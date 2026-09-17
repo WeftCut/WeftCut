@@ -11,6 +11,38 @@ use super::wire::{McpCatalog, McpToolError, PromptDef, ResourceDef, ToolDef, Too
 use super::{prompts, resources, tools};
 use crate::napi_backend::Backend;
 
+/// The advertised schema for one args type. Draft 2020-12 minus the parts no
+/// agent reads and every `tools/list` pays for: the `$schema` / `title`
+/// envelope, `format` hints (`int64`, `double`) and the `default: null` that
+/// `#[serde(default)]` echoes onto every optional field. Subschemas are
+/// inlined so a client that does not resolve `$ref` still sees a typed field.
+fn tool_schema<T: schemars::JsonSchema>() -> serde_json::Value {
+    let mut settings = schemars::generate::SchemaSettings::draft2020_12();
+    settings.meta_schema = None;
+    settings.inline_subschemas = true;
+    let schema = settings
+        .with_transform(TrimAdvertised)
+        .into_generator()
+        .into_root_schema_for::<T>();
+    serde_json::to_value(schema).expect("schema serializes")
+}
+
+#[derive(Clone, Debug)]
+struct TrimAdvertised;
+
+impl schemars::transform::Transform for TrimAdvertised {
+    fn transform(&mut self, schema: &mut schemars::Schema) {
+        if let Some(obj) = schema.as_object_mut() {
+            obj.remove("title");
+            obj.remove("format");
+            if obj.get("default").is_some_and(serde_json::Value::is_null) {
+                obj.remove("default");
+            }
+        }
+        schemars::transform::transform_subschemas(self, schema);
+    }
+}
+
 macro_rules! tool_table {
     ( $( $(#[$meta:meta])* $name:literal => ($desc:expr, $args:ty, $handler:path) ),* $(,)? ) => {
         pub(crate) fn tool_catalog() -> Vec<ToolDef> {
@@ -19,8 +51,7 @@ macro_rules! tool_table {
                 ToolDef {
                     name: $name.to_string(),
                     description: $desc.to_string(),
-                    input_schema: serde_json::to_value(schemars::schema_for!($args))
-                        .expect("schema serializes"),
+                    input_schema: tool_schema::<$args>(),
                 }
             ),* ]
         }
@@ -45,153 +76,25 @@ tool_table! {
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
     // by the TS def; mergeMcpCatalog filters it out of the Rust side.
-    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. \
-                          Cue timings come from the body; each cue lands on the first unlocked caption track \
-                          with room for its span, and a new caption track opens only for a cue that collides \
-                          with all of them. `format` is sniffed when omitted. \
-                          Advanced ASS styling (karaoke, drawings) is simplified. \
-                          Returns the id of the caption track the first cue landed on.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
+    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue packs onto the first unlocked caption track with room, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted; advanced ASS styling (karaoke, drawings) is simplified. For a `transcribe_clip` result use `apply_transcripts` instead — an SRT discards its word timing. Returns the id of the caption track the first cue landed on.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
     #[cfg(feature = "jobs")]
-    "detect_pauses" => ("Find the pauses in a clip's audio — the stretches nobody is speaking — using \
-                          the pre-computed waveform. Commits nothing: it measures and reports, and the \
-                          write is yours to make with `remove_pauses` or `add_marker`. Walks the \
-                          layer's VPEAKS file on its exact PCM timebase, folding EVERY channel (a \
-                          dual-mono take with the voice on one side only would otherwise read as quiet \
-                          end to end), and returns the timeline-absolute ranges where every peak stays \
-                          below `threshold_amp` for at least `min_pause_us` microseconds. \
-                          `bridge_us` keeps one pause whole across a short interruption: a loud run \
-                          shorter than it does not end the pause, so a click, a cough or lip noise no \
-                          longer splits one pause into two halves that are each under the minimum and \
-                          both disappear. Defaults: `threshold_amp=0.02` (-34 dBFS), \
-                          `min_pause_us=500000` (0.5s), `bridge_us=80000` (80ms — no syllable is that \
-                          short). `bridge_us` must be below `min_pause_us`. \
-                          Returns `{ pauses: [{ t_start_us, t_end_us }, ...], noise_floor_amp, \
-                          peaks_source }`: `pauses` sorted by `t_start_us`; `noise_floor_amp` is the \
-                          10th percentile of the peaks inside the clip's source window (0.0 when it \
-                          holds none) — the referent for a threshold, which reads well at roughly the \
-                          floor plus 6 dB; `peaks_source` is `\"raw\"` or `\"fx\"`, naming whether the \
-                          numbers came from the media's own waveform or from its baked effect chain, \
-                          which is what the mixer plays once a chain is baked. \
-                          Pass either an Audio layer or the VideoClip that plays it — a VideoClip is \
-                          resolved to the Audio layer of its link, because only an Audio layer reaches \
-                          the mixer, and a clip that plays no sound is refused saying so. \
-                          Errors if the waveform job hasn't finished yet — wait for a \
-                          `media:job_complete` event with `kind=waveform` and retry.", tools::DetectPausesArgs, tools::detect_pauses),
+    "detect_pauses" => ("Find the pauses in a clip's audio — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the write is `remove_pauses` (cut them) or `add_marker` (mark them). A pause is a run where every channel's peak stays below `threshold_amp` for at least `min_pause_us`; a loud run shorter than `bridge_us` inside it (a click, a cough) does not end it. Defaults `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000`, `bridge_us=80000` (must be below `min_pause_us`). `layer_id` is an Audio layer, or a VideoClip, which resolves to the Audio layer of its link (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_amp, peaks_source }`, timeline-absolute µs, sorted; `noise_floor_amp` is the 10th-percentile peak (a threshold reads well at the floor + 6 dB); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Errors until the waveform job finishes — wait for `media:job_complete` with `kind=waveform` and retry.", tools::DetectPausesArgs, tools::detect_pauses),
     #[cfg(feature = "jobs")]
-    "analyze_clip" => ("Detect shot boundaries in a VideoClip layer and return the shot list plus per-shot \
-                          pixel stats. Runs a deterministic detector over the layer's source (preferring the \
-                          720p proxy) and returns \
-                          `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [ ... ] }], cut_scores: [{ t_us, score }] }`. \
-                          All timestamps are SOURCE-ABSOLUTE microseconds, clipped to the layer's source \
-                          window. `cut_scores` is the raw cut signal (one entry per detected cut, `score` in \
-                          0..1); `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged). \
-                          Per shot: `keyframe_t_us` is a representative cover-frame time (the midpoint); \
-                          `brightness` is mean luma (0..1); `sharpness` is a focus proxy (variance of the \
-                          Laplacian, higher = sharper); `motion` is how much the shot's endpoints differ \
-                          (0..1); `flags` may include `\"black\"`, `\"freeze\"`, `\"fade\"`. Use the shots to \
-                          split, trim, drop bad takes, or pick a cover frame. Optional `sensitivity` (0..1 cut \
-                          threshold, default 0.4; lower = more cuts), `min_shot_us` (minimum shot duration, \
-                          default 500000), and `passes` (subset of `[\"shots\", \"stats\", \"events\"]`, \
-                          default all — drop `\"stats\"` / `\"events\"` to skip the per-shot frame sampling and \
-                          return timing only). VideoClip layers only; any other layer kind errors.", tools::AnalyzeClipArgs, tools::analyze_clip),
+    "analyze_clip" => ("Detect shot boundaries in a VideoClip layer. Deterministic, over the source (720p proxy preferred). Returns `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags }], cut_scores: [{ t_us, score }] }`, all SOURCE-ABSOLUTE µs clipped to the layer's source window. `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged), `cut_scores` the raw cut signal (0..1). Per shot: `keyframe_t_us` is the midpoint cover frame; `brightness` mean luma 0..1; `sharpness` variance of the Laplacian (higher = sharper); `motion` 0..1 endpoint difference; `flags` may hold \"black\", \"freeze\", \"fade\". Optional `sensitivity` (0..1, default 0.4; lower = more cuts), `min_shot_us` (default 500000), `passes` (subset of \"shots\" / \"stats\" / \"events\", default all — drop \"stats\" / \"events\" for timing only). VideoClip layers only. To split at every cut in one edit use `auto_split_by_shot`.", tools::AnalyzeClipArgs, tools::analyze_clip),
     #[cfg(feature = "jobs")]
-    "compare_frames" => ("Compare two video frames for perceptual similarity — dedup shots or match a \
-                          cutaway. Args `{ a: { layer_id, t_us }, b: { layer_id, t_us } }`; each side names \
-                          a VideoClip layer and a SOURCE-ABSOLUTE timestamp (microseconds) in the same \
-                          coordinate space as `media://{id}/frame/<t_us>` and `analyze_clip`'s \
-                          `keyframe_t_us`, so a shot cover frame drops straight in. The two sides may point \
-                          at the same clip or different clips. Samples one frame per side and returns \
-                          `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 Hamming distance \
-                          between the frames' DCT perceptual hashes (0 = identical, small = the same frame \
-                          re-encoded / rescaled); `ssim` is MSSIM structural similarity in 0..1 (1.0 = \
-                          identical); `similar` is true when `phash_hamming <= 10 && ssim >= 0.5` — both \
-                          the hash and the structural score must agree. The pHash is the strong signal \
-                          (0 for the same frame re-encoded, 20+ for a different scene); the loose SSIM \
-                          floor keeps a source frame vs its lossy downscaled proxy similar while still \
-                          rejecting unrelated frames. Read-only; VideoClip layers only \
-                          (any other layer kind, or a missing/non-video source, errors naming the offending \
-                          side).", tools::CompareFramesArgs, tools::compare_frames),
+    "compare_frames" => ("Compare two video frames for perceptual similarity — dedup shots, match a cutaway. Each side is `{ layer_id, t_us }`: a VideoClip layer and a SOURCE-ABSOLUTE µs timestamp (the space `analyze_clip`'s `keyframe_t_us` and `media://{id}/frame/<t_us>` use); the two may be the same clip or different clips. Returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 distance between the frames' perceptual hashes (0 = identical, 20+ = a different scene), `ssim` is structural similarity 0..1, and `similar` is `phash_hamming <= 10 && ssim >= 0.5`. Read-only; VideoClip layers only, errors naming the offending side.", tools::CompareFramesArgs, tools::compare_frames),
     #[cfg(feature = "jobs")]
     "import_media" => ("Import a media file from an absolute path. Hashes the file (blake3) and probes \
                           metadata via ffprobe when installed. Returns the new media id.", tools::ImportMediaArgs, tools::import_media),
     #[cfg(feature = "speech")]
-    "extract_clip_audio" => ("Extract source audio from a VideoClip or Audio layer without any model or API key. \
-                             Returns a JSON text metadata block plus an MCP audio block (base64 audio/wav): \
-                             mono 16000 Hz 16-bit PCM, starting at zero in the returned WAV. \
-                             Optional t_start_us/t_end_us are absolute microseconds in the layer's owning composition, \
-                             defaulting to the layer endpoints. Maximum 60000000 us (60 seconds) per call; \
-                             request consecutive windows for longer clips. Metadata includes layer_id, media_id, \
-                             t_start_us, t_end_us, source_in_us, source_out_us, duration_us, sample_rate_hz, \
-                             channels, bits_per_sample, byte_length and mime_type. Add t_start_us to external \
-                             transcript offsets before apply_subtitles. Reads the original source, before gain, \
-                             mute, effects or mixing; VideoClip audio is its own source stream, not linked audio. \
-                             Rejects missing audio, out-of-range windows and VideoClip speed != 1.0. \
-                             Read-only apart from the shared extraction cache; never runs inference or uploads audio.",
+    "extract_clip_audio" => ("Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `source_in_us`, `source_out_us`, `duration_us`, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are composition-absolute µs, defaulting to the layer endpoints; at most 60 s per call — walk a long clip in consecutive windows. Add the reported `t_start_us` to the offsets your model returns before `apply_subtitles`. Refuses a layer with no audio, a window outside the layer, and a VideoClip with speed != 1.0 (a VideoClip's audio is its own stream, not its linked Audio layer).",
                              super::clip_audio::ExtractClipAudioArgs, super::clip_audio::extract_clip_audio),
     #[cfg(feature = "speech")]
-    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured transcription \
-                          provider (cloud OpenAI Whisper, or local whisper.cpp / FunASR) and return a \
-                          normalized transcript as JSON: \
-                          `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], \
-                          language, word_timing, srt }`. All timestamps are timeline-absolute microseconds. \
-                          `backend` is the engine tag that actually served the request. \
-                          `word_timing` is the provenance of the per-word times: `exact` (from an engine's \
-                          token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span \
-                          across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues \
-                          self-position onto a caption track via their internal timestamps — `apply_subtitles` \
-                          takes no start/end); use `segments`/`words` for word-level editing. Optional \
-                          `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; \
-                          both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | \
-                          `\"funasr\"`) REQUIRES that engine: if it is not available the call errors naming the \
-                          missing piece (key / binary / model) instead of substituting another engine, so an \
-                          explicit local choice never falls back to a cloud upload; an unknown value is rejected. \
-                          When omitted, selection is the user's preferred engine then availability. Optional \
-                          `word_timestamps` (default true) requests exact per-word times when the chosen backend \
-                          can emit them (whisper.cpp `-ojf`; FunASR always); pass false to force SRT-style \
-                          interpolated output. OpenAI \
-                          Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — \
-                          split off a speed-1 segment first. Errors with structured messages if no transcription \
-                          backend is configured (API key or local engine), the audio slice exceeds the provider cap (~13 min for Whisper at \
-                          25 MB), or the provider rate-limits / rejects auth.", tools::TranscribeClipArgs, tools::transcribe_clip),
+    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR). Returns `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }` in timeline-absolute µs. Hand the envelope to `apply_transcripts` to lay captions that keep the word timing (`apply_subtitles` with `srt` works but discards it). `word_timing` is \"exact\" or \"interpolated_from_cue\". Optional `t_start_us`/`t_end_us` narrow the window; `backend` (\"openai\" | \"whisper_cpp\" | \"funasr\") REQUIRES that engine — it errors naming the missing key / binary / model rather than substituting, so a local choice never uploads; omitted, the user's preferred engine then availability. `word_timestamps` (default true) asks for exact per-word times where the engine can (OpenAI is SRT-only). A VideoClip with speed != 1.0 is refused. Errors name the cause: no engine, the provider cap (~13 min for cloud Whisper), rate limits, auth.", tools::TranscribeClipArgs, tools::transcribe_clip),
     #[cfg(feature = "speech")]
-    "synthesize_speech" => ("Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) \
-                          and attach the result as an Audio layer. The MP3 is content-addressed in cache \
-                          by `(model, voice, speed, text)`, so a repeat call with the same args reuses \
-                          the cached file without burning another API request. \
-                          Args: `text` (≤4096 chars for tts-1), `voice` (one of alloy/echo/fable/onyx/nova/shimmer), \
-                          optional `speed` (0.25..4.0; default = provider default ≈1.0), \
-                          optional `target_track_id` (defaults to first existing Audio track or a new \
-                          'Voiceover' track), optional `t_start_us` (defaults to the composition's \
-                          current duration so the voiceover appends at the end). Returns \
-                          `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech),
+    "synthesize_speech" => ("Synthesize speech with the configured cloud TTS provider (OpenAI tts-1) and place it as an Audio layer. `text` ≤ 4096 chars; `voice` is one of alloy / echo / fable / onyx / nova / shimmer; optional `speed` 0.25..4.0 (default ≈ 1.0); optional `target_track_id` (default: the first Audio track, else a new 'Voiceover' track); optional `t_start_us` (default: the composition's current duration, so the clip appends at the end). The MP3 is cached by `(model, voice, speed, text)`, so a repeat call costs no API request. Returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech),
     #[cfg(feature = "speech")]
-    "describe_clip" => ("Describe a VideoClip layer's visual content as timestamped, open-vocabulary \
-                          segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via \
-                          llama-mtmd-cli, or any OpenAI-compatible endpoint). \
-                          Samples frames from the layer's source at `fps` (default 1.0), runs the model \
-                          once over the whole window, and returns \
-                          `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. \
-                          All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the \
-                          engine that actually served the request. `text` is a free-text description of \
-                          the span; `tags` are short visual keywords (subjects, setting, camera motion, \
-                          shot type) the agent can filter on. Results are cached per source range — a \
-                          later call over an already-described window returns instantly with no model \
-                          spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's \
-                          time range (both default to the layer endpoints). Optional `fps` sets the \
-                          sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt \
-                          template that populates `tags`. Optional `language` is a BCP-47 tag \
-                          (`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …) the `text` and `tags` come back in; \
-                          it defaults to the app's UI language, and it is part of the cache key, so \
-                          asking in another language runs the model again rather than translating. \
-                          Optional `backend` (`\"qwen3_vl\"` | \
-                          `\"minicpm_v\"` | `\"byo_endpoint\"`) REQUIRES that engine: if it \
-                          is not available the call errors naming the missing piece (binary / model / \
-                          endpoint) instead of substituting another engine, so an explicit local \
-                          choice never uploads frames anywhere; an unknown value is rejected. When \
-                          omitted, selection is the user's preferred engine then availability \
-                          (local-first). VideoClip layers with speed != 1.0 are rejected — split off a \
-                          speed-1 segment first. Errors with an actionable message when no \
-                          video-understanding backend is configured.", tools::DescribeClipArgs, tools::describe_clip),
+    "describe_clip" => ("Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or an OpenAI-compatible endpoint). Samples frames at `fps` (default 1.0) and runs the model once over the window. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords (subjects, setting, camera, shot type). Cached per source range. Optional `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") picks the prompt that fills `tags`; `language` is a BCP-47 tag for the output (default: the app's UI language) and part of the cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine — it errors naming the missing binary / model / endpoint rather than substituting, so a local choice never uploads frames; omitted, the user's preferred engine then availability (local first). A VideoClip with speed != 1.0 is refused; so is a call with no engine configured, naming the gap.", tools::DescribeClipArgs, tools::describe_clip),
 }
 
 pub(crate) fn resource_catalog() -> Vec<ResourceDef> {

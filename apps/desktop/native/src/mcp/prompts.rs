@@ -67,7 +67,7 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
         prompts.push(PromptDef {
             name: NAME_AUTO_CAPTION.into(),
             description: Some(
-                "Transcribe a video or audio layer with cloud Whisper, then apply the SRT as subtitles."
+                "Transcribe a video or audio layer with the configured engine, then lay the transcript on the caption tracks with its word timing."
                     .into(),
             ),
             arguments: vec![
@@ -216,13 +216,13 @@ fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult
 
 Steps:
 1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR), and returns a JSON envelope `{{ backend, segments, language, word_timing, srt }}` with all timestamps already shifted to timeline-absolute microseconds. The `srt` field is a ready-to-apply SubRip body; `segments`/`words` carry the same content with per-word spans.
-2. Inspect the `srt` field. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
-3. Call `apply_subtitles` with the (possibly edited) `srt` body — NOT the whole JSON envelope. The cues self-position onto a caption track of editable Text layers via their internal timestamps, packing into a caption track already there where it has room — you do not pass start/end times (any `t_start_us`/`t_end_us` are ignored). The tool returns the id of the caption track the first cue landed on.
+2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times).
+3. Call `apply_transcripts` with `transcripts: [<the envelope: segments + word_timing>]` and `source_layer_ids: [\"{layer_id}\"]`. The cues land as editable Text layers on the caption tracks, packing where there is room, and KEEP their word timing — which is what `correct_caption_text` later needs to re-segment a corrected cue. (`apply_subtitles` with the `srt` field also works, but an SRT has no word offsets, so the timing is lost.) The tool returns the id of the caption track the first cue landed on.
 
 If `transcribe_clip` errors because no backend is configured (or with `MissingKey` / `InvalidKey`), tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
     );
     Ok(PromptResult {
-        description: Some("Auto-caption a clip via cloud Whisper + apply_subtitles.".into()),
+        description: Some("Auto-caption a clip via transcribe_clip + apply_transcripts.".into()),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },

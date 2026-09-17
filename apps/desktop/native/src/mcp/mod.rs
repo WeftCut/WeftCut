@@ -40,8 +40,9 @@ pub(crate) use tools::{synthesize_speech_audio, SynthesizeSpeechArgs};
 // The `mcp:change` notification is emitted by the TS host (the TS actor's
 // `mcpCall` notifies via `mcpNotify`).
 
-/// Empty arg shape for tools that take no parameters. The dispatch table
-/// deserializes `{}` (or any object) into this; `schemars` advertises it as an
-/// empty object schema.
+// Empty arg shape for tools that take no parameters. The dispatch table
+// deserializes `{}` (or any object) into this; `schemars` advertises it as an
+// empty object schema. A plain comment on purpose: a doc comment here would be
+// advertised as the schema's `description` on every no-arg tool.
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema, Default)]
 pub(crate) struct EmptyArgs {}

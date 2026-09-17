@@ -4,17 +4,13 @@
       "name": "ping",
       "description": "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Empty arg shape for tools that take no parameters. The dispatch table\ndeserializes `{}` (or any object) into this; `schemars` advertises it as an\nempty object schema.",
-        "title": "EmptyArgs",
         "type": "object"
       }
     },
     {
       "name": "apply_subtitles",
-      "description": "Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue lands on the first unlocked caption track with room for its span, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted. Advanced ASS styling (karaoke, drawings) is simplified. Returns the id of the caption track the first cue landed on.",
+      "description": "Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue packs onto the first unlocked caption track with room, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted; advanced ASS styling (karaoke, drawings) is simplified. For a `transcribe_clip` result use `apply_transcripts` instead — an SRT discards its word timing. Returns the id of the caption track the first cue landed on.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "body": {
             "description": "Subtitle document body (SRT, ASS, or VTT).",
@@ -26,45 +22,21 @@
               "string",
               "null"
             ]
-          },
-          "t_end_us": {
-            "description": "IGNORED — cue timings come from the body, not the timeline envelope.\nKept for wire-schema stability; do not remove.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "t_start_us": {
-            "description": "IGNORED — cue timings come from the body, not the timeline envelope.\nKept for wire-schema stability; do not remove.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "track_id": {
-            "description": "IGNORED — the lane is the packing's to pick: cues land on the caption\ntracks already there where they have room (ADR 0070). Kept for\nwire-schema stability; do not remove.",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
-          "body",
-          "t_end_us"
+          "body"
         ],
-        "title": "ApplySubtitlesArgs",
         "type": "object"
       }
     },
     {
       "name": "detect_pauses",
-      "description": "Find the pauses in a clip's audio — the stretches nobody is speaking — using the pre-computed waveform. Commits nothing: it measures and reports, and the write is yours to make with `remove_pauses` or `add_marker`. Walks the layer's VPEAKS file on its exact PCM timebase, folding EVERY channel (a dual-mono take with the voice on one side only would otherwise read as quiet end to end), and returns the timeline-absolute ranges where every peak stays below `threshold_amp` for at least `min_pause_us` microseconds. `bridge_us` keeps one pause whole across a short interruption: a loud run shorter than it does not end the pause, so a click, a cough or lip noise no longer splits one pause into two halves that are each under the minimum and both disappear. Defaults: `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000` (0.5s), `bridge_us=80000` (80ms — no syllable is that short). `bridge_us` must be below `min_pause_us`. Returns `{ pauses: [{ t_start_us, t_end_us }, ...], noise_floor_amp, peaks_source }`: `pauses` sorted by `t_start_us`; `noise_floor_amp` is the 10th percentile of the peaks inside the clip's source window (0.0 when it holds none) — the referent for a threshold, which reads well at roughly the floor plus 6 dB; `peaks_source` is `\"raw\"` or `\"fx\"`, naming whether the numbers came from the media's own waveform or from its baked effect chain, which is what the mixer plays once a chain is baked. Pass either an Audio layer or the VideoClip that plays it — a VideoClip is resolved to the Audio layer of its link, because only an Audio layer reaches the mixer, and a clip that plays no sound is refused saying so. Errors if the waveform job hasn't finished yet — wait for a `media:job_complete` event with `kind=waveform` and retry.",
+      "description": "Find the pauses in a clip's audio — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the write is `remove_pauses` (cut them) or `add_marker` (mark them). A pause is a run where every channel's peak stays below `threshold_amp` for at least `min_pause_us`; a loud run shorter than `bridge_us` inside it (a click, a cough) does not end it. Defaults `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000`, `bridge_us=80000` (must be below `min_pause_us`). `layer_id` is an Audio layer, or a VideoClip, which resolves to the Audio layer of its link (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_amp, peaks_source }`, timeline-absolute µs, sorted; `noise_floor_amp` is the 10th-percentile peak (a threshold reads well at the floor + 6 dB); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Errors until the waveform job finishes — wait for `media:job_complete` with `kind=waveform` and retry.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "bridge_us": {
-            "description": "A loud run shorter than this INSIDE a quiet run does not end the pause,\nin microseconds. Default 80000 (80ms) — long enough to swallow a click,\na cough or lip noise, short enough that no syllable fits. Must be ≥ 0\nand strictly below `min_pause_us`.",
-            "format": "int64",
+            "description": "A loud run shorter than this (µs) inside a quiet run does not end the\npause. Default 80000 (80ms). Must be ≥ 0 and below `min_pause_us`.",
             "type": [
               "integer",
               "null"
@@ -76,7 +48,6 @@
           },
           "min_pause_us": {
             "description": "Shortest pause to surface, in microseconds. Default 500000 (0.5s).",
-            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -84,7 +55,6 @@
           },
           "threshold_amp": {
             "description": "Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this\ncounts as quiet. Default 0.02 (≈ -34 dBFS).",
-            "format": "float",
             "type": [
               "number",
               "null"
@@ -94,15 +64,13 @@
         "required": [
           "layer_id"
         ],
-        "title": "DetectPausesArgs",
         "type": "object"
       }
     },
     {
       "name": "analyze_clip",
-      "description": "Detect shot boundaries in a VideoClip layer and return the shot list plus per-shot pixel stats. Runs a deterministic detector over the layer's source (preferring the 720p proxy) and returns `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [ ... ] }], cut_scores: [{ t_us, score }] }`. All timestamps are SOURCE-ABSOLUTE microseconds, clipped to the layer's source window. `cut_scores` is the raw cut signal (one entry per detected cut, `score` in 0..1); `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged). Per shot: `keyframe_t_us` is a representative cover-frame time (the midpoint); `brightness` is mean luma (0..1); `sharpness` is a focus proxy (variance of the Laplacian, higher = sharper); `motion` is how much the shot's endpoints differ (0..1); `flags` may include `\"black\"`, `\"freeze\"`, `\"fade\"`. Use the shots to split, trim, drop bad takes, or pick a cover frame. Optional `sensitivity` (0..1 cut threshold, default 0.4; lower = more cuts), `min_shot_us` (minimum shot duration, default 500000), and `passes` (subset of `[\"shots\", \"stats\", \"events\"]`, default all — drop `\"stats\"` / `\"events\"` to skip the per-shot frame sampling and return timing only). VideoClip layers only; any other layer kind errors.",
+      "description": "Detect shot boundaries in a VideoClip layer. Deterministic, over the source (720p proxy preferred). Returns `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags }], cut_scores: [{ t_us, score }] }`, all SOURCE-ABSOLUTE µs clipped to the layer's source window. `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged), `cut_scores` the raw cut signal (0..1). Per shot: `keyframe_t_us` is the midpoint cover frame; `brightness` mean luma 0..1; `sharpness` variance of the Laplacian (higher = sharper); `motion` 0..1 endpoint difference; `flags` may hold \"black\", \"freeze\", \"fade\". Optional `sensitivity` (0..1, default 0.4; lower = more cuts), `min_shot_us` (default 500000), `passes` (subset of \"shots\" / \"stats\" / \"events\", default all — drop \"stats\" / \"events\" for timing only). VideoClip layers only. To split at every cut in one edit use `auto_split_by_shot`.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "layer_id": {
             "description": "Target VideoClip layer id.",
@@ -110,7 +78,6 @@
           },
           "min_shot_us": {
             "description": "Minimum shot duration (microseconds); cuts closer than this are merged.\nDefault 500000 (0.5 seconds).",
-            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -128,7 +95,6 @@
           },
           "sensitivity": {
             "description": "Cut sensitivity in [0.0, 1.0]: a frame whose shot-change score exceeds\nthis starts a new shot. Lower = more (finer) cuts. Default 0.4.",
-            "format": "float",
             "type": [
               "number",
               "null"
@@ -138,25 +104,41 @@
         "required": [
           "layer_id"
         ],
-        "title": "AnalyzeClipArgs",
         "type": "object"
       }
     },
     {
       "name": "compare_frames",
-      "description": "Compare two video frames for perceptual similarity — dedup shots or match a cutaway. Args `{ a: { layer_id, t_us }, b: { layer_id, t_us } }`; each side names a VideoClip layer and a SOURCE-ABSOLUTE timestamp (microseconds) in the same coordinate space as `media://{id}/frame/<t_us>` and `analyze_clip`'s `keyframe_t_us`, so a shot cover frame drops straight in. The two sides may point at the same clip or different clips. Samples one frame per side and returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 Hamming distance between the frames' DCT perceptual hashes (0 = identical, small = the same frame re-encoded / rescaled); `ssim` is MSSIM structural similarity in 0..1 (1.0 = identical); `similar` is true when `phash_hamming <= 10 && ssim >= 0.5` — both the hash and the structural score must agree. The pHash is the strong signal (0 for the same frame re-encoded, 20+ for a different scene); the loose SSIM floor keeps a source frame vs its lossy downscaled proxy similar while still rejecting unrelated frames. Read-only; VideoClip layers only (any other layer kind, or a missing/non-video source, errors naming the offending side).",
+      "description": "Compare two video frames for perceptual similarity — dedup shots, match a cutaway. Each side is `{ layer_id, t_us }`: a VideoClip layer and a SOURCE-ABSOLUTE µs timestamp (the space `analyze_clip`'s `keyframe_t_us` and `media://{id}/frame/<t_us>` use); the two may be the same clip or different clips. Returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 distance between the frames' perceptual hashes (0 = identical, 20+ = a different scene), `ssim` is structural similarity 0..1, and `similar` is `phash_hamming <= 10 && ssim >= 0.5`. Read-only; VideoClip layers only, errors naming the offending side.",
       "inputSchema": {
-        "$defs": {
-          "FrameRef": {
-            "description": "One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected\n`layer` / `media` keeps each side's ADVERTISED schema exactly\n`{ layer_id, t_us }`; serde still deserializes the host-injected slice.",
+        "properties": {
+          "a": {
+            "description": "First frame to compare.",
             "properties": {
               "layer_id": {
                 "description": "Target VideoClip layer id.",
                 "type": "string"
               },
               "t_us": {
-                "description": "SOURCE-ABSOLUTE timestamp (microseconds) of the frame to sample — the\nsame coordinate space as `media://{id}/frame/<t_us>` and the\n`keyframe_t_us` / `t_*_us` that `analyze_clip` returns, so a shot cover\nframe can be fed straight in.",
-                "format": "int64",
+                "description": "SOURCE-ABSOLUTE microseconds of the frame to sample (the space\n`analyze_clip`'s `keyframe_t_us` uses).",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "layer_id",
+              "t_us"
+            ],
+            "type": "object"
+          },
+          "b": {
+            "description": "Second frame to compare.",
+            "properties": {
+              "layer_id": {
+                "description": "Target VideoClip layer id.",
+                "type": "string"
+              },
+              "t_us": {
+                "description": "SOURCE-ABSOLUTE microseconds of the frame to sample (the space\n`analyze_clip`'s `keyframe_t_us` uses).",
                 "type": "integer"
               }
             },
@@ -167,22 +149,10 @@
             "type": "object"
           }
         },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "a": {
-            "$ref": "#/$defs/FrameRef",
-            "description": "First frame to compare."
-          },
-          "b": {
-            "$ref": "#/$defs/FrameRef",
-            "description": "Second frame to compare."
-          }
-        },
         "required": [
           "a",
           "b"
         ],
-        "title": "CompareFramesArgs",
         "type": "object"
       }
     },
@@ -190,7 +160,6 @@
       "name": "import_media",
       "description": "Import a media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns the new media id.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "path": {
             "description": "Absolute path to a video / audio / image / subtitle file the host can read.",
@@ -200,33 +169,27 @@
         "required": [
           "path"
         ],
-        "title": "ImportMediaArgs",
         "type": "object"
       }
     },
     {
       "name": "extract_clip_audio",
-      "description": "Extract source audio from a VideoClip or Audio layer without any model or API key. Returns a JSON text metadata block plus an MCP audio block (base64 audio/wav): mono 16000 Hz 16-bit PCM, starting at zero in the returned WAV. Optional t_start_us/t_end_us are absolute microseconds in the layer's owning composition, defaulting to the layer endpoints. Maximum 60000000 us (60 seconds) per call; request consecutive windows for longer clips. Metadata includes layer_id, media_id, t_start_us, t_end_us, source_in_us, source_out_us, duration_us, sample_rate_hz, channels, bits_per_sample, byte_length and mime_type. Add t_start_us to external transcript offsets before apply_subtitles. Reads the original source, before gain, mute, effects or mixing; VideoClip audio is its own source stream, not linked audio. Rejects missing audio, out-of-range windows and VideoClip speed != 1.0. Read-only apart from the shared extraction cache; never runs inference or uploads audio.",
+      "description": "Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `source_in_us`, `source_out_us`, `duration_us`, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are composition-absolute µs, defaulting to the layer endpoints; at most 60 s per call — walk a long clip in consecutive windows. Add the reported `t_start_us` to the offsets your model returns before `apply_subtitles`. Refuses a layer with no audio, a window outside the layer, and a VideoClip with speed != 1.0 (a VideoClip's audio is its own stream, not its linked Audio layer).",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "layer_id": {
             "description": "Target VideoClip or Audio layer id.",
             "type": "string"
           },
           "t_end_us": {
-            "default": null,
             "description": "Exclusive window end in the owning composition's absolute microseconds.\nDefaults to the layer end. Maximum window duration: 60000000 us (60 s).",
-            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "t_start_us": {
-            "default": null,
             "description": "Window start in the owning composition's absolute microseconds.\nDefaults to the layer start. Must lie inside the layer.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -236,26 +199,22 @@
         "required": [
           "layer_id"
         ],
-        "title": "ExtractClipAudioArgs",
         "type": "object"
       }
     },
     {
       "name": "transcribe_clip",
-      "description": "Transcribe a VideoClip or Audio layer through the configured transcription provider (cloud OpenAI Whisper, or local whisper.cpp / FunASR) and return a normalized transcript as JSON: `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }`. All timestamps are timeline-absolute microseconds. `backend` is the engine tag that actually served the request. `word_timing` is the provenance of the per-word times: `exact` (from an engine's token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues self-position onto a caption track via their internal timestamps — `apply_subtitles` takes no start/end); use `segments`/`words` for word-level editing. Optional `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | `\"funasr\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (key / binary / model) instead of substituting another engine, so an explicit local choice never falls back to a cloud upload; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability. Optional `word_timestamps` (default true) requests exact per-word times when the chosen backend can emit them (whisper.cpp `-ojf`; FunASR always); pass false to force SRT-style interpolated output. OpenAI Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with structured messages if no transcription backend is configured (API key or local engine), the audio slice exceeds the provider cap (~13 min for Whisper at 25 MB), or the provider rate-limits / rejects auth.",
+      "description": "Transcribe a VideoClip or Audio layer with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR). Returns `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }` in timeline-absolute µs. Hand the envelope to `apply_transcripts` to lay captions that keep the word timing (`apply_subtitles` with `srt` works but discards it). `word_timing` is \"exact\" or \"interpolated_from_cue\". Optional `t_start_us`/`t_end_us` narrow the window; `backend` (\"openai\" | \"whisper_cpp\" | \"funasr\") REQUIRES that engine — it errors naming the missing key / binary / model rather than substituting, so a local choice never uploads; omitted, the user's preferred engine then availability. `word_timestamps` (default true) asks for exact per-word times where the engine can (OpenAI is SRT-only). A VideoClip with speed != 1.0 is refused. Errors name the cause: no engine, the provider cap (~13 min for cloud Whisper), rate limits, auth.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "backend": {
-            "default": null,
-            "description": "Optional STRICT backend override: `\"openai\"` | `\"whisper_cpp\"` |\n`\"funasr\"`. When set, that engine serves the request or the call errors\nnaming its exact gap (missing key / binary / model) — it never\nsubstitutes another engine, so an explicit local choice can never leak\naudio to a cloud provider. When omitted, the resolver walks the user's\npreference then availability. An unknown value is rejected.",
+            "description": "Strict engine override: `\"openai\"` | `\"whisper_cpp\"` | `\"funasr\"`.\nThat engine serves or the call errors; nothing is substituted. Omitted:\nthe user's preferred engine, then availability.",
             "type": [
               "string",
               "null"
             ]
           },
           "language": {
-            "default": null,
             "description": "Optional ISO-639-1 language hint (`\"en\"`, `\"zh\"`). Auto-detect when omitted.",
             "type": [
               "string",
@@ -267,26 +226,21 @@
             "type": "string"
           },
           "t_end_us": {
-            "default": null,
             "description": "Optional transcription window end in timeline microseconds.\nDefaults to the layer's `t_end_us`. Must lie within the layer.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "t_start_us": {
-            "default": null,
             "description": "Optional transcription window start in timeline microseconds.\nDefaults to the layer's `t_start_us`. Must lie within the layer.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "word_timestamps": {
-            "default": null,
-            "description": "Request exact per-word timestamps when the chosen backend can emit them\n(whisper.cpp → `-ojf`). Defaults to `true` — the backend's best\nprecision, at no extra engine cost; pass `false` to force the SRT-style\n(interpolated) output instead. OpenAI Whisper is SRT-only and ignores\nit either way; check `word_timing` in the result for what you got.",
+            "description": "Ask for exact per-word times where the engine can emit them. Default\ntrue; `false` forces SRT-style interpolated words. The result's\n`word_timing` reports what you got.",
             "type": [
               "boolean",
               "null"
@@ -296,36 +250,29 @@
         "required": [
           "layer_id"
         ],
-        "title": "TranscribeClipArgs",
         "type": "object"
       }
     },
     {
       "name": "synthesize_speech",
-      "description": "Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) and attach the result as an Audio layer. The MP3 is content-addressed in cache by `(model, voice, speed, text)`, so a repeat call with the same args reuses the cached file without burning another API request. Args: `text` (≤4096 chars for tts-1), `voice` (one of alloy/echo/fable/onyx/nova/shimmer), optional `speed` (0.25..4.0; default = provider default ≈1.0), optional `target_track_id` (defaults to first existing Audio track or a new 'Voiceover' track), optional `t_start_us` (defaults to the composition's current duration so the voiceover appends at the end). Returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`.",
+      "description": "Synthesize speech with the configured cloud TTS provider (OpenAI tts-1) and place it as an Audio layer. `text` ≤ 4096 chars; `voice` is one of alloy / echo / fable / onyx / nova / shimmer; optional `speed` 0.25..4.0 (default ≈ 1.0); optional `target_track_id` (default: the first Audio track, else a new 'Voiceover' track); optional `t_start_us` (default: the composition's current duration, so the clip appends at the end). The MP3 is cached by `(model, voice, speed, text)`, so a repeat call costs no API request. Returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "speed": {
-            "default": null,
             "description": "0.25..4.0 for tts-1. Omit to use the provider default (~1.0).",
-            "format": "float",
             "type": [
               "number",
               "null"
             ]
           },
           "t_start_us": {
-            "default": null,
             "description": "Optional timeline start in microseconds. Defaults to the composition's\ncurrent `duration_us` so the voiceover appends at the end.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "target_track_id": {
-            "default": null,
             "description": "Optional Audio track id. If omitted, lands on the first existing Audio\ntrack or auto-creates one labeled \"Voiceover\".",
             "type": [
               "string",
@@ -345,44 +292,37 @@
           "text",
           "voice"
         ],
-        "title": "SynthesizeSpeechArgs",
         "type": "object"
       }
     },
     {
       "name": "describe_clip",
-      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or any OpenAI-compatible endpoint). Samples frames from the layer's source at `fps` (default 1.0), runs the model once over the whole window, and returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the engine that actually served the request. `text` is a free-text description of the span; `tags` are short visual keywords (subjects, setting, camera motion, shot type) the agent can filter on. Results are cached per source range — a later call over an already-described window returns instantly with no model spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's time range (both default to the layer endpoints). Optional `fps` sets the sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt template that populates `tags`. Optional `language` is a BCP-47 tag (`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …) the `text` and `tags` come back in; it defaults to the app's UI language, and it is part of the cache key, so asking in another language runs the model again rather than translating. Optional `backend` (`\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (binary / model / endpoint) instead of substituting another engine, so an explicit local choice never uploads frames anywhere; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability (local-first). VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with an actionable message when no video-understanding backend is configured.",
+      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or an OpenAI-compatible endpoint). Samples frames at `fps` (default 1.0) and runs the model once over the window. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords (subjects, setting, camera, shot type). Cached per source range. Optional `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") picks the prompt that fills `tags`; `language` is a BCP-47 tag for the output (default: the app's UI language) and part of the cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine — it errors naming the missing binary / model / endpoint rather than substituting, so a local choice never uploads frames; omitted, the user's preferred engine then availability (local first). A VideoClip with speed != 1.0 is refused; so is a call with no engine configured, naming the gap.",
       "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "backend": {
-            "default": null,
-            "description": "Optional STRICT backend override: `\"qwen3_vl\"` | `\"minicpm_v\"` |\n`\"byo_endpoint\"`. When set, that engine serves the request or the call\nerrors naming its exact gap — it never substitutes another engine, so an\nexplicit local choice can never leak frames over the network.\nWhen omitted, selection is preference then availability. Unknown → rejected.",
+            "description": "Strict engine override: `\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"`.\nThat engine serves or the call errors; nothing is substituted. Omitted:\nthe user's preferred engine, then availability.",
             "type": [
               "string",
               "null"
             ]
           },
           "focus": {
-            "default": null,
-            "description": "Prompt focus: `\"general\"` or `\"shot-type\"` (biases `tags` toward shot\ntype / camera). Defaults to the app's Video-understanding setting, which\nthe host injects when this is omitted; with no host, `\"general\"`. Part of\nthe cache key.",
+            "description": "`\"general\"` or `\"shot-type\"` (biases `tags` toward shot type / camera).\nDefault: the app's setting, else `\"general\"`. Cache key.",
             "type": [
               "string",
               "null"
             ]
           },
           "fps": {
-            "default": null,
-            "description": "Frames sampled per second across the window. Higher = finer temporal\ndetail at more cost; capped so the frame set fits the model's context.\nDefaults to the app's Video-understanding setting, which the host injects\nwhen this is omitted; with no host, 1.0. Part of the cache key.",
-            "format": "double",
+            "description": "Frames sampled per second (higher = finer, costlier; capped to the\nmodel's context). Default: the app's setting, else 1.0. Cache key.",
             "type": [
               "number",
               "null"
             ]
           },
           "language": {
-            "default": null,
-            "description": "Language the `text` and `tags` come back in, as a BCP-47 tag\n(`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …). Defaults to the app's UI language,\nwhich the host injects when this is omitted; with no host, `\"en-US\"`.\nPart of the cache key — a description in another language is a different\ndescription, not a translation of this one.",
+            "description": "BCP-47 tag the `text` and `tags` come back in (`\"en-US\"`, `\"zh-CN\"`,\n`\"ja\"`). Default: the app's UI language. Cache key.",
             "type": [
               "string",
               "null"
@@ -393,18 +333,14 @@
             "type": "string"
           },
           "t_end_us": {
-            "default": null,
             "description": "Optional window end in timeline microseconds. Defaults to the layer's\n`t_end_us`. Must lie within the layer.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "t_start_us": {
-            "default": null,
             "description": "Optional window start in timeline microseconds. Defaults to the layer's\n`t_start_us`. Must lie within the layer.",
-            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -414,7 +350,6 @@
         "required": [
           "layer_id"
         ],
-        "title": "DescribeClipArgs",
         "type": "object"
       }
     }
@@ -504,7 +439,7 @@
     },
     {
       "name": "auto-caption",
-      "description": "Transcribe a video or audio layer with cloud Whisper, then apply the SRT as subtitles.",
+      "description": "Transcribe a video or audio layer with the configured engine, then lay the transcript on the caption tracks with its word timing.",
       "arguments": [
         {
           "name": "layer_id",

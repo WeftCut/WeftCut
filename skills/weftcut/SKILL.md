@@ -8,8 +8,8 @@ description: Drive the WeftCut video editor over its MCP tools. Use BEFORE calli
 WeftCut is a desktop video editor; you operate it over MCP while the user
 watches the same project live in the app. Every mutation you commit lands in
 their undo history and on their screen. Each tool's own description carries its
-full contract — this skill covers only what no single tool can: how a session
-should go.
+contract, and each refusal names its cause and options — this skill covers only
+what no single tool can: how a session should go.
 
 ## Session etiquette
 

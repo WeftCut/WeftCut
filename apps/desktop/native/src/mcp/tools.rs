@@ -57,16 +57,11 @@ pub(super) struct ApplySubtitlesArgs {
     pub body: String,
     /// 'srt', 'ass', or 'vtt'. Sniffed from body when omitted.
     pub format: Option<String>,
-    /// IGNORED — the lane is the packing's to pick: cues land on the caption
-    /// tracks already there where they have room (ADR 0070). Kept for
-    /// wire-schema stability; do not remove.
-    pub track_id: Option<String>,
-    /// IGNORED — cue timings come from the body, not the timeline envelope.
-    /// Kept for wire-schema stability; do not remove.
-    pub t_start_us: Option<i64>,
-    /// IGNORED — cue timings come from the body, not the timeline envelope.
-    /// Kept for wire-schema stability; do not remove.
-    pub t_end_us: i64,
+    // `track_id`, `t_start_us` and `t_end_us` used to be advertised here and
+    // ignored (the lane is the packing's to pick and cue timings come from the
+    // body, ADR 0070) — `t_end_us` even as REQUIRED, so every caller had to
+    // invent one. They are gone from the schema; serde still accepts them from
+    // a client that sends them, since unknown fields are ignored.
 }
 
 /// `apply_subtitles` Rust handler is a stub — the tool routes through the hybrid
@@ -91,10 +86,8 @@ pub(super) struct DetectPausesArgs {
     pub threshold_amp: Option<f32>,
     /// Shortest pause to surface, in microseconds. Default 500000 (0.5s).
     pub min_pause_us: Option<i64>,
-    /// A loud run shorter than this INSIDE a quiet run does not end the pause,
-    /// in microseconds. Default 80000 (80ms) — long enough to swallow a click,
-    /// a cough or lip noise, short enough that no syllable fits. Must be ≥ 0
-    /// and strictly below `min_pause_us`.
+    /// A loud run shorter than this (µs) inside a quiet run does not end the
+    /// pause. Default 80000 (80ms). Must be ≥ 0 and below `min_pause_us`.
     pub bridge_us: Option<i64>,
     /// Injected by the TS MCP host (sole state owner) — the SUBJECT Audio layer
     /// resolved by `layer_id`, its `MediaItem`, and the peaks file the mixer
@@ -382,10 +375,8 @@ pub(super) async fn analyze_clip(
 pub(super) struct FrameRef {
     /// Target VideoClip layer id.
     pub layer_id: String,
-    /// SOURCE-ABSOLUTE timestamp (microseconds) of the frame to sample — the
-    /// same coordinate space as `media://{id}/frame/<t_us>` and the
-    /// `keyframe_t_us` / `t_*_us` that `analyze_clip` returns, so a shot cover
-    /// frame can be fed straight in.
+    /// SOURCE-ABSOLUTE microseconds of the frame to sample (the space
+    /// `analyze_clip`'s `keyframe_t_us` uses).
     pub t_us: i64,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
     #[serde(default)]
@@ -1141,12 +1132,9 @@ pub(super) struct TranscribeClipArgs {
     /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
-    /// Optional STRICT backend override: `"openai"` | `"whisper_cpp"` |
-    /// `"funasr"`. When set, that engine serves the request or the call errors
-    /// naming its exact gap (missing key / binary / model) — it never
-    /// substitutes another engine, so an explicit local choice can never leak
-    /// audio to a cloud provider. When omitted, the resolver walks the user's
-    /// preference then availability. An unknown value is rejected.
+    /// Strict engine override: `"openai"` | `"whisper_cpp"` | `"funasr"`.
+    /// That engine serves or the call errors; nothing is substituted. Omitted:
+    /// the user's preferred engine, then availability.
     #[serde(default)]
     pub backend: Option<String>,
     /// Injected by the TS MCP host from the user's Settings preferred-engine —
@@ -1155,11 +1143,9 @@ pub(super) struct TranscribeClipArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub preferred_backend: Option<String>,
-    /// Request exact per-word timestamps when the chosen backend can emit them
-    /// (whisper.cpp → `-ojf`). Defaults to `true` — the backend's best
-    /// precision, at no extra engine cost; pass `false` to force the SRT-style
-    /// (interpolated) output instead. OpenAI Whisper is SRT-only and ignores
-    /// it either way; check `word_timing` in the result for what you got.
+    /// Ask for exact per-word times where the engine can emit them. Default
+    /// true; `false` forces SRT-style interpolated words. The result's
+    /// `word_timing` reports what you got.
     #[serde(default)]
     pub word_timestamps: Option<bool>,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
@@ -1523,30 +1509,21 @@ pub(super) struct DescribeClipArgs {
     /// `t_end_us`. Must lie within the layer.
     #[serde(default)]
     pub t_end_us: Option<i64>,
-    /// Frames sampled per second across the window. Higher = finer temporal
-    /// detail at more cost; capped so the frame set fits the model's context.
-    /// Defaults to the app's Video-understanding setting, which the host injects
-    /// when this is omitted; with no host, 1.0. Part of the cache key.
+    /// Frames sampled per second (higher = finer, costlier; capped to the
+    /// model's context). Default: the app's setting, else 1.0. Cache key.
     #[serde(default)]
     pub fps: Option<f64>,
-    /// Prompt focus: `"general"` or `"shot-type"` (biases `tags` toward shot
-    /// type / camera). Defaults to the app's Video-understanding setting, which
-    /// the host injects when this is omitted; with no host, `"general"`. Part of
-    /// the cache key.
+    /// `"general"` or `"shot-type"` (biases `tags` toward shot type / camera).
+    /// Default: the app's setting, else `"general"`. Cache key.
     #[serde(default)]
     pub focus: Option<String>,
-    /// Language the `text` and `tags` come back in, as a BCP-47 tag
-    /// (`"en-US"`, `"zh-CN"`, `"ja"`, …). Defaults to the app's UI language,
-    /// which the host injects when this is omitted; with no host, `"en-US"`.
-    /// Part of the cache key — a description in another language is a different
-    /// description, not a translation of this one.
+    /// BCP-47 tag the `text` and `tags` come back in (`"en-US"`, `"zh-CN"`,
+    /// `"ja"`). Default: the app's UI language. Cache key.
     #[serde(default)]
     pub language: Option<String>,
-    /// Optional STRICT backend override: `"qwen3_vl"` | `"minicpm_v"` |
-    /// `"byo_endpoint"`. When set, that engine serves the request or the call
-    /// errors naming its exact gap — it never substitutes another engine, so an
-    /// explicit local choice can never leak frames over the network.
-    /// When omitted, selection is preference then availability. Unknown → rejected.
+    /// Strict engine override: `"qwen3_vl"` | `"minicpm_v"` | `"byo_endpoint"`.
+    /// That engine serves or the call errors; nothing is substituted. Omitted:
+    /// the user's preferred engine, then availability.
     #[serde(default)]
     pub backend: Option<String>,
     /// Injected by the TS MCP host from the user's Settings preferred VLM engine

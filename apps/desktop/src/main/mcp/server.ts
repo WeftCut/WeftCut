@@ -216,11 +216,17 @@ export async function handleCallTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif_draft') {
-    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number; height?: number }
+    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number | null; height?: number | null }
     const motifId = a.id ?? a.motif_id ?? ''
+    // The advertised default is the motif's OWN size, read off the catalog the
+    // way `list_motifs` reports it; 480 is only the floor for a bare-core call
+    // with no host to ask.
+    const size = tsHost
+      ? (tsHost.motifTool('list_motifs', {}) as Array<{ id: string; size?: [number, number] }>).find((m) => m.id === motifId)?.size
+      : undefined
     const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(a.props ?? {}),
-      width: a.width ?? 480, height: a.height ?? 480, settleRafs: null, contentHash: '',
+      width: a.width ?? size?.[0] ?? 480, height: a.height ?? size?.[1] ?? 480, settleRafs: null, contentHash: '',
     })
     return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
   }
@@ -436,7 +442,10 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     if (!service) return handler(req, extra)
     const params = (req.params ?? {}) as Record<string, unknown>
     const tool = method === 'tools/call' ? String(params.name ?? '') : method
-    const read = method !== 'tools/call' || /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_)/.test(tool)
+    // Every tool that commits nothing: the prefixes, plus the three read-only
+    // tools whose names start with a verb (`extract_clip_audio`, `dry_run`,
+    // `preview_motif_draft`).
+    const read = method !== 'tools/call' || /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/.test(tool)
     return service.run(connectionId, clientInfo()?.name ?? 'MCP', tool,
       method === 'tools/call' ? params.arguments ?? {} : params, read, () => handler(req, extra))
   }, deps, client)
