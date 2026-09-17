@@ -84,9 +84,15 @@ export function layerEnvelope(layer: Layer, c: Composition): Record<string, unkn
   }
 }
 
-/** `project://tracks`: every track with its flags and its layers as envelopes. */
+/** `project://tracks`: every track with its flags and its layers as envelopes.
+ *
+ *  `muted` / `solo` are stored on a track but nothing mixes by them — the mix
+ *  gates by ROLE (`set_role_flags`; `audio/mix.rs` and the renderer's
+ *  `roleGate.ts` read roles only). A read that advertised them would advertise
+ *  a control with no writer and no effect (audit §3), so they stay off the wire
+ *  until the mix reads them. */
 export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
-  return c.tracks.map(({ layers, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
+  return c.tracks.map(({ layers, muted: _muted, solo: _solo, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
 }
 
 /** `project://settings`: the editing preferences plus the project metadata —

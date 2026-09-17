@@ -262,6 +262,10 @@ describe('project://tracks lists envelopes (audit D19)', () => {
     expect(row).toMatchObject({ kind: 'VideoClip', src_in_us: 500_000, src_out_us: 2_500_000 })
     expect(tracks[0]).toMatchObject({ id: aRoll, enabled: true, locked: false })
     expect(Object.keys(tracks[0])).toContain('role')
+    // Per-track mute/solo have no writer and nothing mixes by them: a control
+    // the read does not advertise (mute and solo are per ROLE — set_role_flags).
+    expect(Object.keys(tracks[0])).not.toContain('muted')
+    expect(Object.keys(tracks[0])).not.toContain('solo')
   })
 })
 
