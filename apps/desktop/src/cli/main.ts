@@ -45,7 +45,17 @@ async function runStdio(se: ShimEnv, userDataDir: string): Promise<void> {
   const stop = shim.startPolling()
   shim.server.onclose = () => {
     stop()
-    shim.bridge.markDown() // closes the SSE stream so the event loop can drain
+    shim.bridge.markDown() // terminates the app session and closes the SSE stream so the event loop can drain
+  }
+  // A client that kills the shim rather than closing stdin must not leave its
+  // app session behind either: `markDown` sends the DELETE, and the pending
+  // fetch keeps the loop alive long enough to deliver it.
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, () => {
+      stop()
+      shim.bridge.markDown()
+      setTimeout(() => process.exit(0), 500).unref()
+    })
   }
   await shim.server.connect(new StdioServerTransport())
   // Eager first connect: the client's initial tools/list should see the full

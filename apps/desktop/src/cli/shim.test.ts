@@ -4,7 +4,7 @@
 // spec's core claims — catalog = synthetic ∪ (app alive ? real : ∅),
 // list_changed on BOTH transitions, actionable down-state errors, and the
 // launch_weftcut close-the-loop flow.
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -234,5 +234,31 @@ describe('transitions', () => {
     const result = await open.client.callTool({ name: 'launch_weftcut', arguments: {} })
     expect(spawned).toBe(false)
     expect(JSON.stringify(result.content)).toContain('already running')
+  })
+})
+
+describe('ending the stdio side ends the app-side SESSION, not just the connection', () => {
+  // Streamable HTTP releases a session only on the client's DELETE
+  // (`terminateSession`); a plain `close()` leaves the app holding the agent's
+  // work session and history lock. The bridge sends the DELETE whenever it
+  // marks the app down — stdin closed, a signal, or the app itself going away.
+  it('markDown calls terminateSession on the transport when it has one', async () => {
+    const terminateSession = vi.fn(async () => {})
+    let app: Server | null = null
+    const shim = createShim({
+      se: SE, userDataDir: 'C:/ud', readAuth: () => AUTH,
+      makeTransport: () => {
+        app = fakeAppServer()
+        const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+        void app.connect(serverT)
+        return Object.assign(clientT, { terminateSession })
+      },
+    })
+    expect(await shim.bridge.ensureUp()).toBe('up')
+    shim.bridge.markDown()
+    await settle()
+    expect(terminateSession).toHaveBeenCalledTimes(1)
+    expect(shim.bridge.isUp()).toBe(false)
+    await shim.server.close().catch(() => {})
   })
 })

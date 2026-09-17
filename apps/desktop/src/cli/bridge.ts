@@ -95,11 +95,19 @@ export class Bridge {
   }
 
   /// Idempotent: onclose fires again when we close the client here.
+  ///
+  /// Terminates the app-side SESSION too, not just the connection: streamable
+  /// HTTP releases a session only on the client's DELETE, and a session left
+  /// behind holds the agent's work session and history lock until the app's
+  /// reaper notices its stream is gone. Best-effort — the app may already be
+  /// down, which is one of the reasons this is called.
   markDown(): void {
     const c = this.client
     if (!c) return
     this.client = null
-    c.close().catch(() => {})
+    const t = c.transport as (Transport & { terminateSession?: () => Promise<void> }) | undefined
+    const terminated = t?.terminateSession ? t.terminateSession().catch(() => {}) : Promise.resolve()
+    void terminated.then(() => c.close()).catch(() => {})
     this.deps.onDown()
   }
 

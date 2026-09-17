@@ -24,6 +24,7 @@ import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
 import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
+import { toolRecord } from '../state/mcp-results.js'
 import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
@@ -264,8 +265,13 @@ async function dispatchTool(
       if (name === 'begin_agent_session') {
         if (typeof args.reason !== 'string') throw new Error('reason must be a string')
         result = tsHost.agent.begin(args.reason)
-      } else if (name === 'end_agent_session') tsHost.agent.end('agent')
-      else {
+      } else if (name === 'end_agent_session') {
+        // Answer with the session that ended (null when none was active), so a
+        // takeover says whose work it closed.
+        const active = tsHost.agent.snapshot().session
+        tsHost.agent.end(args.force === true ? 'forced' : 'agent')
+        result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
+      } else {
         // The lock is taken here rather than through mcpCall because the OWNER
         // is the connection, which only this seam knows. The args still go
         // through the tool's own parser, so the reason gate reads the same
@@ -280,6 +286,11 @@ async function dispatchTool(
     }
   }
   if (tsHost) {
+    // The session view lives in the host's activity service, not the actor, so
+    // it is answered here — the same record `project://session` serves.
+    if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
+      return toolRecord(sessionView(tsHost.agent)) as unknown as ServerResult
+    }
     if (route === 'ts') {
       const r = tsHost.mcpCall(name, JSON.stringify(args))
       if (!r.ok) {
@@ -350,6 +361,19 @@ async function dispatchTool(
   return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(args)), name)
 }
 
+/** `project://session` / `read_project { view: "session" }`: who holds the work
+ *  session, so an agent refused with `AgentSessionBusy` can see the holder, its
+ *  reason and its age before deciding to wait or to take over. `sessions` is the
+ *  recent history the panel keeps; `lock_reason` is the history lock. */
+export const HOST_RESOURCE_DEFS = [
+  { uri: 'project://session', name: 'Work session', mimeType: 'application/json',
+    description: 'The active agent work session (or null): owner client, connection, reason, started_at, checkpoint — plus recent sessions and the history lock. Read it after AgentSessionBusy.' },
+]
+export function sessionView(agent: TsActorHost['agent']): Record<string, unknown> {
+  const snap = agent.snapshot()
+  return { active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason }
+}
+
 /** ReadResource routing (tsHost present): project:// state views served in TS from
  *  the actor (sole state owner); the Rust-compute resources (project://compiled,
  *  media://*, composition://meter) forwarded to the backend with an injected
@@ -362,6 +386,9 @@ export async function handleReadResource(
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost) {
+    if (uri === 'project://session' && tsHost.agent) {
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost.agent), null, 2) }] } as unknown as ServerResult
+    }
     if (uri === 'motifs://current') {
       const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
       const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
@@ -583,7 +610,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     callTool(withCanonicalToolName(req), extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = await rustCatalog(backend)
-    return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
+    return { resources: mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ReadResourceRequestSchema, track('resources/read', async (req: ReadResourceRequest) =>
     handleReadResource(backend, getTsHost, req.params.uri, getVlm),

@@ -190,6 +190,7 @@ Rules:
 - Connected agents receive change notifications in-protocol (see the change feed below) to see edits from other agents and the user.
 - No edit-locks, no per-agent state. If two agents step on each other, the second to commit may fail invariants — expected, agents should retry or back off.
 - `set_history_lock { locked: true, reason }` is the explicit cooperative pen: one client holds the undo pen during a batch, and every REVERT path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) — from the UI or another agent — fails with `HistoryLocked` until the lock releases. It gates reverting only: edits still commit, and the lock never affects what records (`docs/features.md#undo-stack-scope` is authoritative).
+- A work session belongs to a CONNECTION, and a connection can vanish without saying so — streamable HTTP ends a session only on the client's `DELETE`, which a client that exits, crashes or calls plain `close()` never sends. Three things keep that from disabling the batch flow app-wide: the host **closes a session whose client is gone** (its standalone SSE stream has been closed for 90 s, or, for a client that never opened one, no request for 30 min — a live client keeps the stream open however long it thinks, so it is never cut mid-thought), the stdio shim **terminates its app session** when stdin closes or it is signalled, and `end_agent_session { force: true }` is the **takeover** for whoever arrives while the holder is still being judged. `AgentSessionBusy` and `AgentSessionOwnerMismatch` name the holder — client, connection, reason, age — and `project://session` / `read_project { view: "session" }` show it.
 
 ## Tool surface
 
@@ -594,16 +595,18 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `jump_to { index }` — move the history cursor to an absolute stack index: the history panel's click-a-row, and the way back to a state that is neither one undo away nor a checkpoint. `index` is `project://history`'s numbering (`ops[i]` sits at `window_start + i`, and `cursor` is where you are), so jumping is reading that resource and naming a row; out of range is refused naming the live bounds. A revert path, so `set_history_lock` blocks it with the lock's reason. It records nothing, and a later edit truncates whatever sat ahead of it exactly as after an undo. `evicted > 0` means the stack no longer reaches the start of the project — index 0 is then the oldest surviving state, not the beginning.
 - `set_history_lock { locked, reason? }` — freeze undo while a tool batch runs, and release it again; the UI shows the reason. Locking needs a `reason` (it is what the user is shown in place of undo); unlocking refuses one.
 - `begin_agent_session { reason }` → work session with stable `id`, `connection_id` and `checkpoint_id`. Creates one Pre-agent checkpoint and enters the lightweight agent view. One active work session per project: repeating on the same connection returns it without another checkpoint or view switch; another connection receives `AgentSessionBusy`.
-- `end_agent_session()` — ends the calling connection’s work session and releases its owned undo lock. Another connection cannot end it (`AgentSessionOwnerMismatch`). Repeating after end is safe. The user can also end work or unlock locally in the agent panel. Ending work keeps the current view and activity; it does not cancel running operations, disconnect MCP or prohibit later calls.
+- `end_agent_session { force? }` — ends the calling connection’s work session and releases its owned undo lock. Another connection cannot end it (`AgentSessionOwnerMismatch`, naming the holder) — unless it passes `force: true`, the takeover for a holder that is gone: the session ends with `end_reason: 'forced'` and its lock releases whoever's connection took it. Repeating after end is safe. The user can also end work or unlock locally in the agent panel. Ending work keeps the current view and activity; it does not cancel running operations, disconnect MCP or prohibit later calls.
 - `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `add_audio_layer`, `add_text_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layers` (the lift only — `ripple: true` is refused). Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable.
 
 ### Agent panel and lifecycle
 
 Manual entry and exit (View menu / command palette / Exit to editor) only switch
 layout. They create no work session, checkpoint or start message, and do not
-release undo locks. A definite close of the owning MCP transport ends its work
-session and releases that session’s lock; idle time is never treated as a close.
-Already-running operations retain their attribution and actual outcome.
+release undo locks. A close of the owning MCP transport ends its work session
+and releases that session’s lock — a DELETE from the client, or the host judging
+the client gone (its SSE stream closed for 90 s; 30 min without a request for a
+client that never opened one). Already-running operations retain their
+attribution and actual outcome.
 
 Both layouts show the same current-project activity: running tasks, readable
 operations and objects, errors, folded quick reads, work-session groups and

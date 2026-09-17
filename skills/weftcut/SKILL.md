@@ -28,7 +28,10 @@ what no single tool can: how a session should go.
    supported, and call `end_agent_session` when finished (also on failure).
    Use a finally-style cleanup so a failed tool does not leave undo locked.
    Manual view switching neither starts nor ends work. The user can end work
-   or unlock locally; explicit transport close also ends its owned session.
+   or unlock locally; closing your connection ends its owned session, and the
+   app closes a session whose connection has gone quiet. If `begin_agent_session`
+   answers `AgentSessionBusy`, the message names the holder — wait, or take over
+   with `end_agent_session { force: true }` when that holder is gone.
    None of these cancels running calls or prohibits later tools. Do not infer
    that a session ended because the user returned to the editor.
 5. Errors are instructions: WeftCut errors name the cause and list concrete

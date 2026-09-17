@@ -176,7 +176,7 @@ export class AgentActivityService {
     if (!ctx || ctx.workspace !== this.workspace) throw new Error('Agent session requires a current MCP connection')
     const connection = ctx.activity.connection_id!
     if (this.active) {
-      if (this.active.connection_id !== connection) throw new Error('AgentSessionBusy: another connection has an active work session')
+      if (this.active.connection_id !== connection) throw new Error(`AgentSessionBusy: ${this.describeOwner()}. Wait for it to finish, or take it over with end_agent_session { force: true } (its owner may be gone — a connection whose stream dropped is closed automatically, but not instantly). read_project { view: "session" } shows the holder.`)
       ctx.activity.session_id = this.active.id
       return this.active
     }
@@ -195,18 +195,33 @@ export class AgentActivityService {
     return session
   }
 
-  end(reason: 'agent' | 'user' | 'disconnected', connection?: string): void {
+  /** Who holds the session, for the two refusals: the client, a short
+   *  connection id, the reason it gave and how long ago it began. */
+  private describeOwner(): string {
+    const s = this.active!
+    const ageMin = Math.max(0, Math.round((Date.now() - Date.parse(s.started_at)) / 60_000))
+    return `${s.client} (connection ${s.connection_id.slice(0, 8)}…) began the work session "${s.reason}" ${ageMin} min ago (${s.started_at})`
+  }
+
+  /** `forced` is the takeover: another connection ends a session it does not
+   *  own, because the owner is gone and the prescribed batch flow is otherwise
+   *  disabled app-wide until the app restarts. It releases the session's history
+   *  lock too, whoever's connection took it — a lock with no live owner blocks
+   *  every undo for nobody's benefit. Recorded as `end_reason: 'forced'` so the
+   *  panel and the log say what happened. */
+  end(reason: 'agent' | 'user' | 'disconnected' | 'forced', connection?: string): void {
     if (!this.active) return
     const caller = connection ?? this.context.getStore()?.activity.connection_id
-    if (reason !== 'user' && caller !== this.active.connection_id) {
+    if (reason !== 'user' && reason !== 'forced' && caller !== this.active.connection_id) {
       if (reason === 'disconnected') return
-      throw new Error('AgentSessionOwnerMismatch: only the owning connection can end this session')
+      throw new Error(`AgentSessionOwnerMismatch: ${this.describeOwner()}; only that connection can end it. Pass end_agent_session { force: true } to take it over when its owner is gone.`)
     }
     const ended = this.active
     ended.ended_at = new Date().toISOString()
     ended.end_reason = reason
     this.active = null
-    if (this.lockOwner?.session === ended.id && this.lockOwner.connection === ended.connection_id) this.unlock()
+    const lockIsSessions = this.lockOwner?.session === ended.id
+    if (lockIsSessions && (reason === 'forced' || this.lockOwner?.connection === ended.connection_id)) this.unlock()
     this.trim()
     this.publish()
   }

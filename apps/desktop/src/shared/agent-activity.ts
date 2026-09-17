@@ -8,7 +8,9 @@ export interface AgentWorkSession {
   reason: string
   started_at: string
   ended_at: string | null
-  end_reason: 'agent' | 'user' | 'disconnected' | null
+  /** `forced` = another connection took the session over with
+   *  `end_agent_session { force: true }` — the remedy for an owner that is gone. */
+  end_reason: 'agent' | 'user' | 'disconnected' | 'forced' | null
   checkpoint_id: string
 }
 export interface AgentActivity {

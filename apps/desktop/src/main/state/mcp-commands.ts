@@ -1211,7 +1211,7 @@ const POSITION_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'history'] as const
+export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'history', 'session'] as const
 export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 
 // ── Single-source MCP tool table ─────────────────────────────────────────────
@@ -1908,10 +1908,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: { type: 'string' } }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated',
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session.",
-    inputSchema: { type: 'object', properties: {} }, parseDedicated: (_a) => ({}) },
+    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it.",
+    inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
+    parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated',
-    description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection cannot replace it. Finish with end_agent_session. The user may switch views without ending the session.",
+    description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
   // ── hybrid defs (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),
@@ -1936,7 +1937,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated',
-    description: "Read project state as a tool result — the same views the `project://*` resources serve, for a client that cannot read MCP resources (prefer the resources when yours can). `view`: `current` (the whole project), `composition` (root settings), `compositions` (every composition with its `ref_count`), `media`, `tracks` (tracks with layer envelopes), `layer` (one layer in full; needs `id`), `markers`, `history` (recent operations and checkpoints). `tracks` and `markers` take `composition_id` for a Group's composition, the root when omitted. Returns the JSON body as text.",
+    description: "Read project state as a tool result — the same views the `project://*` resources serve, for a client that cannot read MCP resources (prefer the resources when yours can). `view`: `current` (the whole project), `composition` (root settings), `compositions` (every composition with its `ref_count`), `media`, `tracks` (tracks with layer envelopes), `layer` (one layer in full; needs `id`), `markers`, `history` (recent operations and checkpoints), `session` (who holds the agent work session — read after `AgentSessionBusy`). `tracks` and `markers` take `composition_id` for a Group's composition, the root when omitted. Returns the JSON body as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS] },
       id: { type: ['string', 'null'], description: 'The layer id, for view `layer`.' },

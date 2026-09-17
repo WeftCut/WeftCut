@@ -27,8 +27,31 @@ export interface McpHost {
   close(): Promise<void>
 }
 
+/** When a session counts as ABANDONED and is closed by the host, which is what
+ *  releases its work session and history lock (`transport.onclose`).
+ *
+ *  Streamable HTTP has no liveness of its own: the SDK ends a session only on a
+ *  client `DELETE`, which a client that exits, crashes or calls plain `close()`
+ *  never sends — the audit's blocker. The signal used instead is the client's
+ *  standalone SSE stream (the GET every SDK client opens right after
+ *  `initialize`): while it is open the client is alive, however long it thinks;
+ *  once it has been CLOSED for `graceMs` the client is gone (a reconnecting
+ *  client re-opens it within seconds). A client that never opened one is judged
+ *  by requests alone and closed after `idleMs` without any. Both are long enough
+ *  that a live client is never cut mid-thought, and the SDK client does not
+ *  recover a closed session by itself. */
+export interface SessionReaperOptions {
+  /** How long a session's SSE stream may stay closed before the session is. */
+  graceMs?: number
+  /** How long a session with NO stream may go without a request. */
+  idleMs?: number
+  /** How often to look. */
+  sweepMs?: number
+}
+const REAPER_DEFAULTS: Required<SessionReaperOptions> = { graceMs: 90_000, idleMs: 30 * 60_000, sweepMs: 15_000 }
+
 /** Host-level seams, forwarded verbatim to every per-session `buildMcpServer`. */
-export type McpHostOptions = McpServerOptions
+export type McpHostOptions = McpServerOptions & { sessionReaper?: SessionReaperOptions }
 
 export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
@@ -37,6 +60,14 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const servers = new Set<Server>()
   const connections = new Map<string, AgentConnection>()
+  /** Per session: whether its standalone SSE stream is open, when that last
+   *  changed, and when the last request arrived — the liveness the reaper below
+   *  reads. `never` = the client has not opened a stream (yet). Kept here rather
+   *  than on the connection record, which exists only once the client has sent
+   *  `notifications/initialized`: a client that never completes the handshake
+   *  still holds a session and must still be judged. */
+  const streams = new Map<string, { state: 'never' | 'open' | 'closed'; changedAt: number; lastRequestAt: number }>()
+  const reaper = { ...REAPER_DEFAULTS, ...(opts.sessionReaper ?? {}) }
   let available = true
   const log = opts.log ?? NO_MCP_LOG
 
@@ -92,6 +123,18 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
     if (transport) {
       const client = connections.get(sid!)
       if (client) client.last_activity_at = new Date().toISOString()
+      const live = streams.get(sid!)
+      if (live) live.lastRequestAt = Date.now()
+      // The standalone SSE stream is the session's liveness: note it opening,
+      // and note the socket closing under it — that, not a DELETE, is how a
+      // client that simply went away is seen (see `SessionReaperOptions`).
+      if (req.method === 'GET' && live) {
+        live.state = 'open'; live.changedAt = Date.now()
+        res.on('close', () => {
+          const cur = streams.get(sid!)
+          if (cur?.state === 'open') { cur.state = 'closed'; cur.changedAt = Date.now() }
+        })
+      }
       // Existing session — route straight through.
       await transport.handleRequest(req, res, req.body)
       return
@@ -104,6 +147,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         sessionIdGenerator: () => connectionId,
         onsessioninitialized: (id) => {
           transports.set(id, transport!)
+          streams.set(id, { state: 'never', changedAt: Date.now(), lastRequestAt: Date.now() })
         },
         // DNS-rebinding defense-in-depth: a malicious web page the user visits
         // can POST to our loopback port, so reject requests whose Host header
@@ -114,7 +158,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       })
       transport.onclose = () => {
         const sessionId = transport!.sessionId
-        if (sessionId) transports.delete(sessionId)
+        if (sessionId) { transports.delete(sessionId); streams.delete(sessionId) }
         if (newServer) servers.delete(newServer)
         connections.delete(connectionId)
         opts.getTsHost?.()?.agent?.end('disconnected', connectionId)
@@ -177,6 +221,29 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       .json({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: no valid session ID' }, id: null })
   })
 
+  // The reaper: close every session whose client is judged gone, which fires
+  // its `onclose` and with it the work-session and lock release. `unref` so a
+  // host with no clients never keeps the process alive on its own.
+  const sweep = (): void => {
+    const now = Date.now()
+    for (const [sid, transport] of transports) {
+      const stream = streams.get(sid)
+      if (!stream) continue
+      const idleMs = now - stream.lastRequestAt
+      const gone = stream.state === 'closed'
+        ? now - stream.changedAt > reaper.graceMs
+        : stream.state === 'never' && idleMs > reaper.idleMs
+      if (!gone) continue
+      emitLifecycle('info', { kind: 'System' }, 'MCP client gone: session closed', {
+        session_id: sid, client: connections.get(sid)?.client ?? null, reason: stream.state === 'closed' ? 'stream_closed' : 'idle', idle_ms: idleMs,
+      })
+      // Best-effort: a transport already half-closed must not stop the sweep.
+      transport.close().catch(() => {})
+    }
+  }
+  const sweeper = setInterval(sweep, reaper.sweepMs)
+  sweeper.unref()
+
   // The stored port is only a hint; listenLoopback explains why it goes
   // stale and why re-picking is safe for connected clients.
   const { server: http, port } = await listenLoopback(appExpress, auth.port)
@@ -229,6 +296,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
     },
     async close(): Promise<void> {
       available = false
+      clearInterval(sweeper)
       for (const t of transports.values()) await t.close().catch(() => {})
       http.close()
     },
