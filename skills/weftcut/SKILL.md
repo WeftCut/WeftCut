@@ -11,6 +11,21 @@ their undo history and on their screen. Each tool's own description carries its
 contract, and each refusal names its cause and options — this skill covers only
 what no single tool can: how a session should go.
 
+## In ten lines
+
+The server sends these as its `initialize` instructions, so a client without
+this skill reads the same etiquette; the long form follows.
+
+WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history.
+1. Read `project://tracks` (or `read_project` with view "tracks") before your first edit. Ids come from reads, never from memory.
+2. Every mutator answers with the committed record: the ids it minted, the span as it landed, `adjusted` for any grid snap. Verify from that answer before reporting.
+3. A refusal is an isError result whose text names the cause and the fix. Act on it; never retry a rejected call verbatim.
+4. Times are microseconds on the composition's frame grid: an off-grid time is snapped and echoed, a time outside its layer is refused.
+5. Call `create_checkpoint` before your first edit. For a batch (a rough cut, a pause pass, a caption track): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.
+6. The user or another agent may edit concurrently; when a commit fails for that reason, re-read and reapply.
+7. Export is not a tool: point the user to the app's Export UI.
+The weftcut skill (Settings > Agent) carries the longer etiquette, the common flows and the Motif authoring contract.
+
 ## Session etiquette
 
 1. Read `project://current` before your first mutation — never write against a

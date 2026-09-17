@@ -31,6 +31,7 @@ import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
+import { MCP_INSTRUCTIONS } from './instructions.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 
@@ -612,9 +613,13 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // gets no window at all — nothing would read it, and the subscribe/unsubscribe
   // per call would be pure churn.
   const log: McpLogDeps = opts.log ? { ...opts.log, observe: mcpCommitObserver(getTsHost) } : NO_MCP_LOG
+  // `instructions` rides on `initialize`: the ten-line etiquette every client
+  // reads before its first call (`instructions.ts`). `version` is the app's
+  // (`app.getVersion()` in `mcp/index.ts`); a bare `electron.exe out/main`
+  // dev launch reports Electron's, since there is no package.json in that path.
   const server = new Server(
     { name: 'weftcut', version: opts.version ?? '0.0.0-dev' },
-    { capabilities: { tools: {}, resources: {}, prompts: {} } },
+    { capabilities: { tools: {}, resources: {}, prompts: {} }, instructions: MCP_INSTRUCTIONS },
   )
   // One Server per session (`mcp/index.ts`), so this closure resolves to the
   // client that opened *this* session — `undefined` until it has initialized.

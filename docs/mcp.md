@@ -104,6 +104,14 @@ The app's **Connect agent** panel (Settings → Agent):
   and the same per-client snippets in URL + header form.
   For clients that cannot spawn stdio servers; breaks whenever the app is
   closed and goes stale when the port or token changes.
+- **`initialize` carries `instructions`** — ten lines of session etiquette
+  (read first, verify from the returned record, a refusal names the fix, µs on
+  the frame grid, checkpoint then work session for a batch, export is the UI),
+  identical to the "In ten lines" head of the shipped skill and pinned equal by
+  a test, so a client that never installs the skill still starts with the
+  etiquette. `serverInfo` is `weftcut` at the app's version in a packaged
+  build; a bare `electron.exe out/main/index.js` dev launch reports Electron's,
+  because `app.getVersion()` has no package.json to read there.
 - **The agent skill** — the app ships a Claude-format skill that teaches a
   connected agent session etiquette, the orchestration patterns, and the Motif
   authoring contract (the things no single tool description can carry; per-tool

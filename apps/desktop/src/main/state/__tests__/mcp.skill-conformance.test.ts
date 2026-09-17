@@ -19,6 +19,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from '../../mcp/motifToolDefs'
+import { HOST_RESOURCE_DEFS } from '../../mcp/hostResources'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../..')
 const SKILL_SOURCES = [
@@ -39,6 +40,7 @@ const toolNames = new Set([
 const resourceUris = new Set([
   ...rust.resources.map((r) => r.uri),
   ...MOTIF_RESOURCE_DEFS.map((r) => r.uri),
+  ...HOST_RESOURCE_DEFS.map((r) => r.uri),
 ])
 const promptNames = new Set(rust.prompts.map((p) => p.name))
 
@@ -51,6 +53,8 @@ const KNOWN_NON_TOOLS = new Set([
   'from', 'pad_us', 't_start_us', 'segments', 'word_timing',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
   'adjusted', 'siblings',
+  // SKILL.md — the MCP protocol method whose `instructions` the head mirrors
+  'initialize',
   // motif-authoring.md — manifest fields
   'id', 'version', 'name', 'size', 'default_duration_s', 'max_duration_s',
   'max_duration_prop', 'content_duration_s', 'settle_rafs', 'fonts',
