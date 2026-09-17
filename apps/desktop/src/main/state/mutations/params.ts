@@ -22,10 +22,10 @@ import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
  *  the rendered result (ADR 0049). `box_w`/`box_h` are the one pair where
  *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
-  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
-  | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
-  | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; fade_in_us?: number; fade_out_us?: number }
-  | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
+  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
+  | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
+  | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number }
+  | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
   | { kind: 'Audio'; src_in_us?: number; src_out_us?: number; gain_db?: number; pan?: number; fade_in_us?: number; fade_out_us?: number; mute?: boolean; role?: AudioRole }
   /** A Group layer (ADR 0052 §4). The media-bearing set minus what v1 leaves
@@ -39,7 +39,7 @@ export type LayerParamsPatch =
    *  because the Ungroup gate names it: `groupNotPlainReason` refuses a
    *  non-Normal blend, and a reason no command can reach is a dead branch.
    *  Every other kind stores `blend_mode` and no surface writes it yet. */
-  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; blend_mode?: BlendMode }
+  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; blend_mode?: BlendMode }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
 
@@ -57,11 +57,11 @@ const authored = (key: string, v: number | undefined): number | undefined =>
 /** The transform numerics VideoClip / ImageOverlay / Motif all carry, resolved
  *  together so that ALL of them can refuse before ANY of them is written. */
 interface AuthoredTransform {
-  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number
+  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number
 }
 
 function authoredTransform(patch: {
-  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number
+  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number
 }): AuthoredTransform {
   /** A shape predicate on scale, not a range — which is why it is not in
    *  PARAM_PRECISION. A NEGATIVE factor is a mirror and deliberately
@@ -85,6 +85,13 @@ function authoredTransform(patch: {
     scale_x: scale('scale_x'),
     scale_y: scale('scale_y'),
     opacity: authored('opacity', patch.opacity),
+    // The rest of the static transform: unbounded by design (a turn is a turn,
+    // a pivot may sit outside the box), quantised like every other numeric.
+    // Until these were patchable the only route to a still rotation was a
+    // keyframe followed by clear_keyframes (audit §3).
+    rotation_deg: authored('rotation_deg', patch.rotation_deg),
+    anchor_x: authored('anchor_x', patch.anchor_x),
+    anchor_y: authored('anchor_y', patch.anchor_y),
   }
 }
 
@@ -146,6 +153,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       const xP = authored('x', patch.x)
       const yP = authored('y', patch.y)
       const opacityP = authored('opacity', patch.opacity)
+      const rotationP = authored('rotation_deg', patch.rotation_deg)
+      const anchorXP = authored('anchor_x', patch.anchor_x)
+      const anchorYP = authored('anchor_y', patch.anchor_y)
       for (const field of ['line_height', 'letter_spacing'] as const) {
         const v = patch[field]
         if (v !== undefined && !Number.isFinite(v)) {
@@ -203,6 +213,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (xP !== undefined) setPositionTrack(t.transform.position, 'x', stat(xP))
       if (yP !== undefined) setPositionTrack(t.transform.position, 'y', stat(yP))
       if (opacityP !== undefined) t.opacity = stat(opacityP)
+      if (rotationP !== undefined) t.transform.rotation_deg = stat(rotationP)
+      if (anchorXP !== undefined) t.transform.anchor_x = stat(anchorXP)
+      if (anchorYP !== undefined) t.transform.anchor_y = stat(anchorYP)
       if (patch.align !== undefined) t.align = patch.align
       if (patch.valign !== undefined) t.valign = patch.valign
       // On the box pair the absent/null split is LOAD-BEARING, not the incidental
@@ -241,6 +254,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.scale_x !== undefined) v.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) v.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) v.opacity = stat(a.opacity)
+      if (a.rotation_deg !== undefined) v.transform.rotation_deg = stat(a.rotation_deg)
+      if (a.anchor_x !== undefined) v.transform.anchor_x = stat(a.anchor_x)
+      if (a.anchor_y !== undefined) v.transform.anchor_y = stat(a.anchor_y)
       if (patch.speed !== undefined) v.speed = patch.speed
       if (patch.flip_h !== undefined) v.flip_h = patch.flip_h
       if (patch.flip_v !== undefined) v.flip_v = patch.flip_v
@@ -256,6 +272,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.scale_x !== undefined) i.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) i.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) i.opacity = stat(a.opacity)
+      if (a.rotation_deg !== undefined) i.transform.rotation_deg = stat(a.rotation_deg)
+      if (a.anchor_x !== undefined) i.transform.anchor_x = stat(a.anchor_x)
+      if (a.anchor_y !== undefined) i.transform.anchor_y = stat(a.anchor_y)
       if (patch.fade_in_us !== undefined) i.fade_in_us = patch.fade_in_us
       if (patch.fade_out_us !== undefined) i.fade_out_us = patch.fade_out_us
       return
@@ -268,6 +287,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.scale_x !== undefined) m.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) m.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) m.opacity = stat(a.opacity)
+      if (a.rotation_deg !== undefined) m.transform.rotation_deg = stat(a.rotation_deg)
+      if (a.anchor_x !== undefined) m.transform.anchor_x = stat(a.anchor_x)
+      if (a.anchor_y !== undefined) m.transform.anchor_y = stat(a.anchor_y)
       if (patch.src_in_us !== undefined) m.src_in_us = patch.src_in_us
       if (patch.motif_id !== undefined) m.motif_id = patch.motif_id
       if (patch.motif_version !== undefined) m.motif_version = patch.motif_version
@@ -290,6 +312,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.scale_x !== undefined) g.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) g.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) g.opacity = stat(a.opacity)
+      if (a.rotation_deg !== undefined) g.transform.rotation_deg = stat(a.rotation_deg)
+      if (a.anchor_x !== undefined) g.transform.anchor_x = stat(a.anchor_x)
+      if (a.anchor_y !== undefined) g.transform.anchor_y = stat(a.anchor_y)
       if (patch.blend_mode !== undefined) g.blend_mode = patch.blend_mode
       return
     }

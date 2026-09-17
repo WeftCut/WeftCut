@@ -307,13 +307,13 @@ export function parseLayerPatch(v: unknown): LayerPatch {
  *  (mutations/params.ts), restated as data so the parser can name them. A kind
  *  added there gains its keys here, or `mcp.strict-patches` fails. */
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
-  Text: ['content', 'font_family', 'font_size_px', 'color', 'x', 'y', 'opacity', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color'],
-  VideoClip: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'opacity', 'speed', 'flip_h', 'flip_v', 'fade_in_us', 'fade_out_us'],
-  ImageOverlay: ['x', 'y', 'scale_x', 'scale_y', 'opacity', 'fade_in_us', 'fade_out_us'],
-  Motif: ['x', 'y', 'scale_x', 'scale_y', 'opacity', 'src_in_us', 'motif_id', 'motif_version', 'props'],
+  Text: ['content', 'font_family', 'font_size_px', 'color', 'x', 'y', 'opacity', 'rotation_deg', 'anchor_x', 'anchor_y', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color'],
+  VideoClip: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'speed', 'flip_h', 'flip_v', 'fade_in_us', 'fade_out_us'],
+  ImageOverlay: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'fade_in_us', 'fade_out_us'],
+  Motif: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'src_in_us', 'motif_id', 'motif_version', 'props'],
   Color: ['color', 'width', 'height'],
   Audio: ['src_in_us', 'src_out_us', 'gain_db', 'pan', 'fade_in_us', 'fade_out_us', 'mute', 'role'],
-  CompositionRef: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'opacity', 'blend_mode'],
+  CompositionRef: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'blend_mode'],
 }
 export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEYS)
 const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
@@ -1297,6 +1297,9 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   src_out_us: SRC_OUT_SCHEMA,
   scale_x: { type: 'number', description: 'Horizontal scale factor; 1 = native size.' },
   scale_y: { type: 'number', description: 'Vertical scale factor; 1 = native size.' },
+  rotation_deg: { type: 'number', description: 'Rotation, degrees clockwise.' },
+  anchor_x: { type: 'number', description: 'Pivot x, fraction of the width (0.5 = centre).' },
+  anchor_y: { type: 'number', description: 'Pivot y, fraction of the height (0.5 = centre).' },
   speed: { type: 'number', description: 'Playback rate; 1 = normal.' },
   flip_h: { type: 'boolean', description: 'Mirror horizontally.' },
   flip_v: { type: 'boolean', description: 'Mirror vertically.' },
@@ -1417,7 +1420,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
+    description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. `rotation_deg` and the `anchor_x`/`anchor_y` pivot write STATIC values on every visual kind, like `x`/`y`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
   { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,

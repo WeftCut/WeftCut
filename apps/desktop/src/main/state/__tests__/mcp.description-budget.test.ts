@@ -58,10 +58,12 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  agent acts on at the moment it types an argument, in place of prose it had
  *  to learn by trial and the ten to twenty probing calls the audit's testers
  *  paid per session. Annotations on every tool (S3) added ~4 KB more, to
- *  ~118 KB, and are counted here because the wire carries them. What is left
- *  to pay back is prose that restates the schema, and the merge of
- *  over-granular families. */
-const CATALOG_BYTE_BUDGET = 122_000
+ *  ~118 KB, and are counted here because the wire carries them. The audit's
+ *  missing primitives (WP4: shift_layers, the static transform on every visual
+ *  kind, the Text face and shadow) are new capability rather than new prose
+ *  and add ~4 KB more. What is left to pay back is prose that restates the
+ *  schema, and the merge of over-granular families. */
+const CATALOG_BYTE_BUDGET = 126_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
