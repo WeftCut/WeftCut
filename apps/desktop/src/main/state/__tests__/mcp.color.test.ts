@@ -121,7 +121,7 @@ describe('a value of the wrong type is refused, naming the type the param takes'
     expect(grp.ok, 'setup groups_create must succeed').toBe(true)
     if (!grp.ok) throw new Error('setup failed')
     const groupLayerId = (grp.value as { layer_id: string }).layer_id
-    expect(errorMessage(setKeyframe(a, groupLayerId, 0, RED))).toBe('UnknownKeyframeParam')
+    expect(errorMessage(setKeyframe(a, groupLayerId, 0, RED))).toContain('is not an animatable param') // UnknownKeyframeParam, as prose
   })
 })
 

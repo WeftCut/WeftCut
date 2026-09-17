@@ -243,7 +243,7 @@ export async function handleCallTool(
     // already installed — so a plain message there is `invalid_params`. A
     // compute or hybrid failure is not, unless it reads like an argument fault,
     // which `thrownToToolError` tells apart.
-    return toolErrorResult(thrownToToolError(e, route === 'motif' ? 'invalid_params' : 'internal'))
+    return toolErrorResult(thrownToToolError(e, route === 'motif' ? 'invalid_params' : 'internal', name))
   }
 }
 

@@ -1808,7 +1808,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             project_id: current().project_id, transcripts: p.transcripts,
             source_ids: p.source_ids, composition_id: p.composition_id,
           })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord({ caption_track_id: r.value as string, cues: newLayerIds(before, current()).length }) }
         }
         case 'correct_caption_text': {
@@ -1817,7 +1817,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             project_id: current().project_id, layer_ids: p.layer_ids,
             composition_id: p.composition_id,
           })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(r.value as Record<string, unknown>) }
         }
         // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
@@ -1853,7 +1853,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('split_layer').parseDedicated!(a)
           const layer = p.layer as string
           const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_link: (p.escape_link as boolean) ?? false })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           // dispatch('split_layer') (applySplitLayer) names the two halves of the
           // layer the caller named; the answer adds every link sibling's halves.
           return { ok: true, result: toolRecord(splitResult(before, current(), r.value as { left: Uuid; right: Uuid }, p.at_t_us)) }
@@ -1902,7 +1902,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const easing = p.interp as Interpolation | undefined
           const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as TrackValue, easing, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(setKeyframeResult(layer, paramKey, track, readLayerTrack(current(), layer, paramKey), p.t_us)) }
         }
         case 'get_param_track': {
@@ -1922,7 +1922,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const fallback = track.mode === 'Static' ? track.value : (track.value[0]?.value ?? 0)
           const next = removeKeyframe(track, keyframeId, fallback)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'update_keyframe': {
@@ -1950,7 +1950,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (outXy) next = setTangent(next, keyframeId, 'out', outXy)
           if (continuity) next = setContinuity(next, keyframeId, continuity)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(keyframeByIdResult(layer, paramKey, keyframeId, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'smooth_keyframes': {
@@ -1965,7 +1965,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const ids = keyframeId !== null ? [keyframeId] : track.mode === 'Keyframed' ? track.value.map((k) => k.id) : []
           const next = setAuto(track, ids)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'clear_keyframes': {
@@ -1976,7 +1976,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (track.mode === 'Static') return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, { tStartUs: 0, track })) } // no-op, no commit
           const value = (p.value as TrackValue | undefined) ?? track.value[0]?.value ?? 0
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_param_track': {
@@ -1989,7 +1989,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_extrapolation': {
@@ -2004,7 +2004,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             after: (p.after as Extrapolate | null) ?? undefined,
           })
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'update_link': {
@@ -2114,12 +2114,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
       }
       const r = dispatch(op, args)
-      if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+      if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
       const reader = MCP_RESULT_READERS[name]
       return { ok: true, result: reader ? toolRecord(reader(ctx(r.value))) : toolEmpty() }
     } catch (e) {
       if (e instanceof McpArgError) return { ok: false, error: e.toJson() }
-      if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(e.err) }
+      if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(e.err, name) }
       throw e
     }
   }

@@ -76,7 +76,7 @@ const ARG_FAULT = /\b(missing field|invalid type|unknown field|unknown variant|i
  *  (`unwrapEnvelope`'s `{ code: number, message, data }`) maps its number back.
  *  `fallback` is the code for a plain message: `internal` unless the route knows
  *  its failures are the caller's (the motif store's are). */
-export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'internal'): McpToolErrorJson {
+export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'internal', tool?: string): McpToolErrorJson {
   const e = err as { code?: unknown; message?: unknown; data?: unknown } | null
   const raw = typeof e?.message === 'string' ? e.message : String(err)
   if (typeof e?.code === 'number') {
@@ -84,7 +84,7 @@ export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'intern
     return { code, message: raw.replace(SERDE_TAIL, ''), ...(e.data === undefined ? {} : { data: e.data }) }
   }
   const asCommandError = parseCommandError(raw)
-  if (asCommandError) return mapCommandError(asCommandError)
+  if (asCommandError) return mapCommandError(asCommandError, tool)
   const message = raw.replace(SERDE_TAIL, '')
   return { code: ARG_FAULT.test(message) ? 'invalid_params' : fallback, message }
 }

@@ -716,6 +716,18 @@ channel a model reads:
 
 Give the agent something to act on, not a brick wall.
 
+No refusal is a bare variant name. Every `CommandError` has its own arm in
+`mapCommandError` (`main/state/mcp-commands.ts`): the message names the id or
+field it could not honour, the read that lists valid ones (`project://tracks`,
+`list_checkpoints`, …) and the next call, and says "nothing was changed" where
+that is the point. The mapper takes the TOOL that raised the error, because a
+remedy can depend on it — the ripple refusals offer "add it to `layer_ids`" to
+`delete_layers` only; `ripple_delete_gap` and `remove_pauses` have no such
+parameter and are told to move or delete the blocker first. `LayerOverlap`'s
+options are validated against the geometry, so every one it emits would succeed
+as written. `mcp.errors.test.ts` enumerates the vocabulary: a new variant cannot
+fall through to its name.
+
 The text must itself name the cause and the options: it is the one part every
 client shows the model. `structuredContent` mirrors the same facts
 machine-readably for clients that forward it — `code` is the envelope code

@@ -61,11 +61,14 @@ describe('mapCommandError — grid and bounds rules are self-correcting', () => 
     })
   })
 
-  it('leaves every other validation rule on the generic path', () => {
-    // The enrichment is opt-in per rule; a rule whose fix is not a single number
-    // gains nothing from a `data` block and must not grow a misleading one.
+  it('names the rule and its fields for every other validation rule', () => {
+    // The enrichment with `options` is opt-in per rule; the rest still say WHICH
+    // rule and WHICH entity, never the bare 'ValidationFailed'.
     const out = mapCommandError(validationFailed({ rule: 'DuplicateLayerId', layer: 'L1' }))
-    expect(out).toEqual({ code: 'invalid_params', message: 'ValidationFailed' })
+    expect(out.code).toBe('invalid_params')
+    expect(out.message).toContain('DuplicateLayerId')
+    expect(out.message).toContain('layer L1')
+    expect(out.data).toEqual({ error: 'ValidationFailed', rule: 'DuplicateLayerId', layer: 'L1' })
   })
 })
 
@@ -95,14 +98,14 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
     // without it an agent retries the identical call expecting a shove.
     expect(out.message).toContain('never makes room')
     for (const id of ['M1', 'B1', 'T1']) expect(out.message).toContain(id)
-    expect(out.data).toEqual({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1' })
+    expect(out.data).toEqual({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1', tool: null })
   })
 
   it('points a straddling link at the unlink retry', () => {
     const out = mapCommandError({ error: 'RippleLinkStraddles', link: 'K1', hole: HOLE })
     expect(out.message).toContain('[2000000, 5000000) µs')
     expect(out.data).toEqual({
-      error: 'RippleLinkStraddles', link: 'K1', hole_us: [2_000_000, 5_000_000],
+      error: 'RippleLinkStraddles', link: 'K1', hole_us: [2_000_000, 5_000_000], tool: null,
       options: [{ action: 'unlink_then_retry', link_id: 'K1' }],
     })
   })
@@ -112,7 +115,7 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
     expect(out.message).toContain('L9')
     expect(out.message).toContain('locked: false')
     expect(out.message).toMatch(/upstream of the cut is fine/)
-    expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9' })
+    expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9', tool: null })
   })
 
   // The gap closing (ADR 0069): the fix is always "re-read the lane and send

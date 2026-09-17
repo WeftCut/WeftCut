@@ -722,10 +722,31 @@ export function shapeDryRunResponse(
   return toolJson({ results: entries, halted_at: haltedAt })
 }
 
-/** CommandError → MCP error JSON. Only the structured `data`
- *  (LayerOverlap/MediaInUse) + InvalidArgument message are gated byte-exact;
- *  other prose messages are reasonable-but-ungated. */
-export function mapCommandError(e: CommandError): McpToolErrorJson {
+/** The remedy a ripple refusal offers depends on WHICH tool rippled: only
+ *  `delete_layers` has a `layer_ids` to widen or narrow; `ripple_delete_gap`
+ *  closes a span it was given, and `remove_pauses` cuts spans it computed. One
+ *  sentence for all three sent two of them chasing a parameter they do not
+ *  have (audit D6). */
+const RIPPLE_TOOL = { deleteLayers: 'delete_layers', gap: 'ripple_delete_gap', pauses: 'remove_pauses' } as const
+function rippleRemedy(tool: string | undefined, layer: string, widen: string, narrow: string): string {
+  if (tool === RIPPLE_TOOL.gap) return `move_layer or delete_layers ${layer} first so the gap closes clean, or pick a gap it does not reach into`
+  if (tool === RIPPLE_TOOL.pauses) return `move_layer or delete_layers ${layer} first, or cut the pauses with a narrower window (this tool has no layer set to widen)`
+  if (tool === RIPPLE_TOOL.deleteLayers || tool === undefined) return `${widen}; or ${narrow}`
+  return `move_layer or delete_layers ${layer} first`
+}
+
+/** The animatable param keys, per kind — what `set_keyframe` and friends may
+ *  name. Stated as data here for the `UnknownKeyframeParam` arm, which has no
+ *  layer in hand and so lists every kind's set. */
+const KEYFRAME_PARAM_KEYS = `visual kinds (VideoClip, ImageOverlay, Text, Motif, CompositionRef): x, y (or path_progress in Path mode), scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity; Text and Color: color; Audio: gain_db, pan; an effect param: effects[<effect_id>].params[<key>] once update_effect has set it`
+
+/** CommandError → MCP error JSON. Every variant has an arm: a refusal names the
+ *  id or field it could not honour, the read that lists valid ones, and the
+ *  next call — the bare variant name is never the message (the audit found
+ *  thirteen of them). `tool` is the MCP tool that raised it, for the refusals
+ *  whose remedy differs per tool (the ripple family). The structured `data`
+ *  mirrors the same facts for clients that forward it. */
+export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJson {
   if (e.error === 'InvalidArgument') return { code: 'invalid_params', message: `${e.field}: ${e.detail}` }
   if (e.error === 'Backend') return { code: 'internal', message: e.detail }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'LayerOverlap') {
@@ -734,16 +755,32 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     // clients (Claude Code verified against the hero-capture traces) surface
     // only `code: message` to the model and drop `error.data`, so a bare
     // 'layer overlap' left agents blind-retrying.
+    //
+    // Options are VALIDATED against the geometry (audit D5): trimming the
+    // blocker's tail back to the request's start only helps when the request
+    // starts inside the blocker; when it starts at or before the blocker, the
+    // blocker's HEAD is what moves; a split needs a cut strictly inside. Each
+    // emitted option would succeed as written.
+    const requestStartsInside = d.a_start < d.b_start && d.b_start < d.a_end
+    const requestCoversHead = d.b_start <= d.a_start && d.a_start < d.b_end && d.b_end < d.a_end
+    const prose: string[] = [`create_new_track and retry there`, `move_layer ${d.a} elsewhere`]
+    const options: Array<Record<string, unknown>> = [
+      { action: 'create_new_track', kind: 'Video' },
+      { action: 'move_layer', layer_id: d.a },
+    ]
+    if (requestStartsInside) {
+      prose.push(`trim_layer ${d.a} edge 'out' to ${d.b_start}`, `split_layer ${d.a} at ${d.b_start} and delete the right half`)
+      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'out', new_t_us: d.b_start }, { action: 'split_at_t', layer_id: d.a, at_t_us: d.b_start })
+    } else if (requestCoversHead) {
+      prose.push(`trim_layer ${d.a} edge 'in' to ${d.b_end}`)
+      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'in', new_t_us: d.b_end })
+    }
     return { code: 'invalid_params', message:
-      `layer overlap on track ${d.track}: the requested range [${d.b_start}, ${d.b_end}) µs collides with layer ${d.a} at [${d.a_start}, ${d.a_end}) µs. Layers of the same class collide per track (each track has ONE visual lane and ONE audio lane — a track that looks empty can still hold audio, e.g. another clip's auto-paired dialogue). Options: create_new_track and retry there; trim_existing (trim ${d.a} to t_end_us ${d.b_start}); split_at_t (split ${d.a} at ${d.b_start}).`,
+      `layer overlap on track ${d.track}: the requested range [${d.b_start}, ${d.b_end}) µs collides with layer ${d.a} at [${d.a_start}, ${d.a_end}) µs. Layers of the same class collide per track (each track has ONE visual lane and ONE audio lane — a track that looks empty can still hold audio, e.g. another clip's auto-paired dialogue). Nothing was committed. Options: ${prose.join('; ')}.`,
     data: {
       error: 'LayerOverlap', track: d.track, blocking_layer: d.a,
       blocking_range_us: [d.a_start, d.a_end], requested_range_us: [d.b_start, d.b_end],
-      options: [
-        { action: 'create_new_track', kind: 'Video' },
-        { action: 'trim_existing', layer_id: d.a, new_t_end_us: d.b_start },
-        { action: 'split_at_t', layer_id: d.a, at_t_us: d.b_start },
-      ],
+      options,
     } }
   }
   // ── Grid + bounds rules: the only ValidationErrors an agent can fix mechanically ──
@@ -811,7 +848,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'MediaInUse') {
-    return { code: 'invalid_params', message: 'media in use', data: {
+    return { code: 'invalid_params', message: `media ${e.media} is still used by ${e.referenced_by.length} layer(s): ${e.referenced_by.join(', ')}. Nothing was removed. Options: delete_media { media_id, force: true } removes those layers with it (their links and any lane they empty go too), or delete_layers them first and retry.`, data: {
       error: 'MediaInUse', media: e.media, referenced_by: e.referenced_by,
       options: [
         { action: 'force_remove', note: 'calls delete_media with force=true; cascades layer deletions' },
@@ -820,7 +857,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'TransitionInsufficientHandle') {
-    return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer: only ${e.available_us} µs remaining past its source out-point — borrow at most that (a shorter extend-add duration_us, or a smaller extended_us). Overlap placement borrows nothing and is not length-limited by the tail.`, data: {
+    return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer ${e.layer}: only ${e.available_us} µs remaining past its source out-point — borrow at most that (a shorter extend-add duration_us, or a smaller extended_us). Overlap placement borrows nothing and is not length-limited by the tail.`, data: {
       error: 'TransitionInsufficientHandle', layer: e.layer, available_us: e.available_us,
     } }
   }
@@ -848,28 +885,34 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // length, so an agent that assumed the length would otherwise read the refusal
   // against the wrong numbers. Every one is pre-write: the retry costs nothing. ──
   if (e.error === 'RippleInsideHole') {
-    return { code: 'invalid_params', message: `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs that ripple delete would close, and the span has to come out clean. Options: add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple; or call delete_layers without ripple (its default), which removes the layers and leaves the span open. A layer that merely reaches into the span from before ${e.hole.s} is anchored ahead of the cut and does not block.`, data: {
-      error: 'RippleInsideHole', layer: e.layer, hole_us: [e.hole.s, e.hole.e],
-      options: [
-        { action: 'add_to_set_then_retry', layer_ids: [e.layer] },
-        { action: 'delete_without_ripple', tool: 'delete_layers', ripple: false },
-      ],
+    const verb = tool === RIPPLE_TOOL.pauses ? 'the pause cut' : tool === RIPPLE_TOOL.gap ? 'closing the gap' : 'ripple delete'
+    const remedy = rippleRemedy(tool, e.layer,
+      `add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple`,
+      `call delete_layers without ripple (its default), which removes the layers and leaves the span open`)
+    return { code: 'invalid_params', message: `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs that ${verb} would close, and the span has to come out clean. Nothing was changed. Options: ${remedy}. A layer that merely reaches into the span from before ${e.hole.s} is anchored ahead of the cut and does not block.`, data: {
+      error: 'RippleInsideHole', layer: e.layer, hole_us: [e.hole.s, e.hole.e], tool: tool ?? null,
+      options: tool === RIPPLE_TOOL.deleteLayers || tool === undefined
+        ? [{ action: 'add_to_set_then_retry', layer_ids: [e.layer] }, { action: 'delete_without_ripple', tool: 'delete_layers', ripple: false }]
+        : [{ action: 'move_or_delete_first', layer_id: e.layer }],
     } }
   }
   if (e.error === 'RippleCollision') {
-    return { code: 'invalid_params', message: `layer ${e.moving} would shift left onto layer ${e.blocking} on track ${e.track}: ripple delete never makes room, so move or delete ${e.blocking} first, or narrow layer_ids so the span it closes is shorter. A transition's overlap is authorized only while both its participants shift by the same amount.`, data: {
-      error: 'RippleCollision', moving: e.moving, blocking: e.blocking, track: e.track,
+    const narrow = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? ', or narrow layer_ids so the span it closes is shorter' : ''
+    return { code: 'invalid_params', message: `layer ${e.moving} would shift left onto layer ${e.blocking} on track ${e.track}: a ripple never makes room, so move_layer or delete_layers ${e.blocking} first${narrow}. Nothing was changed. A transition's overlap is authorized only while both its participants shift by the same amount.`, data: {
+      error: 'RippleCollision', moving: e.moving, blocking: e.blocking, track: e.track, tool: tool ?? null,
     } }
   }
   if (e.error === 'RippleLinkStraddles') {
-    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Options: dissolve the link (delete_link) or drop the downstream member from it (update_link) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
-      error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e],
+    const widen = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? '; or add the straddling members to layer_ids so the whole link goes with the cut' : ''
+    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Nothing was changed. Options: dissolve the link (delete_link ${e.link}) or drop the downstream member from it (update_link) and retry${widen}.`, data: {
+      error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e], tool: tool ?? null,
       options: [{ action: 'unlink_then_retry', link_id: e.link }],
     } }
   }
   if (e.error === 'RippleLockedLayer') {
-    return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: ripple delete shifts everything that starts at or after the span it closes. Unlock it (update_layer { patch: { locked: false } }) and retry, or narrow layer_ids so nothing downstream of ${e.layer} is removed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
-      error: 'RippleLockedLayer', layer: e.layer,
+    const narrow = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? `, or narrow layer_ids so nothing downstream of ${e.layer} is removed` : ''
+    return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: a ripple shifts everything that starts at or after the span it closes. Unlock it (update_layer { patch: { locked: false } }) and retry${narrow}. Nothing was changed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
+      error: 'RippleLockedLayer', layer: e.layer, tool: tool ?? null,
     } }
   }
   // ── Gap closing (ADR 0069). The span is echoed because the fix is to re-read
@@ -900,7 +943,80 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
       error: 'AudioEffectParamStatic', effect: e.effect, param: e.param,
     } }
   }
-  return { code: 'invalid_params', message: e.error }
+  // ── Every remaining variant, one arm each: the id, the field, the read that
+  // lists valid ones, the next call. The order follows the union in
+  // shared/commandErrors.ts; `mcp.errors` enumerates the vocabulary so a new
+  // variant cannot fall through to a bare name again. ──
+  switch (e.error) {
+    case 'TrackNotFound':
+      return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
+    case 'LayerNotFound':
+      return { code: 'invalid_params', message: `layer ${e.layer} not found — it may have been deleted, split (the right half carries a new id) or pruned with its track; project://tracks lists the current layers, and every mutator's answer carries the ids it minted` }
+    case 'MarkerNotFound':
+      return { code: 'invalid_params', message: `marker ${e.marker} not found — project://markers lists the composition's markers (add composition=<id> for a Group's)` }
+    case 'TransitionNotFound':
+      return { code: 'invalid_params', message: `transition ${e.transition} not found — the composition's \`transitions\` in project://current list them; deleting either participant removes its transition` }
+    case 'TransitionLayersNotAdjacent':
+      return { code: 'invalid_params', message: `layers ${e.from} (outgoing) and ${e.to} (incoming) are not adjacent on one track: the outgoing layer must END exactly where the incoming one STARTS, on the same track (or already overlap by exactly ${e.duration} µs to attach as-is). move_layer / trim_layer them to meet, then retry; project://tracks shows both spans`, data: { error: 'TransitionLayersNotAdjacent', from: e.from, to: e.to, duration_us: e.duration } }
+    case 'CheckpointNotFound':
+      return { code: 'invalid_params', message: `checkpoint ${e.checkpoint} not found — list_checkpoints reports the ones that exist (a deleted checkpoint's id is gone for good)` }
+    case 'MediaNotFound':
+      return { code: 'invalid_params', message: `media ${e.media} not found — project://media lists the pool; import_media adds a file and answers its media_id` }
+    case 'TrackPositionOutOfRange':
+      return { code: 'invalid_params', message: `new_position ${e.position} is out of range for a stack of ${e.len} track(s): positions run 0..${Math.max(0, e.len - 1)}, 0 being the bottom`, data: { error: 'TrackPositionOutOfRange', position: e.position, len: e.len } }
+    case 'TrackNotEmpty':
+      return { code: 'invalid_params', message: `track ${e.track} still holds layers: delete_track { track_id, force: true } deletes them with it, or move_layer / delete_layers them first. Nothing was removed` }
+    case 'TrackNotRemovable':
+      return { code: 'invalid_params', message: `track ${e.track} is a reserved track (A roll / B roll / audio / captions) and is never removed; its layers can be — delete_layers them, and the track stays empty` }
+    case 'TrackLocked':
+      return { code: 'invalid_params', message: `track ${e.track} is locked and refuses edits to the layers on it (a locked track blocks the WHOLE batch it appears in). set_track_flags { track_id: "${e.track}", locked: false } clears it; a layer's own \`locked\` is separate (update_layer)`, data: { error: 'TrackLocked', track: e.track, options: [{ action: 'unlock_track', tool: 'set_track_flags', track_id: e.track, locked: false }] } }
+    case 'SplitOutsideLayer':
+      return { code: 'invalid_params', message: `split at ${e.at_t} µs is outside layer ${e.layer}: at_t_us must be strictly inside the layer's span (t_start_us, t_end_us) — project://layers/${e.layer} has the span. Nothing was split`, data: { error: 'SplitOutsideLayer', layer: e.layer, at_t_us: e.at_t } }
+    case 'LinkLockedMember':
+      return { code: 'invalid_params', message: `layer ${e.touched} moves with link ${e.link}, whose member ${e.locked_layer} is locked, so the whole link refuses. Unlock it (update_layer { layer_id: "${e.locked_layer}", patch: { locked: false } }) or pass escape_link: true to move ${e.touched} alone`, data: { error: 'LinkLockedMember', link: e.link, locked_layer: e.locked_layer, touched: e.touched } }
+    case 'LayerParamsKindMismatch':
+      return { code: 'invalid_params', message: `layer ${e.layer} is a ${e.actual} layer, not ${e.patch}: send patch.kind "${e.actual}" (project://tracks reports each layer's kind). Nothing was changed`, data: { error: 'LayerParamsKindMismatch', layer: e.layer, actual: e.actual, patch: e.patch } }
+    case 'LinkNotFound':
+      return { code: 'invalid_params', message: `link ${e.link} not found — the composition's \`links\` in project://current list them (a layer's record carries its link_id); a link dissolves by itself when it falls below two members` }
+    case 'LayerAlreadyLinked':
+      return { code: 'invalid_params', message: `layer ${e.layer} is already a member of link ${e.existing}: pass reassign: true to move it into the new link (its old link dissolves below two members), or update_link ${e.existing} instead`, data: { error: 'LayerAlreadyLinked', layer: e.layer, existing: e.existing, options: [{ action: 'retry_with_reassign', reassign: true }] } }
+    case 'LinkCreateNeedsTwoLayers':
+      return { code: 'invalid_params', message: `create_link needs at least two DISTINCT layer ids, got ${e.got}` }
+    case 'LayerNotInLink':
+      return { code: 'invalid_params', message: `layer ${e.layer} is not a member of link ${e.link} — the layer's record (or project://tracks) carries its link_id` }
+    case 'NothingToUndo':
+      return { code: 'invalid_params', message: `nothing to undo: the history cursor is at the oldest surviving state (project://history reports cursor, len and evicted)` }
+    case 'NothingToRedo':
+      return { code: 'invalid_params', message: `nothing to redo: the history cursor is at the newest state — a new edit after an undo truncates the redo tail` }
+    case 'HistoryLocked':
+      return { code: 'invalid_params', message: `history is locked: ${e.reason}. undo, redo, jump_to and restore_checkpoint are blocked until set_history_lock { locked: false } (any connection may clear it) or the owning work session ends; edits still record`, data: { error: 'HistoryLocked', reason: e.reason, options: [{ action: 'unlock_history', tool: 'set_history_lock', locked: false }] } }
+    case 'EmptyKeyframeTrack':
+      return { code: 'invalid_params', message: `param '${e.param_key}' on layer ${e.layer} is Keyframed with no keys — a track needs at least one; set_keyframe adds one, clear_keyframes collapses it to Static`, data: { error: 'EmptyKeyframeTrack', layer: e.layer, param_key: e.param_key } }
+    case 'UnknownKeyframeParam':
+      return { code: 'invalid_params', message: `'${e.param_key}' is not an animatable param of layer ${e.layer} (its kind decides — project://tracks reports it). Animatable keys: ${KEYFRAME_PARAM_KEYS}. Static text/colour/box fields are update_layer_params`, data: { error: 'UnknownKeyframeParam', layer: e.layer, param_key: e.param_key } }
+    case 'EffectNotFound':
+      return { code: 'invalid_params', message: `effect ${e.effect} not found on that layer — project://layers/<layer_id> lists the chain under \`effects\`, and add_effect's answer carries the effect_id it minted` }
+    case 'EffectIndexOutOfRange':
+      return { code: 'invalid_params', message: `new_index ${e.index} is out of range for a chain of ${e.len} effect(s): indices run 0..${Math.max(0, e.len - 1)}, 0 applied first`, data: { error: 'EffectIndexOutOfRange', index: e.index, len: e.len } }
+    case 'FpsLockedByContent':
+      return { code: 'invalid_params', message: `fps is locked at ${e.current.num}/${e.current.den}: changing it to ${e.requested.num}/${e.requested.den} would re-snap every edit point, and ${e.locked_by === 'current' ? `the timeline holds ${e.layer_count} layer(s)` : 'a history snapshot or checkpoint still holds layers (undo could resurrect them)'}. Set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear the history lock`, data: { error: 'FpsLockedByContent', current: e.current, requested: e.requested, layer_count: e.layer_count, locked_by: e.locked_by } }
+    case 'ValidationFailed': {
+      // Every enriched rule returned above; the rest are structural (a duplicate
+      // id, a missing media, a lattice mismatch) — name the rule AND its fields
+      // so the caller reads which entity broke which invariant.
+      const { rule, ...fields } = e.detail as { rule: string } & Record<string, unknown>
+      const facts = Object.entries(fields).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')
+      return { code: 'invalid_params', message: `validation failed: ${rule}${facts ? ` (${facts})` : ''}. Nothing was committed — the edit would have broken a project invariant; project://current shows the state it was checked against`, data: { error: 'ValidationFailed', rule, ...fields } }
+    }
+    default: {
+      // The union is closed; a variant reaching here is one this mapper does not
+      // know yet, which the vocabulary gate (`mcp.errors`) is there to catch.
+      const rest = e as { error: string } & Record<string, unknown>
+      const { error: name, ...fields } = rest
+      const facts = Object.entries(fields).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')
+      return { code: 'invalid_params', message: `${name}${facts ? ` (${facts})` : ''}. Nothing was committed`, data: rest }
+    }
+  }
 }
 
 // Presence check; the caller throws McpArgError on false.
