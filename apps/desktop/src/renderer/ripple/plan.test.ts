@@ -237,6 +237,44 @@ describe("a layer that starts inside the span", () => {
   });
 });
 
+describe("a layer at the origin", () => {
+  // Time 0 is a boundary nothing crosses, so a layer starting there is anchored
+  // ahead of any cut that also starts there: it stays, and what closes up lands
+  // beneath it. Before this rule a title at 0 refused every leading-pause cut.
+  it("stays put when the hole starts at 0, and everything behind the hole closes up under it", () => {
+    const view = viewOf([
+      track("TV", [vis("V1", 0, 4), vis("V2", 4, 6)]),
+      track("TB", [vis("T0", 0, 1)]),
+    ]);
+    const plan = accepted(planRipple(view, ["V1"]));
+    expect(plan.holes).toEqual([{ s: 0, e: sec(4) }]);
+    expect(plan.moves.map(shape)).toEqual([["V2", "TV", 0, sec(2)]]);
+  });
+
+  it("is still named when it is the linked partner of what is being deleted", () => {
+    const view = viewOf(
+      [
+        track("TV", [vis("V1", 0, 4), vis("V2", 4, 6)]),
+        track("TA", [aud("A1", 0, 4), aud("A2", 4, 6)]),
+      ],
+      { links: [{ id: "L", members: ["V1", "A1"] }] },
+    );
+    expect(refused(planRipple(view, ["V1"]))).toEqual({
+      error: "RippleInsideHole", layer: "A1", hole: { s: 0, e: sec(4) },
+    });
+  });
+
+  it("gets no pass away from the origin — a layer starting exactly at an interior hole's start is inside it", () => {
+    const view = viewOf([
+      track("TV", [vis("V0", 0, 2), vis("V1", 2, 4), vis("V2", 4, 6)]),
+      track("TB", [vis("T2", 2, 3)]),
+    ]);
+    expect(refused(planRipple(view, ["V1"]))).toEqual({
+      error: "RippleInsideHole", layer: "T2", hole: { s: sec(2), e: sec(4) },
+    });
+  });
+});
+
 describe("landings that are already occupied", () => {
   it("refuses when a downstream layer would slide under a title that spans the cut", () => {
     // The title starts before the hole, so it is anchored and stays; D shifts 2 s

@@ -130,3 +130,12 @@ the `/cut-pauses` recipe could only mark.
   such, so none arrives by drift. Gap selection has since arrived as its own
   decision, [ADR 0069](0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md),
   built on this planner's closing.
+- **Refinement — the origin.** "A remaining layer that starts inside the hole
+  refuses" has one exception: a layer starting at time 0 when the hole starts
+  at 0. Time 0 is a boundary nothing crosses, so such a layer is anchored ahead
+  of the cut in the only way a layer at 0 can be; it stays, and the material
+  that closes up lands beneath it — a title over the head of a film stays over
+  the head once the leading silence is cut. Without this, any title at 0 refused
+  `remove_pauses`' commonest edit. A linked partner of a deleted layer gets no
+  such pass: it is the other half of what is being deleted, and naming it is the
+  refusal's point.

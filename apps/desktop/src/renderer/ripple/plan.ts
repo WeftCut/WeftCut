@@ -210,10 +210,24 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   // has nowhere honest to go, so the ripple names it and stops. Earliest hole
   // first, and within a hole the earliest offender, so the sentence points at the
   // first thing that goes wrong in time.
+  //
+  // The one exception is the ORIGIN. A layer starting at 0 when the hole starts
+  // at 0 has an honest place to be — where it is: time 0 is a boundary nothing
+  // crosses, so it is anchored ahead of the cut in the only way a layer at 0 can
+  // be, and the material that closes up lands beneath it exactly as a title over
+  // the head of a film should stay over the head once the leading silence is cut
+  // (`remove_pauses`' commonest edit was refused by any title at 0 — audit D14).
+  // A LINKED partner of a deleted layer gets no such pass: it is not anchored, it
+  // is the other half of the thing being deleted, and naming it is the point.
+  const linkedToDoomed = new Set<Uuid>()
+  for (const link of view.links) {
+    if (link.members.some((m) => doomed.has(m))) for (const m of link.members) linkedToDoomed.add(m)
+  }
   for (const h of holes) {
     let offender: RippleLayerView | null = null
     for (const r of remaining) {
       if (r.layer.t_start_us < h.s || r.layer.t_start_us >= h.e) continue
+      if (h.s === 0 && r.layer.t_start_us === 0 && !linkedToDoomed.has(r.layer.id)) continue
       if (offender === null || r.layer.t_start_us < offender.t_start_us) offender = r.layer
     }
     if (offender !== null)

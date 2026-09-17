@@ -1414,6 +1414,22 @@ function removedResult(raw: unknown): { surviving_layer_ids: string[]; removed: 
 }
 
 describe('runHybrid: remove_pauses', () => {
+  it('cuts a LEADING pause with a title at t=0 on another track — the title stays over the head (audit D14)', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const aRoll = root(actor.snapshot()).tracks[0].id
+    const title = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    if (!title.ok) throw new Error(JSON.stringify(title.error))
+    const deps = makeDeps(actor)
+    withPauses(deps, [[0, 2_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps))
+    expect(result.removed).toBe(1)
+    expect(result.removed_us).toBe(2_000_000)
+    // The audio closed up to the origin; the title never moved.
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 4_000_000]])
+    const titleLayer = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === title.value)!
+    expect([titleLayer.t_start_us, titleLayer.t_end_us]).toEqual([0, 1_000_000])
+  })
+
   it('cuts each core out and closes the gaps, in ONE history entry', async () => {
     const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
