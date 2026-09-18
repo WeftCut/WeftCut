@@ -46,6 +46,40 @@ describe('update_layer_params { kind: Motif, props }', () => {
     expect(params().props).toEqual(before)
   })
 
+  it('a rebind starts the props over, from the NEW manifest', () => {
+    // The old motif's props are not the new one's: keeping them would leave a
+    // layer naming `lower-third` while carrying countdown's keys, which no
+    // render reads and no validate catches.
+    const { actor, layerId, params } = placed()
+    const r = actor.mcpCall('update_layer_params', JSON.stringify({ layer_id: layerId, patch: { kind: 'Motif', motif_id: 'lower-third' } }))
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    expect(params().motif_id).toBe('lower-third')
+    expect(Object.keys(params().props)).not.toContain('seconds')
+  })
+
+  it('a prop the NEW motif does not declare is refused on a rebind, and nothing is stored', () => {
+    const { actor, layerId, params } = placed()
+    const before = { ...params().props }
+    const r = actor.mcpCall('update_layer_params', JSON.stringify({ layer_id: layerId, patch: { kind: 'Motif', motif_id: 'lower-third', props: { seconds: 3 } } }))
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('expected a refusal')
+    expect(r.error.message).toContain('props_schema')
+    expect(params().motif_id).toBe('countdown')
+    expect(params().props).toEqual(before)
+  })
+
+  it('props that shorten the content pull the layer in, and the record says so', () => {
+    // The clamp is not a grid landing, so it is the one adjustment an agent
+    // cannot infer: `adjusted` names the field, what it was and what it is.
+    const { actor, layerId } = placed()
+    const r = actor.mcpCall('update_layer_params', JSON.stringify({ layer_id: layerId, patch: { kind: 'Motif', props: { seconds: 1 } } }))
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    if (!r.ok) throw new Error('unreachable')
+    const rec = JSON.parse(r.result.content[0].text) as { t_end_us: number; adjusted: Array<{ field: string; requested: number; applied: number; reason: string }> }
+    expect(rec.t_end_us).toBe(1_000_000)
+    expect(rec.adjusted).toContainEqual({ field: 't_end_us', requested: 5_000_000, applied: 1_000_000, reason: 'content' })
+  })
+
   it('the Motif variant of the advertised schema carries props', () => {
     const { actor, layerId } = placed()
     // A wrong type is refused too — the manifest, not the storage, decides.

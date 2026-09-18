@@ -24,7 +24,7 @@ export const HOST_RESOURCE_DEFS = [
   { uri: 'project://transitions', name: 'Transitions', mimeType: APP_JSON,
     description: "The root composition's transitions — { id, kind, direction, from_layer, to_layer, duration_us, extended_us }. `?composition=<id>` for a Group's." },
   { uri: 'project://settings', name: 'Project settings', mimeType: APP_JSON,
-    description: 'The editing preferences `set_project_settings` writes (auto_pair_audio_on_import, prefer_proxies, proxy_overrides, shot_review, pause_review, correction_script) plus `metadata` { name, created_at, modified_at, description }; modified_at moves on every recorded edit.' },
+    description: 'Every project setting: the preferences `set_project_settings` writes (auto_pair_audio_on_import, prefer_proxies, shot_review, pause_review, correction_script, one `proxy_override` at a time, read back as the `proxy_overrides` map), the player and history sizes it does not, and `metadata` { name, created_at, modified_at, description }; modified_at moves on every recorded edit.' },
   { uri: 'effects://catalog', name: 'Effects catalog', mimeType: APP_JSON,
     description: 'Every effect kind `add_effect` takes — the visual kinds and the `audio.*` kinds — with each param\'s default and range (a unit or a sample region where it has one). The kinds are `add_effect`\'s enum, the params are `update_effect` keys and the `effects[<id>].params[<key>]` keyframe path.' },
   { uri: 'project://session', name: 'Work session', mimeType: APP_JSON,

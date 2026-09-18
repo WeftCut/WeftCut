@@ -238,8 +238,8 @@ describe('level follows the tool route', () => {
   })
 
   it('a refusal is Error whatever the route, and carries the refusal code', async () => {
-    // A refusal is an `isError` RESULT since the error-channel change, not a
-    // throw — the row must not read it as a success.
+    // A refusal is an `isError` RESULT, not a throw — the row must not read it
+    // as a success.
     const { entries, deps } = collector()
     await decoratedCallTool(deps)('add_color_layer', {})
     expect(entries[0].level).toBe('error')

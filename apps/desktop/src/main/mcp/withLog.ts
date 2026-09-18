@@ -316,7 +316,7 @@ export function withLog<Req extends RequestLike, Res>(
       settled = true
       // A refusal travels as an `isError` RESULT, not a throw (`toolResult.ts`),
       // and it is still a failed call: the row is `Error` and carries the
-      // refusal's text and code, exactly as a thrown one did.
+      // refusal's text and code.
       if (method === 'tools/call' && isToolError(out)) finish(true, { code: toolErrorCode(out), message: toolErrorText(out) })
       else finish(false, null)
       return out

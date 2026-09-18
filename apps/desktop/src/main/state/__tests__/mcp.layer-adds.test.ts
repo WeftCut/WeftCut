@@ -196,6 +196,29 @@ describe('an unknown media id is MediaNotFound before any other rule', () => {
   })
 })
 
+describe('a collision names the layer that was already there', () => {
+  it('a request placed BEFORE an existing clip still names that clip, with options that exist', () => {
+    // validate reports the colliding pair earliest-start first, so a request
+    // starting before the blocker arrives with the roles swapped: the message
+    // would name the caller's own layer — one the discarded draft never
+    // committed — and every option it offers would then be LayerNotFound.
+    const a = actorWithPool()
+    const track = root(a.snapshot()).tracks[0].id
+    const existing = JSON.parse((a.mcpCall('add_video_layer', JSON.stringify({
+      track_id: track, media_id: SILENT_VIDEO, t_start_us: 3_000_000, t_end_us: 10_000_000, src_in_us: 0, src_out_us: 7_000_000,
+    })) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text).video_layer_id as string
+    const r = a.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 5_000_000 }))
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('expected a refusal')
+    expect(r.error.message).toContain(existing)
+    expect(r.error.message).toContain('[0, 5000000)')
+    const data = r.error.data as { blocking_layer: string; requested_range_us: [number, number]; options: Array<{ layer_id?: string }> }
+    expect(data.blocking_layer).toBe(existing)
+    expect(data.requested_range_us).toEqual([0, 5_000_000])
+    for (const o of data.options) if (o.layer_id !== undefined) expect(o.layer_id).toBe(existing)
+  })
+})
+
 describe('add_text_layer', () => {
   it('creates a Text layer centred in the composition it landed in', () => {
     const a = actorWithPool()

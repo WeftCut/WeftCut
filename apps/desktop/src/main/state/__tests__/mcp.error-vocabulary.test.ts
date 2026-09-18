@@ -43,6 +43,7 @@ const EVERY_VARIANT: CommandError[] = [
   { error: 'RippleCollision', moving: L1, blocking: L2, track: T1 },
   { error: 'RippleLinkStraddles', link: X1, hole: { s: 0, e: 5 } },
   { error: 'RippleLockedLayer', layer: L1 },
+  { error: 'ShiftLinkStraddles', link: X1, from_t_us: 2_000_000 },
   { error: 'GapNotFound', track: T1, s: 1, e: 2 },
   { error: 'SplitOutsideLayer', layer: L1, at_t: 9 },
   { error: 'LinkLockedMember', link: X1, locked_layer: L1, touched: L2 },

@@ -143,9 +143,12 @@ describe('dryRunErrorString', () => {
     }))).toBe('validation failed: OffGridLayerBoundary (t_end_us 2999999 µs → send 3000000)')
   })
 
-  it('falls back to the rule name for everything else', () => {
-    expect(dryRunErrorString(validationFailed({ rule: 'DuplicateLayerId', layer: 'L1' })))
-      .toBe('validation failed: DuplicateLayerId')
+  it('every other rule takes the mapper’s own sentence, ids included', () => {
+    // A rehearsal names what a wet call would name: the rule AND the layer it
+    // is about, not a bare rule name an agent cannot act on.
+    const text = dryRunErrorString(validationFailed({ rule: 'DuplicateLayerId', layer: 'L1' }))
+    expect(text).toContain('DuplicateLayerId')
+    expect(text).toContain('L1')
   })
 
   it('reads as prose for the ripple refusals rather than the bare variant name', () => {

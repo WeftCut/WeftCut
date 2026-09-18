@@ -26,7 +26,8 @@ const color = (a: ActorHandle, track: string, s: number, e: number) => idOf(a.di
 const video = (a: ActorHandle, track: string, s: number, e: number) => idOf(a.dispatch('add_layer', { track, kind: 'video', media: AV, src_in_us: 0, src_out_us: e - s, t_start_us: s, t_end_us: e }))
 const audio = (a: ActorHandle, track: string, s: number, e: number) => idOf(a.dispatch('add_layer', { track, kind: 'audio', media: AV, src_in_us: 0, src_out_us: e - s, t_start_us: s, t_end_us: e }))
 const call = (a: ActorHandle, args: Record<string, unknown>) => a.mcpCall('shift_layers', JSON.stringify(args))
-const record = (r: ReturnType<ActorHandle['mcpCall']>): { moved: Array<{ layer_id: string; t_start_us: number; t_end_us: number }>; delta_us: number; requested_delta_us: number } => {
+type Adjustment = { field: string; requested: number; applied: number; reason: string }
+const record = (r: ReturnType<ActorHandle['mcpCall']>): { moved: Array<{ layer_id: string; t_start_us: number; t_end_us: number; adjusted: Adjustment[] }>; delta_us: number } => {
   if (!r.ok) throw new Error(r.error.message)
   return JSON.parse(r.result.content[0].text)
 }
@@ -99,8 +100,11 @@ describe('shift_layers by layer_ids', () => {
     const { a, tA } = setup()
     const l = color(a, tA, 0, S)
     const rec = record(call(a, { layer_ids: [l], delta_us: 350_000 }))
-    expect(rec.requested_delta_us).toBe(350_000)
+    expect(rec.delta_us).toBe(350_000)
     expect(rec.moved[0].t_start_us).toBe(366_667) // 11 frames at 30 fps
+    // The record says the start moved off the requested delta, so an agent
+    // reads the landing rather than assuming its own arithmetic.
+    expect(rec.moved[0].adjusted).toEqual([{ field: 't_start_us', requested: 350_000, applied: 366_667, reason: 'grid' }])
     expect(span(a, l)[0]).toBe(366_667)
   })
 })
@@ -129,13 +133,28 @@ describe('shift_layers from a time', () => {
     expect(span(a, onB)).toEqual([3 * S, 5 * S])
   })
 
-  it('a link partner that starts before the time stays — the cut is a place, not a membership', () => {
+  it('refuses a sweep that would split a link, naming the way to move it whole', () => {
+    // Moving one member and not the other slips their sync, which is what the
+    // ripple refuses for the same shape; nothing moves.
     const { a, tA } = setup()
     const v = video(a, tA, 0, 4 * S)
     const au = audio(a, tA, 2 * S, 4 * S)
     idOf(a.dispatch('links_create', { layers: [v, au] }))
-    record(call(a, { from_t_us: 2 * S, delta_us: S }))
+    const r = call(a, { from_t_us: 2 * S, delta_us: S })
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('expected a refusal')
+    expect(r.error.message).toContain('layer_ids')
     expect(span(a, v)).toEqual([0, 4 * S])
+    expect(span(a, au)).toEqual([2 * S, 4 * S])
+  })
+
+  it('sweeps a link whose members all start at or after the time', () => {
+    const { a, tA } = setup()
+    const v = video(a, tA, 2 * S, 4 * S)
+    const au = audio(a, tA, 2 * S, 4 * S)
+    idOf(a.dispatch('links_create', { layers: [v, au] }))
+    record(call(a, { from_t_us: 2 * S, delta_us: S }))
+    expect(span(a, v)).toEqual([3 * S, 5 * S])
     expect(span(a, au)).toEqual([3 * S, 5 * S])
   })
 
@@ -159,6 +178,15 @@ describe('shift_layers arguments', () => {
       if (!r.ok) expect(r.error.code).toBe('invalid_params')
     }
     expect(span(a, l)).toEqual([0, S])
+  })
+
+  it('refuses an empty layer_ids by its own name, not the actor\'s', () => {
+    const { a } = setup()
+    const r = call(a, { layer_ids: [], delta_us: S })
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('expected a refusal')
+    expect(r.error.message).toContain('layer_ids')
+    expect(r.error.message).toContain('from_t_us')
   })
 
   it('refuses a key of the other branch instead of ignoring it', () => {

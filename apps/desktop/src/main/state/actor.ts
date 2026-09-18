@@ -40,10 +40,11 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitResult, toolRecord, type ResultCtx } from './mcp-results'
-import { readLayerTrack } from './mutations/params'
+import { readLayerTrack, parseEffectParamKey } from './mutations/params'
+import { effectsCatalogView } from '../../shared/effects/catalogView'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
 import { applyTextCorrection, applyTranscripts } from './mutations/textCorrection'
 import { CORRECTION_SCRIPT_MAX, type TextCorrectionExpectation } from '../../shared/textCorrectionRequest'
@@ -73,6 +74,41 @@ function snapEnvelopePatch(p: Project, id: Uuid, patch: LayerPatch): LayerPatch 
     ...(typeof patch.t_start_us === 'number' ? { t_start_us: snapOnGrid(patch.t_start_us, grid) } : {}),
     ...(typeof patch.t_end_us === 'number' ? { t_end_us: snapOnGrid(patch.t_end_us, grid) } : {}),
   }
+}
+
+/** `validate` names the EARLIER-starting layer of a colliding pair `a` and the
+ *  later one `b`, while the mapper reads `a` as the blocker and `b` as the
+ *  requested range. A request placed before an existing layer arrives inverted,
+ *  and its options then name the caller's own layer — which, on an add, the
+ *  discarded draft never committed. The request is the layer the pre-call
+ *  snapshot does not hold, else the layer the call named; swapping the pair
+ *  restores the mapper's reading. */
+function orientOverlap(e: CommandError, before: Project, subjects: readonly Uuid[]): CommandError {
+  if (e.error !== 'ValidationFailed' || e.detail.rule !== 'LayerOverlap') return e
+  const d = e.detail
+  const aExisted = locateLayer(before, d.a) != null
+  const bExisted = locateLayer(before, d.b) != null
+  const requestIsA = aExisted !== bExisted ? !aExisted : subjects.includes(d.a) && !subjects.includes(d.b)
+  if (!requestIsA) return e
+  return { error: 'ValidationFailed', detail: { ...d, a: d.b, a_start: d.b_start, a_end: d.b_end, b: d.a, b_start: d.a_start, b_end: d.a_end } }
+}
+
+/** The layer ids a table-exec call addresses, read from its parsed args. */
+function subjectsOf(args: Record<string, unknown>): Uuid[] {
+  const out: Uuid[] = []
+  if (typeof args.layer === 'string') out.push(args.layer)
+  if (Array.isArray(args.layers)) for (const l of args.layers) if (typeof l === 'string') out.push(l)
+  return out
+}
+
+/** `effects[<id>].params[<key>]` written as keyframes: the kind's catalogued
+ *  range holds here as it does on `update_effect`, or one path would refuse
+ *  what the other stores. */
+function checkEffectKeyframeValues(p: Project, layerId: Uuid, paramKey: string, values: readonly unknown[], field: string): void {
+  const eff = parseEffectParamKey(paramKey)
+  if (!eff) return
+  const kind = locateLayer(p, layerId)?.layer.effects.find((e) => e.id === eff[0])?.kind
+  if (kind) checkEffectParamValues(kind, eff[1], values, field)
 }
 
 export type DryRunOp =
@@ -1386,8 +1422,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Narrowed to `layer_ids`, the refs are those captions instead.
           const only = (a.layer_ids as Uuid[] | null | undefined) ?? null
           const captionRefs: EntityRef[] = only ? layerRefs(only) : captionTracks(current()).map((t) => ({ kind: 'Track', id: t.id }))
-          commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch, only))
-          return { ok: true, value: null }
+          const restyled = commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch, only))
+          return { ok: true, value: restyled }
         }
         // merge_captions — two or more cues of one lane fold into the earliest;
         // the refs name the survivor and the absorbed.
@@ -1676,9 +1712,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
       case 'update_layer_params':
         return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: parseLayerParamsPatch(spec.patch) }
       case 'move_layer':
-        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: (spec.escape_link as boolean) ?? false }
+        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(spec.escape_link, 'escape_link', false) }
       case 'split_layer':
-        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_link: (spec.escape_link as boolean) ?? false }
+        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_link: parseBoolOpt(spec.escape_link, 'escape_link', false) }
       case 'delete_layers': {
         if (spec.ripple === true) throw new McpArgError('delete_layers with `ripple: true` is not dry-runnable in v1 — rehearse the lift, or run the ripple for real', 'ripple')
         return { kind: 'DeleteLayers', ids: asArray(spec.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) }
@@ -1955,7 +1991,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolRecord({ checkpoint_id: id, label, cursor: h.cursor, len: h.len, can_undo: h.can_undo, can_redo: h.can_redo }) }
         }
         // Work-session lifecycle is owned by the host; a bare actor has no session.
-        case 'end_agent_session': return { ok: true, result: toolEmpty() }
+        case 'end_agent_session': return { ok: true, result: toolRecord({ ended: null }) }
         case 'begin_agent_session': {
           const p = mcpDef('begin_agent_session').parseDedicated!(a)
           const reason = p.reason as string
@@ -1972,8 +2008,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // consistent and the write-time check in the mutation half is what
           // refuses a caller that mixed them.
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
+          checkEffectKeyframeValues(current(), layer, paramKey, [p.value], 'value')
           const easing = p.interp as Interpolation | undefined
-          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as TrackValue, easing, idGen)
+          const rel = (p.t_us as number) - tStartUs
+          const next = upsertKeyframe(track, rel, p.value as TrackValue, easing, idGen)
+          // A Bezier's p2 shapes the ARRIVAL at the next key and is stored there;
+          // on the last key it has nowhere to land and would be dropped under a
+          // success report. The other kinds write only this key's leaving side.
+          if (easing?.kind === 'Bezier' && next.mode === 'Keyframed' && next.value[next.value.length - 1]?.t_us === rel)
+            throw new McpArgError(`interp: a Bezier on the last key of '${paramKey}' has no next key for its p2 to land on — add the later key first, then set this key's interp`, 'interp')
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(setKeyframeResult(layer, paramKey, track, readLayerTrack(current(), layer, paramKey), p.t_us)) }
@@ -2058,6 +2101,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = p.param_key as string
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
           const input = p.track as Animated<TrackValue>
+          checkEffectKeyframeValues(current(), layer, paramKey, input.mode === 'Static' ? [input.value] : input.value.map((k) => k.value), 'track')
           const shifted: Animated<TrackValue> = input.mode === 'Keyframed'
             ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
@@ -2106,6 +2150,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // support reads exactly what one with it reads.
           const p = mcpDef('read_project').parseDedicated!(a)
           const view = p.view as string
+          // The effects vocabulary is a catalog, not project state, so it needs
+          // no snapshot. The work session and the two picture views live in the
+          // MCP host, which answers them before a call reaches the actor.
+          if (view === 'effects') return { ok: true, result: toolRecord(effectsCatalogView()) }
+          if (view === 'session' || view === 'media_thumbnail' || view === 'media_frame')
+            return { ok: false, error: { code: 'invalid_params', message: `view '${view}' is served by the MCP host, not by the state actor — call it over MCP, or read the matching resource` } }
           const compositionId = p.composition_id as string | null
           const scoped = compositionId !== null && SCOPED_PROJECT_VIEWS.has(view) ? `?composition=${compositionId}` : ''
           const uri = view === 'layer' ? `project://layers/${p.id as string}` : `project://${view}${scoped}`
@@ -2179,12 +2229,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
       // has to send again: one rule for a time an agent sends — snap and echo.
       if (name === 'update_layer') args.patch = snapEnvelopePatch(current(), args.layer as Uuid, args.patch as LayerPatch)
       const r = dispatch(op, args)
-      if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
+      if (!r.ok) return { ok: false, error: mapCommandError(orientOverlap(r.error, before, subjectsOf(args)), name) }
       const reader = MCP_RESULT_READERS[name]
       return { ok: true, result: reader ? toolRecord(reader(ctx(r.value))) : toolEmpty() }
     } catch (e) {
       if (e instanceof McpArgError) return { ok: false, error: e.toJson() }
-      if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(e.err, name) }
+      if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(orientOverlap(e.err, before, []), name) }
       throw e
     }
   }

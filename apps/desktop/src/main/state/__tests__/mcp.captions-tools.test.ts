@@ -86,6 +86,19 @@ describe('restyle_captions { layer_ids }', () => {
     expect(!bad.ok && bad.error.message).toContain('update_layer_params')
   })
 
+  it('a patch naming no style is refused, and `restyled` counts the captions it wrote', () => {
+    const { a, ids } = captioned()
+    const bare = call(a, 'restyle_captions', {})
+    expect(bare.ok).toBe(false)
+    if (bare.ok) throw new Error('expected a refusal')
+    expect(bare.error.message).toContain('font_family')
+    // A repeated id is one caption, and the count says so rather than echoing
+    // the request.
+    const out = body<{ restyled: number }>(call(a, 'restyle_captions', { layer_ids: [ids[0], ids[0]], font_size_px: 40 }))
+    expect(out.restyled).toBe(1)
+    expect(body<{ restyled: number }>(call(a, 'restyle_captions', { font_size_px: 44 })).restyled).toBe(3)
+  })
+
   it('an empty layer_ids is refused — never success for nothing done', () => {
     const { a } = captioned()
     const r = call(a, 'restyle_captions', { font_size_px: 12, layer_ids: [] })

@@ -11,9 +11,9 @@
 // Deliberately narrow: `required`, `type`, `enum`, and one level of nested
 // `properties`. Not a validator — a field this does not understand passes
 // through to the real parser. An explicit `null` on a field that is not
-// required reads as omitted: the catalog stopped advertising `['T', 'null']`
-// on optional fields (a `null` arm is kept only where null means something of
-// its own), and a client that still sends `format: null` deserves the same
+// required reads as omitted: the catalog advertises a `null` arm only where
+// null means something of its own, and a client that sends `format: null` for
+// "unset" deserves the same
 // answer as one that leaves it out.
 
 interface SchemaLike {

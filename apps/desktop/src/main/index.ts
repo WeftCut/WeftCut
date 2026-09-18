@@ -815,9 +815,17 @@ app.whenReady().then(async () => {
     statPath: (p) => {
       try {
         const st = fs.statSync(p)
+        const kind = st.isFile() ? 'file' : st.isDirectory() ? 'directory' : 'other'
+        // Opened, not `access`ed: on Windows `accessSync(R_OK)` reads the
+        // read-only ATTRIBUTE and never the ACL, so a file the process may not
+        // read would pass and fail later inside the probe with the OS's own
+        // locale text. Directories are not opened for read.
         let readable = true
-        try { fs.accessSync(p, fs.constants.R_OK) } catch { readable = false }
-        return { kind: st.isFile() ? 'file' : st.isDirectory() ? 'directory' : 'other', readable }
+        if (kind === 'file') {
+          let fd: number | undefined
+          try { fd = fs.openSync(p, 'r') } catch { readable = false } finally { if (fd !== undefined) fs.closeSync(fd) }
+        }
+        return { kind, readable }
       } catch { return null }
     },
     workspaceDir: () => wsCache,

@@ -226,6 +226,9 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.ripple_link_straddles",
     args: (e, ctx) => ({ link: ctx.link(e.link) }),
   },
+  // No renderer gesture sweeps layers by time, so this one only ever reaches
+  // an agent, which reads the mapper's sentence instead of this table.
+  ShiftLinkStraddles: { tier: "generic" },
   RippleLockedLayer: {
     tier: "curated",
     key: "errors.ripple_locked_layer",

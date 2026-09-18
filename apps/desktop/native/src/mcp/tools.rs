@@ -1449,8 +1449,16 @@ pub(super) async fn transcribe_clip(
                 speech::resolve_transcriber_exact(b, &cfg)
                     .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
             ),
+            // The shared message names the Settings remedy a person acts on; an
+            // agent has a path of its own, so the tool names that too.
             None => speech::resolve_transcriber(preferred, &cfg).ok_or_else(|| {
-                McpToolError::invalid_request(speech::NO_TRANSCRIBER_CONFIGURED, None)
+                McpToolError::invalid_request(
+                    format!(
+                        "{}; or call `extract_clip_audio` and transcribe its WAV with a speech model of your own",
+                        speech::NO_TRANSCRIBER_CONFIGURED
+                    ),
+                    None,
+                )
             })?,
         }
     };
@@ -1753,8 +1761,17 @@ pub(super) async fn describe_clip(
             vlm::resolve_scene_describer_exact(be, cfg)
                 .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
         ),
-        None => vlm::resolve_scene_describer(preferred, cfg)
-            .ok_or_else(|| McpToolError::invalid_request(vlm::NO_DESCRIBER_CONFIGURED, None))?,
+        // The shared message names the Settings remedy a person acts on; an agent
+        // can look at the frames itself, so the tool names that path too.
+        None => vlm::resolve_scene_describer(preferred, cfg).ok_or_else(|| {
+            McpToolError::invalid_request(
+                format!(
+                    "{}; or read `media://{{id}}/frame/{{t_us}}` (`read_project {{ view: \"media_frame\" }}`) and look at the frames yourself",
+                    vlm::NO_DESCRIBER_CONFIGURED
+                ),
+                None,
+            )
+        })?,
     };
     let model = vlm::model_label(used_backend, cfg.get(used_backend.as_str()));
 

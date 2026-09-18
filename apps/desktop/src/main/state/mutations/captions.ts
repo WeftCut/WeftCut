@@ -198,17 +198,15 @@ function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
 /** One caption's restyle. A positive outline_width keeps the existing outline
  *  color (or BLACK if none); zero removes the outline (see `CaptionStylePatch`). */
 function restyleTextLayer(tp: TextParams, patch: CaptionStylePatch): void {
-  {
-    if (patch.font_family !== undefined && patch.font_family !== null) tp.font.family = patch.font_family
-    if (patch.font_size_px !== undefined && patch.font_size_px !== null) tp.font.size_px = patch.font_size_px
-    if (patch.color !== undefined && patch.color !== null) tp.color = { mode: 'Static', value: patch.color }
-    if (patch.outline_width !== undefined && patch.outline_width !== null) {
-      if (patch.outline_width <= 0) {
-        tp.outline = null
-      } else {
-        const existingColor = tp.outline ? tp.outline.color : BLACK
-        tp.outline = { color: existingColor, width: patch.outline_width }
-      }
+  if (patch.font_family !== undefined && patch.font_family !== null) tp.font.family = patch.font_family
+  if (patch.font_size_px !== undefined && patch.font_size_px !== null) tp.font.size_px = patch.font_size_px
+  if (patch.color !== undefined && patch.color !== null) tp.color = { mode: 'Static', value: patch.color }
+  if (patch.outline_width !== undefined && patch.outline_width !== null) {
+    if (patch.outline_width <= 0) {
+      tp.outline = null
+    } else {
+      const existingColor = tp.outline ? tp.outline.color : BLACK
+      tp.outline = { color: existingColor, width: patch.outline_width }
     }
   }
 }
@@ -219,15 +217,21 @@ function restyleTextLayer(tp: TextParams, patch: CaptionStylePatch): void {
  *  tracks are untouched. There is no TrackNotFound — a project may legitimately
  *  hold zero caption tracks, in which case this is a no-op (commit's no-op guard
  *  then records nothing). */
-export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch, layerIds: readonly Uuid[] | null = null): void {
-  if (layerIds === null) { for (const track of captionTracks(p)) restyleTrackTextLayers(track, patch); return }
+export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch, layerIds: readonly Uuid[] | null = null): number {
+  if (layerIds === null) {
+    let n = 0
+    for (const track of captionTracks(p)) { restyleTrackTextLayers(track, patch); n += track.layers.filter((l) => l.params.kind === 'Text').length }
+    return n
+  }
   // Narrowed: only the named captions — each must BE one, so a title from
   // add_text_layer cannot be restyled through the caption door by mistake.
-  for (const id of new Set(layerIds)) {
+  const unique = new Set(layerIds)
+  for (const id of unique) {
     const { track, layer } = requireLayer(p, id)
     if (track.role !== 'Caption' || layer.params.kind !== 'Text') throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: `layer ${id} is not a caption (a Text layer on a Caption track); a title is styled with update_layer_params` })
     restyleTextLayer(layer.params, patch)
   }
+  return unique.size
 }
 
 /** What a merge did: the cue that absorbed the others, and the ones removed. */

@@ -152,7 +152,7 @@
     },
     {
       "name": "import_media",
-      "description": "Import ONE media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns `{ media_id, kind, duration_us, width, height, has_audio }`; a subtitle document (.srt/.vtt/.ass) is laid onto a caption track instead and returns `{ caption_track_id, cues }`. A directory, a missing path or an unreadable file is refused by name before anything is written; a read that fails mid-import rolls the provisional pool row back. Unrecorded.",
+      "description": "Import ONE media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; a subtitle document (.srt/.vtt/.ass) is laid onto a caption track instead and returns `{ caption_track_id, cues }`. A directory, a missing path or an unreadable file is refused by name before anything is written; a read that fails mid-import rolls the provisional pool row back. Unrecorded.",
       "inputSchema": {
         "properties": {
           "path": {

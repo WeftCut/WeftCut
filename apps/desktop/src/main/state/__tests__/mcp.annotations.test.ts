@@ -162,6 +162,9 @@ describe('an unrecorded mutator says so', () => {
     const desc = (name: string): string => merged.find((t) => t.name === name)?.description ?? ''
     for (const n of ['set_track_flags', 'create_checkpoint', 'delete_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
     for (const n of ['update_composition', 'set_project_settings', 'set_role_flags', 'delete_media', 'import_media']) expect(desc(n), n).toContain('Unrecorded')
+    // The session tools write too — a view, a lock, a checkpoint pin — and undo
+    // walks past all three.
+    for (const n of ['begin_agent_session', 'end_agent_session', 'set_history_lock']) expect(desc(n), n).toContain('Unrecorded')
     // and a recorded edit does not carry the word
     for (const n of ['add_color_layer', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
   })

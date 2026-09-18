@@ -10,8 +10,8 @@
 //
 // `structuredContent` mirrors the text for clients that forward it: the
 // envelope code, the message, and whatever `data` the mapper attached
-// (`error`, ids, `options[]`). The text stays complete on its own — the rule
-// in docs/mcp.md § Error model still holds, only the carrier changed.
+// (`error`, ids, `options[]`). The text stays complete on its own: it is the
+// one part every client shows the model (docs/mcp.md § Error model).
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import { mapCommandError, McpArgError, type McpErrorCode, type McpToolErrorJson } from '../state/mcp-commands.js'
 import type { CommandError } from '../state/errors.js'

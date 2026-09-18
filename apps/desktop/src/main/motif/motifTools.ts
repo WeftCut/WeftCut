@@ -39,6 +39,8 @@ export interface MotifToolDeps {
  *  `write_motif_draft { from }`; neither present is refused naming both ways to
  *  supply one, before anything is written. */
 function parseMode(mode: unknown, targetId: unknown, draftId: string, store: UserMotifStore): InstallArgs['mode'] {
+  if (typeof mode === 'string' && mode !== 'new' && mode !== 'update')
+    throw new Error(`install_motif mode '${mode}' is neither 'new' nor 'update'`)
   if (mode === 'new') return { kind: 'new' }
   if (mode === 'update') {
     const explicit = typeof targetId === 'string' && targetId.trim() !== '' ? targetId.trim() : null

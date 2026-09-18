@@ -47,9 +47,10 @@ async function runStdio(se: ShimEnv, userDataDir: string): Promise<void> {
     stop()
     shim.bridge.markDown() // terminates the app session and closes the SSE stream so the event loop can drain
   }
-  // A client that kills the shim rather than closing stdin must not leave its
-  // app session behind either: `markDown` sends the DELETE, and the pending
-  // fetch keeps the loop alive long enough to deliver it.
+  // A client that signals the shim rather than closing stdin releases its app
+  // session the same way: `markDown` sends the DELETE, and the pending fetch
+  // keeps the loop alive long enough to deliver it. (Windows has no SIGTERM to
+  // catch — EOF below is what covers it.)
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.once(sig, () => {
       stop()
@@ -59,10 +60,13 @@ async function runStdio(se: ShimEnv, userDataDir: string): Promise<void> {
   }
   await shim.server.connect(new StdioServerTransport())
   // The SDK's stdio transport reads stdin but does not close the server when it
-  // ends, and a client that exits closes stdin first — its SIGTERM is
-  // TerminateProcess on Windows, which no handler sees — so EOF is the one exit
-  // signal every client on every platform delivers. Closing here runs `onclose`.
+  // ends. EOF is the one exit signal every client delivers on every platform —
+  // a Windows SIGTERM is TerminateProcess, which no handler sees — so closing
+  // here is what runs `onclose`, and with it the session release.
   process.stdin.once('end', () => { void shim.server.close() })
+  // A client that closed stdin before the transport was connected has already
+  // sent the only signal there is; the listener above would never fire.
+  if (process.stdin.readableEnded) void shim.server.close()
   // Eager first connect: the client's initial tools/list should see the full
   // catalog without waiting for a poll tick when the app is already up.
   await shim.bridge.ensureUp()

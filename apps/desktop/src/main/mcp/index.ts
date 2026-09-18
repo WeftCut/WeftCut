@@ -68,7 +68,10 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
    *  than on the connection record, which exists only once the client has sent
    *  `notifications/initialized`: a client that never completes the handshake
    *  still holds a session and must still be judged. */
-  const streams = new Map<string, { state: 'never' | 'open' | 'closed'; changedAt: number; lastRequestAt: number }>()
+  const streams = new Map<string, { state: 'never' | 'open' | 'closed'; changedAt: number; lastRequestAt: number; openToken: number }>()
+  // Which GET a close belongs to: two on one session interleave, and only the
+  // one that set the record may change it back.
+  let streamSeq = 0
   const reaper = { ...REAPER_DEFAULTS, ...(opts.sessionReaper ?? {}) }
   let available = true
   const log = opts.log ?? NO_MCP_LOG
@@ -130,14 +133,22 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       // The standalone SSE stream is the session's liveness: note it opening,
       // and note the socket closing under it — that, not a DELETE, is how a
       // client that simply went away is seen (see `SessionReaperOptions`).
+      //
+      // Only a GET the transport actually turns into a stream counts. One it
+      // rejects (406 without the SSE `Accept`, 409 for a second stream, 400 on
+      // the protocol version, 403 on the Host) is neither an opening nor a
+      // closing, so the record goes back to what it said — otherwise a client
+      // that asked wrongly once would read as streaming forever, and nothing
+      // could ever judge it gone.
       if (req.method === 'GET' && live) {
-        live.state = 'open'; live.changedAt = Date.now()
+        const prev = { state: live.state, changedAt: live.changedAt }
+        const token = ++streamSeq
+        live.state = 'open'; live.changedAt = Date.now(); live.openToken = token
         res.on('close', () => {
-          // A second GET on a session that already has its stream is answered
-          // 409 and closes at once; that is not the stream going away.
-          if (res.statusCode !== 200) return
           const cur = streams.get(sid!)
-          if (cur?.state === 'open') { cur.state = 'closed'; cur.changedAt = Date.now() }
+          if (cur === undefined || cur.openToken !== token) return
+          if (res.statusCode !== 200) { cur.state = prev.state; cur.changedAt = prev.changedAt; return }
+          if (cur.state === 'open') { cur.state = 'closed'; cur.changedAt = Date.now() }
         })
       }
       // Existing session — route straight through.
@@ -152,7 +163,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         sessionIdGenerator: () => connectionId,
         onsessioninitialized: (id) => {
           transports.set(id, transport!)
-          streams.set(id, { state: 'never', changedAt: Date.now(), lastRequestAt: Date.now() })
+          streams.set(id, { state: 'never', changedAt: Date.now(), lastRequestAt: Date.now(), openToken: 0 })
         },
         // DNS-rebinding defense-in-depth: a malicious web page the user visits
         // can POST to our loopback port, so reject requests whose Host header

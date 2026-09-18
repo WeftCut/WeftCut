@@ -200,6 +200,45 @@ describe('update_effect — params are the kind\'s, inside its range', () => {
   })
 })
 
+describe('keyframe writers — one range, one easing rule', () => {
+  /** A title with a blur whose `strength` is already Static, which is what makes
+   *  an effect param keyframable at all. */
+  function blurredTitle(a: Actor): { layer: string; key: string } {
+    const layer = ok(call(a, 'add_text_layer', { track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: 'Title' })).layer_id as string
+    const effect = ok(call(a, 'add_effect', { layer_id: layer, kind: 'blur' })).effect_id as string
+    ok(call(a, 'update_effect', { layer_id: layer, effect_id: effect, patch: { params: { strength: { mode: 'Static', value: 8 } } } }))
+    return { layer, key: `effects[${effect}].params[strength]` }
+  }
+
+  it('an effect param outside its range is refused by set_keyframe, as update_effect refuses it', () => {
+    // One param, two writers: a range the patch enforces and the keyframe does
+    // not would let an agent store through the door that does not look.
+    const a = freshActor()
+    const { layer, key } = blurredTitle(a)
+    expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: key, t_us: 0, value: 500 }))).toContain('[0, 100]')
+    expect(refusal(call(a, 'set_param_track', { layer_id: layer, param_key: key, track: { mode: 'Static', value: 500 } }))).toContain('[0, 100]')
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: key, t_us: 0, value: 40 }))
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: key, t_us: 1_000_000, value: 60 }))
+    // The documented round trip — read the track, edit it, send it back — is
+    // held to the same range as the key-at-a-time writer.
+    const track = ok(call(a, 'get_param_track', { layer_id: layer, param_key: key }))
+    const edited = { mode: 'Keyframed', value: (track.keyframes as Array<Record<string, unknown>>).map((k, i) => (i === 1 ? { ...k, value: 500 } : k)) }
+    expect(refusal(call(a, 'set_param_track', { layer_id: layer, param_key: key, track: edited }))).toContain('[0, 100]')
+  })
+
+  it('a Bezier on the last key is refused, and lands once a later key exists', () => {
+    // Its p2 is stored on the NEXT key; with no next key the arriving side is
+    // dropped and the call would still report success.
+    const a = freshActor()
+    const layer = ok(call(a, 'add_text_layer', { track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: 'Title' })).layer_id as string
+    const bezier = { kind: 'Bezier', p1: [0.4, 0], p2: [0.2, 0.9] }
+    expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))).toContain('p2')
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1 }))
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 1_000_000, value: 0 }))
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))
+  })
+})
+
 describe('set_position — typed and gated', () => {
   it('refuses a malformed position at the boundary with the shared validator\'s sentence', () => {
     const a = freshActor()

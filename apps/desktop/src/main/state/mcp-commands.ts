@@ -265,10 +265,8 @@ export function parseObj(v: unknown, field: string): Record<string, unknown> {
 }
 
 // ── Strict patch parsers ────────────────────────────────────────────────────
-// `parseObj` proves "is an object" and nothing else, and every apply* mutation
-// reads its patch behind `typeof` guards — so an unknown key, a typo, a field
-// that belongs to another tool would all commit NOTHING and report success. The
-// parsers below refuse at the boundary, naming the accepted set, so the agent
+// Key SETS, not just "is an object" (`parseObj` above says why): each parser
+// refuses an unknown key at the boundary naming the accepted set, so the agent
 // learns the vocabulary from the refusal rather than from a re-read that shows
 // nothing changed.
 
@@ -304,16 +302,21 @@ export function parseLayerPatch(v: unknown): LayerPatch {
 }
 
 /** The fields each kind's patch may carry — the key sets of `LayerParamsPatch`
- *  (mutations/params.ts), restated as data so the parser can name them. A kind
- *  added there gains its keys here, or `mcp.strict-patches` fails. */
+ *  (mutations/params.ts) as data, so the parser can name them and the schema
+ *  can advertise them. `keysOf` ties each row to the type: a key added to one
+ *  side without the other fails to compile. */
+type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<LayerParamsPatch, { kind: K }>, 'kind'>
+/** One kind's key set as a record, so tsc refuses a key the patch type does
+ *  not have and demands every key it does. */
+const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
-  Text: ['content', 'font_family', 'font_size_px', 'font_weight', 'italic', 'color', 'x', 'y', 'opacity', 'rotation_deg', 'anchor_x', 'anchor_y', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color', 'shadow'],
-  VideoClip: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'speed', 'flip_h', 'flip_v', 'fade_in_us', 'fade_out_us'],
-  ImageOverlay: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'fade_in_us', 'fade_out_us'],
-  Motif: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'src_in_us', 'motif_id', 'motif_version', 'props'],
-  Color: ['color', 'width', 'height'],
-  Audio: ['src_in_us', 'src_out_us', 'gain_db', 'pan', 'fade_in_us', 'fade_out_us', 'mute', 'role'],
-  CompositionRef: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'blend_mode'],
+  Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true }),
+  VideoClip: keysOf('VideoClip', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, speed: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
+  ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true }),
+  Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true }),
+  Color: keysOf('Color', { color: true, width: true, height: true }),
+  Audio: keysOf('Audio', { src_in_us: true, src_out_us: true, gain_db: true, pan: true, fade_in_us: true, fade_out_us: true, mute: true, role: true }),
+  CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, blend_mode: true }),
 }
 export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEYS)
 const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
@@ -360,8 +363,8 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
 
 /** `update_layer_params`'s patch: `kind` names one of the seven kinds, every
  *  other key is in that kind's set, and every value is the type the kind
- *  stores. Ranges and shape rules (a positive font size, the text-box modes,
- *  `2·pad < min`) stay the mutation's — it names them better than a table could. */
+ *  stores. Ranges and shape rules (a positive font size, the text-box modes, a
+ *  non-zero scale) stay the mutation's — it names them better than a table could. */
 export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
   const o = parseObj(v, 'patch')
   const kind = o.kind
@@ -389,6 +392,19 @@ export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
 export function parseEffectKind(v: unknown): string {
   if (typeof v !== 'string' || !EFFECT_KINDS.includes(v)) throw new McpArgError(`unknown effect kind ${typeof v === 'string' ? `'${v}'` : describeValue(v)} — kinds: ${EFFECT_KINDS.join(', ')}`, 'kind')
   return v
+}
+
+/** An effect param written as keyframes (`set_keyframe` / `set_param_track` on
+ *  `effects[<id>].params[<key>]`): every value must sit inside the kind's
+ *  catalogued range, exactly as `update_effect` refuses it — one rule whichever
+ *  tool writes the param. A kind or key no catalog knows passes untouched. */
+export function checkEffectParamValues(kind: string, key: string, values: readonly unknown[], field: string): void {
+  const specs = effectParamSpecs(kind)
+  if (specs === null || !(key in specs)) return
+  const [lo, hi] = specs[key].range
+  for (const value of values) {
+    if (typeof value === 'number' && (value < lo || value > hi)) throw new McpArgError(`${field} ${value} is outside '${kind}'.${key}'s range [${lo}, ${hi}] — effects://catalog lists every param's range`, field)
+  }
 }
 
 /** `update_effect`'s params against the effect's KIND: an unknown key or a
@@ -681,9 +697,11 @@ export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unk
   }
 }
 
-/** Reasonable, NON-asserted prose for a failed dry-run op (the differential
- *  gate uses succeeding-ops-only sequences, so this string is never gated;
- *  the halt/error shape is unit-tested in mcp.dryrun.test.ts). */
+/** A failed dry-run op's `error` text. The grid rules carry the corrected value
+ *  so an agent planning a batch can fix the op without a second round trip, and
+ *  the ripple and transition refusals read as one line of prose; everything else
+ *  takes the mapper's own sentence, so a rehearsal names the ids and the remedy
+ *  exactly as the wet call would. */
 export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'InvalidArgument') return `${e.field}: ${e.detail}`
   if (e.error === 'Backend') return e.detail
@@ -692,7 +710,7 @@ export function dryRunErrorString(e: CommandError): string {
     // The two grid rules carry the corrected value, so say it even in dry-run prose:
     // an agent planning a batch can fix the op without a second round trip.
     if (d.rule === 'OffGridLayerBoundary' || d.rule === 'OffGridTime') return `validation failed: ${d.rule} (${d.field} ${d.t} µs → send ${d.snap_to})`
-    return `validation failed: ${d.rule}`
+    return mapCommandError(e).message
   }
   if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
   if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
@@ -705,7 +723,7 @@ export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'RippleLinkStraddles') return `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close`
   if (e.error === 'RippleLockedLayer') return `layer ${e.layer} is locked and would have to move`
   if (e.error === 'GapNotFound') return `[${e.s}, ${e.e}) µs is not a gap on track ${e.track}`
-  return e.error
+  return mapCommandError(e).message
 }
 
 /** Dry-run response: per-op {index, status, output|error} flattened, plus
@@ -834,7 +852,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
       default: break
     }
   }
-  if (e.error === 'CompositionNotFound') return { code: 'invalid_params', message: `composition ${e.composition} not found` }
+  if (e.error === 'CompositionNotFound') return { code: 'invalid_params', message: `composition ${e.composition} not found — project://compositions lists every composition with its id and ref_count; omit composition_id for the root`, data: { error: 'CompositionNotFound', composition: e.composition } }
   // Scope refusals (ADR 0052): name BOTH compositions, because the fix is a
   // different destination or a narrower set, and the ids are what the agent
   // reads back from `project://compositions`.
@@ -964,6 +982,8 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
   // shared/commandErrors.ts; `mcp.error-vocabulary` enumerates the vocabulary
   // so a new variant cannot fall through to a bare name. ──
   switch (e.error) {
+    case 'ShiftLinkStraddles':
+      return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Name the whole set with shift_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
     case 'LayerNotFound':
@@ -1082,10 +1102,10 @@ export interface McpToolDef {
 // Every advertised property has a one-line description with its unit, so an
 // agent learns a field from the schema rather than from ten or twenty failed
 // calls. `mcp.description-budget` counts the properties that do not. Ids and
-// times recur on most tools, so they are
-// minted here once; a `null` arm is advertised only where null MEANS something
-// omission does not (clear a label, unpin a duration, return a text box axis
-// to auto) — an optional field is simply not required.
+// times recur on most tools, so they are minted here once; a `null` arm is
+// advertised only where null MEANS something omission does not (clear a label,
+// unpin a duration, return a text box axis to auto) — an optional field is
+// simply not required.
 const ID_SCHEMA = (what: string) => ({ type: 'string', description: `${what} id.` })
 const LAYER_ID_SCHEMA = ID_SCHEMA('Layer')
 const TRACK_ID_SCHEMA = ID_SCHEMA('Track')
@@ -1097,12 +1117,15 @@ const SRC_IN_SCHEMA = US_SCHEMA('Source in point')
 const SRC_OUT_SCHEMA = US_SCHEMA('Source out point (exclusive)')
 const ESCAPE_LINK_SCHEMA = { type: 'boolean', description: 'Act on this layer alone, leaving its link partners in place. Default false.' }
 const RGBA_SCHEMA = { type: 'object', description: 'Colour, integer channels 0..255.', properties: { r: { type: 'integer', description: 'Red 0..255.' }, g: { type: 'integer', description: 'Green 0..255.' }, b: { type: 'integer', description: 'Blue 0..255.' }, a: { type: 'integer', description: 'Alpha 0..255; 255 opaque.' } }, required: ['r', 'g', 'b', 'a'] }
-// The creation-op scope (ADR 0052): only tools that CREATE take it. Every
-// layer-addressed tool derives its composition from the layer id — an agent
-// editing inside a Group never names the Group. Two spellings of the same
-// optional field: the second for tools whose required `track_id` already fixes
-// the composition, where the id is a cross-check rather than a choice.
+// The composition scope (ADR 0052): the tools that CREATE take it to say where,
+// and the caption tools that address a composition's captions as a body take it
+// to say which. Every layer-addressed tool derives its composition from the
+// layer id — an agent editing inside a Group never names the Group. Three
+// spellings of one optional field: the second for tools whose required
+// `track_id` already fixes the composition, where the id is a cross-check
+// rather than a choice; the third for a read or an edit over existing captions.
 const COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition to create in — a Group\'s id from `project://compositions`; omit for the root.' }
+const CAPTIONS_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition whose captions are meant — a Group\'s id from `project://compositions`; omit for the root.' }
 const TRACK_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Optional cross-check: the composition `track_id` belongs to; refused on mismatch. The track alone fixes the composition.' }
 export function parseCompositionIdOpt(v: unknown): string | null {
   return v === undefined || v === null ? null : parseUuid(v, 'composition_id')
@@ -1383,7 +1406,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'move_track', exec: 'table', annotations: ANN_SET,
     description: "Move a track to a different z-order position. 0 = bottom of stack. Position must be < current track count.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, new_position: { type: 'integer', description: 'Target index in the stack; 0 is the bottom.' } }, required: ['new_position', 'track_id'] },
-    parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseNum(a.new_position, 'new_position') } }) },
+    parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseIntNum(a.new_position, 'new_position') } }) },
   // Two flags of four: `Track` also stores muted/solo, and they are omitted on
   // purpose — the mix folds by ROLE (ADR 0023), so nothing reads a track's, and
   // advertising them would be advertising a write that changes nothing.
@@ -1454,7 +1477,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, new_t_start_us: US_SCHEMA('New timeline start'), new_track_id: { type: 'string', description: 'Destination track; the current one to move in time only.' }, escape_link: ESCAPE_LINK_SCHEMA }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and with a positive delta at `from_t_us` the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track of the composition). Each layer snaps on its own grid. Refuses, moving nothing: a start that would cross 0 (`NegativeLayerStart`), a landing on an occupied span (`LayerOverlap`, naming the pair), a locked lane (`TrackLocked`). Returns `{ moved: [layer records], delta_us, requested_delta_us }`.",
+    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and at `from_t_us` with a positive delta the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track). Each layer snaps on its own grid; its record's `adjusted` says where it landed. Nothing moves on a refusal: a sweep splitting a link (`ShiftLinkStraddles` — use `layer_ids`), a start crossing 0, an occupied landing, a locked lane. Returns `{ moved: [layer records], delta_us }`.",
     inputSchema: { type: 'object', properties: {
       layer_ids: LAYER_IDS_SCHEMA('The layers to shift, all in one composition. Exactly one of this and `from_t_us`.'),
       from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
@@ -1472,7 +1495,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       const delta = parseIntNum(a.delta_us, 'delta_us')
       if (delta === 0) throw new McpArgError('delta_us is 0 — nothing would move', 'delta_us')
       return { op: 'shift_layers', args: byIds
-        ? { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), delta_us: delta, escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true }
+        ? { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer, or sweep from a time with from_t_us').map((s) => parseUuid(s, 'layer_ids')), delta_us: delta, escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true }
         : { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
     } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
@@ -1617,7 +1640,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'move_effect', exec: 'table', annotations: ANN_SET,
     description: "Reorder an effect within its layer's chain. new_index is 0-based; 0 = first applied. Must be < effect count.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA, new_index: { type: 'integer', description: 'Target position in the chain; 0 is applied first.' } }, required: ['effect_id', 'layer_id', 'new_index'] },
-    parseArgs: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: parseNum(a.new_index, 'new_index') } }) },
+    parseArgs: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: parseIntNum(a.new_index, 'new_index') } }) },
   { name: 'delete_effect', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Remove an effect from a layer by id.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA }, required: ['effect_id', 'layer_id'] },
@@ -1699,7 +1722,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
   { name: 'set_project_settings', exec: 'table', annotations: ANN_SET,
-    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Read current values from `project://current`.",
+    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Read current values from `project://settings`.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
       description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
@@ -1783,14 +1806,19 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       outline_width: { type: 'number', description: '0 removes the outline; a positive width (composition px) adds or resizes it.' },
       layer_ids: LAYER_IDS_SCHEMA('Only these captions. Omit for every caption in the project.'),
     }, required: [] },
-    parseArgs: (a) => ({ op: 'restyle_captions', args: {
-      layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'omit it to restyle every caption, or name at least one').map((s) => parseUuid(s, 'layer_ids')),
-      patch: {
+    parseArgs: (a) => {
+      const patch = {
         font_family: parseStrOpt(a.font_family, 'font_family'),
         font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,
         color: a.color === undefined || a.color === null ? null : parseRgba(a.color, 'color'),
         outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
-      } } }) },
+      }
+      if (Object.values(patch).every((v) => v === null || v === undefined)) throw new McpArgError('patch names no style — send at least one of font_family, font_size_px, color, outline_width; a call that changes nothing would still report success', 'font_family')
+      return { op: 'restyle_captions', args: {
+        layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'omit it to restyle every caption, or name at least one').map((s) => parseUuid(s, 'layer_ids')),
+        patch,
+      } }
+    } },
   { name: 'merge_captions', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Merge two or more captions of ONE caption lane into the earliest, as one recorded edit: its span becomes the union, its text the texts joined by a line break in time order, its style stays; the others are deleted. A gap between them is spanned. Refuses a layer that is not a caption, captions on different lanes, and a union that would overlap another cue of the lane (`LayerOverlap`). Returns the merged caption's record with `removed`.",
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more captions on one caption track.') }, required: ['layer_ids'] },
@@ -1871,10 +1899,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'correct_caption_text', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Correct the captions against the project's reference text — `set_project_settings { correction_script }`: the script, the running order, the spelling of every name — and re-segment the cues the correction changed. Returns `{ changed }`. Refused while the script is blank (`InvalidArgument`, field `correction_script`). Every caption in the composition by default; `layer_ids` narrows it (an id that is not a caption Text layer refuses the call). A cue with word timing (see `apply_transcripts`) may be SPLIT or MERGED to match the new wording, each cue timed from its words; one without it is corrected in place. Refuses whole, before any write, if a target or its track is locked. One recorded edit.",
+    description: "Correct the captions against the project's reference text — `set_project_settings { correction_script }` — and re-segment the cues the correction changed. Returns `{ changed }`, counting a re-segmented group whole. Refused while the script is blank (`InvalidArgument`, field `correction_script`). Every caption in the composition by default; `layer_ids` narrows it (a non-caption id refuses the call). A cue with word timing (see `apply_transcripts`) may be SPLIT or MERGED to match the new wording, each timed from its words; one without it is corrected in place. Refuses whole, before any write, if a target or its track is locked. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The captions to correct. Omit for every caption in the composition.' },
-      composition_id: COMPOSITION_ID_SCHEMA,
+      composition_id: CAPTIONS_COMPOSITION_ID_SCHEMA,
     }, required: [] },
     parseDedicated: (a) => ({
       layer_ids: a.layer_ids === undefined || a.layer_ids === null
@@ -1896,7 +1924,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'set_history_lock', exec: 'dedicated', annotations: ANN_SET,
-    description: "Block reverts (undo / redo / jump_to / restore_checkpoint) while a batch runs, or release the block. `locked: true` needs a `reason`, shown beside the lock badge in the agent and history panels and returned to any revert attempt; `locked: false` takes none and is idempotent. Never affects what records: the lock rejects reverts, it does not fold a batch into one history entry. Last writer wins. Always pair the lock with its release — ending the owning work session or disconnecting also releases it, and the user can unlock locally; switching views does not.",
+    description: "Block reverts (undo / redo / jump_to / restore_checkpoint) while a batch runs, or release the block. `locked: true` needs a `reason`, shown beside the lock badge in the agent and history panels and returned to any revert attempt; `locked: false` takes none and is idempotent. Never affects what records: the lock rejects reverts, it does not fold a batch into one history entry. Last writer wins. Always pair the lock with its release: ending the work session that OWNS it releases it, as does that connection going away; a lock taken outside a work session is released only by `locked: false` (from any connection) or by the user, and switching views never releases one. Unrecorded.",
     inputSchema: { type: 'object', properties: {
       locked: { type: 'boolean', description: 'true blocks reverts; false releases the block.' },
       reason: { type: 'string', description: 'Why the history is locked — required when locking, refused when unlocking.' },
@@ -1911,7 +1939,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { locked, reason }
     } },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
-    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce — the schema has the shapes; named presets go through `update_keyframe`); omitted, it inherits the preceding segment's easing. One side or the continuity: `update_keyframe`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
+    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalars, `{r,g,b,a}` (0..255) for \"color\"; an effect param must sit in its catalogued range (`effects://catalog`). `interp` (optional) eases the segment LEAVING this key (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce); omitted, it inherits the preceding segment's. A Bezier on the LAST key is refused — its p2 lands on the next key, so add that key first. One side, the continuity or a preset: `update_keyframe`; Auto tangents: `smooth_keyframes`.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
@@ -2026,7 +2054,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: {
       format: { type: 'string', enum: ['srt', 'vtt'], description: 'SubRip or WebVTT.' },
       track_id: { type: 'string', description: 'One caption lane only; omit for every caption lane of the composition.' },
-      composition_id: COMPOSITION_ID_SCHEMA,
+      composition_id: CAPTIONS_COMPOSITION_ID_SCHEMA,
     }, required: ['format'] },
     parseDedicated: (a) => ({
       format: parseOneOf(a.format, ['srt', 'vtt'], 'format'),
@@ -2042,11 +2070,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it.",
+    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Unrecorded.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session.",
+    description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session. Unrecorded.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'What this work session is for; shown to the user beside the busy badge.' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
   // ── hybrid defs (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),

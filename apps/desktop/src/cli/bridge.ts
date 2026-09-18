@@ -96,11 +96,10 @@ export class Bridge {
 
   /// Idempotent: onclose fires again when we close the client here.
   ///
-  /// Terminates the app-side SESSION too, not just the connection: streamable
-  /// HTTP releases a session only on the client's DELETE, and a session left
-  /// behind holds the agent's work session and history lock until the app's
-  /// reaper notices its stream is gone. Best-effort — the app may already be
-  /// down, which is one of the reasons this is called.
+  /// Terminates the app-side SESSION too, not just the connection — the DELETE
+  /// that releases the work session and the history lock at once, instead of
+  /// leaving them to the app's reaper (`main/mcp/index.ts`). Best-effort: the
+  /// app may already be down, which is one of the reasons this is called.
   markDown(): void {
     const c = this.client
     if (!c) return

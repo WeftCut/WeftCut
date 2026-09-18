@@ -205,11 +205,17 @@ export class AgentActivityService {
 
   /** `forced` is the takeover: another connection ends a session it does not
    *  own, because the owner is gone and the prescribed batch flow is otherwise
-   *  disabled app-wide until the app restarts. It releases the session's history
-   *  lock too, whoever's connection took it — a lock with no live owner blocks
-   *  every undo for nobody's benefit. Recorded as `end_reason: 'forced'` so the
-   *  panel and the log say what happened. */
+   *  disabled app-wide until the app restarts. Recorded as `end_reason: 'forced'`
+   *  so the panel and the log say what happened.
+   *
+   *  Either way the ending side's history lock goes with it — the one it took
+   *  inside this session, or the one its CONNECTION took before the session
+   *  began — because a lock whose owner is gone blocks every revert for nobody.
+   *  Another live connection's lock is never touched. */
   end(reason: 'agent' | 'user' | 'disconnected' | 'forced', connection?: string): void {
+    // A connection going away releases the lock it holds even with no work
+    // session to end: nothing else ever would.
+    if (reason === 'disconnected' && connection !== undefined && this.lockOwner?.connection === connection) this.unlock()
     if (!this.active) return
     const caller = connection ?? this.context.getStore()?.activity.connection_id
     if (reason !== 'user' && reason !== 'forced' && caller !== this.active.connection_id) {
@@ -220,8 +226,8 @@ export class AgentActivityService {
     ended.ended_at = new Date().toISOString()
     ended.end_reason = reason
     this.active = null
-    const lockIsSessions = this.lockOwner?.session === ended.id
-    if (lockIsSessions && (reason === 'forced' || this.lockOwner?.connection === ended.connection_id)) this.unlock()
+    const owner = this.lockOwner
+    if (owner !== null && (owner.session === ended.id || owner.connection === ended.connection_id)) this.unlock()
     this.trim()
     this.publish()
   }

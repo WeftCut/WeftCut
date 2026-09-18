@@ -5,12 +5,11 @@
 // and with a positive delta at a time the ripple INSERT: open a gap at
 // `from_t_us`, then place into it.
 //
-// The arithmetic is `applyMoveLayer`'s, wholesale: `shiftOnGrids` lands every
-// member on its own lattice, `floorShiftAtZero` takes the zero boundary as one
-// body, so a set lands exactly where a drag of the same set would. Overlap is
-// validate's (`LayerOverlap` names the pair); a locked lane refuses before
-// anything moves; a strict caller (MCP) is refused at zero rather than floored,
-// the move tools' rule (ADR 0048 — no silent clamping).
+// The arithmetic is `applyMoveLayer`'s, wholesale (`shiftOnGrids`,
+// `floorShiftAtZero` in `../snap`), so a set lands exactly where a drag of the
+// same set would. Overlap is validate's (`LayerOverlap` names the pair); a
+// locked lane refuses before anything moves; a strict caller (MCP) is refused
+// at zero rather than floored (ADR 0048).
 import type { Composition, Project, Uuid } from '../model'
 import { rootComposition } from '../model'
 import { CommandFailure } from '../errors'
@@ -19,7 +18,9 @@ import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameCompositi
 import { linkSiblingsExcluding } from './links'
 
 /** What the shift touched: the layers re-timed (partners included) and the
- *  delta actually applied, which a non-strict caller may have had floored. */
+ *  delta the set was shifted by before each member's own grid landing — a
+ *  non-strict caller's request may have been floored at 0. Where a member
+ *  landed is in the snapshot; the MCP record reads it back per layer. */
 export interface ShiftLayersResult { moved: Uuid[]; delta_us: number }
 
 /** The set a named list means: the layers plus — unless `escapeLink` — their
@@ -46,8 +47,10 @@ export function applyShiftLayers(p: Project, ids: readonly Uuid[], deltaUs: numb
 
 /** Shift every layer of a composition (the root when `compositionId` is null)
  *  that STARTS at or after `fromTUs`, on `trackIds` or on every track — "shift
- *  everything after t". A link partner starting earlier stays, as it does
- *  under a ripple: the cut is a place in time, not a membership. */
+ *  everything after t". A link the time (or the lane filter) splits is refused
+ *  as `ShiftLinkStraddles`: a link is "these move together", and a sweep that
+ *  moved one member and not another would slip their sync — the refusal a
+ *  ripple gives a link reaching across its cut. */
 export function applyShiftLayersFrom(
   p: Project, compositionId: Uuid | null, trackIds: readonly Uuid[] | null, fromTUs: number, deltaUs: number, strict = false,
 ): ShiftLayersResult {
@@ -59,6 +62,11 @@ export function applyShiftLayersFrom(
   for (const t of c.tracks) {
     if (lanes && !lanes.has(t.id)) continue
     for (const l of t.layers) if (l.t_start_us >= fromTUs) ids.push(l.id)
+  }
+  const set = new Set(ids)
+  for (const link of c.links) {
+    const inside = link.members.filter((m) => set.has(m)).length
+    if (inside > 0 && inside < link.members.length) throw new CommandFailure({ error: 'ShiftLinkStraddles', link: link.id, from_t_us: fromTUs })
   }
   return shiftInComposition(c, ids, deltaUs, strict)
 }

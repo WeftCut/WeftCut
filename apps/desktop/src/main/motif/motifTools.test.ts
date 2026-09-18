@@ -125,6 +125,11 @@ describe('runMotifTool', () => {
     expect(emitted).toBe(0)
   })
 
+  it('refuses a mode that is neither "new" nor "update" instead of reading it as an update', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo')))
+    expect(() => runMotifTool('install_motif', { draft_id: 'foo', mode: 'updat' }, deps)).toThrow(/updat/)
+  })
+
   it('install_motif accepts the MCP flat string mode "new"', () => {
     store.writeDraft('foo', doc(m('Foo', 'foo')))
     const id = runMotifTool('install_motif', { draft_id: 'foo', mode: 'new' }, deps) as string

@@ -204,20 +204,21 @@ export function captionCueCount(p: Project): number {
 
 // ── The adjusted[] slot ─────────────────────────────────────────────────────
 
-/** `reason` is `'grid'` and only `'grid'`: since the strict placing rule, the
- *  one thing a tool may change about a time it was sent is to land it on the
- *  layer's lattice (at most half a quantum). Anything else — a start before 0,
- *  a trim past the other edge — is refused before the write, so it never
- *  appears here. */
-export interface Adjustment { field: string; requested: number; applied: number; reason: 'grid' }
+/** `reason` says what moved a number the caller did not choose. `'grid'`: a
+ *  time it sent landed on the layer's lattice (at most half a quantum) — the one
+ *  change a tool may make to a time it was sent; a start before 0 or a trim past
+ *  the other edge is refused before the write and never appears here.
+ *  `'content'`: a Motif's props shortened its content, so the layer's end (and
+ *  its source offset) followed; `requested` is then the value the layer had. */
+export interface Adjustment { field: string; requested: number; applied: number; reason: 'grid' | 'content' }
 /** Every (field, requested, applied) whose two numbers differ. A requested
  *  value that is not a finite number was not a request for that field. */
-export function adjusted(pairs: ReadonlyArray<readonly [string, unknown, number | null | undefined]>): Adjustment[] {
+export function adjusted(pairs: ReadonlyArray<readonly [string, unknown, number | null | undefined]>, reason: Adjustment['reason'] = 'grid'): Adjustment[] {
   const out: Adjustment[] = []
   for (const [field, requested, applied] of pairs) {
     if (typeof requested !== 'number' || !Number.isFinite(requested)) continue
     if (typeof applied !== 'number') continue
-    if (requested !== applied) out.push({ field, requested, applied, reason: 'grid' })
+    if (requested !== applied) out.push({ field, requested, applied, reason })
   }
   return out
 }
@@ -257,7 +258,19 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // ── layers ──
   set_position: (c) => layerOf(c),
   translate_path: (c) => layerOf(c),
-  update_layer_params: (c) => layerOf(c),
+  // A Motif whose props shortened its content pulls the layer's end (and its
+  // source offset) in; the record says so, since the caller sent neither.
+  update_layer_params: (c) => {
+    const rec = layerOf(c)
+    const id = str(c.args.layer_id)
+    const prev = located(c.before, id)
+    const next = located(c.after, id)
+    if (!prev || !next || next.layer.params.kind !== 'Motif') return rec
+    const patch = obj(c.args.patch)
+    const pairs: Array<readonly [string, unknown, number]> = [['t_end_us', prev.layer.t_end_us, next.layer.t_end_us]]
+    if (patch.src_in_us === undefined) pairs.push(['src_in_us', (prev.layer.params as { src_in_us: number }).src_in_us, (next.layer.params as { src_in_us: number }).src_in_us])
+    return { ...rec, adjusted: adjusted(pairs, 'content') }
+  },
   restack_layer: (c) => layerOf(c),
   set_scale_linked: (c) => {
     const hit = located(c.after, str(c.args.layer_id))
@@ -301,11 +314,22 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       moved: ripple ? movedLayers(c.before, c.after, new Set(ids)) : [],
     }
   },
-  shift_layers: (c) => ({
-    moved: movedLayers(c.before, c.after),
-    delta_us: (c.value as { delta_us: number }).delta_us,
-    requested_delta_us: c.args.delta_us,
-  }),
+  // `moved` is the whole set the shift addressed, partners included, each
+  // with where it landed and `adjusted` for its own grid snap: the set has no
+  // single applied delta, since a frame-grid member and a sample-grid member
+  // land different distances from one request.
+  shift_layers: (c) => {
+    const v = c.value as { moved: Uuid[]; delta_us: number }
+    const requested = typeof c.args.delta_us === 'number' ? c.args.delta_us : v.delta_us
+    return {
+      moved: v.moved.map((id) => {
+        const prev = located(c.before, id)
+        const now = located(c.after, id)
+        return { ...(layerRecord(c.after, id) ?? { layer_id: id }), adjusted: prev ? adjusted([['t_start_us', prev.layer.t_start_us + requested, now?.layer.t_start_us]]) : [] }
+      }),
+      delta_us: requested,
+    }
+  },
   ripple_delete_gap: (c) => ({
     track_id: str(c.args.track_id), start_us: c.args.start_us, end_us: c.args.end_us,
     moved: movedLayers(c.before, c.after),
@@ -405,7 +429,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   jump_to: (c) => ({ index: c.args.index, ...historyOf(c) }),
   delete_checkpoint: (c) => ({ checkpoint_id: str(c.args.checkpoint_id) }),
   // ── captions / roles ──
-  restyle_captions: (c) => ({ captions: captionCueCount(c.after), ...(Array.isArray(c.args.layer_ids) ? { restyled: (c.args.layer_ids as unknown[]).length } : {}) }),
+  restyle_captions: (c) => ({ captions: captionCueCount(c.after), restyled: typeof c.value === 'number' ? c.value : 0 }),
   merge_captions: (c) => {
     const v = c.value as { layer: Uuid; removed: Uuid[] }
     const kept = located(c.after, v.layer)

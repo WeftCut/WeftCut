@@ -121,6 +121,21 @@ describe('a clamp is refused before any write', () => {
   })
 })
 
+describe('an index outside the stack is refused, not counted from the end', () => {
+  it('move_track and move_effect refuse a negative index, and nothing moves', () => {
+    // `splice(-1, 0, x)` counts from the end and would place the track second
+    // from the top under a success report.
+    const a = freshActor()
+    const tracks = root(a.snapshot()).tracks.map((t) => t.id)
+    expect(refusal(call(a, 'move_track', { track_id: tracks[0], new_position: -1 }))).toContain('0..')
+    expect(root(a.snapshot()).tracks.map((t) => t.id)).toEqual(tracks)
+    const layer = colorLayer(a, aRollId(a), 0, 2_000_000)
+    const effect = ok(call(a, 'add_effect', { layer_id: layer, kind: 'blur' })).effect_id as string
+    expect(refusal(call(a, 'move_effect', { layer_id: layer, effect_id: effect, new_index: -1 }))).toContain('0..')
+    expect(refusal(call(a, 'move_track', { track_id: tracks[0], new_position: 0.5 }))).toContain('new_position')
+  })
+})
+
 describe('the renderer\'s drag keeps its clamps — the flag is the MCP parsers\' alone', () => {
   it('a non-strict move floors at 0 and a non-strict trim clamps, as before', () => {
     const a = freshActor()

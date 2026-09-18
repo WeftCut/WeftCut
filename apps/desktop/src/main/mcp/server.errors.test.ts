@@ -182,6 +182,39 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   })
 })
 
+describe('the routes with no parser of their own are still gated', () => {
+  it("a motif tool's advertised enum and required fields are enforced before the store is touched", async () => {
+    // Without a gate the raw string reaches the authoring layer and surfaces as
+    // a lookup for `undefined` — a store error for what is a bad argument.
+    const touched: string[] = []
+    const host = () => tsHostStub({ motifTool: (name) => { touched.push(name); return [] } })
+    const mode = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', { draft_id: 'd1', mode: 'updat' }))
+    expect(mode.structuredContent.code).toBe('invalid_params')
+    expect(mode.content[0].text).toContain('mode')
+    const missing = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', {}))
+    expect(missing.content[0].text).toContain('draft_id')
+    expect(touched).toEqual([])
+  })
+
+  it('a hybrid told to work on a layer that is gone answers invalid_params, not internal', async () => {
+    const host = tsHostStub({ compute: { detectPauses: vi.fn(async () => { throw new Error('the layer check comes first') }) } })
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'remove_pauses', { layer_id: NOWHERE }))
+    expect(out.structuredContent.code).toBe('invalid_params')
+    expect(out.content[0].text).toContain('project://tracks')
+  })
+
+  it('a picture view of a media id that names nothing is invalid_params, never not_found', async () => {
+    // `not_found` over tools means "no such tool" and the host turns it into a
+    // JSON-RPC error; a bad id is the caller's argument, and the reader's own
+    // sentence says which.
+    const backend = fakeBackend()
+    backend.mcpReadResource = async () => { throw Object.assign(new Error(`media ${NOWHERE} not found`), { code: -32601 }) }
+    const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'read_project', { view: 'media_thumbnail', id: NOWHERE }))
+    expect(out.structuredContent.code).toBe('invalid_params')
+    expect(out.content[0].text).toContain(NOWHERE)
+  })
+})
+
 describe('over the wire, the client sees a result for a refusal and a rejection for an unknown tool', () => {
   async function connected() {
     const server = buildMcpServer(fakeBackend(), { getTsHost: () => tsHostStub() })

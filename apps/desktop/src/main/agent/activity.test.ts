@@ -54,12 +54,24 @@ describe('agent work sessions', () => {
     await run('one', () => { service.begin('Edit'); service.lock('one') })
     await run('two', () => service.lock('two'))
     await expect(run('two', () => service.end('agent'))).rejects.toThrow('OwnerMismatch')
-    service.end('disconnected', 'two')
-    expect(service.snapshot().session).not.toBeNull()
+    // 'two' is still connected, so ending 'one's session leaves its lock alone.
     service.end('user')
+    expect(service.snapshot().session).toBeNull()
     expect(actor.historyStatus().lock_reason).toBe('two')
     service.unlock()
     expect(actor.historyStatus().lock_reason).toBeUndefined()
+  })
+
+  it('releases the lock of a connection that went away, work session or not', async () => {
+    // A lock taken outside a work session belongs to its CONNECTION, and once
+    // that is gone nothing else would ever release it while it blocks every
+    // revert.
+    const { service, actor, run } = setup()
+    await run('one', () => { service.begin('Edit'); service.lock('one') })
+    await run('two', () => service.lock('two'))
+    service.end('disconnected', 'two')
+    expect(actor.historyStatus().lock_reason).toBeUndefined()
+    expect(service.snapshot().session).not.toBeNull()
   })
 
   it('closes on explicit disconnect but retains the actual running task outcome', async () => {

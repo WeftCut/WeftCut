@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
+import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
 import { blankProject, eachLayer, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
@@ -126,11 +127,13 @@ export interface TsActorHost {
 }
 
 /** Mints the `project:changed` wire payload — the shape the renderer event and
- *  the mcp:change relay both see. */
-export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'user' | 'agent'; client: string | null; summary: string; timestamp: string; affected_count: number } {
+ *  the `notifications/weftcut/change` relay both see. `affected` carries the
+ *  refs themselves: an agent watching the feed decides from the ids whether an
+ *  edit touched its own work, which a count cannot tell it. */
+export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'user' | 'agent'; client: string | null; summary: string; timestamp: string; affected: EntityRef[] } {
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
-  return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected_count: e.affected.length }
+  return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected: e.affected }
 }
 
 /** Extract Manifest-shaped entries from a `list_motifs` JSON array.

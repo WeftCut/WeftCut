@@ -32,7 +32,7 @@ import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
 import { MCP_INSTRUCTIONS } from './instructions.js'
-import { effectsCatalogView } from './effectsCatalog.js'
+import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 
@@ -203,18 +203,21 @@ function unwrapToolEnvelope(json: string, name: string): ServerResult {
  *  A TS-owned hybrid def (`auto_split_by_shot`, `remove_pauses`) carries a
  *  `parseDedicated`; running it here refuses a malformed id in the same words
  *  every table tool uses (the bijection gate runs it too, but on fixtures). A
- *  Rust-sourced tool is checked against its advertised schema (`argCheck.ts`)
- *  so every missing or mistyped field is named at once, in the tool's own
- *  vocabulary, instead of serde's one-field-at-a-time text. Returns the
- *  refusal, or null when the args pass. */
+ *  motif tool and a Rust-sourced tool are checked against their advertised
+ *  schema (`argCheck.ts`), so a missing `draft_id` or a `mode` outside its enum
+ *  is named here rather than surfacing as a store lookup for `undefined`, and
+ *  a Rust tool missing two fields is refused once in its own vocabulary instead
+ *  of serde's one-field-at-a-time text. Returns the refusal, or null when the
+ *  args pass. */
 async function refuseBadArgs(backend: Backend, name: string, args: Record<string, unknown>): Promise<ServerResult | null> {
   if (HYBRID_TOOLS.has(name) && MCP_TOOLS.has(name)) {
     try { mcpDef(name).parseDedicated?.(args) }
     catch (e) { if (e instanceof McpArgError) return toolErrorResult(e.toJson()); throw e }
     return null
   }
-  const tool = (await rustCatalog(backend)).tools.find((t) => t.name === name)
-  const schema = tool?.inputSchema ?? tool?.input_schema
+  const motif = MOTIF_TOOL_DEFS.find((d) => d.name === name)
+  const tool = motif ? undefined : (await rustCatalog(backend)).tools.find((t) => t.name === name)
+  const schema = motif?.inputSchema ?? tool?.inputSchema ?? tool?.input_schema
   const message = schema ? argProblemMessage(name, schema, args) : null
   return message === null ? null : toolErrorResult({ code: 'invalid_params', message })
 }
@@ -333,7 +336,12 @@ async function dispatchTool(
     if (name === 'read_project' && (args.view === 'media_thumbnail' || args.view === 'media_frame')) {
       const p = mcpDef('read_project').parseDedicated!(args)
       const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.t_us as number}` : `media://${p.id as string}/thumbnail`
-      const res = await handleReadResource(backend, () => tsHost, uri, getVlm)
+      // The resource reader answers a missing id with the resource vocabulary
+      // (`not_found`, which over tools means "no such tool"); as a tool call it
+      // is a bad argument, and the reader's own sentence says which.
+      const res = await handleReadResource(backend, () => tsHost, uri, getVlm).catch((e: unknown) => {
+        throw new McpArgError(e instanceof Error ? e.message : String(e), 'id')
+      })
       const first = (res as { contents?: Array<{ blob?: string; text?: string; mimeType?: string }> }).contents?.[0]
       if (first?.blob) return { content: [{ type: 'image', data: first.blob, mimeType: first.mimeType ?? 'image/jpeg' }] } as unknown as ServerResult
       return { content: [{ type: 'text', text: first?.text ?? '' }] } as unknown as ServerResult
@@ -359,6 +367,8 @@ async function dispatchTool(
     if (route === 'motif') {
       // Catalog-read + authoring + install, served in TS. The raw value
       // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
       const raw = tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw, args) as unknown as ServerResult
     }

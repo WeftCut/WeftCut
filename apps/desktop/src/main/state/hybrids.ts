@@ -10,7 +10,7 @@
 import type { ActorHandle } from './actor'
 import type { AudioParams, Composition, Layer, MediaItem, Rgba, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
-import { McpArgError } from './mcp-commands'
+import { McpArgError, mapCommandError } from './mcp-commands'
 import { parseDiscardSegments } from './mutations/split'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
@@ -245,9 +245,10 @@ function resolveShotLayer(
   deps: HybridDeps,
 ): { layer: Layer; media: MediaItem; params: VideoClipParams; composition: Composition } {
   const { layer, composition } = findLayer(layerId, deps)
-  if (!layer) throw new Error(`shot cuts: layer ${layerId} not found`)
+  // The caller named the wrong layer: a bad argument, not a fault of the host.
+  if (!layer) throw new McpArgError(`shot cuts: layer ${layerId} not found — project://tracks lists the current layers`, 'layer_id')
   if (layer.params.kind !== 'VideoClip')
-    throw new Error(`shot cuts: layer ${layerId} is not a VideoClip — shots are a video concept`)
+    throw new McpArgError(`shot cuts: layer ${layerId} is not a VideoClip — shots are a video concept`, 'layer_id')
   const params = layer.params
   const media = (deps.actor.snapshot().media_pool as Record<string, MediaItem>)[params.media]
   if (!media) throw new Error(`shot cuts: layer ${layerId} references missing media ${params.media}`)
@@ -272,7 +273,7 @@ function resolvePauseTarget(
   const snapshot = deps.actor.snapshot()
   const resolved = resolvePauseSubject(layerId, snapshot)
   if (!resolved.ok) {
-    if (resolved.reason === 'not_found') throw new Error(`${verb}: layer ${layerId} not found`)
+    if (resolved.reason === 'not_found') throw new McpArgError(`${verb}: layer ${layerId} not found — project://tracks lists the current layers`, 'layer_id')
     throw playsNoSoundError(verb, layerId, snapshot)
   }
   // The subject is an Audio layer by construction; the narrowing is for the
@@ -816,8 +817,10 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         // The row is provisional until its hash lands, so a read that fails
         // here leaves nothing behind. `force: false`: were a layer already
         // placed on it, the row stays and the error still names the failure.
-        const rolledBack = deps.actor.dispatch('remove_media', { media: item.id, force: false }).ok
-        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. ${rolledBack ? 'The provisional pool row was rolled back; nothing was imported' : `The provisional pool row ${item.id} stays because a layer already references it; its hash is still pending`}`)
+        const rollback = deps.actor.dispatch('remove_media', { media: item.id, force: false })
+        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. ${rollback.ok
+          ? 'The provisional pool row was rolled back; nothing was imported'
+          : `The provisional pool row ${item.id} could not be rolled back (${mapCommandError(rollback.error).message}); it stays with a pending hash — delete_media removes it`}`)
       }
       const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
       // Benign if the media was removed during hashing — nothing left to enqueue.

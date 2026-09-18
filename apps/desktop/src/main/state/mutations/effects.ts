@@ -104,7 +104,7 @@ export function applyMoveEffect(p: Project, layerId: Uuid, effectId: Uuid, newIn
   const from = effects.findIndex((e) => e.id === effectId)
   if (from < 0) throw new CommandFailure({ error: 'EffectNotFound', effect: effectId })
   const len = effects.length
-  if (newIndex >= len) throw new CommandFailure({ error: 'EffectIndexOutOfRange', index: newIndex, len })
+  if (newIndex < 0 || newIndex >= len) throw new CommandFailure({ error: 'EffectIndexOutOfRange', index: newIndex, len })
   const [e] = effects.splice(from, 1)
   effects.splice(newIndex, 0, e)
 }

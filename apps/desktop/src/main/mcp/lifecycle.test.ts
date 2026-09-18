@@ -230,6 +230,48 @@ describe('a session whose client is gone is closed by the host', () => {
     expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)
   })
 
+  it('a GET the transport refuses does not make the session look alive', async () => {
+    // A GET without the SSE `Accept` is answered 406 and never becomes a
+    // stream. Counting it as one would pin the session "streaming" forever and
+    // nothing could judge the client gone — the failure this reaper exists for.
+    const { rows, deps } = collector()
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 60, graceMs: 60, sweepMs: 10 } })
+    hosts.push(host)
+    const bind = host.getInfo().bind
+    const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
+    const init = await post(port, INITIALIZE, { authorization: 'Bearer test-token' })
+    await new Promise<void>((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'GET', headers: { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId!, accept: 'application/json' } }, (res) => {
+        expect(res.statusCode).not.toBe(200)
+        res.resume(); res.on('end', () => resolve())
+      })
+      sockets.push(req)
+      req.on('error', () => resolve())
+      req.end()
+    })
+    const gone = await rowWith(rows, 'MCP client gone: session closed')
+    expect(gone.details).toMatchObject({ session_id: init.sessionId, reason: 'idle' })
+  })
+
+  it('a client whose stream dropped and then went silent is closed, the row naming the stream', async () => {
+    // The headline case: an SDK client that exits takes its SSE stream with it
+    // and sends nothing more.
+    const { rows, deps } = collector()
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 60_000, graceMs: 60, sweepMs: 10 } })
+    hosts.push(host)
+    const bind = host.getInfo().bind
+    const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
+    const init = await post(port, INITIALIZE, { authorization: 'Bearer test-token' })
+    await new Promise<void>((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'GET', headers: { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId!, accept: 'text/event-stream' } }, (res) => { res.destroy(); resolve() })
+      sockets.push(req)
+      req.on('error', () => resolve())
+      req.end()
+    })
+    const gone = await rowWith(rows, 'MCP client gone: session closed')
+    expect(gone.details).toMatchObject({ session_id: init.sessionId, reason: 'stream_closed' })
+  })
+
   it('a client whose stream dropped but who keeps making requests is not judged gone either', async () => {
     const { rows, deps } = collector()
     const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 400, graceMs: 400, sweepMs: 10 } })

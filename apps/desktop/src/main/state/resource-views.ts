@@ -89,18 +89,23 @@ export function layerEnvelope(layer: Layer, c: Composition): Record<string, unkn
  *  `muted` / `solo` are stored on a track but nothing mixes by them — the mix
  *  gates by ROLE (`set_role_flags`; `audio/mix.rs` and the renderer's
  *  `roleGate.ts` read roles only). A read that advertised them would advertise
- *  a control with no writer and no effect, so they stay off the wire until the
- *  mix reads them. */
+ *  a control with no MCP writer and no effect, so they stay off the wire until
+ *  the mix reads them. */
 export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
   return c.tracks.map(({ layers, muted: _muted, solo: _solo, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
 }
 
-/** `project://settings`: the editing preferences plus the project metadata —
- *  six booleans and a dirty signal, without the whole `project://current`.
- *  `modified_at` moves on every recorded commit. */
+/** `project://settings`: the editing preferences plus the project metadata,
+ *  without the whole `project://current`. `metadata.modified_at` is the dirty
+ *  signal and moves on every recorded commit. */
 export function settingsView(p: Project): Record<string, unknown> {
   return { ...p.settings, metadata: p.metadata }
 }
+
+/** The views a `?composition=<id>` query scopes — one per composition-owned
+ *  collection. `read_project`'s `SCOPED_PROJECT_VIEWS` names the same set as
+ *  views; `resource-views.test` pins the two equal. */
+const SCOPED_BASES: ReadonlySet<string> = new Set(['project://composition', 'project://tracks', 'project://markers', 'project://links', 'project://transitions'])
 
 /** The composition a `?composition=<id>` query selects, the root when absent.
  *  Not-found for an unknown id, so an agent that guessed wrong learns it from
@@ -133,10 +138,17 @@ export function serveProjectResource(
   }
   // The per-composition views take `?composition=<id>`; absent means the root.
   // `project://composition` scopes too — a Group's envelope is readable by id,
-  // never the ROOT answered under the requested URI.
+  // never the ROOT answered under the requested URI. Any other query key, and a
+  // scope on a project-wide view, is refused rather than ignored: a misspelt key
+  // would otherwise answer the root under the URI the caller wrote.
   const q = uri.indexOf('?')
   const base = q === -1 ? uri : uri.slice(0, q)
-  const composition = q === -1 ? null : new URLSearchParams(uri.slice(q + 1)).get('composition')
+  const query = q === -1 ? null : new URLSearchParams(uri.slice(q + 1))
+  if (query) {
+    for (const k of query.keys()) if (k !== 'composition') resourceNotFound(`unknown query key '${k}' on ${base} — the one query is ?composition=<id>, on ${[...SCOPED_BASES].join(', ')}`)
+    if (!SCOPED_BASES.has(base)) resourceNotFound(`${base} takes no ?composition= scope — it reads the whole project`)
+  }
+  const composition = query?.get('composition') ?? null
   const snap = actor.snapshot()
   switch (base) {
     case 'project://current': return textResource(uri, serializeProject(snap))

@@ -103,9 +103,11 @@ const VALIGNS: readonly VAlign[] = ['Top', 'Middle', 'Bottom']
  *  `undefined`, i.e. a layer composited by no rule at all. */
 const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference']
 
-/** apply_params_patch — kind-matched field merge; a discriminant
- *  mismatch is the only error. Animated fields collapse to Static(v) (MVP: this
- *  overwrites any keyframe track). Motif props merge field-wise (never replace). */
+/** apply_params_patch — kind-matched field merge. Refuses a discriminant
+ *  mismatch and a value the kind cannot store (an enum outside its variants, a
+ *  zero scale, a face outside its range, a Path-mode x/y). Animated fields
+ *  collapse to Static(v), overwriting any keyframe track. Motif props merge
+ *  field-wise; only a rebind (a new `motif_id`) replaces them. */
 export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   const p = layer.params
   if ('transform' in p && p.transform.position.mode === 'Path' && ('x' in patch || 'y' in patch)) throw new CommandFailure({ error:'InvalidArgument',field:'position',detail:'This layer follows a path. Translate or edit its path, or explicitly bake to XY.' })
@@ -308,7 +310,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.anchor_x !== undefined) m.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) m.transform.anchor_y = stat(a.anchor_y)
       if (patch.src_in_us !== undefined) m.src_in_us = patch.src_in_us
-      if (patch.motif_id !== undefined) m.motif_id = patch.motif_id
+      // A rebind starts the props over (the caller's, canonicalised upstream
+      // when the manifest is known): the old motif's props are not the new one's.
+      if (patch.motif_id !== undefined && patch.motif_id !== m.motif_id) { m.motif_id = patch.motif_id; m.props = {} }
       if (patch.motif_version !== undefined) m.motif_version = patch.motif_version
       if (patch.props !== undefined) for (const k of Object.keys(patch.props)) m.props[k] = patch.props[k]
       return
@@ -384,15 +388,23 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   // A Motif's props are checked against its manifest BEFORE the merge, the
   // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
-  // render that ignores it. A motif the catalog does not
+  // render that ignores it. The manifest is the motif the layer will NAME once
+  // the patch lands: a rebind (a new `motif_id`) starts from the patch's props
+  // alone, canonicalised with the new manifest's defaults and version, because
+  // the old motif's props are not the new one's. A motif the catalog does not
   // know stays permissive — the project may come from a build that knows it.
-  if (patch.kind === 'Motif' && patch.props !== undefined && layer.params.kind === 'Motif') {
-    const manifest = catalog.get(layer.params.motif_id)
-    if (manifest !== undefined) {
-      try { canonicalizeProps(manifest, { ...layer.params.props, ...patch.props }) }
-      catch (e) {
-        if (e instanceof MotifPropError) throw new CommandFailure({ error: 'InvalidArgument', field: 'props', detail: `${e.detail} — list_motifs reports this motif's props_schema` })
-        throw e
+  if (patch.kind === 'Motif' && layer.params.kind === 'Motif') {
+    const rebinds = patch.motif_id !== undefined && patch.motif_id !== layer.params.motif_id
+    if (rebinds || patch.props !== undefined) {
+      const manifest = catalog.get(patch.motif_id ?? layer.params.motif_id)
+      if (manifest !== undefined) {
+        try {
+          const canonical = canonicalizeProps(manifest, rebinds ? (patch.props ?? {}) : { ...layer.params.props, ...patch.props })
+          if (rebinds) patch = { ...patch, props: canonical, motif_version: patch.motif_version ?? manifest.version }
+        } catch (e) {
+          if (e instanceof MotifPropError) throw new CommandFailure({ error: 'InvalidArgument', field: 'props', detail: `${e.detail} — list_motifs reports this motif's props_schema` })
+          throw e
+        }
       }
     }
   }

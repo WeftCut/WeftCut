@@ -160,6 +160,9 @@ export type CommandError =
   // the cut and the pieces after it is what the ripple is for. Members inside
   // the deleted set are ignored — they are gone.
   | { error: 'RippleLinkStraddles'; link: Uuid; hole: { s: TimeUs; e: TimeUs } }
+  /** `shift_layers { from_t_us }`: the time (or the lane filter) splits a link,
+   *  so the sweep would move one member and not another. */
+  | { error: 'ShiftLinkStraddles'; link: Uuid; from_t_us: TimeUs }
   // A locked layer would have to move. The lock reading is lenient throughout:
   // only a layer that actually shifts blocks, so locking a logo at the head does
   // not disable ripple for the rest of the film. A locked TRACK holding a mover

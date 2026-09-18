@@ -154,6 +154,10 @@ describe('effects://catalog: the effect vocabulary is readable, not learned from
     const denoise = body.kinds.find((k) => k.kind.startsWith('audio.'))!
     expect(denoise.target).toBe('audio')
     expect(Object.keys(denoise.params).length).toBeGreaterThan(0)
+    // A region bound carries no default: "no region yet" is what the effect's
+    // completeness check refuses on, and a default would read as one chosen.
+    const region = (denoise as { region?: { in_key: string } }).region
+    if (region) expect(denoise.params[region.in_key]).not.toHaveProperty('default')
     expect(body.param_key).toContain('effects[<effect_id>].params[<key>]')
     const view = await handleCallTool(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'read_project', { view: 'effects' }) as { content: Array<{ text: string }> }
     expect(JSON.parse(view.content[0].text).kinds.map((k: { kind: string }) => k.kind)).toEqual(body.kinds.map((k) => k.kind))

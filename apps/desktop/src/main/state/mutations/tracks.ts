@@ -30,7 +30,9 @@ export function applyRenameTrack(p: Project, id: Uuid, label: string | null): vo
  *  is handled by the actor. */
 export function applyMoveTrack(p: Project, id: Uuid, newPosition: number): void {
   const { comp: c, trackIndex: cur } = requireTrack(p, id)
-  if (newPosition >= c.tracks.length) throw new CommandFailure({ error: 'TrackPositionOutOfRange', position: newPosition, len: c.tracks.length })
+  // `splice` counts a negative index from the end, which would place the
+  // track and report success; the range is 0..len-1 and nothing else.
+  if (newPosition < 0 || newPosition >= c.tracks.length) throw new CommandFailure({ error: 'TrackPositionOutOfRange', position: newPosition, len: c.tracks.length })
   const [t] = c.tracks.splice(cur, 1)
   c.tracks.splice(newPosition, 0, t)
 }

@@ -200,6 +200,17 @@ describe('project://compositions and the ?composition= scope', () => {
     expect(() => serveProjectResource('project://composition?composition=ghost', actor)).toThrow(/not found/)
   })
 
+  it('refuses an unknown query key and a scope on a project-wide view', () => {
+    // A misspelt key silently answered the ROOT under the URI the caller wrote
+    // — the wrong object, reported as the right one.
+    const gen = uuidV7Gen()
+    const { p, groupId } = groupedProject(gen, 'r')
+    const actor = createActor({ initial: p, idGen: gen })
+    expect(() => serveProjectResource(`project://tracks?compositon=${groupId}`, actor)).toThrow(/unknown query key/)
+    expect(() => serveProjectResource(`project://media?name=clip`, actor)).toThrow(/unknown query key/)
+    expect(() => serveProjectResource(`project://current?composition=${groupId}`, actor)).toThrow(/no .*scope/)
+  })
+
   it('project://links and project://transitions scope the same way', () => {
     const gen = uuidV7Gen()
     const { p, groupId } = groupedProject(gen, 'r')
