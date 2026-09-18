@@ -67,9 +67,9 @@ export function keyframedParams(layer: Layer): string[] {
 
 /** A layer as `project://tracks` lists it: the envelope an agent plans against
  *  — where it sits, what it is, what it plays, what is on it — without the
- *  params, keyframes and effect values `project://layers/{id}` carries. The
- *  audit found the "envelopes" the docs promised were whole layers (D19), so a
- *  timeline read cost as much as the project. */
+ *  params, keyframes and effect values `project://layers/{id}` carries; rows
+ *  that inlined whole layers would make a timeline read cost as much as the
+ *  project. */
 export function layerEnvelope(layer: Layer, c: Composition): Record<string, unknown> {
   const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number }
   return {
@@ -89,15 +89,15 @@ export function layerEnvelope(layer: Layer, c: Composition): Record<string, unkn
  *  `muted` / `solo` are stored on a track but nothing mixes by them — the mix
  *  gates by ROLE (`set_role_flags`; `audio/mix.rs` and the renderer's
  *  `roleGate.ts` read roles only). A read that advertised them would advertise
- *  a control with no writer and no effect (audit §3), so they stay off the wire
- *  until the mix reads them. */
+ *  a control with no writer and no effect, so they stay off the wire until the
+ *  mix reads them. */
 export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
   return c.tracks.map(({ layers, muted: _muted, solo: _solo, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
 }
 
 /** `project://settings`: the editing preferences plus the project metadata —
- *  six booleans and a dirty signal that used to cost the whole
- *  `project://current` (audit S14). `modified_at` moves on every recorded commit. */
+ *  six booleans and a dirty signal, without the whole `project://current`.
+ *  `modified_at` moves on every recorded commit. */
 export function settingsView(p: Project): Record<string, unknown> {
   return { ...p.settings, metadata: p.metadata }
 }
@@ -132,8 +132,8 @@ export function serveProjectResource(
     return textResource(uri, layer)
   }
   // The per-composition views take `?composition=<id>`; absent means the root.
-  // `project://composition` too: a Group's envelope used to be write-only, the
-  // scoped read answering with the ROOT under the requested URI (audit S14).
+  // `project://composition` scopes too — a Group's envelope is readable by id,
+  // never the ROOT answered under the requested URI.
   const q = uri.indexOf('?')
   const base = q === -1 ? uri : uri.slice(0, q)
   const composition = q === -1 ? null : new URLSearchParams(uri.slice(q + 1)).get('composition')

@@ -17,13 +17,23 @@ function stamp(us: number, sep: ',' | '.'): string {
   return `${two(h)}:${two(m)}:${two(s)}${sep}${String(frac).padStart(3, '0')}`
 }
 
+/** A cue's text as a block payload: CRLF folded to LF and blank lines dropped,
+ *  since a blank line ENDS a cue block in both formats and would hand the rest
+ *  of the text to the reader as the next cue. WebVTT payload text is markup, so
+ *  `&`, `<` and `>` are escaped there; SRT has no escaping convention and its
+ *  tags are meant literally. */
+function payload(text: string, vtt: boolean): string {
+  const body = text.replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() !== '').join('\n')
+  return vtt ? body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : body
+}
+
 /** Cues in time order, each numbered from 1. An empty list is an empty body. */
 export function formatSrt(cues: readonly FormatCue[]): string {
-  return cues.map((c, i) => `${i + 1}\n${stamp(c.start_us, ',')} --> ${stamp(c.end_us, ',')}\n${c.text}\n`).join('\n')
+  return cues.map((c, i) => `${i + 1}\n${stamp(c.start_us, ',')} --> ${stamp(c.end_us, ',')}\n${payload(c.text, false)}\n`).join('\n')
 }
 
 /** The `WEBVTT` header, then the cues; VTT cues carry no numbers. */
 export function formatVtt(cues: readonly FormatCue[]): string {
-  const body = cues.map((c) => `${stamp(c.start_us, '.')} --> ${stamp(c.end_us, '.')}\n${c.text}\n`).join('\n')
+  const body = cues.map((c) => `${stamp(c.start_us, '.')} --> ${stamp(c.end_us, '.')}\n${payload(c.text, true)}\n`).join('\n')
   return `WEBVTT\n\n${body}`
 }

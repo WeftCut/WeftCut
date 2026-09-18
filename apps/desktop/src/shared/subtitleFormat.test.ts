@@ -15,4 +15,14 @@ describe('subtitle writers', () => {
     expect(formatVtt(CUES)).toBe('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nHello world\n\n01:01:01.000 --> 01:01:02.000\nTwo\nlines\n')
     expect(formatVtt([])).toBe('WEBVTT\n\n')
   })
+  it('a blank line inside a cue never ends its block early, and CRLF folds to LF', () => {
+    const cue = [{ start_us: 0, end_us: 1_000_000, text: 'One\n\n  \r\nTwo\r\n' }]
+    expect(formatSrt(cue)).toBe('1\n00:00:00,000 --> 00:00:01,000\nOne\nTwo\n')
+    expect(formatVtt(cue)).toBe('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nOne\nTwo\n')
+  })
+  it('WebVTT escapes the markup characters; SRT leaves the text as typed', () => {
+    const cue = [{ start_us: 0, end_us: 1_000_000, text: 'a < b & c --> d' }]
+    expect(formatVtt(cue)).toContain('a &lt; b &amp; c --&gt; d')
+    expect(formatSrt(cue)).toContain('a < b & c --> d')
+  })
 })

@@ -1646,7 +1646,7 @@ describe('media-pool mutations dispatch', () => {
     expect(a.snapshot().media_pool[MID].file_hash_blake3).toBe('realhash-abc')
     expect(a.dispatch('set_media_hash', { media: '00000000-0000-0000-0000-0000000000ff', file_hash_blake3: 'x' }).ok).toBe(false)
   })
-  it('metadata.modified_at takes the commit timestamp on a recorded edit, and an unrecorded write leaves it (audit S14)', () => {
+  it('metadata.modified_at takes the commit timestamp on a recorded edit, and an unrecorded write leaves it', () => {
     const a = actorWithMedia()
     const born = a.snapshot().metadata.modified_at
     expect(born).not.toBe('<TS>')
@@ -1687,10 +1687,10 @@ describe('media-pool mutations dispatch', () => {
     expect(a.snapshot().media_pool[MID], 'undo restores media').toBeDefined()
   })
 
-  // Audit D22: the forced cascade spliced the layers out bare, so a linked
-  // video+audio pair over one media left a link with two dangling members and
-  // the commit died in validate — the very edit the MediaInUse refusal names.
-  // The cascade is now delete_layers' delete, link maintenance included.
+  // The forced cascade is delete_layers' delete, link maintenance included: a
+  // bare splice would leave a linked video+audio pair over one media as a link
+  // with two dangling members, and the commit would die in validate — the
+  // very edit the MediaInUse refusal names.
   describe('remove_media force is delete_layers\' delete, links and lanes included', () => {
     const AV = '00000000-0000-0000-0000-0000000000ab'
     function actorWithAvMedia() {

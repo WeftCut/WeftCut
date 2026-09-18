@@ -1,8 +1,7 @@
 // apps/desktop/src/main/mcp/server.session.test.ts
-// The work session's escape hatches over the tool surface. The audit's wave-2
-// blocker: a client that exited left `AgentSessionBusy` for every later
-// connection until the app restarted, with no owner named, no age, no takeover
-// and no session view. Here: the refusal names the holder, `read_project
+// The work session's escape hatches over the tool surface, so a connection that
+// went away cannot hold `AgentSessionBusy` over every later one until the app
+// restarts: the refusal names the holder, its reason and its age, `read_project
 // { view: 'session' }` / `project://session` show it, and `end_agent_session
 // { force: true }` takes it over — lock included.
 import { describe, it, expect, vi } from 'vitest'

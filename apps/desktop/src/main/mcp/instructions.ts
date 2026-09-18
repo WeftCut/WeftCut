@@ -2,10 +2,10 @@
 // What `initialize` tells a client about using this server: the session
 // etiquette in ten lines. Every MCP client reads `instructions` on connect,
 // with or without the shipped skill installed, so this is the one message
-// that reaches an agent before its first call (audit S13 found it empty).
+// that reaches an agent before its first call.
 //
 // The SAME lines head the shipped skill (`skills/weftcut/SKILL.md`, "In ten
-// lines"), pinned equal by `mcp.instructions.test.ts`, so a client that has the
+// lines"), pinned equal by `instructions.test.ts`, so a client that has the
 // skill reads one etiquette, not two. Per-tool facts stay in the tool
 // descriptions; the long form stays in the skill and docs/mcp.md. Kept under a
 // size a session pays without noticing — the test caps it.

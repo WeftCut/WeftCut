@@ -201,8 +201,8 @@ function unwrapToolEnvelope(json: string, name: string): ServerResult {
 /** The argument gate for the routes that have no TS parser of their own.
  *
  *  A TS-owned hybrid def (`auto_split_by_shot`, `remove_pauses`) carries a
- *  `parseDedicated` that until now only the bijection gate ever ran — run it,
- *  so a malformed id is refused in the same words every table tool uses. A
+ *  `parseDedicated`; running it here refuses a malformed id in the same words
+ *  every table tool uses (the bijection gate runs it too, but on fixtures). A
  *  Rust-sourced tool is checked against its advertised schema (`argCheck.ts`)
  *  so every missing or mistyped field is named at once, in the tool's own
  *  vocabulary, instead of serde's one-field-at-a-time text. Returns the
@@ -231,7 +231,11 @@ function readOnlyTools(backend: Backend): Promise<Set<string>> {
       new Set(mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]).filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name))
     // A backend that throws synchronously (no catalog method at all, as some
     // test doubles have) is the same case as one whose catalog rejects.
-    p = Promise.resolve().then(() => rustCatalog(backend)).then((c) => names(c.tools), () => names([]))
+    const attempt = Promise.resolve().then(() => rustCatalog(backend)).then((c) => names(c.tools))
+    // Only a catalog that was read is remembered: a failed read answers the
+    // TS-owned reads for this call and is retried on the next.
+    attempt.catch(() => { if (readOnlySets.get(backend) === p) readOnlySets.delete(backend) })
+    p = attempt.catch(() => names([]))
     readOnlySets.set(backend, p)
   }
   return p
@@ -284,26 +288,29 @@ async function dispatchTool(
   const tsHost = getTsHost()
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
     try {
-      let result: unknown = {}
+      // Every arm reads its args through the tool's own parser, so a refusal
+      // reads the same whichever path reaches the service, and answers with
+      // the record it committed like every other mutator.
+      let result: Record<string, unknown>
       if (name === 'begin_agent_session') {
-        if (typeof args.reason !== 'string') throw new Error('reason must be a string')
-        result = tsHost.agent.begin(args.reason)
+        const p = mcpDef('begin_agent_session').parseDedicated!(args)
+        result = tsHost.agent.begin(p.reason as string) as unknown as Record<string, unknown>
       } else if (name === 'end_agent_session') {
         // Answer with the session that ended (null when none was active), so a
         // takeover says whose work it closed.
+        const p = mcpDef('end_agent_session').parseDedicated!(args)
         const active = tsHost.agent.snapshot().session
-        tsHost.agent.end(args.force === true ? 'forced' : 'agent')
+        tsHost.agent.end(p.force === true ? 'forced' : 'agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
       } else {
         // The lock is taken here rather than through mcpCall because the OWNER
-        // is the connection, which only this seam knows. The args still go
-        // through the tool's own parser, so the reason gate reads the same
-        // whichever path reaches the lock.
+        // is the connection, which only this seam knows.
         const p = mcpDef('set_history_lock').parseDedicated!(args)
         if (p.locked as boolean) tsHost.agent.lock(p.reason as string)
         else tsHost.agent.unlock()
+        result = { locked: p.locked as boolean, reason: (p.reason as string | undefined) ?? null }
       }
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] } as ServerResult
+      return toolRecord(result) as ServerResult
     } catch (e) {
       return toolErrorResult({ code: 'invalid_params', message: e instanceof Error ? e.message : String(e) })
     }
@@ -387,9 +394,9 @@ async function dispatchTool(
       ? (tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown> & { id: string; size?: [number, number] }>).find((m) => m.id === motifId)
       : undefined
     if (tsHost && !entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids` })
-    // Props canonicalised against the manifest exactly as `add_motif_layer` does
-    // (audit D2: omitted props rendered a lower third with no text): missing keys
-    // take the schema defaults, an unknown key is refused naming it.
+    // Props canonicalised against the manifest exactly as `add_motif_layer` does:
+    // missing keys take the schema defaults (a lower third previews WITH its
+    // text), an unknown key is refused naming it.
     let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>
     if (entry) {
       try { props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null) }
@@ -636,7 +643,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
 
   const connectionId = opts.connectionId ?? randomUUID()
   // Read or write is the catalog's own `readOnlyHint` — the one statement of
-  // the split (audit S3), so the agent panel's read rows and the annotations a
+  // the split, so the agent panel's read rows and the annotations a
   // client sees cannot disagree. A non-tool method (a list, a resource read)
   // is a read by nature; a tool name the catalog does not know is logged as an
   // operation and refused as unknown by the dispatcher. Resolved on the first

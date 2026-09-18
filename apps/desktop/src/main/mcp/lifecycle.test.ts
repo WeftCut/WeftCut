@@ -188,11 +188,11 @@ describe('MCP host lifecycle rows', () => {
 })
 
 describe('a session whose client is gone is closed by the host', () => {
-  // The audit's wave-2 blocker: streamable HTTP ends a session only on the
-  // client's DELETE, so a client that exited held its work session until the
-  // app restarted. The host now judges liveness by the client's SSE stream — and,
-  // for a client that never opened one, by requests — and closes the session,
-  // which fires `onclose` and with it the work-session release.
+  // Streamable HTTP ends a session only on the client's DELETE, which a client
+  // that exits never sends, so the host judges liveness itself — by the client's
+  // SSE stream, and for a client that never opened one, by requests — and closes
+  // the session, which fires `onclose` and with it the work-session release.
+  // Without this a lost connection holds its work session until the app restarts.
   it('a client that never opened a stream and went idle is closed, with a row saying why', async () => {
     const { rows, deps } = collector()
     const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 60, graceMs: 60, sweepMs: 10 } })
@@ -207,7 +207,7 @@ describe('a session whose client is gone is closed by the host', () => {
     expect(gone.level).toBe('info')
     expect(gone.details).toMatchObject({ session_id: init.sessionId, reason: 'idle' })
     // `onclose` ran: the ordinary disconnect row followed, and the session id is
-    // no longer honoured.
+    // refused from here on.
     await rowWith(rows, 'MCP client disconnected')
     const stale = await post(port, { jsonrpc: '2.0', id: 2, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
     expect(stale.status).toBe(400)
@@ -226,6 +226,27 @@ describe('a session whose client is gone is closed by the host', () => {
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 60))
       await post(port, { jsonrpc: '2.0', id: 10 + i, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
+    }
+    expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)
+  })
+
+  it('a client whose stream dropped but who keeps making requests is not judged gone either', async () => {
+    const { rows, deps } = collector()
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 400, graceMs: 400, sweepMs: 10 } })
+    hosts.push(host)
+    const bind = host.getInfo().bind
+    const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
+    const init = await post(port, INITIALIZE, { authorization: 'Bearer test-token' })
+    // Open the standalone stream, then drop its socket: the session's stream is now `closed`.
+    await new Promise<void>((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'GET', headers: { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId!, accept: 'text/event-stream' } }, (res) => { res.destroy(); resolve() })
+      sockets.push(req)
+      req.on('error', () => resolve())
+      req.end()
+    })
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 60))
+      await post(port, { jsonrpc: '2.0', id: 20 + i, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
     }
     expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)
   })

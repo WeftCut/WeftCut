@@ -2,11 +2,10 @@
 //
 // What a mutator ANSWERS with: the committed record(s), read back from the
 // snapshot the commit produced, so the caller learns where its edit landed
-// without a second round trip. Before this every write returned `content: []`
-// or a bare id, and an agent that had just placed a clip re-read
-// `project://tracks` (48–123 KB) to find out that the start snapped, that a
-// paired audio layer landed too, or which link it joined — the audit's
-// testers spent most of their calls on exactly that.
+// without a second round trip. A write that answered `content: []` or a bare
+// id would send an agent that had just placed a clip back to `project://tracks`
+// (tens of KB) to find out that the start snapped, that a paired audio layer
+// landed too, or which link it joined.
 //
 // The readers are PURE over two snapshots and the wire args: nothing here
 // touches the actor, and every reader can be driven from a unit test with two
@@ -252,8 +251,8 @@ const trackOf = ({ after }: ResultCtx, id: string): Record<string, unknown> => (
 const historyOf = ({ history }: ResultCtx): Record<string, unknown> => ({ cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo })
 
 /** Every table-exec mutator, keyed by MCP tool name. A tool absent here answers
- *  `content: []`, which the tool-table gate refuses for a mutator — a new tool
- *  cannot land without saying what it committed. */
+ *  `content: []`, which `mcp.tool-table` refuses for a table-exec mutator — a
+ *  new tool cannot land without saying what it committed. */
 export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // ── layers ──
   set_position: (c) => layerOf(c),
@@ -425,16 +424,21 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
 
 /** `split_layer`'s answer: the two halves the caller named, PLUS every link
  *  sibling the split fanned out to — a sibling's left half keeps its id and its
- *  right half is a new layer starting where the left one now ends. The audit's
- *  rough-cut tester re-linked by hand because only the target's halves were
- *  named. */
+ *  right half is a new layer starting where the left one now ends — so the
+ *  caller never re-links halves by hand. */
 export function splitResult(before: Project, after: Project, halves: { left: Uuid; right: Uuid }, atTUs: unknown): Record<string, unknown> {
   const right = layerRecord(after, halves.right)
   const siblings = newLayerIds(before, after).filter((id) => id !== halves.right).map((rid) => {
-    const r = layerRecord(after, rid)
+    const r = located(after, rid)
     let left: Uuid | null = null
+    // The left half is the pre-existing layer of the same kind on the same
+    // track that shrank to end where this right half starts. Kind matters: a
+    // paired video and its audio share one track, so "ends at the cut" alone
+    // names two layers.
     if (r) for (const { track, layer } of eachLayer(after)) {
-      if (track.id === r.track_id && layer.id !== rid && layer.t_end_us === r.t_start_us) { left = layer.id; break }
+      if (track.id !== r.trackId || layer.id === rid || layer.params.kind !== r.layer.params.kind || layer.t_end_us !== r.layer.t_start_us) continue
+      const was = located(before, layer.id)
+      if (was && was.layer.t_end_us > layer.t_end_us) { left = layer.id; break }
     }
     return { source: left, left, right: rid }
   })

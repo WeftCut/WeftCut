@@ -190,7 +190,7 @@ describe('project://compositions and the ?composition= scope', () => {
     expect(() => serveProjectResource('project://tracks?composition=ghost', actor)).toThrow(/not found/)
   })
 
-  it('project://composition scopes too — a Group\'s settings by id, not the root under the wrong name (audit S14)', () => {
+  it('project://composition scopes too — a Group\'s settings by id, not the root under the wrong name', () => {
     const gen = uuidV7Gen()
     const { p, groupId } = groupedProject(gen, 'r')
     const actor = createActor({ initial: p, idGen: gen })
@@ -210,7 +210,7 @@ describe('project://compositions and the ?composition= scope', () => {
   })
 })
 
-describe('project://tracks lists envelopes (audit D19)', () => {
+describe('project://tracks lists envelopes', () => {
   it('a layer row is the envelope — kind at the top, no params, its link, its effects by kind, its keyframed params', () => {
     const gen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(gen, 'env'), idGen: gen, clock: () => '<TS>' })
@@ -270,7 +270,7 @@ describe('project://tracks lists envelopes (audit D19)', () => {
 })
 
 describe('project://settings', () => {
-  it('is the preferences plus the metadata — six booleans no longer cost the whole project', () => {
+  it('is the preferences plus the metadata — six booleans without the whole project', () => {
     const gen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(gen, 'set'), idGen: gen, clock: () => '<TS>' })
     const body = JSON.parse(text(serveProjectResource('project://settings', actor)))

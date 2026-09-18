@@ -34,7 +34,7 @@ export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): Past
 /** Paste a detached clone onto an explicitly resolved target track — in the
  *  source's own composition (a track elsewhere is CrossCompositionMove). The
  *  caller owns automatic track selection/creation; this mutation preserves all
- *  layer content and effects, gives only the layer a fresh id, and never joins
+ *  layer content and effects, gives the layer and each effect a fresh id, and never joins
  *  the source link. */
 export function applyPasteLayer(
   p: Project,
@@ -52,6 +52,7 @@ export function applyPasteLayer(
   const copy = cloneLayer(source.layer)
   const pastedId = idGen()
   copy.id = pastedId
+  copy.effects = copy.effects.map((e) => ({ ...e, id: idGen() }))
   copy.t_start_us = interval.tStartUs
   copy.t_end_us = interval.tEndUs
 
@@ -133,6 +134,7 @@ export function applyPasteLayers(
   for (const plan of plans) {
     const copy = cloneLayer(plan.source)
     copy.id = idGen()
+    copy.effects = copy.effects.map((e) => ({ ...e, id: idGen() }))
     copy.t_start_us = plan.tStartUs
     copy.t_end_us = plan.tEndUs
     const track = c.tracks[plan.trackIdx]

@@ -144,7 +144,9 @@ describe('production adapter routing — paste_layer (rich)', () => {
     expect(pasted.id).not.toBe(sourceId)
     expect(pasted.label).toBe('Copied clip')
     expect(pasted.params).toEqual(source.params)
-    expect(pasted.effects).toEqual(source.effects)
+    // Same chain, fresh ids: an effect id is unique per layer, so a clone never shares one.
+    expect(pasted.effects.map(({ id: _id, ...rest }) => rest)).toEqual(source.effects.map(({ id: _id, ...rest }) => rest))
+    expect(pasted.effects.map((e) => e.id)).not.toEqual(source.effects.map((e) => e.id))
     expect(pasted.t_start_us).toBe(3_000_000)
     expect(pasted.t_end_us).toBe(5_000_000)
   })

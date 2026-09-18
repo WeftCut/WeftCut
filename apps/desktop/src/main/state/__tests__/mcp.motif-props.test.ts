@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/__tests__/mcp.motif-props.test.ts
-// A placed Motif's props through the declared `kind: "Motif"` arm (audit §3:
-// "only kind:'Motif' outside the enum works"): known props merge, an unknown
-// one is refused against the manifest, nothing is stored on a refusal.
+// A placed Motif's props through the declared `kind: "Motif"` arm: known props
+// merge, an unknown one is refused against the manifest, nothing is stored on
+// a refusal.
 import { describe, it, expect } from 'vitest'
 import { createActor } from '../actor'
 import { seededGen } from '../ids'

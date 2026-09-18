@@ -32,7 +32,8 @@ export interface McpHost {
  *
  *  Streamable HTTP has no liveness of its own: the SDK ends a session only on a
  *  client `DELETE`, which a client that exits, crashes or calls plain `close()`
- *  never sends — the audit's blocker. The signal used instead is the client's
+ *  never sends, so its work session and lock would outlive it until the app
+ *  restarted. The signal used instead is the client's
  *  standalone SSE stream (the GET every SDK client opens right after
  *  `initialize`): while it is open the client is alive, however long it thinks;
  *  once it has been CLOSED for `graceMs` the client is gone (a reconnecting
@@ -41,7 +42,8 @@ export interface McpHost {
  *  that a live client is never cut mid-thought, and the SDK client does not
  *  recover a closed session by itself. */
 export interface SessionReaperOptions {
-  /** How long a session's SSE stream may stay closed before the session is. */
+  /** How long a session's SSE stream may stay closed, with no request arriving
+   *  either, before the session is. */
   graceMs?: number
   /** How long a session with NO stream may go without a request. */
   idleMs?: number
@@ -131,6 +133,9 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       if (req.method === 'GET' && live) {
         live.state = 'open'; live.changedAt = Date.now()
         res.on('close', () => {
+          // A second GET on a session that already has its stream is answered
+          // 409 and closes at once; that is not the stream going away.
+          if (res.statusCode !== 200) return
           const cur = streams.get(sid!)
           if (cur?.state === 'open') { cur.state = 'closed'; cur.changedAt = Date.now() }
         })
@@ -230,8 +235,10 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       const stream = streams.get(sid)
       if (!stream) continue
       const idleMs = now - stream.lastRequestAt
+      // A closed stream is the signal and a request is the counter-signal: a
+      // client whose stream dropped but who keeps calling is not gone.
       const gone = stream.state === 'closed'
-        ? now - stream.changedAt > reaper.graceMs
+        ? now - stream.changedAt > reaper.graceMs && idleMs > reaper.graceMs
         : stream.state === 'never' && idleMs > reaper.idleMs
       if (!gone) continue
       emitLifecycle('info', { kind: 'System' }, 'MCP client gone: session closed', {

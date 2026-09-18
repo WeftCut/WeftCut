@@ -17,7 +17,7 @@ export function shapeHybridResult(name: string, args: Record<string, unknown>, r
   switch (name) {
     case 'import_media': {
       // A subtitle document is CONSUMED into a caption track, not pooled: the
-      // id that comes back is a track's, and the record says so (audit D23).
+      // id that comes back is a track's, and the record says so.
       if (SUBTITLE_EXT.test(String(args.path ?? '')))
         return toolRecord({ caption_track_id: text, cues: captionCueCount(after) - captionCueCount(before) })
       return toolRecord(mediaRecord(after, text) ?? { media_id: text })

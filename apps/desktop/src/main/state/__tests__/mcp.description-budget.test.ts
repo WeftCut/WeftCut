@@ -4,9 +4,9 @@
 //
 // `tools/list` is read whole into the model's context by every MCP client, so
 // each description and every nested schema `description` is a standing cost,
-// paid per session, per client, by every agent that connects. Left unguarded
-// the catalog grew to ~127 KB (~32K tokens) with descriptions that restated
-// docs/mcp.md and one another; this suite is what stops it growing back.
+// paid per session, per client, by every agent that connects. Unguarded,
+// descriptions restate docs/mcp.md and one another and the catalog grows by
+// tens of kilobytes; this suite is what stops it.
 //
 // The bar is a budget, not a style: a description says what the tool does,
 // when to pick it over its siblings, the non-obvious argument semantics and
@@ -46,23 +46,12 @@ const COMPLEX: ReadonlySet<string> = new Set([
 ])
 /** A nested schema `description` is a hint on one field, not a second essay. */
 const PROPERTY_DESCRIPTION_CAP = 260
-/** The whole catalog, compact JSON, as the wire carries it. The first pass
- *  under this gate landed at ~92 KB (from ~127 KB) without touching the tool set;
- *  lowering it further is the merge / on-demand-toolset work, not more trimming.
- *
- *  Raised from 94 KB, then from 100 KB, as the audit's fixes moved semantics
- *  INTO the schema — a typed `set_position`, the effect-kind enum, every
- *  mutator's return shape named, then (S2) a one-line meaning and unit on
- *  every property, `update_layer_params` as one variant per kind, `param_key`
- *  as an enum plus pattern. That pass landed at ~114 KB: ~14 KB of bytes an
- *  agent acts on at the moment it types an argument, in place of prose it had
- *  to learn by trial and the ten to twenty probing calls the audit's testers
- *  paid per session. Annotations on every tool (S3) added ~4 KB more, to
- *  ~118 KB, and are counted here because the wire carries them. The audit's
- *  missing primitives (WP4: shift_layers, the static transform on every visual
- *  kind, the Text face and shadow) are new capability rather than new prose
- *  and add ~4 KB more. What is left to pay back is prose that restates the
- *  schema, and the merge of over-granular families. */
+/** The whole catalog, compact JSON, as the wire carries it — descriptions,
+ *  schemas and annotations. A raise is a review decision that names what the
+ *  bytes bought: an enum, a return shape, a meaning on a property an agent acts
+ *  on as it types the argument, in place of prose it would learn by trial. The
+ *  way down is merging over-granular families and cutting prose that restates
+ *  the schema, not trimming meaning. */
 const CATALOG_BYTE_BUDGET = 126_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
@@ -114,9 +103,9 @@ describe('MCP catalog context budget', () => {
   })
 
   it('every advertised property carries a description — the schema, not the prose, teaches a field', () => {
-    // 232 of 397 had none before the audit's S2 pass; an agent learned `edge`,
-    // `param_key` and the position record by failing calls. Pinned to zero,
-    // Rust-sourced schemas included (schemars carries the doc comments).
+    // A field without one is learned by failing calls (`edge`, `param_key`, the
+    // position record). Pinned to zero, Rust-sourced schemas included
+    // (schemars carries the doc comments).
     const bare: string[] = []
     const walk = (s: unknown, path: string): void => {
       if (s === null || typeof s !== 'object') return

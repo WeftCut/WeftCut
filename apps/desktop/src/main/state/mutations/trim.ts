@@ -89,8 +89,8 @@ export function trimEdgeWindowUs(
  *  `strict` is the AGENT's mode (the MCP arm sets it): a target outside the
  *  legal window is refused with that window, rather than clamped to its
  *  nearest end — the renderer's drag clamps because the user sees where the
- *  edge stopped; a tool call sees nothing and would report the clamp as the
- *  edit it asked for (the audit's one-frame clip). */
+ *  edge stopped; a tool call sees nothing and would report the clamp — a
+ *  one-frame clip — as the edit it asked for. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean, strict = false): void {
   const located = requireLayer(p, id)
   const c = located.comp

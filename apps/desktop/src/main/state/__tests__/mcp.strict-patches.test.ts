@@ -1,11 +1,11 @@
 // apps/desktop/src/main/state/__tests__/mcp.strict-patches.test.ts
-// The parse boundary enforces KEY SETS, not just "is an object". The audit's
-// worst class of finding was success reported for nothing done:
-// `update_layer_params { patch: { kind: 'Color', opacityy: 0.2 } }` committed
-// nothing and said ok; `update_layer` applied an undocumented `enabled` and
-// dropped `opacity`; `add_effect` took `audio.compressor` and `""`;
-// `update_effect` stored `wobble` and `strength: 500`. Every one of those is
-// now a refusal that names the accepted set, before any write.
+// The parse boundary enforces KEY SETS, not just "is an object", because the
+// worst answer a tool can give is success for nothing done: a typo such as
+// `update_layer_params { patch: { kind: 'Color', opacityy: 0.2 } }`, an
+// `update_layer` key the tool does not take, an `add_effect` kind no catalog
+// knows (`audio.compressor`, `""`), an `update_effect` param outside its range
+// (`wobble`, `strength: 500`). Every one is a refusal that names the accepted
+// set, before any write.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId } from './pbt/harness'
 import { root } from './fixtures/project'
@@ -34,7 +34,7 @@ function textLayer(a: Actor): string {
 const layerOf = (a: Actor, id: string) => root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 
 describe('update_layer_params — unknown keys are refused, naming the kind\'s set', () => {
-  it('the audit repro: a typo commits nothing and is REFUSED, not reported as success', () => {
+  it('a typo commits nothing and is REFUSED, not reported as success', () => {
     const a = freshActor()
     const id = colorLayer(a)
     const before = a.historyStatus().len
@@ -88,7 +88,7 @@ describe('update_layer_params — unknown keys are refused, naming the kind\'s s
     expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Text', color: '#fff' } }))).toContain('{r,g,b,a}')
   })
 
-  it('Text outline is advertised and writable (audit D15)', () => {
+  it('Text outline is advertised and writable', () => {
     const a = freshActor()
     const id = textLayer(a)
     ok(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Text', outline_width: 3, outline_color: { r: 255, g: 0, b: 0, a: 255 } } }))

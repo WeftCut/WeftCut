@@ -1,10 +1,9 @@
 // apps/desktop/src/main/state/__tests__/mcp.annotations.test.ts
-// Annotations are the single source of the read/write and destructive split
-// (audit S3). The server used to classify a call as a read with a regex over
-// the tool name for the activity service while `tools/list` advertised no
-// `annotations` at all — two statements of one fact, one of them invisible to
-// the client. Now every def carries `annotations`, `tools/list` emits them, and
-// the activity service takes `readOnlyHint` from the same merged catalog.
+// Annotations are the single source of the read/write and destructive split:
+// every def carries `annotations`, `tools/list` emits them, and the activity
+// service takes `readOnlyHint` from the same merged catalog — one statement of
+// the fact, visible to the client. A second classifier (a regex over tool
+// names) would drift from it invisibly, which is what these pins refuse.
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -55,12 +54,12 @@ describe('every advertised tool carries annotations', () => {
 })
 
 describe('the read set', () => {
-  // The regex the activity service used to apply. Pinned so the migration
-  // changed nothing an agent panel already showed — and so a later read tool
-  // whose name starts with a verb is caught HERE if its annotation is wrong.
+  // A name-shaped fixture the read set is pinned against: the tools this
+  // pattern names must be exactly the annotated reads, so a read tool whose
+  // name starts with a verb is caught HERE if its annotation is wrong.
   const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/
-  // Reads added after the migration whose names start with a verb — each one
-  // a review decision, listed here so a stray annotation is still caught.
+  // Reads whose names the pattern does not match — each one a review
+  // decision, listed here so a stray annotation is still caught.
   const READS_BEYOND_THE_REGEX = ['export_captions']
   it('is exactly the set the retired name regex named, plus the reads added since', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
@@ -97,7 +96,7 @@ describe('the read set', () => {
 })
 
 describe('the destructive set', () => {
-  it('names every removal and revert the audit listed, and no read', () => {
+  it('is every removal and revert, and no read', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
       'delete_composition', 'delete_keyframe', 'delete_checkpoint', 'delete_motif', 'clear_keyframes',
@@ -158,7 +157,7 @@ describe('the wire and the activity service read the same fact', () => {
   })
 })
 
-describe('D28: an unrecorded mutator says so', () => {
+describe('an unrecorded mutator says so', () => {
   it('in one word, at the end, on every tool whose write undo walks past', () => {
     const desc = (name: string): string => merged.find((t) => t.name === name)?.description ?? ''
     for (const n of ['set_track_flags', 'create_checkpoint', 'delete_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
@@ -166,7 +165,7 @@ describe('D28: an unrecorded mutator says so', () => {
     // and a recorded edit does not carry the word
     for (const n of ['add_color_layer', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
   })
-  it('ANN_READ is what the four TS reads carry', () => {
-    for (const n of ['read_project', 'list_checkpoints', 'get_param_track', 'dry_run']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
+  it('ANN_READ is what the TS reads carry', () => {
+    for (const n of ['read_project', 'list_checkpoints', 'get_param_track', 'dry_run', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
   })
 })

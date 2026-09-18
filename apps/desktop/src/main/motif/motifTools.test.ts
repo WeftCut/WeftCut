@@ -100,7 +100,7 @@ describe('runMotifTool', () => {
     expect((rebinds[0] as any[])[0]).toMatchObject({ layer_id: 'la', motif_id: 'foo', motif_version: 2 })
   })
 
-  it('install_motif bare "update" resolves the target the draft recorded (audit D1)', () => {
+  it('install_motif bare "update" resolves the target the draft recorded', () => {
     const published = runMotifTool('write_motif_draft', { manifest: m('Base'), html: '<head></head><body>B</body>' }, deps) as string
     runMotifTool('install_motif', { draft_id: published, mode: 'new' }, deps)
     const draft = runMotifTool('write_motif_draft', { manifest: m('Base'), html: '<head></head><body>B2</body>', from: published }, deps) as string
@@ -119,7 +119,7 @@ describe('runMotifTool', () => {
     expect(store.getMotif(published)!.manifest.version).toBe(2)
   })
 
-  it('delete_motif refuses an unknown id and a built-in, naming list_motifs (audit D13)', () => {
+  it('delete_motif refuses an unknown id and a built-in, naming list_motifs', () => {
     expect(() => runMotifTool('delete_motif', { id: 'never-written' }, deps)).toThrow(/unknown Motif 'never-written'.*list_motifs/)
     expect(() => runMotifTool('delete_motif', { id: 'countdown' }, deps)).toThrow(/built-in/)
     expect(emitted).toBe(0)

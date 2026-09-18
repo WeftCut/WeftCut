@@ -216,7 +216,7 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   // crosses, so it is anchored ahead of the cut in the only way a layer at 0 can
   // be, and the material that closes up lands beneath it exactly as a title over
   // the head of a film should stay over the head once the leading silence is cut
-  // (`remove_pauses`' commonest edit was refused by any title at 0 — audit D14).
+  // (`remove_pauses`' commonest edit, which any title at 0 would otherwise block).
   // A LINKED partner of a deleted layer gets no such pass: it is not anchored, it
   // is the other half of the thing being deleted, and naming it is the point.
   const linkedToDoomed = new Set<Uuid>()
@@ -235,7 +235,8 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   }
 
   // 6 — a link is "these move together", so a link with a member REACHING ACROSS
-  // the cut — starting before `s` and ending after it — while another member
+  // the cut — starting at or before `s` (the origin pass above lets a layer at
+  // 0 stay) and ending after it — while another member
   // starts at or after `e` has no landing that honours it: the reaching member
   // stays (it is anchored ahead of the cut) and the downstream one moves, and a
   // J-cut's audio drifts off its picture. A member that ENDS at or before `s` is
@@ -254,7 +255,7 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
         if (doomed.has(member)) continue
         const placed = index.get(member)
         if (placed === undefined) continue
-        if (placed.layer.t_start_us < h.s) { if (placed.layer.t_end_us > h.s) reaching = true }
+        if (placed.layer.t_start_us <= h.s) { if (placed.layer.t_end_us > h.s) reaching = true }
         else if (placed.layer.t_start_us >= h.e) after = true
       }
       if (reaching && after)

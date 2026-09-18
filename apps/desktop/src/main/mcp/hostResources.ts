@@ -8,9 +8,9 @@
 // "envelopes" and means it, and how the per-composition scope is documented on
 // the resource an agent actually lists.
 //
-// The templates are the parameterised families the audit's testers could not
-// discover (S4): `resources/templates/list` answered "method not found", so
-// `media://{id}/frame/{t_us}` was found only because a tool's prose named it.
+// The templates are the parameterised families (`media://{id}/frame/{t_us}`
+// and its kin): without `resources/templates/list` an agent finds them only
+// when a tool's prose happens to name one.
 
 const APP_JSON = 'application/json'
 

@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/__tests__/shift-layers.test.ts
-// `shift_layers`: one delta over a set, as one recorded edit (audit §3 gaps —
-// the multi-layer move and the ripple insert testers rebuilt out of N moves).
+// `shift_layers`: one delta over a set, as one recorded edit — the multi-layer
+// move and the ripple insert, which are otherwise N moves and a read.
 import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
@@ -157,6 +157,17 @@ describe('shift_layers arguments', () => {
       const r = call(a, args)
       expect(r.ok, JSON.stringify(args)).toBe(false)
       if (!r.ok) expect(r.error.code).toBe('invalid_params')
+    }
+    expect(span(a, l)).toEqual([0, S])
+  })
+
+  it('refuses a key of the other branch instead of ignoring it', () => {
+    const { a, tA, tB } = setup()
+    const l = color(a, tA, 0, S)
+    for (const args of [{ layer_ids: [l], track_ids: [tB], delta_us: S }, { layer_ids: [l], composition_id: root(a.snapshot()).id, delta_us: S }, { from_t_us: 0, escape_link: true, delta_us: S }]) {
+      const r = call(a, args)
+      expect(r.ok, JSON.stringify(args)).toBe(false)
+      if (!r.ok) { expect(r.error.code).toBe('invalid_params'); expect(r.error.message).toContain('goes with') }
     }
     expect(span(a, l)).toEqual([0, S])
   })

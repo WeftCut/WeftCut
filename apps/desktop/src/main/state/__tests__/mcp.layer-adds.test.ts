@@ -138,8 +138,8 @@ describe('add_video_layer media-kind guard', () => {
     expect(r.ok).toBe(false)
     if (r.ok) throw new Error('expected refusal')
     expect(r.error.message).toContain('add_audio_layer')
-    // The failure mode this guard exists for: a VideoClip over an mp3 used to
-    // COMMIT, so the emptiness of the timeline is the assertion that matters.
+    // The failure mode this guard exists for is a VideoClip over an mp3 that
+    // COMMITS, so the emptiness of the timeline is the assertion that matters.
     expect(layerCount(a)).toBe(0)
   })
 
@@ -156,10 +156,10 @@ describe('add_video_layer media-kind guard', () => {
   })
 })
 
-// Audit D17: an unknown media id fell through to the source-window rule and
-// reported "src_in_us and src_out_us are required for Video media <id>" about
-// a media that does not exist. Not found is the first thing said about an id
-// that names nothing, on both add tools, wet and rehearsed alike.
+// Not found is the FIRST thing said about a media id that names nothing, on
+// both add tools, wet and rehearsed alike — never a rule about the media's
+// kind ("src_in_us and src_out_us are required for Video media <id>") for a
+// media that does not exist.
 describe('an unknown media id is MediaNotFound before any other rule', () => {
   const NOWHERE = '00000000-0000-7000-8000-00000000dead'
   function refusal(r: ReturnType<Actor['mcpCall']>): string {

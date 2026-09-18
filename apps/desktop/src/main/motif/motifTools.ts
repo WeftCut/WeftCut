@@ -36,9 +36,8 @@ export interface MotifToolDeps {
  *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update"
  *  plus an optional `target_id`. A bare "update" resolves its target from the
  *  explicit `target_id`, else from the target the draft RECORDED at
- *  `write_motif_draft { from }` — the audit found it coerced to `''` and so could
- *  never succeed over MCP. Neither present is refused naming both ways to supply
- *  one, before anything is written. */
+ *  `write_motif_draft { from }`; neither present is refused naming both ways to
+ *  supply one, before anything is written. */
 function parseMode(mode: unknown, targetId: unknown, draftId: string, store: UserMotifStore): InstallArgs['mode'] {
   if (mode === 'new') return { kind: 'new' }
   if (mode === 'update') {

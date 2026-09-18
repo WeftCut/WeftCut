@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/__tests__/mcp.captions-tools.test.ts
-// The caption primitives the audit's testers lacked (§3, captions): export as
-// SRT/VTT, merge cues, restyle a subset.
+// The caption primitives over the MCP surface: export as SRT/VTT, merge cues,
+// restyle a subset.
 import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
@@ -84,5 +84,12 @@ describe('restyle_captions { layer_ids }', () => {
     const title = body<{ layer_id: string }>(call(a, 'add_text_layer', { track_id: root(a.snapshot()).tracks[1].id, content: 'T', t_start_us: 0, t_end_us: 500_000 }))
     const bad = call(a, 'restyle_captions', { font_size_px: 12, layer_ids: [title.layer_id] })
     expect(!bad.ok && bad.error.message).toContain('update_layer_params')
+  })
+
+  it('an empty layer_ids is refused — never success for nothing done', () => {
+    const { a } = captioned()
+    const r = call(a, 'restyle_captions', { font_size_px: 12, layer_ids: [] })
+    expect(r.ok).toBe(false)
+    if (!r.ok) { expect(r.error.code).toBe('invalid_params'); expect(r.error.message).toContain('omit it') }
   })
 })

@@ -1,12 +1,11 @@
 // apps/desktop/src/main/state/__tests__/mcp.silent-adjustment.test.ts
 // One rule for a time an agent sends: a GRID SNAP is applied and echoed in
 // `adjusted` (reason 'grid'); a CLAMP — anything that changes what was asked
-// beyond the lattice — is refused before any write. The audit found the two
-// mixed: `trim_layer` past the other edge became a one-frame clip reported as
-// success, `move_layer` to a negative start landed at 0, and a marker at
-// −1 000 000 µs was stored negative, while `add_text_layer` refused a negative
-// start. The renderer's drag keeps its clamps (the user sees the ghost); the
-// MCP parsers set `strict` on the mutations.
+// beyond the lattice — is refused before any write. So `trim_layer` past the
+// other edge never lands a one-frame clip, `move_layer` to a negative start
+// never lands at 0, and a marker is never stored negative. The renderer's drag
+// keeps its clamps (the user sees the ghost); the MCP parsers set `strict` on
+// the mutations.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { root } from './fixtures/project'
@@ -92,7 +91,7 @@ describe('a clamp is refused before any write', () => {
     expect(layerOf(a, s).t_start_us).toBe(500_000)
   })
 
-  it('trim_layer past the other edge is refused with the legal window — the audit\'s one-frame clip never lands', () => {
+  it('trim_layer past the other edge is refused with the legal window — a one-frame clip never lands', () => {
     const a = freshActor()
     const id = colorLayer(a, aRollId(a), 0, 3_000_000)
     const msg = refusal(call(a, 'trim_layer', { layer_id: id, edge: 'out', new_t_us: 0 }))
@@ -146,5 +145,28 @@ describe('mapCommandError — TrimEdgeOutOfRange carries the window into the mes
     const out = mapCommandError({ error: 'TrimEdgeOutOfRange', layer: 'L1', new_t: 0, cur_start: 0, cur_end: 3_000_000 })
     expect(out.message).toContain('spans [0, 3000000)')
     expect(out.message).not.toContain('within')
+  })
+})
+
+describe('dry_run rehearses under the same rule', () => {
+  type DryRun = { results: Array<{ status: string; error?: string }> }
+  const dry = (a: Actor, operations: unknown[]): DryRun => {
+    const r = call(a, 'dry_run', { operations })
+    if (!r.ok) throw new Error(r.error.message)
+    return JSON.parse(r.result.content[0].text) as DryRun
+  }
+  it('a rehearsed move below 0 is an error naming the start, as the wet call refuses it', () => {
+    const a = freshActor()
+    const id = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
+    const r = dry(a, [{ kind: 'move_layer', layer_id: id, new_track_id: aRollId(a), new_t_start_us: -500_000 }])
+    expect(r.results[0].status).toBe('error')
+    expect(r.results[0].error).toMatch(/NegativeLayerStart|-500000/)
+    expect(layerOf(a, id).t_start_us).toBe(1_000_000)
+  })
+  it('a rehearsed off-grid envelope time is snapped, as the wet call snaps it', () => {
+    const a = freshActor()
+    const id = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
+    const r = dry(a, [{ kind: 'update_layer', layer_id: id, patch: { t_start_us: 1_010_000 } }])
+    expect(r.results[0].status).toBe('ok')
   })
 })

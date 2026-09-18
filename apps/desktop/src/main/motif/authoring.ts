@@ -161,7 +161,7 @@ export function deleteMotifCore(store: UserMotifStore, id: string): void {
   if (BUILTIN_IDS.includes(id)) throw new Error(`cannot delete the built-in Motif '${id}'`)
   // The store's remove is idempotent, which is right for a retry and wrong for a
   // typo: an id that names neither an installed Motif nor a draft is refused, so
-  // the caller learns it before believing something was removed (audit D13).
+  // the caller learns it before believing something was removed.
   if (store.getMotif(id) === null && store.getDraft(id) === null) {
     throw new Error(`unknown Motif '${id}': nothing installed or drafted under that id — list_motifs reports the ids that exist (built-ins cannot be deleted)`)
   }

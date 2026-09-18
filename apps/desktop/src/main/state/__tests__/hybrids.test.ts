@@ -142,9 +142,9 @@ describe('runHybrid: import_media', () => {
     expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
   })
 
-  // Audit D21: a folder passed the stat-only probe, landed a pool row with a
-  // `pending-` hash and null metadata, and only then died in the hash pass with
-  // the OS's locale text. The path is judged first, by name, before any write.
+  // A folder passes the stat-only probe and would land a pool row with a
+  // `pending-` hash and null metadata, dying only in the hash pass with the
+  // OS's locale text — so the path is judged first, by name, before any write.
   describe('what the path IS is decided before anything is written', () => {
     async function refused(deps: ReturnType<typeof makeDeps>, path = 'C:/clips'): Promise<string> {
       let message = ''
@@ -1485,7 +1485,7 @@ function removedResult(raw: unknown): { surviving_layer_ids: string[]; removed: 
 }
 
 describe('runHybrid: remove_pauses', () => {
-  it('cuts a LEADING pause with a title at t=0 on another track — the title stays over the head (audit D14)', async () => {
+  it('cuts a LEADING pause with a title at t=0 on another track — the title stays over the head', async () => {
     const { actor, layerId } = withAudioLayer(6_000_000)
     const aRoll = root(actor.snapshot()).tracks[0].id
     const title = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })

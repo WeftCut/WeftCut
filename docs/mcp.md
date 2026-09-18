@@ -245,7 +245,7 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>`. Each carries `anchor_layer` and `anchor_src_us` (both null on a free marker) and `hibernating` — see *Markers follow clips* below |
 | `project://links` | a composition's links — `{ id, label?, members }` — the root's, or `project://links?composition=<id>` |
 | `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
-| `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it |
+| `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it, and undo, redo and a checkpoint restore put back the stamp of the state they return to, so compare it for change, not for order |
 | `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
@@ -386,7 +386,7 @@ crosses; crossing has its own op.
 - `restyle_captions { font_family?, font_size_px?, color?, outline_width?, layer_ids? }` — restyle **every** caption in the project (or only `layer_ids`, each of which must be a caption) in one recorded edit: every Text layer on every Caption-role track, in every composition, because caption lanes multiply as cues collide and a per-lane restyle would leave the film styled two ways mid-batch. Omitted or `null` leaves that aspect alone; `outline_width: 0` removes the outline, a positive width adds or resizes one (keeping its colour, black if it had none). A Text layer from `add_text_layer` is not on a caption track and is untouched — style that with `update_layer_params`.
 - `merge_captions { layer_ids }` → the merged caption's record + `removed` — fold two or more cues of ONE caption lane into the earliest: span = the union, text = the texts joined by a line break in time order, style kept, the others deleted; a union overlapping another cue of the lane is refused (`LayerOverlap`).
 - `export_captions { format, track_id?, composition_id? }` → `{ format, cues, body }` — a composition's captions (every caption lane, or one `track_id`) as an SRT or WebVTT body in time order; a read, write the body to a file yourself.
-- `apply_subtitles { body, format? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Lands the cues as editable `Text` layers (one per cue) on the composition's caption-role tracks: each cue goes to the first unlocked caption track with room for its span, and a new caption track opens only for a cue that collides with all of them (ADR 0070). An older client may still send `track_id`, `t_start_us` or `t_end_us`; they are accepted and ignored (cue timings come from the body, and the lane is the packing's to pick) but no longer advertised — `t_end_us` used to be REQUIRED, so every caller had to invent one. Returns `{ caption_track_id, cues, simplified }`.
+- `apply_subtitles { body, format? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Lands the cues as editable `Text` layers (one per cue) on the composition's caption-role tracks: each cue goes to the first unlocked caption track with room for its span, and a new caption track opens only for a cue that collides with all of them (ADR 0070). An older client may still send `track_id`, `t_start_us` or `t_end_us`; they are accepted and ignored (cue timings come from the body, and the lane is the packing's to pick) and not advertised. Returns `{ caption_track_id, cues, simplified }`.
 - `update_layer { layer_id, patch }` — envelope-only: `label`, `t_start_us`, `t_end_us`, `locked`. Any other key is refused naming that set — `enabled` is pointed at `set_layers_enabled`, a param key at `update_layer_params` — so a typo can never commit nothing and report success.
 - `update_layer_params { layer_id, patch }` — kind-specific params; the schema advertises one `oneOf` variant per kind, each closed to that kind's fields. Every visual kind takes the static transform whole — `x`, `y`, `scale_x`, `scale_y` (not Text), `rotation_deg`, `anchor_x`, `anchor_y` (the pivot, as a fraction of the layer's box) — each written as a Static value that replaces any keyframes on that param. A Text layer's face is `font_family`, `font_size_px`, `font_weight` (100..900) and `italic`; its `shadow` is a whole `{ color, offset_x, offset_y, blur }` record or `null` for none (captions keep to an outline — ADR 0026). `patch.kind` is one of `Text | VideoClip | ImageOverlay | Motif | Color | Audio | CompositionRef` and must match the layer; every other key must be in that kind's set (the parser names it on refusal, and says which kind a stray key belongs to), and every value is type-gated at the boundary — enums for `align`/`valign`/`role`/`blend_mode`, `{r,g,b,a}` for colours, integers for the µs fields. `null` is a value only for `box_w`/`box_h` (back to auto); elsewhere it is refused, since an omitted field is how a field is left alone. Text also takes `outline_width` (0 removes) and `outline_color`. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.
   - Text: `{ content?, font_family?, font_size_px?, color?, x?, y?, opacity?, align?, valign?, box_w?, box_h?, line_height?, letter_spacing?, outline_width?, outline_color? }`. `outline_width` 0 removes the outline (stored as `null`, the absent style a Text layer is born with); a positive width adds or resizes it, black until coloured. `outline_color` needs an outline to colour — with none stored, send `outline_width > 0` in the same patch, or it is refused (`InvalidArgument`, field `outline_color`) rather than answered with a guessed width. `box_w`/`box_h` are the layout box in composition pixels, local (before `scale`), and which of the two are set **is** the resize mode: `(null, null)` auto width (never wraps), `(set, null)` auto height (wraps), `(set, set)` fixed (wraps and shrinks to fit). Send an explicit `null` to put an axis back to auto; omit the field to leave it alone. A `box_h` with no `box_w` — neither stored nor in the same patch — is refused (`InvalidArgument`, field `box_h`) rather than measured by guess: this surface has no canvas, and no default may silently invent a width. A box axis is either `null` or a positive extent — `0` and negative are refused, because the renderer reads a non-positive width as "no box" and would draw auto width while state claimed fixed. `align` places the text block horizontally inside the box, `valign` (`Top | Middle | Bottom`) vertically; both are checked against their enums here rather than trusted, since an unrecognized `valign` would reach the sprite as a `NaN` anchor. There are deliberately **no scale fields** on a Text patch — a bigger title is a bigger box, and `font_size_px` is what reaches the frame at any box size; animate a text layer's size with `scale_x`/`scale_y` through the keyframe tools instead. See [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
@@ -680,9 +680,9 @@ provider is configured.
 Agents pick tools from descriptions, so a description is written like API
 docs, not a function signature — but the catalog is also read WHOLE into the
 model's context by every client on every session, so each sentence is a
-standing cost paid by every agent that connects. Left unguarded the catalog
-reached ~127 KB (~32K tokens), with descriptions that restated this document
-and one another. The two pressures meet at a budget:
+standing cost paid by every agent that connects. Unguarded, descriptions
+restate this document and one another and the catalog grows by tens of
+kilobytes. The two pressures meet at a budget:
 
 - **What a description carries.** The first sentence says what the tool does
   and, where it has a sibling, when to pick it (`add_audio_layer` vs
@@ -713,21 +713,18 @@ and one another. The two pressures meet at a budget:
 - **The budget is a gate.** `mcp.description-budget.test.ts` caps each
   description at 700 characters (an explicit, size-limited allowlist of
   complex tools at 1100), each nested schema `description` at 260, and the
-  whole compact catalog at 126 KB, annotations included (the first pass landed
-  at ~92 KB from ~127 KB with the tool set unchanged; the cap then rose from
-  94 KB, and again from 100 KB, as the audit's fixes moved semantics into the
-  schema — a typed `set_position`, the effect-kind enum, every mutator's return
-  shape named, then a meaning on every property and a variant per kind, landing
-  at ~114 KB, then `annotations` on every tool, ~118 KB, then the missing
-  primitives — `shift_layers`, the static transform and the Text face on every
-  kind that has them — ~122 KB; the next step down is merging over-granular
-  families and cutting prose that now restates the schema, not more trimming). It also refuses schema envelope no agent
+  whole compact catalog at 126 KB, annotations included. A raise is a review
+  decision that names what the bytes bought — an enum, a return shape, a
+  meaning on a property an agent acts on as it types the argument — and the
+  way down is merging over-granular families and cutting prose that restates
+  the schema, not trimming meaning. It also refuses schema envelope no agent
   reads: `$schema`, `title`, `format`, `default: null`. Rust schemas come out
   of `tool_schema()` in `native/src/mcp/catalog.rs`, which strips those at
   generation; TS schemas simply do not write them. The snapshot the gates read
   is pinned to the binary you run: `npm run mcp:catalog:check` regenerates it
-  from the built addon and fails on any diff — CI runs it, and `npm run
-  package` runs it right after the addon build.
+  from the built addon and fails on any diff — CI runs it, and `npm run build`
+  and `npm run build:e2e` run it first, so a stale addon on the box fails the
+  build instead of serving an old catalog.
 
 Bad:
 ```

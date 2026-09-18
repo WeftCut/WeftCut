@@ -778,11 +778,11 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
     case 'import_media': {
       const path = args.path as string
       // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
-      // used to pass it, land a pool row with null metadata and a pending
-      // hash, and only then die in the hash pass with the OS's own locale text
-      // (audit D21). What the path IS is decided here, by name, before any
-      // read or write — and for the subtitle branch too, whose readFile would
-      // otherwise be the one to report a missing file.
+      // would pass it, land a pool row with null metadata and a pending hash,
+      // and only then die in the hash pass with the OS's own locale text. What
+      // the path IS is decided here, by name, before any read or write — and
+      // for the subtitle branch too, whose readFile would otherwise be the one
+      // to report a missing file.
       const facts = deps.statPath(path)
       if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
       if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
@@ -816,8 +816,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         // The row is provisional until its hash lands, so a read that fails
         // here leaves nothing behind. `force: false`: were a layer already
         // placed on it, the row stays and the error still names the failure.
-        deps.actor.dispatch('remove_media', { media: item.id, force: false })
-        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. The provisional pool row was rolled back; nothing was imported`)
+        const rolledBack = deps.actor.dispatch('remove_media', { media: item.id, force: false }).ok
+        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. ${rolledBack ? 'The provisional pool row was rolled back; nothing was imported' : `The provisional pool row ${item.id} stays because a layer already references it; its hash is still pending`}`)
       }
       const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
       // Benign if the media was removed during hashing — nothing left to enqueue.

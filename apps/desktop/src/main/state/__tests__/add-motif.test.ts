@@ -170,7 +170,7 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
 
 // ── d. MCP path ───────────────────────────────────────────────────────────────
 describe('add_motif_layer description', () => {
-  it('names example ids that exist (audit D18: the old examples did not)', () => {
+  it('names example ids that exist, pinned to the built-ins', () => {
     const def = MCP_TOOL_DEFS.find((d) => d.name === 'add_motif_layer')!
     const desc = ((def.inputSchema as { properties: { motif_id: { description: string } } }).properties.motif_id.description)
     const quoted = [...desc.matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1])

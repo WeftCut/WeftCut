@@ -1,10 +1,10 @@
 // apps/desktop/src/main/mcp/server.errors.test.ts
 // The error CHANNEL of a tool call. MCP reserves JSON-RPC errors for a
 // malformed request and an unknown tool; everything that goes wrong inside a
-// tool is a `CallToolResult { isError: true }`, which is the channel the model
-// reads. Before this gate every refusal — a bad argument, a stale id, a blocked
-// ripple, a compute failure — travelled as a JSON-RPC error whose `data` no
-// client shows and whose code some clients count as a server fault.
+// tool — a bad argument, a stale id, a blocked ripple, a compute failure — is a
+// `CallToolResult { isError: true }`, which is the channel the model reads. A
+// refusal sent as a JSON-RPC error instead carries `data` no client shows and a
+// code some clients count as a server fault.
 //
 // Driven two ways: `handleCallTool` directly for each route, and over a real
 // in-memory transport so the CLIENT's view is what is asserted — a refusal

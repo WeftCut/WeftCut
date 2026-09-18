@@ -240,7 +240,7 @@ describe("a layer that starts inside the span", () => {
 describe("a layer at the origin", () => {
   // Time 0 is a boundary nothing crosses, so a layer starting there is anchored
   // ahead of any cut that also starts there: it stays, and what closes up lands
-  // beneath it. Before this rule a title at 0 refused every leading-pause cut.
+  // beneath it — a title at 0 must not refuse every leading-pause cut.
   it("stays put when the hole starts at 0, and everything behind the hole closes up under it", () => {
     const view = viewOf([
       track("TV", [vis("V1", 0, 4), vis("V2", 4, 6)]),
@@ -261,6 +261,19 @@ describe("a layer at the origin", () => {
     );
     expect(refused(planRipple(view, ["V1"]))).toEqual({
       error: "RippleInsideHole", layer: "A1", hole: { s: 0, e: sec(4) },
+    });
+  });
+
+  it("is still a link's anchor: a partner beyond the hole cannot close up under it", () => {
+    const view = viewOf(
+      [
+        track("TV", [vis("V1", 0, 4), vis("V2", 4, 6)]),
+        track("TB", [vis("T0", 0, 1), vis("T4", 4, 5)]),
+      ],
+      { links: [{ id: "L", members: ["T0", "T4"] }] },
+    );
+    expect(refused(planRipple(view, ["V1"]))).toEqual({
+      error: "RippleLinkStraddles", link: "L", hole: { s: 0, e: sec(4) },
     });
   });
 

@@ -1,9 +1,8 @@
 // apps/desktop/src/main/mcp/server.preview.test.ts
-// `preview_motif_draft` renders what `add_motif_layer` would place. The audit
-// found it rendered `props ?? {}` — the manifest defaults ignored, so the
-// built-in lower third previewed with no text (D2) — and an unknown id or prop
-// went straight to the capture. Now the props go through the same canonicaliser
-// the placement uses, and both refusals arrive before any capture.
+// `preview_motif_draft` renders what `add_motif_layer` would place: the props
+// go through the same canonicaliser the placement uses, so an omitted prop
+// takes its manifest default (a lower third previews WITH its text), and an
+// unknown id or prop is refused before any capture.
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 

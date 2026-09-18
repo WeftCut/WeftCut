@@ -1,9 +1,9 @@
 // apps/desktop/src/main/mcp/effectsCatalog.ts
 // `effects://catalog` / `read_project { view: "effects" }`: every effect kind
-// `add_effect` takes, with each param's default and range — the vocabulary the
-// audit's testers had to learn from refusals (§3, effects: "blur/chromakey
-// params unknown"). One projection of the two shared catalogs the parser
-// refuses against, so what is advertised is exactly what is accepted.
+// `add_effect` takes, with each param's default and range — the vocabulary an
+// agent would otherwise learn from refusals. One projection of the two shared
+// catalogs the parser refuses against, so what is advertised is exactly what
+// is accepted.
 import { EFFECT_KINDS, effectParamSpecs } from '../../shared/effects/params.js'
 import { AUDIO_EFFECTS } from '../../shared/audioEffects/catalog.js'
 
@@ -32,6 +32,6 @@ export function effectsCatalogView(): EffectsCatalogView {
         ...(audio?.region ? { region: { in_key: audio.region.inKey, out_key: audio.region.outKey, min_us: audio.region.minUs } } : {}),
       }
     }),
-    param_key: 'A param is keyframed as effects[<effect_id>].params[<key>]; update_effect writes it Static as { "<key>": { "mode": "Static", "value": v } }.',
+    param_key: 'update_effect writes a param Static as { "<key>": { "mode": "Static", "value": v } }; a VISUAL param is then keyframed as effects[<effect_id>].params[<key>]. Audio params are static only.',
   }
 }

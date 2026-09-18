@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS } from '../mcp-commands'
+import { MCP_RESULT_READERS } from '../mcp-results'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
@@ -212,6 +213,13 @@ describe('MCP tool table projections', () => {
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
     expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: [u], label: 42 })).toThrow()
+  })
+})
+
+describe('every table-exec mutator says what it committed', () => {
+  it('has a result reader — none answers `content: []`', () => {
+    const mutators = MCP_TOOL_DEFS.filter((d) => d.exec === 'table' && d.annotations.readOnlyHint !== true).map((d) => d.name)
+    expect(mutators.filter((n) => !(n in MCP_RESULT_READERS))).toEqual([])
   })
 })
 

@@ -31,11 +31,11 @@ fn tool_schema<T: schemars::JsonSchema>() -> serde_json::Value {
 
 /// `Option<T>` comes out of schemars as `["T", "null"]`. On a property that is
 /// not `required`, omitting it already means "none", so the `null` arm is a
-/// second spelling of the same thing — a hundred of them across the catalog
-/// read as "this field takes null" (audit S2). Drop it; a field where `null`
-/// means something of its own is required, and keeps it. The TS-side argument
-/// check treats an explicit `null` on an optional field as omitted, so a
-/// client that still sends one is answered as before.
+/// second spelling of the same thing, and across a catalog it reads as "this
+/// field takes null". Drop it; a field where `null` means something of its own
+/// is required, and keeps it. The TS-side argument check treats an explicit
+/// `null` on an optional field as omitted, so a client that sends one is
+/// answered as if it had left the field out.
 fn drop_optional_null_arms(v: &mut serde_json::Value) {
     let Some(obj) = v.as_object_mut() else { return };
     let required: Vec<String> = obj

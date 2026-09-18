@@ -58,6 +58,11 @@ async function runStdio(se: ShimEnv, userDataDir: string): Promise<void> {
     })
   }
   await shim.server.connect(new StdioServerTransport())
+  // The SDK's stdio transport reads stdin but does not close the server when it
+  // ends, and a client that exits closes stdin first — its SIGTERM is
+  // TerminateProcess on Windows, which no handler sees — so EOF is the one exit
+  // signal every client on every platform delivers. Closing here runs `onclose`.
+  process.stdin.once('end', () => { void shim.server.close() })
   // Eager first connect: the client's initial tools/list should see the full
   // catalog without waiting for a poll tick when the app is already up.
   await shim.bridge.ensureUp()

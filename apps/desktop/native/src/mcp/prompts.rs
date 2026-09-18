@@ -220,7 +220,7 @@ Steps:
 2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times).
 3. Call `apply_transcripts` with `transcripts: [<the envelope: segments + word_timing>]` and `source_layer_ids: [\"{layer_id}\"]`. The cues land as editable Text layers on the caption tracks, packing where there is room, and KEEP their word timing — which is what `correct_caption_text` later needs to re-segment a corrected cue. (`apply_subtitles` with the `srt` field also works, but an SRT has no word offsets, so the timing is lost.) The tool returns the id of the caption track the first cue landed on.
 
-If `transcribe_clip` errors because no backend is configured (or with `MissingKey` / `InvalidKey`), tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
+If `transcribe_clip` refuses because no backend is configured or its key is missing or invalid, tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription; the refusal names what is missing. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
     );
     Ok(PromptResult {
         description: Some("Auto-caption a clip via transcribe_clip + apply_transcripts.".into()),
@@ -234,8 +234,8 @@ If `transcribe_clip` errors because no backend is configured (or with `MissingKe
 #[cfg(feature = "speech")]
 fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let script = require_str(args, "script")?;
-    // Required here because `synthesize_speech` requires it: the prompt used to
-    // promise "the default voice" and write a call the tool refused (audit S9).
+    // Required here because `synthesize_speech` requires it: a prompt that
+    // promised a default voice would write a call the tool refuses.
     let voice = require_str(args, "voice")?;
     let speed = optional_str(args, "speed");
     let target_track = optional_str(args, "target_track_id");
@@ -336,14 +336,14 @@ mod tests {
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
-        // The marker's two required fields are named where the step is (audit S9).
+        // The marker's two required fields are named where the step is.
         assert!(body.contains("`label`"));
         assert!(body.contains("`color`"));
     }
 
     /// Pad is what makes *Remove* keep part of each pause instead of erasing
     /// it, so the defaults paragraph has to name it — and the bridge — or an
-    /// agent tunes only the two knobs the old prompt knew about.
+    /// agent never learns those two knobs exist.
     #[test]
     fn cut_pauses_names_the_pad_and_bridge_defaults() {
         let a = args(&[("layer_id", json!("xyz"))]);
@@ -384,7 +384,7 @@ mod tests {
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
-        // The marker's two required fields are named where the step is (audit S9).
+        // The marker's two required fields are named where the step is.
         assert!(body.contains("`label`"));
         assert!(body.contains("`color`"));
 
@@ -455,6 +455,16 @@ mod tests {
 
     #[cfg(feature = "speech")]
     #[test]
+    fn auto_caption_names_the_fix_not_error_tokens() {
+        let a = args(&[("layer_id", json!("00000000-0000-7000-8000-000000000001"))]);
+        let r = expand("auto-caption", Some(&a)).expect("expand auto-caption");
+        let body = message_text(&r.messages[0]);
+        assert!(body.contains("Settings → Transcription"));
+        assert!(!body.contains("MissingKey") && !body.contains("InvalidKey"), "no token names the model cannot act on");
+    }
+
+    #[cfg(feature = "speech")]
+    #[test]
     fn voiceover_expands_with_script_and_voice() {
         let a = args(&[("script", json!("hello there")), ("voice", json!("nova"))]);
         let r = expand("voiceover", Some(&a)).expect("expand voiceover");
@@ -462,7 +472,7 @@ mod tests {
         assert!(body.contains("hello there"));
         assert!(body.contains("in the `nova` voice"));
         assert!(body.contains("`voice: \"nova\"`"));
-        assert!(!body.contains("voice voice"), "the sentence names one voice once (audit S9)");
+        assert!(!body.contains("voice voice"), "the sentence names one voice once");
         assert!(body.contains("Settings → API keys"));
         assert!(!body.contains("MissingKey"), "no token names the model cannot act on");
     }

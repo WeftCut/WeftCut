@@ -87,8 +87,6 @@ function authoredTransform(patch: {
     opacity: authored('opacity', patch.opacity),
     // The rest of the static transform: unbounded by design (a turn is a turn,
     // a pivot may sit outside the box), quantised like every other numeric.
-    // Until these were patchable the only route to a still rotation was a
-    // keyframe followed by clear_keyframes (audit §3).
     rotation_deg: authored('rotation_deg', patch.rotation_deg),
     anchor_x: authored('anchor_x', patch.anchor_x),
     anchor_y: authored('anchor_y', patch.anchor_y),
@@ -386,7 +384,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   // A Motif's props are checked against its manifest BEFORE the merge, the
   // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
-  // render that ignores it (audit §3, motifs). A motif the catalog does not
+  // render that ignores it. A motif the catalog does not
   // know stays permissive — the project may come from a build that knows it.
   if (patch.kind === 'Motif' && patch.props !== undefined && layer.params.kind === 'Motif') {
     const manifest = catalog.get(layer.params.motif_id)

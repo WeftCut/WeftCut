@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/__tests__/mcp.transform-statics.test.ts
-// Static rotation and pivot through update_layer_params (audit §3: until now
-// the only route to a still rotation was set_keyframe then clear_keyframes).
+// Static rotation and pivot through update_layer_params — one patch, not a
+// set_keyframe followed by clear_keyframes.
 import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'

@@ -28,9 +28,10 @@ The weftcut skill (Settings > Agent) carries the longer etiquette, the common fl
 
 ## Session etiquette
 
-1. Read `project://current` before your first mutation — never write against a
-   guessed state. If your client cannot read MCP resources, `read_project`
-   returns the same views as a tool result.
+1. Read `project://tracks` before your first mutation — never write against a
+   guessed state; `project://current` is the whole project when you need it.
+   If your client cannot read MCP resources, `read_project` returns the same
+   views as a tool result.
 2. Call `create_checkpoint` before your first edit, so the user has a one-step
    restore point.
 3. A small change (a handful of tool calls) needs no more ceremony than that:

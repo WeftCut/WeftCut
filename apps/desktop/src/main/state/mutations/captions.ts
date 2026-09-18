@@ -236,8 +236,9 @@ export interface MergeCaptionsResult { layer: Uuid; removed: Uuid[] }
 /** merge_captions — fold two or more cues of ONE caption track into the
  *  earliest: its span becomes the union, its text the texts joined by a line
  *  break in time order, its style stays; the rest are deleted. A gap between
- *  them is spanned; a cue of another lane in between makes the union overlap
- *  it, which validate refuses (`LayerOverlap`) — the merge is per lane. */
+ *  them is spanned, and so is a cue of ANOTHER lane inside it (overlap is per
+ *  track); an unnamed cue of the same lane inside the union is what validate
+ *  refuses (`LayerOverlap`). */
 export function applyMergeCaptions(p: Project, ids: readonly Uuid[]): MergeCaptionsResult {
   const unique = [...new Set(ids)]
   if (unique.length < 2) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: 'merge_captions needs two or more captions' })

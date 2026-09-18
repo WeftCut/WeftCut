@@ -81,7 +81,7 @@ describe('handleReadResource', () => {
   })
 })
 
-describe('resources/templates/list and resources/list (audit S4)', () => {
+describe('resources/templates/list and resources/list', () => {
   const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
   async function connected() {
     const ts = tsHostStub()
@@ -142,7 +142,7 @@ describe('read_project picture views answer an image block from the media reader
   })
 })
 
-describe('effects://catalog (audit §3: the effect vocabulary had to be learned from refusals)', () => {
+describe('effects://catalog: the effect vocabulary is readable, not learned from refusals', () => {
   it('lists every kind add_effect takes with each param\'s default and range, as a resource and as a read_project view', async () => {
     const ts = tsHostStub()
     ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)

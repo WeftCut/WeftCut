@@ -1,5 +1,5 @@
 // apps/desktop/src/main/mcp/instructions.test.ts
-// `initialize` carries instructions (audit S13): the ten-line etiquette, sent to
+// `initialize` carries instructions: the ten-line etiquette, sent to
 // every client, identical to the head of the shipped skill so the two cannot
 // drift, and small enough that a session pays for it without noticing.
 import { describe, it, expect, vi } from 'vitest'

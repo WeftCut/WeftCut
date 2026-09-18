@@ -264,10 +264,10 @@ export function parseObj(v: unknown, field: string): Record<string, unknown> {
   return v as Record<string, unknown>
 }
 
-// ── Strict patch parsers (audit S6) ─────────────────────────────────────────
+// ── Strict patch parsers ────────────────────────────────────────────────────
 // `parseObj` proves "is an object" and nothing else, and every apply* mutation
 // reads its patch behind `typeof` guards — so an unknown key, a typo, a field
-// that belongs to another tool all committed NOTHING and reported success. The
+// that belongs to another tool would all commit NOTHING and report success. The
 // parsers below refuse at the boundary, naming the accepted set, so the agent
 // learns the vocabulary from the refusal rather than from a re-read that shows
 // nothing changed.
@@ -281,9 +281,9 @@ export function parseIntNum(v: unknown, field: string): number {
 }
 
 const LAYER_PATCH_KEYS: readonly string[] = ['label', 't_start_us', 't_end_us', 'locked']
-/** `update_layer`'s envelope patch. `enabled` is refused by name — the audit
- *  found the mutation APPLIED it while the description said visibility is
- *  `set_layers_enabled` — and a param key is pointed at `update_layer_params`. */
+/** `update_layer`'s envelope patch. `enabled` is refused by name — the
+ *  mutation would apply it, but visibility is `set_layers_enabled`'s — and a
+ *  param key is pointed at `update_layer_params`. */
 export function parseLayerPatch(v: unknown): LayerPatch {
   const o = parseObj(v, 'patch')
   const keys = Object.keys(o)
@@ -328,8 +328,9 @@ function parseOneOf(v: unknown, options: readonly string[], field: string): stri
 
 /** One value of a kind-specific patch, gated by field name. `null` is a value
  *  only where it MEANS something — the text box pair, where it is "back to
- *  auto" — and is refused everywhere else: the wire convention is that an
- *  omitted field is left alone, so a null one is a request nothing reads. */
+ *  auto", and `shadow`, where it is "no shadow" — and is refused everywhere
+ *  else: the wire convention is that an omitted field is left alone, so a null
+ *  one is a request nothing reads. */
 function parseLayerParamValue(k: string, v: unknown): unknown {
   const field = `patch.${k}`
   if (v === null) {
@@ -628,6 +629,14 @@ export function asArray(v: unknown, field: string): string[] {
   return v as string[]
 }
 
+/** An array that NAMES a set: empty is refused, since a call over no members
+ *  would report success for nothing done. `orElse` says what to send instead. */
+export function asNonEmptyArray(v: unknown, field: string, orElse: string): string[] {
+  const arr = asArray(v, field)
+  if (arr.length === 0) throw new McpArgError(`${field} names nothing — ${orElse}`, field)
+  return arr
+}
+
 /** restack_layer's placement — a closed two-value enum, gated here so a typo
  *  rejects at the boundary instead of reaching the actor. */
 export function parseRestackPosition(v: unknown): 'above' | 'below' {
@@ -732,8 +741,8 @@ export function shapeDryRunResponse(
 /** The remedy a ripple refusal offers depends on WHICH tool rippled: only
  *  `delete_layers` has a `layer_ids` to widen or narrow; `ripple_delete_gap`
  *  closes a span it was given, and `remove_pauses` cuts spans it computed. One
- *  sentence for all three sent two of them chasing a parameter they do not
- *  have (audit D6). */
+ *  sentence for all three would send two of them chasing a parameter they do
+ *  not have. */
 const RIPPLE_TOOL = { deleteLayers: 'delete_layers', gap: 'ripple_delete_gap', pauses: 'remove_pauses' } as const
 function rippleRemedy(tool: string | undefined, layer: string, widen: string, narrow: string): string {
   if (tool === RIPPLE_TOOL.gap) return `move_layer or delete_layers ${layer} first so the gap closes clean, or pick a gap it does not reach into`
@@ -749,8 +758,8 @@ const KEYFRAME_PARAM_KEYS = `visual kinds (VideoClip, ImageOverlay, Text, Motif,
 
 /** CommandError → MCP error JSON. Every variant has an arm: a refusal names the
  *  id or field it could not honour, the read that lists valid ones, and the
- *  next call — the bare variant name is never the message (the audit found
- *  thirteen of them). `tool` is the MCP tool that raised it, for the refusals
+ *  next call — the bare variant name is never the message. `tool` is the MCP
+ *  tool that raised it, for the refusals
  *  whose remedy differs per tool (the ripple family). The structured `data`
  *  mirrors the same facts for clients that forward it. */
 export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJson {
@@ -763,7 +772,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
     // only `code: message` to the model and drop `error.data`, so a bare
     // 'layer overlap' left agents blind-retrying.
     //
-    // Options are VALIDATED against the geometry (audit D5): trimming the
+    // Options are VALIDATED against the geometry: trimming the
     // blocker's tail back to the request's start only helps when the request
     // starts inside the blocker; when it starts at or before the blocker, the
     // blocker's HEAD is what moves; a split needs a cut strictly inside. Each
@@ -952,8 +961,8 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
   }
   // ── Every remaining variant, one arm each: the id, the field, the read that
   // lists valid ones, the next call. The order follows the union in
-  // shared/commandErrors.ts; `mcp.errors` enumerates the vocabulary so a new
-  // variant cannot fall through to a bare name again. ──
+  // shared/commandErrors.ts; `mcp.error-vocabulary` enumerates the vocabulary
+  // so a new variant cannot fall through to a bare name. ──
   switch (e.error) {
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
@@ -1017,7 +1026,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
     }
     default: {
       // The union is closed; a variant reaching here is one this mapper does not
-      // know yet, which the vocabulary gate (`mcp.errors`) is there to catch.
+      // know yet, which the vocabulary gate (`mcp.error-vocabulary`) is there to catch.
       const rest = e as { error: string } & Record<string, unknown>
       const { error: name, ...fields } = rest
       const facts = Object.entries(fields).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')
@@ -1039,9 +1048,8 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
 /** MCP tool annotations, advertised in `tools/list` and the ONE statement of
  *  the read/write and destructive split: the activity service's read rows take
  *  `readOnlyHint` from the merged catalog, so the agent panel and the client
- *  can never disagree about which calls commit (audit S3 — the regex over tool
- *  names this replaces knew nothing the table did not, and was a second list).
- *  The spec's defaults are `readOnlyHint: false`, `destructiveHint: true`,
+ *  can never disagree about which calls commit (a regex over tool names would
+ *  be a second list that knows nothing the table does not). The spec's defaults are `readOnlyHint: false`, `destructiveHint: true`,
  *  `idempotentHint: false`; each constant states only what differs from them,
  *  and every def carries one, which the type enforces. */
 export interface ToolAnnotations { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
@@ -1072,10 +1080,9 @@ export interface McpToolDef {
 // mcp.catalog-bijection.test.ts gates this catalog-wide.
 // ── Property schemas carry their meaning ────────────────────────────────────
 // Every advertised property has a one-line description with its unit, so an
-// agent learns a field from the schema rather than from a failed call (the
-// audit's testers spent their first ten to twenty calls learning vocabularies
-// the schema could have carried — S2). `mcp.description-budget` counts the
-// properties that do not. Ids and times recur on most tools, so they are
+// agent learns a field from the schema rather than from ten or twenty failed
+// calls. `mcp.description-budget` counts the properties that do not. Ids and
+// times recur on most tools, so they are
 // minted here once; a `null` arm is advertised only where null MEANS something
 // omission does not (clear a label, unpin a duration, return a text box axis
 // to auto) — an optional field is simply not required.
@@ -1381,7 +1388,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // purpose — the mix folds by ROLE (ADR 0023), so nothing reads a track's, and
   // advertising them would be advertising a write that changes nothing.
   { name: 'set_track_flags', exec: 'table', annotations: ANN_SET,
-    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. Unrecorded (not undoable), like `set_role_flags`. A layer's own `locked` is separate (`update_layer`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`. Unrecorded.",
+    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. A layer's own `locked` is separate (`update_layer`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`. Unrecorded.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, enabled: { type: 'boolean', description: "The track's output, preview and export alike. Omitted leaves it alone." }, locked: { type: 'boolean', description: 'Whether the track refuses edits to its layers. Omitted leaves it alone.' } }, required: ['track_id'] },
     parseArgs: (a) => {
       const enabled = parseBoolTriState(a.enabled, 'enabled')
@@ -1447,7 +1454,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, new_t_start_us: US_SCHEMA('New timeline start'), new_track_id: { type: 'string', description: 'Destination track; the current one to move in time only.' }, escape_link: ESCAPE_LINK_SCHEMA }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and with a positive delta at `from_t_us` the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track of the composition). Each layer snaps on its own grid; the record echoes where each landed. Refuses, moving nothing: a start that would cross 0 (`NegativeLayerStart`), a landing on an occupied span (`LayerOverlap`, naming the pair), a locked lane (`TrackLocked`). Returns `{ moved: [layer records], delta_us }`.",
+    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and with a positive delta at `from_t_us` the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track of the composition). Each layer snaps on its own grid. Refuses, moving nothing: a start that would cross 0 (`NegativeLayerStart`), a landing on an occupied span (`LayerOverlap`, naming the pair), a locked lane (`TrackLocked`). Returns `{ moved: [layer records], delta_us, requested_delta_us }`.",
     inputSchema: { type: 'object', properties: {
       layer_ids: LAYER_IDS_SCHEMA('The layers to shift, all in one composition. Exactly one of this and `from_t_us`.'),
       from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
@@ -1460,6 +1467,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       const byIds = a.layer_ids !== undefined && a.layer_ids !== null
       const byTime = a.from_t_us !== undefined && a.from_t_us !== null
       if (byIds === byTime) throw new McpArgError(`shift_layers takes exactly one of \`layer_ids\` / \`from_t_us\`${byIds ? ' — two of them name two sets' : ' — neither names a set'}`, byIds ? 'from_t_us' : 'layer_ids')
+      for (const k of ['track_ids', 'composition_id'] as const) if (byIds && a[k] !== undefined && a[k] !== null) throw new McpArgError(`\`${k}\` goes with \`from_t_us\`; \`layer_ids\` already names the set — drop it`, k)
+      if (byTime && a.escape_link !== undefined && a.escape_link !== null) throw new McpArgError('`escape_link` goes with `layer_ids`; a sweep from `from_t_us` takes every layer by where it starts — drop it', 'escape_link')
       const delta = parseIntNum(a.delta_us, 'delta_us')
       if (delta === 0) throw new McpArgError('delta_us is 0 — nothing would move', 'delta_us')
       return { op: 'shift_layers', args: byIds
@@ -1477,7 +1486,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
     description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it unless `escape_link=true`. A target past the other edge or past the source (of any member) is refused naming the legal window, never clamped. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },
-    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
+    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseOneOf(a.edge, ['in', 'out'], 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   // One delete tool over two actor ops: `ripple` is the whole difference between
   // them, and the surface says so rather than making an agent pick a verb it can
   // only tell apart by reading two descriptions. Empty `layer_ids` splits — the
@@ -1775,7 +1784,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       layer_ids: LAYER_IDS_SCHEMA('Only these captions. Omit for every caption in the project.'),
     }, required: [] },
     parseArgs: (a) => ({ op: 'restyle_captions', args: {
-      layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
+      layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'omit it to restyle every caption, or name at least one').map((s) => parseUuid(s, 'layer_ids')),
       patch: {
         font_family: parseStrOpt(a.font_family, 'font_family'),
         font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,

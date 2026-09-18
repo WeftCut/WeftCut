@@ -60,6 +60,21 @@ export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
 export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint }
 
+/** `update_layer`'s one rule for the times an agent sends, wet or rehearsed:
+ *  landed on the layer's own grid rather than refused as off-grid (the answer's
+ *  `adjusted` says so). A layer that does not exist gets its patch back as is —
+ *  the mutation names the missing layer. */
+function snapEnvelopePatch(p: Project, id: Uuid, patch: LayerPatch): LayerPatch {
+  const loc = locateLayer(p, id)
+  if (!loc) return patch
+  const grid = gridForLayerKind(loc.layer.params.kind, loc.comp.fps)
+  return {
+    ...patch,
+    ...(typeof patch.t_start_us === 'number' ? { t_start_us: snapOnGrid(patch.t_start_us, grid) } : {}),
+    ...(typeof patch.t_end_us === 'number' ? { t_end_us: snapOnGrid(patch.t_end_us, grid) } : {}),
+  }
+}
+
 export type DryRunOp =
   | { kind: 'AddLayer'; track_id: Uuid; params: LayerParams; t_start_us: number; t_end_us: number }
   | { kind: 'DeleteLayers'; ids: Uuid[] }
@@ -201,9 +216,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // neither reconcile blocks this.)
     if (next === current()) return value
     // Every recorded edit is a modification, so `metadata.modified_at` takes
-    // the commit's timestamp — the one cheap dirty signal a client has (audit
-    // S14 found it equal to created_at after an hour of edits). After the
-    // no-op guard, so an unchanged draft stays the very same object; before
+    // the commit's timestamp — the one cheap dirty signal a client has. After
+    // the no-op guard, so an unchanged draft stays the very same object; before
     // validate, so what is validated is what is recorded. Unrecorded writes
     // (settings, the envelope, flags) are setup and leave it alone.
     const ts = clock()
@@ -641,10 +655,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    durable, 1 broadcast id) | force-cascade (applyDeleteLayer per referencing
   //    layer + commit, 1 op_id, undoable). The cascade IS delete_layers' delete:
   //    drop from links (dissolve below two), prune the lane it empties, autofit.
-  //    A bare splice used to leave a link with dangling members behind, so a
-  //    forced removal of an auto-paired video+audio pair died in validate — the
-  //    one thing the MediaInUse refusal had just told the agent to do (audit
-  //    D22). A locked lane refuses as TrackLocked, as delete_layers would. ──
+  //    It has to be that delete: a bare splice leaves a link with dangling
+  //    members, and a forced removal of an auto-paired video+audio pair — the
+  //    one thing the MediaInUse refusal tells the agent to do — dies in
+  //    validate. A locked lane refuses as TrackLocked, as delete_layers would. ──
   function removeMedia(id: Uuid, force: boolean): void {
     const cur = current()
     if (!(id in cur.media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -737,7 +751,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       const { media_id, value } = patch.proxy_override
       // Read back as `settings.proxy_overrides[media_id]`, so an id that names
       // no pool item would be a key nothing ever resolves — refused as the
-      // media tools refuse it (audit D26).
+      // media tools refuse it.
       if (!(media_id in current().media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: media_id })
       if (value === null) delete next.proxy_overrides[media_id]
       else next.proxy_overrides[media_id] = value
@@ -780,11 +794,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
               requireSameComposition(d, op.ids)
               for (const id of op.ids) applyDeleteLayer(d, id)
               break
-            case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
+            // The rehearsal is the agent's, so it runs under the MCP arms' rule
+            // for a time it sends: an envelope time lands on the grid, a start
+            // below 0 or a trim past the window is refused (`strict`) — exactly
+            // what the real call answers.
+            case 'UpdateLayer': applyUpdateLayer(d, op.id, snapEnvelopePatch(scratch, op.id, op.patch)); break
             case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
-            case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link); break
+            case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link, true); break
             case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_link); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
-            case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_link); break
+            case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_link, true); break
             // The SAME apply the wet arm runs, so moves, bounces, spawns and
             // refusals are predicted by one code path (bounces are primitives —
             // safe to carry out of the discarded draft).
@@ -1723,16 +1741,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t1 = p.t_end_us as number
           const snap = current()
           const item = snap.media_pool[media]
-          // An id that names nothing is MediaNotFound FIRST. It used to fall
-          // through to the source-window rule and report "src_in_us and
-          // src_out_us are required for Video media <id>" about a media that
-          // does not exist (audit D17).
+          // An id that names nothing is MediaNotFound FIRST: the source-window
+          // rule below would otherwise demand src_in_us/src_out_us for a media
+          // that does not exist.
           if (item === undefined) return { ok: false, error: mapCommandError({ error: 'MediaNotFound', media }, name) }
-          // Audio-only media used to fall through to videoClipParams and commit
-          // a VideoClip over an mp3: it draws nothing, and the mixer folds only
-          // Audio layers (native/src/audio/mix.rs), so it is silent too — a
-          // success report for a clip that neither shows nor plays. Name the
-          // tool that does place it instead.
+          // Audio-only media must not fall through to videoClipParams: a
+          // VideoClip over an mp3 draws nothing, and the mixer folds only Audio
+          // layers (native/src/audio/mix.rs), so it is silent too — a success
+          // report for a clip that neither shows nor plays. Name the tool that
+          // does place it instead.
           if (item.kind === 'Audio' || item.kind === 'Subtitle') {
             return { ok: false, error: { code: 'invalid_params', message: item.kind === 'Audio'
               ? `media ${media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use add_audio_layer with the same track, span and source window.`
@@ -2160,15 +2177,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       // placing tool's (snap, and the answer's `adjusted` says so) rather than
       // being refused by the grid backstop with a `snap_to` the caller then
       // has to send again: one rule for a time an agent sends — snap and echo.
-      if (name === 'update_layer') {
-        const loc = locateLayer(current(), args.layer as Uuid)
-        const patch = args.patch as LayerPatch
-        if (loc) {
-          const grid = gridForLayerKind(loc.layer.params.kind, loc.comp.fps)
-          if (typeof patch.t_start_us === 'number') patch.t_start_us = snapOnGrid(patch.t_start_us, grid)
-          if (typeof patch.t_end_us === 'number') patch.t_end_us = snapOnGrid(patch.t_end_us, grid)
-        }
-      }
+      if (name === 'update_layer') args.patch = snapEnvelopePatch(current(), args.layer as Uuid, args.patch as LayerPatch)
       const r = dispatch(op, args)
       if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
       const reader = MCP_RESULT_READERS[name]

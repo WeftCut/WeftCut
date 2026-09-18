@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/__tests__/mcp.text-style.test.ts
-// The Text face and shadow through update_layer_params (audit §3: readable,
-// unwritable). `background` is not in the model and is deliberately absent.
+// The Text face and shadow through update_layer_params. `background` is not in
+// the model and is deliberately absent.
 import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'

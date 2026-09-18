@@ -1,9 +1,9 @@
 // apps/desktop/src/main/state/mutations/shift.ts
 //
 // Shift a SET of layers in time by one delta, as one recorded edit — the
-// multi-layer move the audit's testers kept rebuilding out of N `move_layer`
-// calls and a read (findings §3), and with a positive delta at a time the
-// ripple INSERT: open a gap at `from_t_us`, then place into it.
+// multi-layer move that would otherwise be N `move_layer` calls and a read,
+// and with a positive delta at a time the ripple INSERT: open a gap at
+// `from_t_us`, then place into it.
 //
 // The arithmetic is `applyMoveLayer`'s, wholesale: `shiftOnGrids` lands every
 // member on its own lattice, `floorShiftAtZero` takes the zero boundary as one

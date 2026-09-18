@@ -1,12 +1,10 @@
 // apps/desktop/src/main/state/__tests__/mcp.schema-semantics.test.ts
-// The schema carries the semantics (audit S2). Before this pass 232 of the
-// catalog's 397 properties had no description, a hundred optional fields were
-// typed `['T', 'null']`, `update_layer_params.patch` was one flat bag of 32
-// keys with a `kind` enum that left out Motif, `param_key` was a bare string
-// on six tools and `trim_layer.edge` had no enum — so testers spent their
-// first ten to twenty calls learning vocabularies the schema could have
-// carried. These pin what the schema now says against what the parsers
-// accept, so the two cannot drift apart again.
+// The schema carries the semantics: every property described, a `null` arm
+// only where null means something, `update_layer_params.patch` one variant per
+// kind, `param_key` an enum plus pattern, `trim_layer.edge` an enum. A
+// vocabulary the schema leaves to prose is learned by failing calls, so these
+// pin what the schema says against what the parsers accept and the two cannot
+// drift apart.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
@@ -61,7 +59,7 @@ describe('update_layer_params advertises one variant per kind, from the table th
   it('has a variant for every kind, the enum on `kind` naming the same seven', () => {
     expect(variants.map((v) => v.properties.kind.const)).toEqual([...LAYER_PARAM_KINDS])
     expect(patch.properties.kind.enum).toEqual([...LAYER_PARAM_KINDS])
-    expect(LAYER_PARAM_KINDS).toContain('Motif') // the flat bag's enum left it out (D15's sibling)
+    expect(LAYER_PARAM_KINDS).toContain('Motif') // Motif's fields ride the same patch, so its kind is in the enum
   })
 
   it("each variant's fields are exactly that kind's key set — no more, no fewer", () => {
@@ -94,10 +92,11 @@ describe('update_layer_params advertises one variant per kind, from the table th
     expect(() => parseLayerParamsPatch({ kind: 'Text', scale_x: 2 })).toThrow(McpArgError)
   })
 
-  it('the Text box pair alone keeps its null arm: null is "back to auto", not "omitted"', () => {
+  it('the Text box pair and `shadow` keep their null arm: null MEANS back to auto / no shadow, not "omitted"', () => {
     const text = variants.find((v) => v.properties.kind.const === 'Text')!.properties
     expect(text.box_w.type).toEqual(['number', 'null'])
     expect(text.box_h.type).toEqual(['number', 'null'])
+    expect(text.shadow.type).toContain('null')
     expect(text.content.type).toBe('string')
   })
 })
@@ -105,7 +104,7 @@ describe('update_layer_params advertises one variant per kind, from the table th
 describe('param_key is an enum plus the effect-param pattern, on every tool that takes one', () => {
   const takers = MCP_TOOL_DEFS.filter((d) => 'param_key' in ((d.inputSchema as Schema).properties ?? {}))
 
-  it('six tools take it and every one advertises the same schema', () => {
+  it('every tool that takes it advertises the same schema', () => {
     expect(takers.map((d) => d.name).sort()).toEqual(['clear_keyframes', 'delete_keyframe', 'get_param_track', 'set_extrapolation', 'set_keyframe', 'set_param_track', 'smooth_keyframes', 'update_keyframe'].sort())
     const first = JSON.stringify((takers[0].inputSchema as Schema).properties.param_key)
     for (const d of takers) expect(JSON.stringify((d.inputSchema as Schema).properties.param_key), d.name).toBe(first)
@@ -157,7 +156,7 @@ describe('null arms are advertised only where null means something omission does
   })
 })
 
-describe('the undo description (D25) and the proxy override (D26)', () => {
+describe('the undo description and the proxy override', () => {
   it('undo names each unrecorded surface once', () => {
     const d = MCP_TOOL_DEFS.find((t) => t.name === 'undo')!.description
     expect(d).not.toContain('`update_composition`, `update_composition`')

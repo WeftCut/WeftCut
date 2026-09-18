@@ -27,8 +27,8 @@ import urllib.request
 
 # The app's userData is Electron's default for the product name, `%APPDATA%\WeftCut`
 # (dev and packaged alike), unless it was launched with `--user-data-dir` — then
-# point WEFTCUT_USERDATA at that directory. The old `dev.weftcut.desktop` name
-# was the appId, which was never the folder (audit S11).
+# point WEFTCUT_USERDATA at that directory. `dev.weftcut.desktop` is the appId,
+# not the folder.
 CONFIG_PATH = os.path.join(
     os.environ.get("WEFTCUT_USERDATA") or os.path.expandvars(r"%APPDATA%\WeftCut"),
     "mcp_auth.json",

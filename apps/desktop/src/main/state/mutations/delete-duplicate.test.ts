@@ -4,6 +4,8 @@ import { blankProject, type Layer, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
 import { applyDeleteLayer } from './delete'
 import { applyPasteLayer, applyPasteLayers } from './duplicate'
+import { applyAddEffect } from './effects'
+import { EFFECT_KINDS } from '../../../shared/effects/params'
 import { CommandFailure, isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapOnGrid, timeUsAtGridIndex } from '../snap'
@@ -27,6 +29,17 @@ describe('delete + duplicate', () => {
   it('rejects deleting a missing layer / locked track', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     try { applyDeleteLayer(p, 'ghost'); throw new Error('x') } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LayerNotFound') }
+  })
+  it('a clone carries its effects under fresh ids, so no two layers share one', () => {
+    const g = seededGen(); const p = blankProject(g, 't')
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
+    const kind = EFFECT_KINDS.find((k) => !k.startsWith('audio.'))!
+    const fx = applyAddEffect(p, g, a, kind)
+    const dup = applyPasteLayers(p, g, [a], 2_000_000, null).get(a)!
+    const find = (id: string): Layer => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
+    expect(find(dup).effects.map((e) => e.kind)).toEqual([kind])
+    expect(find(dup).effects[0].id).not.toBe(fx)
+    expect(find(a).effects[0].id).toBe(fx)
   })
   it('duplicates with a fresh id, offset, sorted insert, and no link join', () => {
     const g = seededGen(); const p = blankProject(g, 't')

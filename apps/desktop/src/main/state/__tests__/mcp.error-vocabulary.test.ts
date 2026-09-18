@@ -1,12 +1,11 @@
 // apps/desktop/src/main/state/__tests__/mcp.error-vocabulary.test.ts
-// No refusal is a bare variant name. The audit found thirteen — `TrackLocked`,
-// `LayerNotFound`, `UnknownKeyframeParam`, … — each a dead end: no id echoed,
-// no next step, and for a multi-id call no way to tell which id failed. This
-// gate enumerates every `CommandError` variant with representative fields and
-// asserts the message is prose that names its ids, plus the three findings
-// with a shape of their own: per-tool ripple remedies (D6), overlap options
-// that would actually succeed (D5), and the two structured messages the
-// descriptions promise (D24).
+// No refusal is a bare variant name: `TrackLocked` or `LayerNotFound` alone is
+// a dead end — no id echoed, no next step, and for a multi-id call no way to
+// tell which id failed. This gate enumerates every `CommandError` variant with
+// representative fields and asserts the message is prose that names its ids,
+// plus the three refusals with a shape of their own: per-tool ripple remedies,
+// overlap options that would actually succeed, and the two structured messages
+// the descriptions promise.
 import { describe, it, expect } from 'vitest'
 import { mapCommandError } from '../mcp-commands'
 import type { CommandError } from '../errors'
@@ -102,7 +101,7 @@ describe('every CommandError variant maps to prose that names its ids', () => {
   })
 })
 
-describe('the ripple remedies are per tool (D6)', () => {
+describe('the ripple remedies are per tool', () => {
   const inside: CommandError = { error: 'RippleInsideHole', layer: L1, hole: { s: 0, e: 5_000_000 } }
 
   it('delete_layers is told to widen or narrow layer_ids', () => {
@@ -135,7 +134,7 @@ describe('the ripple remedies are per tool (D6)', () => {
   })
 })
 
-describe('LayerOverlap options are validated against the geometry (D5)', () => {
+describe('LayerOverlap options are validated against the geometry', () => {
   const overlap = (a: [number, number], b: [number, number]): CommandError =>
     ({ error: 'ValidationFailed', detail: { rule: 'LayerOverlap', track: T1, a: L1, a_start: a[0], a_end: a[1], b: L2, b_start: b[0], b_end: b[1] } })
   const actions = (e: CommandError) => ((mapCommandError(e).data as { options: Array<{ action: string; edge?: string; new_t_us?: number; at_t_us?: number }> }).options)
@@ -147,10 +146,10 @@ describe('LayerOverlap options are validated against the geometry (D5)', () => {
     expect(opts[3]).toMatchObject({ at_t_us: 2_000_000 })
   })
 
-  it('a request starting at or before the blocker (the audit\'s split_at_t 0 case): never a split at the start, never a trim to the start', () => {
-    // The audit followed `split_at_t 0` / `trim_existing to 0` and got
-    // SplitOutsideLayer and a one-frame clip. Here the request covers the
-    // blocker's head, so the blocker's START is what moves.
+  it('a request starting at or before the blocker: never a split at the start, never a trim to the start', () => {
+    // `split_at_t 0` would be SplitOutsideLayer and `trim_existing to 0` a
+    // one-frame clip. The request covers the blocker's head, so the blocker's
+    // START is what moves.
     const opts = actions(overlap([0, 3_000_000], [0, 1_000_000]))
     expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layer', 'trim_existing'])
     expect(opts[2]).toMatchObject({ edge: 'in', new_t_us: 1_000_000 })
@@ -165,7 +164,7 @@ describe('LayerOverlap options are validated against the geometry (D5)', () => {
   })
 })
 
-describe('the messages the descriptions promise (D24)', () => {
+describe('the messages the descriptions promise', () => {
   it('HistoryLocked carries the reason and the way out', () => {
     const out = mapCommandError({ error: 'HistoryLocked', reason: 'rough cut in progress' })
     expect(out.message).toContain('rough cut in progress')
