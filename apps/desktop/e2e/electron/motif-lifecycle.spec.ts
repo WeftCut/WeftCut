@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// rules, both of which the 8 s + `proc.kill()` first version broke:
 ///
 ///   - the force path goes through forceCloseApp, never a hand-rolled kill. Its
-///     comment has what a leader-only kill costs on Windows; the short version
+///     comment has what a leader-only kill costs on Windows and Linux; the short version
 ///     is that it trades this spec's bounded teardown for the WORKER's unbounded
 ///     one.
 ///   - the budget is a safety net, not the expected path. A graceful quit here
@@ -30,24 +30,47 @@ const CLOSE_BUDGET_MS = 30_000
 
 async function closeAppRobustly(app: ElectronApplication): Promise<void> {
   const proc = app.process()
+  let closed = false
+  let onClose: () => void
+  const processClosed = new Promise<void>((resolve) => {
+    onClose = () => {
+      closed = true
+      resolve()
+    }
+    proc.once('close', onClose)
+  })
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
-      app.close(),
+      Promise.all([app.close(), processClosed]),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, CLOSE_BUDGET_MS)
       }),
     ])
   } catch {
-    // close() rejects when the process is already gone; the guard below no-ops.
+    // The app may have disconnected while descendants still hold its pipes.
+    // Only the process 'close' event makes the force-close below unnecessary.
   } finally {
     // Losing the race leaves the timer pending, and a pending timer holds the
     // worker's event loop open for the rest of the budget.
     if (timer) clearTimeout(timer)
   }
-  if (proc?.exitCode === null) {
-    console.log(`[lifecycle] close() outlived ${CLOSE_BUDGET_MS}ms — force-closing`)
-    forceCloseApp(app)
+  try {
+    if (!closed) {
+      console.log('[lifecycle] graceful close incomplete — force-closing the process tree')
+      forceCloseApp(app)
+      // A signal is not completion: inherited stdio must reach EOF before
+      // Playwright can remove this app from its worker cleanup set (#367).
+      await Promise.race([
+        processClosed,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Electron stdio stayed open after force-close')), 10_000)
+        }),
+      ])
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+    proc.removeListener('close', onClose!)
   }
 }
 

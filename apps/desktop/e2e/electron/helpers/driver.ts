@@ -236,8 +236,8 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
   }
 }
 
-/// Force a leaked app down, synchronously so an 'exit' handler can call it. On
-/// Windows that means its whole process TREE.
+/// Force a wedged app's whole process tree down while the worker is still
+/// running. The caller must wait for ChildProcess 'close', not just 'exit'.
 ///
 /// LANDMINE — on Windows the main pid alone is NOT enough. Electron's renderer/GPU/crashpad
 /// children inherit the stdio pipes Playwright spawned the app with, so killing
@@ -254,14 +254,11 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
 /// re-parented and out of reach (measured: taskkill after a bare kill() reaps
 /// nothing, and 'close' stays unfired). There is no second chance at the tree.
 ///
-/// LANDMINE — POSIX deliberately keeps the leader-only kill, and the symmetry is
-/// not worth "fixing". Playwright spawns detached off-Windows, so
-/// `process.kill(-pid)` looks like the obvious counterpart; it is also what this
-/// sweep runs from inside a `process.on('exit')` listener, and `process.exit()`
-/// cannot finish until that listener returns. A group kill there rode with a
-/// Linux leg whose worker then never exited at all — the runner force-killed it
-/// after 5 minutes with every test green. The evidence for a tree kill is
-/// Windows-only; keep the blast radius there until a Linux failure asks for it.
+/// #367 demonstrated the same inherited-pipe failure on Linux. Playwright
+/// launches Electron in its own POSIX process group, so SIGKILL to -pid reaches
+/// its descendants too. Do not use ChildProcess.kill(): besides missing the
+/// children it sets `killed`, making Playwright skip its own later tree kill.
+/// This is deliberately separate from the synchronous process-exit sweep below.
 export function forceCloseApp(app: ElectronApplication): void {
   try {
     const proc = app.process()
@@ -269,7 +266,7 @@ export function forceCloseApp(app: ElectronApplication): void {
     if (process.platform === 'win32') {
       spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
     } else {
-      proc.kill()
+      process.kill(-proc.pid, 'SIGKILL')
     }
   } catch {
     // Already gone.
@@ -278,11 +275,17 @@ export function forceCloseApp(app: ElectronApplication): void {
 
 /// Best-effort sweep when the Playwright worker exits: kill any app a spec
 /// forgot to close, then remove every dir the driver minted. 'exit' handlers
-/// must be synchronous, so this is forceCloseApp() + rmSync, not an awaited
-/// close().
+/// must be synchronous. Keep the historical POSIX leader-only fallback HERE:
+/// changing this exit listener to a group kill accompanied a separate Linux
+/// worker-exit hang (2a5e8bac). Normal bounded teardown above reaps the tree
+/// before worker exit, when callers can still await and verify pipe closure.
 process.on('exit', () => {
   for (const [app, dir] of liveApps) {
-    forceCloseApp(app)
+    if (process.platform === 'win32') {
+      forceCloseApp(app)
+    } else {
+      try { app.process().kill() } catch { /* already gone */ }
+    }
     if (dir && !keepTmp()) removeDir(dir)
   }
   if (!keepTmp()) for (const dir of mintedTmpDirs) removeDir(dir)
