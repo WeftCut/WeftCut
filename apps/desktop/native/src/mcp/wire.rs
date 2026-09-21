@@ -163,9 +163,17 @@ pub struct ToolAnnotations {
 
 impl ToolAnnotations {
     /// A read: commits nothing.
-    pub const READ: Self = Self { read_only_hint: Some(true), destructive_hint: None, idempotent_hint: None };
+    pub const READ: Self = Self {
+        read_only_hint: Some(true),
+        destructive_hint: None,
+        idempotent_hint: None,
+    };
     /// A write that creates — twice is twice, nothing removed.
-    pub const WRITE: Self = Self { read_only_hint: None, destructive_hint: Some(false), idempotent_hint: None };
+    pub const WRITE: Self = Self {
+        read_only_hint: None,
+        destructive_hint: Some(false),
+        idempotent_hint: None,
+    };
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -353,7 +353,10 @@ mod tests {
         assert!(body.contains("100000"), "the pad default, in µs");
         assert!(body.contains("pass 0 to erase pauses whole"));
         assert!(body.contains("bridge_us 80 ms"));
-        assert!(body.contains("`detect_pauses` alone also takes bridge_us"), "bridge_us belongs to detect_pauses only");
+        assert!(
+            body.contains("`detect_pauses` alone also takes bridge_us"),
+            "bridge_us belongs to detect_pauses only"
+        );
         assert!(body.contains("min_pause_us 500 ms"));
     }
 
@@ -460,7 +463,10 @@ mod tests {
         let r = expand("auto-caption", Some(&a)).expect("expand auto-caption");
         let body = message_text(&r.messages[0]);
         assert!(body.contains("Settings → Transcription"));
-        assert!(!body.contains("MissingKey") && !body.contains("InvalidKey"), "no token names the model cannot act on");
+        assert!(
+            !body.contains("MissingKey") && !body.contains("InvalidKey"),
+            "no token names the model cannot act on"
+        );
     }
 
     #[cfg(feature = "speech")]
@@ -472,9 +478,15 @@ mod tests {
         assert!(body.contains("hello there"));
         assert!(body.contains("in the `nova` voice"));
         assert!(body.contains("`voice: \"nova\"`"));
-        assert!(!body.contains("voice voice"), "the sentence names one voice once");
+        assert!(
+            !body.contains("voice voice"),
+            "the sentence names one voice once"
+        );
         assert!(body.contains("Settings → API keys"));
-        assert!(!body.contains("MissingKey"), "no token names the model cannot act on");
+        assert!(
+            !body.contains("MissingKey"),
+            "no token names the model cannot act on"
+        );
     }
 
     /// `voice` is required because the tool requires it — the prompt and the
@@ -484,8 +496,15 @@ mod tests {
     fn voiceover_requires_voice_as_the_tool_does() {
         let a = args(&[("script", json!("hello there"))]);
         assert!(expand("voiceover", Some(&a)).is_err());
-        let def = catalog().into_iter().find(|p| p.name == "voiceover").expect("voiceover in catalog");
-        let voice = def.arguments.iter().find(|a| a.name == "voice").expect("voice arg");
+        let def = catalog()
+            .into_iter()
+            .find(|p| p.name == "voiceover")
+            .expect("voiceover in catalog");
+        let voice = def
+            .arguments
+            .iter()
+            .find(|a| a.name == "voice")
+            .expect("voice arg");
         assert!(voice.required);
     }
 

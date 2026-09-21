@@ -7,7 +7,9 @@
 //! TS-executed mutations are served by the TS actor's `MCP_TOOLS` table and
 //! routed by `routeMcpTool`.
 
-use super::wire::{McpCatalog, McpToolError, PromptDef, ResourceDef, ToolAnnotations, ToolDef, ToolResult};
+use super::wire::{
+    McpCatalog, McpToolError, PromptDef, ResourceDef, ToolAnnotations, ToolDef, ToolResult,
+};
 use super::{prompts, resources, tools};
 use crate::napi_backend::Backend;
 
@@ -41,19 +43,33 @@ fn drop_optional_null_arms(v: &mut serde_json::Value) {
     let required: Vec<String> = obj
         .get("required")
         .and_then(serde_json::Value::as_array)
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
-    if let Some(props) = obj.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
+    if let Some(props) = obj
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
         for (name, prop) in props.iter_mut() {
             if !required.iter().any(|r| r == name) {
                 if let Some(p) = prop.as_object_mut() {
                     for key in ["type", "enum"] {
-                        let Some(arr) = p.get(key).and_then(serde_json::Value::as_array).cloned() else { continue };
+                        let Some(arr) = p.get(key).and_then(serde_json::Value::as_array).cloned()
+                        else {
+                            continue;
+                        };
                         let kept: Vec<serde_json::Value> = arr
                             .into_iter()
                             .filter(|t| !(t.is_null() || t.as_str() == Some("null")))
                             .collect();
-                        let collapsed = if key == "type" && kept.len() == 1 { kept[0].clone() } else { serde_json::Value::Array(kept) };
+                        let collapsed = if key == "type" && kept.len() == 1 {
+                            kept[0].clone()
+                        } else {
+                            serde_json::Value::Array(kept)
+                        };
                         p.insert(key.to_string(), collapsed);
                     }
                 }
