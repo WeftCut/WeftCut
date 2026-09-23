@@ -48,6 +48,11 @@ Metal build — upstream publishes no other — and carries `libggml-cpu` and
 `libggml-blas` beside `libggml-metal`, the same superset shape that chose the
 Vulkan archives in ADR 0055 and ADR 0073.
 
+> **Superseded in part by [ADR 0076](0076-the-macos-whisper-cli-is-built-here-with-metal.md):**
+> macOS arm64 now carries Whisper — a whisper-cli this project builds from the
+> v1.9.1 commit and publishes, plus the same Base model. The paragraph below
+> records why it was absent from this slice.
+
 **Whisper is absent on macOS, runtime AND model together.** whisper.cpp v1.9.1
 publishes an xcframework for linking into an app, no command-line binary, and
 the whisper backend spawns `whisper-cli` by path like every other engine.

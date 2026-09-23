@@ -6,9 +6,10 @@
 // multilingual Base), ADR 0043 (sherpa-onnx v1.13.4 + Paraformer-zh for the
 // FunASR backend), ADR 0055 (llama.cpp b10103 Vulkan + Qwen3-VL-4B-Instruct
 // Q4_K_M for the video-understanding backend), and ADR 0073 (the Linux x64
-// artifacts of all three, at those same upstream versions), and ADR 0075 (the
-// macOS arm64 artifacts of sherpa-onnx and llama.cpp — whisper.cpp publishes
-// no macOS CLI, so its items have no darwin entry yet). Do not re-derive
+// artifacts of all three, at those same upstream versions), ADR 0075 (the
+// macOS arm64 artifacts of sherpa-onnx and llama.cpp), and ADR 0076 (the macOS
+// arm64 whisper-cli, which whisper.cpp does not publish — this repo builds it
+// from the pinned upstream commit and releases it). Do not re-derive
 // or "refresh" them — a new upstream release is a NEW catalog entry with its
 // own pinned url/bytes/sha, decided through an ADR update, not an edit here.
 //
@@ -57,6 +58,22 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         entryPath: "whisper-bin-ubuntu-x64/whisper-cli",
         fields: { binary: "whisper-bin-ubuntu-x64/whisper-cli" },
       },
+      // whisper.cpp publishes no macOS CLI (its only Apple asset is an
+      // xcframework), so this is WeftCut's own release asset: whisper-cli
+      // v1.9.1 built from the pinned upstream commit by
+      // scripts/build-whisper-cli-macos.mjs in the content-whisper-cli
+      // workflow (ADR 0076). One static binary with Metal and its shader
+      // library embedded — it links only system frameworks, so nothing needs
+      // to sit beside it. The pin is the CI-published asset, not a local build.
+      "darwin-arm64": {
+        url: "https://github.com/WeftCut/WeftCut/releases/download/content-whisper-cli-v1.9.1/whisper-cli-v1.9.1-macos-arm64.tar.gz",
+        sha256:
+          "cda72d4951aa2adbcf4b109151fbfaa071be7fab0297acbf002f3cf5d007b8d1",
+        bytes: 1169176,
+        archive: "tar.gz",
+        entryPath: "whisper-cli-v1.9.1-macos-arm64/whisper-cli",
+        fields: { binary: "whisper-cli-v1.9.1-macos-arm64/whisper-cli" },
+      },
     },
   },
   {
@@ -85,6 +102,15 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         fields: { model: "ggml-base.bin" },
       },
       "linux-x64": {
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin?download=true",
+        sha256:
+          "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+        bytes: 147951465,
+        archive: "none",
+        entryPath: "ggml-base.bin",
+        fields: { model: "ggml-base.bin" },
+      },
+      "darwin-arm64": {
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin?download=true",
         sha256:
           "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",

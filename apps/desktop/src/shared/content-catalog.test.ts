@@ -269,9 +269,31 @@ describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
     }
   });
 
-  it("whisper.cpp has no macOS entry — upstream ships no macOS CLI to pin", () => {
-    expect(macOf("whisper-cpp-runtime")).toBeUndefined();
-    expect(macOf("whisper-model-base")).toBeUndefined();
+});
+
+describe("the ADR 0076 macOS arm64 whisper-cli is present verbatim", () => {
+  const macOf = (id: string) =>
+    CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
+
+  it("whisper-cli v1.9.1 macos-arm64 — this repo's CI-published asset", () => {
+    const mac = macOf("whisper-cpp-runtime");
+    expect(mac?.bytes).toBe(1169176);
+    expect(mac?.sha256).toBe(
+      "cda72d4951aa2adbcf4b109151fbfaa071be7fab0297acbf002f3cf5d007b8d1",
+    );
+    expect(mac?.archive).toBe("tar.gz");
+    expect(mac?.url).toBe(
+      "https://github.com/WeftCut/WeftCut/releases/download/content-whisper-cli-v1.9.1/whisper-cli-v1.9.1-macos-arm64.tar.gz",
+    );
+    expect(mac?.fields).toEqual({
+      binary: "whisper-cli-v1.9.1-macos-arm64/whisper-cli",
+    });
+    expect(mac?.prerequisiteKey).toBeUndefined();
+  });
+
+  it("the Base model is the same bytes as everywhere else", () => {
+    const item = CONTENT_CATALOG.find((i) => i.id === "whisper-model-base");
+    expect(item?.platforms["darwin-arm64"]).toEqual(item?.platforms["win32-x64"]);
   });
 });
 
@@ -279,8 +301,8 @@ describe("coverage is all-or-nothing per engine on every platform", () => {
   // An engine is the set of items that together make one backend runnable. If
   // a platform carried some of them and not others, its Settings row would
   // offer a download that installs part of a set and can never configure the
-  // engine — the trap ADR 0055 avoided for MiniCPM-V and ADR 0075 avoids for
-  // whisper.cpp on macOS by leaving the runtime AND the model out together.
+  // engine — the trap ADR 0055 avoided for MiniCPM-V, and the reason ADR 0075
+  // left whisper.cpp's runtime AND model off macOS together until ADR 0076.
   const engines = new Map<string, string[]>();
   for (const item of CONTENT_CATALOG) {
     const keys = [
