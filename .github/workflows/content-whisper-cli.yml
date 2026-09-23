@@ -1,0 +1,73 @@
+name: content-whisper-cli
+
+# Builds and publishes the macOS arm64 whisper-cli content artifact. whisper.cpp
+# ships no macOS CLI (its only Apple asset is an xcframework), so the catalog's
+# darwin-arm64 Whisper runtime is this repo's own release asset, built from the
+# upstream commit pinned in apps/desktop/scripts/build-whisper-cli-macos.mjs.
+#
+# Manual only: a run publishes the bytes the catalog's sha256 then pins, so it
+# happens once per upstream bump, never on push. The release is immutable in
+# practice — a rerun whose tarball differs from the published one fails rather
+# than replacing an asset installs already verified against.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # Keep in step with WHISPER_TAG in the build script.
+  RELEASE_TAG: content-whisper-cli-v1.9.1
+  ASSET: whisper-cli-v1.9.1-macos-arm64.tar.gz
+
+jobs:
+  build:
+    # Pinned rather than macos-latest: the toolchain is part of the bytes.
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Build
+        working-directory: apps/desktop
+        run: node scripts/build-whisper-cli-macos.mjs --out "$RUNNER_TEMP/out"
+      - name: Smoke-run the binary
+        run: |
+          dir="$RUNNER_TEMP/smoke"
+          mkdir -p "$dir"
+          tar -xzf "$RUNNER_TEMP/out/$ASSET" -C "$dir"
+          "$dir/whisper-cli-v1.9.1-macos-arm64/whisper-cli" --help > /dev/null
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          file="$RUNNER_TEMP/out/$ASSET"
+          sha=$(shasum -a 256 "$file" | cut -d' ' -f1)
+          echo "sha256=$sha bytes=$(stat -f %z "$file")" >> "$GITHUB_STEP_SUMMARY"
+          if ! gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --latest=false \
+              --title "Content: whisper-cli v1.9.1 (macOS arm64)" \
+              --notes "whisper.cpp v1.9.1 whisper-cli for macOS arm64, built by apps/desktop/scripts/build-whisper-cli-macos.mjs. App-managed content, not an app release."
+          fi
+          published=$(gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --json assets \
+            -q ".assets[] | select(.name == \"$ASSET\") | .digest")
+          if [ -z "$published" ]; then
+            gh release upload "$RELEASE_TAG" "$file" -R "$GITHUB_REPOSITORY"
+          elif [ "$published" != "sha256:$sha" ]; then
+            echo "::error::$ASSET is already published as $published; this build is sha256:$sha"
+            exit 1
+          else
+            echo "$ASSET already published with the same digest"
+          fi
