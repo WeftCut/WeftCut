@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONTENT_CATALOG } from "./content-catalog";
-import { contentPlatformKey } from "./content-download";
+import { contentPlatformKey, type ContentItem } from "./content-download";
 
 // The catalog is a supply-chain surface: every entry must stay pinned
 // (immutable versioned URL + exact bytes + SHA-256) so a drive-by "bump the
@@ -223,6 +223,83 @@ describe("the ADR 0073 Linux slice is present verbatim", () => {
   it("every catalog item covers Linux — a half-covered engine has no usable row", () => {
     for (const item of CONTENT_CATALOG) {
       expect(Object.keys(item.platforms), item.id).toContain("linux-x64");
+    }
+  });
+});
+
+describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
+  const macOf = (id: string) =>
+    CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
+
+  it("sherpa-onnx v1.13.4 osx-arm64-shared runtime — the same upstream version", () => {
+    const mac = macOf("funasr-runtime");
+    expect(mac?.bytes).toBe(27044587);
+    expect(mac?.sha256).toBe(
+      "809ab5d0c77bd8f358364a244e6ab17f2afecf9779eb9fd436fa469c3ff5375c",
+    );
+    expect(mac?.archive).toBe("tar.bz2");
+    expect(mac?.url).toContain("/releases/download/v1.13.4/");
+    expect(mac?.fields).toEqual({
+      binary: "sherpa-onnx-v1.13.4-osx-arm64-shared/bin/sherpa-onnx-offline",
+    });
+    expect(mac?.prerequisiteKey).toBeUndefined();
+  });
+
+  it("llama.cpp b10103 macos-arm64 runtime — the Metal build", () => {
+    const mac = macOf("llama-mtmd-runtime");
+    expect(mac?.bytes).toBe(10803401);
+    expect(mac?.sha256).toBe(
+      "1c07a23cf98d80b6349860b6d30f9e15548a7fd91a4b44b15e749f377b6f6246",
+    );
+    expect(mac?.archive).toBe("tar.gz");
+    expect(mac?.url).toContain("/releases/download/b10103/");
+    expect(mac?.fields).toEqual({ binary: "llama-b10103/llama-mtmd-cli" });
+  });
+
+  it("the models it covers are the same bytes as everywhere else", () => {
+    for (const id of [
+      "funasr-model-paraformer-zh",
+      "qwen3-vl-4b-model",
+      "qwen3-vl-4b-mmproj",
+    ]) {
+      const item = CONTENT_CATALOG.find((i) => i.id === id);
+      expect(item?.platforms["darwin-arm64"], id).toEqual(
+        item?.platforms["win32-x64"],
+      );
+    }
+  });
+
+  it("whisper.cpp has no macOS entry — upstream ships no macOS CLI to pin", () => {
+    expect(macOf("whisper-cpp-runtime")).toBeUndefined();
+    expect(macOf("whisper-model-base")).toBeUndefined();
+  });
+});
+
+describe("coverage is all-or-nothing per engine on every platform", () => {
+  // An engine is the set of items that together make one backend runnable. If
+  // a platform carried some of them and not others, its Settings row would
+  // offer a download that installs part of a set and can never configure the
+  // engine — the trap ADR 0055 avoided for MiniCPM-V and ADR 0075 avoids for
+  // whisper.cpp on macOS by leaving the runtime AND the model out together.
+  const engines = new Map<string, string[]>();
+  for (const item of CONTENT_CATALOG) {
+    const keys = [
+      ...(item.speech ? [`speech:${item.speech.backend}`] : []),
+      ...(item.vlm?.backends.map((b) => `vlm:${b}`) ?? []),
+    ];
+    for (const key of keys) engines.set(key, [...(engines.get(key) ?? []), item.id]);
+  }
+  const platforms = new Set(allArtifacts.map((a) => a.platform));
+
+  it.each([...engines])("%s", (_engine, ids) => {
+    for (const platform of platforms) {
+      const covered = ids.map(
+        (id) =>
+          CONTENT_CATALOG.find((i) => i.id === id)!.platforms[
+            platform as keyof ContentItem["platforms"]
+          ] !== undefined,
+      );
+      expect(new Set(covered).size, `${platform}: ${ids.join(", ")}`).toBe(1);
     }
   });
 });

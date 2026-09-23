@@ -6,7 +6,9 @@
 // multilingual Base), ADR 0043 (sherpa-onnx v1.13.4 + Paraformer-zh for the
 // FunASR backend), ADR 0055 (llama.cpp b10103 Vulkan + Qwen3-VL-4B-Instruct
 // Q4_K_M for the video-understanding backend), and ADR 0073 (the Linux x64
-// artifacts of all three, at those same upstream versions). Do not re-derive
+// artifacts of all three, at those same upstream versions), and ADR 0075 (the
+// macOS arm64 artifacts of sherpa-onnx and llama.cpp — whisper.cpp publishes
+// no macOS CLI, so its items have no darwin entry yet). Do not re-derive
 // or "refresh" them — a new upstream release is a NEW catalog entry with its
 // own pinned url/bytes/sha, decided through an ADR update, not an edit here.
 //
@@ -134,6 +136,23 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
           binary: "sherpa-onnx-v1.13.4-linux-x64-shared/bin/sherpa-onnx-offline",
         },
       },
+      // The osx-arm64 `shared` build — the macOS twin of the Linux choice. Its
+      // bin/sherpa-onnx-offline resolves libonnxruntime through @loader_path
+      // and @loader_path/../lib, so bin/ and lib/ stay in one tree. ⚠️ Upstream
+      // ships lib/libonnxruntime*.dylib with a signature that no longer covers
+      // the file, which Apple Silicon answers with SIGKILL at load — the
+      // install's macOS seal step re-signs it ad hoc (contentSign.ts, ADR 0075).
+      "darwin-arm64": {
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-osx-arm64-shared.tar.bz2",
+        sha256:
+          "809ab5d0c77bd8f358364a244e6ab17f2afecf9779eb9fd436fa469c3ff5375c",
+        bytes: 27044587,
+        archive: "tar.bz2",
+        entryPath: "sherpa-onnx-v1.13.4-osx-arm64-shared/bin/sherpa-onnx-offline",
+        fields: {
+          binary: "sherpa-onnx-v1.13.4-osx-arm64-shared/bin/sherpa-onnx-offline",
+        },
+      },
     },
   },
   {
@@ -170,6 +189,18 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         },
       },
       "linux-x64": {
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2",
+        sha256:
+          "9c49fd9c6fb63de8e18c1054cf3d100f804741b7e608e187923cd8ff09fa9f03",
+        bytes: 234051698,
+        archive: "tar.bz2",
+        entryPath: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
+        fields: {
+          model: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
+          tokens: "sherpa-onnx-paraformer-zh-2023-09-14/tokens.txt",
+        },
+      },
+      "darwin-arm64": {
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2",
         sha256:
           "9c49fd9c6fb63de8e18c1054cf3d100f804741b7e608e187923cd8ff09fa9f03",
@@ -235,6 +266,21 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         entryPath: "llama-b10103/llama-mtmd-cli",
         fields: { binary: "llama-b10103/llama-mtmd-cli" },
       },
+      // The macos-arm64 build, which is the Metal build — upstream publishes no
+      // other macOS arm64 variant, and it carries the CPU and BLAS backends
+      // beside libggml-metal, so it is the same superset shape as the Vulkan
+      // archives. Same one-directory layout (RPATH @loader_path, versioned
+      // dylibs behind symlinks the tar lane recreates); its signatures are
+      // valid as shipped (ADR 0075).
+      "darwin-arm64": {
+        url: "https://github.com/ggml-org/llama.cpp/releases/download/b10103/llama-b10103-bin-macos-arm64.tar.gz",
+        sha256:
+          "1c07a23cf98d80b6349860b6d30f9e15548a7fd91a4b44b15e749f377b6f6246",
+        bytes: 10803401,
+        archive: "tar.gz",
+        entryPath: "llama-b10103/llama-mtmd-cli",
+        fields: { binary: "llama-b10103/llama-mtmd-cli" },
+      },
     },
   },
   {
@@ -262,6 +308,15 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         fields: { model: "Qwen3VL-4B-Instruct-Q4_K_M.gguf" },
       },
       "linux-x64": {
+        url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/Qwen3VL-4B-Instruct-Q4_K_M.gguf?download=true",
+        sha256:
+          "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a",
+        bytes: 2497281664,
+        archive: "none",
+        entryPath: "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+        fields: { model: "Qwen3VL-4B-Instruct-Q4_K_M.gguf" },
+      },
+      "darwin-arm64": {
         url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/Qwen3VL-4B-Instruct-Q4_K_M.gguf?download=true",
         sha256:
           "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a",
@@ -300,6 +355,15 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         fields: { mmproj: "mmproj-Qwen3VL-4B-Instruct-F16.gguf" },
       },
       "linux-x64": {
+        url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/mmproj-Qwen3VL-4B-Instruct-F16.gguf?download=true",
+        sha256:
+          "256f3a43bd4205ffef48d6b92715e1e70b5b0e9aef06522584967513a9985331",
+        bytes: 836180256,
+        archive: "none",
+        entryPath: "mmproj-Qwen3VL-4B-Instruct-F16.gguf",
+        fields: { mmproj: "mmproj-Qwen3VL-4B-Instruct-F16.gguf" },
+      },
+      "darwin-arm64": {
         url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/mmproj-Qwen3VL-4B-Instruct-F16.gguf?download=true",
         sha256:
           "256f3a43bd4205ffef48d6b92715e1e70b5b0e9aef06522584967513a9985331",

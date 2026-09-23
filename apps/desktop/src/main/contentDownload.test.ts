@@ -666,6 +666,47 @@ describe("downloadItem — tar extraction (delegated to the injected extractor)"
     expect(deps.extractCalls).toHaveLength(1);
   });
 
+  it("the seal step runs on the fully staged payload, before the manifest exists", async () => {
+    const deps = makeDeps({
+      responses: [archive],
+      tarEntries: [
+        { path: "bundle/bin/tool.exe", data: new TextEncoder().encode("macho") },
+      ],
+    });
+    const sealed: Array<{ dir: string; staged: number | null; manifest: number | null }> = [];
+    deps.sealInstall = async (dir) => {
+      sealed.push({
+        dir,
+        staged: deps.fs.statBytes(`${dir}/bundle/bin/tool.exe`),
+        manifest: deps.fs.statBytes("root/downloads/test-tarball/2.0.0/manifest.json"),
+      });
+    };
+    const result = await downloadItem(deps, tarItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(sealed).toEqual([
+      { dir: "root/downloads/test-tarball/.staging-2.0.0", staged: 5, manifest: null },
+    ]);
+  });
+
+  it("a seal failure fails the install without retrying and leaves no manifest", async () => {
+    const deps = makeDeps({
+      responses: [archive, archive, archive],
+      tarEntries: [
+        { path: "bundle/bin/tool.exe", data: new TextEncoder().encode("macho") },
+      ],
+    });
+    deps.sealInstall = async () => {
+      throw new Error("codesign exited 1");
+    };
+    const result = await downloadItem(deps, tarItem(), "win32-x64", noProgress, live());
+    expect(result).toEqual({ ok: false, error: "codesign exited 1" });
+    expect(deps.fetches).toBe(1);
+    expect(
+      deps.fs.statBytes("root/downloads/test-tarball/2.0.0/manifest.json"),
+    ).toBeNull();
+    expect(itemStatus(deps, tarItem(), "win32-x64")).toEqual({ state: "not_installed" });
+  });
+
   it("an extractor refusal (hostile archive) fails without retrying", async () => {
     const deps = makeDeps({
       responses: [archive, archive, archive],

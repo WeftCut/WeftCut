@@ -104,6 +104,14 @@ export interface ContentDeps {
    * to start at all — the zip lane, whose payloads are Windows-only, does not.
    */
   extractTar(archivePath: string, destDir: string): Promise<void>;
+  /**
+   * Platform finishing step over the staged payload, after it is fully laid
+   * out and before it is renamed into place — so a throw here leaves no
+   * manifest and the item never reads installed. Present on macOS only, where
+   * it ad-hoc re-signs Mach-O files whose upstream signature is invalid
+   * (contentSign.ts, ADR 0075); absent everywhere else.
+   */
+  sealInstall?(stagingDir: string): Promise<void>;
   join(...parts: string[]): string;
   downloadsDir: string;
   partialDir: string;
@@ -570,6 +578,7 @@ async function installVerified(
         deps.join(stagingDir, ...artifact.entryPath.split("/")),
       );
     }
+    await deps.sealInstall?.(stagingDir);
     finishInstall(deps, item, artifact, stagingDir, finalDir);
     return entryAbsPath(deps, item, artifact);
   } catch (e) {

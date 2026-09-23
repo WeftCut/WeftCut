@@ -53,6 +53,7 @@ import { randomUUID } from 'node:crypto'
 import { CONTENT_CATALOG } from '../shared/content-catalog.js'
 import { contentPlatformKey } from '../shared/content-download.js'
 import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, type ContentDeps } from './contentDownload.js'
+import { resignInvalidMachO, type ContentSignDeps } from './contentSign.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
@@ -1857,12 +1858,34 @@ app.whenReady().then(async () => {
     clearMarker(migrationMarkerPath, migrationFs)
   })
 
-  // App-managed content downloads (ADR 0039, 0043, 0055) — driven by the model
+  // App-managed content downloads (ADR 0039, 0043, 0055, 0073, 0075) — driven by the model
   // feature (models:* below), never by the renderer directly. The lifecycle
   // itself is pure + DI (contentDownload.ts); these deps bind it to node:fs,
   // fflate, and Electron net.fetch — Chromium's network stack, which honors the
   // system proxy configuration (incl. SOCKS) that the ureq-based sidecar
   // downloader documented in docs/setup.md cannot.
+  const codesign = (args: string[]): Promise<void> => new Promise((resolve, reject) => {
+    execFile('/usr/bin/codesign', args, (err, _stdout, stderr) => {
+      if (err) reject(new Error(`codesign ${args.join(' ')}: ${String(stderr).trim() || err.message}`))
+      else resolve()
+    })
+  })
+  const macContentSignDeps: ContentSignDeps = {
+    listFiles: (dir) => fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+      // Dirent types come from lstat: symlinks are skipped, never followed.
+      .filter((d) => d.isFile())
+      .map((d) => path.join(d.parentPath, d.name)),
+    readHead: (p, n) => {
+      const fd = fs.openSync(p, 'r')
+      try {
+        const buf = Buffer.alloc(n)
+        const read = fs.readSync(fd, buf, 0, n, 0)
+        return buf.subarray(0, read)
+      } finally { fs.closeSync(fd) }
+    },
+    verify: (p) => codesign(['--verify', p]).then(() => true, () => false),
+    sign: (paths) => codesign(['--force', '--sign', '-', ...paths]),
+  }
   const contentDeps: ContentDeps = {
     fs: {
       mkdirp: (d) => { fs.mkdirSync(d, { recursive: true }) },
@@ -1932,6 +1955,13 @@ app.whenReady().then(async () => {
     extractTar: async (archivePath, destDir) => {
       await backend!.invoke('content_extract_archive', JSON.stringify({ archivePath, destDir }))
     },
+    // macOS only (ADR 0075): Apple Silicon SIGKILLs code whose signature does
+    // not cover its bytes, and the upstream sherpa-onnx osx-arm64 tarball
+    // ships its libonnxruntime that way — re-sign what fails to verify, ad hoc,
+    // before the install is marked complete.
+    ...(process.platform === 'darwin' ? { sealInstall: async (dir: string) => {
+      await resignInvalidMachO(macContentSignDeps, dir)
+    } } : {}),
     join: path.join,
     downloadsDir: dataRoot.downloadsDir,
     partialDir: path.join(dataRoot.cacheDir, 'content-partial'),
