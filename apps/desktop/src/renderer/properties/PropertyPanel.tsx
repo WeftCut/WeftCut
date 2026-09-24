@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import { fontListImported, pickAndImportFont } from "@/bridge/font";
+import { DEFAULT_CAPTION_FONT_FAMILY } from "../../shared/fonts";
 import {
   AUDIO_UNITS_ORDER,
   formatAudioTime,
@@ -987,7 +988,10 @@ function TextFields({
   // Ordered font option list: imported fonts first (marked with ↑), then built-in.
   const fontOptions = [
     ...importedFonts.map((f) => ({ value: f, label: `↑ ${f}` })),
-    ...FONT_FAMILIES.map((f) => ({ value: f, label: f })),
+    ...FONT_FAMILIES.map((f) => ({
+      value: f,
+      label: f === DEFAULT_CAPTION_FONT_FAMILY ? "Default (Liberation Sans)" : f,
+    })),
   ];
   const [size, setSize] = useState(v.font_size_px);
   const [boxW, setBoxW] = useState<number | null>(v.box_w);
@@ -2013,6 +2017,7 @@ function AudioAdvancedFields({
 }
 
 const FONT_FAMILIES = [
+  DEFAULT_CAPTION_FONT_FAMILY,
   "Noto Sans SC",
   "Liberation Sans",
   "Arial",
