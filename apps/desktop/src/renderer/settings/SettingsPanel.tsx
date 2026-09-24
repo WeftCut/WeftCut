@@ -18,8 +18,7 @@ import {
 } from "../ipc";
 import { fitCompositionToLayersOf, setCompositionOf } from "../ipc/compositionScoped";
 import { listen, type UnlistenFn } from "@/bridge/events";
-import { open as openFontDialog } from "@/bridge/dialog";
-import { fontImport, fontListImported, fontResolve } from "@/bridge/font";
+import { fontListImported, pickAndImportFont } from "@/bridge/font";
 import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
 import { refusalText } from "../errors/tryMutate";
 import { AppDialog } from "../components/AppDialog";
@@ -1336,23 +1335,15 @@ function FontsSection({ onError }: { onError: (msg: string) => void }) {
   useEffect(() => { void refresh(); }, [refresh]);
 
   const handleImport = async () => {
-    const picked = await openFontDialog({
-      title: t("settings.import_font_title", { defaultValue: "Import font file" }),
-      filters: [{ name: "Font files", extensions: ["ttf", "otf", "woff2"] }],
-    });
-    if (!picked || Array.isArray(picked)) return;
     setImporting(true);
     onError("");
     try {
-      const result = await fontImport(picked);
-      // Register in document.fonts for the running session immediately.
-      const bytes = await fontResolve(result.family);
-      if (bytes) {
-        const face = new FontFace(result.family, bytes.buffer as ArrayBuffer);
-        await face.load();
-        document.fonts.add(face);
+      const result = await pickAndImportFont(
+        t("settings.import_font_title", { defaultValue: "Import font file" })
+      );
+      if (result) {
+        await refresh();
       }
-      await refresh();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
