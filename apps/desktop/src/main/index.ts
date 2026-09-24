@@ -27,7 +27,7 @@ import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
-import { resolveSystemFont } from './fonts/resolveSystemFont.js'
+import { resolveSystemFont, importFont, listImportedFonts, setImportedFontsDir } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
@@ -381,6 +381,11 @@ app.whenReady().then(async () => {
   // in-place update so a rewritten exe never orphans the identity. Dev shares the
   // packaged identity on purpose (one taskbar grouping across dev and prod).
   app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
+
+  // Initialize the global imported-font directory (<userData>/fonts/) so that
+  // font:import and font:listImported work from the very first IPC call, and so
+  // the family-map scanner picks up previously-imported fonts on every launch.
+  setImportedFontsDir(app.getPath('userData'))
 
   // WeftCut's UI is dark-only (base.css pins `color-scheme: dark`), so declare
   // that to the OS instead of inheriting the system appearance. macOS draws the
@@ -2200,6 +2205,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('font:resolve', async (_e, { family }: { family: string }) => {
     return resolveSystemFont(family)
   })
+  ipcMain.handle('font:import', async (_e, { srcPath }: { srcPath: string }) => {
+    return importFont(srcPath)
+  })
+  ipcMain.handle('font:listImported', () => listImportedFonts())
 
   // Native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
   // forwarded straight to the napi backend's ffmpeg stdin. No JSON.

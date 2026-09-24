@@ -1,8 +1,13 @@
 // Best-effort family-name → font-file resolver for the burn-in path. Scans the
-// platform font directories, builds a family→path map by reading each font's
-// sfnt `name` table (no native deps). Returns null when not found — the
-// renderer then applies the bundled-font fallback (never tofu). NOT part of the
+// platform font directories AND the app-managed imported-font directory
+// (<userData>/fonts/), builds a family→path map by reading each font's sfnt
+// `name` table (no native deps). Returns null when not found — the renderer
+// then applies the bundled-font fallback (never tofu). NOT part of the
 // cross-OS determinism contract: different machines, different files.
+//
+// Imported fonts (<userData>/fonts/) ARE part of the determinism guarantee for
+// a single machine: they are app-managed, present on every launch, and shared
+// across all workspaces and projects.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +32,18 @@ const FONT_DIRS: Record<string, string[]> = {
 
 let familyMap: Map<string, string> | null = null;
 
+/// The app-managed imported-font directory, set once at startup.
+/// Fonts here resolve just like OS fonts and are shared across all workspaces.
+let importedFontsDir: string | null = null;
+
+/// Call once at app startup with app.getPath('userData') to enable the
+/// app-managed imported-font directory (<userData>/fonts/).
+export function setImportedFontsDir(userDataPath: string): void {
+  importedFontsDir = path.join(userDataPath, 'fonts');
+  // Ensure the directory exists so later scans and copies never throw.
+  try { fs.mkdirSync(importedFontsDir, { recursive: true }); } catch { /* already exists */ }
+}
+
 export async function resolveSystemFont(family: string): Promise<Buffer | null> {
   if (!familyMap) familyMap = buildFamilyMap();
   const hit = familyMap.get(family.toLowerCase());
@@ -38,14 +55,58 @@ export async function resolveSystemFont(family: string): Promise<Buffer | null> 
   }
 }
 
+/// Import a font file into <userData>/fonts/. Reads the family name from the
+/// sfnt name table, copies the file, invalidates the family-map cache so the
+/// new font resolves on the next `font:resolve` call, and returns the family
+/// name. Throws with a user-readable message on any failure.
+export async function importFont(
+  srcPath: string,
+): Promise<{ family: string; filename: string }> {
+  if (!importedFontsDir) throw new Error('importedFontsDir not initialized');
+
+  const ext = path.extname(srcPath).toLowerCase();
+  if (!/^\.(ttf|otf|woff2)$/i.test(ext)) {
+    throw new Error(`Unsupported font format "${ext}". Use .ttf, .otf, or .woff2.`);
+  }
+
+  const buf = fs.readFileSync(srcPath);
+  const family = readFamilyName(buf as Buffer);
+  if (!family) throw new Error('Could not read font family name from file.');
+
+  const destFilename = `${family.replace(/[/\\:*?"<>|]/g, '_')}${ext}`;
+  const destPath = path.join(importedFontsDir, destFilename);
+  fs.writeFileSync(destPath, buf);
+
+  // Invalidate so the next resolve re-scans and picks up the new file.
+  familyMap = null;
+
+  return { family, filename: destFilename };
+}
+
+/// List every font previously imported into <userData>/fonts/.
+/// Returns `{ family, filename }` pairs — filename is relative to the dir.
+export function listImportedFonts(): { family: string; filename: string }[] {
+  if (!importedFontsDir) return [];
+  const out: { family: string; filename: string }[] = [];
+  for (const file of walk(importedFontsDir)) {
+    if (!/\.(ttf|otf|woff2)$/i.test(file)) continue;
+    try {
+      const name = readFamilyName(fs.readFileSync(file) as Buffer);
+      if (name) out.push({ family: name, filename: path.basename(file) });
+    } catch { /* skip unreadable */ }
+  }
+  return out;
+}
+
 function buildFamilyMap(): Map<string, string> {
   const map = new Map<string, string>();
-  const dirs = FONT_DIRS[process.platform] ?? [];
+  // OS platform dirs first, then the app-managed imported-font dir.
+  const dirs = [...(FONT_DIRS[process.platform] ?? []), ...(importedFontsDir ? [importedFontsDir] : [])];
   for (const dir of dirs) {
     for (const file of walk(dir)) {
-      if (!/\.(ttf|otf|ttc)$/i.test(file)) continue;
+      if (!/\.(ttf|otf|ttc|woff2)$/i.test(file)) continue;
       try {
-        const name = readFamilyName(fs.readFileSync(file));
+        const name = readFamilyName(fs.readFileSync(file) as Buffer);
         if (name) map.set(name.toLowerCase(), file);
       } catch {
         // skip unreadable / unparsable

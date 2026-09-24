@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
@@ -944,6 +944,48 @@ function TextFields({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  // Imported fonts: loaded from <userData>/fonts/ on mount and refreshed after
+  // each import. Empty on first render — the list fills asynchronously.
+  const [importedFonts, setImportedFonts] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+
+  const refreshImported = useCallback(async () => {
+    try {
+      const list = await window.api.font.listImported();
+      setImportedFonts(list.map((f) => f.family));
+    } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => { void refreshImported(); }, [refreshImported]);
+
+  const handleImportFont = async () => {
+    const picked = await window.api.dialog.open({
+      title: t("property_panel.import_font_title", { defaultValue: "Import font file" }),
+      filters: [{ name: "Font files", extensions: ["ttf", "otf", "woff2"] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    setImporting(true);
+    try {
+      const result = await window.api.font.import(picked);
+      await refreshImported();
+      // Switch the current layer to the newly imported font immediately.
+      setFamily(result.family);
+      commit({ kind: "Text", font_family: result.family });
+    } catch (err) {
+      // Surface as a status-bar refusal (same pattern as tryMutate).
+      console.warn("[font:import]", err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Build the ordered option list: imported fonts first (with a group label
+  // separator), then the built-in static list.
+  const fontOptions = [
+    ...importedFonts.map((f) => ({ value: f, label: `↑ ${f}` })),
+    ...FONT_FAMILIES.map((f) => ({ value: f, label: f })),
+  ];
+
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
@@ -1008,14 +1050,26 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.font_family")}>
-        <AppSelect
-          value={family}
-          onValueChange={(v) => {
-            setFamily(v);
-            commit({ kind: "Text", font_family: v });
-          }}
-          options={FONT_FAMILIES.map((f) => ({ value: f, label: f }))}
-        />
+        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+          <AppSelect
+            value={family}
+            onValueChange={(v) => {
+              setFamily(v);
+              commit({ kind: "Text", font_family: v });
+            }}
+            options={fontOptions}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={importing}
+            title={t("property_panel.import_font_title", { defaultValue: "Import font file" })}
+            onClick={() => void handleImportFont()}
+            style={{ flexShrink: 0, padding: "0 6px" }}
+          >
+            {importing ? "…" : "+"}
+          </Button>
+        </div>
       </Field>
       <Field label={t("property_panel.font_size_px")}>
         <AppNumberField

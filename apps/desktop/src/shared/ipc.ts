@@ -463,7 +463,18 @@ export interface WeftcutApi {
   metrics: { get(): Promise<SystemStats> }
   /// Best-effort OS font-file lookup by family name (main-side scan); null when
   /// not found, so the renderer falls back to the bundled font chain.
-  font: { resolve(family: string): Promise<Uint8Array | null> }
+  ///
+  /// `import` copies a .ttf/.otf/.woff2 into <userData>/fonts/ (app-managed,
+  /// persisted across sessions, shared across all workspaces and projects) and
+  /// returns the resolved family name + filename. Throws on unsupported format
+  /// or unreadable name table.
+  ///
+  /// `listImported` enumerates every font previously imported into <userData>/fonts/.
+  font: {
+    resolve(family: string): Promise<Uint8Array | null>
+    import(srcPath: string): Promise<{ family: string; filename: string }>
+    listImported(): Promise<{ family: string; filename: string }[]>
+  }
   /// Native GPU-decode preview (Windows). Session commands only — per-frame
   /// `ImageBitmap`s do NOT travel over this bridge (a MessagePort/frame can't
   /// cross contextBridge). Instead `requestPort(streamId)` hands a MessagePort to
