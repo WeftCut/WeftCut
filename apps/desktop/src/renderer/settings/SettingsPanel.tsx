@@ -41,6 +41,7 @@ import {
   useTailSnapEnabled,
   useTailSnapStrengthPx,
   useTimelineWheelAxis,
+  useDefaultTextFont,
 } from "./appSettingsStore";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 import {
@@ -1314,6 +1315,16 @@ function SpeechSection({ onError }: { onError: (msg: string) => void }) {
   return <ModelSection family="speech" onError={onError} />;
 }
 
+const FONT_FAMILIES = [
+  "Noto Sans SC",
+  "Liberation Sans",
+  "Arial",
+  "Times New Roman",
+  "Courier New",
+  "Verdana",
+  "Tahoma",
+];
+
 /// Manage app-wide imported fonts: import new ones, remove existing ones.
 /// Lives in General settings so users discover it independently of the
 /// text-layer inspector. Each import copies the file to <userData>/fonts/
@@ -1322,6 +1333,7 @@ function FontsSection({ onError }: { onError: (msg: string) => void }) {
   const { t } = useTranslation();
   const [fonts, setFonts] = useState<{ family: string; filename: string }[]>([]);
   const [importing, setImporting] = useState(false);
+  const defaultTextFont = useDefaultTextFont();
 
   const refresh = useCallback(async () => {
     try {
@@ -1379,6 +1391,37 @@ function FontsSection({ onError }: { onError: (msg: string) => void }) {
           ))}
         </ul>
       )}
+
+      <div style={{ marginTop: "24px" }}>
+        <h4 style={{ fontSize: "12px", fontWeight: 500, marginBottom: "8px" }}>
+          {t("settings.default_text_font", { defaultValue: "Default Text Font" })}
+        </h4>
+        <label className="settings-toggle-row" style={{ alignItems: "center" }}>
+          <span>
+            <span className="settings-toggle-label">
+              {t("settings.default_text_font_label", { defaultValue: "Font Family" })}
+            </span>
+            <span className="settings-toggle-hint">
+              {t("settings.default_text_font_hint", { defaultValue: "The default font for new text layers." })}
+            </span>
+          </span>
+          <AppSelect
+            value={defaultTextFont ?? ""}
+            onValueChange={async (next) => {
+              try {
+                await setAppSettings({ default_text_font: next });
+              } catch (err) {
+                onError(String(err));
+              }
+            }}
+            options={[
+              { value: "", label: t("settings.default_text_font_none", { defaultValue: "App Default" }) },
+              ...fonts.map((f) => ({ value: f.family, label: f.family })),
+              ...FONT_FAMILIES.map((f) => ({ value: f, label: f })),
+            ]}
+          />
+        </label>
+      </div>
     </div>
   );
 }

@@ -238,4 +238,20 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "language": 5 }' }).get().language).toBeUndefined()
     expect(store({ [PATH]: '{ "language": "   " }' }).get().language).toBeUndefined()
   })
+
+  it('default_text_font round-trips, and empty/missing/corrupt degrades to unset', () => {
+    expect(store().get().default_text_font).toBeUndefined()
+
+    const { fs, files } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(s.apply({ default_text_font: 'Inter' }).default_text_font).toBe('Inter')
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().default_text_font).toBe('Inter')
+    expect(JSON.parse(files.get(PATH)!).default_text_font).toBe('Inter')
+
+    expect(s.apply({ default_text_font: '' }).default_text_font).toBeUndefined()
+    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('default_text_font')
+
+    expect(store({ [PATH]: '{ "default_text_font": 5 }' }).get().default_text_font).toBeUndefined()
+    expect(store({ [PATH]: '{ "default_text_font": "   " }' }).get().default_text_font).toBeUndefined()
+  })
 })

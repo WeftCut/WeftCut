@@ -34,6 +34,7 @@ import {
   textEditingLayerId,
 } from "../state/textEditingStore";
 import { activeTool, setTool, useActiveTool } from "../state/toolStore";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { containFit, type Pt } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 import { observeClientRect } from "./layoutRectCache";
@@ -124,11 +125,13 @@ async function actAt(composition: CompositionSummary, point: Pt): Promise<void> 
 
   let layerId: string;
   try {
+    const defaultFont = useAppSettingsStore.getState().settings.default_text_font;
     layerId = await addTextLayerIn({
       compositionId: composition.id,
       tStartUs: tUs,
       x: point.x,
       y: point.y,
+      ...(defaultFont ? { fontFamily: defaultFont } : {}),
     });
   } catch (err) {
     logMutationFailure(err, "Add text at click");

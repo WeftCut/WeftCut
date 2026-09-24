@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
-import { fontListImported, pickAndImportFont } from "@/bridge/font";
+import { fontListImported } from "@/bridge/font";
 import {
   AUDIO_UNITS_ORDER,
   formatAudioTime,
@@ -945,11 +945,9 @@ function TextFields({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  // Imported fonts: loaded from <userData>/fonts/ on mount and refreshed after
-  // each import. Empty on first render — the list fills asynchronously.
+  // Imported fonts, listed above the built-ins. Empty on first render — the
+  // list fills asynchronously. Import itself lives in Settings.
   const [importedFonts, setImportedFonts] = useState<string[]>([]);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
 
   const refreshImported = useCallback(async () => {
     try {
@@ -961,26 +959,6 @@ function TextFields({
   }, []);
 
   useEffect(() => { void refreshImported(); }, [refreshImported]);
-
-  const handleImportFont = async () => {
-    setImportError(null);
-    setImporting(true);
-    try {
-      const result = await pickAndImportFont(
-        t("property_panel.import_font_title", { defaultValue: "Import font file" })
-      );
-      if (result) {
-        await refreshImported();
-        setFamily(result.family);
-        commit({ kind: "Text", font_family: result.family });
-      }
-    } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err));
-      console.warn("[font:import]", err);
-    } finally {
-      setImporting(false);
-    }
-  };
 
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
@@ -1051,31 +1029,14 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.font_family")}>
-        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-          <AppSelect
-            value={family}
-            onValueChange={(v) => {
-              setFamily(v);
-              commit({ kind: "Text", font_family: v });
-            }}
-            options={fontOptions}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={importing}
-            title={t("property_panel.import_font_title", { defaultValue: "Import font file" })}
-            onClick={() => void handleImportFont()}
-            style={{ flexShrink: 0, padding: "0 6px" }}
-          >
-            {importing ? "…" : "+"}
-          </Button>
-        </div>
-        {importError && (
-          <p style={{ color: "var(--color-error, #f87171)", fontSize: "11px", marginTop: "4px" }}>
-            {importError}
-          </p>
-        )}
+        <AppSelect
+          value={family}
+          onValueChange={(v) => {
+            setFamily(v);
+            commit({ kind: "Text", font_family: v });
+          }}
+          options={fontOptions}
+        />
       </Field>
       <Field label={t("property_panel.font_size_px")}>
         <AppNumberField

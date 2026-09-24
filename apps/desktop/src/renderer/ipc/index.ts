@@ -774,6 +774,7 @@ export async function addTextLayer(opts: {
   /// centred in the frame.
   x?: number;
   y?: number;
+  fontFamily?: string;
 }): Promise<string> {
   return invoke<string>("add_text_layer", {
     trackId: opts.trackId,
@@ -782,6 +783,7 @@ export async function addTextLayer(opts: {
     durationUs: opts.durationUs,
     x: opts.x,
     y: opts.y,
+    fontFamily: opts.fontFamily,
   });
 }
 

@@ -113,6 +113,7 @@ import {
   toggleDisplayMode,
   toggleFollowPlayhead,
   toggleMarkersVisible,
+  useAppSettingsStore,
 } from "./settings/appSettingsStore";
 import { toggleLinkOverride } from "./state/linkOverrideStore";
 import {
@@ -1032,9 +1033,11 @@ export function App({ onCloseProject }: AppProps) {
   }, [refresh]);
 
   const handleAddTextLayer = useCallback(async () => {
+    const defaultFont = useAppSettingsStore.getState().settings.default_text_font;
     const layerId = await addTextLayerIn({
       compositionId: currentOpenComposition()?.id ?? null,
       tStartUs: focusedPlayheadUs(),
+      ...(defaultFont ? { fontFamily: defaultFont } : {}),
     });
     setPendingRevealLayerId(layerId);
     await refresh();

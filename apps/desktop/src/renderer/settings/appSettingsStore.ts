@@ -122,6 +122,8 @@ export const useSafeAreaGuidesVisible = (): boolean =>
 /// language source; this is the persisted user choice.
 export const useLanguage = (): string | undefined =>
   useAppSettingsStore((s) => s.settings.language);
+export const useDefaultTextFont = (): string | undefined =>
+  useAppSettingsStore((s) => s.settings.default_text_font);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 

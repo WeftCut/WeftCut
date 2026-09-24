@@ -207,6 +207,15 @@ describe('prodTextParams', () => {
     expect(p.content).toBe('Hello World')
   })
 
+  // The Settings default rides this wire field. It replaces the family alone:
+  // a second size or colour here would be a second factory.
+  it('stamps an explicit fontFamily and changes nothing else', () => {
+    const placed = prodTextParams({ fontFamily: 'Times New Roman' }, COMP) as Extract<LayerParams, { kind: 'Text' }>
+    const base = textParamsDefault('Text', COMP)
+    expect(placed.font.family).toBe('Times New Roman')
+    expect({ ...placed, font: { ...placed.font, family: base.font.family } }).toEqual(base)
+  })
+
   // One factory, or the bundled-font determinism guarantee stops holding: a
   // local default here can name a family the renderer does not ship. This pins
   // that the wire arm adds nothing to the factory but the content default.

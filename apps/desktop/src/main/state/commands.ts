@@ -44,7 +44,11 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
  *  the text is centred on the point. Both or neither: half a point is refused
  *  at the boundary rather than paired with a guessed axis, the way ADR 0049
  *  refuses a `(null, set)` box. Unclamped on purpose — a title that starts
- *  partly out of frame is a legitimate thing to author. */
+ *  partly out of frame is a legitimate thing to author.
+ *
+ *  `fontFamily`, when the caller names one, replaces the factory family and
+ *  nothing else. Absent, the bundled default stays — this arm does not invent
+ *  a second family of its own. */
 export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
   const params = textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
   const x = parseNumOpt(a.x, 'x')
@@ -53,6 +57,8 @@ export function prodTextParams(a: Record<string, unknown>, comp: { width: number
     throw new McpArgError('x and y must be given together', x === undefined ? 'x' : 'y')
   }
   if (x !== undefined && y !== undefined) params.transform.position = staticPosition(x, y)
+  const font = parseStrOpt(a.fontFamily, 'fontFamily')
+  if (font) params.font.family = font
   return params
 }
 
