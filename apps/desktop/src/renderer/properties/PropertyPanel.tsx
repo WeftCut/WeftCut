@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
+import { fontImport, fontListImported, fontResolve } from "@/bridge/font";
+import { open as openFontDialog } from "@/bridge/dialog";
 import {
   AUDIO_UNITS_ORDER,
   formatAudioTime,
@@ -948,46 +950,59 @@ function TextFields({
   // each import. Empty on first render — the list fills asynchronously.
   const [importedFonts, setImportedFonts] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const refreshImported = useCallback(async () => {
     try {
-      const list = await window.api.font.listImported();
+      const list = await fontListImported();
       setImportedFonts(list.map((f) => f.family));
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort: the section just shows no imported fonts */
+    }
   }, []);
 
   useEffect(() => { void refreshImported(); }, [refreshImported]);
 
   const handleImportFont = async () => {
-    const picked = await window.api.dialog.open({
+    setImportError(null);
+    const picked = await openFontDialog({
       title: t("property_panel.import_font_title", { defaultValue: "Import font file" }),
       filters: [{ name: "Font files", extensions: ["ttf", "otf", "woff2"] }],
     });
     if (!picked || Array.isArray(picked)) return;
     setImporting(true);
     try {
-      const result = await window.api.font.import(picked);
+      // 1. Copy the file into <userData>/fonts/ and get the family name back.
+      const result = await fontImport(picked);
+      // 2. Load the font bytes into document.fonts right now so PixiJS can
+      //    render text with it WITHOUT requiring an app restart.
+      //    fontResolve reads from <userData>/fonts/ (familyMap is invalidated
+      //    by importFont on the main side), so the bytes arrive immediately.
+      const bytes = await fontResolve(result.family);
+      if (bytes) {
+        const face = new FontFace(result.family, bytes.buffer as ArrayBuffer);
+        await face.load();
+        document.fonts.add(face);
+      }
+      // 3. Refresh the dropdown list and apply the new family to this layer.
       await refreshImported();
-      // Switch the current layer to the newly imported font immediately.
       setFamily(result.family);
       commit({ kind: "Text", font_family: result.family });
     } catch (err) {
-      // Surface as a status-bar refusal (same pattern as tryMutate).
+      setImportError(err instanceof Error ? err.message : String(err));
       console.warn("[font:import]", err);
     } finally {
       setImporting(false);
     }
   };
 
-  // Build the ordered option list: imported fonts first (with a group label
-  // separator), then the built-in static list.
+  const [content, setContent] = useState(v.content);
+  const [family, setFamily] = useState(v.font_family);
+  // Ordered font option list: imported fonts first (marked with ↑), then built-in.
   const fontOptions = [
     ...importedFonts.map((f) => ({ value: f, label: `↑ ${f}` })),
     ...FONT_FAMILIES.map((f) => ({ value: f, label: f })),
   ];
-
-  const [content, setContent] = useState(v.content);
-  const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
   const [boxW, setBoxW] = useState<number | null>(v.box_w);
   const [boxH, setBoxH] = useState<number | null>(v.box_h);
@@ -1070,6 +1085,11 @@ function TextFields({
             {importing ? "…" : "+"}
           </Button>
         </div>
+        {importError && (
+          <p style={{ color: "var(--color-error, #f87171)", fontSize: "11px", marginTop: "4px" }}>
+            {importError}
+          </p>
+        )}
       </Field>
       <Field label={t("property_panel.font_size_px")}>
         <AppNumberField

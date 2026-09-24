@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type DataRootCurrent,
@@ -18,6 +18,8 @@ import {
 } from "../ipc";
 import { fitCompositionToLayersOf, setCompositionOf } from "../ipc/compositionScoped";
 import { listen, type UnlistenFn } from "@/bridge/events";
+import { open as openFontDialog } from "@/bridge/dialog";
+import { fontImport, fontListImported, fontResolve } from "@/bridge/font";
 import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
 import { refusalText } from "../errors/tryMutate";
 import { AppDialog } from "../components/AppDialog";
@@ -287,6 +289,14 @@ export function SettingsPanel({
             <section className="settings-section">
               <h3>{t("settings.motifs_heading")}</h3>
               <PrebakeSection onError={setError} />
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.fonts_heading", { defaultValue: "Custom fonts" })}</h3>
+              <p className="settings-blurb">
+                {t("settings.fonts_blurb", { defaultValue: "Import .ttf / .otf / .woff2 font files. Imported fonts are available in all projects and workspaces." })}
+              </p>
+              <FontsSection onError={setError} />
             </section>
 
             <section className="settings-section">
@@ -1303,4 +1313,81 @@ function CompositionSection({
 
 function SpeechSection({ onError }: { onError: (msg: string) => void }) {
   return <ModelSection family="speech" onError={onError} />;
+}
+
+/// Manage app-wide imported fonts: import new ones, remove existing ones.
+/// Lives in General settings so users discover it independently of the
+/// text-layer inspector. Each import copies the file to <userData>/fonts/
+/// and registers it in document.fonts for the current session.
+function FontsSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const [fonts, setFonts] = useState<{ family: string; filename: string }[]>([]);
+  const [importing, setImporting] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const list = await fontListImported();
+      setFonts(list);
+    } catch (err) {
+      onError(String(err));
+    }
+  }, [onError]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const handleImport = async () => {
+    const picked = await openFontDialog({
+      title: t("settings.import_font_title", { defaultValue: "Import font file" }),
+      filters: [{ name: "Font files", extensions: ["ttf", "otf", "woff2"] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    setImporting(true);
+    onError("");
+    try {
+      const result = await fontImport(picked);
+      // Register in document.fonts for the running session immediately.
+      const bytes = await fontResolve(result.family);
+      if (bytes) {
+        const face = new FontFace(result.family, bytes.buffer as ArrayBuffer);
+        await face.load();
+        document.fonts.add(face);
+      }
+      await refresh();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={importing}
+        onClick={() => void handleImport()}
+        style={{ marginBottom: "10px" }}
+      >
+        {importing
+          ? t("settings.importing_font", { defaultValue: "Importing…" })
+          : t("settings.import_font_button", { defaultValue: "Import font file…" })}
+      </Button>
+
+      {fonts.length === 0 ? (
+        <p className="settings-toggle-hint">
+          {t("settings.fonts_empty", { defaultValue: "No custom fonts imported yet." })}
+        </p>
+      ) : (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "6px" }}>
+          {fonts.map((f) => (
+            <li key={f.filename} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ flex: 1, fontSize: "13px" }}>{f.family}</span>
+              <span className="settings-toggle-hint" style={{ fontSize: "11px" }}>{f.filename}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
