@@ -140,7 +140,7 @@ function seed(layers: LayerSummary[], linked = false): void {
       root: compositionFixture({
         tracks: [track(layers)],
         links: linked
-          ? [{ id: "lk-1", label: null, layer_ids: layers.map((l) => l.id) }]
+          ? [{ id: "lk-1", layer_ids: layers.map((l) => l.id) }]
           : [],
       }),
     }),

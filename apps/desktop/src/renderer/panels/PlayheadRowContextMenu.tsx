@@ -14,8 +14,7 @@ import type { RestackMenuTargets, RestackTarget } from "./playheadItems";
 ///   anchored restack (or null = disabled) via `restackMenuTargets` at open
 ///   time, so this component is purely presentational and the op surface
 ///   stays above/below.
-/// - Link (`link`), on a folded link row wherever it sits: rename the link's
-///   label, or dissolve the link.
+/// - Link (`link`), on a folded link row wherever it sits: dissolve the link.
 ///
 /// Same virtual-anchor Base UI menu as the timeline's and the media pool's:
 /// placement from the right-click coordinates, outside-press + Escape close
@@ -28,7 +27,6 @@ export function PlayheadRowContextMenu({
   link,
   onClose,
   onAction,
-  onRenameLink,
   onUnlink,
 }: {
   x: number;
@@ -38,11 +36,10 @@ export function PlayheadRowContextMenu({
   /// Null when the row is not in the visible visual stack.
   targets: RestackMenuTargets | null;
   /// The link a folded row stands for; null on a plain layer row.
-  link: { id: string; label: string | null } | null;
+  link: { id: string } | null;
   onClose: () => void;
   /// Fires exactly once per chosen item with the item's anchored restack.
   onAction: (target: RestackTarget) => void;
-  onRenameLink: (linkId: string) => void;
   onUnlink: (linkId: string) => void;
 }) {
   const { t } = useTranslation();
@@ -92,16 +89,10 @@ export function PlayheadRowContextMenu({
             )}
             {targets && link && <MenuSeparator />}
             {link && (
-              <>
-                <MenuItem
-                  label={t("playhead_panel.rename_link")}
-                  onSelect={() => onRenameLink(link.id)}
-                />
-                <MenuItem
-                  label={t("playhead_panel.unlink")}
-                  onSelect={() => onUnlink(link.id)}
-                />
-              </>
+              <MenuItem
+                label={t("playhead_panel.unlink")}
+                onSelect={() => onUnlink(link.id)}
+              />
             )}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>

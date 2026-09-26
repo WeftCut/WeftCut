@@ -79,7 +79,7 @@ describe("linkToggleForSelection", () => {
   });
 
   it("is disabled with nothing selected, whatever links exist", () => {
-    seed([{ id: "l1", label: null, layer_ids: ["a", "b"] }]);
+    seed([{ id: "l1", layer_ids: ["a", "b"] }]);
     expect(linkToggleForSelection()).toBe("needs_two");
     expect(canToggleLinkSelection()).toBe(false);
   });
@@ -88,7 +88,7 @@ describe("linkToggleForSelection", () => {
   // out of a link, and the whole-link selection a plain click produces is the
   // same case.
   it("unlinks a selection that sits inside one link", () => {
-    seed([{ id: "l1", label: null, layer_ids: ["a", "b"] }]);
+    seed([{ id: "l1", layer_ids: ["a", "b"] }]);
     setLayerSelection("a", ["a"]);
     expect(linkToggleForSelection()).toBe("unlink");
     setLayerSelection("a", ["a", "b"]);
@@ -100,8 +100,8 @@ describe("linkToggleForSelection", () => {
   // `reassign`, unlinking would drop members the user never selected.
   it("is disabled for a selection mixing linked and unlinked layers, or spanning two links", () => {
     seed([
-      { id: "l1", label: null, layer_ids: ["a", "b"] },
-      { id: "l2", label: null, layer_ids: ["c", "d"] },
+      { id: "l1", layer_ids: ["a", "b"] },
+      { id: "l2", layer_ids: ["c", "d"] },
     ]);
     setLayerSelection("a", ["a", "z"]);
     expect(linkToggleForSelection()).toBe("mixed");
@@ -114,7 +114,7 @@ describe("linkToggleForSelection", () => {
   // `clearRange`. Unlinking through some other surface must not leave the
   // button reading "Unlink".
   it("follows the project store, not a snapshot", () => {
-    seed([{ id: "l1", label: null, layer_ids: ["a", "b"] }]);
+    seed([{ id: "l1", layer_ids: ["a", "b"] }]);
     setLayerSelection("a", ["a", "b"]);
     expect(linkToggleForSelection()).toBe("unlink");
     seed([]);
@@ -127,8 +127,8 @@ describe("linkToggleForSelection", () => {
 describe("enclosingLink", () => {
   it("names the link the handler dissolves, and null when there is none", () => {
     const links: LinkSummary[] = [
-      { id: "l1", label: null, layer_ids: ["a", "b"] },
-      { id: "l2", label: null, layer_ids: ["c", "d"] },
+      { id: "l1", layer_ids: ["a", "b"] },
+      { id: "l2", layer_ids: ["c", "d"] },
     ];
     expect(enclosingLink(new Set(["a", "b"]), links)?.id).toBe("l1");
     expect(enclosingLink(new Set(["d"]), links)?.id).toBe("l2");

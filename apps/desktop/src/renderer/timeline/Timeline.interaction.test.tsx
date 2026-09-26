@@ -245,7 +245,6 @@ const linkedTrack: TrackSummary = {
 
 const link: LinkSummary = {
   id: "link-1",
-  label: null,
   layer_ids: [layer.id, linkedLayer.id],
 };
 
@@ -1110,7 +1109,6 @@ describe("Timeline seek/selection coupling", () => {
     await waitFor(() => {
       expect(ipcMocks.linksCreate).toHaveBeenCalledWith(
         [layer.id, linkedLayer.id],
-        null,
         false,
       );
     });
@@ -1647,7 +1645,6 @@ describe("Timeline seek/selection coupling", () => {
     };
     const collisionLink: LinkSummary = {
       id: "collision-link",
-      label: null,
       layer_ids: [anchor.id, sibling.id],
     };
     const { getByText } = renderTimeline({
@@ -2243,7 +2240,7 @@ describe("Timeline seek/selection coupling", () => {
       },
     ] as TrackSummary[],
     links: [
-      { id: "raise-link", label: null, layer_ids: [lower.id, upper.id] },
+      { id: "raise-link", layer_ids: [lower.id, upper.id] },
     ] as LinkSummary[],
   });
 
@@ -3569,14 +3566,7 @@ describe("Timeline marquee", () => {
 });
 
 describe("Timeline link chrome", () => {
-  // Data order [lower, upper] → `upper` renders as the TOP row.
   const lowerTrack: TrackSummary = { ...track, id: "track-lower", layers: [layer] };
-  const upperTrack: TrackSummary = {
-    ...track,
-    id: "track-upper",
-    role: "b-roll",
-    layers: [linkedLayer],
-  };
   const hiddenTrack: TrackSummary = {
     ...track,
     id: "track-hidden",
@@ -3590,8 +3580,9 @@ describe("Timeline link chrome", () => {
   beforeEach(() => {
     clearLayerSelection();
     setActiveRegion(null);
-    // The rename store is module-global, and the two focus-return cases below
-    // deliberately leave an editor open; a leaked one hides every clip's label.
+    // The rename store is module-global, and the focus-return case below
+    // deliberately leaves an editor open; a leaked one hides every clip's label
+    // — here and in every describe after this one.
     endRename();
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AllTracks", tail_snap_enabled: false },
@@ -3599,6 +3590,7 @@ describe("Timeline link chrome", () => {
   });
   afterEach(() => {
     cleanup();
+    endRename();
     vi.useRealTimers();
   });
 
@@ -3607,7 +3599,6 @@ describe("Timeline link chrome", () => {
     const first = blockOf("Clip A");
     expect(first.getAttribute("data-link-id")).toBe(link.id);
     expect(first.querySelector('[data-testid="link-glyph"]')).not.toBeNull();
-    expect(screen.queryByTestId("link-tab")).toBeNull();
   });
 
   it("an unlinked clip carries neither the id nor the glyph", () => {
@@ -3615,18 +3606,6 @@ describe("Timeline link chrome", () => {
     const first = blockOf("Clip A");
     expect(first.hasAttribute("data-link-id")).toBe(false);
     expect(first.querySelector('[data-testid="link-glyph"]')).toBeNull();
-  });
-
-  it("a labelled link draws its tab once, on the top-most visible member", () => {
-    renderTimeline({
-      tracks: [lowerTrack, upperTrack],
-      links: [{ ...link, label: "Pair" }],
-    });
-    const tabs = screen.getAllByTestId("link-tab");
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]!.textContent).toBe("Pair");
-    expect(blockOf("Clip B").contains(tabs[0]!)).toBe(true);
-    expect(screen.queryByTestId("link-hidden-badge")).toBeNull();
   });
 
   it("in A/B Roll the visible member counts its filtered-out siblings; All Tracks counts none", () => {
@@ -3694,19 +3673,7 @@ describe("Timeline link chrome", () => {
     fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
   });
 
-  it("the layer context menu offers a link rename only for a linked clip", async () => {
-    renderTimeline({ tracks: [linkedTrack], links: [link] });
-    fireEvent.contextMenu(blockOf("Clip A"), { clientX: 40, clientY: 30 });
-    await waitFor(() => expect(screen.queryByText("Rename link…")).not.toBeNull());
-    fireEvent.click(screen.getByText("Rename link…"));
-    await waitFor(() =>
-      expect(screen.queryByLabelText("Link name")).not.toBeNull(),
-    );
-    // The editor opens on the anchor member's tab even for an unlabelled link.
-    expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
-  });
-
-  // Both rows below guard one LANDMINE (`contextMenuFinalFocus`): the menu
+  // The row below guards one LANDMINE (`contextMenuFinalFocus`): the menu
   // returns focus to whatever held it when it opened, a microtask AFTER it
   // unmounts — so it lands on top of the editor the row just opened, and the
   // editor commits on blur. The row then reads as doing nothing at all.
@@ -3733,24 +3700,6 @@ describe("Timeline link chrome", () => {
 
     const field = await waitFor(() => {
       const found = document.querySelector<HTMLInputElement>(".app-input");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    await afterFocusReturn();
-    expect(field.isConnected).toBe(true);
-    expect(document.activeElement).toBe(field);
-    parked.remove();
-  });
-
-  it("keeps the caret in the tab Rename link… opened", async () => {
-    const parked = parkFocus();
-    renderTimeline({ tracks: [linkedTrack], links: [link] });
-    fireEvent.contextMenu(blockOf("Clip A"), { clientX: 40, clientY: 30 });
-    await waitFor(() => expect(screen.queryByText("Rename link…")).not.toBeNull());
-    fireEvent.click(screen.getByText("Rename link…"));
-
-    const field = await waitFor(() => {
-      const found = screen.queryByLabelText("Link name");
       expect(found).not.toBeNull();
       return found!;
     });
@@ -3923,7 +3872,7 @@ describe("Timeline group marker badge", () => {
     expect(badge()).toBeNull();
   });
 
-  it("shares the block with the label, the link tab and the chain glyph without displacing any of them", () => {
+  it("shares the block with the label, the hidden-member badge and the chain glyph without displacing any of them", () => {
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AbRoll" },
     }));
@@ -3941,12 +3890,11 @@ describe("Timeline group marker badge", () => {
     renderTimeline({
       tracks: [outerTrack, hidden],
       links: [
-        { id: "link-g", label: "Pair", layer_ids: [outerClip.id, linkedLayer.id] },
+        { id: "link-g", layer_ids: [outerClip.id, linkedLayer.id] },
       ],
     });
 
     const block = screen.getByText("Outer").closest(".timeline-layer") as HTMLElement;
-    expect(screen.getByTestId("link-tab").textContent).toBe("Pair");
     expect(screen.getByTestId("link-hidden-badge").textContent).toBe("+1");
     expect(block.querySelector('[data-testid="link-glyph"]')).not.toBeNull();
     expect(

@@ -124,15 +124,14 @@ describe('update_link', () => {
   }
   function link(a: Actor, id: string) { return root(a.snapshot()).links.find((g) => g.id === id) }
 
-  it('adds, removes and renames in ONE recorded edit', () => {
+  it('adds and removes in ONE recorded edit', () => {
     const a = actorWithPool()
     const { c1, c2, c3, linkId } = linked(a)
     const before = a.historyStatus().len
-    expect(call(a, 'update_link', { link_id: linkId, add_layer_ids: [c3], remove_layer_ids: [c1], label: 'pair' }).ok).toBe(true)
+    expect(call(a, 'update_link', { link_id: linkId, add_layer_ids: [c3], remove_layer_ids: [c1] }).ok).toBe(true)
     expect(a.historyStatus().len).toBe(before + 1)
     const g = link(a, linkId)!
     expect([...g.members].sort()).toEqual([c2, c3].sort())
-    expect(g.label).toBe('pair')
     expect(call(a, 'undo').ok).toBe(true)
     expect([...link(a, linkId)!.members].sort()).toEqual([c1, c2].sort())
   })
@@ -144,15 +143,12 @@ describe('update_link', () => {
     expect(link(a, linkId)).toBeUndefined()
   })
 
-  it('clears the label with null, and refuses a call that changes nothing', () => {
+  it('refuses a call that changes nothing', () => {
     const a = actorWithPool()
     const { linkId } = linked(a)
-    expect(call(a, 'update_link', { link_id: linkId, label: 'x' }).ok).toBe(true)
-    expect(call(a, 'update_link', { link_id: linkId, label: null }).ok).toBe(true)
-    expect(link(a, linkId)!.label).toBeUndefined()
     const e = refusal(call(a, 'update_link', { link_id: linkId }))
     expect(e.code).toBe('invalid_params')
-    expect(e.message).toMatch(/at least one of add_layer_ids, remove_layer_ids, label/)
+    expect(e.message).toMatch(/at least one of add_layer_ids, remove_layer_ids —/)
   })
 })
 

@@ -15,7 +15,6 @@ import {
   dropShotMarkers,
   linksCreate,
   linksDissolve,
-  linksRename,
   groupsRename,
   moveLayer,
   removeTransition,
@@ -115,7 +114,7 @@ import { handCaretToEditor } from "../menu/Menu";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { ForeignDragGhost } from "./ForeignDragGhost";
 import { MarqueeOverlay } from "./MarqueeOverlay";
-import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
+import { beginGroupRename, beginLayerRename } from "./renameStore";
 import {
   MarqueeAnchorContext,
   beginMarquee,
@@ -585,7 +584,7 @@ export function Timeline({
       if (enclosing) {
         await linksDissolve(enclosing.id);
       } else if (linkToggleState(sel, currentLinks) === "link") {
-        await linksCreate(Array.from(sel), null, false);
+        await linksCreate(Array.from(sel), false);
       } else {
         return;
       }
@@ -1186,18 +1185,6 @@ export function Timeline({
     [onMutated],
   );
 
-  const onCommitLinkLabel = useCallback(
-    async (linkId: string, label: string | null) => {
-      try {
-        await linksRename(linkId, label);
-        await onMutated();
-      } catch (e) {
-        logMutationFailure(e, "Rename link");
-      }
-    },
-    [onMutated],
-  );
-
   /// A Group's COMPOSITION name, from the clip's inline editor. Blank clears it
   /// back to the derived `Group N`, which is a Group's ordinary unnamed state.
   const onCommitGroupLabel = useCallback(
@@ -1286,12 +1273,6 @@ export function Timeline({
     // editor commits on blur — see `contextMenuFinalFocus`.
     handCaretToEditor();
     beginLayerRename(layerId);
-  }, []);
-
-  const onRenameLink = useCallback((linkId: string) => {
-    setContextMenu(null);
-    handCaretToEditor();
-    beginLinkRename(linkId);
   }, []);
 
   /// The Group clip's OTHER rename: the composition's name rather than this
@@ -1942,7 +1923,6 @@ export function Timeline({
                 onGapContextMenu={onGapContextMenu}
                 onChipResize={(args) => void onChipResize(args)}
                 onCommitLabel={onCommitLabel}
-                onCommitLinkLabel={onCommitLinkLabel}
                 onCommitGroupLabel={onCommitGroupLabel}
                 onMediaDrop={onMediaDrop}
                 isRevealed={track.id === (revealedTrackId ?? null)}
@@ -2009,7 +1989,6 @@ export function Timeline({
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
         layerEnabled={contextMenu.layerEnabled}
-        linkId={linkByLayerId.get(contextMenu.layerId) ?? null}
         linkMemberIds={
           links.find((l) => l.id === linkByLayerId.get(contextMenu.layerId))
             ?.layer_ids ?? [contextMenu.layerId]
@@ -2018,7 +1997,6 @@ export function Timeline({
         transitionCut={contextMenu.cut}
         onClose={() => setContextMenu(null)}
         onRename={onRename}
-        onRenameLink={onRenameLink}
         onRenameGroup={onRenameGroup}
         onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}

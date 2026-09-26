@@ -95,8 +95,7 @@ export function liveRefusalContext(
         .flatMap((c) => c.links)
         .find((candidate) => candidate.id === id);
       if (!link) return shortId(id);
-      const label = link.label?.trim();
-      if (label) return label;
+      // A link has no name, so it is named by its members.
       const layers = useProjectStore.getState().layerById;
       const members = link.layer_ids
         .map((memberId) => {

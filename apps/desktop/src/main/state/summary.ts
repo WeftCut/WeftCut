@@ -277,7 +277,7 @@ export interface CompositionSummary {
 }
 export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
-export interface LinkSummary { id: string; label: string | null; layer_ids: string[] }
+export interface LinkSummary { id: string; layer_ids: string[] }
 export interface MarkerSummary {
   id: string; t_us: number
   /** The region's SHOWN end, null for a point. An awake anchored region is
@@ -427,7 +427,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
     transitions: c.transitions.map((t): TransitionView => ({
       id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
     })),
-    links: c.links.map((g: Link): LinkSummary => ({ id: g.id, label: g.label ?? null, layer_ids: g.members })),
+    links: c.links.map((g: Link): LinkSummary => ({ id: g.id, layer_ids: g.members })),
   })
   const compositions: Record<string, CompositionSummary> = {}
   for (const c of all) compositions[c.id] = compositionSummary(c)

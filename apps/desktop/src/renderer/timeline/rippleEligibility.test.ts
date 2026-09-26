@@ -273,7 +273,7 @@ describe("rippleDeleteReason", () => {
       root: {
         duration_us: 4_000_000,
         tracks,
-        links: [{ id: "lk-1", label: null, layer_ids: ["l-a", "l-b"] }],
+        links: [{ id: "lk-1", layer_ids: ["l-a", "l-b"] }],
       },
     });
     useProjectStore.getState().apply(summary);

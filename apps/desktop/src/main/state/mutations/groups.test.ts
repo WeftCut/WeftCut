@@ -60,7 +60,7 @@ function normalise(c: Composition) {
   const name = (id: Uuid) => tok.get(id) ?? `?${id}`
   return {
     duration_us: c.duration_us, tracks, markers: c.markers,
-    links: c.links.map((g) => ({ label: g.label ?? null, members: g.members.map(name).sort() })).sort((a, b) => a.members.join().localeCompare(b.members.join())),
+    links: c.links.map((g) => ({ members: g.members.map(name).sort() })).sort((a, b) => a.members.join().localeCompare(b.members.join())),
     transitions: c.transitions.map((t) => ({ from: name(t.from_layer), to: name(t.to_layer), duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us })),
   }
 }
@@ -71,7 +71,7 @@ function pair(): { p: Project; gen: IdGen; v: Uuid; w: Uuid; link: Uuid } {
   const p = blankProject(gen, 't')
   const v = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 2 * S, 5 * S)
   const w = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 2 * S, 5 * S)
-  const link = applyLinksCreate(p, gen, [v, w], null, false)
+  const link = applyLinksCreate(p, gen, [v, w], false)
   return { p, gen, v, w, link }
 }
 
@@ -118,7 +118,7 @@ describe('applyGroupsCreate', () => {
     const x = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 0, S)
     const y = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, S)
     const z = applyAddLayer(p, gen, t3, color(), 0, S)
-    const link = applyLinksCreate(p, gen, [x, y, z], null, false)
+    const link = applyLinksCreate(p, gen, [x, y, z], false)
     const r = applyGroupsCreate(p, gen, [x, y], null)
     expect(group(p, r.compositionId).links).toEqual([])
     expect(root(p).links).toEqual([]) // {z} alone is below two
@@ -128,10 +128,10 @@ describe('applyGroupsCreate', () => {
     const gen2 = seededGen(); gen2(); gen2(); gen2(); gen2()
     const a = applyAddLayer(q, gen2, root(q).tracks[0].id, color(), 0, S)
     const b = applyAddLayer(q, gen2, root(q).tracks[1].id, color(), 0, S)
-    const inside = applyLinksCreate(q, gen2, [a, b], 'AB', false)
+    const inside = applyLinksCreate(q, gen2, [a, b], false)
     const c = applyAddLayer(q, gen2, applyAddTrack(q, gen2, null), color(), 0, S)
     const r2 = applyGroupsCreate(q, gen2, [a, b, c], null)
-    expect(group(q, r2.compositionId).links).toEqual([{ id: inside, label: 'AB', members: [a, b].sort() }])
+    expect(group(q, r2.compositionId).links).toEqual([{ id: inside, members: [a, b].sort() }])
     expect(root(q).links).toEqual([])
   })
 
@@ -328,15 +328,15 @@ describe('applyGroupsAddMembers', () => {
 
   it('a link fully inside the set travels with its id; a straddling one loses its inside members and dissolves below two', () => {
     const { p, gen, comp, g, x, y } = withDest()
-    const link = applyLinksCreate(p, gen, [x, y], 'XY', false)
+    const link = applyLinksCreate(p, gen, [x, y], false)
     applyGroupsAddMembers(p, gen, [x, y], g)
-    expect(group(p, comp).links).toEqual([{ id: link, label: 'XY', members: [x, y].sort() }])
+    expect(group(p, comp).links).toEqual([{ id: link, members: [x, y].sort() }])
     expect(root(p).links).toEqual([])
     expect(() => validate(p)).not.toThrow()
 
     const q = withDest()
     const stays = applyAddLayer(q.p, q.gen, root(q.p).tracks[0].id, color(), 5 * S, 6 * S)
-    applyLinksCreate(q.p, q.gen, [q.x, q.y, stays], null, false)
+    applyLinksCreate(q.p, q.gen, [q.x, q.y, stays], false)
     applyGroupsAddMembers(q.p, q.gen, [q.x, q.y], q.g)
     expect(group(q.p, q.comp).links).toEqual([])
     expect(root(q.p).links).toEqual([]) // {stays} alone is below two
@@ -554,7 +554,7 @@ describe('applyGroupsUngroup', () => {
     const b = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 0, S)
     const tr = gen()
     root(p).transitions.push({ id: tr, from_layer: a1, to_layer: a2, duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    const link = applyLinksCreate(p, gen, [a1, b], null, false)
+    const link = applyLinksCreate(p, gen, [a1, b], false)
     const r = applyGroupsCreate(p, gen, [a1, a2, b], null)
     // Group layer sits on t3 (the top former lane, index 2 — A roll and B roll below it).
     expect(trackOf(root(p), r.layerId)).toBe(2)

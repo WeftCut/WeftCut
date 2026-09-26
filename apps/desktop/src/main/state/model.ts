@@ -176,12 +176,11 @@ export interface Transition {
 /** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts.
  *  Members are layers of ONE composition (validate checks them against that
  *  composition's own layer set, never the project-wide one). */
-export interface Link { id: Uuid; label?: string; members: Uuid[] }
+export interface Link { id: Uuid; members: Uuid[] }
 /** One timeline: settings + tracks + markers + transitions + links. The root and
  *  every Group share this shape (ADR 0052 §3) — there is no sub type, so every
  *  walk, mutation and validator has ONE path. `label` is null on the root and
- *  on an unnamed Group (the renderer derives "Group N"); unlike `Link.label` it
- *  is ALWAYS written (null, never omitted) — the Rust twin is a plain
+ *  on an unnamed Group (the renderer derives "Group N"); it is ALWAYS written (null, never omitted) — the Rust twin is a plain
  *  `Option<String>`. */
 export interface Composition {
   id: Uuid; label: string | null

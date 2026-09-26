@@ -57,7 +57,6 @@ import { autoKeyTrack } from "../keyframe/autoKey";
 import { collapseToStaticRgba } from "../keyframe/edits";
 import { resolveAnimatedColor } from "../render/animated";
 import { InspectorAnimField } from "./InspectorAnimField";
-import { LinkLabelField } from "./LinkLabelField";
 import { ScaleFields } from "./ScaleFields";
 import { PositionFields } from './PositionFields';
 import { TEXT_BOX_MODES, textBoxModeOf, textBoxPatchFor, type TextBoxMode } from "./textBoxMode";
@@ -347,12 +346,13 @@ function LayerPanel({
     <>
       <div className="prop-identity">
         {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
-        <LinkLabelField
-          kindLabel={kindLabel}
-          trackLabel={trackLabel}
-          link={link}
-          onMutated={onMutated}
-        />
+        <p className="prop-identity-meta">
+          {`${kindLabel} · ${trackLabel} · ${
+            link
+              ? t("property_panel.link_of", { count: link.layer_ids.length })
+              : t("property_panel.link_none")
+          }`}
+        </p>
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">

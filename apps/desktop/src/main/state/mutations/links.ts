@@ -67,9 +67,8 @@ import { dropLayerFromLinks } from './helpers'
 function sortedUnique(ids: Uuid[]): Uuid[] { return [...new Set(ids)].sort() }
 
 /** Create a new link from the given layer ids, in the ONE composition they share.
- *  Dedup → existence + same composition → already-linked → reassign-drops → id alloc → push.
- *  `label === null` → field omitted (serde None parity: `'label' in link === false`). */
-export function applyLinksCreate(p: Project, idGen: IdGen, layerIds: Uuid[], label: string | null, reassign: boolean): Uuid {
+ *  Dedup → existence + same composition → already-linked → reassign-drops → id alloc → push. */
+export function applyLinksCreate(p: Project, idGen: IdGen, layerIds: Uuid[], reassign: boolean): Uuid {
   const unique = sortedUnique(layerIds)
   if (unique.length < 2) throw new CommandFailure({ error: 'LinkCreateNeedsTwoLayers', got: unique.length })
   const c = requireSameComposition(p, unique) // LayerNotFound / CrossCompositionSet
@@ -80,7 +79,7 @@ export function applyLinksCreate(p: Project, idGen: IdGen, layerIds: Uuid[], lab
   }
   if (reassign) for (const m of unique) dropLayerFromLinks(c, m)
   const id = idGen()
-  const link: Link = label === null ? { id, members: unique } : { id, label, members: unique }
+  const link: Link = { id, members: unique }
   c.links.push(link)
   return id
 }
@@ -126,9 +125,3 @@ export function applyLinksRemoveMembers(p: Project, id: Uuid, layerIds: Uuid[]):
   if (g.members.length < 2) c.links.splice(index, 1)
 }
 
-/** Rename a link; null → delete label field (serde None parity). */
-export function applyLinksRename(p: Project, id: Uuid, label: string | null): void {
-  const { link: g } = requireLink(p, id)
-  if (label === null) delete g.label
-  else g.label = label
-}

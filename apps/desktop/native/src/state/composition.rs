@@ -20,8 +20,8 @@ pub struct Composition {
     /// Equals its key in `Project.compositions`; TS validates the pair.
     pub id: CompositionId,
     /// `None` ⇔ wire `null`: the renderer derives "Group N". ALWAYS emitted —
-    /// no `skip_serializing_if`, unlike `Link.label`, because TS writes
-    /// `label: null` and the fixture round-trip compares whole values.
+    /// no `skip_serializing_if`, because TS writes `label: null` and the
+    /// fixture round-trip compares whole values.
     pub label: Option<String>,
     /// The `N` behind the UI's derived "Group N", drawn from
     /// `Project::next_group_ordinal` when the composition is created. Rust

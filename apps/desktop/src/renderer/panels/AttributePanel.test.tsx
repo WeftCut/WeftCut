@@ -199,10 +199,10 @@ function expandAdvanced(): void {
 
 describe("AttributePanel Layer envelope", () => {
   it("shows identity as one meta line (kind · track · link) and keeps Label/Enabled/Duration core", () => {
-    summaryWithLinks([{ id: "g1", label: "Intro", layer_ids: ["layer-1"] }]);
+    summaryWithLinks([{ id: "g1", layer_ids: ["layer-1"] }]);
     renderPanel(colorTrack());
 
-    expect(screen.getByText("Color · Visual · Intro")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Link of 1 clip")).toBeTruthy();
     const env = envelope();
     expect(within(env).getByLabelText("Label")).toHaveProperty("value", "Card");
     expect(within(env).getByRole("switch", { name: "Enabled" }).getAttribute("aria-checked")).toBe("true");
@@ -235,13 +235,12 @@ describe("AttributePanel Layer envelope", () => {
     expect(screen.queryByText("voice.wav")).toBeNull();
   });
 
-  // A uuid is never a display name, and links made from the UI are always
-  // `label: null` — so an unnamed link must describe itself by member count.
-  it("describes an unnamed link by its member count, not its uuid", () => {
+  // A uuid is never a display name, and a link has no name of its own — so it
+  // describes itself by member count.
+  it("describes a link by its member count, not its uuid", () => {
     summaryWithLinks([
       {
         id: "019fcc4d-20d4-7f65-b368-47ecbe3ef63d",
-        label: null,
         layer_ids: ["layer-1", "layer-2"],
       },
     ]);

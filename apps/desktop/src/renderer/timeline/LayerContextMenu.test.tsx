@@ -86,7 +86,6 @@ import { LayerContextMenu } from "./LayerContextMenu";
 const handlers = {
   onClose: vi.fn(),
   onRename: vi.fn(),
-  onRenameLink: vi.fn(),
   onRenameGroup: vi.fn(),
   onToggleEnabled: vi.fn(),
   onSeparateAudio: vi.fn(),
@@ -103,7 +102,6 @@ function renderMenu(layerKind: string) {
       layerId="layer-1"
       layerKind={layerKind}
       layerEnabled
-      linkId={null}
       linkMemberIds={["layer-1"]}
       escapeLink={false}
       transitionCut={null}

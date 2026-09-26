@@ -89,7 +89,6 @@ export const HISTORY_SUMMARY = {
   linkDissolve: { key: 'history.link.dissolve', text: 'Dissolved link' },
   linkAddMembers: { key: 'history.link.add_members', text: 'Added link members' },
   linkRemoveMembers: { key: 'history.link.remove_members', text: 'Removed link members' },
-  linkRename: { key: 'history.link.rename', text: 'Renamed link' },
 
   // Groups (ADR 0052). `groupCreate` is templated — see groupCreateSummary.
   groupUngroup: { key: 'history.group.ungroup', text: 'Ungrouped' },

@@ -162,7 +162,7 @@ describe('MCP tool table projections', () => {
 
   it('asArray hardening: layer_ids rejects non-array', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: u, label: null })).toThrow()
+    expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: u })).toThrow()
   })
 
   it('transition tools round-trip valid args to dispatch vocabulary', () => {
@@ -212,7 +212,7 @@ describe('MCP tool table projections', () => {
 
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: [u], label: 42 })).toThrow()
+    expect(() => MCP_ARG_PARSERS['create_group']({ layer_ids: [u], label: 42 })).toThrow()
   })
 })
 

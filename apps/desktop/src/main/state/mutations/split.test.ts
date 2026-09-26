@@ -72,7 +72,7 @@ describe('applySplitLayer', () => {
     // a:[0,1s] and b:[0,1s] on track B linked; both span t=400k
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     const r = applySplitLayer(p, seededGen(), 'a', 400_000, false)
     const link = root(p).links.find((g) => g.id === gid)!
     // a's right-half + b's right-half both joined the link → 4 members
@@ -84,7 +84,7 @@ describe('applySplitLayer', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     const r = applySplitLayer(p, seededGen(), 'a', 400_000, true)
     expect(root(p).tracks[1].layers.length).toBe(1) // sibling b NOT split (escape → no spanning fan-out)
     const link = root(p).links.find((g) => g.id === gid)!

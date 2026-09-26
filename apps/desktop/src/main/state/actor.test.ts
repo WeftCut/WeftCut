@@ -502,12 +502,10 @@ describe('dispatch: link-membership family', () => {
     expect(actor.dispatch('links_remove_members', { link: g, layers: [l2, l3] }).ok).toBe(true)
     expect(root(actor.snapshot()).links.length).toBe(0) // dropped below 2 → auto-dissolved
   })
-  it('rename then dissolve', () => {
+  it('dissolve', () => {
     const { actor, mk } = setup()
     const l1 = mk(0, 1_000_000), l2 = mk(2_000_000, 3_000_000)
     const g = (actor.dispatch('links_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
-    expect(actor.dispatch('links_rename', { link: g, label: 'scene' }).ok).toBe(true)
-    expect(root(actor.snapshot()).links[0].label).toBe('scene')
     expect(actor.dispatch('links_dissolve', { link: g }).ok).toBe(true)
     expect(root(actor.snapshot()).links.length).toBe(0)
   })

@@ -278,7 +278,7 @@ describe('applyMoveLayer: zero-delta link sibling move is a no-op shift', () => 
     const p = mkProject()
     // Place both layers on track 0; link them.
     root(p).tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 400_000, 600_000)]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     // Move 'a' to its current position → delta = 0.
     // Sibling 'b' should stay at 400_000 (no shift applied).
     applyMoveLayer(p, 'a', root(p).tracks[0].id, 0, false)
@@ -290,7 +290,7 @@ describe('applyMoveLayer: zero-delta link sibling move is a no-op shift', () => 
     const p = mkProject()
     // Both layers on track 0; 'a' at 0 and 'b' at 500_000 (non-overlapping).
     root(p).tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 500_000, 700_000)]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     // Move 'a' from 0 to 300_000 → delta = 300_000.
     applyMoveLayer(p, 'a', root(p).tracks[0].id, 300_000, false)
     // Sibling 'b' follows: 500_000 + 300_000 = 800_000.
@@ -450,7 +450,7 @@ describe('applyMoveLayer: link sibling insertion position', () => {
       colorLayer('b', 400_000, 600_000),
       colorLayer('c', 800_000, 1_000_000),
     ]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     // After move: a[600k,800k), b[1000k,1200k), c[800k,1000k) — check sort order.
     applyMoveLayer(p, 'a', root(p).tracks[0].id, 600_000, false)
     const starts = root(p).tracks[0].layers.map((l) => l.t_start_us)

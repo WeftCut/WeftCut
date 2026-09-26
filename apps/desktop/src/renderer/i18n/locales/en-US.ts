@@ -1006,7 +1006,6 @@ const enUS = {
     mark_shot_cuts_hint:
       "Detect this clip's shot boundaries and drop a marker on each.",
     rename: "Rename",
-    rename_link: "Rename link…",
     // The Group rows, gated on the right-clicked clip's kind.
     open_group: "Open group",
     rename_group: "Rename group…",
@@ -1028,7 +1027,6 @@ const enUS = {
     group_marker_count_other:
       "{{count}} markers inside — click to open this group",
     // Accessible name for the label tab's inline editor.
-    link_label: "Link name",
     // Tooltip of the `+N` badge on a link whose members sit on filtered lanes.
     link_hidden_members_one:
       "{{count}} linked clip on a hidden track — click to reveal it",
@@ -1165,7 +1163,6 @@ const enUS = {
     expand_link: "Show the clips linked with {{label}}",
     collapse_link: "Hide the clips linked with {{label}}",
     link_menu: "Link {{label}}",
-    rename_link: "Rename link…",
     unlink: "Unlink",
     all_tracks_title: "All Tracks",
     all_tracks_msg:
@@ -2088,7 +2085,6 @@ const enUS = {
     link_none: "Not linked",
     link_of_one: "Link of {{count}} clip",
     link_of_other: "Link of {{count}} clips",
-    link_rename: "Rename link",
     // The Group section: the composition's own name, its frame size and length
     // (both read-only here — a Group's size is copied at pre-compose), and the
     // two navigation/structure buttons.
@@ -2476,7 +2472,6 @@ const enUS = {
       dissolve: "Dissolved link",
       add_members: "Added link members",
       remove_members: "Removed link members",
-      rename: "Renamed link",
     },
     group: {
       create: "Grouped {{count}} clips",

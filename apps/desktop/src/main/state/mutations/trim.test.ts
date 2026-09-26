@@ -239,7 +239,7 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     const p = projectAtRate(num, den)
     root(p).tracks[0].layers = [color('a', at(0), at(90))]
     root(p).tracks[1].layers = [color('b', at(60), at(90))] // shorter → governs
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     applyTrimLayer(p, 'a', 'Out', 0, false)
     for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
       expect(l.t_end_us).toBe(at(61))
@@ -252,7 +252,7 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     const p = projectAtRate(num, den)
     root(p).tracks[0].layers = [color('a', at(30), at(120))]
     root(p).tracks[1].layers = [color('b', at(30), at(60))] // shorter → governs
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     applyTrimLayer(p, 'a', 'In', at(500), false)
     for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
       expect(l.t_start_us).toBe(at(59))
@@ -266,7 +266,7 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     p.media_pool.m = media('m', OFF_GRID_MEDIA_DUR)
     root(p).tracks[0].layers = [color('a', 0, at(30))]
     root(p).tracks[1].layers = [video('v', 'm', 0, at(30), 0, at(30))]
-    applyLinksCreate(p, seededGen(), ['a', 'v'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'v'], false)
     applyTrimLayer(p, 'a', 'Out', 60_000_000, false)
     const lastWhole = timeUsAtFrame(frameIndexFloor(OFF_GRID_MEDIA_DUR, num, den), num, den)
     for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
@@ -298,7 +298,7 @@ describe('trim link aligned-set (live)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)] // same out-edge 1_000_000
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
     expect(root(p).tracks[0].layers[0].t_end_us).toBe(600_000)
     expect(root(p).tracks[1].layers[0].t_end_us).toBe(600_000) // sibling fanned out
@@ -307,7 +307,7 @@ describe('trim link aligned-set (live)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 800_000)] // different out-edge
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
     expect(root(p).tracks[1].layers[0].t_end_us).toBe(800_000) // untouched
   })
@@ -315,7 +315,7 @@ describe('trim link aligned-set (live)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     root(p).tracks[1].layers[0].locked = true
     try { applyTrimLayer(p, 'a', 'Out', 600_000, false); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }

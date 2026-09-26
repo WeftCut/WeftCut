@@ -1005,18 +1005,17 @@ not range-checked.
 ```rust
 struct Link {
     id: LinkId,
-    label: Option<String>,            // omitted on the wire when absent (`skip_serializing_if`), never `null`
     members: imbl::OrdSet<LayerId>,   // ≥ 2; a layer is in at most one link; the TS twin keeps its array sorted to match
 }
 ```
 
 A flat, non-nesting set of layers of **one composition** whose move / trim /
 split fan out to every member; nothing else about a link is rendered, mixed
-or exported. The
+or exported, and — as in every NLE — a link has no name. The
 behaviour contract is [features.md § Links](features.md#links). On the read
-surface a link is `LinkSummary { id, label: string | null, layer_ids }` —
-`links` on `project://current` — where the omitted label becomes an explicit
-`null`.
+surface a link is `LinkSummary { id, layer_ids }` — `links` on
+`project://current`. A `label` in a file written while links had names is
+dropped at load.
 
 ## Read surface: `ProjectSummary`
 
@@ -1259,8 +1258,8 @@ the UI uses the same actor via backend commands.
 | `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
 | `ripple_delete_layers(layer_ids)` | agents reach this as `delete_layers { ripple: true }`. `delete_layers` that also **closes** what the set vacated (ADR 0062; [features.md §Ripple delete](features.md#ripple-delete)): each deleted layer's hole is its own footprint clipped to its remaining same-class neighbours on its track, touching holes merge, and every remaining layer starting at or after a hole shifts left by its length on every track of the composition, each on its own lattice. Anchored markers follow through reconcile; free markers, the playhead and layers starting before a hole stay. A transition whose two participants both move keeps its frame count and has its `duration_us` / `extended_us` re-derived from the landing. Refuses whole before any write: `RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (only a layer that would move blocks), `CrossCompositionSet`, and `InvalidArgument` for an empty set |
 | `ripple_delete_gap(track_id, s, e)` | closes a selected **gap** (ADR 0069; [features.md §Ripple delete](features.md#ripple-delete)): `[s, e)` must be exactly a gap on `track_id` — free of every layer, `e` where a layer starts, `s` where one ends or `0` — else `GapNotFound { track, s, e }`; nothing is deleted and the closing is `ripple_delete_layers`' with the gap as the one hole (`delete_layers { ripple: true }` to an agent), refusing with the same names. `TrackNotFound` for an unknown lane; `InvalidArgument` for a degenerate span. Recorded as *Closed gap*; one undo |
-| `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
-| `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
+| `links_create(layer_ids, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
+| `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
 | `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; the markers ANCHORED to a member move with it (their `t_us` re-derived in the child by the same commit), free markers stay |
 | `add_group_layer(source_composition_id, track_id, t_start_us, composition_id?)` → `LayerId` | place an existing composition as one more Group layer — the media pool's drag, and the reuse half of ADR 0052 (`groups_create` is the half that makes a composition). Windowed `[0, duration_us)` with an identity transform; the track fixes the destination composition and `composition_id` is a cross-check. Refused before any write, so nothing is created and no layer id is burned: the root → `RootComposition`; a source that already reaches the destination, itself included → `CompositionCycle` naming the loop; an empty source → `InvalidArgument` |
 | `groups_add_members(layer_ids, group_layer_id)` | move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had. The members and the Group clip must be siblings, and the clip's `params.composition` is the destination; each member lands at `t_start_us − group.t_start_us + group.src_in_us`, so one outside the clip's window arrives outside it and shows as overhang. Delegates to `move_layers_to_composition` for the crossing itself, and keeps only what is its own: `CrossCompositionSet` when the clip is not the members' sibling, `WrongLayerKind` when it is not a `CompositionRef`, and `RootComposition` — which guards a `CompositionRef` pointing at the root, not the root receiving layers |

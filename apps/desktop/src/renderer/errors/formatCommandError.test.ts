@@ -195,7 +195,7 @@ describe("formatCommandError — curated tier", () => {
         media: [{ id: "m-1", label: "Aurora.mp4" }] as unknown as ProjectSummary["media"],
         root: {
           duration_us: 2_000_000,
-          links: [{ id: "lk-1", label: null, layer_ids: ["l-a", "l-b"] }],
+          links: [{ id: "lk-1", layer_ids: ["l-a", "l-b"] }],
           tracks: [
             {
               id: "t-1",
@@ -233,22 +233,6 @@ describe("formatCommandError — curated tier", () => {
       ).toBe(
         "Ripple delete blocked: link Interview A + Interview A audio has members on both sides of the cut.",
       );
-      // A labelled link is named by its label tab, which is what the timeline
-      // shows.
-      const labelled = summaryFixture({
-        root: {
-          ...summary.compositions[summary.root_id]!,
-          links: [{ id: "lk-1", label: "A-roll pair", layer_ids: ["l-a", "l-b"] }],
-        },
-      });
-      useProjectStore.getState().apply(labelled);
-      expect(
-        formatCommandError({
-          error: "RippleLinkStraddles",
-          link: "lk-1",
-          hole: { s: 0, e: 1_000_000 },
-        }).message,
-      ).toContain("link A-roll pair");
     });
 
     it("degrades an unresolvable link to a short id, never a raw uuid", () => {

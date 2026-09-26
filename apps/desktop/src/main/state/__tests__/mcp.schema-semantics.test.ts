@@ -137,7 +137,7 @@ describe('null arms are advertised only where null means something omission does
   // return a text-box axis to auto, fall back to a detector's defaults, remove
   // an effect param. Growing this list is a review decision.
   const KEEP_NULL = new Set([
-    'rename_track.label', 'update_layer.patch.label', 'update_link.label', 'rename_composition.label',
+    'rename_track.label', 'update_layer.patch.label', 'rename_composition.label',
     'update_marker.patch.label', 'update_marker.patch.note',
     'update_composition.patch.duration_us',
     'set_marker_anchor.layer_id',

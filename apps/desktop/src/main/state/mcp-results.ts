@@ -121,11 +121,11 @@ export function transitionRecord(p: Project, id: Uuid): TransitionRecord | null 
   return null
 }
 
-export interface LinkRecord { link_id: Uuid; composition_id: Uuid; members: Uuid[]; label: string | null }
+export interface LinkRecord { link_id: Uuid; composition_id: Uuid; members: Uuid[] }
 export function linkRecord(p: Project, id: Uuid): LinkRecord | null {
   for (const c of Object.values(p.compositions)) {
     const l = c.links.find((x) => x.id === id)
-    if (l) return { link_id: l.id, composition_id: c.id, members: [...l.members], label: l.label ?? null }
+    if (l) return { link_id: l.id, composition_id: c.id, members: [...l.members] }
   }
   return null
 }

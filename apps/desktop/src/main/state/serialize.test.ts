@@ -16,12 +16,25 @@ describe('serialize round-trip', () => {
     const wire = serializeProject(p)
     expect(canonicalString(serializeProject(parseProject(wire)))).toBe(canonicalString(wire))
   })
-  it('sorts link.members and omits a null label', () => {
+  it('sorts link.members', () => {
     const p = blankProject(seededGen(), 'test')
     root(p).links = [{ id: 'g', members: ['00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000a'] }]
     const wire = (serializeProject(p) as Wire).compositions[p.root_id] as unknown as { links: Array<Record<string, unknown>> }
     expect(wire.links[0].members).toEqual(['00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b'])
-    expect('label' in wire.links[0]).toBe(false)
+    expect(Object.keys(wire.links[0]).sort()).toEqual(['id', 'members'])
+  })
+  it('drops the label a link carried in a file written while links had names', () => {
+    const g = seededGen()
+    const p = blankProject(g, 'test')
+    const track = root(p).tracks[0].id
+    const RED = { r: 255, g: 0, b: 0, a: 255 }
+    const a = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 0, 1_000_000)
+    const b = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 2_000_000, 3_000_000)
+    const wire = serializeProject(p) as Wire
+    ;(wire.compositions[p.root_id] as unknown as { links: unknown[] }).links = [{ id: 'lk', label: 'Pair', members: [a, b].sort() }]
+    const link = root(parseProject(wire)).links[0]
+    expect(link.members).toEqual([a, b].sort())
+    expect('label' in link).toBe(false)
   })
   it('rejects any version but the current one, in both directions', () => {
     // parseProject sees only current-shaped input by construction: the gate and

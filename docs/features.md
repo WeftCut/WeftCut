@@ -450,7 +450,7 @@ selector — audio readouts only; the ruler and playhead stay frame-based.
 
 Mutations live in `apps/desktop/src/main/state/mutations/links.ts`, with
 fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
-(`links_create` … `links_rename`, plus `escape_link` on the structural
+(`links_create` … `links_remove_members`, plus `escape_link` on the structural
 ops) and the read surface (`links` on `project://current`; there is no
 `links_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 

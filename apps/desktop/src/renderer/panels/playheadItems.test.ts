@@ -34,7 +34,6 @@ function item(
       effects: [],
     },
     linkId: null,
-    linkLabel: null,
     linkSize: 0,
     linkMembers: [],
     trackId: `track-${id}`,
@@ -606,11 +605,10 @@ describe("section membership at the window edges", () => {
 });
 
 describe("buildPlayheadItems link folding", () => {
-  const link = (
-    id: string,
-    layerIds: string[],
-    label: string | null = null,
-  ): LinkSummary => ({ id, label, layer_ids: layerIds });
+  const link = (id: string, layerIds: string[]): LinkSummary => ({
+    id,
+    layer_ids: layerIds,
+  });
 
   it("folds a link's listed members into one entry standing on the member nearest the playhead", () => {
     const items = buildPlayheadItems(
@@ -622,14 +620,13 @@ describe("buildPlayheadItems link folding", () => {
       NOW,
       500_000,
       T,
-      [link("g", ["far", "near"], "Pair")],
+      [link("g", ["far", "near"])],
     );
 
     // One row for the pair, sorted by its nearest member's start.
     expect(items.map((i) => i.layer.id)).toEqual(["solo", "near"]);
     const fold = items[1]!;
     expect(fold.linkId).toBe("g");
-    expect(fold.linkLabel).toBe("Pair");
     expect(fold.linkSize).toBe(2);
     expect(fold.linkMembers.map((m) => m.layer.id)).toEqual(["near", "far"]);
     // Members wear the accent but hold no fold of their own.
@@ -654,7 +651,6 @@ describe("buildPlayheadItems link folding", () => {
     const solo = items.find((i) => i.layer.id === "solo")!;
     expect(solo).toMatchObject({
       linkId: null,
-      linkLabel: null,
       linkSize: 0,
       linkMembers: [],
     });

@@ -4,15 +4,12 @@ import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
 
 function serializeLink(g: Link): unknown {
-  const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
-  if (g.label !== undefined && g.label !== null) out.label = g.label // skip_serializing_if = None
-  return out
+  return { id: g.id, members: [...g.members].sort() }
 }
 
 /** Produce the on-disk/wire JSON shape. The model is already JSON-native, so
- *  this is mostly identity; the only non-identity rules are link member
- *  sorting and the `Link.label` omission (mirrors serde skip_serializing_if),
- *  applied inside every composition. `Composition.label` is NOT omitted —
+ *  this is mostly identity; the only non-identity rule is link member
+ *  sorting, applied inside every composition. `Composition.label` is NOT omitted —
  *  null is written (the Rust twin is a plain `Option<String>`). */
 export function serializeProject(p: Project): unknown {
   const compositions: Record<string, unknown> = {}
@@ -512,6 +509,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
     if (c === null || typeof c !== 'object' || Array.isArray(c)) throw new Error(`parseProject: compositions[${k}] must be an object`)
     for (const arr of ['tracks', 'markers', 'transitions', 'links'] as const)
       if (!Array.isArray((c as Record<string, unknown>)[arr])) throw new Error(`parseProject: compositions[${k}].${arr} must be an array`)
+    // Links have no name; a file written while they did loses the field here,
+    // so no reader — `project://links` serves the model as-is — ever sees it.
+    for (const l of (c as { links: unknown[] }).links)
+      if (l !== null && typeof l === 'object') delete (l as Record<string, unknown>).label
   }
   // The keyframe record has no default and no conversion: a project holding the
   // retired per-segment `interp`, or a Keyframed track without `extrapolate`, is

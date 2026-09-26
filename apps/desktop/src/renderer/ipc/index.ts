@@ -509,7 +509,6 @@ export interface ProjectSummary {
 
 export interface LinkSummary {
   id: string;
-  label: string | null;
   layer_ids: string[];
 }
 
@@ -1472,27 +1471,13 @@ export async function splitLayerLinked(
 /** `docs/features.md#links` — bundle ≥2 layer ids into a link. */
 export async function linksCreate(
   layerIds: string[],
-  label: string | null = null,
   reassign = false,
 ): Promise<string> {
-  return invoke<string>("links_create", {
-    layerIds,
-    label,
-    reassign,
-  });
+  return invoke<string>("links_create", { layerIds, reassign });
 }
 
 export async function linksDissolve(linkId: string): Promise<void> {
   return invoke<void>("links_dissolve", { linkId });
-}
-
-/** Set or clear (`null`) a link's label; the tab on its top-most visible
- *  member is the only place the label is drawn. */
-export async function linksRename(
-  linkId: string,
-  label: string | null,
-): Promise<void> {
-  return invoke<void>("links_rename", { linkId, label });
 }
 
 /// `docs/features.md#groups` — pre-compose: the selection (≥ 1 layer, one

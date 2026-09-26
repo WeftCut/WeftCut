@@ -69,7 +69,6 @@ export function TrackLane({
   onGapContextMenu,
   onChipResize,
   onCommitLabel,
-  onCommitLinkLabel,
   onCommitGroupLabel,
   isRevealed,
   isResizing,
@@ -142,7 +141,6 @@ export function TrackLane({
   /// `updateTransition` (one commit per gesture, spec D6).
   onChipResize: (args: TransitionResizeArgs) => void;
   onCommitLabel: (layerId: string, label: string) => void;
-  onCommitLinkLabel: (linkId: string, label: string | null) => void;
   onCommitGroupLabel: (compositionId: string, label: string | null) => void;
   /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
@@ -620,7 +618,6 @@ export function TrackLane({
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
             onCommitLabel={onCommitLabel}
-            onCommitLinkLabel={onCommitLinkLabel}
             onCommitGroupLabel={onCommitGroupLabel}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
@@ -651,8 +648,7 @@ export function TrackLane({
               onDragStart={onDragStart}
               onContextMenu={onContextMenu}
               onCommitLabel={onCommitLabel}
-              onCommitLinkLabel={onCommitLinkLabel}
-              onCommitGroupLabel={onCommitGroupLabel}
+                onCommitGroupLabel={onCommitGroupLabel}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
             />,

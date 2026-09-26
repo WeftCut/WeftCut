@@ -390,12 +390,11 @@ export interface HiddenLinkMember {
   trackId: string;
 }
 
-/// What a link draws at its one on-clip anchor: the label tab and the count of
-/// members the display filter hides. `LayerBlock` receives it only on the
+/// What a link draws at its one on-clip anchor: the count of members the
+/// display filter hides. `LayerBlock` receives it only on the
 /// anchor member; every other member gets null.
 export interface LinkTab {
   linkId: string;
-  label: string | null;
   /// In link order, so "reveal the first hidden member" is stable across
   /// re-renders. Empty in All Tracks display by construction.
   hidden: HiddenLinkMember[];
@@ -406,8 +405,8 @@ export interface LinkTab {
 ///
 /// One anchor per link, its TOP-MOST rendered member: lowest visual row, and
 /// inside a combined row the visual half over the audio half, then the earlier
-/// clip. A labelled link is named once rather than once per member, and the
-/// badge that counts filtered-out members sits where the eye lands first.
+/// clip, so the badge that counts filtered-out members sits where the eye lands
+/// first.
 ///
 /// `visibleTracks` is the rendered lane list in visual order (top row first),
 /// so the A/B Roll filter is honoured structurally: a member whose lane is not
@@ -462,7 +461,7 @@ export function indexLinkTabs(
       }
     }
     if (anchorId === null) continue;
-    out.set(anchorId, { linkId: link.id, label: link.label, hidden });
+    out.set(anchorId, { linkId: link.id, hidden });
   }
   return out;
 }

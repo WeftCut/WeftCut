@@ -243,7 +243,7 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | `project://tracks` | a composition's tracks, each with its flags (`enabled`, `locked`, `role`; mute and solo are per **role** — `set_role_flags` — so a track carries none) and its layers as **envelopes** — `{ id, label, kind, t_start_us, t_end_us, src_in_us?, src_out_us?, enabled, locked, link_id, effects: [{ id, kind }], keyframed: [param_key] }` — the root's, or `project://tracks?composition=<id>` for a Group's. What an agent plans a timeline edit against; the params, keys and effect values are `project://layers/{id}` |
 | `project://layers/{id}` | one layer in detail, from whichever composition holds it |
 | `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>`. Each carries `anchor_layer` and `anchor_src_us` (both null on a free marker) and `hibernating` — see *Markers follow clips* below |
-| `project://links` | a composition's links — `{ id, label?, members }` — the root's, or `project://links?composition=<id>` |
+| `project://links` | a composition's links — `{ id, members }` — the root's, or `project://links?composition=<id>` |
 | `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
 | `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it, and undo, redo and a checkpoint restore put back the stamp of the state they return to, so compare it for change, not for order |
 | `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` |
@@ -531,10 +531,10 @@ Audio roles (a project-level mix fold, not a track property; see [ADR 0023](adr/
 - `set_role_flags { role, muted?, solo? }` — mute/solo a role. **Unrecorded**, unlike every other mutation here: a monitoring state is not an edit, so it burns no undo step. Mute wins over solo, and any solo silences the non-soloed roles.
 
 Links (see [features.md §Links](features.md#links)):
-- `create_link { layer_ids, label?, reassign? }` → `{ link_id, composition_id, members, label }`
+- `create_link { layer_ids, reassign? }` → `{ link_id, composition_id, members }`
 - `delete_link { link_id }`
-- `update_link { link_id, add_layer_ids?, remove_layer_ids?, label?, reassign? }` — one recorded edit, applied add → remove → label; `reassign` lets an added layer leave another link first, and a link left below two members dissolves
-- Reads: there is no `links_list`/`links_get` tool — link membership is carried on the `project://current` resource as `links: [{ id, label, layer_ids }]`.
+- `update_link { link_id, add_layer_ids?, remove_layer_ids?, reassign? }` — one recorded edit, applied add → remove; `reassign` lets an added layer leave another link first, and a link left below two members dissolves
+- Reads: there is no `links_list`/`links_get` tool — link membership is carried on the `project://current` resource as `links: [{ id, layer_ids }]`.
 
 Groups (see [features.md §Groups](features.md#groups)):
 - `create_group { layer_ids, label? }` → `{ composition_id, layer_id, layer }` — pre-compose: the layers (one or more, all in one composition) move into a new composition, placed back as one Group layer at their earliest start on the top-most lane they occupied. Never partial: a locked member refuses the whole set (`GroupLockedMember`), so does a locked track (`TrackLocked`); a set spanning two compositions is `CrossCompositionSet`. Links fully inside move with the set, a straddling link loses its inside members; transitions between two members move, a straddling one is dropped and logged; markers stay.

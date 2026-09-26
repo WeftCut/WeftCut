@@ -130,7 +130,7 @@ describe("resolveSplitTargets", () => {
         track("video", [layer("v", 0, 2_000_000)]),
         track("audio", [layer("a", 0, 2_000_000)]),
       ],
-      [{ id: "g1", label: null, layer_ids: ["v", "a"] }],
+      [{ id: "g1", layer_ids: ["v", "a"] }],
     );
     const targets = resolveSplitTargets(p, 1_000_000, NOTHING_SELECTED, false);
     expect(targets).toHaveLength(1);
@@ -145,7 +145,7 @@ describe("resolveSplitTargets", () => {
         track("video", [layer("v", 0, 2_000_000)]),
         track("audio", [layer("a", 0, 2_000_000)]),
       ],
-      [{ id: "g1", label: null, layer_ids: ["v", "a"] }],
+      [{ id: "g1", layer_ids: ["v", "a"] }],
     );
     const targets = resolveSplitTargets(p, 1_000_000, NOTHING_SELECTED, false, false);
     expect(ids(targets)).toEqual(["v", "a"]);
@@ -159,8 +159,8 @@ describe("resolveSplitTargets", () => {
         track("t2", [layer("v2", 0, 2_000_000)]),
       ],
       [
-        { id: "g1", label: null, layer_ids: ["v1"] },
-        { id: "g2", label: null, layer_ids: ["v2"] },
+        { id: "g1", layer_ids: ["v1"] },
+        { id: "g2", layer_ids: ["v2"] },
       ],
     );
     expect(ids(resolveSplitTargets(p, 1_000_000, NOTHING_SELECTED, false))).toEqual(

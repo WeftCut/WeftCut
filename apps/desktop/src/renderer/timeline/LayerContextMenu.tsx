@@ -281,13 +281,11 @@ export function LayerContextMenu({
   layerId,
   layerKind,
   layerEnabled,
-  linkId,
   linkMemberIds,
   escapeLink,
   transitionCut,
   onClose,
   onRename,
-  onRenameLink,
   onRenameGroup,
   onToggleEnabled,
   onSeparateAudio,
@@ -300,8 +298,6 @@ export function LayerContextMenu({
   layerId: string;
   layerKind: string;
   layerEnabled: boolean;
-  /// The right-clicked layer's link, or null — gates the link rename row.
-  linkId: string | null;
   /// Every member of that link, the clicked layer included; `[layerId]` when
   /// unlinked. The Enable/Disable row's fan-out set (`docs/features.md#links`).
   linkMemberIds: readonly string[];
@@ -311,8 +307,6 @@ export function LayerContextMenu({
   transitionCut: TransitionCut | null;
   onClose: () => void;
   onRename: (id: string) => void;
-  /// Opens the inline editor on the link's label tab (`renameStore`).
-  onRenameLink: (linkId: string) => void;
   /// Opens the inline editor on the Group clip for its COMPOSITION's name.
   /// Distinct from `onRename`, which edits this clip's own label: a Group has
   /// both, and the two rows say which one they write.
@@ -527,12 +521,6 @@ export function LayerContextMenu({
               label={t("timeline.rename", { defaultValue: "Rename" })}
               onSelect={() => onRename(layerId)}
             />
-            {linkId !== null && (
-              <MenuItem
-                label={t("timeline.rename_link", { defaultValue: "Rename link…" })}
-                onSelect={() => onRenameLink(linkId)}
-              />
-            )}
             <MenuItem
               label={enabledLabel}
               onSelect={() => onToggleEnabled(enabledTargets, !layerEnabled)}

@@ -24,7 +24,6 @@ export interface PlayheadItem {
   /// folded entry and each member under it — because the accent stripe is a
   /// property of the row, not of the fold.
   linkId: string | null;
-  linkLabel: string | null;
   /// `LinkSummary.layer_ids.length`: the N of the row's `×N` glyph. Counts
   /// members on lanes the panel does not list too — the glyph names the
   /// link's size, which does not change when the playhead moves.
@@ -94,7 +93,6 @@ export function buildPlayheadItems(
       items.push({
         layer,
         linkId: link?.id ?? null,
-        linkLabel: link?.label ?? null,
         linkSize: link?.layer_ids.length ?? 0,
         linkMembers: [],
         trackId: track.id,

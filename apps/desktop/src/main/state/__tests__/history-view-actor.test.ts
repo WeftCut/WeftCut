@@ -104,11 +104,9 @@ describe('affected backfill', () => {
     actor.dispatch('links_remove_members', { link: gid, layers: [l3] })
     expect(head(actor)).toMatchObject({ summary: 'Removed link members', entity_labels: [{ text: 'Clip 03' }] })
   })
-  it('link rename / dissolve name the members read off the pre-mutation snapshot', () => {
+  it('link dissolve names the members read off the pre-mutation snapshot', () => {
     const { actor, l1, l2, val } = twoLayers()
     const gid = val(actor.dispatch('links_create', { layers: [l1, l2] }))
-    actor.dispatch('links_rename', { link: gid, label: 'Pair' })
-    expect(head(actor)).toMatchObject({ summary: 'Renamed link', entity_labels: [{ text: 'Clip 01' }, { text: 'Clip 02' }] })
     actor.dispatch('links_dissolve', { link: gid })
     expect(head(actor)).toMatchObject({ summary: 'Dissolved link', entity_labels: [{ text: 'Clip 01' }, { text: 'Clip 02' }] })
   })

@@ -239,7 +239,7 @@ describe("marqueeHitClips", () => {
 
 describe("resolveMarqueeSelection", () => {
   const linked: LinkSummary[] = [
-    { id: "g", label: null, layer_ids: ["in-box", "off-screen"] },
+    { id: "g", layer_ids: ["in-box", "off-screen"] },
   ];
   const linkIndex = new Map([
     ["in-box", "g"],
@@ -308,7 +308,7 @@ describe("resolveMarqueeSelection", () => {
           ["a", "g"],
           ["locked", "g"],
         ]),
-        links: [{ id: "g", label: null, layer_ids: ["a", "locked"] }],
+        links: [{ id: "g", layer_ids: ["a", "locked"] }],
         mode: "replace",
       }).ids,
     ).toEqual(["a", "locked"]);

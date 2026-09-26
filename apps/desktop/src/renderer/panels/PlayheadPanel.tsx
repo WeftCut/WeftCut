@@ -2,11 +2,10 @@
 // navigation gestures (pick vs Go To — see the props below), the
 // At-playhead restack drag (grip per visual stack row) and the row context
 // menu (the drag's non-drag equivalent); double-click renames via the
-// recorded Layer label command — or, on a folded link row, the link's label.
+// recorded Layer label command (a folded link row has no name to rename).
 // A link's listed members arrive folded into one row (`playheadItems.ts`);
 // this panel draws the fold (accent, `×N`, stacked thumbnails, the expand
-// chevron) and commits the link's own actions (rename, unlink) straight
-// through IPC, the `project:changed` bridge refreshing the view. Windowing,
+// chevron) and commits the link's own action (unlink) straight through IPC, the `project:changed` bridge refreshing the view. Windowing,
 // filtering, the At-playhead / Nearby split and the drop's / menu's anchor
 // mappings live in `playheadItems.ts` (ADR 0044). The top row is a toolbar —
 // category chips plus the ±Δ window dial — and outside A/B Roll the panel
@@ -15,7 +14,6 @@
 import {
   Fragment,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -42,7 +40,6 @@ import { usePointerReorder } from "../hooks/usePointerReorder";
 import { useReorderSettle } from "../hooks/useReorderSettle";
 import {
   linksDissolve,
-  linksRename,
   type LinkSummary,
   type TrackSummary,
 } from "../ipc";
@@ -52,7 +49,6 @@ import {
   useDeltaWindowUs,
   useDisplayMode,
 } from "../settings/appSettingsStore";
-import { handCaretToEditor } from "../menu/Menu";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
@@ -83,9 +79,9 @@ import {
 const NO_CATEGORY_FILTER: ReadonlySet<PlayheadCategory> = new Set();
 
 /// The name a row prints and is addressed by (title, menu label, rename
-/// field). A folded link answers with its label when it has one; otherwise —
-/// and on every other row — with the layer's display name, shared with the
-/// timeline block and the inspector.
+/// field): the layer's display name, shared with the timeline block and the
+/// inspector. A folded link has no name of its own and answers with its top
+/// member's.
 function rowLabel(
   item: PlayheadItem,
   t: (key: string, values: Record<string, unknown>) => string,
@@ -93,7 +89,6 @@ function rowLabel(
   /// composition, and the derived `Group N` needs the whole set to count over.
   groupOrdinals: ReadonlyMap<string, number>,
 ): string {
-  if (item.linkMembers.length > 0 && item.linkLabel !== null) return item.linkLabel;
   return layerDisplayName(item.layer, t, groupOrdinals);
 }
 
@@ -192,18 +187,10 @@ export function PlayheadPanel({
       return next;
     });
   };
-  // The context menu's Rename link… hands the fold's row its inline editor
-  // (the row consumes the request as it opens the editor). One slot: a menu
-  // is open on one row at a time, so one pending rename is all there can be.
-  const [linkRenameRequest, setLinkRenameRequest] = useState<string | null>(null);
-
   // Committed straight through IPC rather than through a host-wired handler
-  // like `onRename` / `onRestack`: the link is the panel's own row, not a
-  // layer the host addresses, and the `project:changed` bridge refreshes the
-  // summary either way. Empty clears the label — a link has no name by
-  // default (`LinkSummary.label: null`), so clearing is a real destination.
-  const renameLink = (linkId: string, label: string | null) =>
-    void tryMutate(() => linksRename(linkId, label), "Rename link");
+  // like `onRestack`: the link is the panel's own row, not a layer the host
+  // addresses, and the `project:changed` bridge refreshes the summary either
+  // way.
   const unlink = (linkId: string) =>
     void tryMutate(() => linksDissolve(linkId), "Unlink");
 
@@ -283,15 +270,15 @@ export function PlayheadPanel({
   // anchored op stays valid because it re-resolves against the anchor's
   // track at apply time. One item click = one restack = one history entry.
   //
-  // A folded link row adds the link's two actions, and is the one row that
-  // opens a menu outside the visual stack — there the menu is link-only.
+  // A folded link row adds Unlink, and is the one row that opens a menu
+  // outside the visual stack — there the menu is link-only.
   const [rowMenu, setRowMenu] = useState<{
     x: number;
     y: number;
     layerId: string;
     label: string;
     targets: RestackMenuTargets | null;
-    link: { id: string; label: string | null } | null;
+    link: { id: string } | null;
   } | null>(null);
 
   // Coordinates are viewport-fixed, so the menu closes once the row it belongs
@@ -318,7 +305,7 @@ export function PlayheadPanel({
       stackIndex !== undefined && visualRows[stackIndex]?.layer.id === item.layer.id;
     const link =
       item.linkMembers.length > 0 && item.linkId !== null
-        ? { id: item.linkId, label: item.linkLabel }
+        ? { id: item.linkId }
         : null;
     if (!inStack && !link) return;
     setRowMenu({
@@ -387,14 +374,8 @@ export function PlayheadPanel({
             : undefined
         }
         onRename={
-          folded
-            ? (next) => renameLink(item.linkId!, next === "" ? null : next)
-            : onRename
-              ? (next) => onRename(item.layer.id, next)
-              : undefined
+          !folded && onRename ? (next) => onRename(item.layer.id, next) : undefined
         }
-        renameRequested={folded && item.linkId === linkRenameRequest}
-        onRenameRequestConsumed={() => setLinkRenameRequest(null)}
         expanded={folded ? expanded : undefined}
         onToggleExpanded={folded ? () => toggleExpanded(item.linkId!) : undefined}
         rowClassName={rowClassName === "" ? undefined : rowClassName}
@@ -561,13 +542,6 @@ export function PlayheadPanel({
             setRowMenu(null);
             onRestack?.(rowMenu.layerId, target.anchorId, target.position);
           }}
-          onRenameLink={(linkId) => {
-            setRowMenu(null);
-            // See `contextMenuFinalFocus`: without this the menu's focus
-            // return blurs the row's field, and the field commits on blur.
-            handCaretToEditor();
-            setLinkRenameRequest(linkId);
-          }}
           onUnlink={(linkId) => {
             setRowMenu(null);
             unlink(linkId);
@@ -657,8 +631,6 @@ function PlayheadRow({
   onReveal,
   onGoTo,
   onRename,
-  renameRequested,
-  onRenameRequestConsumed,
   expanded,
   onToggleExpanded,
   rowClassName,
@@ -675,14 +647,10 @@ function PlayheadRow({
   fpsDen: number;
   onReveal: () => void;
   onGoTo?: (() => void) | undefined;
-  /// Inline-rename commit. On a folded row this names the LINK, and an empty
-  /// draft is passed through (the caller maps it to `null`); on a layer row an
-  /// empty draft reverts, because the label command cannot clear to null.
+  /// Inline-rename commit on a layer row; an empty draft reverts, because the
+  /// label command cannot clear to null. Absent on a folded row — a link has
+  /// no name to edit.
   onRename?: ((nextLabel: string) => void) | undefined;
-  /// The context menu's Rename link…: opens the same inline editor a
-  /// double-click does. The row consumes the request as it opens the editor.
-  renameRequested: boolean;
-  onRenameRequestConsumed: () => void;
   /// Folded rows only — whether the members are listed underneath, and the
   /// chevron that flips it. Absent on every other row.
   expanded?: boolean | undefined;
@@ -722,7 +690,7 @@ function PlayheadRow({
   // Inline rename. Enter commits, Escape cancels, click-away commits — all
   // funnelled through `commit`/`cancel`, which a single latch (`settled`)
   // guards so a key-driven finish can't also fire the follow-up blur.
-  const currentLabel = folded ? (item.linkLabel ?? "") : (item.layer.label ?? "");
+  const currentLabel = item.layer.label ?? "";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const settled = useRef(false);
@@ -738,23 +706,15 @@ function PlayheadRow({
     settled.current = true;
     setEditing(false);
     const next = draft.trim();
-    // An unchanged value records no undo entry. Empty reverts on a layer row
-    // (the label command can't clear to null) and clears on a folded one.
-    if (next === currentLabel || (next === "" && !folded)) return;
+    // An unchanged value records no undo entry. Empty reverts (the label
+    // command can't clear to null).
+    if (next === currentLabel || next === "") return;
     onRename?.(next);
   };
   const cancel = () => {
     settled.current = true;
     setEditing(false);
   };
-  useEffect(() => {
-    if (!renameRequested) return;
-    onRenameRequestConsumed();
-    startEdit();
-    // The request is the only trigger; the handlers it reaches are the
-    // render's own and need no re-subscription.
-  }, [renameRequested]);
-
   // Right-click anywhere on the row opens the ordering menu at the cursor;
   // the keyboard opener anchors it inside the row's own rect instead.
   // Both funnel through `onMenuOpen` so the panel owns what the menu shows.

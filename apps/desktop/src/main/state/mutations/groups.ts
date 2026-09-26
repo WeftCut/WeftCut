@@ -254,7 +254,7 @@ export function applyGroupsUngroup(p: Project, idGen: IdGen, layerId: Uuid): voi
     const members = link.members.flatMap((m) => { const n = idMap.get(m); return n === undefined ? [] : [n] }).sort()
     if (members.length < 2) continue
     const id = idGen()
-    parent.links.push(link.label === undefined ? { id, members } : { id, label: link.label, members })
+    parent.links.push({ id, members })
   }
   for (const tr of child.transitions) {
     const from = idMap.get(tr.from_layer)

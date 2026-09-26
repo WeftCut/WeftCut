@@ -1532,20 +1532,19 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'create_link', exec: 'table', annotations: ANN_WRITE,
-    description: "Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
-    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more layers of one composition.'), label: { type: 'string', description: 'Optional name.' }, reassign: { type: 'boolean', description: 'Pull a member out of the link it is already in. Default false: such a member refuses.' } }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
+    description: "Create a new link from >=2 distinct layer ids. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more layers of one composition.'), reassign: { type: 'boolean', description: 'Pull a member out of the link it is already in. Default false: such a member refuses.' } }, required: ['layer_ids'] },
+    parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
   { name: 'delete_link', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Dissolve (delete) a link. The member layers themselves are not deleted.",
     inputSchema: { type: 'object', properties: { link_id: ID_SCHEMA('Link') }, required: ['link_id'] },
     parseArgs: (a) => ({ op: 'links_dissolve', args: { link: parseUuid(a.link_id, 'link_id') } }) },
   { name: 'update_link', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Change a link in one recorded edit — any of: `add_layer_ids` (join layers; one already in another link is refused unless `reassign` is true, which pulls it out of its old link first, dissolving that link if it falls below two members), `remove_layer_ids` (drop members; below two, the link dissolves), `label` (rename; `null` clears). At least one. Applied add → remove → label. Every layer must be in the link's composition (`CrossCompositionSet`). Create with `create_link`, delete with `delete_link`.",
+    description: "Change a link in one recorded edit — any of: `add_layer_ids` (join layers; one already in another link is refused unless `reassign` is true, which pulls it out of its old link first, dissolving that link if it falls below two members), `remove_layer_ids` (drop members; below two, the link dissolves). At least one. Applied add → remove. Every layer must be in the link's composition (`CrossCompositionSet`). Create with `create_link`, delete with `delete_link`.",
     inputSchema: { type: 'object', properties: {
       link_id: ID_SCHEMA('Link'),
       add_layer_ids: LAYER_IDS_SCHEMA('Layers to join.'),
       remove_layer_ids: LAYER_IDS_SCHEMA('Members to drop.'),
-      label: { type: ['string', 'null'], description: 'New label; null clears it.' },
       reassign: { type: 'boolean', description: 'Let `add_layer_ids` take a layer out of another link. Default false.' },
     }, required: ['link_id'] },
     parseDedicated: (a) => {
@@ -1554,11 +1553,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         link: parseUuid(a.link_id, 'link_id'),
         add: ids(a.add_layer_ids, 'add_layer_ids'),
         remove: ids(a.remove_layer_ids, 'remove_layer_ids'),
-        label: a.label === undefined ? undefined : parseStrOpt(a.label, 'label'),
         reassign: parseBoolOpt(a.reassign, 'reassign', false),
       }
-      if (p.add.length === 0 && p.remove.length === 0 && p.label === undefined)
-        throw new McpArgError(`update_link needs at least one of add_layer_ids, remove_layer_ids, label — nothing to change`)
+      if (p.add.length === 0 && p.remove.length === 0)
+        throw new McpArgError(`update_link needs at least one of add_layer_ids, remove_layer_ids — nothing to change`)
       return p
     } },
   // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────

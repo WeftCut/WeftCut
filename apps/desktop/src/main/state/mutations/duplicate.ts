@@ -142,7 +142,7 @@ export function applyPasteLayers(
     track.layers.splice(at < 0 ? track.layers.length : at, 0, copy)
     result.set(plan.source.id, copy.id)
   }
-  if (result.size >= 2) applyLinksCreate(p, idGen, [...result.values()], null, false)
+  if (result.size >= 2) applyLinksCreate(p, idGen, [...result.values()], false)
   applyDurationAutofit(c)
   return result
 }

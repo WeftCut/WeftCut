@@ -43,7 +43,6 @@ import type { Extrapolate, LayerSummary } from "../ipc";
 import {
   useEditingGroupId,
   useEditingLayerId,
-  useEditingLinkId,
   beginLayerRename,
   endRename,
 } from "./renameStore";
@@ -182,15 +181,13 @@ function GroupMarkerBadge({
   );
 }
 
-/// A link's chrome above its anchor member's top-left corner: the label tab
-/// when the link is named (or being named), and the `+N` badge when the display
-/// filter hides members. Both share one anchor so a labelled link with hidden
-/// members reads `label · +N`. Badge click reveals the first hidden member's
-/// lane and nothing else — revealing is not selecting, and because the reveal is
-/// single-lane the member revealed leaves the count, so a second click reaches
-/// the next one.
+/// A link's chrome above its anchor member's top-left corner: the `+N` badge
+/// when the display filter hides members. Click reveals the first hidden
+/// member's lane and nothing else — revealing is not selecting, and because the
+/// reveal is single-lane the member revealed leaves the count, so a second click
+/// reaches the next one.
 ///
-/// Every pointer event stops here: the tab sits inside the block, whose
+/// Every pointer event stops here: the badge sits inside the block, whose
 /// pointerdown selects and arms a drag, and a click meant for the badge must
 /// not become either.
 function LinkTab({
@@ -199,8 +196,6 @@ function LinkTab({
   accentAlpha,
   clipWidthPx,
   hiddenCount,
-  isEditing,
-  onCommitLabel,
 }: {
   tab: LinkTabInfo;
   hue: number;
@@ -210,27 +205,10 @@ function LinkTab({
   /// The count to draw — the tab's own while idle, the drag's while this
   /// member is the drag anchor.
   hiddenCount: number;
-  isEditing: boolean;
-  onCommitLabel: (linkId: string, label: string | null) => void;
 }) {
   const { t } = useTranslation();
-  const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(tab.label ?? "");
-      inputRef.current?.focus({ preventScroll: true });
-      inputRef.current?.select();
-    }
-  }, [isEditing, tab.label]);
-  const showTab = tab.label !== null || isEditing;
-  if (!showTab && hiddenCount === 0) return null;
+  if (hiddenCount === 0) return null;
 
-  const commit = () => {
-    const next = draft.trim() || null;
-    if (next !== tab.label) onCommitLabel(tab.linkId, next);
-    endRename();
-  };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const badgeTitle = t("timeline.link_hidden_members", { count: hiddenCount });
 
@@ -247,56 +225,20 @@ function LinkTab({
       onDoubleClick={stop}
       onContextMenu={stop}
     >
-      {isEditing ? (
-        <AppInput
-          ref={inputRef}
-          className="z-[2]"
-          style={{ width: "8rem", maxWidth: "100%", height: "1rem", fontSize: 10 }}
-          value={draft}
-          ariaLabel={t("timeline.link_label")}
-          onValueChange={setDraft}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              endRename();
-            }
-          }}
-        />
-      ) : tab.label !== null ? (
-        <span
-          data-testid="link-tab"
-          className="overflow-hidden text-ellipsis whitespace-nowrap"
-          title={tab.label}
-        >
-          {tab.label}
-        </span>
-      ) : null}
-      {showTab && hiddenCount > 0 && !isEditing && (
-        <span aria-hidden="true" className="opacity-70">
-          ·
-        </span>
-      )}
-      {hiddenCount > 0 && !isEditing && (
-        <button
-          type="button"
-          data-testid="link-hidden-badge"
-          className="shrink-0 cursor-pointer rounded-sm bg-black/30 px-1 hover:bg-black/50"
-          title={badgeTitle}
-          aria-label={badgeTitle}
-          onClick={(e) => {
-            e.stopPropagation();
-            const first = tab.hidden[0];
-            if (first) revealTrackWithoutSelection(first.trackId);
-          }}
-        >
-          +{hiddenCount}
-        </button>
-      )}
+      <button
+        type="button"
+        data-testid="link-hidden-badge"
+        className="shrink-0 cursor-pointer rounded-sm bg-black/30 px-1 hover:bg-black/50"
+        title={badgeTitle}
+        aria-label={badgeTitle}
+        onClick={(e) => {
+          e.stopPropagation();
+          const first = tab.hidden[0];
+          if (first) revealTrackWithoutSelection(first.trackId);
+        }}
+      >
+        +{hiddenCount}
+      </button>
     </div>
   );
 }
@@ -359,7 +301,6 @@ export function LayerBlock({
   onDragStart,
   onContextMenu,
   onCommitLabel,
-  onCommitLinkLabel,
   onCommitGroupLabel,
   fpsNum,
   fpsDen,
@@ -414,9 +355,6 @@ export function LayerBlock({
   /// label → block falls back to the kind name). Wired by Timeline to
   /// `updateLayer({label}) + onMutated`, matching the drag-commit pattern.
   onCommitLabel: (layerId: string, label: string) => void;
-  /// Persist a link's label from the tab editor; `null` clears it, which is a
-  /// link's ordinary unlabelled state. Wired by Timeline to `linksRename`.
-  onCommitLinkLabel: (linkId: string, label: string | null) => void;
   /// Persist a Group's COMPOSITION name from the clip's inline editor; `null`
   /// clears it back to the derived `Group N`. Wired by Timeline to
   /// `groupsRename`. Separate from `onCommitLabel` because the two write
@@ -462,10 +400,7 @@ export function LayerBlock({
   const isEditingGroupName =
     groupCompositionId !== null && editingGroupId === groupCompositionId;
   const isEditing = editingLayerId === layer.id || isEditingGroupName;
-  const editingLinkId = useEditingLinkId();
   const linksOff = useLinkOverride();
-  const isEditingLinkTab =
-    linkTab !== null && editingLinkId === linkTab.linkId;
   const focusedParam = useFocusedParamFor(layer.id);
   const groupOrdinals = useGroupOrdinals();
   // Null for every other kind, and for a Group whose composition the summary no
@@ -779,10 +714,7 @@ export function LayerBlock({
   // above's resize handle (`z-[3]`) lives. A selected block is a `z-[2]`
   // stacking context, so the tab cannot out-rank the handle on its own — the
   // BLOCK is lifted while it draws link chrome, or the badge is unclickable.
-  const linkChromeShown =
-    linkTab !== null &&
-    !previewOnly &&
-    (linkTab.label !== null || isEditingLinkTab || linkHiddenCount > 0);
+  const linkChromeShown = linkTab !== null && !previewOnly && linkHiddenCount > 0;
 
   const sliceClasses =
     slice === "top"
@@ -1130,8 +1062,6 @@ export function LayerBlock({
           accentAlpha={linkAccentAlpha}
           clipWidthPx={layerWidthPx}
           hiddenCount={linkHiddenCount}
-          isEditing={isEditingLinkTab}
-          onCommitLabel={onCommitLinkLabel}
         />
       )}
       {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} />}

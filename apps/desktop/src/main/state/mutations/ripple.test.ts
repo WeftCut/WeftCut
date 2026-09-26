@@ -191,7 +191,7 @@ describe('applyRippleDeleteLayers over a link', () => {
     const v2 = color(x, x.aRoll, sec(2), sec(4))
     const a1 = sound(x, x.bRoll, sec(0), sec(2))
     const a2 = sound(x, x.bRoll, sec(2), sec(4))
-    applyLinksCreate(x.p, x.gen, [v1, a1], null, false)
+    applyLinksCreate(x.p, x.gen, [v1, a1], false)
     return { x, v1, v2, a1, a2 }
   }
 
@@ -442,7 +442,7 @@ describe('dispatch: ripple_delete_layers refuses rather than making room', () =>
     const { x, b } = threeUp()
     const head = color(x, x.bRoll, sec(0), sec(1))
     const tail = color(x, x.bRoll, sec(5), sec(6))
-    applyLinksCreate(x.p, x.gen, [head, tail], null, false)
+    applyLinksCreate(x.p, x.gen, [head, tail], false)
     const actor = x.open()
     expect(ripple(actor, [b]).ok).toBe(true)
     const rc = root(actor.snapshot())
@@ -454,7 +454,7 @@ describe('dispatch: ripple_delete_layers refuses rather than making room', () =>
     const { x, b } = threeUp()
     const head = color(x, x.bRoll, sec(0), sec(3)) // runs under the cut at 2 s
     const tail = color(x, x.bRoll, sec(5), sec(6))
-    const link = applyLinksCreate(x.p, x.gen, [head, tail], null, false)
+    const link = applyLinksCreate(x.p, x.gen, [head, tail], false)
     const actor = x.open()
     refuses(x, actor, [b], { error: 'RippleLinkStraddles', link, hole: { s: sec(2), e: sec(4) } })
   })

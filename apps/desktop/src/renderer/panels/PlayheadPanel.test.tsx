@@ -38,10 +38,9 @@ vi.mock("./MediaThumbnail", () => ({
   MediaThumbnail: () => <span>thumbnail</span>,
 }));
 
-// The link actions commit straight through IPC (the `project:changed` bridge
+// The link action commits straight through IPC (the `project:changed` bridge
 // refreshes the summary), so the panel test observes the IPC calls themselves.
 const ipcMocks = vi.hoisted(() => ({
-  linksRename: vi.fn(async () => {}),
   linksDissolve: vi.fn(async () => {}),
 }));
 
@@ -49,7 +48,6 @@ vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
   return {
     ...actual,
-    linksRename: ipcMocks.linksRename,
     linksDissolve: ipcMocks.linksDissolve,
   };
 });
@@ -64,7 +62,6 @@ beforeEach(() => {
   settings.displayMode = "AbRoll";
   settings.deltaWindowUs = 5_000_000;
   settings.setAppSettings.mockClear();
-  ipcMocks.linksRename.mockClear();
   ipcMocks.linksDissolve.mockClear();
   playhead.timeUs = 1_000_000;
 });
@@ -1099,7 +1096,7 @@ describe("PlayheadPanel folded link rows", () => {
   // Wash is an unlinked layer under them. Both link members span the
   // playhead, so the fold stands on the visual one (Cam) and sits in the
   // visual stack above Wash.
-  const LINK = { id: "link-1", label: null, layer_ids: ["l-v", "l-a"] };
+  const LINK = { id: "link-1", layer_ids: ["l-v", "l-a"] };
   function linkedTracks(): TrackSummary[] {
     return [
       makeTrack("t-wash", "Wash lane", "Video", [
@@ -1136,10 +1133,9 @@ describe("PlayheadPanel folded link rows", () => {
     expect(wash.querySelector("[data-testid='playhead-row-link-count']")).toBeNull();
   });
 
-  it("prints the link's label on the fold when it has one, the nearest member's name otherwise", () => {
-    renderPanel(linkedTracks(), {}, [{ ...LINK, label: "Interview" }]);
-    expect(screen.getByTitle("Interview")).toBeTruthy();
-    expect(screen.queryByTitle("Cam")).toBeNull();
+  it("prints the nearest member's name on the fold — a link has none of its own", () => {
+    renderPanel(linkedTracks(), {}, [LINK]);
+    expect(screen.getByTitle("Cam")).toBeTruthy();
   });
 
   it("expanding lists the members as indented rows; collapsing hides them again", () => {
@@ -1191,12 +1187,12 @@ describe("PlayheadPanel folded link rows", () => {
         withMedia(makeLayer("l-b", "B", "VideoClip", 500_000, 1_500_000), "m-b"),
       ]),
     ];
-    renderPanel(tracks, {}, [{ id: "link-2", label: null, layer_ids: ["l-a", "l-b"] }]);
+    renderPanel(tracks, {}, [{ id: "link-2", layer_ids: ["l-a", "l-b"] }]);
 
     expect(screen.getAllByText("thumbnail")).toHaveLength(2);
   });
 
-  it("the fold's context menu offers Rename link… and Unlink beside the ordering items", () => {
+  it("the fold's context menu offers Unlink beside the ordering items", () => {
     renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
     const menu = openMenuOn("Cam");
     expect(
@@ -1208,7 +1204,6 @@ describe("PlayheadPanel folded link rows", () => {
       "Send backward",
       "Bring to front",
       "Send to back",
-      "Rename link…",
       "Unlink",
     ]);
   });
@@ -1230,7 +1225,7 @@ describe("PlayheadPanel folded link rows", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((el) => el.textContent),
-    ).toEqual(["Rename link…", "Unlink"]);
+    ).toEqual(["Unlink"]);
   });
 
   it("Unlink dissolves the link through IPC", async () => {
@@ -1245,59 +1240,14 @@ describe("PlayheadPanel folded link rows", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("Rename link… opens the inline editor; Enter commits the label through IPC", async () => {
-    const user = userEvent.setup();
+  it("a fold has no name to rename: double-click opens no editor", () => {
     const onRename = vi.fn();
     renderPanel(linkedTracks(), { onRename }, [LINK]);
-    openMenuOn("Cam");
 
-    await user.click(screen.getByRole("menuitem", { name: "Rename link…" }));
-    const input = screen.getByLabelText("Rename Cam");
-    fireEvent.change(input, { target: { value: "Interview" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.doubleClick(screen.getByTitle("Cam"));
 
-    expect(ipcMocks.linksRename).toHaveBeenCalledWith("link-1", "Interview");
-    // The link was renamed, not the member standing in for it.
+    expect(screen.queryByLabelText("Rename Cam")).toBeNull();
     expect(onRename).not.toHaveBeenCalled();
-  });
-
-  // The LANDMINE `contextMenuFinalFocus` guards: the menu returns focus to
-  // whatever held it when it opened, a microtask AFTER it unmounts, and this
-  // field commits on blur — so the row read as doing nothing at all. The parked
-  // button stands in for the focus region the app has focused by the time a
-  // right-click lands; the case above has none, which is why it never saw this.
-  it("Rename link… keeps the caret in the editor it opened", async () => {
-    const user = userEvent.setup();
-    const parked = document.createElement("button");
-    document.body.appendChild(parked);
-    parked.focus();
-
-    renderPanel(linkedTracks(), {}, [LINK]);
-    openMenuOn("Cam");
-    await user.click(screen.getByRole("menuitem", { name: "Rename link…" }));
-
-    const field = screen.getByLabelText("Rename Cam");
-    // A macrotask: it runs after the focus-return microtask has drained.
-    await new Promise((done) => setTimeout(done, 0));
-    expect(field.isConnected).toBe(true);
-    expect(document.activeElement).toBe(field);
-    parked.remove();
-  });
-
-  it("an emptied link label commits as null; Escape commits nothing", () => {
-    renderPanel(linkedTracks(), {}, [{ ...LINK, label: "Interview" }]);
-
-    fireEvent.doubleClick(screen.getByTitle("Interview"));
-    let input = screen.getByLabelText("Rename Interview");
-    fireEvent.change(input, { target: { value: "Renamed" } });
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(ipcMocks.linksRename).not.toHaveBeenCalled();
-
-    fireEvent.doubleClick(screen.getByTitle("Interview"));
-    input = screen.getByLabelText("Rename Interview");
-    fireEvent.change(input, { target: { value: "   " } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(ipcMocks.linksRename).toHaveBeenCalledWith("link-1", null);
   });
 
   it("a link's lone listed member keeps its own row, marked with the accent and ×2", () => {
@@ -1316,6 +1266,5 @@ describe("PlayheadPanel folded link rows", () => {
     fireEvent.change(input, { target: { value: "Cam 2" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRename).toHaveBeenCalledWith("l-v", "Cam 2");
-    expect(ipcMocks.linksRename).not.toHaveBeenCalled();
   });
 });

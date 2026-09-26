@@ -18,7 +18,7 @@ import { applyDeleteLayer } from './mutations/delete'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
 import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
-import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
+import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, linkSiblingsExcluding } from './mutations/links'
 import { serveProjectResource } from './resource-views'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
@@ -1233,11 +1233,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
             rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, m.anchor ?? null))) }
         }
-        case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
+        case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.reassign as boolean) ?? false)) }
         case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
         case 'links_add_members': commit(HISTORY_SUMMARY.linkAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksAddMembers(d, a.link as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
         case 'links_remove_members': commit(HISTORY_SUMMARY.linkRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksRemoveMembers(d, a.link as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
-        case 'links_rename': commit(HISTORY_SUMMARY.linkRename, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksRename(d, a.link as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         // Groups (ADR 0052) — one commit each; the row points at the Group layer,
         // and at the members too where the op has a set of them. The result is
         // ONE shape always (not the branch-dependent shape add_video_layer has),
@@ -1557,7 +1556,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const audioId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, autoPairAudio, t0, t1))
             commit(HISTORY_SUMMARY.linkCreate, layerRefs([videoId, audioId]), { kind: 'Coarse' }, (d) =>
-              applyLinksCreate(d, idGen, [videoId, audioId], null, false))
+              applyLinksCreate(d, idGen, [videoId, audioId], false))
           }
           return { ok: true, value: videoId }
         }
@@ -1818,7 +1817,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const ids = commit(HISTORY_SUMMARY.layerAddAvPair, (r: { video_layer_id: Uuid; audio_layer_id: Uuid; link_id: Uuid }) => layerRefs([r.video_layer_id, r.audio_layer_id]), { kind: 'Coarse' }, (d) => {
               const videoId = applyAddLayer(d, idGen, track, vParams, t0, t1)
               const audioId = applyAddLayer(d, idGen, track, aParams, t0, t1)
-              const linkId = applyLinksCreate(d, idGen, [videoId, audioId], null, false)
+              const linkId = applyLinksCreate(d, idGen, [videoId, audioId], false)
               return { video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId }
             })
             return { ok: true, result: toolRecord(addedVideo(ids.video_layer_id, ids.audio_layer_id, ids.link_id, p)) }
@@ -2129,18 +2128,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const link = p.link as Uuid
           const add = p.add as Uuid[]
           const remove = p.remove as Uuid[]
-          const label = p.label as string | null | undefined
           const reassign = p.reassign as boolean
-          // One commit, add → remove → label: adding before removing means a
-          // link never dissolves under a member that is about to join it. The
-          // row is labelled by the heaviest change present, and names the
-          // layers that moved when any did, else the link's members.
-          const summary = add.length > 0 ? HISTORY_SUMMARY.linkAddMembers : remove.length > 0 ? HISTORY_SUMMARY.linkRemoveMembers : HISTORY_SUMMARY.linkRename
-          const refs = add.length > 0 || remove.length > 0 ? layerRefs([...add, ...remove]) : linkMemberRefs(link)
-          commit(summary, refs, { kind: 'Coarse' }, (d) => {
+          // One commit, add → remove: adding before removing means a link
+          // never dissolves under a member that is about to join it. The row
+          // is labelled by the heavier change present and names the layers
+          // that moved.
+          const summary = add.length > 0 ? HISTORY_SUMMARY.linkAddMembers : HISTORY_SUMMARY.linkRemoveMembers
+          commit(summary, layerRefs([...add, ...remove]), { kind: 'Coarse' }, (d) => {
             if (add.length > 0) applyLinksAddMembers(d, link, add, reassign)
             if (remove.length > 0) applyLinksRemoveMembers(d, link, remove)
-            if (label !== undefined) applyLinksRename(d, link, label)
           })
           return { ok: true, result: toolRecord(linkRecord(current(), link) ?? { link_id: link, dissolved: true }) }
         }

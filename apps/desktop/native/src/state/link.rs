@@ -8,8 +8,8 @@
 //! (`src/main/state/validate.ts`) and structural fan-out
 //! (`src/main/state/mutations/links.ts`).
 //!
-//! Links carry only identity, an optional label, and membership. They have no
-//! rendering significance.
+//! Links carry only identity and membership — no name, as in every NLE's
+//! link. They have no rendering significance.
 
 #![allow(dead_code)]
 
@@ -22,27 +22,20 @@ use super::ids::{LayerId, LinkId};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Link {
     pub id: LinkId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
     /// `OrdSet` so the on-disk form is deterministic. Insertion order is
     /// not user-visible — link membership is a set.
     pub members: imbl::OrdSet<LayerId>,
 }
 
 impl Link {
-    pub fn new(id: LinkId, label: Option<String>, members: imbl::OrdSet<LayerId>) -> Self {
-        Self { id, label, members }
+    pub fn new(id: LinkId, members: imbl::OrdSet<LayerId>) -> Self {
+        Self { id, members }
     }
 
     /// Convenience: build from an unordered iterator.
-    pub fn from_iter<I: IntoIterator<Item = LayerId>>(
-        id: LinkId,
-        label: Option<String>,
-        members: I,
-    ) -> Self {
+    pub fn from_iter<I: IntoIterator<Item = LayerId>>(id: LinkId, members: I) -> Self {
         Self {
             id,
-            label,
             members: members.into_iter().collect(),
         }
     }
@@ -72,7 +65,7 @@ mod tests {
         let id = new_id();
         let a = new_id();
         let b = new_id();
-        let l = Link::from_iter(id, Some("l".into()), vec![a, b]);
+        let l = Link::from_iter(id, vec![a, b]);
         assert_eq!(l.id, id);
         assert_eq!(l.members.len(), 2);
         assert!(l.members.contains(&a));
@@ -87,8 +80,8 @@ mod tests {
         let b = new_id();
         let c = new_id();
         let links: imbl::Vector<Link> = imbl::vector![
-            Link::from_iter(l1_id, None, vec![a, b]),
-            Link::from_iter(l2_id, None, vec![c]),
+            Link::from_iter(l1_id, vec![a, b]),
+            Link::from_iter(l2_id, vec![c]),
         ];
         let idx = index_links(&links);
         assert_eq!(idx[&a], l1_id);

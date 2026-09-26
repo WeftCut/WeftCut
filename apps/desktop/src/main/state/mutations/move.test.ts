@@ -63,7 +63,7 @@ describe('move link lock checks (not corpus-gated)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 100_000)]
     root(p).tracks[1].layers = [color('b', 0, 100_000)]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     root(p).tracks[1].layers[0].locked = true // sibling b locked
     try { applyMoveLayer(p, 'a', root(p).tracks[0].id, 500_000, false); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
@@ -72,7 +72,7 @@ describe('move link lock checks (not corpus-gated)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 0, 100_000)]
     root(p).tracks[1].layers = [color('b', 0, 100_000)]
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
     root(p).tracks[1].layers[0].locked = true
     expect(() => applyMoveLayer(p, 'a', root(p).tracks[0].id, 500_000, true)).not.toThrow()
     expect(root(p).tracks[1].layers[0].t_start_us).toBe(0) // sibling unmoved
@@ -92,7 +92,7 @@ describe('move link lock checks (not corpus-gated)', () => {
     const p = blankProject(seededGen(), 't')
     root(p).tracks[0].layers = [color('a', 1_000_000, 2_000_000)] // target, 1 s duration
     root(p).tracks[1].layers = [color('b', 500_000, 600_000)]     // earliest member, 100 ms
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
 
     // Asks for -1 000 000; the set can only travel -500 000 before `b` hits zero.
     applyMoveLayer(p, 'a', root(p).tracks[0].id, 0, false)
@@ -118,7 +118,7 @@ describe('move link lock checks (not corpus-gated)', () => {
     }
     root(p).tracks[0].layers = [color('v', 1_000_000, 2_000_000)]
     root(p).tracks[1].layers = [au]
-    applyLinksCreate(p, seededGen(), ['v', 'au'], null, false)
+    applyLinksCreate(p, seededGen(), ['v', 'au'], false)
 
     applyMoveLayer(p, 'v', root(p).tracks[0].id, -3_000_000, false)
 
@@ -133,7 +133,7 @@ describe('move link lock checks (not corpus-gated)', () => {
       color('b', 200_000, 300_000),
     ]
     root(p).tracks[1].layers = []
-    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], false)
 
     applyMoveLayer(p, 'a', root(p).tracks[1].id, 500_000, false)
 

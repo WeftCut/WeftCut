@@ -232,7 +232,7 @@ describe("linkHue", () => {
 describe("indexLinks", () => {
   it("maps layer ids to link ids", () => {
     const idx = indexLinks([
-      { id: "g1", label: null, layer_ids: ["a", "b"] },
+      { id: "g1", layer_ids: ["a", "b"] },
     ]);
     expect(idx.get("a")).toBe("g1");
     expect(idx.get("b")).toBe("g1");
@@ -253,12 +253,12 @@ describe("indexLinkTabs", () => {
   const bottom = track({ id: "bottom", role: "a-roll", layers: [video, audio] });
   const combined = track({ id: "mid", role: "b-roll", layers: [overlay] });
   const hiddenLane = track({ id: "hidden", role: null, layers: [] });
-  const link = { id: "L", label: "Pair", layer_ids: ["A", "V", "O"] };
+  const link = { id: "L", layer_ids: ["A", "V", "O"] };
 
   it("anchors on the top-most rendered member and names no other member", () => {
     const tabs = indexLinkTabs([link], [combined, bottom], [combined, bottom]);
     expect([...tabs.keys()]).toEqual(["O"]);
-    expect(tabs.get("O")).toEqual({ linkId: "L", label: "Pair", hidden: [] });
+    expect(tabs.get("O")).toEqual({ linkId: "L", hidden: [] });
   });
 
   it("inside one combined row the visual half anchors over the audio half", () => {
@@ -280,7 +280,6 @@ describe("indexLinkTabs", () => {
     );
     expect(tabs.get("V")).toEqual({
       linkId: "L",
-      label: "Pair",
       hidden: [
         { layerId: "A", trackId: "hidden" },
         { layerId: "O", trackId: "mid" },

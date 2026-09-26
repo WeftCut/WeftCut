@@ -141,7 +141,7 @@ function track(id: string, layers: LayerSummary[]): TrackSummary {
 function comp(layers: LayerSummary[], linked = false) {
   return compositionFixture({
     tracks: [track("t-1", layers)],
-    links: linked ? [{ id: "lk-1", label: null, layer_ids: layers.map((l) => l.id) }] : [],
+    links: linked ? [{ id: "lk-1", layer_ids: layers.map((l) => l.id) }] : [],
   });
 }
 

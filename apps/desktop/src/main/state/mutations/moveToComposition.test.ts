@@ -120,7 +120,7 @@ describe('applyMoveLayersToComposition', () => {
   // no timeout can interrupt. The linked pair is what makes that reachable.
   it('refuses a destination that is the composition the set is already in', () => {
     const { p, gen, x, y } = crossing()
-    applyLinksCreate(p, gen, [x, y], null, false)
+    applyLinksCreate(p, gen, [x, y], false)
     const before = structuredClone(p)
     const e = expectCmd(() => applyMoveLayersToComposition(p, gen, [x, y], p.root_id, x, 8 * S, null))
     expect(e).toMatchObject({ error: 'InvalidArgument', field: 'to_composition_id' })

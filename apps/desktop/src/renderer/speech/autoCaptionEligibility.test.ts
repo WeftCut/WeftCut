@@ -206,8 +206,8 @@ describe("transcribeSubjects", () => {
   const lone = videoLayer("lone-v", 1, { media: "m-lone", tStart: 6_000_000, tEnd: 8_000_000 });
   const title = colorLayer("title");
   const links: LinkSummary[] = [
-    { id: "link-pair", label: null, layer_ids: ["pair-v", "pair-a"] },
-    { id: "link-bed", label: null, layer_ids: ["bed-v", "bed-a"] },
+    { id: "link-pair", layer_ids: ["pair-v", "pair-a"] },
+    { id: "link-bed", layer_ids: ["bed-v", "bed-a"] },
   ];
   const comp = compositionFixture({
     tracks: [trackWith([lone, bedV, pairV, title], "t-pic"), trackWith([pairA, bedA], "t-aud")],
