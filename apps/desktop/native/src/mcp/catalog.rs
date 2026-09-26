@@ -141,7 +141,6 @@ tool_table! {
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping, ToolAnnotations::READ),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
     // by the TS def; mergeMcpCatalog filters it out of the Rust side.
-    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue packs onto the first unlocked caption track with room, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted; advanced ASS styling (karaoke, drawings) is simplified. For a `transcribe_clip` result use `apply_transcripts` instead — an SRT discards its word timing. Returns `{ caption_track_id, cues, simplified }`.", tools::ApplySubtitlesArgs, tools::apply_subtitles, ToolAnnotations::WRITE),
     #[cfg(feature = "jobs")]
     "detect_pauses" => ("Find the pauses in a clip's audio — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the write is `remove_pauses` (cut them) or `add_marker` (mark them). A pause is a run where every channel's peak stays below `threshold_amp` for at least `min_pause_us`; a loud run shorter than `bridge_us` inside it (a click, a cough) does not end it. Defaults `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000`, `bridge_us=80000` (must be below `min_pause_us`). `layer_id` is an Audio layer, or a VideoClip, which resolves to the Audio layer of its link (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_amp, peaks_source }`, timeline-absolute µs, sorted; `noise_floor_amp` is the 10th-percentile peak (a threshold reads well at the floor + 6 dB); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Errors until the waveform job finishes — wait for `media:job_complete` with `kind=waveform` and retry.", tools::DetectPausesArgs, tools::detect_pauses, ToolAnnotations::READ),
     #[cfg(feature = "jobs")]
@@ -155,10 +154,10 @@ tool_table! {
                           A directory, a missing path or an unreadable file is refused by name before anything is written; a read that \
                           fails mid-import rolls the provisional pool row back. Unrecorded.", tools::ImportMediaArgs, tools::import_media, ToolAnnotations::WRITE),
     #[cfg(feature = "speech")]
-    "extract_clip_audio" => ("Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `source_in_us`, `source_out_us`, `duration_us`, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are composition-absolute µs, defaulting to the layer endpoints; at most 60 s per call — walk a long clip in consecutive windows. Add the reported `t_start_us` to the offsets your model returns before `apply_subtitles`. Refuses a layer with no audio, a window outside the layer, and a VideoClip with speed != 1.0 (a VideoClip's audio is its own stream, not its linked Audio layer).",
+    "extract_clip_audio" => ("Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `source_in_us`, `source_out_us`, `duration_us`, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are composition-absolute µs, defaulting to the layer endpoints; at most 60 s per call — walk a long clip in consecutive windows. Add the reported `t_start_us` to the offsets your model returns, then `apply_transcripts`. Refuses a layer with no audio, a window outside the layer, and a VideoClip with speed != 1.0 (a VideoClip's audio is its own stream, not its linked Audio layer).",
                              super::clip_audio::ExtractClipAudioArgs, super::clip_audio::extract_clip_audio, ToolAnnotations::READ),
     #[cfg(feature = "speech")]
-    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR). Returns `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }` in timeline-absolute µs. Hand the envelope to `apply_transcripts` to lay captions that keep the word timing (`apply_subtitles` with `srt` works but discards it). `word_timing` is \"exact\" or \"interpolated_from_cue\". Optional `t_start_us`/`t_end_us` narrow the window; `backend` (\"openai\" | \"whisper_cpp\" | \"funasr\") REQUIRES that engine — it errors naming the missing key / binary / model rather than substituting, so a local choice never uploads; omitted, the user's preferred engine then availability. `word_timestamps` (default true) asks for exact per-word times where the engine can (OpenAI is SRT-only). A VideoClip with speed != 1.0 is refused. Errors name the cause: no engine, the provider cap (~13 min for cloud Whisper), rate limits, auth.", tools::TranscribeClipArgs, tools::transcribe_clip, ToolAnnotations::READ),
+    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR). Returns `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }` in timeline-absolute µs. Hand the envelope to `apply_transcripts` to lay captions that keep the word timing. `word_timing` is \"exact\" or \"interpolated_from_cue\". Optional `t_start_us`/`t_end_us` narrow the window; `backend` (\"openai\" | \"whisper_cpp\" | \"funasr\") REQUIRES that engine — it errors naming the missing key / binary / model rather than substituting, so a local choice never uploads; omitted, the user's preferred engine then availability. `word_timestamps` (default true) asks for exact per-word times where the engine can (OpenAI is SRT-only). A VideoClip with speed != 1.0 is refused. Errors name the cause: no engine, the provider cap (~13 min for cloud Whisper), rate limits, auth.", tools::TranscribeClipArgs, tools::transcribe_clip, ToolAnnotations::READ),
     #[cfg(feature = "speech")]
     "synthesize_speech" => ("Synthesize speech with the configured cloud TTS provider (OpenAI tts-1) and place it as an Audio layer. `text` ≤ 4096 chars; `voice` is one of alloy / echo / fable / onyx / nova / shimmer; optional `speed` 0.25..4.0 (default ≈ 1.0); optional `target_track_id` (default: the first Audio track, else a new 'Voiceover' track); optional `t_start_us` (default: the composition's current duration, so the clip appends at the end). The MP3 is cached by `(model, voice, speed, text)`, so a repeat call costs no API request. Returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech, ToolAnnotations::WRITE),
     #[cfg(feature = "speech")]
@@ -208,7 +207,6 @@ mod tests {
     fn catalog_advertises_tools_resources_prompts() {
         let cat = catalog();
         assert!(cat.tools.iter().any(|t| t.name == "ping"));
-        assert!(cat.tools.iter().any(|t| t.name == "apply_subtitles"));
         assert!(cat.resources.iter().any(|r| r.uri == "project://current"));
         assert!(cat.prompts.iter().any(|p| p.name == "cut-pauses"));
     }
@@ -277,27 +275,5 @@ mod tests {
                 t.name
             );
         }
-    }
-
-    /// apply_subtitles is a hybrid: its Rust handler is a stub that
-    /// returns an error (the TS host intercepts the real call). The catalog entry
-    /// stays (asserted above); dispatch reaching the Rust stub errors cleanly.
-    #[tokio::test]
-    async fn apply_subtitles_rust_handler_is_a_host_stub() {
-        use std::sync::Arc;
-        let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
-        b.init().await.unwrap();
-        let args = serde_json::json!({
-            "body": "1\n00:00:01,000 --> 00:00:02,000\nHi\n", "t_end_us": 2_000_000
-        })
-        .to_string();
-        let err = dispatch_tool(&b, "apply_subtitles", &args)
-            .await
-            .unwrap_err();
-        assert!(
-            err.message.contains("host process"),
-            "apply_subtitles Rust handler must be a host stub, got: {}",
-            err.message,
-        );
     }
 }

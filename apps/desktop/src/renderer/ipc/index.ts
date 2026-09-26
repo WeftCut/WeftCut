@@ -2508,9 +2508,8 @@ export async function applyShotCuts(
 // The renderer half of the two authored speech recipes. Every channel here is
 // the SAME tool an agent calls by the same name: `transcribe_clip` and
 // `describe_clip` go through the MCP host's own `callClipComputeTool` (slice
-// resolution and engine injection included), and `apply_subtitles` /
-// `synthesize_speech` go through the same hybrid arms, so a human and an agent
-// land the same single commit.
+// resolution and engine injection included), and `apply_transcripts` /
+// `synthesize_speech` land the same single commit the agent's tools do.
 //
 // All four THROW. They are the read and write halves of one gesture, and a
 // swallowed failure would leave the timeline looking untouched with no reason
@@ -2557,7 +2556,7 @@ export interface TranscriptResult {
 /// panel. `language` blank/omitted lets the engine auto-detect.
 ///
 /// A read: it commits nothing, so it neither enters undo nor dirties the
-/// project. Applying the result is `applySubtitles`.
+/// project. Applying the result is `applyTranscripts`.
 export async function transcribeClip(
   layerId: string,
   opts: { language?: string } = {},
@@ -2567,19 +2566,6 @@ export async function transcribeClip(
     layer_id: layerId,
     ...(language ? { language } : {}),
   });
-}
-
-/// Parse an SRT body and write it as a caption-role track of `Text` layers in
-/// ONE commit (`add_caption_track`), so a whole transcript is one undo step.
-/// Returns the new track id. Cues self-position from their own timestamps —
-/// there is no start/end argument.
-///
-/// `format` is pinned rather than sniffed: the only body this reaches is the
-/// `srt` field of a `transcribe_clip` result. That pin is also what makes the
-/// arm's bare-id answer exact — the styling annotation it can append belongs to
-/// the ASS branch, which SRT never takes.
-export async function applySubtitles(srt: string): Promise<string> {
-  return invoke<string>("apply_subtitles", { body: srt, format: "srt" });
 }
 
 export async function applyTranscripts(transcripts: TranscriptResult[], projectId: string, compositionId: string, sourceIds: string[]): Promise<string> {

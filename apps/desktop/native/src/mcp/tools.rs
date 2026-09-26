@@ -47,35 +47,6 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
 // move_layer, trim_layer, delete_layers, split_layer, paste_layers) are
 // absent — they are served by the TS actor.
 
-#[expect(
-    dead_code,
-    reason = "hybrid-orchestrator stub: TS intercepts apply_subtitles before dispatch, so no Rust code reads the fields; the struct exists to emit the wire schema"
-)]
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct ApplySubtitlesArgs {
-    /// Subtitle document body (SRT, ASS, or VTT).
-    pub body: String,
-    /// 'srt', 'ass', or 'vtt'. Sniffed from body when omitted.
-    pub format: Option<String>,
-    // `track_id`, `t_start_us` and `t_end_us` used to be advertised here and
-    // ignored (the lane is the packing's to pick and cue timings come from the
-    // body, ADR 0070) — `t_end_us` even as REQUIRED, so every caller had to
-    // invent one. They are gone from the schema; serde still accepts them from
-    // a client that sends them, since unknown fields are ignored.
-}
-
-/// `apply_subtitles` Rust handler is a stub — the tool routes through the hybrid
-/// orchestrator (parse_subtitles napi compute → TS-actor add_caption_track write).
-pub(super) async fn apply_subtitles(
-    _b: &Backend,
-    _args: ApplySubtitlesArgs,
-) -> Result<ToolResult, McpToolError> {
-    Err(McpToolError::internal_error(
-        "apply_subtitles is handled by the host process (TS actor hybrid)".to_string(),
-        None,
-    ))
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct DetectPausesArgs {
     /// Target Audio layer id. A VideoClip id is accepted by the host, which
@@ -1381,10 +1352,10 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
 /// JSON envelope `transcribe_clip` returns: the normalized transcript
 /// (`segments` with per-word spans, detected `language`, `word_timing`
 /// provenance), the `backend` tag that actually served the request (so a
-/// fallback pick is visible, not silent), PLUS a rendered `srt` field. The
-/// agent inspects `segments` for word-level editing and pipes `srt` straight
-/// into `apply_subtitles` (which still expects an SRT body). Borrows the
-/// transcript so we serialize without cloning the segment vec.
+/// fallback pick is visible, not silent), PLUS a rendered `srt` field — the
+/// transcript at a glance. The agent hands `segments` + `word_timing` to
+/// `apply_transcripts`. Borrows the transcript so we serialize without cloning
+/// the segment vec.
 #[cfg(feature = "speech")]
 #[derive(Serialize)]
 struct TranscribeClipResult<'a> {

@@ -96,8 +96,8 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 **Keyframes** — animate any parameter, with bézier easing, a curve editor, tangent control, motion paths and extrapolation.
 <br/><sub>Agent: `set_keyframe` · `update_keyframe` · `smooth_keyframes` · `set_extrapolation`</sub>
 
-**Speech and captions** — transcribe a clip and get editable caption layers packed onto your caption tracks; import SRT/VTT/ASS the same way. Transcription runs against a cloud provider, or entirely on your machine once you let the app fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out and run its own model. Text-to-speech for scratch voiceover.
-<br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_subtitles` · `synthesize_speech`</sub>
+**Speech and captions** — transcribe a clip and get editable caption layers packed onto your caption tracks; import SRT/VTT/ASS into the media pool and drop it where it starts. Transcription runs against a cloud provider, or entirely on your machine once you let the app fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out and run its own model. Text-to-speech for scratch voiceover.
+<br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_transcripts` · `apply_subtitles` · `synthesize_speech`</sub>
 
 **Audio** — role-based mixing (dialogue / music / SFX / voiceover) with live per-role metering, gain, pan, fades and denoise. **Pauses** finds the dead air in a take and cuts it as one undoable edit, keeping a pad so speech still breathes.
 <br/><sub>Agent: `detect_pauses` · `remove_pauses` · `set_role_gain` · `set_role_flags`</sub>

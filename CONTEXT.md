@@ -793,6 +793,24 @@ region on the card and dragging on that clip. UI word: Select region / 选区.
 _Avoid_: noise selection, region of effect, in/out marks (those are export
 state), profile range, noise print
 
+## Captions and subtitles
+
+**Subtitle**:
+A subtitle DOCUMENT — an `.srt`, `.vtt` or `.ass` file — held in the media pool
+as a `Subtitle` item like any other imported file. It is a source, not
+something on the timeline: applying it (`apply_subtitles`, or dragging it onto
+a timeline) lays its cues as Captions, all of them, its time 0 at the chosen
+time. The Captions are copies; the item keeps no tie to them.
+_Avoid_: subtitle for a cue already on the timeline (that is a Caption),
+subtitle layer, subtitle track
+
+**Caption**:
+One cue on the timeline: an ordinary `Text` layer on a caption-role track,
+laid there by applying a Subtitle or a transcript. Edited, restyled, merged and
+corrected per cue like any Text layer. UI word: caption / 字幕.
+_Avoid_: subtitle (the document it may have come from), caption layer kind
+(there is none — it is a Text layer)
+
 ## Caption correction
 
 **文字校正**:

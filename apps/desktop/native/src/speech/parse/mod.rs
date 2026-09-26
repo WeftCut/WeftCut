@@ -130,8 +130,8 @@ mod tests {
     }
 
     /// `render_srt(parse(srt))` must round-trip cue timing + text through the
-    /// SAME caption-import parser `apply_subtitles` uses — the bridge that keeps
-    /// the caption flow working (ADR 0036 acceptance).
+    /// SAME caption-import parser `apply_subtitles` uses, so a rendered `srt`
+    /// saved to a file imports back to the same cues (ADR 0036 acceptance).
     #[test]
     fn render_srt_round_trips_through_caption_parser() {
         use crate::subtitles::{parse_subtitle_cues, SubFormat};

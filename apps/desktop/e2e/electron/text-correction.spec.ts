@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { dockPanel, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
+import { applySubtitleFile, dockPanel, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 const SCRIPT = '今天介绍自动剪辑功能\n它可以节省时间';
@@ -20,7 +20,7 @@ test('text correction supports imported captions, selected/all scope, undo and s
     await newProject(page, { parentFolder: parent, name: 'correction', canvas: CANVAS });
     const srt = path.join(parent, 'captions.srt');
     fs.writeFileSync(srt, '1\n00:00:00,000 --> 00:00:03,000\n今天介绍自动剪缉功能\n\n2\n00:00:04,000 --> 00:00:07,000\n今天介绍自动剪缉功能\n');
-    await invokeCmd(page, 'import_media', { path: srt });
+    await applySubtitleFile(page, srt);
     const panel = await openCaptions(page);
     await expect(panel.locator('.caption-row')).toHaveCount(2);
     await panel.screenshot({ path: info.outputPath('captions-panel.png') });
@@ -94,7 +94,7 @@ test('imported captions follow manuscript lines with estimated cuts, undo and re
     await newProject(page, { parentFolder: parent, name: 'paper-demo', canvas: CANVAS });
     const srt = path.join(parent, 'captions.srt');
     fs.writeFileSync(srt, '1\n00:00:00,000 --> 00:00:06,000\n先准备彩纸。然后对折最后压平\n');
-    await invokeCmd(page, 'import_media', { path: srt });
+    await applySubtitleFile(page, srt);
     const summary = await invokeCmd<{ project_id: string; root_id: string }>(page, 'project_summary');
     const panel = await openCaptions(page);
     await panel.getByRole('button', { name: 'Text correction' }).click();

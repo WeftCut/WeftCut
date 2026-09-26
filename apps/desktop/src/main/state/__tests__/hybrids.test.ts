@@ -177,14 +177,6 @@ describe('runHybrid: import_media', () => {
       expect(await refused(deps, 'C:/locked.mp4')).toContain('not readable')
     })
 
-    it('a subtitle path is judged the same way — readFile never sees a missing .srt', async () => {
-      const deps = makeDeps(freshActor(), { statPath: null, fileContent: TWO_CUE_SRT })
-      let message = ''
-      try { await runHybrid('import_media', { path: 'C:/gone.srt' }, deps) } catch (e) { message = (e as Error).message }
-      expect(message).toContain('does not exist')
-      expect(deps._readFile).not.toHaveBeenCalled()
-    })
-
     it('a hash pass that fails rolls the provisional row back and names the path', async () => {
       const actor = freshActor()
       const deps = makeDeps(actor)
@@ -211,16 +203,15 @@ describe('runHybrid: import_media', () => {
     })
   })
 
-  it('branches on a subtitle extension WITHOUT probing media (routes to the subtitle path)', async () => {
+  it('pools a subtitle document like any other file, touching no caption track', async () => {
     const actor = freshActor()
-    const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-    // The subtitle hybrid: the orchestrator branches on .srt, reads the file,
-    // calls parseSubtitles, and dispatches add_caption_track — NOT probeMedia.
-    // Returns a BARE track-id string (the import_media channel contract).
+    const deps = makeDeps(actor)
+    deps._probeMedia.mockImplementation(async () => JSON.stringify({ ...mediaItemTemplate(MID, 'Subtitle', null), path_abs: 'C:/subs.srt' }))
     const result = await runHybrid('import_media', { path: 'C:/subs.srt' }, deps)
-    expect(deps._probeMedia).not.toHaveBeenCalled()
-    expect(typeof result).toBe('string')
-    expect((result as string).length).toBeGreaterThan(0)
+    expect(result).toBe(MID)
+    expect(actor.snapshot().media_pool[MID].kind).toBe('Subtitle')
+    expect(deps._parseSubtitles).not.toHaveBeenCalled()
+    expect(root(actor.snapshot()).tracks.filter((t) => t.role === 'Caption').flatMap((t) => t.layers)).toEqual([])
   })
 
   it('throws when the actor rejects the insert (e.g. invalid item)', async () => {
@@ -242,110 +233,98 @@ describe('runHybrid: unhandled tool', () => {
   })
 })
 
-describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
-  it('builds a caption track with 2 Text layers and returns the BARE track-id string', async () => {
+describe('runHybrid: apply_subtitles', () => {
+  const SUB = '00000000-0000-0000-0000-0000000000cc'
+
+  /** An actor whose pool holds one imported Subtitle item at `C:/subs.srt`. */
+  function actorWithSubtitle(): ActorHandle {
     const actor = freshActor()
-    const deps = makeDeps(actor)
-    // MCP arm returns the Rust ToolResult TEXT — the bare track id when not
-    // simplified. (server.ts stringifies this; an object would surface as
-    // "[object Object]".)
-    const result = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: null }, deps)
-    expect(typeof result).toBe('string')
-    expect((result as string).length).toBeGreaterThan(0)
-    // The returned id must name a caption track with exactly 2 layers (one per cue).
-    const snap = actor.snapshot()
-    const track = root(snap).tracks.find((t) => t.id === result)
-    expect(track).toBeTruthy()
-    expect(track!.layers).toHaveLength(2)
+    const r = actor.dispatch('add_media_item', { media: { ...mediaItemTemplate(SUB, 'Subtitle', null), path_abs: 'C:/subs.srt' } })
+    if (!r.ok) throw new Error(JSON.stringify(r.error))
+    return actor
+  }
+
+  async function refusal(actor: ActorHandle, args: Record<string, unknown>): Promise<string> {
+    let message = ''
+    try { await runHybrid('apply_subtitles', args, makeDeps(actor)) } catch (e) { message = (e as Error).message }
+    expect(message, 'apply_subtitles was expected to refuse').not.toBe('')
+    return message
+  }
+
+  it("reads the item's file and lays one Text layer per cue, answering a JSON record", async () => {
+    const actor = actorWithSubtitle()
+    const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
+    const result = JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB }, deps) as string) as { caption_track_id: string; cues: number; simplified: boolean }
+    expect(deps._readFile).toHaveBeenCalledWith('C:/subs.srt')
+    expect(deps._parseSubtitles).toHaveBeenCalledWith(TWO_CUE_SRT, null)
+    expect(result.cues).toBe(2)
+    expect(result.simplified).toBe(false)
+    const track = root(actor.snapshot()).tracks.find((t) => t.id === result.caption_track_id)
+    expect(track?.role).toBe('Caption')
+    expect(track!.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[1_000_000, 2_000_000], [3_000_000, 4_000_000]])
   })
 
-  // ADR 0070: the write packs into the caption track already there, so two
-  // transcriptions of two clips on one timeline share one caption track and the
-  // arm answers the SAME id twice.
-  it('a second body whose cues fit lands on the first caption track and returns its id', async () => {
-    const actor = freshActor()
+  it("puts the document's time 0 at t_start_us", async () => {
+    const actor = actorWithSubtitle()
+    const id = JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB, t_start_us: 10_000_000 }, makeDeps(actor)) as string).caption_track_id
+    const track = root(actor.snapshot()).tracks.find((t) => t.id === id)!
+    expect(track.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[11_000_000, 12_000_000], [13_000_000, 14_000_000]])
+  })
+
+  // ADR 0070: the write packs into the caption track already there.
+  it('a second apply whose cues fit lands on the first caption track', async () => {
+    const actor = actorWithSubtitle()
     const deps = makeDeps(actor)
-    const first = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: 'srt' }, deps)
-    deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({
-      cues: [{ start_us: 6_000_000, end_us: 7_000_000, text: 'Later', style: { bold: false, italic: false } }],
-      simplified: false,
-    }))
-    const second = await runHybrid('apply_subtitles', { body: 'ignored by the fake parser', format: 'srt' }, deps)
+    const first = JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB }, deps) as string).caption_track_id
+    const second = JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB, t_start_us: 5_000_000 }, deps) as string).caption_track_id
     expect(second).toBe(first)
     const caps = root(actor.snapshot()).tracks.filter((t) => t.role === 'Caption')
     expect(caps).toHaveLength(1)
-    expect(caps[0].layers).toHaveLength(3)
+    expect(caps[0].layers).toHaveLength(4)
   })
 
-  it('appends the simplified-styling annotation when ASS styling was lossy', async () => {
-    const actor = freshActor()
+  it('reports simplified ASS styling', async () => {
+    const actor = actorWithSubtitle()
     const deps = makeDeps(actor)
-    // Drive the fake parser with simplified:true → the MCP text gains the
-    // "(some ASS styling was simplified)" suffix (hybrids.ts, apply_subtitles arm).
     deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({
       cues: [{ start_us: 0, end_us: 1_000_000, text: 'hi', style: { bold: false, italic: false } }],
       simplified: true,
     }))
-    const result = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: 'ass' }, deps)
-    expect(typeof result).toBe('string')
-    expect(result).toMatch(/ \(some ASS styling was simplified\)$/)
-    // The id prefix must still resolve to a real track.
-    const id = (result as string).replace(/ \(some ASS styling was simplified\)$/, '')
-    expect(root(actor.snapshot()).tracks.find((t) => t.id === id)).toBeTruthy()
+    expect(JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB }, deps) as string).simplified).toBe(true)
   })
 
-  it('calls compute.parseSubtitles with the body and format', async () => {
+  it('lays the cues in the named composition', async () => {
+    const idGen = seededGen()
+    const { p, groupId } = withGroup(blankProject(idGen, 'h'), idGen)
+    const actor = createActor({ initial: p, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_media_item', { media: { ...mediaItemTemplate(SUB, 'Subtitle', null), path_abs: 'C:/subs.srt' } })
+    const id = JSON.parse(await runHybrid('apply_subtitles', { media_id: SUB, composition_id: groupId }, makeDeps(actor)) as string).caption_track_id
+    expect(actor.snapshot().compositions[groupId].tracks.some((t) => t.id === id)).toBe(true)
+    expect(root(actor.snapshot()).tracks.some((t) => t.id === id)).toBe(false)
+  })
+
+  it('refuses a media id the pool does not hold, pointing at import_media', async () => {
+    expect(await refusal(freshActor(), { media_id: SUB })).toContain('import_media')
+  })
+
+  it('refuses an item that is not a subtitle document', async () => {
     const actor = freshActor()
+    actor.dispatch('add_media_item', { media: mediaItemTemplate(MID, 'Video', 4_000_000) })
+    expect(await refusal(actor, { media_id: MID })).toContain('is a Video item')
+  })
+
+  it('refuses a negative t_start_us before reading anything', async () => {
+    const actor = actorWithSubtitle()
     const deps = makeDeps(actor)
-    await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: 'srt' }, deps)
-    expect(deps._parseSubtitles).toHaveBeenCalledWith(TWO_CUE_SRT, 'srt')
+    await expect(runHybrid('apply_subtitles', { media_id: SUB, t_start_us: -1 }, deps)).rejects.toThrow(/non-negative/)
+    expect(deps._readFile).not.toHaveBeenCalled()
   })
 
-  it('throws when the actor rejects the caption track (empty cues)', async () => {
-    const actor = freshActor()
+  it('names the file when it can no longer be read', async () => {
+    const actor = actorWithSubtitle()
     const deps = makeDeps(actor)
-    // Override parseSubtitles to return zero cues — the TS actor validates the
-    // caption track; either way we test the throw path.
-    deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({ cues: [], simplified: false }))
-    // The actor may or may not error on zero cues, but the hybrid must not crash
-    // unexpectedly — it either succeeds or propagates an actor error.
-    const r = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: null }, deps).then(() => 'ok', () => 'threw')
-    expect(['ok', 'threw']).toContain(r)
-  })
-})
-
-describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
-  it('reads the file, calls parseSubtitles, and returns a BARE track-id string without probing media', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-    const result = await runHybrid('import_media', { path: 'C:/My Subs/captions.srt' }, deps)
-    expect(deps._probeMedia).not.toHaveBeenCalled()
-    expect(deps._readFile).toHaveBeenCalledWith('C:/My Subs/captions.srt')
-    expect(deps._parseSubtitles).toHaveBeenCalledWith(TWO_CUE_SRT, null)
-    // import_media returns the bare track id string, NOT an object.
-    expect(typeof result).toBe('string')
-    expect((result as string).length).toBeGreaterThan(0)
-  })
-
-  it('uses the full filename (with extension) as the caption label', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-    const id = await runHybrid('import_media', { path: 'C:\\My Subs\\captions.srt' }, deps) as string
-    const track = root(actor.snapshot()).tracks.find((t) => t.id === id)
-    expect(track).toBeTruthy()
-    // The import_media subtitle branch labels the track with the full filename
-    // → "captions.srt" WITH extension.
-    expect(track!.label).toBe('captions.srt')
-  })
-
-  it('also branches on .ass and .vtt extensions', async () => {
-    for (const ext of ['.ass', '.vtt']) {
-      const actor = freshActor()
-      const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-      const result = await runHybrid('import_media', { path: `C:/subs${ext}` }, deps)
-      expect(deps._probeMedia).not.toHaveBeenCalled()
-      expect(typeof result).toBe('string')
-    }
+    deps._readFile.mockImplementation(() => { throw new Error('ENOENT') })
+    await expect(runHybrid('apply_subtitles', { media_id: SUB }, deps)).rejects.toThrow(/C:\/subs\.srt could not be read \(ENOENT\)/)
   })
 })
 

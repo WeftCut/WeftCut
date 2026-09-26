@@ -47,7 +47,7 @@ const PLACEMENTS: readonly VoiceoverPlacement[] = ["append", "playhead"];
 ///
 /// Nothing here logs the script. The log rows carry its LENGTH and the voice, so
 /// a run is identifiable in the record without the record holding what was said
-/// — the same treatment `main/mcp/withLog.ts` gives an `apply_subtitles` body on
+/// — the same treatment `main/mcp/withLog.ts` gives a long string argument on
 /// the agent path.
 ///
 /// Rendered by App rather than by a Panel — see `voiceoverPrompt.ts`.

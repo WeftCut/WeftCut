@@ -37,11 +37,12 @@ export type Route =
  *  like the read-only shot channels. The first is the second at the detection
  *  defaults in 'mark' mode; both are renderer-only, with no MCP tool.
  *
- *  `apply_subtitles` and `synthesize_speech` are the write halves of the two
- *  authored speech recipes, and the renderer's transcribe command and voiceover
- *  dialog reach them by the same names. Classified here rather than as an
- *  index.ts intercept because they ARE hybrids — Rust renders or synthesizes,
- *  the actor commits — and an unclassified channel is rejected by design.
+ *  `apply_subtitles` lays a pooled subtitle document, reached by a Subtitle item
+ *  dropped on the timeline; `synthesize_speech` is the write half of the
+ *  voiceover recipe, reached by the voiceover dialog. Classified here rather
+ *  than as an index.ts intercept because they ARE hybrids — Rust parses or
+ *  synthesizes, the actor commits — and an unclassified channel is rejected by
+ *  design.
  *  Either caller lands the same single commit; the MCP path differs only in
  *  wrapping the string result as a `ToolResult` text block (server.ts).
  *

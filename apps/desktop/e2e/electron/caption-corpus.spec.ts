@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  applySubtitleFile,
   dockPanel,
   invokeCmd,
   launchApp,
@@ -149,7 +150,7 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     const srt = path.join(tmpDir("weftcut-caption-srt-"), "unbroken.srt");
     fs.writeFileSync(srt, `1\n00:00:00,000 --> 00:00:03,000\n${UNBROKEN_LINE}\n`, "utf8");
 
-    await invokeCmd(page, "import_media", { path: srt });
+    await applySubtitleFile(page, srt);
     await expect.poll(async () => (await captionLayers(page)).length).toBe(1);
 
     await invokeCmd(page, "project_save");
@@ -233,9 +234,8 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
     const parent = tmpDir("weftcut-caption-");
     await newProject(page, { parentFolder: parent, name: "caption-corpus", canvas: CANVAS });
 
-    // Seed captions via the real subtitle-import path (consumes the .srt into
-    // caption Tracks, not the media pool).
-    await invokeCmd(page, "import_media", { path: SRT_PATH });
+    // Seed captions via the real subtitle path: pool the .srt, then apply it.
+    await applySubtitleFile(page, SRT_PATH);
     await expect
       .poll(async () => new Set((await captionLayers(page)).map((l) => l.trackId)).size)
       .toBeGreaterThanOrEqual(2);

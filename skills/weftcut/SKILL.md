@@ -79,15 +79,16 @@ descriptions:
   a positive delta from a time is the ripple insert; then place into the gap.
 - Captions: `transcribe_clip` → inspect the returned SRT → `apply_transcripts`,
   passing the envelope's `segments` and `word_timing` through (also
-  `/auto-caption`). `apply_subtitles` is for a subtitle FILE the user already
-  has — routing a transcript through one discards the word timing that
-  `correct_caption_text` needs. Correcting names and jargon: put the script or
+  `/auto-caption`). A subtitle FILE the user already has: `import_media` it,
+  then `apply_subtitles { media_id, t_start_us? }` — the whole document, its
+  time 0 at `t_start_us`. Correcting names and jargon: put the script or
   notes in `set_project_settings { correction_script }`, then
   `correct_caption_text`. Restyle every caption at once with `restyle_captions`.
 - Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
   mono WAV block plus the window it covers (60 s per call — walk a long clip in
   consecutive windows). Transcribe it yourself, add the reported `t_start_us` to
-  every offset you get back, then `apply_subtitles`.
+  every offset you get back, then `apply_transcripts` with `word_timing:
+  "exact"` (or `"none"` and empty `words` if your model gives cue times only).
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline
   (also `/voiceover`).
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
@@ -97,7 +98,7 @@ descriptions:
   only tool that places audio-only media — `add_video_layer` builds a visual
   layer and refuses an audio file.
 - A title, a lower third, a credit: `add_text_layer`, then style it with
-  `update_layer_params`. Subtitles from a document stay `apply_subtitles`.
+  `update_layer_params`. Subtitles from a document are `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.

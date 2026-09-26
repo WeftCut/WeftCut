@@ -35,6 +35,7 @@ describe('routeMcpTool', () => {
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('routes the TS-owned hybrid defs to the hybrid orchestrator (Rust compute + TS writes)', () => {
+    expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('auto_split_by_shot')).toBe('hybrid')
     expect(routeMcpTool('remove_pauses')).toBe('hybrid')
   })
@@ -44,11 +45,11 @@ describe('routeMcpTool', () => {
     // their edits still write through the TS actor, so single-writer holds.
     for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe(HYBRID_TOOLS.has(t) ? 'hybrid' : 'ts')
   })
-  it('the hybrid tools with a TS-owned def are auto_split_by_shot and remove_pauses (the rest are Rust-catalog-sourced)', () => {
-    // import_media / apply_subtitles / synthesize_speech advertise via the Rust
-    // catalog, so they are NOT in MCP_TOOLS. The two whose defs are TS-owned —
-    // they must merge into the catalog from the TS side — are the only overlap.
-    const TS_OWNED = new Set(['auto_split_by_shot', 'remove_pauses'])
+  it('the hybrid tools with a TS-owned def are apply_subtitles, auto_split_by_shot and remove_pauses (the rest are Rust-catalog-sourced)', () => {
+    // import_media / synthesize_speech advertise via the Rust catalog, so they
+    // are NOT in MCP_TOOLS. The three whose defs are TS-owned — they must merge
+    // into the catalog from the TS side — are the only overlap.
+    const TS_OWNED = new Set(['apply_subtitles', 'auto_split_by_shot', 'remove_pauses'])
     for (const t of HYBRID_TOOLS) {
       expect(MCP_TOOLS.has(t), t).toBe(TS_OWNED.has(t))
     }

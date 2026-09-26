@@ -397,9 +397,8 @@ impl Backend {
     /// Probe + hash a source file into a serialized `MediaItem` — the compute
     /// half of the `import_media` hybrid (body: `commands::media::probe_media_item`).
     /// NO actor write: the TS host applies the insert
-    /// (`actor.dispatch('add_media_item', { media })`). Subtitles route through
-    /// the subtitle hybrid; `probe_media` is for non-subtitle media — the
-    /// orchestrator branches by ext.
+    /// (`actor.dispatch('add_media_item', { media })`). A subtitle document is
+    /// pooled like any other file, as a `Subtitle` item.
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn probe_media(&self, path: String) -> napi::Result<String> {
@@ -588,12 +587,13 @@ impl Backend {
         serde_json::to_string(&reduced).map_err(|e| Error::from_reason(e.to_string()))
     }
 
-    /// Pure parse half of the `apply_subtitles` hybrid. Validates
-    /// the body, sniffs/applies the format, runs the parser, and returns a JSON
-    /// string `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS
-    /// host applies the caption-track write via `actor.dispatch('add_caption_track',
-    /// { cues, comp_w, comp_h, label })`. `format` is one of "srt"/"ass"/"vtt"
-    /// (case-insensitive) or null to auto-sniff.
+    /// Pure parse half of the `apply_subtitles` hybrid: the TS host reads the
+    /// `Subtitle` pool item's file and hands its body here. Validates the body,
+    /// sniffs/applies the format, runs the parser, and returns a JSON string
+    /// `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS host
+    /// shifts the cues and applies the caption-track write via
+    /// `actor.dispatch('add_caption_track', …)`. `format` is one of
+    /// "srt"/"ass"/"vtt" (case-insensitive) or null to auto-sniff.
     #[napi]
     pub async fn parse_subtitles(
         &self,
@@ -1333,14 +1333,14 @@ mod tests {
 
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mcp_catalog_lists_ping_and_apply_subtitles() {
+    async fn mcp_catalog_lists_ping_but_no_ts_tools() {
         // Rust catalog is native/compute/hybrid only.
-        // `add_track` is TS-served and must NOT appear here.
+        // `add_track` and `apply_subtitles` are TS-defined and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let cat = b.mcp_catalog().await.unwrap();
         assert!(cat.contains("\"ping\""));
-        assert!(cat.contains("\"apply_subtitles\""));
+        assert!(!cat.contains("\"apply_subtitles\""));
         assert!(
             !cat.contains("\"add_track\""),
             "add_track must not be in the Rust-native catalog"

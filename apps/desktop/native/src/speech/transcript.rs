@@ -10,9 +10,9 @@
 //! Timestamps are microseconds. As produced by a parser they are
 //! **audio-slice-relative** (0 = first sample of the extracted window); the
 //! tool layer calls [`Transcript::shift`] to place them on the timeline before
-//! returning to the agent. [`Transcript::render_srt`] is the bridge back to the
-//! `apply_subtitles` caption flow (SRT is cue-granular, so word spans are not
-//! represented there — by design; they live in the JSON `segments`).
+//! returning to the agent. [`Transcript::render_srt`] renders the transcript as
+//! an SRT document (cue-granular, so word spans are not represented there — by
+//! design; they live in the JSON `segments`).
 
 use serde::Serialize;
 
@@ -78,8 +78,8 @@ impl Transcript {
 
     /// Render the segments back to an SRT body (cue granularity — index /
     /// `HH:MM:SS,mmm --> HH:MM:SS,mmm` / text / blank line). This is what
-    /// `transcribe_clip` returns in the envelope's `srt` field so the existing
-    /// `apply_subtitles` flow keeps working. Cue indices are renumbered from 1;
+    /// `transcribe_clip` returns in the envelope's `srt` field — the transcript
+    /// at a glance. Cue indices are renumbered from 1;
     /// per-word times are intentionally not emitted (SRT can't represent them).
     pub fn render_srt(&self) -> String {
         let mut out = String::new();

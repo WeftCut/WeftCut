@@ -1867,7 +1867,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // agent has no reason to hold one, so the arm supplies it from the state it
   // is already reading.
   { name: 'apply_transcripts', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`) — prefer this over `apply_subtitles` for a transcript: an SRT has no room for word offsets, and `correct_caption_text` needs them to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
+    description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`), or your own cues with `word_timing: 'none'`; `correct_caption_text` needs word offsets to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
         type: 'object',
@@ -2082,7 +2082,17 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    the waveform peaks — while the edit writes through the TS actor, so the
   //    def has to merge into the advertised catalog from the TS side.
   //    parseDedicated is the bijection gate's required-scalar check only;
-  //    runHybrid re-validates layer_id itself. ──
+  //    runHybrid re-validates layer_id itself. apply_subtitles is the same
+  //    split: Rust parses the document, the TS side reads the pool item and
+  //    writes the cues. ──
+  { name: 'apply_subtitles', exec: 'dedicated', annotations: ANN_WRITE,
+    description: "Lay an imported `Subtitle` item (a .srt/.vtt/.ass from `import_media`) onto the caption tracks as one editable Text layer per cue, one recorded edit. The whole document lands, its time 0 at `t_start_us`. Each cue packs onto the first unlocked caption track with room, opening a new one only where it collides with all of them. Advanced ASS styling is simplified. Returns `{ caption_track_id, cues, simplified }`.",
+    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Subtitle media'), t_start_us: US_SCHEMA('Where the document\'s time 0 lands on the timeline; default 0'), composition_id: COMPOSITION_ID_SCHEMA }, required: ['media_id'] },
+    parseDedicated: (a) => {
+      const t = parseNumOpt(a.t_start_us, 't_start_us') ?? 0
+      if (!Number.isInteger(t) || t < 0) throw new McpArgError(`t_start_us must be a non-negative integer, got ${String(a.t_start_us)}`, 't_start_us')
+      return { media: parseUuid(a.media_id, 'media_id'), t_start_us: t, composition_id: parseCompositionIdOpt(a.composition_id) }
+    } },
   { name: 'auto_split_by_shot', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Detect a VideoClip's shot cuts and split it at every in-window cut as ONE undoable step; returns `{ layer_ids }` in timeline order (the single unchanged id when there is no interior cut). `min_shot_us` (default 500000) is the minimum shot length; `drop_short=true` also deletes segments shorter than that, taking every overlapping member of the layer's link with them so no orphaned audio sliver is left. Reads the same cached shot report as `analyze_clip`, so boundaries agree; a convenience over `analyze_clip` + `split_layer`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },

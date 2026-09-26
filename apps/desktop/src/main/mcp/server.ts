@@ -387,15 +387,14 @@ async function dispatchTool(
       if (refused) return refused
       // Native-compute → TS-write. `runHybrid` answers a string (the renderer's
       // IPC contract); the agent gets the committed record read back from the
-      // snapshots around the call (`hybridResult.ts`).
+      // snapshot after the call (`hybridResult.ts`).
       // Every commit the hybrid makes records as this call's agent: `by` rides
       // each synchronous dispatch, so a second hybrid in flight cannot cross it.
       const by = mcpActor(client)
       const hybridActor = tsHost.hybridDeps.actor
       const deps = { ...tsHost.hybridDeps, actor: { ...hybridActor, dispatch: (c: string, a: Record<string, unknown>) => hybridActor.dispatch(c, a, by) } }
-      const before = tsHost.actor.snapshot()
       const result = await runHybrid(name, args, deps)
-      return shapeHybridResult(name, args, result, before, tsHost.actor.snapshot()) as unknown as ServerResult
+      return shapeHybridResult(name, result, tsHost.actor.snapshot()) as unknown as ServerResult
     }
     if (route === 'motif') {
       // Catalog-read + authoring + install, served in TS. The raw value

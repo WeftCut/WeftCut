@@ -1,6 +1,6 @@
 // The single chokepoint that turns imported subtitle text (SRT/VTT/ASS) into
-// Cues. File import, the MCP apply_subtitles tool, and the transcribe workflow
-// all flow through `parse`. Cues are then laid out into Text layers by `layout`.
+// Cues. The apply_subtitles hybrid (a Subtitle pool item's file) and the
+// transcribe workflow's SRT-emitting engines all flow through `parse`. Cues are then laid out into Text layers by `layout`.
 use crate::state::color::Rgba;
 use serde::Serialize;
 

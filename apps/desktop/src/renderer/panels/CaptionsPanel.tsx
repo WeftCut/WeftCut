@@ -8,8 +8,8 @@
 // one atomic undo entry. Outline width 0 means no outline: it is the one style
 // the default caption look adds beyond the file's own, so the row that sets its
 // weight is also the row that takes it off.
-// Each caption cue is a first-class Text Layer built by `apply_subtitles` /
-// transcribe / subtitle import.
+// Each caption cue is a first-class Text Layer built by `apply_subtitles` (a
+// pooled subtitle document) or `apply_transcripts` (a transcription).
 
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";

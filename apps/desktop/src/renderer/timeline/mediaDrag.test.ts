@@ -306,6 +306,25 @@ describe("media drag placement", () => {
     expect(onStrip.validity).toBe("spawn");
     expect(onStrip.conflictingLayerIds).toEqual([]);
   });
+
+  it("takes only the drop time for a subtitle document, whatever it is released over", () => {
+    const args = {
+      compositionId: null,
+      media: mediaDragPayload(media({ kind: "Subtitle", duration_us: 60_000_000 })),
+      pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
+      pxPerSec: 80,
+      fpsNum: 30,
+      fpsDen: 1,
+    };
+    // Its cues pack onto the caption tracks, so an occupied lane, a locked lane
+    // and the strip all accept it, and none of them is where it lands.
+    for (const target of [track([visualLayer("video", 0, 10_000_000)]), track([], true), null]) {
+      const plan = planMediaDrop({ ...args, track: target });
+      expect(plan.validity).toBe("valid");
+      expect(plan.tStartUs).toBe(1_000_000);
+      expect(plan.tEndUs).toBe(plan.tStartUs);
+    }
+  });
 });
 
 describe("media drag target ownership", () => {

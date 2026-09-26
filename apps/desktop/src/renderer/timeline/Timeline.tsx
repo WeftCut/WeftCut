@@ -150,7 +150,7 @@ import {
   revealTrackInPlace,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
-import { addGroupLayerIn, addTrackIn } from "../ipc/compositionScoped";
+import { addGroupLayerIn, addTrackIn, applySubtitlesIn } from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -928,8 +928,9 @@ export function Timeline({
       payload: MediaDragPayload,
       plan: MediaDropPlan,
     ) => {
-      // No kind gate: tracks are kind-agnostic, so any media kind drops on any
-      // track and nothing is auto-routed elsewhere. Overlap is the main-process
+      // No kind gate on the lane: tracks are kind-agnostic, so any placed media
+      // kind drops on any track. The one thing routed elsewhere is a subtitle
+      // document, which is not placed at all — see below. Overlap is the main-process
       // state layer's rule (`main/state/validate.ts`), pre-checked for the ghost
       // by the placement policy.
       //
@@ -968,6 +969,17 @@ export function Timeline({
         console.warn(
           `media drop rejected: ${payload.mediaId} is ${readiness.reason}`,
         );
+        return;
+      }
+      // A subtitle document takes only the drop TIME: its cues pack onto the
+      // caption tracks, whichever lane — or the strip — it was released over.
+      if (payload.kind === "Subtitle") {
+        try {
+          await applySubtitlesIn({ compositionId, mediaId: payload.mediaId, tStartUs: plan.rawStartUs });
+          await onMutated();
+        } catch (err) {
+          logMutationFailure(err, "Subtitle drop");
+        }
         return;
       }
       try {

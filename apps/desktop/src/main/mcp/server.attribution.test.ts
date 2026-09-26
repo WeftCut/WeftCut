@@ -9,6 +9,7 @@ import { createActor } from '../state/actor'
 import { createTsActorHost } from '../state/ts-actor-host'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
+import { mediaItemTemplate } from '../state/mutations/media'
 import { CLIENT_MAX_BYTES, mcpActor, normalizeClientName } from '../state/mcp-actor'
 import { root } from '../state/__tests__/fixtures/project'
 
@@ -58,7 +59,9 @@ describe('MCP client attribution', () => {
 
   it("a hybrid's commits record as the calling agent", async () => {
     const ts = host()
-    const out: any = await handleCallTool(backend, () => ts, 'apply_subtitles', { body: '1\n00:00:00,000 --> 00:00:01,000\na\n', format: 'srt' }, undefined, undefined, undefined, CLIENT)
+    const sub = '00000000-0000-0000-0000-0000000000cc'
+    ts.actor.dispatch('add_media_item', { media: { ...mediaItemTemplate(sub, 'Subtitle', null), path_abs: 'C:/a.srt' } })
+    const out: any = await handleCallTool(backend, () => ts, 'apply_subtitles', { media_id: sub }, undefined, undefined, undefined, CLIENT)
     expect(out.isError).toBeFalsy()
     expect(lastOp(ts).actor).toEqual(AGENT)
   })

@@ -4,6 +4,12 @@ status: accepted
 
 # Captions land where there is room, and a transcription reads each selected source once
 
+> **Amended by [ADR 0077](0077-a-subtitle-document-is-pool-media-and-applying-it-copies-its-cues.md).**
+> "The wire does not change" no longer holds: `apply_subtitles` now takes a
+> pooled `Subtitle` item's `media_id` and a `t_start_us` that means where the
+> document's time 0 lands, and the accepted-and-ignored arguments are gone.
+> The packing rule stands.
+
 A caption import — a subtitle file, an agent's `apply_subtitles`, a
 transcription — lands its cues on the caption tracks the composition **already
 has** wherever they have room, and opens a new caption track only for a cue

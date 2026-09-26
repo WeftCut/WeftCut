@@ -343,6 +343,21 @@ export function planMediaDrop({
     fpsDen,
   );
   const overlapClass = dragOverlapClass(media);
+  // A subtitle document is not placed on the lane it is released over: its
+  // cues pack onto the caption tracks (ADR 0070), so the lane can neither
+  // refuse it nor be spawned for it. The ghost shrinks to a marker at the time
+  // the document's 0 lands.
+  if (media.source === "media" && media.kind === "Subtitle") {
+    return {
+      rawStartUs,
+      tStartUs,
+      tEndUs: tStartUs,
+      validity: "valid",
+      conflictingLayerIds: [],
+      overlapClass,
+      sharesLane: false,
+    };
+  }
   // The cycle gate out-ranks the lane: a composition that would contain itself
   // is refused wherever it is released, so no lane, and no free interval on one,
   // can make it droppable. Asked of the RECEIVING composition rather than the

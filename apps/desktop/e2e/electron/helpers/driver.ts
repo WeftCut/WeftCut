@@ -397,6 +397,14 @@ export async function invokeCmd<T = unknown>(
   )) as T
 }
 
+/// Import a subtitle document into the pool and apply it at time 0 — the two
+/// calls an agent makes (ADR 0077). Returns the Subtitle item's media id.
+export async function applySubtitleFile(page: Page, path: string): Promise<string> {
+  const mediaId = await invokeCmd<string>(page, 'import_media', { path })
+  await invokeCmd(page, 'apply_subtitles', { media_id: mediaId })
+  return mediaId
+}
+
 /// One composition on the wire — the root and every Group share the shape
 /// (`main/state/summary.ts` CompositionSummary). Loosely typed; callers narrow
 /// the fields they read.

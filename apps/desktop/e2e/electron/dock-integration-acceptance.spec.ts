@@ -7,6 +7,7 @@ import {
   dockPanel,
   dockTab,
   dragDockTab,
+  applySubtitleFile,
   invokeCmd,
   launchApp,
   newProject,
@@ -595,8 +596,8 @@ test("Caption cue navigation still selects and seeks after the Caption Panel mov
   try {
     await setupEditor(page, "dock-caption-move");
 
-    // Seed the corpus via the real subtitle-import path (two caption Tracks).
-    await invokeCmd(page, "import_media", { path: SRT_PATH });
+    // Seed the corpus via the real subtitle path (two caption Tracks).
+    await applySubtitleFile(page, SRT_PATH);
 
     // Open the initially-closed Caption Panel.
     await viewMenuTrigger(page).click();

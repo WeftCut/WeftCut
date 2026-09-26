@@ -8,8 +8,7 @@
 //
 // The Rust snapshot is the LIVE rust-native surface ONLY: ping, the clip compute
 // tools (detect_pauses, transcribe_clip, analyze_clip, compare_frames,
-// describe_clip), and the hybrid-import tools (import_media, apply_subtitles,
-// synthesize_speech). The mutation defs (MCP_TOOL_DEFS) and the motif defs are
+// describe_clip), and the hybrid-import tools (import_media, synthesize_speech). The mutation defs (MCP_TOOL_DEFS) and the motif defs are
 // TS-owned — TS is their source of truth, so there is nothing for them to "be
 // faithful to". Because the snapshot == what the addon advertises,
 // snapshot ∪ TS tables == the exact runtime catalog, so these assertions describe what

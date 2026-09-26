@@ -22,17 +22,23 @@ status at render time: they composite through `TextSprite` like any text.
 
 ## Ingestion — one parser, one mutation
 
-Three entry points feed captions, and all of them converge on a single Rust
-chokepoint so there is exactly one parsing path and one mutation:
+Two entry points feed captions, and both converge on one caption packing
+mutation:
 
-- **File import.** Dropping or importing a `.srt` / `.vtt` / `.ass` file is
-  intercepted in `import_media` by extension. Subtitle files are **consumed at
-  import** — parsed straight into a caption track. They are never added to the
-  media pool and produce no proxy or derivative jobs.
-- **MCP `apply_subtitles`.** An agent passes a subtitle body inline. Cue timings
-  come from the body; the cues land on the composition's caption tracks (see
-  *Cues pack into the caption tracks already there*, below) and the tool
-  returns the id of the track the first cue landed on.
+- **Subtitle documents.** A `.srt` / `.vtt` / `.ass` file enters the media pool
+  like any other file (`import_media`, a pool drop, *Import media…*), as a
+  `Subtitle` item. It needs no proxy or derivative jobs, and the workspace
+  copies it like any source. Laying it on the timeline is `apply_subtitles
+  { media_id, t_start_us? }`: the whole document lands, its time 0 at
+  `t_start_us` (default 0), and the cues pack onto the composition's caption
+  tracks (see *Cues pack into the caption tracks already there*, below). A
+  person does the same by dragging the item from the pool onto the timeline:
+  only the drop TIME counts — whichever lane, or the new-track strip, it is
+  released over, the cues go to the caption tracks. The cues are copies; the
+  pool item keeps no tie to them, and removing it leaves them in place. There
+  is no partial apply: to use part of a document, edit the file, or delete the
+  cues afterwards
+  ([ADR 0077](adr/0077-a-subtitle-document-is-pool-media-and-applying-it-copies-its-cues.md)).
 - **Transcription.** `transcribe_clip` returns a normalized transcript
   envelope with timeline-absolute timestamps. The app passes this structure to
   `apply_transcripts`, preserving word timing alongside the generated captions.
@@ -50,10 +56,10 @@ chokepoint so there is exactly one parsing path and one mutation:
   which is strictly more than a review list offers ([features.md](features.md)
   § Transcribe and voiceover).
 
-File and inline subtitle imports call `subtitles::parse(body, format)` →
-`Cue { start_us, end_us, text, style }`; normalized transcripts supply cues
-directly. Both converge on the same caption packing mutation. Format is sniffed
-(`subtitles::sniff`) when a subtitle caller does not supply one. The whole import is a
+`apply_subtitles` reads the item's file and calls `subtitles::parse(body,
+None)` → `Cue { start_us, end_us, text, style }`, the format sniffed
+(`subtitles::sniff`) from the body; normalized transcripts supply cues
+directly. Both converge on the same caption packing mutation. The whole import is a
 single history entry, *Added captions* (one undo removes the whole import,
 however many cues).
 

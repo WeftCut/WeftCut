@@ -18,6 +18,7 @@ import { createActor } from '../state/actor'
 import { HISTORY_SUMMARY } from '../state/history-labels'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
+import { mediaItemTemplate } from '../state/mutations/media'
 import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
 import { root } from '../state/__tests__/fixtures/project'
 
@@ -455,19 +456,26 @@ describe('hybrids keep the mechanical line — a wrong attribution is worse', ()
     const parsed = JSON.stringify({ cues: [{ start_us: 0, end_us: 1_000_000, text: 'hi' }], simplified: false })
     // Both calls park on ONE gate, so their commits really do land while the
     // other call is still in flight.
-    const ts = tsHostStub({ parseSubtitles: async () => { await gate; return parsed } })
+    const sub = '00000000-0000-0000-0000-0000000000cc'
+    const ts = tsHostStub({
+      parseSubtitles: async () => { await gate; return parsed },
+      probeMedia: async () => { await gate; return JSON.stringify(mediaItemTemplate(uuidV7Gen()(), 'Video', 1_000_000)) },
+      hashMediaSource: async () => 'h',
+    })
+    ts.actor.dispatch('add_media_item', { media: mediaItemTemplate(sub, 'Subtitle', null) })
     const call = sessionCallTool(deps, ts)
 
     const both = Promise.all([
-      call('apply_subtitles', { body: '1\n00:00:00,000 --> 00:00:01,000\nhi\n' }),
-      call('import_media', { path: 'C:/media/captions.srt' }),
+      call('apply_subtitles', { media_id: sub }),
+      call('import_media', { path: 'C:/media/clip.mp4' }),
     ])
     release()
     await both
 
-    // Two caption tracks were committed with both calls in flight...
-    expect(ts.actor.historyView(2).ops.map((o: { label_key: string }) => o.label_key))
-      .toEqual([HISTORY_SUMMARY.trackAddCaption.key, HISTORY_SUMMARY.trackAddCaption.key])
+    // Both calls committed while the other was in flight...
+    expect(Object.keys(ts.actor.snapshot().media_pool)).toHaveLength(2)
+    expect(ts.actor.historyView(10).ops.map((o: { label_key: string }) => o.label_key))
+      .toContain(HISTORY_SUMMARY.trackAddCaption.key)
     // ...and neither row borrowed one. Keyed by tool rather than by arrival: the
     // two settle one microtask apart and the order is not the property here.
     expect(entries).toHaveLength(2)

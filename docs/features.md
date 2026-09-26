@@ -1395,8 +1395,8 @@ layer that plays, so a plain click on a linked clip is still one
 transcription, and the words follow an A/V slip), and the same source span
 selected twice is read once; titles and captions caught in a marquee are
 ignored. It runs `transcribe_clip` on each subject's whole span, one at a
-time, then applies every returned `srt` in one `apply_subtitles` call
-(`add_caption_track`, so a six-clip transcription is one history row and one
+time, then applies every returned transcript in one `apply_transcripts` call
+(one commit, so a six-clip transcription is one history row and one
 undo, and the cues pack into the caption track already there wherever it has
 room), and reveals the Caption panel — a landed transcript is invisible until
 its editor is open. A greyed row says why: nothing selected, nothing with

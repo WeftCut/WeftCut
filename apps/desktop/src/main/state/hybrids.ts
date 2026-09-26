@@ -10,7 +10,9 @@
 import type { ActorHandle } from './actor'
 import type { AudioParams, Composition, Layer, MediaItem, Rgba, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
-import { McpArgError, mapCommandError } from './mcp-commands'
+import { McpArgError, mapCommandError, mcpDef } from './mcp-commands'
+import type { Cue } from './mutations/captions'
+import { scopeComposition } from './mutations/helpers'
 import { parseDiscardSegments } from './mutations/split'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
@@ -144,29 +146,28 @@ function ensureAudioTrack(deps: HybridDeps): string {
   return r.value as string
 }
 
-/** Parse a subtitle body via Rust (compute only) then write the caption track
- *  through the TS actor. Used by both the MCP `apply_subtitles` arm and the
- *  `import_media` `.srt`/`.ass`/`.vtt` branch.
+/** apply_subtitles: read a `Subtitle` pool item's document, parse it in Rust
+ *  (format sniffed from the body), move its time 0 to `t_start_us`, and pack
+ *  the cues onto the target composition's caption tracks through the TS actor.
+ *  The cues are copies — nothing ties them back to the pool item afterwards.
  *
- *  Returns `{ track_id, simplified }`. Both call sites UNWRAP it: the renderer
- *  import branch returns the bare `track_id` string, and the MCP arm builds the
- *  `ToolResult::text` message. Do NOT return this object straight out of
- *  `runHybrid` — server.ts stringifies the hybrid result, so an object would
- *  surface as "[object Object]". */
-async function applySubtitleBody(
-  body: string,
-  format: string | null,
-  label: string | null,
-  deps: HybridDeps,
-): Promise<{ track_id: string; simplified: boolean }> {
-  const { cues, simplified } = JSON.parse(await deps.compute.parseSubtitles(body, format)) as {
-    cues: unknown[]
-    simplified: boolean
-  }
-  const { width, height } = deps.snapshotComposition()
-  const r = deps.actor.dispatch('add_caption_track', { cues, comp_w: width, comp_h: height, label })
+ *  Answers a JSON STRING `{ caption_track_id, cues, simplified }`, runHybrid's
+ *  result contract. */
+async function applySubtitles(args: Record<string, unknown>, deps: HybridDeps): Promise<string> {
+  const p = mcpDef('apply_subtitles').parseDedicated!(args) as { media: string; t_start_us: number; composition_id: string | null }
+  const project = deps.actor.snapshot()
+  const item = project.media_pool[p.media]
+  if (!item) throw new McpArgError(`media ${p.media} not found — project://media lists the pool; a subtitle file enters it through import_media`, 'media_id')
+  if (item.kind !== 'Subtitle') throw new McpArgError(`media ${p.media} is a ${item.kind} item, not a subtitle document — apply_subtitles lays an imported .srt/.vtt/.ass`, 'media_id')
+  let body: string
+  try { body = deps.readFile(item.path_abs) }
+  catch (e) { throw new McpArgError(`media ${p.media}: its file ${item.path_abs} could not be read (${errText(e)})`, 'media_id') }
+  const { cues, simplified } = JSON.parse(await deps.compute.parseSubtitles(body, null)) as { cues: Cue[]; simplified: boolean }
+  const shifted = cues.map((c) => ({ ...c, start_us: c.start_us + p.t_start_us, end_us: c.end_us + p.t_start_us }))
+  const comp = scopeComposition(project, p.composition_id)
+  const r = deps.actor.dispatch('add_caption_track', { cues: shifted, comp_w: comp.width, comp_h: comp.height, label: null, composition_id: comp.id })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
-  return { track_id: r.value as string, simplified }
+  return JSON.stringify({ caption_track_id: r.value as string, cues: cues.length, simplified })
 }
 
 /** The detection defaults as Rust states them (`Backend::shot_default_opts`):
@@ -754,9 +755,8 @@ export async function removePauses(
  *  Return-shape contract, and it is the MCP half that constrains it: server.ts
  *  stringifies whatever comes back into one `ToolResult` text block, so an arm
  *  listed in `mcp/mutationTools.ts` `HYBRID_TOOLS` must return a STRING — a
- *  media id (import_media), the bare caption track id (import_media's
- *  `.srt` branch), the id plus a styling note (apply_subtitles), or a JSON
- *  string (synthesize_speech, auto_split_by_shot, remove_pauses).
+ *  media id (import_media) or a JSON string (apply_subtitles,
+ *  synthesize_speech, auto_split_by_shot, remove_pauses).
  *  `drop_shot_markers`, `apply_shot_cuts` and `mark_pauses` have no MCP tool
  *  at all, so they return the object their IPC caller reads directly —
  *  `apply_shot_cuts` a union discriminated by the `mode` it was asked for, since
@@ -781,24 +781,12 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
       // would pass it, land a pool row with null metadata and a pending hash,
       // and only then die in the hash pass with the OS's own locale text. What
-      // the path IS is decided here, by name, before any read or write — and
-      // for the subtitle branch too, whose readFile would otherwise be the one
-      // to report a missing file.
+      // the path IS is decided here, by name, before any read or write.
       const facts = deps.statPath(path)
       if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
       if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
       if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
       if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
-      // Subtitles are CONSUMED into a caption track (not pooled into the media
-      // pool). Read the file, derive a label from the filename, hand off to
-      // applySubtitleBody (format null → sniff from body), and return the BARE
-      // track id string — the channel contract; `simplified` is discarded here.
-      if (/\.(srt|ass|vtt)$/i.test(path)) {
-        const body = deps.readFile(path)
-        // Full filename WITH extension as the label (e.g. "captions.srt").
-        const label = path.replace(/\\/g, '/').split('/').pop() ?? null
-        return (await applySubtitleBody(body, null, label, deps)).track_id
-      }
       // Insert the probed item FIRST so the clip appears in the timeline
       // immediately. A probe that fails has written nothing; it says so.
       let item: MediaItem
@@ -836,21 +824,10 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       if (deps.workspaceDir()) await deps.enqueueWorkspaceCopy(item.id, path)
       return item.id
     }
-    case 'apply_subtitles': {
-      // Body + optional format tag; label is always "Captions". Reached by the
-      // agent's `apply_subtitles` tool and by the renderer's transcribe command,
-      // which hands over the `srt` its `transcribe_clip` call returned.
-      // ToolResult text contract: the bare track id, or the id + a
-      // simplified-styling annotation. server.ts wraps this string into
-      // `{content:[{type:'text', text}]}`.
-      const { track_id, simplified } = await applySubtitleBody(
-        args.body as string,
-        (args.format as string | null | undefined) ?? null,
-        'Captions',
-        deps,
-      )
-      return simplified ? `${track_id} (some ASS styling was simplified)` : track_id
-    }
+    case 'apply_subtitles':
+      // Reached by the agent's tool and by a Subtitle item dropped on the
+      // timeline, which passes the drop time as `t_start_us`.
+      return applySubtitles(args, deps)
     case 'synthesize_speech': {
       // The TS host applies the WRITES: add_media_item + enqueueDerivatives +
       // resolve track + add Audio layer (voiceover role, single commit).

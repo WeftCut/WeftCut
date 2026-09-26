@@ -8,6 +8,12 @@ status: accepted
 > overlapping cues fan onto additional tracks. The overlap rule stands, but the
 > candidates now include the caption tracks the composition already has: a new
 > track opens only for a cue that collides with all of them.
+>
+> **Amended by [ADR 0077](0077-a-subtitle-document-is-pool-media-and-applying-it-copies-its-cues.md).**
+> Pillar 1's entry points changed: a subtitle file is no longer consumed at
+> import but pooled as a `Subtitle` item, and `apply_subtitles` takes that
+> item's id instead of an inline body. The one parser and the one mutation
+> stand.
 
 ## Context
 

@@ -103,6 +103,23 @@ export async function addTextLayerIn(opts: {
 ///
 /// Refused with `CompositionCycle` when the composition would contain itself;
 /// the drop target greys the same case out first (`mediaDrag.ts`).
+/// `apply_subtitles`: lay a pooled `Subtitle` item onto `compositionId`'s
+/// caption tracks, one `Text` layer per cue, in ONE commit. The document's
+/// time 0 lands at `tStartUs`; which caption lane each cue takes is the
+/// packing's choice (ADR 0070), so there is no track argument. The hybrid reads
+/// the MCP tool's own argument names.
+export async function applySubtitlesIn(args: {
+  compositionId: string | null;
+  mediaId: string;
+  tStartUs: number;
+}): Promise<void> {
+  await invoke<string>("apply_subtitles", {
+    media_id: args.mediaId,
+    t_start_us: args.tStartUs,
+    composition_id: args.compositionId,
+  });
+}
+
 export async function addGroupLayerIn(args: {
   compositionId: string | null;
   sourceCompositionId: string;
