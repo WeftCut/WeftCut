@@ -6,6 +6,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@/bridge/window";
+import { listen } from "@/bridge/events";
+import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { useFocusRegions } from "./focus/useFocusRegions";
 import { StartupScreen } from "./startup/StartupScreen";
@@ -81,6 +83,26 @@ function Root() {
   // replay of the splash cannot unmount a live editor underneath it.
   const [splashIntroDone, setSplashIntroDone] = useState(false);
   const [editorPainted, setEditorPainted] = useState(false);
+  // Bumped when an agent opens or creates a project. It keys <App>, so an
+  // editor already on screen remounts on the new project exactly as a UI Close
+  // + Open would, and no store of the previous project survives.
+  const [projectEpoch, setProjectEpoch] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listen<ProjectOpenedPayload>(PROJECT_OPENED_EVENT, () => {
+      setProjectEpoch((n) => n + 1);
+      setStage("editor");
+    }).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Focus regions (ADR 0041). Mounted here rather than in `App` so it also
   // covers the startup screen and the splash: its listeners are on `window`
@@ -278,7 +300,7 @@ function Root() {
       {launchReady && stage === "startup" && (
         <StartupScreen onWorkspaceReady={onWorkspaceReady} />
       )}
-      {editorMounted && <App onCloseProject={onCloseProject} />}
+      {editorMounted && <App key={projectEpoch} onCloseProject={onCloseProject} />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

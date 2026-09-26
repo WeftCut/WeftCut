@@ -15,7 +15,7 @@ import {
   addMotif,
   projectNewWorkspace,
   projectOpen,
-  projectSave,
+  projectClose,
   projectSummary,
   updateLayerParams,
   workspaceDir,
@@ -645,7 +645,7 @@ export function installBootstrapHook(
     await editorCommitted();
   };
   hookSlot().motifReopenProject = async ({ path }) => {
-    await projectSave();
+    await projectClose();
     exitToStartup();
     // Let React commit the App unmount before swapping actor state under it.
     await new Promise((r) => setTimeout(r, 50));

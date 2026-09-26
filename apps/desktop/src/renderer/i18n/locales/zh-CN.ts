@@ -1027,6 +1027,8 @@ const zhCN: Resources = {
   "arguments": "调用参数",
   "tools": {
     "begin_agent_session": "开始工作会话",
+    "open_project": "打开项目",
+    "create_project": "新建项目",
     "end_agent_session": "结束工作会话",
     "set_history_lock": "设置撤销锁",
     "analyze_clip": "分析片段",

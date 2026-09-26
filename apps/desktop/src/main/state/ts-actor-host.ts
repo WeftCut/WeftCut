@@ -13,6 +13,7 @@ import { describeGridRepairs, type GridRepair } from './serialize'
 import { AgentActivityService } from '../agent/activity'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
+import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
@@ -102,11 +103,43 @@ interface PersistenceHandlers {
   saveAs: (dir: string) => Promise<void>
   newWorkspace: (args: { parentFolder: string; name: string; width: number; height: number; fpsNum: number; fpsDen: number }) => Promise<string>
   save: () => Promise<void>
+  close: () => Promise<void>
 }
+
+/** The project the USER has open: set where the UI's Open / New / Save As
+ *  land, cleared by Close. Not the workspace slot — that is set before a
+ *  failed open's swap and survives Close — and not the actor's state, which
+ *  always holds a project (a startup placeholder, or the one just closed). */
+export interface OpenedProject { dir: string }
+
+/** What the MCP session view says about projects: the one open (its name read
+ *  from the actor, so a rename cannot go stale) and where one can come from. */
+export interface ProjectStatus {
+  project: { name: string; dir: string } | null
+  /** The Recents list, newest first — what the start screen shows. */
+  recent_projects: Array<{ name: string; path: string }>
+  /** Where the New Project dialog would create one. */
+  default_parent_folder: string | null
+}
+
+/** What an agent's open / create answers: the project now open, and the one
+ *  it replaced (flushed to disk first), if any. */
+export interface ProjectOpened { name: string; dir: string; replaced: string | null }
 
 export interface TsActorHost {
   actor: ActorHandle
   agent: AgentActivityService
+  /** The project the user has open, or null on the start screen. What the MCP
+   *  surface gates project work on (`server.ts`). */
+  openedProject: () => OpenedProject | null
+  projectStatus: () => ProjectStatus
+  /** MCP's `open_project` / `create_project`: the start screen's Open and New,
+   *  plus the event that brings the editor along. A `WorkspaceFailure` throws
+   *  through untouched, leaving the open record as it was. */
+  projects: {
+    open: (dir: string) => Promise<ProjectOpened>
+    create: (args: { parentFolder: string; name: string; width: number; height: number; fpsNum: number; fpsDen: number }) => Promise<ProjectOpened>
+  }
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
   /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
    *  LogBus pin-row for restore_checkpoint / create_checkpoint / begin_agent_session on success.
@@ -263,11 +296,33 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return replace()
   }
 
+  let opened: OpenedProject | null = null
+  // Each record update runs only after its operation resolves, so a failed
+  // open leaves the record as it was.
   const persistence: PersistenceHandlers = {
-    open: (dir) => replaceWorkspace(() => openProject(orchestratorDeps, dir)),
-    saveAs: (dir) => saveProjectAs(orchestratorDeps, dir),
-    newWorkspace: (a) => replaceWorkspace(() => newWorkspace(orchestratorDeps, a)),
+    open: async (dir) => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opened = { dir } },
+    saveAs: async (dir) => { await saveProjectAs(orchestratorDeps, dir); opened = { dir } },
+    newWorkspace: async (a) => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opened = { dir }; return dir },
     save: () => autosave.forceFlush(),
+    // The actor keeps the closed project until the next Open / New replaces
+    // it, and the workspace slot keeps its folder; what stops an agent writing
+    // into it is the MCP gate reading `opened`.
+    close: async () => { await autosave.forceFlush(); opened = null },
+  }
+
+  const agentProjects: TsActorHost['projects'] = {
+    open: async (dir) => {
+      const replaced = opened?.dir ?? null
+      await persistence.open(dir)
+      deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
+      return { name: actor.snapshot().metadata.name, dir, replaced }
+    },
+    create: async (a) => {
+      const replaced = opened?.dir ?? null
+      const dir = await persistence.newWorkspace(a)
+      deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
+      return { name: actor.snapshot().metadata.name, dir, replaced }
+    },
   }
 
   /** Best-effort refresh the actor's user motif layer from list_motifs.
@@ -285,7 +340,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const motifToolDeps: MotifToolDeps = {
       store: deps.motifStore,
       builtins: deps.motifBuiltins ?? [],
-      motifLayers: () =>
+      // With no project open the actor holds a placeholder or the project the
+      // user closed: an update-mode install then touches only the library.
+      motifLayers: () => opened === null ? [] :
         [...eachLayer(actor.snapshot())].flatMap(({ layer: l }) => {
           if (l.params.kind !== 'Motif') return []
           const p = l.params as MotifParams
@@ -430,6 +487,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
       case 'save': return persistence.save()
+      case 'close': return persistence.close()
       case 'agentSessionEnd': agent.end('user'); return null
       // Compatibility for the old local channel: it now requests a view only.
       case 'agentSessionBegin': deps.send(AGENT_VIEW_EVENT, { workspace_id: agent.snapshot().workspace_id }); return null
@@ -538,6 +596,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   return {
     actor,
     agent,
+    openedProject: () => opened,
+    projects: agentProjects,
+    projectStatus: () => ({
+      project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
+      recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),
+      default_parent_folder: deps.recents?.lastNewProjectParent() ?? null,
+    }),
     handleInvoke,
     mcpCall,
     hybridDeps,

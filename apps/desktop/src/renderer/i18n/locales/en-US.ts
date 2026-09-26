@@ -1216,6 +1216,8 @@ const enUS = {
   "arguments": "Call arguments",
   "tools": {
     "begin_agent_session": "Start work session",
+    "open_project": "Open project",
+    "create_project": "New project",
     "end_agent_session": "End work session",
     "set_history_lock": "Set the undo lock",
     "analyze_clip": "Analyze clip",

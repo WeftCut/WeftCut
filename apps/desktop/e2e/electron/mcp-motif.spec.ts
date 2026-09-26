@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { launchApp } from './helpers/driver'
+import { launchApp, newProject, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -16,6 +16,9 @@ async function connect(url: string, token: string): Promise<Client> {
 
 test('MCP motif tools are advertised and callable', async () => {
   const { app, page } = await launchApp()
+  // add_motif_layer places into the open project; project tools refuse on the
+  // start screen, so create one first.
+  await newProject(page, { parentFolder: tmpDir('weftcut-mcp-motif-'), name: 'mcp-motif', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
 
   const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
   const client = await connect(info.url, info.bearer_token)

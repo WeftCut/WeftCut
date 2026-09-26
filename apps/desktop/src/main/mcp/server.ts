@@ -13,9 +13,11 @@ import {
   type ReadResourceRequest,
   type GetPromptRequest,
   type ServerResult,
+  ErrorCode,
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
-import { HYBRID_TOOLS, routeMcpTool } from './mutationTools.js'
+import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'
 import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
@@ -25,11 +27,12 @@ import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type ToolAnnotations } from '../state/mcp-commands.js'
-import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
+import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
+import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
 import { MCP_INSTRUCTIONS } from './instructions.js'
@@ -265,6 +268,14 @@ export async function handleCallTool(
   client?: string,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
+  // Nothing the user can see is open: every project tool refuses before it
+  // reaches a project (the startup placeholder, or the one the user closed).
+  // Synchronous, so the ts route's commit prefix below is untouched; only the
+  // refusal path awaits, to keep an unknown name the JSON-RPC error it is.
+  if (noProjectOpen(getTsHost()) && !servesWithoutProject(name, args)) {
+    if (!(await isKnownTool(backend, name))) throw new UnknownToolError(name)
+    return noProjectOpenResult()
+  }
   try {
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
@@ -278,6 +289,17 @@ export async function handleCallTool(
     // which `thrownToToolError` tells apart.
     return toolErrorResult(thrownToToolError(e, route === 'motif' ? 'invalid_params' : 'internal', name))
   }
+}
+
+/** True when a host is attached and the user has no project open. A host
+ *  without the record (a test stub) is not gated. */
+function noProjectOpen(tsHost: TsActorHost | null): boolean {
+  return typeof tsHost?.openedProject === 'function' && tsHost.openedProject() === null
+}
+
+async function isKnownTool(backend: Backend, name: string): Promise<boolean> {
+  if (MCP_TOOLS.has(name) || HYBRID_TOOLS.has(name) || routeMcpTool(name) === 'motif') return true
+  return (await rustCatalog(backend)).tools.some((t) => t.name === name)
 }
 
 async function dispatchTool(
@@ -322,10 +344,13 @@ async function dispatchTool(
     }
   }
   if (tsHost) {
+    // Opening swaps the actor's whole state and moves the editor with it, so
+    // the host runs these, not the actor (`projectTools.ts`).
+    if (PROJECT_TOOLS.has(name) && tsHost.projects) return runProjectTool(tsHost, name, args)
     // The session view lives in the host's activity service, not the actor, so
     // it is answered here — the same record `project://session` serves.
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
-      return toolRecord(sessionView(tsHost.agent)) as unknown as ServerResult
+      return toolRecord(sessionView(tsHost)) as unknown as ServerResult
     }
     // The effects vocabulary is a catalog, not project state, so it is answered
     // here — the same record `effects://catalog` serves.
@@ -439,11 +464,16 @@ async function dispatchTool(
 /** `project://session` / `read_project { view: "session" }`: who holds the work
  *  session, so an agent refused with `AgentSessionBusy` can see the holder, its
  *  reason and its age before deciding to wait or to take over. `sessions` is the
- *  recent history the panel keeps; `lock_reason` is the history lock. The
- *  resource defs themselves live in `hostResources.ts`. */
-export function sessionView(agent: TsActorHost['agent']): Record<string, unknown> {
-  const snap = agent.snapshot()
-  return { active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason }
+ *  recent history the panel keeps; `lock_reason` is the history lock. `project`
+ *  is the project the user has open (null on the start screen), with the Recents
+ *  list and default parent folder `open_project` / `create_project` draw on.
+ *  The resource defs themselves live in `hostResources.ts`. */
+export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus'>>): Record<string, unknown> {
+  const snap = host.agent.snapshot()
+  return {
+    active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason,
+    ...(host.projectStatus ? host.projectStatus() : {}),
+  }
 }
 
 /** ReadResource routing (tsHost present): project:// state views served in TS from
@@ -459,7 +489,7 @@ export async function handleReadResource(
   const tsHost = getTsHost()
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
-      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost.agent), null, 2) }] } as unknown as ServerResult
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost), null, 2) }] } as unknown as ServerResult
     }
     if (uri === 'effects://catalog') {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(effectsCatalogView(), null, 2) }] } as unknown as ServerResult
@@ -469,6 +499,9 @@ export async function handleReadResource(
       const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
       return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
     }
+    // A resource read has no isError slot, so the start-screen refusal is the
+    // protocol error, with the same text the tools answer.
+    if (noProjectOpen(tsHost) && !APP_SCOPE_RESOURCES.has(uri)) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
     const served = serveProjectResource(uri, tsHost.actor)
     if (served) return served
     // project://compiled / media://* / composition://meter stay Rust compute —

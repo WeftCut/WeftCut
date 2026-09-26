@@ -52,6 +52,7 @@ import {
   resolutionLabel,
 } from "./canvasPresets";
 import { LogoPulsePaths } from "./LogoPulsePaths";
+import { validateProjectName } from "../../shared/newProject";
 import {
   cleanIpcDetail,
   describeCreateError,
@@ -405,36 +406,6 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 /// reveals at most 7 additional entries.
 const COLLAPSED_RECENT_COUNT = 3;
 
-
-/// Reserved file/folder names that are illegal on Windows regardless of
-/// extension. We block the full set so projects stay portable. NUL and
-/// CON show up in real systems; the LPT/COM band is rarer but cheap to
-/// guard against.
-const RESERVED_NAMES = new Set<string>([
-  "CON", "PRN", "AUX", "NUL",
-  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-]);
-
-const INVALID_CHARS = /[\\/:*?"<>|]/;
-
-/// Validate a project name for filesystem compatibility. Returns either
-/// an i18n key for the failure mode, or `null` when valid. Checks the
-/// union of Windows + POSIX rules so projects round-trip across OSes
-/// without surprises.
-function validateProjectName(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return "new_project.validation_empty";
-  if (trimmed !== raw) return "new_project.validation_whitespace";
-  if (INVALID_CHARS.test(trimmed)) return "new_project.validation_invalid_chars";
-  if (trimmed.endsWith(".")) return "new_project.validation_trailing_dot";
-  // Windows reserved-names check is case-insensitive and ignores any
-  // extension suffix — `con.txt` is also reserved. We compare on the
-  // pre-dot prefix uppercased.
-  const stem = trimmed.split(".")[0]!.toUpperCase();
-  if (RESERVED_NAMES.has(stem)) return "new_project.validation_reserved";
-  return null;
-}
 
 /// Join a parent folder + project name into a full path. Picks the
 /// separator from whatever the parent uses (`\` if it contains one,

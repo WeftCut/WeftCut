@@ -12,7 +12,7 @@ export type Route =
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
   | { kind: 'projectSettings' } // actor.snapshot().settings
-  | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
+  | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
@@ -172,6 +172,7 @@ export function routeChannel(channel: string): Route {
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }
     case 'project_save': return { kind: 'save' }
+    case 'project_close': return { kind: 'close' }
     case 'agent_session_end': return { kind: 'agentSessionEnd' }
     case 'agent_session_begin': return { kind: 'agentSessionBegin' }
     case 'app_settings_get':

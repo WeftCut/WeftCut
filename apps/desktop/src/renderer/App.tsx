@@ -10,6 +10,7 @@ import {
   moveLayersToNewTrack,
   pasteLayer,
   projectRedo,
+  projectClose,
   projectSave,
   projectSaveAs,
   projectSummary,
@@ -544,7 +545,8 @@ export function App({ onCloseProject }: AppProps) {
     setBusy(true);
     setError(null);
     try {
-      await projectSave();
+      // Saves, and tells the backend nothing is open any more.
+      await projectClose();
       onCloseProject();
     } catch (e) {
       const msg = String(e);

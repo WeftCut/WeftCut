@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { launchApp, invokeCmd } from './helpers/driver'
+import { launchApp, invokeCmd, newProject, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -42,6 +42,19 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
 
   const pong = await client.callTool({ name: 'ping', arguments: {} })
   expect(JSON.stringify(pong.content)).toContain('pong')
+
+  // The app booted to its start screen: no project is open, so a project tool
+  // is refused with the remedy in its text and commits nothing into the
+  // placeholder the user cannot see.
+  const startScreen = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
+  const refused = await client.callTool({ name: 'add_track', arguments: {} })
+  expect((refused as { isError?: boolean }).isError).toBe(true)
+  expect((refused.content as Array<{ text: string }>)[0].text).toContain('No project is open in WeftCut')
+  expect((refused.structuredContent as { error?: string } | undefined)?.error).toBe('NoProjectOpen')
+  const stillStartScreen = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
+  expect(stillStartScreen.track_count).toBe(startScreen.track_count)
+
+  await newProject(page, { parentFolder: tmpDir('weftcut-mcp-server-'), name: 'mcp-server', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
 
   const before = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
   await client.callTool({ name: 'add_track', arguments: {} })

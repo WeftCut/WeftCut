@@ -23,6 +23,31 @@ export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
   'motif_staleness_report', 'acknowledge_motif_staleness',
 ])
 
+/** The tools that answer while no project is open — default-deny: every tool
+ *  NOT named here is refused with `NoProjectOpen` on the start screen, so a new
+ *  tool cannot leak into a project the user cannot see. Pinned by
+ *  `mcp.project-scope.test.ts`; widening it is an edit there too.
+ *
+ *  Liveness, the Motif LIBRARY (its store, not placed layers — `install_motif`
+ *  rebinds nothing while no project is open), and the two ways INTO a project. */
+export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([
+  'ping',
+  'list_motifs', 'get_motif_source', 'write_motif_draft', 'preview_motif_draft', 'install_motif', 'delete_motif',
+  'open_project', 'create_project',
+])
+
+/** `read_project` views the host answers without the actor's project. */
+const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects'])
+
+/** Resources the host answers without the actor's project. */
+export const APP_SCOPE_RESOURCES: ReadonlySet<string> = new Set(['project://session', 'effects://catalog', 'motifs://current'])
+
+/** Whether a tool call is served with no project open. */
+export function servesWithoutProject(name: string, args: Record<string, unknown>): boolean {
+  if (APP_SCOPE_TOOLS.has(name)) return true
+  return name === 'read_project' && typeof args.view === 'string' && APP_SCOPE_VIEWS.has(args.view)
+}
+
 /** Where an MCP tool runs. motif → tsHost.motifTool (then shapeMotifMcpResult);
  *  hybrid → runHybrid; ts → tsHost.actor.mcpCall; rust → backend.
  *  motif-first so install_motif can never both hybrid and motif-route. */

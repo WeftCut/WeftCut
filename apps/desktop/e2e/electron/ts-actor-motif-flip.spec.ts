@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type Page } from '@playwright/test'
-import { GL_SWITCHES, launchApp, MAIN, tmpDir } from './helpers/driver'
+import { GL_SWITCHES, launchApp, MAIN, newProject, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -76,7 +76,9 @@ test('TS actor: MCP add_motif_layer returns the layer id + the summary reflects 
     const page = await app.firstWindow({ timeout: 60_000 })
     await page.waitForLoadState('domcontentloaded')
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, { timeout: 30_000 })
-    await page.evaluate(([ws]) => (window as any).api.backend.invoke('project_new_workspace', { parentFolder: ws, name: 'motif-mcp', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }), [ws])
+    // Create a project and enter the editor, as the user would: MCP project
+    // tools refuse while the app is on its start screen.
+    await newProject(page, { parentFolder: ws, name: 'motif-mcp', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
 
     await expect.poll(() => connect, { timeout: 15_000 }).not.toBeNull()
     const transport = new StreamableHTTPClientTransport(new URL(connect!.url), { requestInit: { headers: { Authorization: `Bearer ${connect!.token}` } } })

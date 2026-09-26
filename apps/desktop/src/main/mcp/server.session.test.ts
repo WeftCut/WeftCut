@@ -51,7 +51,7 @@ describe('the work session names its holder and can be taken over', () => {
     expect(view.structuredContent).toMatchObject({ active: { client: 'client-one', reason: 'Rough cut' } })
     const res = await handleReadResource(backend, () => ts, 'project://session') as { contents: Array<{ text: string }> }
     expect(JSON.parse(res.contents[0]!.text)).toMatchObject({ active: { client: 'client-one' } })
-    expect(sessionView(agent).active).toMatchObject({ connection_id: 'one' })
+    expect(sessionView({ agent }).active).toMatchObject({ connection_id: 'one' })
   })
 
   it('a plain end from another connection is refused naming the holder; force ends it and releases its lock', async () => {

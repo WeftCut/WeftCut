@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { GL_SWITCHES, tmpDir } from './helpers/driver'
+import { GL_SWITCHES, newProject, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -35,8 +35,9 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
     const page = await app.firstWindow({ timeout: 60_000 })
     await page.waitForLoadState('domcontentloaded')
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, { timeout: 30_000 })
-    // New workspace (TS orchestrator) so there's a project + tracks.
-    await page.evaluate(([ws]) => (window as any).api.backend.invoke('project_new_workspace', { parentFolder: ws, name: 'mcp', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }), [ws])
+    // Create a project and enter the editor, as the user would: MCP project
+    // tools refuse while the app is on its start screen.
+    await newProject(page, { parentFolder: ws, name: 'mcp', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
     // Wait for the connect log, then open an MCP client.
     await expect.poll(() => connect, { timeout: 15_000 }).not.toBeNull()
     const transport = new StreamableHTTPClientTransport(new URL(connect!.url), { requestInit: { headers: { Authorization: `Bearer ${connect!.token}` } } })

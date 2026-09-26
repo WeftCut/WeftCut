@@ -28,6 +28,10 @@ const SE: ShimEnv = {
 }
 const AUTH: McpAuth = { token: 'tok', port: 4711 }
 
+/// What the fake app's `read_project { view: "session" }` answers; undefined
+/// leaves read_project a plain pass-through like every other tool.
+let appSession: Record<string, unknown> | undefined
+
 function fakeAppServer(): Server {
   const s = new Server(
     { name: 'weftcut', version: '0.0.0' },
@@ -36,9 +40,13 @@ function fakeAppServer(): Server {
   s.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [{ name: 'add_marker', description: 'Add a marker.', inputSchema: { type: 'object' as const } }],
   }))
-  s.setRequestHandler(CallToolRequestSchema, async (req) => ({
-    content: [{ type: 'text' as const, text: `called:${req.params.name}` }],
-  }))
+  s.setRequestHandler(CallToolRequestSchema, async (req) => {
+    // The session view, when a test has set what the app has open.
+    if (req.params.name === 'read_project' && appSession !== undefined) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(appSession) }], structuredContent: appSession }
+    }
+    return { content: [{ type: 'text' as const, text: `called:${req.params.name}` }] }
+  })
   s.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: 'project://current', name: 'project' }],
   }))
@@ -106,6 +114,7 @@ let open: Harness | null = null
 afterEach(async () => {
   await open?.close()
   open = null
+  appSession = undefined
 })
 
 const settle = () => new Promise((r) => setTimeout(r, 25))
@@ -177,6 +186,17 @@ describe('up state', () => {
     open = await harness({ appUp: true })
     const status = await open.client.callTool({ name: 'weftcut_status', arguments: {} })
     expect(JSON.stringify(status.content)).toContain('WeftCut is running')
+  })
+
+  it('weftcut_status names the open project, or says none is open', async () => {
+    appSession = { project: { name: 'Demo', dir: '/p/Demo' } }
+    open = await harness({ appUp: true })
+    const named = await open.client.callTool({ name: 'weftcut_status', arguments: {} }) as { content: Array<{ text: string }> }
+    expect(named.content[0].text).toContain('Project: Demo (/p/Demo)')
+    appSession = { project: null }
+    const none = await open.client.callTool({ name: 'weftcut_status', arguments: {} }) as { content: Array<{ text: string }> }
+    expect(none.content[0].text).toContain('Project: none open')
+    expect(none.content[0].text).toContain('open_project')
   })
 })
 

@@ -19,6 +19,7 @@ export const MCP_INSTRUCTION_LINES: ReadonlyArray<string> = [
   "5. Call `create_checkpoint` before your first edit. For a batch (a rough cut, a pause pass, a caption track): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.",
   "6. The user or another agent may edit concurrently; when a commit fails for that reason, re-read and reapply.",
   "7. Export is not a tool: point the user to the app's Export UI.",
+  "8. Project tools refuse while no project is open: `open_project` or `create_project` the one the user asked for, else ask which.",
   "The weftcut skill (Settings > Agent) carries the longer etiquette, the common flows and the Motif authoring contract.",
 ]
 

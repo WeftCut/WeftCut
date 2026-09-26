@@ -27,7 +27,8 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
   token.
 - **Shim catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Two
   synthetic tools are always present: `weftcut_status` (endpoint state + next
-  steps) and `launch_weftcut` (detached GUI spawn, then waits for the endpoint,
+  steps, plus a `Project:` line naming the open project or saying none is open,
+  read from the session view while the app is up) and `launch_weftcut` (detached GUI spawn, then waits for the endpoint,
   bounded). `tools/list_changed` fires on every bridge transition, so one agent
   session upgrades to the full catalog the moment the app comes up — including
   when `launch_weftcut` itself brought it up — and degrades back to the
@@ -106,7 +107,9 @@ The app's **Connect agent** panel (Settings → Agent):
   closed and goes stale when the port or token changes.
 - **`initialize` carries `instructions`** — ten lines of session etiquette
   (read first, verify from the returned record, a refusal names the fix, µs on
-  the frame grid, checkpoint then work session for a batch, export is the UI),
+  the frame grid, checkpoint then work session for a batch, export is the UI,
+  project tools refuse until the project the user asked for is opened or
+  created),
   identical to the "In ten lines" head of the shipped skill and pinned equal by
   a test, so a client that never installs the skill still starts with the
   etiquette. `serverInfo` is `weftcut` at the app's version in a packaged
@@ -194,7 +197,7 @@ Multiple agents may connect simultaneously. The single-writer actor (see [data-m
 
 Rules:
 - Tool calls are atomic: each call either commits or rejects; no half-applied edits.
-- Operations carry an `Actor` tag (`User` or `Agent { client }`) — surfaced in change events and the status-log console.
+- Operations carry an `Actor` tag (`User` or `Agent { client }`) — surfaced in history entries, checkpoints, change events and the status-log console. Every MCP call records as `Agent { client }`, where `client` is the name the client declared in `initialize` (control characters stripped, clamped to 64 UTF-8 bytes, `mcp` when it named none); a hybrid's commits and a restore carry it too. Through the stdio shim it is the downstream client's name, not the shim's. Edits from the app's own UI record as `User`.
 - Connected agents receive change notifications in-protocol (see the change feed below) to see edits from other agents and the user.
 - No edit-locks, no per-agent state. If two agents step on each other, the second to commit may fail invariants — expected, agents should retry or back off.
 - `set_history_lock { locked: true, reason }` is the explicit cooperative pen: one client holds the undo pen during a batch, and every REVERT path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) — from the UI or another agent — fails with `HistoryLocked` until the lock releases. It gates reverting only: edits still commit, and the lock never affects what records (`docs/features.md#undo-stack-scope` is authoritative).
@@ -216,7 +219,7 @@ this). Every tool carries `annotations` — `readOnlyHint` on the reads,
 `auto_split_by_shot`, `undo` / `redo` / `jump_to` / `restore_checkpoint`,
 `install_motif`), `idempotentHint` on a set — and they are the one statement
 of that split: the agent panel's read rows come from the same `readOnlyHint`
-(`mcp.annotations` pins every tool to one). Don't expose 100 tools; agents get confused. The current set is 91,
+(`mcp.annotations` pins every tool to one). Don't expose 100 tools; agents get confused. The current set is 94,
 organised below — near enough that ceiling that a new tool is first checked
 against an existing one's arguments: two verbs that differ by one boolean are
 one tool with a flag, and a field's set and clear are one tool taking `null`.
@@ -232,6 +235,67 @@ is the whole contract ([ADR 0074](adr/0074-the-mcp-tool-surface-is-one-verb-per-
 names retired before that decision (`add_motif`, `checkpoint`,
 `set_composition`, `compositions_delete`) and takes no new entries.
 
+### Projects and the no-project rule
+
+The app's state actor always holds a project — a startup placeholder before the
+user picks one, or the project the user just closed — so "a project is open" is
+not a fact about the actor. It is what the user sees: the host records the
+project where the UI's Open, New Project and Save As land (and where the two
+tools below land), and clears the record on Close Project. The workspace folder
+is not the signal; it survives Close.
+
+**No project open ⇒ every project tool refuses.** With WeftCut on its start
+screen, or after Close Project, a call answers only if it is app-scoped —
+`ping`, the Motif library tools (`list_motifs`, `get_motif_source`,
+`write_motif_draft`, `preview_motif_draft`, `install_motif`, `delete_motif`),
+`open_project`, `create_project`, and `read_project` for `view: "session"` or
+`view: "effects"` — and a resource read answers only for `project://session`,
+`effects://catalog` and `motifs://current`. Everything else is refused with
+`NoProjectOpen` (see the error model) and dispatches nothing: every mutator,
+`undo` / `redo` / `jump_to`, checkpoints and work sessions, every other
+`read_project` view and `project://*` / `media://*` / `composition://*`
+resource, the clip-analysis tools, `dry_run` and `export_captions`. The list is
+default-deny: `APP_SCOPE_TOOLS` / `APP_SCOPE_RESOURCES` in
+`main/mcp/mutationTools.ts` name the short side, one predicate
+(`servesWithoutProject`) serves both gates, and `mcp.project-scope` sweeps the
+whole advertised catalog against a host with nothing open — a new tool is
+refused until someone adds it to the list in the same diff. `install_motif` in
+`update` mode with no project open republishes the library entry and rebinds no
+placed layers. The gate is the MCP surface's rule; the renderer is not gated.
+
+Agents open or create a project **only when the user asked for that project**;
+otherwise they ask which one to work in. The session view
+(`read_project { view: "session" }` / `project://session`) reports `project`
+(`null` when nothing is open) and lists `recent_projects` and
+`default_parent_folder`, so "open my last project" resolves without a
+filesystem search. The stdio shim's `weftcut_status` adds the same fact as one
+`Project:` line when the app is up.
+
+- `open_project { path }` → `{ name, dir, replaced }` — the start screen's
+  Open, for an absolute project folder (the one holding `project.json`). The
+  project open before is flushed to disk first and `replaced` names its folder
+  (`null` when none was open); its undo history and checkpoints are dropped, as
+  a UI Close + Open drops them. A relative `path` is refused. The editor
+  follows: the host sends the renderer `project:opened`, which mounts the
+  editor from the start screen or remounts it over the previous project.
+- `create_project { name, parent_folder?, width?, height?, fps? }` →
+  `{ name, dir, replaced }` — New Project: creates `<parent_folder>/<name>` and
+  opens it, with the same flush-and-follow as `open_project`. `name` is checked
+  by the New Project dialog's own rules (`shared/newProject.ts`: not empty, no
+  leading or trailing whitespace, none of `\ / : * ? " < > |`, no trailing
+  period, no Windows reserved name). `parent_folder` defaults to the session
+  view's `default_parent_folder`, and is refused by name when that is unset
+  (nothing has been created yet — ask the user where). The canvas defaults to
+  1920x1080 at 60 fps; `width` and `height` travel together (even, 16..7680,
+  at most 8K in area), and `fps` is `{ num, den }`, one of the dialog's rates
+  (24, 25, 30, 50, 60, or 24000/30000/60000 over 1001) — the rate locks once a
+  layer is placed.
+
+Both carry `destructiveHint` — they replace what the user is looking at — and
+both answer with or without a project open. A failure of the open or create
+itself is an `isError` result whose text names the folder and the fix, with
+`error` set to the workspace variant (see the error model).
+
 ### Read (resources, not tools)
 
 | URI | Returns |
@@ -246,7 +310,7 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | `project://links` | a composition's links — `{ id, members }` — the root's, or `project://links?composition=<id>` |
 | `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
 | `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it, and undo, redo and a checkpoint restore put back the stamp of the state they return to, so compare it for change, not for order |
-| `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` |
+| `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` — plus the project state: `project` (`{ name, dir }` of the project the user has open, `null` on the start screen or after Close Project), `recent_projects` (the start screen's Recents, `[{ name, path }]`, newest first) and `default_parent_folder` (where New Project would create one, or `null`). The one non-error read of whether a project is open, and what `open_project` / `create_project` draw on (see *No project open* below) |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `composition://meter` | latest PREVIEW master-bus level — `{ live: true, rms_db, peak_db }` while something is playing, `{ live: false }` once nothing has for 2 seconds. The preview UI pushes this reading at about 2 Hz, so the liveness window is a few pushes wide and polling faster than that returns the same numbers. A tap on the preview mixer, so it answers "how loud is what the user is hearing right now" and nothing about a render; a stopped transport reports `live: false` rather than a stale reading. Master bus only — the per-role levels the Role Mixer draws are a renderer-side tap and reach no MCP surface ([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)) |
@@ -614,8 +678,12 @@ agent-created marker is free.
   bounds the detectors enforce, so a stored tuning is always one a later
   `analyze_clip` / `remove_pauses` accepts; `null` clears it back to the
   detector's defaults), and `correction_script` (the reference text
-  `correct_caption_text` corrects against). Read the current values from
-  `project://current`.
+  `correct_caption_text` corrects against). Answers `{ settings, changed }`:
+  the whole stored settings after the patch, and `changed`, the sorted names of
+  the top-level fields whose value moved. A patch that re-sends the current
+  values succeeds with `changed: []` — stating the state you want is not a
+  fault, but the answer says nothing changed. Read the current values from
+  `project://settings`.
 
 Catalog:
 - `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, has_params_ui, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update); `has_params_ui` reports whether the Motif ships its own parameter page (see [motifs.md](motifs.md) "Parameter UI") — a draft without one gets the generated fallback form, which is the normal agent path. Inspect `props_schema` before calling `add_motif_layer`. Drafts are placeable immediately for preview.
@@ -629,11 +697,11 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 
 ### Workflow / safety
 
-- `ping()` → `"pong"` — liveness. The one tool that reads no project state and needs no open workspace, so it separates "the host is not running" from "the host refused my call" before anything else is diagnosed.
+- `ping()` → `"pong"` — liveness. It reads no project state and answers with no project open (it is app-scoped — see *Projects and the no-project rule*), so it separates "the host is not running" from "the host refused my call" before anything else is diagnosed.
 - `create_checkpoint { label }` → `{ checkpoint_id, label }`
 - `list_checkpoints()` / `restore_checkpoint { checkpoint_id }` — restore clears redo and replaces the current snapshot.
 - `delete_checkpoint { checkpoint_id }` — drop a restore point. Only the marker goes; the edits it marked stay, nothing about the timeline or the undo stack changes, and there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately **not** blocked by `set_history_lock` — the lock rejects revert paths, and forgetting a restore point reverts nothing.
-- `undo()` / `redo()`
+- `undo()` / `redo()` → the history status (`cursor`, `len`, `can_undo`, `can_redo`) plus `undone` / `redone`: the op the cursor stepped over, as a `project://history` row (`op_id`, `actor`, `summary`, `label_key`, `affected`, `entity_labels`, …), so the agent learns what it reverted or reapplied without reading the history back. `NothingToUndo` / `NothingToRedo` at either end.
 - `jump_to { index }` — move the history cursor to an absolute stack index: the history panel's click-a-row, and the way back to a state that is neither one undo away nor a checkpoint. `index` is `project://history`'s numbering (`ops[i]` sits at `window_start + i`, and `cursor` is where you are), so jumping is reading that resource and naming a row; out of range is refused naming the live bounds. A revert path, so `set_history_lock` blocks it with the lock's reason. It records nothing, and a later edit truncates whatever sat ahead of it exactly as after an undo. `evicted > 0` means the stack no longer reaches the start of the project — index 0 is then the oldest surviving state, not the beginning.
 - `set_history_lock { locked, reason? }` — freeze undo while a tool batch runs, and release it again; the UI shows the reason. Locking needs a `reason` (it is what the user is shown in place of undo); unlocking refuses one.
 - `begin_agent_session { reason }` → work session with stable `id`, `connection_id` and `checkpoint_id`. Creates one Pre-agent checkpoint and enters the lightweight agent view. One active work session per project: repeating on the same connection returns it without another checkpoint or view switch; another connection receives `AgentSessionBusy`.
@@ -802,6 +870,18 @@ machine-readably for clients that forward it — `code` is the envelope code
 (`invalid_params` for anything the caller can fix, `internal` for a failure
 that is not the caller's), then `message`, then whatever the mapper attached:
 the `error` variant, the ids, `options[]`. Nothing may live only there.
+
+Two refusal families come from the MCP host rather than the actor, so they are
+not `CommandError` variants and stay out of `mcp.error-vocabulary`'s union:
+
+| `error` | Raised by | `code` | Text |
+|---|---|---|---|
+| `NoProjectOpen` | any project tool while no project is open (the start screen, or after Close Project) — see *Projects and the no-project rule* | `invalid_request` | the one fixed message, `NO_PROJECT_OPEN_MESSAGE` in `main/mcp/toolResult.ts`: no project is open and the app is on its start screen; if the user asked for a particular project, `open_project` it (`read_project { view: "session" }` lists `recent_projects`) or `create_project` it, otherwise ask the user which project to work in; nothing was changed. A resource read has no `isError` slot, so a gated `resources/read` is a JSON-RPC `InvalidRequest` error with the same message |
+| `ProjectFolderMissing`, `NotProjectFolder`, `ProjectSchemaUnreadable`, `ProjectSchemaTooNew`, `ProjectFileUnreadable`, `ProjectInvalid`, `ProjectFolderExists`, `ProjectNameRequired`, `InvalidCanvasPreset` | `open_project` / `create_project` — the workspace failure the start screen would show (`shared/workspaceErrors.ts`) | `invalid_params` | names the folder and the way out — a missing folder points at `recent_projects`, a folder without `project.json` at the folder that holds one or `create_project`, an existing target at another name or `open_project`, a newer schema at the version needed — and ends "Nothing was changed." The variant's own fields (`found` / `supported`, `detail`) ride `structuredContent` beside `error` |
+
+`create_project` without `parent_folder` when no project has ever been created
+(no `default_parent_folder`) is an `invalid_params` refusal naming
+`parent_folder` — ask the user where the project should go.
 
 Two things stay JSON-RPC errors, because they are faults of the REQUEST rather
 than answers of a tool: an unknown tool name (`-32602`, `Unknown tool: <name>`),

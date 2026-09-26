@@ -33,8 +33,8 @@ const SYNTHETIC_TOOLS: Tool[] = [
   {
     name: 'weftcut_status',
     description:
-      'Report whether the WeftCut desktop app is currently running and reachable. ' +
-      'Returns the endpoint state and what to do next when it is not running. ' +
+      'Report whether the WeftCut desktop app is currently running and reachable, and which ' +
+      'project it has open. Returns the endpoint state and what to do next when it is not running. ' +
       'Costs nothing; call this first when WeftCut tools appear to be missing or failing.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
@@ -149,6 +149,21 @@ export function createShim(opts: ShimOptions): Shim {
     )
   }
 
+  /// The status line for the open project, from the app's session view. Left
+  /// out (empty) when the read fails: the status call itself must still answer.
+  async function projectLine(): Promise<string> {
+    try {
+      const r = await bridge.forward('tools/call', { name: 'read_project', arguments: { view: 'session' } }, CallToolResultSchema)
+      const view = (r.structuredContent ?? JSON.parse((r.content[0] as { text?: string } | undefined)?.text ?? '{}')) as { project?: { name: string; dir: string } | null }
+      if (view.project === undefined) return ''
+      return view.project === null
+        ? 'Project: none open. Open or create the one the user asked for (open_project / create_project), or ask them which.'
+        : `Project: ${view.project.name} (${view.project.dir})`
+    } catch {
+      return ''
+    }
+  }
+
   async function statusResult(): Promise<ReturnType<typeof text>> {
     await bridge.ensureUp()
     if (bridge.isUp()) {
@@ -158,6 +173,7 @@ export function createShim(opts: ShimOptions): Shim {
         [
           `WeftCut is running${v ? ` (${v.name} ${v.version})` : ''}.`,
           auth ? `Endpoint: ${endpointUrl(auth)}` : '',
+          await projectLine(),
           'The full tool catalog is available in this session.',
         ]
           .filter(Boolean)

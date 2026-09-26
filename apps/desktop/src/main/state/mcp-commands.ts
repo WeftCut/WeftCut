@@ -13,6 +13,7 @@ import type { LayerParamsPatch } from './mutations/params'
 import { EFFECT_KINDS, effectParamSpecs } from '../../shared/effects/params'
 import { positionProblem } from '../../shared/position'
 import { sortKeys } from './canonical'
+import { CANVAS_MAX, CANVAS_MIN, DEFAULT_CANVAS, FPS_OPTIONS, canvasSizeError, validateProjectName } from '../../shared/newProject'
 import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
@@ -1775,7 +1776,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Returns the history status plus `undone` — the op it reverted, a `project://history` row.",
+    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Answers `undone`: the op reverted.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table', annotations: ANN_DESTRUCTIVE,
@@ -1783,7 +1784,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
     parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
   { name: 'redo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail. Returns the history status plus `redone` — the op it reapplied, a `project://history` row.",
+    description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail. Answers `redone`: the op reapplied.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
   { name: 'delete_checkpoint', exec: 'table', annotations: ANN_DESTRUCTIVE,
@@ -2113,7 +2114,68 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       const t_us = view === 'media_frame' ? parseNum(a.t_us, 't_us') : null
       return { view, id: needsId ? parseUuid(a.id, 'id') : null, t_us, composition_id: parseCompositionIdOpt(a.composition_id) }
     } },
+  // ── projects — executed by the MCP host (`mcp/projectTools.ts`), not the
+  //    actor: opening swaps the actor's whole state and the renderer follows.
+  //    Both answer while no project is open (`APP_SCOPE_TOOLS`).
+  { name: 'open_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
+    description: "Open a project folder (the one holding project.json) in the editor, as the start screen's Open does; only one the user asked for. The project open before is saved; its undo history is dropped. Recent projects: `read_project { view: \"session\" }`. Returns `{ name, dir, replaced }`.",
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the project folder.' } }, required: ['path'] },
+    parseDedicated: (a) => ({ path: parseAbsolutePath(a.path, 'path') }) },
+  { name: 'create_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
+    description: "Create `<parent_folder>/<name>` and open it, as New Project does; only when the user asked. The project open before is saved. Defaults: the session view's `default_parent_folder`; 1920x1080 at 60 fps (the rate locks once a layer is placed). Returns `{ name, dir, replaced }`.",
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: 'Folder and project name.' },
+      parent_folder: { type: 'string', description: 'Absolute folder to create in.' },
+      width: { type: 'integer', description: 'Even px, 16..7680; with `height`.' },
+      height: { type: 'integer', description: 'Even px, 16..7680; with `width`.' },
+      fps: { type: 'object', description: '24, 25, 30, 50, 60, or 24000/30000/60000 over 1001.', properties: { num: { type: 'integer', description: 'Numerator.' }, den: { type: 'integer', description: 'Denominator.' } }, required: ['num', 'den'] },
+    }, required: ['name'] },
+    parseDedicated: (a) => parseCreateProject(a) },
 ]
+
+/** An absolute path, Windows (`C:\…`, `\\server\…`) or POSIX (`/…`). A relative
+ *  one would resolve against the app's working directory, which no caller can
+ *  see. */
+function parseAbsolutePath(v: unknown, field: string): string {
+  const p = parseStr(v, field).trim()
+  if (!/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(p)) throw new McpArgError(`${field} must be an absolute path; got '${p}'`, field)
+  return p
+}
+
+/** English for the New Project dialog's name rules (`shared/newProject.ts`). */
+const PROJECT_NAME_PROBLEM: Record<string, string> = {
+  'new_project.validation_empty': 'name is required',
+  'new_project.validation_whitespace': "name can't start or end with whitespace",
+  'new_project.validation_invalid_chars': 'name can\'t contain any of \\ / : * ? " < > |',
+  'new_project.validation_trailing_dot': "name can't end with a period",
+  'new_project.validation_reserved': 'name is one the OS reserves (CON, NUL, COM1…) — pick another',
+}
+
+function parseCreateProject(a: Record<string, unknown>): Record<string, unknown> {
+  const name = parseStr(a.name, 'name')
+  const nameProblem = validateProjectName(name)
+  if (nameProblem) throw new McpArgError(PROJECT_NAME_PROBLEM[nameProblem] ?? nameProblem, 'name')
+  const parent = a.parent_folder === undefined || a.parent_folder === null ? null : parseAbsolutePath(a.parent_folder, 'parent_folder')
+  if ((a.width === undefined) !== (a.height === undefined)) throw new McpArgError('send width and height together, or neither for 1920x1080', a.width === undefined ? 'width' : 'height')
+  const width = a.width === undefined ? DEFAULT_CANVAS.width : parseNum(a.width, 'width')
+  const height = a.height === undefined ? DEFAULT_CANVAS.height : parseNum(a.height, 'height')
+  const size = canvasSizeError(width, height)
+  if (size) {
+    const why = size.key === 'canvas.size_range' ? `width and height must be between ${CANVAS_MIN} and ${CANVAS_MAX}`
+      : size.key === 'canvas.size_odd' ? 'width and height must be whole even numbers'
+      : 'the canvas cannot exceed 8K (7680 × 4320) in total area'
+    throw new McpArgError(`${why}; got ${width}x${height}`, 'width')
+  }
+  let fps = { num: DEFAULT_CANVAS.fpsNum, den: DEFAULT_CANVAS.fpsDen }
+  if (a.fps !== undefined) {
+    const f = parseObj(a.fps, 'fps')
+    fps = { num: parseNum(f.num, 'fps.num'), den: parseNum(f.den, 'fps.den') }
+    if (!FPS_OPTIONS.some((o) => o.num === fps.num && o.den === fps.den)) {
+      throw new McpArgError(`fps ${fps.num}/${fps.den} is not a WeftCut rate; one of ${FPS_OPTIONS.map((o) => `${o.num}/${o.den}`).join(', ')}`, 'fps')
+    }
+  }
+  return { name, parent_folder: parent, width, height, fps_num: fps.num, fps_den: fps.den }
+}
 
 const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))
 export function mcpDef(name: string): McpToolDef { const d = DEF_BY_NAME.get(name); if (!d) throw new Error(`no MCP def for ${name}`); return d }

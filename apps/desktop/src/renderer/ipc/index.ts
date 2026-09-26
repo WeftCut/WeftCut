@@ -804,6 +804,12 @@ export async function projectOpen(path: string): Promise<void> {
   return invoke<void>("project_open", { path });
 }
 
+/// Save the open project and tell the backend nothing is open any more, so an
+/// agent cannot keep writing into the project the user just left.
+export async function projectClose(): Promise<void> {
+  return invoke<void>("project_close");
+}
+
 // ============================================================
 // Workspace lifecycle (docs/data-model.md)
 // ============================================================
