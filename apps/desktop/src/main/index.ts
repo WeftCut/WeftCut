@@ -2306,9 +2306,9 @@ app.on('window-all-closed', () => app.quit())
 
 // Flush the TS actor's debounced autosave before the process exits — an edit made
 // inside the 500ms autosave debounce window would otherwise be lost on quit
-// (autosave.stop() drops the pending timer rather than firing it). `project_save`
-// routes (router.ts) to autosave.forceFlush(), a no-op when no workspace is set
-// (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
+// (autosave.stop() drops the pending timer rather than firing it). `shutdown`
+// shuts the MCP project gate, then autosave.forceFlush()es, a no-op when no
+// workspace is set (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
 // quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.
 // A null tsHost early-returns: nothing to flush before whenReady constructs the host.
 let quitFlushed = false
@@ -2334,8 +2334,11 @@ app.on('before-quit', (event) => {
   if (quitFlushed || !tsHost) return
   event.preventDefault()
   quitFlushed = true
+  // `shutdown`, not a plain save: it also shuts the MCP gate first, so an
+  // agent write racing the quit is refused rather than answered as success and
+  // then lost with the dropped autosave timer.
   void tsHost
-    .handleInvoke('project_save', {})
+    .shutdown()
     .catch((e) => console.warn('[main] autosave quit-flush failed', e))
     .finally(() => app.quit())
 })

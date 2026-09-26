@@ -24,6 +24,9 @@ export async function runProjectTool(
   args: Record<string, unknown>,
 ): Promise<ServerResult> {
   const p = mcpDef(name).parseDedicated!(args)
+  if (host.projects.shuttingDown()) {
+    return toolErrorResult({ code: 'invalid_request', message: 'WeftCut is quitting, so no project can be opened now. Nothing was changed.', data: { error: 'AppQuitting' } })
+  }
   if (name === 'open_project') {
     const dir = p.path as string
     try { return toolRecord(await host.projects.open(dir)) as unknown as ServerResult }

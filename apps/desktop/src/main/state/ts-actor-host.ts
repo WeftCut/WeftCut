@@ -137,6 +137,9 @@ export interface TsActorHost {
    *  plus the event that brings the editor along. A `WorkspaceFailure` throws
    *  through untouched, leaving the open record as it was. */
   projects: {
+    /** True once `shutdown` ran: an agent cannot open anything while the app
+     *  quits. */
+    shuttingDown: () => boolean
     open: (dir: string) => Promise<ProjectOpened>
     create: (args: { parentFolder: string; name: string; width: number; height: number; fpsNum: number; fpsDen: number }) => Promise<ProjectOpened>
   }
@@ -156,6 +159,10 @@ export interface TsActorHost {
    *  watcher can refresh the actor catalog when a Motif appears on disk with no
    *  store-mutating tool call (otherwise add_motif rejects it). */
   refreshMotifCatalog: () => void
+  /** The quit path's close: the gate shuts at once (so a write racing the
+   *  quit is refused instead of answered and then lost), the project is
+   *  flushed, and nothing can be opened afterwards. */
+  shutdown: () => Promise<void>
   start: () => void
   stop: () => void
 }
@@ -297,20 +304,28 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
+  /** Set once the app starts quitting; never cleared. Nothing opens after it. */
+  let quitting = false
   // Each record update runs only after its operation resolves, so a failed
-  // open leaves the record as it was.
+  // open leaves the record as it was — and an open still in flight when the
+  // quit began does not reopen the gate the quit closed.
+  const opens = (dir: string): void => { if (!quitting) opened = { dir } }
   const persistence: PersistenceHandlers = {
-    open: async (dir) => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opened = { dir } },
-    saveAs: async (dir) => { await saveProjectAs(orchestratorDeps, dir); opened = { dir } },
-    newWorkspace: async (a) => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opened = { dir }; return dir },
+    open: async (dir) => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opens(dir) },
+    saveAs: async (dir) => { await saveProjectAs(orchestratorDeps, dir); opens(dir) },
+    newWorkspace: async (a) => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opens(dir); return dir },
     save: () => autosave.forceFlush(),
-    // The actor keeps the closed project until the next Open / New replaces
-    // it, and the workspace slot keeps its folder; what stops an agent writing
-    // into it is the MCP gate reading `opened`.
-    close: async () => { await autosave.forceFlush(); opened = null },
+    // The record clears BEFORE the flush: the flush is async, and a write the
+    // gate still let through during it would reach the closed project's
+    // project.json on the next debounce (or, on quit, be answered as success
+    // and then dropped with the pending timer). The actor keeps the closed
+    // project until the next Open / New replaces it, and the workspace slot
+    // keeps its folder; what stops an agent writing into it is the MCP gate.
+    close: async () => { opened = null; await autosave.forceFlush() },
   }
 
   const agentProjects: TsActorHost['projects'] = {
+    shuttingDown: () => quitting,
     open: async (dir) => {
       const replaced = opened?.dir ?? null
       await persistence.open(dir)
@@ -598,6 +613,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     agent,
     openedProject: () => opened,
     projects: agentProjects,
+    shutdown: () => { quitting = true; return persistence.close() },
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

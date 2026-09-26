@@ -197,3 +197,30 @@ describe('open_project / create_project', () => {
     expect(ts.openedProject()).toBeNull()
   })
 })
+
+describe('closing and quitting shut the gate before the flush', () => {
+  it('a write racing Close is refused, not saved into the closed project', async () => {
+    const { ts } = host({ parent: '/work' })
+    await call(ts, 'create_project', { name: 'Race' })
+    const closing = ts.handleInvoke('project_close', {})
+    const raced = await call(ts, 'add_track', { label: 'raced' })
+    await closing
+    expect(raced.structuredContent?.error).toBe('NoProjectOpen')
+    expect(ts.actor.snapshot().compositions[ts.actor.snapshot().root_id]!.tracks.some((t) => t.label === 'raced')).toBe(false)
+  })
+
+  it('quitting refuses project writes and opening, even for an open already in flight', async () => {
+    const { ts } = host({ parent: '/work' })
+    await call(ts, 'create_project', { name: 'Q' })
+    const opening = call(ts, 'create_project', { name: 'Late' })
+    const quitting = ts.shutdown()
+    const raced = await call(ts, 'add_track', { label: 'raced' })
+    await quitting
+    await opening
+    expect(raced.structuredContent?.error).toBe('NoProjectOpen')
+    expect(ts.openedProject()).toBeNull()
+    const refused = await call(ts, 'open_project', { path: '/work/Q' })
+    expect(refused.structuredContent?.error).toBe('AppQuitting')
+    expect(refused.content[0].text).toContain('WeftCut is quitting')
+  })
+})
