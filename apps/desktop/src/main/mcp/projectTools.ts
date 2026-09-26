@@ -11,7 +11,7 @@
 // which already shows the path, so its variants carry none.
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
-import { mcpDef } from '../state/mcp-commands.js'
+import { mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { isWorkspaceFailure, type WorkspaceError } from '../../shared/workspaceErrors.js'
 import { toolErrorResult } from './toolResult.js'
@@ -56,9 +56,27 @@ function joinFolder(parent: string, name: string): string {
   return parent.endsWith(sep) ? `${parent}${name}` : `${parent}${sep}${name}`
 }
 
+/** Whether a caller can fix the refusal by changing its arguments. A wrong or
+ *  taken path is `invalid_params`: send another. A folder that IS the project
+ *  asked for but cannot be opened here — unreadable, invalid, from a newer
+ *  WeftCut — is `invalid_request`: no argument fixes it, and a client that
+ *  retries on `invalid_params` must not loop on it. Exhaustive, so a new
+ *  variant cannot land unclassified. */
+const WORKSPACE_REFUSAL_CODE: Record<WorkspaceError['error'], McpErrorCode> = {
+  ProjectFolderMissing: 'invalid_params',
+  NotProjectFolder: 'invalid_params',
+  ProjectFolderExists: 'invalid_params',
+  ProjectNameRequired: 'invalid_params',
+  InvalidCanvasPreset: 'invalid_params',
+  ProjectSchemaUnreadable: 'invalid_request',
+  ProjectSchemaTooNew: 'invalid_request',
+  ProjectFileUnreadable: 'invalid_request',
+  ProjectInvalid: 'invalid_request',
+}
+
 function refusal(e: unknown, dir: string): ServerResult {
   if (!isWorkspaceFailure(e)) throw e
-  return toolErrorResult({ code: 'invalid_params', message: `${workspaceProblem(e.err, dir)} Nothing was changed.`, data: { ...e.err } })
+  return toolErrorResult({ code: WORKSPACE_REFUSAL_CODE[e.err.error], message: `${workspaceProblem(e.err, dir)} Nothing was changed.`, data: { ...e.err } })
 }
 
 export function workspaceProblem(err: WorkspaceError, dir: string): string {

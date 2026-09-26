@@ -224,3 +224,25 @@ describe('closing and quitting shut the gate before the flush', () => {
     expect(refused.content[0].text).toContain('WeftCut is quitting')
   })
 })
+
+describe('a project refusal says whether an argument can fix it', () => {
+  it('a wrong or taken path is invalid_params; a folder that cannot be opened here is invalid_request', async () => {
+    const { ts, fs } = host({ parent: '/work' })
+    const code = async (name: string, args: Record<string, unknown>) => {
+      const out = await call(ts, name, args)
+      expect(out.isError, JSON.stringify(args)).toBe(true)
+      return [out.structuredContent?.error, out.structuredContent?.code]
+    }
+    expect(await code('open_project', { path: '/nowhere/X' })).toEqual(['ProjectFolderMissing', 'invalid_params'])
+    fs.mkdirp('/work/Plain')
+    expect(await code('open_project', { path: '/work/Plain' })).toEqual(['NotProjectFolder', 'invalid_params'])
+    await call(ts, 'create_project', { name: 'Taken' })
+    expect(await code('create_project', { name: 'Taken' })).toEqual(['ProjectFolderExists', 'invalid_params'])
+    fs.mkdirp('/work/Garbled'); fs.writeFile('/work/Garbled/project.json', '{ not json')
+    expect(await code('open_project', { path: '/work/Garbled' })).toEqual(['ProjectFileUnreadable', 'invalid_request'])
+    fs.mkdirp('/work/Future'); fs.writeFile('/work/Future/project.json', JSON.stringify({ schema_version: 999999 }))
+    expect(await code('open_project', { path: '/work/Future' })).toEqual(['ProjectSchemaTooNew', 'invalid_request'])
+    fs.mkdirp('/work/Unversioned'); fs.writeFile('/work/Unversioned/project.json', JSON.stringify({ name: 'x' }))
+    expect(await code('open_project', { path: '/work/Unversioned' })).toEqual(['ProjectSchemaUnreadable', 'invalid_request'])
+  })
+})
