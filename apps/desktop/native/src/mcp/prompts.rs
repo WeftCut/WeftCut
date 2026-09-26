@@ -216,7 +216,7 @@ fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult
 "Auto-caption the clip on layer `{layer_id}` using the configured transcription engine.
 
 Steps:
-1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR), and returns a JSON envelope `{{ backend, segments, language, word_timing, srt }}` with all timestamps already shifted to timeline-absolute microseconds. The `srt` field is a ready-to-apply SubRip body; `segments`/`words` carry the same content with per-word spans.
+1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR), and returns a JSON envelope `{{ backend, segments, language, word_timing }}` with all timestamps already shifted to timeline-absolute microseconds. `segments` carry the cues, each with its per-word spans in `words`.
 2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times).
 3. Call `apply_transcripts` with `transcripts: [<the envelope: segments + word_timing>]` and `source_layer_ids: [\"{layer_id}\"]`. The cues land as editable Text layers on the caption tracks, packing where there is room, and KEEP their word timing — which is what `correct_caption_text` later needs to re-segment a corrected cue. The tool returns the id of the caption track the first cue landed on.
 

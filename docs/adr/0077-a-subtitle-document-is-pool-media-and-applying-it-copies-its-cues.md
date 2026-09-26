@@ -64,6 +64,10 @@ it.
   many layers placed by packing, with no `track_id`; `add_*_layer` makes one
   layer on the track the caller names. A rename to `add_subtitle_layer` would
   promise the second contract.
+- **`transcribe_clip` drops its `srt` field.** Its one consumer was the
+  body-taking `apply_subtitles`; with that gone it was a second copy of every
+  transcript on every call. The envelope is `segments` + `word_timing`, which
+  `apply_transcripts` takes as it comes.
 - **The def is TS-owned.** The tool now reads project state (the pool), so its
   schema lives with the other hybrids that compute in Rust and write through
   the TS actor (`auto_split_by_shot`, `remove_pauses`), and the Rust catalog

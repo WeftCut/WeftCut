@@ -20,7 +20,7 @@ vi.mock("../ipc", async (importActual) => {
 import { runTranscribe, setTranscribing, useTranscribeRunStore } from "./transcribeRun";
 
 /// One transcript envelope, forwarded intact so word timing is not discarded.
-function transcript(cues = 3, over: { backend?: string; srt?: string } = {}) {
+function transcript(cues = 3, over: { backend?: string; language?: string } = {}) {
   return {
     backend: over.backend ?? "openai",
     segments: Array.from({ length: cues }, (_, i) => ({
@@ -29,9 +29,8 @@ function transcript(cues = 3, over: { backend?: string; srt?: string } = {}) {
       text: `line ${i}`,
       words: [],
     })),
-    language: "en",
+    language: over.language ?? "en",
     word_timing: "interpolated_from_cue" as const,
-    srt: over.srt ?? "1\n00:00:00,000 --> 00:00:01,000\nline 0\n\n",
   };
 }
 
@@ -113,13 +112,13 @@ describe("runTranscribe", () => {
       expect(inFlight).toBe(1);
       await Promise.resolve();
       inFlight -= 1;
-      return transcript(2, { srt: `1\n00:00:00,000 --> 00:00:01,000\n${id}\n\n` });
+      return transcript(2, { language: id });
     });
     expect(await runTranscribe(many())).toBe("");
     expect(order).toEqual(["l-1", "l-2", "l-3"]);
     expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
     expect(mocks.applyTranscripts).toHaveBeenCalledWith(
-      ["l-1", "l-2", "l-3"].map((id) => transcript(2, { srt: `1\n00:00:00,000 --> 00:00:01,000\n${id}\n\n` })),
+      ["l-1", "l-2", "l-3"].map((id) => transcript(2, { language: id })),
       "project", "composition", ["l-1", "l-2", "l-3"],
     );
     expect(reveal).toHaveBeenCalledTimes(1);
@@ -154,14 +153,14 @@ describe("runTranscribe", () => {
   // plain row, and the clip that failed BY NAME as the row that closes the op.
   it("stops at the first clip that fails, lands the transcripts before it, and names the clip", async () => {
     mocks.transcribeClip
-      .mockResolvedValueOnce(transcript(3, { srt: "one\n\n" }))
+      .mockResolvedValueOnce(transcript(3, { language: "one" }))
       .mockRejectedValueOnce(ipcError("audio payload too large for the provider (13 min limit); narrow the window"));
     expect(await runTranscribe(many())).toBe(
       "Error: audio payload too large for the provider (13 min limit); narrow the window",
     );
     expect(mocks.transcribeClip).toHaveBeenCalledTimes(2);
     expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
-    expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript(3, { srt: "one\n\n" })], "project", "composition", ["l-1"]);
+    expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript(3, { language: "one" })], "project", "composition", ["l-1"]);
     expect(rows()).toHaveLength(3);
     expect(rows()[1]).toMatchObject({ i18n_key: "log.auto_caption_done", i18n_args: { cues: 3 } });
     expect(rows()[1].op_state).toBeUndefined();

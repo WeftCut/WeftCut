@@ -129,25 +129,6 @@ mod tests {
         assert_eq!(json.word_timing, WordTiming::Exact);
     }
 
-    /// `render_srt(parse(srt))` must round-trip cue timing + text through the
-    /// SAME caption-import parser `apply_subtitles` uses, so a rendered `srt`
-    /// saved to a file imports back to the same cues (ADR 0036 acceptance).
-    #[test]
-    fn render_srt_round_trips_through_caption_parser() {
-        use crate::subtitles::{parse_subtitle_cues, SubFormat};
-        let body = "1\n00:00:01,000 --> 00:00:02,500\nHello world\n\n\
-                    2\n00:00:03,000 --> 00:00:04,000\nBye now\n";
-        let t = parse_raw(RawTranscript::Srt(body.into())).expect("parse");
-        let rendered = t.render_srt();
-        let (cues, _) =
-            parse_subtitle_cues(&rendered, Some(SubFormat::Srt)).expect("re-parse rendered srt");
-        assert_eq!(cues.len(), 2);
-        assert_eq!((cues[0].start_us, cues[0].end_us), (1_000_000, 2_500_000));
-        assert_eq!(cues[0].text, "Hello world");
-        assert_eq!((cues[1].start_us, cues[1].end_us), (3_000_000, 4_000_000));
-        assert_eq!(cues[1].text, "Bye now");
-    }
-
     #[test]
     fn format_tag_matches_variant() {
         assert_eq!(

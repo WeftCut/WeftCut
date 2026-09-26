@@ -82,9 +82,9 @@ boundary, or a CJK character start), marks `Exact`. Result:
 - **All three** yield byte-identical `Transcript` structure; only `word_timing`
   differs, and it is inspectable.
 
-`transcribe_clip` returns the `Transcript` as JSON **plus** a rendered `srt`
-field (`render_srt(&Transcript)`) so the existing `apply_subtitles` caption
-flow keeps working.
+`transcribe_clip` returns the `Transcript` as JSON, which `apply_transcripts`
+takes as it comes. (It once carried a rendered `srt` field for the body-taking
+`apply_subtitles`; ADR 0077 removed both.)
 
 ### Local engines are one-shot CLI sidecars
 

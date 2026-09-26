@@ -2539,15 +2539,14 @@ export type WordTiming = "exact" | "interpolated_from_cue" | "none";
 
 /// What `transcribe_clip` answers with. `backend` names the engine that actually
 /// served the request, so a resolver fallback is visible rather than silent.
-/// `srt` remains available for subtitle consumers. The app's transcription
-/// flow uses `applyTranscripts` so words survive caption ingestion and saving.
+/// The app's transcription flow hands it to `applyTranscripts` whole, so words
+/// survive caption ingestion and saving.
 export interface TranscriptResult {
   source?: import('../../shared/captionTiming').TranscriptPayload['source'];
   backend: string;
   segments: TranscriptSegment[];
   language?: string | null;
   word_timing: WordTiming;
-  srt: string;
 }
 
 /// Transcribe one VideoClip or Audio layer's whole span. The engine is chosen by

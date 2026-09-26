@@ -42,7 +42,6 @@ mutation:
 - **Transcription.** `transcribe_clip` returns a normalized transcript
   envelope with timeline-absolute timestamps. The app passes this structure to
   `apply_transcripts`, preserving word timing alongside the generated captions.
-  The rendered `srt` field remains available to subtitle consumers.
   A person starts the flow with **Transcribe selected clip**
   on a `VideoClip` / `Audio` layer's context menu, in the Edit menu and in the
   search palette: no dialog — the language is the engine's to detect — so the

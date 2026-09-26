@@ -1352,10 +1352,9 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
 /// JSON envelope `transcribe_clip` returns: the normalized transcript
 /// (`segments` with per-word spans, detected `language`, `word_timing`
 /// provenance), the `backend` tag that actually served the request (so a
-/// fallback pick is visible, not silent), PLUS a rendered `srt` field — the
-/// transcript at a glance. The agent hands `segments` + `word_timing` to
-/// `apply_transcripts`. Borrows the transcript so we serialize without cloning
-/// the segment vec.
+/// fallback pick is visible, not silent). The agent hands `segments` +
+/// `word_timing` to `apply_transcripts`. Borrows the transcript so we serialize
+/// without cloning the segment vec.
 #[cfg(feature = "speech")]
 #[derive(Serialize)]
 struct TranscribeClipResult<'a> {
@@ -1364,7 +1363,6 @@ struct TranscribeClipResult<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<&'a str>,
     word_timing: speech::WordTiming,
-    srt: String,
 }
 
 #[cfg(feature = "speech")]
@@ -1458,13 +1456,11 @@ pub(super) async fn transcribe_clip(
     let mut transcript = speech::parse_raw(raw).map_err(map_speech_error)?;
     transcript.shift(resolved.timeline_start_us);
 
-    let srt = transcript.render_srt();
     let result = TranscribeClipResult {
         backend: used_backend.as_str(),
         segments: &transcript.segments,
         language: transcript.language.as_deref(),
         word_timing: transcript.word_timing,
-        srt,
     };
     ToolResult::json(&result)
 }

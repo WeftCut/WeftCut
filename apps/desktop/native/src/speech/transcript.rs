@@ -10,9 +10,7 @@
 //! Timestamps are microseconds. As produced by a parser they are
 //! **audio-slice-relative** (0 = first sample of the extracted window); the
 //! tool layer calls [`Transcript::shift`] to place them on the timeline before
-//! returning to the agent. [`Transcript::render_srt`] renders the transcript as
-//! an SRT document (cue-granular, so word spans are not represented there — by
-//! design; they live in the JSON `segments`).
+//! returning to the agent.
 
 use serde::Serialize;
 
@@ -61,10 +59,7 @@ pub struct Transcript {
 impl Transcript {
     /// Shift every segment and word timestamp forward by `offset_us` (the
     /// slice's timeline-absolute start), clamping at zero so a negative result
-    /// never underflows. Shifts the parsed struct; a caller that needs a cue
-    /// body re-renders it via [`render_srt`].
-    ///
-    /// [`render_srt`]: Transcript::render_srt
+    /// never underflows.
     pub fn shift(&mut self, offset_us: i64) {
         for seg in &mut self.segments {
             seg.t_start_us = shift_us(seg.t_start_us, offset_us);
@@ -75,44 +70,10 @@ impl Transcript {
             }
         }
     }
-
-    /// Render the segments back to an SRT body (cue granularity — index /
-    /// `HH:MM:SS,mmm --> HH:MM:SS,mmm` / text / blank line). This is what
-    /// `transcribe_clip` returns in the envelope's `srt` field — the transcript
-    /// at a glance. Cue indices are renumbered from 1;
-    /// per-word times are intentionally not emitted (SRT can't represent them).
-    pub fn render_srt(&self) -> String {
-        let mut out = String::new();
-        for (i, seg) in self.segments.iter().enumerate() {
-            out.push_str(&(i + 1).to_string());
-            out.push('\n');
-            out.push_str(&format_srt_timestamp(seg.t_start_us));
-            out.push_str(" --> ");
-            out.push_str(&format_srt_timestamp(seg.t_end_us));
-            out.push('\n');
-            out.push_str(&seg.text);
-            out.push('\n');
-            out.push('\n');
-        }
-        out
-    }
 }
 
 fn shift_us(base_us: i64, offset_us: i64) -> i64 {
     base_us.saturating_add(offset_us).max(0)
-}
-
-/// `HH:MM:SS,mmm` — the SRT cue-timestamp format.
-fn format_srt_timestamp(us: i64) -> String {
-    let us = us.max(0);
-    let total_ms = us / 1000;
-    let ms = total_ms % 1000;
-    let total_s = total_ms / 1000;
-    let s = total_s % 60;
-    let total_m = total_s / 60;
-    let m = total_m % 60;
-    let h = total_m / 60;
-    format!("{h:02}:{m:02}:{s:02},{ms:03}")
 }
 
 #[cfg(test)]
@@ -172,14 +133,6 @@ mod tests {
                 assert!(w.t_start_us >= 0 && w.t_end_us >= 0);
             }
         }
-    }
-
-    #[test]
-    fn render_srt_emits_renumbered_cues() {
-        let t = sample();
-        let srt = t.render_srt();
-        assert!(srt.starts_with("1\n00:00:01,000 --> 00:00:02,500\nHello world\n\n"));
-        assert!(srt.contains("2\n00:00:03,000 --> 00:00:04,000\nBye\n\n"));
     }
 
     #[test]
