@@ -1,11 +1,21 @@
 // Best-effort family-name → font-file resolver for the burn-in path. Scans the
-// platform font directories, builds a family→path map by reading each font's
-// sfnt `name` table (no native deps). Returns null when not found — the
-// renderer then applies the bundled-font fallback (never tofu). NOT part of the
+// platform font directories and the app-managed imported-font directory
+// (<userData>/fonts/), builds a family→path map by reading each font's sfnt
+// `name` table (no native deps). Returns null when not found — the renderer
+// then applies the bundled-font fallback (never tofu). NOT part of the
 // cross-OS determinism contract: different machines, different files.
+//
+// Imported fonts (<userData>/fonts/) are app-managed, present on every launch,
+// and shared across all workspaces and projects.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+// Supported font extensions. `.woff2` is deliberately excluded: its container
+// is compressed and `readFamilyName` only handles raw sfnt / TTC headers.
+const FONT_EXT_RE = /\.(ttf|otf|ttc)$/i;
+// Import accepts only single-font containers (no collections).
+const IMPORT_EXT_RE = /\.(ttf|otf)$/i;
 
 const FONT_DIRS: Record<string, string[]> = {
   win32: [
@@ -26,7 +36,24 @@ const FONT_DIRS: Record<string, string[]> = {
 };
 
 let familyMap: Map<string, string> | null = null;
+let importedFontsDir: string | null = null;
 
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+/** Call once at app startup with `app.getPath('userData')`. Creates
+ *  `<userData>/fonts/` if it doesn't exist. */
+export function setImportedFontsDir(userDataPath: string): void {
+  importedFontsDir = path.join(userDataPath, "fonts");
+  fs.mkdirSync(importedFontsDir, { recursive: true });
+}
+
+// ---------------------------------------------------------------------------
+// Resolve
+// ---------------------------------------------------------------------------
+
+/** Return the raw bytes of the font file matching `family`, or null. */
 export async function resolveSystemFont(family: string): Promise<Buffer | null> {
   if (!familyMap) familyMap = buildFamilyMap();
   const hit = familyMap.get(family.toLowerCase());
@@ -38,12 +65,73 @@ export async function resolveSystemFont(family: string): Promise<Buffer | null> 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+
+/** Copy a .ttf/.otf font file into `<userData>/fonts/`, read its family name
+ *  from the sfnt name table, and return `{ family, filename }`. Invalidates
+ *  the family-map cache so the next `resolveSystemFont` call picks it up. */
+export async function importFont(
+  srcPath: string,
+): Promise<{ family: string; filename: string }> {
+  if (!importedFontsDir) throw new Error("importedFontsDir not initialised");
+
+  const ext = path.extname(srcPath).toLowerCase();
+  if (!IMPORT_EXT_RE.test(ext)) {
+    throw new Error(`Unsupported font format "${ext}". Use .ttf or .otf.`);
+  }
+
+  const buf = fs.readFileSync(srcPath);
+  const family = readFamilyName(buf);
+  if (!family) {
+    throw new Error("Could not read a font family name from the file.");
+  }
+
+  // Sanitise family for use as a filename.
+  const safe = family.replace(/[/\\:*?"<>|]/g, "_");
+  const destFilename = `${safe}${ext}`;
+  fs.writeFileSync(path.join(importedFontsDir, destFilename), buf);
+
+  // Invalidate the cache so the font resolves immediately.
+  familyMap = null;
+
+  return { family, filename: destFilename };
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+/** Enumerate every font previously imported into `<userData>/fonts/`. */
+export function listImportedFonts(): { family: string; filename: string }[] {
+  if (!importedFontsDir) return [];
+  const out: { family: string; filename: string }[] = [];
+  for (const file of walk(importedFontsDir)) {
+    if (!FONT_EXT_RE.test(file)) continue;
+    try {
+      const name = readFamilyName(fs.readFileSync(file));
+      if (name) out.push({ family: name, filename: path.basename(file) });
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
 function buildFamilyMap(): Map<string, string> {
   const map = new Map<string, string>();
-  const dirs = FONT_DIRS[process.platform] ?? [];
+  const dirs = [
+    ...(FONT_DIRS[process.platform] ?? []),
+    ...(importedFontsDir ? [importedFontsDir] : []),
+  ];
   for (const dir of dirs) {
     for (const file of walk(dir)) {
-      if (!/\.(ttf|otf|ttc)$/i.test(file)) continue;
+      if (!FONT_EXT_RE.test(file)) continue;
       try {
         const name = readFamilyName(fs.readFileSync(file));
         if (name) map.set(name.toLowerCase(), file);
@@ -115,12 +203,10 @@ export function readFamilyName(buf: Buffer): string | null {
   }
 }
 
-function swap16(b: Buffer): string {
-  const out = Buffer.from(b);
-  for (let i = 0; i + 1 < out.length; i += 2) {
-    const t = out[i] as number;
-    out[i] = out[i + 1] as number;
-    out[i + 1] = t;
+function swap16(buf: Buffer): string {
+  const out: string[] = [];
+  for (let i = 0; i + 1 < buf.length; i += 2) {
+    out.push(String.fromCharCode(buf.readUInt16BE(i)));
   }
-  return out.toString("utf16le").replace(/\0/g, "");
+  return out.join("");
 }

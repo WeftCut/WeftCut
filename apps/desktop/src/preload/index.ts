@@ -160,6 +160,10 @@ const api: WeftcutApi = {
   font: {
     resolve: (family: string): Promise<Uint8Array | null> =>
       ipcRenderer.invoke('font:resolve', { family }) as Promise<Uint8Array | null>,
+    import: (srcPath: string): Promise<{ family: string; filename: string }> =>
+      ipcRenderer.invoke('font:import', { srcPath }) as Promise<{ family: string; filename: string }>,
+    listImported: (): Promise<{ family: string; filename: string }[]> =>
+      ipcRenderer.invoke('font:listImported') as Promise<{ family: string; filename: string }[]>,
   },
 
   // Event subscription: main relays core events via webContents.send →

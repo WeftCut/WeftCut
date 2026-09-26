@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
+import { fontListImported } from "@/bridge/font";
 import {
   AUDIO_UNITS_ORDER,
   formatAudioTime,
@@ -944,8 +945,28 @@ function TextFields({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  // Imported fonts, listed above the built-ins. Empty on first render — the
+  // list fills asynchronously. Import itself lives in Settings.
+  const [importedFonts, setImportedFonts] = useState<string[]>([]);
+
+  const refreshImported = useCallback(async () => {
+    try {
+      const list = await fontListImported();
+      setImportedFonts(list.map((f) => f.family));
+    } catch {
+      /* best-effort: the section just shows no imported fonts */
+    }
+  }, []);
+
+  useEffect(() => { void refreshImported(); }, [refreshImported]);
+
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
+  // Ordered font option list: imported fonts first (marked with ↑), then built-in.
+  const fontOptions = [
+    ...importedFonts.map((f) => ({ value: f, label: `↑ ${f}` })),
+    ...FONT_FAMILIES.map((f) => ({ value: f, label: f })),
+  ];
   const [size, setSize] = useState(v.font_size_px);
   const [boxW, setBoxW] = useState<number | null>(v.box_w);
   const [boxH, setBoxH] = useState<number | null>(v.box_h);
@@ -1014,7 +1035,7 @@ function TextFields({
             setFamily(v);
             commit({ kind: "Text", font_family: v });
           }}
-          options={FONT_FAMILIES.map((f) => ({ value: f, label: f }))}
+          options={fontOptions}
         />
       </Field>
       <Field label={t("property_panel.font_size_px")}>

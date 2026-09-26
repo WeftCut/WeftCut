@@ -108,6 +108,9 @@ export interface AppSettings {
   /// unknown code is tolerated (i18next falls back), so main does not validate
   /// the set. Kept off disk when unset, like data_root.
   language?: string;
+  /// The default font family for a new Text layer. Unset means the bundled
+  /// DEFAULT_CAPTION_FONT_FAMILY. Captions keep their own import style.
+  default_text_font?: string;
 }
 
 /// Patch shape — every field optional. The store merges into the current
@@ -135,6 +138,8 @@ export interface AppSettingsPatch {
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
   /// to unset (→ auto-detect on next launch).
   language?: string;
+  /// New default font for Text layers. An empty string clears it back to unset.
+  default_text_font?: string;
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -173,6 +178,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   safe_area_guides_visible: false,
   data_root: undefined,
   language: undefined,
+  default_text_font: undefined,
 };
 
 export const DELTA_WINDOW_MIN_US = 1_000_000;

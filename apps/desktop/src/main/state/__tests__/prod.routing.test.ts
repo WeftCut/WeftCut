@@ -84,6 +84,18 @@ describe('production adapter routing — add_text_layer (rich)', () => {
     expect(params.font.size_px).toBe(72)
   })
 
+  it('fontFamily on the wire is the layer font', () => {
+    const a = freshActor()
+    const trackId = aRollId(a)
+    const r = a.command('add_text_layer', { trackId, tStartUs: 0, fontFamily: 'Times New Roman' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
+    const params = track.layers[0].params as { kind: 'Text'; font: { family: string; size_px: number } }
+    expect(params.font.family).toBe('Times New Roman')
+    expect(params.font.size_px).toBe(72)
+  })
+
   it('tStartUs missing (not a number) → structured InvalidArgument error, no throw', () => {
     const a = freshActor()
     // tStartUs absent → parseNum(undefined,'tStartUs') throws → rich command() catch → InvalidArgument
