@@ -19,7 +19,7 @@
 // only reports the difference.
 import type { Composition, Layer, Project, Uuid } from './model'
 import { eachLayer } from './model'
-import type { HistoryStatus } from './history'
+import type { HistoryOpRef, HistoryStatus } from './history'
 import { sortKeys } from './canonical'
 import { compositionSettings } from './resource-views'
 import type { ToolResultJson } from './mcp-commands'
@@ -240,6 +240,10 @@ export interface ResultCtx {
   before: Project
   after: Project
   history: HistoryStatus
+  /** The history cursor the call started from. */
+  cursorBefore: number
+  /** The op at an absolute stack index, or null outside the stack. */
+  entryAt: (index: number) => HistoryOpRef | null
 }
 export type ResultReader = (ctx: ResultCtx) => Record<string, unknown>
 
@@ -250,6 +254,15 @@ const obj = (v: unknown): Record<string, unknown> => (v !== null && typeof v ===
 const layerOf = ({ args, after }: ResultCtx, key = 'layer_id'): Record<string, unknown> => ({ ...(layerRecord(after, str(args[key])) ?? { layer_id: str(args[key]) }) })
 const trackOf = ({ after }: ResultCtx, id: string): Record<string, unknown> => ({ ...(trackRecord(after, id) ?? { track_id: id }) })
 const historyOf = ({ history }: ResultCtx): Record<string, unknown> => ({ cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo })
+
+/** Top-level keys whose value differs between two records, sorted. */
+function changedKeys(before: object, after: object): string[] {
+  const b = before as Record<string, unknown>
+  const a = after as Record<string, unknown>
+  return [...new Set([...Object.keys(b), ...Object.keys(a)])]
+    .filter((k) => JSON.stringify(sortKeys(b[k] ?? null)) !== JSON.stringify(sortKeys(a[k] ?? null)))
+    .sort()
+}
 
 /** Every table-exec mutator, keyed by MCP tool name. A tool absent here answers
  *  `content: []`, which `mcp.tool-table` refuses for a table-exec mutator — a
@@ -412,7 +425,10 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     const comp = c.after.compositions[id]
     return comp ? compositionSettings(comp) : { composition_id: id }
   },
-  set_project_settings: (c) => ({ settings: c.after.settings as unknown as Record<string, unknown> }),
+  // `changed` is what separates "set to what it already was" from a write that
+  // landed: both succeed (a caller stating the state it wants is not at fault),
+  // but only one of them changed anything.
+  set_project_settings: (c) => ({ settings: c.after.settings as unknown as Record<string, unknown>, changed: changedKeys(c.before.settings, c.after.settings) }),
   // ── markers ──
   update_marker: (c) => {
     const rec = markerRecord(c.after, str(c.args.marker_id)) ?? { marker_id: str(c.args.marker_id) }
@@ -424,8 +440,11 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // ── media ──
   delete_media: (c) => ({ media_id: str(c.args.media_id), deleted_layers: removedLayerIds(c.before, c.after), pruned_tracks: prunedTrackIds(c.before, c.after) }),
   // ── history ──
-  undo: (c) => historyOf(c),
-  redo: (c) => historyOf(c),
+  // The op the cursor stepped over, by name: without it an agent learns only
+  // that a number moved, and has to read the history back to find out what it
+  // just reverted.
+  undo: (c) => ({ ...historyOf(c), undone: c.entryAt(c.cursorBefore) }),
+  redo: (c) => ({ ...historyOf(c), redone: c.entryAt(c.history.cursor) }),
   jump_to: (c) => ({ index: c.args.index, ...historyOf(c) }),
   delete_checkpoint: (c) => ({ checkpoint_id: str(c.args.checkpoint_id) }),
   // ── captions / roles ──

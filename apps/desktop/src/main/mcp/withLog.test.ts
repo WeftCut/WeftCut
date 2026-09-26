@@ -180,14 +180,14 @@ describe('all six request handlers are decorated', () => {
     }
   })
 
-  it('client identity rides in details, not in the transport-level source', async () => {
+  it('the source names the client that opened the session; the full payload rides in details', async () => {
     vi.spyOn(Server.prototype, 'getClientVersion').mockReturnValue({ name: 'claude-code', version: '1.2.3' })
     const registered = spyRegistrations()
     const { entries, deps } = collector()
     buildMcpServer(fakeBackend(), { log: deps })
     await registered.get(ListToolsRequestSchema)!({ params: {} }, undefined).catch(() => {})
     expect(detailsOf(entries[0]).client_info).toEqual({ name: 'claude-code', version: '1.2.3' })
-    expect(entries[0].source).toEqual({ kind: 'Agent', client: 'mcp' })
+    expect(entries[0].source).toEqual({ kind: 'Agent', client: 'claude-code' })
   })
 
   it('a session that has not initialized omits client_info rather than writing undefined', async () => {

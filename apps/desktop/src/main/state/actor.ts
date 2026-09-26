@@ -4,6 +4,7 @@ import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpo
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
+import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
@@ -52,10 +53,6 @@ import type { TranscriptPayload } from '../../shared/captionTiming'
 import type { PositionAnimation } from '../../shared/position'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
-
-/** The actor stamped on MCP-created checkpoints; surfaces in list_checkpoints'
- *  result. */
-const MCP_ACTOR: Actor = { kind: 'Agent', client: 'mcp' }
 
 export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
@@ -152,7 +149,9 @@ export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: 
 
 export interface ActorHandle {
   snapshot(): Project
-  dispatch(channel: string, args: Record<string, unknown>): DispatchResult
+  /** `by` attributes this one call's commits and checkpoints to someone other
+   *  than the instance actor — how an MCP hybrid's writes carry its client. */
+  dispatch(channel: string, args: Record<string, unknown>, by?: Actor): DispatchResult
   command(channel: string, wireArgs: Record<string, unknown>): DispatchResult
   replaceState(next: Project): void
   subscribe(cb: (e: ChangeEvent) => void): () => void
@@ -173,7 +172,9 @@ export interface ActorHandle {
   deleteCheckpoint(id: Uuid): void
   listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
-  mcpCall(name: string, argsJson: string): McpCallResult
+  /** Everything the call records is stamped with the agent `client` names
+   *  (normalized; the fallback when absent), never the instance actor. */
+  mcpCall(name: string, argsJson: string, client?: string): McpCallResult
   /** Replace the user-layer of the motif catalog (built-ins are always present).
    *  Called by the host after motif-store-mutating operations to keep the catalog
    *  current for the content-window clamp in applyUpdateLayerParams. */
@@ -184,6 +185,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
   const idGen = opts.idGen
   const clock: Clock = opts.clock ?? (() => '<TS>')
   const actor: Actor = opts.actor ?? { kind: 'User' }
+  /** Who the call in flight records as, when that is not the instance actor.
+   *  Set only across a SYNCHRONOUS dispatch/mcpCall and restored in a finally,
+   *  so two async hybrids interleaving can never read each other's: each one's
+   *  commits happen inside its own synchronous dispatch. */
+  let callActor: Actor | null = null
+  const who = (): Actor => callActor ?? actor
+  function recordingAs<T>(by: Actor, fn: () => T): T {
+    const prev = callActor
+    callActor = by
+    try { return fn() } finally { callActor = prev }
+  }
   const history = new History(opts.initial, actor, idGen(), clock()) // consumes the Initial op_id
   const subs = new Set<(e: ChangeEvent) => void>()
   const motifCatalog: MotifCatalog = opts.motifCatalog ?? new MotifCatalog()
@@ -261,8 +273,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
     runValidate(stamped)
     const refs = typeof affected === 'function' ? affected(value) : affected
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
-    history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: stamped })
-    emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: stamped, diff_hint: diff })
+    const by = who()
+    history.record({ op_id: opId, actor: by, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: stamped })
+    emit({ op_id: opId, actor: by, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: stamped, diff_hint: diff })
     logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
     logDroppedMarkers(droppedMarkers)
     return value
@@ -277,7 +290,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         opts.emitLog({
           level: 'info',
           category: { kind: 'Project' },
-          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          source: logSource(),
           message: `Transition removed: edit broke its overlap (transition ${d.id}, from ${d.from_layer}, to ${d.to_layer})`,
           details: { kind: 'TransitionReconcileDrop', transition: d.id, from_layer: d.from_layer, to_layer: d.to_layer, reason: d.reason },
         })
@@ -297,7 +310,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         opts.emitLog({
           level: 'info',
           category: { kind: 'Project' },
-          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          source: logSource(),
           message: `Marker removed: the clip it followed is gone (marker ${d.id}${d.label ? ` "${d.label}"` : ''}, layer ${d.layer})`,
           details: { kind: 'MarkerReconcileDrop', marker: d.id, composition: d.composition, layer: d.layer, label: d.label },
         })
@@ -315,12 +328,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
         opts.emitLog({
           level: 'info',
           category: { kind: 'Project' },
-          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          source: logSource(),
           message: `Transition placement moved layer ${b.layer} to ${b.spawned ? `a new track ${b.to_track}` : `track ${b.to_track}`}: its lane was occupied after the shift`,
           details: { kind: 'TransitionPlacementBounce', layer: b.layer, from_track: b.from_track, to_track: b.to_track, spawned: b.spawned },
         })
       } catch (err) { console.warn('[actor] emitLog failed (transition bounce)', err) }
     }
+  }
+
+  function logSource(): { kind: 'User' } | { kind: 'Agent'; client: string } {
+    const by = who()
+    return by.kind === 'Agent' ? { kind: 'Agent', client: by.client } : { kind: 'User' }
   }
 
   function emit(e: ChangeEvent): void {
@@ -339,7 +357,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  the recorded history ID; undo/redo and preference changes have none. */
   function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }, historyOpId?: Uuid): void {
     const opId = idGen() // the unrecorded broadcast's own deterministic id
-    emit({ op_id: opId, ...(historyOpId ? { history_op_id: historyOpId } : {}), actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
+    emit({ op_id: opId, ...(historyOpId ? { history_op_id: historyOpId } : {}), actor: who(), timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
   }
 
   // ── affected-ref helpers. Every recorded commit names the entities it touched,
@@ -602,7 +620,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   // ── checkpoints — used by the MCP checkpoint + begin_agent_session tools.
   //    checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
   //    (entry op_id then broadcast op_id); CheckpointNotFound/HistoryLocked = 0. ──
-  function checkpoint(label: string, cpActor: Actor = actor): Uuid {
+  function checkpoint(label: string, cpActor: Actor = who()): Uuid {
     const id = idGen() // the checkpoint's own id — no commit, no broadcast
     return history.checkpoint(label, cpActor, id, clock())
   }
@@ -611,7 +629,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
     const opId = idGen() // entry op_id — minted FIRST
-    const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
+    const snap = history.restoreCheckpoint(id, opId, clock(), who())!
     broadcastUnrecorded(`Restored checkpoint ${id}`, snap, { kind: 'Coarse' }, opId) // +1 broadcast id (the SECOND id)
   }
   /** Drop a checkpoint. Absent id → CheckpointNotFound, burning ZERO ids (same
@@ -863,7 +881,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
 
   // ── string dispatch — the op-name core that command(), mcpCall() and the unit
   //    tests all route through. ──
-  function dispatch(channel: string, a: Record<string, unknown>): DispatchResult {
+  function dispatch(channel: string, a: Record<string, unknown>, by?: Actor): DispatchResult {
+    return by ? recordingAs(by, () => dispatchOp(channel, a)) : dispatchOp(channel, a)
+  }
+  function dispatchOp(channel: string, a: Record<string, unknown>): DispatchResult {
     try {
       switch (channel) {
         case 'add_layer': {
@@ -1060,10 +1081,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'redo': redo(); return { ok: true, value: null }
         case 'jump_to': jumpTo(parseNum(a.index, 'index')); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
-        // The renderer's User-actor path: `checkpoint()` defaults cpActor to this
-        // actor, `{kind:'User'}` on the production instance. The agent's
-        // `create_checkpoint` is a same-named DEDICATED tool with its own arm in
-        // mcpCall's switch, which is how it stamps MCP_ACTOR instead;
+        // The renderer's User-actor path: `checkpoint()` defaults cpActor to the
+        // recording actor, `{kind:'User'}` on the production instance. The
+        // agent's `create_checkpoint` is a same-named DEDICATED tool with its own
+        // arm in mcpCall's switch, which records as the calling agent;
         // `delete_checkpoint` is table-exec and lands here, the actor being
         // immaterial to a removal.
         case 'create_checkpoint': {
@@ -1732,7 +1753,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  function mcpCall(name: string, argsJson: string): McpCallResult {
+  function mcpCall(name: string, argsJson: string, client?: string): McpCallResult {
+    return recordingAs(mcpActor(client), () => mcpCallAsAgent(name, argsJson))
+  }
+  function mcpCallAsAgent(name: string, argsJson: string): McpCallResult {
     let a: Record<string, unknown>
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
     catch (e) { return { ok: false, error: { code: 'invalid_params', message: `invalid args for ${name}: ${String(e)}` } } }
@@ -1741,7 +1765,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // against this one is what names the siblings a move dragged, the layers a
     // ripple shifted, the cues an import added (mcp-results.ts).
     const before = current()
-    const ctx = (value: unknown): ResultCtx => ({ args: a, value, before, after: current(), history: history.status() })
+    const cursorBefore = history.status().cursor
+    const ctx = (value: unknown): ResultCtx => ({ args: a, value, before, after: current(), history: history.status(), cursorBefore, entryAt: (i) => history.entryAt(i) })
     /** A freshly placed layer: its envelope plus the grid's adjustments to the
      *  span the caller asked for. */
     const addedLayer = (id: Uuid, req: { t_start_us?: unknown; t_end_us?: unknown }): Record<string, unknown> => {
@@ -1964,7 +1989,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)
           const label = p.label as string
           if (label.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
-          return { ok: true, result: toolRecord({ checkpoint_id: checkpoint(label, MCP_ACTOR), label }) }
+          return { ok: true, result: toolRecord({ checkpoint_id: checkpoint(label), label }) }
         }
         case 'list_checkpoints': { mcpDef('list_checkpoints').parseDedicated!(a); return { ok: true, result: toolJson(listCheckpoints()) } }
         // export_captions — the caption corpus of one composition (or one of its
@@ -1995,7 +2020,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('begin_agent_session').parseDedicated!(a)
           const reason = p.reason as string
           if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
-          const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects
+          const checkpointId = checkpoint(`Pre-agent: ${reason}`) // 1 det id; slot-flip + log are non-state side effects
           return { ok: true, result: toolRecord({ checkpoint_id: checkpointId, started_at: clock() }) }
         }
         case 'set_keyframe': {

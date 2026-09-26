@@ -262,3 +262,76 @@ describe('ending the stdio side ends the app-side SESSION, not just the connecti
     await shim.server.close().catch(() => {})
   })
 })
+
+describe('the app session carries the driving client name, not the shim', () => {
+  it('a bridge opened after the client initialized is opened under its name', async () => {
+    open = await harness({ appUp: true })
+    await open.client.listTools()
+    expect(open.appServer()?.getClientVersion()?.name).toBe('test')
+  })
+
+  it('a bridge opened before the client initialized reopens under its name', async () => {
+    const apps: Server[] = []
+    const shim = createShim({
+      se: SE,
+      userDataDir: 'C:\\ud',
+      readAuth: () => AUTH,
+      makeTransport: () => {
+        const app = fakeAppServer()
+        apps.push(app)
+        const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+        void app.connect(serverT)
+        return clientT
+      },
+    })
+    // The poll loop's start-up connect: nobody has named themselves yet.
+    expect(await shim.bridge.ensureUp()).toBe('up')
+    expect(apps[0].getClientVersion()?.name).toBe('weftcut-mcp')
+    const client = new Client({ name: 'claude-code', version: '1' }, { capabilities: {} })
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+    await shim.server.connect(serverT)
+    await client.connect(clientT)
+    await settle()
+    expect(apps).toHaveLength(2)
+    expect(apps[1].getClientVersion()?.name).toBe('claude-code')
+    expect(shim.bridge.isUp()).toBe(true)
+    await client.close().catch(() => {})
+    await shim.server.close().catch(() => {})
+    shim.bridge.markDown()
+  })
+
+  it('a connect still in flight when the client initializes is reopened once it lands', async () => {
+    const apps: Server[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const shim = createShim({
+      se: SE,
+      userDataDir: 'C:\\ud',
+      readAuth: () => AUTH,
+      makeTransport: () => {
+        const app = fakeAppServer()
+        apps.push(app)
+        const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+        // The first connect's server answers only after the client has
+        // initialized — the start-up poll racing the handshake.
+        if (apps.length === 1) void gate.then(() => app.connect(serverT))
+        else void app.connect(serverT)
+        return clientT
+      },
+    })
+    const polling = shim.bridge.ensureUp()
+    const client = new Client({ name: 'claude-code', version: '1' }, { capabilities: {} })
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+    await shim.server.connect(serverT)
+    await client.connect(clientT)
+    release()
+    await polling
+    await settle()
+    expect(apps[0].getClientVersion()?.name).toBe('weftcut-mcp')
+    expect(apps.at(-1)!.getClientVersion()?.name).toBe('claude-code')
+    expect(shim.bridge.isUp()).toBe(true)
+    await client.close().catch(() => {})
+    await shim.server.close().catch(() => {})
+    shim.bridge.markDown()
+  })
+})

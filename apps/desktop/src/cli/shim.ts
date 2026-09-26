@@ -117,12 +117,17 @@ export function createShim(opts: ShimOptions): Shim {
     ...(opts.makeTransport ? { makeTransport: opts.makeTransport } : {}),
     onUp: broadcastCatalogChanged,
     onDown: broadcastCatalogChanged,
+    clientName: () => server.getClientVersion()?.name,
     onNotification: (n) => {
       // The app's change feed (notifications/weftcut/change), forwarded so a
       // shim-connected agent sees edits exactly like an HTTP-direct one.
       server.notification(n as { method: string; params?: Record<string, unknown> }).catch(() => {})
     },
   })
+
+  // The app names an agent by the session it opened; open it as the client
+  // that is actually driving, not as the shim.
+  server.oninitialized = () => { void bridge.reidentify() }
 
   /// Everything actionable rides the MESSAGE: several MCP clients (Claude
   /// Code among them) surface only `code: message` to the model and drop

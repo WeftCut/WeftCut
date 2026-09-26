@@ -1720,7 +1720,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
   { name: 'set_project_settings', exec: 'table', annotations: ANN_SET,
-    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Read current values from `project://settings`.",
+    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Returns `{ settings, changed }`; `changed` names the fields that moved (empty: all already set). Read current values from `project://settings`.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
       description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
@@ -1775,7 +1775,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history).",
+    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Returns the history status plus `undone` — the op it reverted, a `project://history` row.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table', annotations: ANN_DESTRUCTIVE,
@@ -1783,7 +1783,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
     parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
   { name: 'redo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail.",
+    description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail. Returns the history status plus `redone` — the op it reapplied, a `project://history` row.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
   { name: 'delete_checkpoint', exec: 'table', annotations: ANN_DESTRUCTIVE,

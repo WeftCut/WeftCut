@@ -26,6 +26,22 @@ export interface BridgeDeps {
   /// Server-initiated notifications from the app (the weftcut/change feed),
   /// forwarded verbatim to the stdio client.
   onNotification: (n: { method: string; params?: unknown }) => void
+  /// The downstream client's name (what the agent's client declared to the
+  /// shim), once it has initialized. The app attributes every edit to the name
+  /// its session was opened under, so the shim opens it under this one rather
+  /// than its own. Absent → the shim's own name.
+  clientName?: () => string | undefined
+}
+
+/// What the shim calls itself upstream until the downstream client has named
+/// itself.
+const SHIM_CLIENT_NAME = 'weftcut-mcp'
+
+/// Close a client AND its app-side session (the DELETE), best-effort.
+async function endSession(c: Client): Promise<void> {
+  const t = c.transport as (Transport & { terminateSession?: () => Promise<void> }) | undefined
+  if (t?.terminateSession) await t.terminateSession().catch(() => {})
+  await c.close().catch(() => {})
 }
 
 function httpTransport(auth: McpAuth): Transport {
@@ -48,6 +64,8 @@ function serverAnswered(e: unknown): boolean {
 export class Bridge {
   private client: Client | null = null
   private connecting: Promise<EnsureResult> | null = null
+  /// The name the live app session was opened under.
+  private openedAs: string | null = null
 
   constructor(private readonly deps: BridgeDeps) {}
 
@@ -75,7 +93,8 @@ export class Bridge {
   private async connectOnce(): Promise<EnsureResult> {
     const auth = this.deps.readAuth()
     if (!auth) return 'no-auth'
-    const client = new Client({ name: 'weftcut-mcp', version: '1.0' }, { capabilities: {} })
+    const name = this.deps.clientName?.() ?? SHIM_CLIENT_NAME
+    const client = new Client({ name, version: '1.0' }, { capabilities: {} })
     client.fallbackNotificationHandler = async (n) => {
       this.deps.onNotification(n as { method: string; params?: unknown })
     }
@@ -88,8 +107,17 @@ export class Bridge {
       await client.close().catch(() => {})
       return 'down'
     }
+    // The client named itself while this connect was in flight: reopen under
+    // that name before anyone is handed this session. Done inside the connect,
+    // so every caller awaiting `connecting` gets the final session.
+    const now = this.deps.clientName?.()
+    if (now !== undefined && now !== name) {
+      await endSession(client)
+      return this.connectOnce()
+    }
     client.onclose = () => this.markDown()
     this.client = client
+    this.openedAs = name
     this.deps.onUp()
     return 'up'
   }
@@ -104,10 +132,24 @@ export class Bridge {
     const c = this.client
     if (!c) return
     this.client = null
-    const t = c.transport as (Transport & { terminateSession?: () => Promise<void> }) | undefined
-    const terminated = t?.terminateSession ? t.terminateSession().catch(() => {}) : Promise.resolve()
-    void terminated.then(() => c.close()).catch(() => {})
+    void endSession(c)
     this.deps.onDown()
+  }
+
+  /// Reopen the app session under the downstream client's name when it was
+  /// opened before that name was known (the poll loop connects at start-up,
+  /// ahead of the client's initialize). Called once the client initializes,
+  /// before it can have taken a work session or a lock the reopen would drop.
+  ///
+  /// The swap is synchronous up to the new connect, so a request arriving after
+  /// this call finds `connecting` set and waits for the renamed session. A
+  /// connect already in flight renames itself (`connectOnce`).
+  reidentify(): Promise<void> {
+    if (this.connecting) return this.connecting.then(() => {})
+    const want = this.deps.clientName?.()
+    if (!this.client || !want || want === this.openedAs) return Promise.resolve()
+    this.markDown()
+    return this.ensureUp().then(() => {})
   }
 
   /// Cheap liveness check for the poll loop while up.

@@ -27,6 +27,7 @@ import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type ToolAnnotations } from '../state/mcp-commands.js'
 import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
+import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
@@ -261,13 +262,14 @@ export async function handleCallTool(
   getPreferredEngine: () => string | null = () => null,
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
+  client?: string,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
   try {
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor)
+    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor, client)
   } catch (e) {
     if (e instanceof UnknownToolError) throw e
     // The motif store's failures are the caller's — an unknown draft, an id
@@ -287,6 +289,7 @@ async function dispatchTool(
   getPreferredEngine: () => string | null,
   getVlm: VlmProvider,
   peaksPathFor: PeaksPathProvider,
+  client: string | undefined,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
@@ -347,7 +350,7 @@ async function dispatchTool(
       return { content: [{ type: 'text', text: first?.text ?? '' }] } as unknown as ServerResult
     }
     if (route === 'ts') {
-      const r = tsHost.mcpCall(name, JSON.stringify(args))
+      const r = tsHost.mcpCall(name, JSON.stringify(args), client)
       if (!r.ok) {
         if (r.error.code === 'not_found') throw new UnknownToolError(name)
         return toolErrorResult(r.error)
@@ -360,8 +363,13 @@ async function dispatchTool(
       // Native-compute → TS-write. `runHybrid` answers a string (the renderer's
       // IPC contract); the agent gets the committed record read back from the
       // snapshots around the call (`hybridResult.ts`).
+      // Every commit the hybrid makes records as this call's agent: `by` rides
+      // each synchronous dispatch, so a second hybrid in flight cannot cross it.
+      const by = mcpActor(client)
+      const hybridActor = tsHost.hybridDeps.actor
+      const deps = { ...tsHost.hybridDeps, actor: { ...hybridActor, dispatch: (c: string, a: Record<string, unknown>) => hybridActor.dispatch(c, a, by) } }
       const before = tsHost.actor.snapshot()
-      const result = await runHybrid(name, args, tsHost.hybridDeps)
+      const result = await runHybrid(name, args, deps)
       return shapeHybridResult(name, args, result, before, tsHost.actor.snapshot()) as unknown as ServerResult
     }
     if (route === 'motif') {
@@ -678,7 +686,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // the log row, the activity service's read/write split and the dispatcher all
   // read the same single name (`toolAliases.ts`).
   const callTool = track('tools/call', async (req: CallToolRequest) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor),
+    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, clientInfo()?.name),
   log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(withCanonicalToolName(req), extra))

@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { routeMcpTool } from './mutationTools.js'
 import { isToolError, toolErrorCode, toolErrorText } from './toolResult.js'
+import { mcpActor } from '../state/mcp-actor.js'
 
 /** The six request methods `buildMcpServer` registers handlers for. */
 export type McpLoggedMethod =
@@ -90,10 +91,6 @@ const SLOW_OP_MS = 250
  *  `write_motif_draft`'s `html` body, `apply_subtitles`' subtitle text — would
  *  otherwise take `tool` and every other key down with it. */
 const ELIDE_MAX_BYTES = 512
-
-/** Every row this producer writes arrived over the MCP transport; `'mcp'` is
- *  that fact, not an identity. The real client goes in `details.client_info`. */
-const MCP_SOURCE: McpLogEntryInput['source'] = { kind: 'Agent', client: 'mcp' }
 
 /** Replace every string over `maxBytes` with an `{ omitted, bytes, sha256_8 }`
  *  stub, recursing through objects and arrays. Returns a fresh value — the
@@ -210,6 +207,10 @@ export function withLog<Req extends RequestLike, Res>(
     const toolMessage = messageFor(method, tool, params)
     const startedAt = Date.now()
 
+    // The agent chip names the client that opened this session; the fallback
+    // only before `initialize`. The full payload rides `details.client_info`.
+    const source = (): McpLogEntryInput['source'] => mcpActor(clientInfo()?.name) as McpLogEntryInput['source']
+
     /** The change this call committed, once the window has closed over it. */
     let summary: McpRowSummary | null = null
 
@@ -280,7 +281,7 @@ export function withLog<Req extends RequestLike, Res>(
       safeEmit(deps, {
         level: levelFor(method, tool, false, true),
         category: { kind: 'Mcp' },
-        source: MCP_SOURCE,
+        source: source(),
         ...rowText(),
         op_id: opId,
         op_state: { state: 'Started' },
@@ -304,7 +305,7 @@ export function withLog<Req extends RequestLike, Res>(
       safeEmit(deps, {
         level: levelFor(method, tool, failed, opId !== null),
         category: { kind: 'Mcp' },
-        source: MCP_SOURCE,
+        source: source(),
         ...text,
         ...(groupId ? { op_id: groupId, op_state: { state: failed ? 'Err' as const : 'Ok' as const } } : {}),
         details: details(failed ? errorDetail(err) : undefined),

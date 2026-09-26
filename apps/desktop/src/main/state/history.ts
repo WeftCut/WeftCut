@@ -63,6 +63,8 @@ export interface HistoryView {
   evicted: number
   lock_reason?: string
 }
+/** One recorded op, named without its snapshot — a `HistoryView` row. */
+export type HistoryOpRef = HistoryEntrySummary
 export interface HistoryStatus {
   cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string
   /** storedSnapshotsHoldLayer() — the fps rate lock's condition, carried here
@@ -132,6 +134,18 @@ export class History {
     this.snapshots.push(entry)
     while (this.snapshots.length > this.cap) { this.snapshots.shift(); this.evictedCount += 1 } // evict front
     this.cursor = this.snapshots.length - 1
+  }
+
+  /** The op at absolute stack index `index` — who made it and what it was —
+   *  or null outside `[0, len)`. What undo and redo name when they answer. */
+  entryAt(index: number): HistoryOpRef | null {
+    const e = this.snapshots[index]
+    if (!e) return null
+    return {
+      op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, label_key: e.label_key, ...(e.label_args ? { label_args: e.label_args } : {}),
+      affected: e.affected,
+      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[index - 1]?.snapshot ?? null, e.affected, createLayerFlattener()),
+    }
   }
 
   undo(): Project | null {

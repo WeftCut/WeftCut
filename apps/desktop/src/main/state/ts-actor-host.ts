@@ -11,6 +11,7 @@ import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
 import { describeGridRepairs, type GridRepair } from './serialize'
 import { AgentActivityService } from '../agent/activity'
+import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -111,7 +112,7 @@ export interface TsActorHost {
    *  LogBus pin-row for restore_checkpoint / create_checkpoint / begin_agent_session on success.
    *  The emit is best-effort (try/catch) and never blocks or fails the call.
    *  server.ts calls this instead of actor.mcpCall directly for the 'ts' route. */
-  mcpCall: (name: string, argsJson: string) => import('./mcp-commands.js').McpCallResult
+  mcpCall: (name: string, argsJson: string, client?: string) => import('./mcp-commands.js').McpCallResult
   /** Hybrid deps (native-compute → TS-write). Exposed so the MCP host's hybrid
    *  branch can `runHybrid(name, args, tsHost.hybridDeps)` (server.ts). */
   hybridDeps: HybridDeps
@@ -358,25 +359,25 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   /** See TsActorHost.mcpCall. */
-  function mcpCall(name: string, argsJson: string): import('./mcp-commands.js').McpCallResult {
-    const result = actor.mcpCall(name, argsJson)
+  function mcpCall(name: string, argsJson: string, client?: string): import('./mcp-commands.js').McpCallResult {
+    const result = actor.mcpCall(name, argsJson, client)
     if (!result.ok) return result
     try {
       const a = JSON.parse(argsJson) as Record<string, unknown>
       if (name === 'restore_checkpoint') {
         const cpId = (a.checkpoint_id as string | undefined) ?? ''
         const label = actor.listCheckpoints().find((c) => c.id === cpId)?.label ?? null
-        emitRestoreLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+        emitRestoreLog(cpId, label, mcpActor(client))
       } else if (name === 'create_checkpoint') {
         const label = ((a.label as string | undefined) ?? '').trim()
         const cpId = String((result.result.structuredContent as { checkpoint_id?: unknown } | undefined)?.checkpoint_id ?? '')
-        emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+        emitCheckpointLog(cpId, label, mcpActor(client))
       } else if (name === 'begin_agent_session') {
         const reason = ((a.reason as string | undefined) ?? '').trim()
         const label = `Pre-agent: ${reason}`
         const payload = JSON.parse(result.result.content[0]?.text ?? '{}') as { checkpoint_id?: string }
         const cpId = payload.checkpoint_id ?? ''
-        emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+        emitCheckpointLog(cpId, label, mcpActor(client))
       }
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (mcpCall post-hook)', err) }
     return result
