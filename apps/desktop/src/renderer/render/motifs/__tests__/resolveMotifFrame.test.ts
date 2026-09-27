@@ -12,7 +12,7 @@ describe("resolveMotifFrame → Motif CDP", () => {
   it("on a non-baked key, produces the frame via rasterMotifFrame with id, manifest size + settle_rafs", async () => {
     expect(sharedBakedKeyIndex.has("k-not-baked")).toBe(false);
     const bmp = await resolveMotifFrame(motif, "k-not-baked", 7, 2.5, 5, { seconds: 5 });
-    expect(rasterMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480, 2, undefined);
+    expect(rasterMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480, 2, undefined, undefined);
     expect(bmp).toEqual({ id: "cdp" });
   });
 });

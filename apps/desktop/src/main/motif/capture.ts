@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
+import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors.js'
 import type { UserMotifStore } from './store.js'
 
 interface CaptureArgs {
@@ -44,6 +45,17 @@ let host: Host | null = null
 // Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the one
 // host — single-threaded but await-interleaved.
 let chain: Promise<unknown> = Promise.resolve()
+
+/// Queued (not yet running) keyed captures, latest-wins per key. The on-demand
+/// sprite path keys by layer id, so during playback each tick's fresh frame
+/// replaces the still-queued previous one: its waiter rejects IMMEDIATELY with
+/// CAPTURE_SUPERSEDED_MESSAGE and its chain slot no-ops when reached — the one
+/// serial chain never spends capture-seconds executing a frame nobody wants
+/// anymore. Without this, real-time playback enqueues ~30 requests/s per
+/// visible motif against a ~1 s/capture chain, and the unbounded backlog
+/// starves the prewarmer AND the L2 baker queued behind it. Keyless requests
+/// (prewarmer, baker, MCP) are never superseded: their frames stay wanted.
+const queuedKeys = new Map<string, { reject: (e: Error) => void }>()
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -138,7 +150,18 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     `(typeof window.__motifRender==='function' && document.readyState==='complete'` +
     ` && location.hostname===${JSON.stringify(motifId)})`
   for (let i = 0; i < READY_ATTEMPTS; i++) {
-    const r = await h.send('Runtime.evaluate', { expression: probe, returnByValue: true })
+    // TIMED, unlike a plain send: a wedged offscreen renderer never settles a
+    // sendCommand, and an untimed probe would hang the one serial capture chain
+    // for the rest of the process's life — every motif in every project frozen,
+    // no error anywhere. The timeout converts the wedge into an error, which
+    // doCapture's catch answers with teardownHost → the next capture rebuilds.
+    // A wedged page does not unwedge between polls, so the throw also skips the
+    // remaining attempts (they exist for a LOADING page, which fails fast).
+    const r = await withTimeout(
+      h.send('Runtime.evaluate', { expression: probe, returnByValue: true }),
+      CAPTURE_TIMEOUT_MS,
+      'waitReady probe',
+    )
     if (r?.result?.value === true) { h.readyFor = motifId; return }
     await delay(READY_POLL_MS)
   }
@@ -182,9 +205,31 @@ async function doCapture(a: CaptureArgs): Promise<string> {
   }
 }
 
-export function captureMotifFrameB64(a: CaptureArgs): Promise<string> {
-  const run = chain.then(() => doCapture(a))
-  // Keep the chain alive even if this capture rejects.
-  chain = run.then(() => undefined, () => undefined)
-  return run
+export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Promise<string> {
+  if (!coalesceKey) {
+    const run = chain.then(() => doCapture(a))
+    // Keep the chain alive even if this capture rejects.
+    chain = run.then(() => undefined, () => undefined)
+    return run
+  }
+  // Latest-wins per key: wake the previous queued waiter right away — its slot
+  // on the chain then does no work when reached (checked below).
+  queuedKeys.get(coalesceKey)?.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
+  const ticket: { reject: (e: Error) => void } = { reject: () => {} }
+  const out = new Promise<string>((resolve, reject) => {
+    ticket.reject = reject
+    const run = chain.then(() => {
+      // Replaced by a newer same-key request while queued (the map moved on):
+      // `out` is already rejected by the supersede above — occupy the slot
+      // cheaply. Otherwise this request is the live one: past the replaceable
+      // window, so leave the map before running.
+      if (queuedKeys.get(coalesceKey) !== ticket) return ''
+      queuedKeys.delete(coalesceKey)
+      return doCapture(a)
+    })
+    chain = run.then(() => undefined, () => undefined)
+    run.then(resolve, reject)
+  })
+  queuedKeys.set(coalesceKey, ticket)
+  return out
 }

@@ -36,6 +36,7 @@ export async function resolveMotifFrame(
   tSec: number,
   durationSec: number,
   canonicalProps: Record<string, unknown>,
+  coalesceKey?: string,
 ): Promise<ImageBitmap> {
   if (sharedBakedKeyIndex.has(cacheKey)) {
     try {
@@ -50,5 +51,5 @@ export async function resolveMotifFrame(
   // (`motifCtxDurationS`, shared/motifs/catalog.ts) from props. Kept in the
   // signature for caller parity across the read paths.
   void durationSec;
-  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash);
+  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, coalesceKey);
 }

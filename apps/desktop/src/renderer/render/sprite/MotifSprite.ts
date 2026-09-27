@@ -22,6 +22,7 @@ import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
 import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { isCaptureSuperseded } from "../motifs/host";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
@@ -260,6 +261,10 @@ export class MotifSprite implements StageableSprite {
     try {
       const bitmap = await resolveMotifFrame(
            this.motif, cacheKey, frame, tSec, durationSec, canonicalProps,
+           // Latest-wins on the serial capture chain: a newer frame's request
+           // from THIS sprite replaces a still-queued older one, so playback
+           // can't build a stale-request backlog ahead of the prewarmer/baker.
+           `sprite:${this.layerId}`,
          );
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
       // sprite already cached this (cacheKey, frame), it keeps that bitmap and
@@ -276,6 +281,13 @@ export class MotifSprite implements StageableSprite {
       this.onLoaded?.();
     } catch (e) {
       if (this.disposed || this.target !== target) return;
+      // Superseded by this sprite's own newer request (latest-wins queueing):
+      // not a failure — no backoff, no error log. The frame stays retrievable
+      // if the playhead returns to it.
+      if (isCaptureSuperseded(e)) {
+        if (target.state !== "bound") target.state = "idle";
+        return;
+      }
       // Callback errors must not turn an already-bound frame into a failed
       // capture. Otherwise a repaint callback could cause repeated rebinds.
       if (target.state !== "bound") {

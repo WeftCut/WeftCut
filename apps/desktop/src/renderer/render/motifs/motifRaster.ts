@@ -12,13 +12,14 @@ export async function rasterMotifFrame(
   height: number,
   settleRafs?: number,
   contentHash?: string,
+  coalesceKey?: string,
 ): Promise<ImageBitmap> {
   if (typeof window !== "undefined") {
     const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } })
       .__weftcutMotifPerf;
     if (perf) perf.renders++;
   }
-  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash);
+  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey);
 }
 
 /// Capture one ARBITRARY content frame of a Motif directly via CDP, at the

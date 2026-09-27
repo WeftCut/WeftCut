@@ -1,4 +1,5 @@
 import { invoke } from "@/bridge/ipc";
+import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors";
 
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
@@ -25,6 +26,7 @@ export async function captureMotifFramePngBlob(
   height: number,
   settleRafs?: number,
   contentHash?: string,
+  coalesceKey?: string,
 ): Promise<Blob> {
   const b64: string = await invoke("motif_capture_frame", {
     motifId,
@@ -34,6 +36,9 @@ export async function captureMotifFramePngBlob(
     height,
     settleRafs: settleRafs ?? null,
     contentHash: contentHash ?? "",
+    // Latest-wins queueing on the serial capture chain (main/motif/capture.ts):
+    // a newer same-key request replaces a still-queued older one.
+    coalesceKey: coalesceKey ?? null,
   });
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new Blob([bytes], { type: "image/png" });
@@ -61,7 +66,15 @@ export async function captureMotifFrame(
   height: number,
   settleRafs?: number,
   contentHash?: string,
+  coalesceKey?: string,
 ): Promise<ImageBitmap> {
-  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash);
+  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey);
   return createImageBitmap(blob);
+}
+
+/// True when a capture rejection is the chain's latest-wins replacement
+/// (CAPTURE_SUPERSEDED_MESSAGE), i.e. NOT a capture failure — callers must not
+/// count it against retry budgets or log it as an error.
+export function isCaptureSuperseded(e: unknown): boolean {
+  return String(e).includes(CAPTURE_SUPERSEDED_MESSAGE);
 }
