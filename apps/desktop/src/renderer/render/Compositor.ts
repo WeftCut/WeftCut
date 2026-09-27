@@ -39,6 +39,8 @@ import { MotifBaker, type BakeContentSpec } from "./motifs/MotifBaker";
 import { encodeBitmapToPng } from "./motifs/pngEncode";
 import { onPrebakeRequest } from "./motifs/prebakeBus";
 import { bakeMotifFrame } from "./motifs/motifRaster";
+import { collectLiveRasterKeys } from "./motifs/liveRasterKeys";
+import { syncUserMotifsFromBackend } from "./motifs/syncCatalog";
 import {
   setLayerBakeStatuses,
   motifWarmPhase,
@@ -1253,24 +1255,23 @@ export class Compositor {
   /// (so the resolver's disk-first read fires only for keys that actually have
   /// PNGs) and reclaim disk for hash dirs no live key references anymore.
   /// Fire-and-forget; any fs error is swallowed so it can never block load.
+  ///
+  /// Safety rules for the GC half (see liveRasterKeys.ts for the why):
+  /// 1. Re-pull the user-Motif catalog first — project open can win the race
+  ///    against the boot-time catalog sync, and GC'ing against a stale catalog
+  ///    deletes live frames.
+  /// 2. If ANY motif layer is unresolvable afterwards, skip the GC entirely:
+  ///    "can't resolve" is not "orphaned".
   private async hydrateBakedIndexAndGc(): Promise<void> {
     if (!this.projectSummary) return;
-    const activeKeys: string[] = [];
-    // The cacheKey is window/time-independent (it folds props, dims, fps and
-    // content-duration, not the playhead), so the time handed in is
-    // irrelevant here: only `desc.cacheKey` is read. Every composition's
-    // motifs count, not just the drawn one's — a key is live while any
-    // timeline in the project holds it.
-    for (const compId of Object.keys(this.projectSummary.compositions)) {
-      forEachLayer(this.projectSummary, compId, ({ layer }) => {
-        if (layer.params.kind !== "Motif") return;
-        const motif = getMotif(layer.params.motif_id);
-        if (!motif) return;
-        const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(layer.params, 0, durationUs, this.fpsNum, this.fpsDen, motif);
-        if (desc) activeKeys.push(desc.cacheKey);
-      });
-    }
+    // Preview-realm only: the export Worker has no window/IPC bridge (the
+    // sync would warn-fail) and no L2 to GC (rasterRootDir is null there).
+    if (this.baker) await syncUserMotifsFromBackend();
+    const { activeKeys, unresolved } = collectLiveRasterKeys(
+      this.projectSummary,
+      this.fpsNum,
+      this.fpsDen,
+    );
     sharedBakedKeyIndex.setLiveCandidates(activeKeys);
     try {
       const hashes = await sharedMotifFrameCache.listBakedHashes();
@@ -1278,6 +1279,15 @@ export class Compositor {
       // The index now reflects on-disk frames; recompute so last-session-baked
       // layers (no live baker status) surface as "ready".
       this.recomputeBakeStatuses();
+      if (unresolved.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[weftcut/motifs] skipping raster GC: ${unresolved.length} motif id(s) unresolvable ` +
+            `(${unresolved.slice(0, 5).join(", ")}${unresolved.length > 5 ? ", …" : ""}) — ` +
+            `their on-disk frames are kept`,
+        );
+        return;
+      }
       await sharedMotifFrameCache.gcUnreferenced(activeKeys);
     } catch (e) {
       console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
