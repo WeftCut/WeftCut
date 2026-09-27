@@ -265,6 +265,9 @@ export class MotifSprite implements StageableSprite {
            // from THIS sprite replaces a still-queued older one, so playback
            // can't build a stale-request backlog ahead of the prewarmer/baker.
            `sprite:${this.layerId}`,
+           // The rate tSec was derived from — the capture's meta.fps must
+           // agree with it (30 fps fallback would render wrong at other rates).
+           this.fpsNum, this.fpsDen,
          );
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
       // sprite already cached this (cacheKey, frame), it keeps that bitmap and

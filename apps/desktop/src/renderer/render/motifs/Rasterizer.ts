@@ -2,8 +2,9 @@
 // src/shared/motifs/catalog.ts; this file is the adapter over it.
 //
 // Name is historical: only the prop canonicalizer lives here. Importers:
-// `exportBake.ts` (and the canonicalizer twin-checks in catalog /
-// motifFrameDescriptor tests).
+// the canonicalizer twin-checks in the catalog / motifFrameDescriptor tests.
+// (ExportBake no longer uses it — export canonicalizes through
+// `motifFrameDescriptor`'s lenient path, matching preview.)
 
 import type { MotifManifest } from "./catalog";
 import { canonicalizeProps as _sharedStrict } from "../../../shared/motifs/catalog";

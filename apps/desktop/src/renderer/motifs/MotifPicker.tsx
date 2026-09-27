@@ -254,7 +254,7 @@ export function MotifPicker({
                     }
                     onClick={() => setSelectedId(tpl.id)}
                   >
-                    <MotifCardThumbnail motif={tpl} />
+                    <MotifCardThumbnail motif={tpl} fpsNum={fpsNum} fpsDen={fpsDen} />
                     <span className="motif-card-title">
                       <span className="motif-card-name">{tpl.name}</span>
                       <span className={`motif-card-status status-${tpl.status ?? "builtin"}`}>
@@ -419,6 +419,8 @@ function MotifForm({
         maxWidth={480}
         large
         canvas={[compWidth, compHeight]}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
       />
 
       <h3>{t("motif_picker.props_heading")}</h3>
@@ -513,6 +515,8 @@ function MotifPreview({
   maxWidth,
   large,
   canvas,
+  fpsNum,
+  fpsDen,
 }: {
   motif: MotifSummary;
   props: Record<string, unknown>;
@@ -523,6 +527,12 @@ function MotifPreview({
   /// placement — top-left at (0,0), natural pixels relative to the canvas —
   /// instead of being contain-zoomed to fill the box.
   canvas?: [number, number];
+  /// Composition fps — the capture's meta.fps must name the rate the still's
+  /// tSec is authored against (a Motif reading it renders wrong at non-30 fps).
+  /// Explicit `| undefined`: callers thread an optional pair through
+  /// (`exactOptionalPropertyTypes`).
+  fpsNum?: number | undefined;
+  fpsDen?: number | undefined;
 }) {
   const [w, h] = motif.size;
   const tSec = posterTSec(motif);
@@ -539,7 +549,7 @@ function MotifPreview({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    captureMotifFramePngBlob(motif.id, tSec, props, w, h, undefined, motif.content_hash)
+    captureMotifFramePngBlob(motif.id, tSec, props, w, h, undefined, motif.content_hash, undefined, fpsNum, fpsDen)
       .then((blob) => {
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
@@ -557,7 +567,7 @@ function MotifPreview({
     // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
     // `content_hash` is in the deps so a same-id draft edit (new content, same id)
     // re-captures — the host reloads off the `?v=` cache-buster threaded above.
-  }, [motif.id, motif.content_hash, tSec, props, w, h]);
+  }, [motif.id, motif.content_hash, tSec, props, w, h, fpsNum, fpsDen]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -623,8 +633,16 @@ function MotifPreview({
 
 /// Card-grid thumbnail. Renders the same still preview at default props that
 /// the form's large preview uses, so card and form stay visually consistent.
-function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
+function MotifCardThumbnail({
+  motif,
+  fpsNum,
+  fpsDen,
+}: {
+  motif: MotifSummary;
+  fpsNum?: number | undefined;
+  fpsDen?: number | undefined;
+}) {
   const defaults = useMemo(() => defaultPropsFor(motif), [motif]);
-  return <MotifPreview motif={motif} props={defaults} maxWidth={240} />;
+  return <MotifPreview motif={motif} props={defaults} maxWidth={240} fpsNum={fpsNum} fpsDen={fpsDen} />;
 }
 

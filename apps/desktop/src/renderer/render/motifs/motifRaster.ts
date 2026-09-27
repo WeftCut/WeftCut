@@ -13,19 +13,23 @@ export async function rasterMotifFrame(
   settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
+  fpsNum?: number,
+  fpsDen?: number,
 ): Promise<ImageBitmap> {
   if (typeof window !== "undefined") {
     const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } })
       .__weftcutMotifPerf;
     if (perf) perf.renders++;
   }
-  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey);
+  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
 }
 
 /// Capture one ARBITRARY content frame of a Motif directly via CDP, at the
 /// motif's manifest size. The baker is the sole L2 writer and already gates on
 /// `isOnDisk`, so it must NOT read disk-first (that's `resolveMotifFrame`'s
-/// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`.
+/// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`;
+/// the fps pair is also forwarded so the capture's `meta.fps` names the same
+/// rate the frame grid was computed on.
 export function bakeMotifFrame(
   motif: Motif,
   frame: number,
@@ -34,5 +38,5 @@ export function bakeMotifFrame(
   canonicalProps: Record<string, unknown>,
 ): Promise<ImageBitmap> {
   const [w, h] = motif.manifest.size;
-  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash);
+  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, undefined, fpsNum, fpsDen);
 }

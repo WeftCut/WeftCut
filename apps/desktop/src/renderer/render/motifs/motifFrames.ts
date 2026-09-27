@@ -51,6 +51,33 @@ export function motifContentFrame(
   return { frame, contentDurationFrames };
 }
 
+/// Reconstruct the `tInLayerUs` the compositor derives for the layer-local
+/// frame slot `layerLocalFrame` of a layer starting at `tStartUs`. A
+/// composition frame at index `layerStartFrame + layerLocalFrame` arrives at
+/// the compositor as `tInLayerUs = snapFrameFloor(compFrameUs) - tStartUs`;
+/// this rebuilds that same value from the frame index so a caller that plans
+/// per-frame (the export bake) selects content frames IDENTICAL to the live
+/// preview, including where the fractional parts of `srcInUs` and `tInLayerUs`
+/// would make floor(a) + floor(b) ≠ floor(a+b) inside `motifContentFrame`.
+/// Exported for the export bake + unit testing.
+export function tInLayerUsForLayerLocalFrame(
+  layerLocalFrame: number,
+  tStartUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  // Reconstruct the absolute comp-frame index for this layer-local slot.
+  const layerStartFrame = frameIndexInLayer(tStartUs, fpsNum, fpsDen);
+  const absFrame = layerStartFrame + layerLocalFrame;
+  // Reconstruct the comp-grid µs for that absolute frame — same as the
+  // compositor's `snapFrameFloor(playheadUs)` for a playhead sitting exactly
+  // on a frame boundary. absFrame is always an integer, so
+  //   Math.round(absFrame * US_PER_SEC * fpsDen / fpsNum)
+  // is the exact half-up grid value (matches snapFrameFloor on-grid).
+  const compFrameUs = Math.round((absFrame * US_PER_SEC * fpsDen) / fpsNum);
+  return compFrameUs - tStartUs;
+}
+
 export interface MotifFrameCacheKeyInput {
   motifId: string;
   version: number;

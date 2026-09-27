@@ -1,5 +1,5 @@
-// Unit tests for the export Motif bake. The PURE half (`motifLayersToBake`,
-// `bakeContentFrameFor`) is fully Node-testable. The bake LOOP
+// Unit tests for the export Motif bake. The PURE half (`motifLayersToBake`)
+// is fully Node-testable. The bake LOOP
 // (`exportBakeMotifs`) is covered here too by mocking its CDP producer
 // (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
 // the real-Chromium/Electron e2e (`e2e/electron/motif-export.spec.ts`).
@@ -38,13 +38,15 @@ vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
 
 import type { AnimTrack, LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { bakeContentFrameFor, motifLayersToBake, exportBakeMotifs } from "./exportBake";
+import { motifLayersToBake, exportBakeMotifs } from "./exportBake";
 import {
   previewRenderTargetId,
   setPreviewRenderTarget,
 } from "../state/compositionAnchorStore";
 import { useProjectStore } from "../state/projectStore";
-import { motifContentFrame, motifDurationFrames } from "./motifs/motifFrames";
+import { motifContentFrame, motifDurationFrames, tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
+import { getMotif, type Motif } from "./motifs/catalog";
+import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 
@@ -329,11 +331,13 @@ describe("motifLayersToBake", () => {
 // Export bake / preview PARITY tests
 //
 // The core invariant: for every layer-local frame `f` that the export Worker
-// will request, `bakeContentFrameFor(f, ...)` must return the SAME content
-// frame as the live preview's `motifContentFrame(tInLayerUs, ...)`. The
-// compositor derives `tInLayerUs = snapFrameFloor(compFrameUs) - t_start_us`;
-// this helper reconstructs that exactly so that floor(a+b) ≠ floor(a)+floor(b)
-// divergences at /1001 fps boundaries are eliminated.
+// will request, the bake loop's selection — `motifFrameDescriptor` fed the
+// reconstructed `tInLayerUsForLayerLocalFrame(f, tStartUs, …)` — must return
+// the SAME content frame as the live preview's `motifContentFrame(tInLayerUs,
+// …)`. The compositor derives `tInLayerUs = snapFrameFloor(compFrameUs) -
+// t_start_us`; the reconstruction mirrors it exactly so that
+// floor(a+b) ≠ floor(a)+floor(b) divergences at /1001 fps boundaries are
+// eliminated.
 // ---------------------------------------------------------------------------
 
 const US = 1_000_000;
@@ -353,98 +357,205 @@ function previewContentFrameAt(
   return motifContentFrame(tInLayerUs, srcInUs, contentDurUs, n, d).frame;
 }
 
-describe("export bake matches preview content frame (windowed motif)", () => {
-  it("agrees for every layer-local frame at 29.97fps with src_in>0 and t_start>0", () => {
+const countdownMotif = getMotif(COUNTDOWN)!;
+
+/// A `content_duration_s` holdable: plays its in-animation from content frame
+/// 0, then clamps/holds the tail. Never windows (src_in is ignored).
+const holdableMotif: Motif = {
+  manifest: {
+    id: "holdable",
+    name: "Holdable",
+    version: 1,
+    size: [1280, 320],
+    default_duration_s: 5,
+    content_duration_s: 0.8,
+    props_schema: {},
+  },
+  hasParamsUi: false,
+};
+
+/// A wholly uncapped motif: animates over the layer width, never windows.
+const uncappedMotif: Motif = {
+  manifest: {
+    id: "uncapped",
+    name: "Uncapped",
+    version: 1,
+    size: [640, 360],
+    default_duration_s: 5,
+    props_schema: {},
+  },
+  hasParamsUi: false,
+};
+
+/// Export's content-frame selection for layer-local slot `f` — the same
+/// tInLayerUs reconstruction + `motifFrameDescriptor` call the bake loop makes.
+function exportContentFrameAt(
+  f: number,
+  tStartUs: number,
+  view: { props: Record<string, unknown>; src_in_us: number },
+  layerWidthUs: number,
+  n: number,
+  d: number,
+  motif: Motif,
+): number {
+  return motifFrameDescriptor(
+    view,
+    tInLayerUsForLayerLocalFrame(f, tStartUs, n, d),
+    layerWidthUs,
+    n,
+    d,
+    motif,
+  )!.contentFrame;
+}
+
+/// Assert export and preview select the same content frame for every
+/// layer-local frame of a layer. `expectedSrcInUs`/`expectedContentDurUs` are
+/// what the descriptor must resolve from the motif + view — asserted up front
+/// so a wiring mistake fails loudly instead of comparing two equally-wrong
+/// paths.
+function expectParity(opts: {
+  motif: Motif;
+  props?: Record<string, unknown>;
+  /// The layer view's src_in; the descriptor decides whether it applies.
+  viewSrcInUs?: number;
+  tStartFrame: number;
+  layerWidthUs: number;
+  frames: number;
+  n: number;
+  d: number;
+  expectedSrcInUs: number;
+  expectedContentDurUs: number;
+}): void {
+  const { motif, n, d } = opts;
+  const view = { props: opts.props ?? {}, src_in_us: opts.viewSrcInUs ?? 0 };
+  const tStartUs = snapFrameFloor(Math.round((opts.tStartFrame * US * d) / n), n, d);
+  const desc0 = motifFrameDescriptor(view, 0, opts.layerWidthUs, n, d, motif)!;
+  expect(desc0.srcInUs).toBe(opts.expectedSrcInUs);
+  expect(desc0.contentDurationUs).toBe(opts.expectedContentDurUs);
+  const mismatches: number[] = [];
+  for (let f = 0; f < opts.frames; f++) {
+    const preview = previewContentFrameAt(
+      opts.tStartFrame + f, tStartUs, opts.expectedSrcInUs, opts.expectedContentDurUs, n, d,
+    );
+    const bake = exportContentFrameAt(f, tStartUs, view, opts.layerWidthUs, n, d, motif);
+    if (preview !== bake) mismatches.push(f);
+  }
+  expect(mismatches).toEqual([]);
+}
+
+describe("export bake matches preview content frame", () => {
+  it("windowed motif: every layer-local frame at 29.97fps with src_in>0 and t_start>0", () => {
     const n = 30000, d = 1001;
     // Layer starts at comp frame 30, src_in scrubbed in by ~1s, content 6s.
-    const tStartFrame = 30;
-    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
-    const srcInUs = snapFrameFloor(Math.round((30 * US * d) / n), n, d); // ~1s, grid-aligned
-    const contentDurUs = 6 * US;
-    const layerWidthFrames = 90; // 3s window
-    const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
-      if (preview !== bake) mismatches.push(f);
-    }
-    expect(mismatches).toEqual([]);
+    expectParity({
+      motif: countdownMotif,
+      props: { seconds: 6 },
+      viewSrcInUs: snapFrameFloor(Math.round((30 * US * d) / n), n, d), // ~1s, grid-aligned
+      tStartFrame: 30,
+      layerWidthUs: 3_000_000,
+      frames: 90, // 3s window
+      n, d,
+      expectedSrcInUs: snapFrameFloor(Math.round((30 * US * d) / n), n, d),
+      expectedContentDurUs: 6_000_000,
+    });
   });
 
-  it("agrees with src_in==0 and t_start==0 (legacy/common path)", () => {
+  it("windowed motif: src_in==0 and t_start==0 (legacy/common path)", () => {
     const n = 30000, d = 1001;
-    const tStartUs = 0;
-    const srcInUs = 0;
-    const contentDurUs = 6 * US;
-    const layerWidthFrames = 90;
-    const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
-      if (preview !== bake) mismatches.push(f);
-    }
-    expect(mismatches).toEqual([]);
+    expectParity({
+      motif: countdownMotif,
+      props: { seconds: 6 },
+      tStartFrame: 0,
+      layerWidthUs: 3_000_000,
+      frames: 90,
+      n, d,
+      expectedSrcInUs: 0,
+      expectedContentDurUs: 6_000_000,
+    });
   });
 
-  it("agrees for every layer-local frame at 30fps (integer rate) with src_in>0", () => {
+  it("windowed motif: every layer-local frame at 30fps (integer rate) with src_in>0", () => {
     const n = 30, d = 1;
-    const tStartFrame = 15;
-    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
-    const srcInUs = snapFrameFloor(Math.round((10 * US * d) / n), n, d);
-    const contentDurUs = 5 * US;
-    const layerWidthFrames = 60;
-    const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
-      if (preview !== bake) mismatches.push(f);
-    }
-    expect(mismatches).toEqual([]);
+    expectParity({
+      motif: countdownMotif,
+      props: { seconds: 5 },
+      viewSrcInUs: snapFrameFloor(Math.round((10 * US * d) / n), n, d),
+      tStartFrame: 15,
+      layerWidthUs: 2_000_000,
+      frames: 60,
+      n, d,
+      expectedSrcInUs: snapFrameFloor(Math.round((10 * US * d) / n), n, d),
+      expectedContentDurUs: 5_000_000,
+    });
   });
 
-  it("agrees for every layer-local frame at 24fps with src_in>0", () => {
+  it("windowed motif: every layer-local frame at 24fps with src_in>0", () => {
     const n = 24, d = 1;
-    const tStartFrame = 24; // 1s in
-    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
-    const srcInUs = snapFrameFloor(Math.round((12 * US * d) / n), n, d); // 0.5s in
-    const contentDurUs = 4 * US;
-    const layerWidthFrames = 48;
-    const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
-      if (preview !== bake) mismatches.push(f);
-    }
-    expect(mismatches).toEqual([]);
+    expectParity({
+      motif: countdownMotif,
+      props: { seconds: 4 },
+      viewSrcInUs: snapFrameFloor(Math.round((12 * US * d) / n), n, d), // 0.5s in
+      tStartFrame: 24, // 1s in
+      layerWidthUs: 2_000_000,
+      frames: 48,
+      n, d,
+      expectedSrcInUs: snapFrameFloor(Math.round((12 * US * d) / n), n, d),
+      expectedContentDurUs: 4_000_000,
+    });
   });
 
-  it("agrees for every layer-local frame at 23.976fps with src_in>0 and t_start>0", () => {
+  it("holdable motif (content_duration_s): never windows, clamps the tail — 23.976fps", () => {
     const n = 24000, d = 1001;
-    const tStartFrame = 24;
-    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
-    const srcInUs = snapFrameFloor(Math.round((24 * US * d) / n), n, d);
-    const contentDurUs = 5 * US;
-    const layerWidthFrames = 72;
-    const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
-      if (preview !== bake) mismatches.push(f);
-    }
-    expect(mismatches).toEqual([]);
+    expectParity({
+      motif: holdableMotif,
+      // src_in set on the view: the descriptor must IGNORE it (holdables play
+      // from content frame 0), and the preview expectation agrees.
+      viewSrcInUs: snapFrameFloor(Math.round((24 * US * d) / n), n, d),
+      tStartFrame: 24,
+      layerWidthUs: 2_000_000,
+      frames: 48,
+      n, d,
+      expectedSrcInUs: 0,
+      expectedContentDurUs: 800_000,
+    });
   });
 
-  it("agrees for every layer-local frame at 59.94fps with src_in>0 and t_start>0", () => {
+  it("uncapped motif: layer width is the content, src_in ignored — 59.94fps", () => {
     const n = 60000, d = 1001;
-    const tStartFrame = 60;
-    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
-    const srcInUs = snapFrameFloor(Math.round((60 * US * d) / n), n, d);
-    const contentDurUs = 6 * US;
-    const layerWidthFrames = 180;
+    expectParity({
+      motif: uncappedMotif,
+      viewSrcInUs: snapFrameFloor(Math.round((60 * US * d) / n), n, d),
+      tStartFrame: 60,
+      layerWidthUs: 1_500_000,
+      frames: 90,
+      n, d,
+      expectedSrcInUs: 0,
+      expectedContentDurUs: 1_500_000,
+    });
+  });
+
+  it("windowed motif: every frame of a MID-LAYER export range at 29.97fps", () => {
+    const n = 30000, d = 1001;
+    const tStartUs = snapFrameFloor(Math.round((30 * US * d) / n), n, d); // ~1s in
+    const srcInUs = snapFrameFloor(Math.round((15 * US * d) / n), n, d); // ~0.5s
+    const summary = summaryWith([
+      motifLayer("L1", tStartUs, tStartUs + 10_000_000, {
+        src_in_us: srcInUs,
+        props: { seconds: 10 },
+      }),
+    ]);
+    const specs = motifLayersToBake(summary, 3_000_000, 6_000_000, n, d);
+    expect(specs).toHaveLength(1);
+    const s = specs[0]!;
+    // Genuinely mid-layer: the range's first slot is not the layer's frame 0.
+    expect(s.firstFrame).toBeGreaterThan(0);
+    expect(s.lastFrame).toBeLessThan(s.durationFrames - 1);
+    const view = { props: { seconds: 10 }, src_in_us: srcInUs };
     const mismatches: number[] = [];
-    for (let f = 0; f < layerWidthFrames; f++) {
-      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
-      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+    for (let f = s.firstFrame; f <= s.lastFrame; f++) {
+      const absFrame = frameIndexInLayer(s.tStartUs, n, d) + f;
+      const preview = previewContentFrameAt(absFrame, s.tStartUs, srcInUs, 10_000_000, n, d);
+      const bake = exportContentFrameAt(f, s.tStartUs, view, s.durationUs, n, d, countdownMotif);
       if (preview !== bake) mismatches.push(f);
     }
     expect(mismatches).toEqual([]);

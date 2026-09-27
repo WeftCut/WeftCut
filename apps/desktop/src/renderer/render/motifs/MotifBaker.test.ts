@@ -152,4 +152,45 @@ describe("MotifBaker", () => {
     expect(newEmits.some((e) => e.phase === "baking")).toBe(false);
     expect(emits[emits.length - 1]!.phase).toBe("ready");
   });
+
+  it("targetCacheKeys reports queued AND in-flight contents, empty after dispose", async () => {
+    // Block the first batch's render so "a" is mid-flight while "b" is still
+    // queued: both must report as targets — the GC live set unions these so a
+    // dir the baker is writing into is never collected mid-bake.
+    const pending: (() => void)[] = [];
+    let releaseRender: (() => void) | null = null;
+    const baker = new MotifBaker({
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: async () => false,
+      persist: async () => {},
+      warm: vi.fn(),
+      batchSize: 1,
+    });
+    baker.setTargets([
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 1, render: () => new Promise<ImageBitmap>((r) => { releaseRender = () => r(makeFakeBitmap()); }) },
+      { cacheKey: "b", contentFrame: 0, contentDurationFrames: 1, render: async () => makeFakeBitmap() },
+    ]);
+    expect(baker.targetCacheKeys().sort()).toEqual(["a", "b"]);
+    // Start the drain (frame a#0 goes in-flight and blocks), then re-check.
+    const cb = pending.shift()!;
+    cb();
+    expect(baker.targetCacheKeys().sort()).toEqual(["a", "b"]);
+    // A re-plan that drops "b" (props changed mid-bake) must NOT drop the
+    // in-flight "a": its frame is still writing to a's hash dir.
+    baker.setTargets([{ cacheKey: "c", contentFrame: 0, contentDurationFrames: 1, render: async () => makeFakeBitmap() }]);
+    expect(baker.targetCacheKeys().sort()).toEqual(["a", "c"]);
+    // Let the batch reach a's render (it sits behind the isOnDisk await).
+    await new Promise((r) => setTimeout(r, 0));
+    releaseRender!();
+    // Let a's settled batch re-arm the queue (its completion chain runs in
+    // microtasks first) so drain() below sees the re-armed callback.
+    await new Promise((r) => setTimeout(r, 0));
+    await drain(pending);
+    // Baked-but-still-targeted contents stay listed until setTargets moves on:
+    // the conservative answer is the safe one for a GC live set.
+    expect(baker.targetCacheKeys()).toEqual(["c"]);
+    baker.dispose();
+    expect(baker.targetCacheKeys()).toEqual([]);
+  });
 });

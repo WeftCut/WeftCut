@@ -55,7 +55,8 @@ motif.define({
 - **`frame(t, ctx)`** — optional; called at every seeked time. `t` is content
   time in **seconds**. Pure-declarative Motifs omit it.
 - **`ctx`** = `{ duration, width, height, fps, frame, random() }` — `duration`
-  in seconds, `ctx.frame` the integer frame index, `ctx.random()` a seeded
+  in seconds, `ctx.fps` the composition's frame rate (`ctx.frame` is the integer
+  frame index `round(t × ctx.fps)`), `ctx.random()` a seeded
   deterministic generator.
 
 Declared animations are seeked by pausing and setting `currentTime`; they are

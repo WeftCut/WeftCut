@@ -1090,9 +1090,13 @@ app.whenReady().then(async () => {
       const a = args as {
         motifId: string; tSec: number; propsJson: string
         width: number; height: number; settleRafs: number | null; contentHash: string
-        coalesceKey: string | null
+        coalesceKey: string | null; fpsNum: number | null; fpsDen: number | null
       }
-      return await captureMotifFrameB64(a, a.coalesceKey ?? undefined)
+      const { coalesceKey, fpsNum, fpsDen, ...captureArgs } = a
+      return await captureMotifFrameB64(
+        { ...captureArgs, fpsNum: fpsNum ?? undefined, fpsDen: fpsDen ?? undefined },
+        coalesceKey ?? undefined,
+      )
     }
     // API-key writes need safeStorage (main-only) + a push into the backend
     // cache. Intercept here; status/test fall through to the Rust dispatcher.

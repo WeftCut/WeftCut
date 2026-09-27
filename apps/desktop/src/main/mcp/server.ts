@@ -444,9 +444,15 @@ async function dispatchTool(
       try { props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null) }
       catch (e) { if (e instanceof MotifPropError) return toolErrorResult({ code: 'invalid_params', message: `invalid props for '${motifId}': ${e.detail} — list_motifs reports its props_schema` }); throw e }
     }
+    // meta.fps names the open project's root-composition rate, so a Motif
+    // reading it renders the same frame an in-project capture would. No project
+    // open → the fields stay unset and the capture falls back to 30.
+    const snap = tsHost?.actor.snapshot()
+    const rootFps = snap?.compositions?.[snap.root_id]?.fps
     const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
       width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: '',
+      ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
     })
     return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
   }

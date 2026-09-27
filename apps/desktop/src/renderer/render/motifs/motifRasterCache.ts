@@ -37,6 +37,10 @@ export async function resolveMotifFrame(
   durationSec: number,
   canonicalProps: Record<string, unknown>,
   coalesceKey?: string,
+  /// Composition fps `tSec` was computed on — forwarded so the capture's
+  /// `meta.fps` names the real rate, not the 30 fps fallback.
+  fpsNum?: number,
+  fpsDen?: number,
 ): Promise<ImageBitmap> {
   if (sharedBakedKeyIndex.has(cacheKey)) {
     try {
@@ -51,5 +55,5 @@ export async function resolveMotifFrame(
   // (`motifCtxDurationS`, shared/motifs/catalog.ts) from props. Kept in the
   // signature for caller parity across the read paths.
   void durationSec;
-  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, coalesceKey);
+  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, coalesceKey, fpsNum, fpsDen);
 }

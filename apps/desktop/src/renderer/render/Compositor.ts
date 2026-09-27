@@ -9,15 +9,16 @@
 // in export — through a `CompositionNode` staged into `stage`; that node's
 // sweep recurses into Group layers through `CompositionRefSprite`s, each
 // with a node of its own. What lives here is what every node shares: the
-// decoder pool, the ingest shaders, the audio bus, the motif planners,
-// underrun and presentation state.
+// decoder pool, the ingest shaders, the audio bus, underrun and presentation
+// state. The motif raster lifecycle (prewarm/bake/hydrate/GC/status) lives in
+// the `MotifFrameService` collaborator.
 //
 // Plan: docs/render.md
 
 import { Application, Container } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
-import type { CompositionSummary, LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import type { CompositionSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { compositionOrRoot, EMPTY_COMPOSITION } from "../ipc/compositions";
 import { AudioGraph } from "./audio/AudioGraph";
 import type { ClockAnchor } from "./audio/chunkSchedule";
@@ -27,25 +28,7 @@ import {
   planPreviewDecodePriority,
   type PreviewDecodePriorityPlan,
 } from "./decoder/previewDecodePriority";
-import { getMotif } from "./motifs/catalog";
-import { MotifPrewarmer, type PrewarmContentSpec } from "./motifs/MotifPrewarmer";
-import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-import {
-  resolveMotifFrame,
-  sharedBakedKeyIndex,
-  sharedMotifFrameCache,
-} from "./motifs/motifRasterCache";
-import { MotifBaker, type BakeContentSpec } from "./motifs/MotifBaker";
-import { encodeBitmapToPng } from "./motifs/pngEncode";
-import { onPrebakeRequest } from "./motifs/prebakeBus";
-import { bakeMotifFrame } from "./motifs/motifRaster";
-import { collectLiveRasterKeys } from "./motifs/liveRasterKeys";
-import { syncUserMotifsFromBackend } from "./motifs/syncCatalog";
-import {
-  setLayerBakeStatuses,
-  motifWarmPhase,
-  type LayerBakeStatus,
-} from "../timeline/motifBakeStatusStore";
+import { MotifFrameService } from "./motifs/MotifFrameService";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
@@ -66,8 +49,6 @@ import {
   type CompositionNodeHost,
   type ResolvedRendererSource,
 } from "./CompositionNode";
-import { compositionLocalUs, forEachLayer } from "./compositionWalk";
-
 export type { ActiveClipProbe, ResolvedRendererSource } from "./CompositionNode";
 
 /// Match the preview ring's default lookahead window
@@ -190,27 +171,6 @@ export interface CompositorInit {
   pool?: DecoderPool;
 }
 
-/// Schedule `cb` for an idle slice: `requestIdleCallback` when available
-/// (with a 200ms timeout floor so the prewarm can't starve indefinitely),
-/// else a short `setTimeout`. Returns a cancel token for `cancelIdle`.
-function scheduleIdle(cb: () => void): number {
-  const g = globalThis as unknown as {
-    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    setTimeout: (cb: () => void, ms: number) => number;
-  };
-  if (typeof g.requestIdleCallback === "function") return g.requestIdleCallback(cb, { timeout: 200 });
-  return g.setTimeout(cb, 16);
-}
-
-function cancelIdle(token: number): void {
-  const g = globalThis as unknown as {
-    cancelIdleCallback?: (t: number) => void;
-    clearTimeout: (t: number) => void;
-  };
-  if (typeof g.cancelIdleCallback === "function") g.cancelIdleCallback(token);
-  else g.clearTimeout(token);
-}
-
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
@@ -266,65 +226,10 @@ export class Compositor {
   /// `scheduleRepaint()` for async-arrived frames when the playhead
   /// is paused (no rAF tick incoming).
   private lastTUs = 0;
-  /// Background filler that warms the shared motif-frame cache ahead of the
-  /// playhead. DOM-gated: only the main-thread preview Compositor creates one;
-  /// the export Worker (no `document`, frames injected via `setMotifFrames`)
-  /// leaves it null.
-  private prewarmer: MotifPrewarmer | null =
-    typeof document !== "undefined"
-      ? new MotifPrewarmer({
-          cap: sharedMotifFrameCache.capacity(),
-          hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f),
-          setFrame: (k, f, b) => {
-            sharedMotifFrameCache.setFrame(k, f, b);
-          },
-          schedule: (cb) => scheduleIdle(cb),
-          cancel: (t) => cancelIdle(t),
-          // batchSize 1: captures serialize in the main process (the single
-          // capture host's promise chain in main/motif/capture.ts), so a larger
-          // batch only adds head-of-line latency for an on-demand scrub. One
-          // in-flight capture per loop keeps the shared host queue short.
-          batchSize: 1,
-          onProgress: () => this.recomputeBakeStatuses(),
-        })
-      : null;
-  /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
-  private baker: MotifBaker | null =
-    typeof document !== "undefined"
-      ? new MotifBaker({
-          schedule: (cb) => scheduleIdle(cb),
-          cancel: (t) => cancelIdle(t),
-          // batchSize 1: same head-of-line rationale as the prewarmer above.
-          batchSize: 1,
-          isOnDisk: (k, f) => sharedMotifFrameCache.hasPng(k, f),
-          persist: async (k, f, bmp) => {
-            const png = await encodeBitmapToPng(bmp);
-            await sharedMotifFrameCache.writePng(k, f, png);
-            sharedBakedKeyIndex.add(k);
-          },
-          warm: (k, f, bmp) => {
-            sharedMotifFrameCache.setFrame(k, f, bmp);
-          },
-          onStatus: (cacheKey, status) => {
-            this.bakeStatusByCacheKey.set(cacheKey, status);
-            this.recomputeBakeStatuses();
-          },
-        })
-      : null;
-  /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
-  /// entries in `recomputeBakeStatuses`.
-  private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
-  /// Signature of the last published bake-status map, so recompute is a no-op
-  /// when nothing changed (it runs every frame via updateBakeTargets).
-  private lastBakeStatusSig = "";
-  /// LayerIds the user manually "Pre-bake now"'d this session — baked even
-  /// when the global setting is off.
-  private manualPrebakeLayers = new Set<string>();
-  /// Unsubscribe handle for the prebake bus.
-  private prebakeUnsub: (() => void) | null = null;
-  /// Last composition frame index we re-planned the prewarm targets at, so the
-  /// per-tick refresh in `compositeFrame` only fires on a frame change.
-  private lastPrewarmFrame = -1;
+  /// The preview realm's motif raster lifecycle (L0 warm, L2 bake,
+  /// baked-index hydrate/GC, bake status) — owned here as a collaborator;
+  /// see motifs/MotifFrameService.ts. Inert in the export Worker (no DOM).
+  private readonly motifService: MotifFrameService;
   private repaintScheduled = false;
   /// Engine's playing state — written by PlaybackEngine on play /
   /// pause / seek. AudioMixers consult this to decide whether to
@@ -430,6 +335,13 @@ export class Compositor {
       },
     };
     this.root = this.buildRoot(EMPTY_COMPOSITION, null);
+    this.motifService = new MotifFrameService({
+      projectSummary: () => this.projectSummary,
+      openCompositionId: () => this.root.composition.id,
+      fpsNum: () => this.fpsNum,
+      fpsDen: () => this.fpsDen,
+      currentTimeUs: () => this.lastTUs,
+    });
     // THE install site for the CJK break rule, and the reason one site is
     // enough: `canBreakWords` is a class static, so it must be set in every
     // realm that rasterizes text — and every such realm builds a Compositor
@@ -652,12 +564,8 @@ export class Compositor {
       this.tenBitIngest = null;
       this.nv12Ingest?.dispose();
       this.nv12Ingest = null;
-      this.baker?.setTargets([]);
-      this.manualPrebakeLayers.clear();
-      sharedBakedKeyIndex.clear();
-      this.bakeStatusByCacheKey.clear();
-      this.lastBakeStatusSig = "";
-      setLayerBakeStatuses({});
+      // The service's null-summary path tears the motif lifecycle down.
+      this.motifService.handleProjectChanged();
       return;
     }
     // Recompute the frame-snap fps state whenever the project changes
@@ -670,24 +578,11 @@ export class Compositor {
     }
     // No `unsupportedMedia` reconciliation: the next `compositeFrame` sweep
     // rebuilds the set from this project's layers and fires on any change.
-    // Subscribe to the timeline's "Pre-bake now" bus exactly once (DOM-gated
-    // by `this.baker`). A request records the layer and refreshes bake targets
-    // so it bakes even when the global setting is off.
-    if (this.baker && !this.prebakeUnsub) {
-      this.prebakeUnsub = onPrebakeRequest((layerId) => {
-        this.manualPrebakeLayers.add(layerId);
-        this.updateBakeTargets(this.lastTUs);
-      });
-    }
-    // Re-plan the prewarm window against the new project at the current
-    // playhead. Reached only for a non-null summary (the null branch returns
-    // above); `this.lastTUs` is the last composited composition time.
-    this.updatePrewarmTargets(this.lastTUs);
-    this.updateBakeTargets(this.lastTUs);
-    this.recomputeBakeStatuses();
-    // Hydrate the on-disk baked-key index + GC orphaned hash dirs against the
-    // new project's live keys. Fire-and-forget — never blocks load.
-    void this.hydrateBakedIndexAndGc();
+    // The motif lifecycle (prewarm/bake re-plan at the current playhead, bake
+    // statuses, baked-index hydrate/GC) lives in the service — one hook per
+    // project change. Called AFTER the fps update above so its planning reads
+    // the new frame grid.
+    this.motifService.handleProjectChanged();
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -825,17 +720,11 @@ export class Compositor {
           `appStage.children=${this.app.stage.children.length}`,
       );
     }
-    // Refresh the prewarm window when the playhead crosses a frame boundary.
-    // Throttled to once per composition frame so scrub/play ticks within the
-    // same frame don't re-plan. Runs whether playing or paused.
-    if (this.prewarmer) {
-      const frameIdx = Math.round((tUsSnapped * this.fpsNum) / (1_000_000 * this.fpsDen));
-      if (frameIdx !== this.lastPrewarmFrame) {
-        this.lastPrewarmFrame = frameIdx;
-        this.updatePrewarmTargets(tUsSnapped);
-        this.updateBakeTargets(tUsSnapped);
-      }
-    }
+    // Refresh the motif prewarm/bake windows when the playhead crosses a frame
+    // boundary. Throttled to once per composition frame inside the service, so
+    // scrub/play ticks within the same frame don't re-plan. Runs whether
+    // playing or paused; a no-op in the DOM-less export realm.
+    this.motifService.noteFrameBoundary(tUsSnapped);
     // Stamp the duration last — anything that early-returns above
     // (disposed, suspended, no project) is correctly excluded from
     // the average, since the body did no real work.
@@ -983,17 +872,7 @@ export class Compositor {
     // Compositor and `compositeFrame` is now a no-op.
     this.unsupportedMedia.clear();
     this.root.dispose();
-    this.prewarmer?.dispose();
-    this.prewarmer = null;
-    this.baker?.dispose();
-    this.baker = null;
-    this.prebakeUnsub?.();
-    this.prebakeUnsub = null;
-    this.manualPrebakeLayers.clear();
-    sharedBakedKeyIndex.clear();
-    this.bakeStatusByCacheKey.clear();
-    this.lastBakeStatusSig = "";
-    setLayerBakeStatuses({});
+    this.motifService.dispose();
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeMotifs`), not the Compositor — same as
     // `setMotifFrames`, which clears without closing — so we clear (no
@@ -1151,186 +1030,5 @@ export class Compositor {
         });
     }
     return plan;
-  }
-
-  /// Every enabled Motif layer reachable from the drawn composition, Groups'
-  /// included, with the LOCAL time `tUs` maps to inside it — the motif
-  /// planners' one walk.
-  private forEachMotifLayer(
-    tUs: number,
-    f: (layer: LayerSummary & { params: { kind: "Motif" } }, tInLayerUs: number) => void,
-  ): void {
-    if (!this.projectSummary) return;
-    forEachLayer(this.projectSummary, this.root.composition.id, ({ layer, offsetUs }) => {
-      if (layer.params.kind !== "Motif") return;
-      // `compositionLocalUs`, not a bare subtraction: the descriptor's
-      // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
-      // asking for is derived through the same re-snap on its way down the
-      // nodes. A µs of lattice residual between the two would warm a key
-      // nothing ever reads.
-      const tLocalUs = compositionLocalUs(tUs - offsetUs, this.fpsNum, this.fpsDen);
-      f(layer as LayerSummary & { params: { kind: "Motif" } }, tLocalUs - layer.t_start_us);
-    });
-  }
-
-  /// Map the active motif layers at composition-time `tUs` to prewarm specs
-  /// (deduped by cacheKey inside the planner) and hand them to the prewarmer.
-  /// Runs whether playing or paused (compositeFrame fires on seek/scrub too), so
-  /// the cache warms ahead of the playhead in both states.
-  private updatePrewarmTargets(tUs: number): void {
-    if (!this.prewarmer || !this.projectSummary) return;
-    const specs: PrewarmContentSpec[] = [];
-    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
-      if (!desc) return;
-      // Capture the plan-time inputs in locals so the async render closure
-      // binds the values that produced THIS cacheKey, not whatever `this.fps*`
-      // is at raster time (which could drift if the project fps changes).
-      const fpsNum = this.fpsNum;
-      const fpsDen = this.fpsDen;
-      const canonicalProps = desc.canonicalProps;
-      const durationSec = desc.durationSec;
-      specs.push({
-        cacheKey: desc.cacheKey,
-        contentFrame: desc.contentFrame,
-        contentDurationFrames: desc.contentDurationFrames,
-        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        // Disk-first: prefer a baked PNG over a live raster, falling through
-        // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
-        render: (frame: number) =>
-          resolveMotifFrame(
-            motif,
-            desc.cacheKey,
-            frame,
-            (frame * fpsDen) / fpsNum,
-            durationSec,
-            canonicalProps,
-          ),
-      });
-    });
-    this.prewarmer.setTargets(specs);
-  }
-
-  /// Feed the L2 baker (the SOLE disk writer). Persists the FULL content of:
-  /// every active motif content when the global `prebake_motifs` setting
-  /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
-  /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
-  /// shape; the baker's `render` closure uses `bakeMotifFrame` (CDP capture,
-  /// no disk read) directly (reading disk-first would be pointless — the baker is the writer).
-  private updateBakeTargets(tUs: number): void {
-    if (!this.baker || !this.projectSummary) return;
-    const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
-    const specs: BakeContentSpec[] = [];
-    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
-      const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
-      if (!wanted) return;
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
-      if (!desc) return;
-      // Plan-time fps in locals — same closure-capture rationale as
-      // `updatePrewarmTargets`.
-      const fpsNum = this.fpsNum;
-      const fpsDen = this.fpsDen;
-      const canonicalProps = desc.canonicalProps;
-      specs.push({
-        cacheKey: desc.cacheKey,
-        contentFrame: desc.contentFrame,
-        contentDurationFrames: desc.contentDurationFrames,
-        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
-      });
-    });
-    this.baker.setTargets(specs);
-    this.recomputeBakeStatuses();
-  }
-
-  /// On project load: rebuild the in-RAM baked-key index from what's on disk
-  /// (so the resolver's disk-first read fires only for keys that actually have
-  /// PNGs) and reclaim disk for hash dirs no live key references anymore.
-  /// Fire-and-forget; any fs error is swallowed so it can never block load.
-  ///
-  /// Safety rules for the GC half (see liveRasterKeys.ts for the why):
-  /// 1. Re-pull the user-Motif catalog first — project open can win the race
-  ///    against the boot-time catalog sync, and GC'ing against a stale catalog
-  ///    deletes live frames.
-  /// 2. If ANY motif layer is unresolvable afterwards, skip the GC entirely:
-  ///    "can't resolve" is not "orphaned".
-  private async hydrateBakedIndexAndGc(): Promise<void> {
-    if (!this.projectSummary) return;
-    // Preview-realm only: the export Worker has no window/IPC bridge (the
-    // sync would warn-fail) and no L2 to GC (rasterRootDir is null there).
-    if (this.baker) await syncUserMotifsFromBackend();
-    const { activeKeys, unresolved } = collectLiveRasterKeys(
-      this.projectSummary,
-      this.fpsNum,
-      this.fpsDen,
-    );
-    sharedBakedKeyIndex.setLiveCandidates(activeKeys);
-    try {
-      const hashes = await sharedMotifFrameCache.listBakedHashes();
-      sharedBakedKeyIndex.hydrateFromHashes(hashes);
-      // The index now reflects on-disk frames; recompute so last-session-baked
-      // layers (no live baker status) surface as "ready".
-      this.recomputeBakeStatuses();
-      if (unresolved.length > 0) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/motifs] skipping raster GC: ${unresolved.length} motif id(s) unresolvable ` +
-            `(${unresolved.slice(0, 5).join(", ")}${unresolved.length > 5 ? ", …" : ""}) — ` +
-            `their on-disk frames are kept`,
-        );
-        return;
-      }
-      await sharedMotifFrameCache.gcUnreferenced(activeKeys);
-    } catch (e) {
-      console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
-    }
-  }
-
-  /// Build the per-layer bake-status map and publish it to the store. A layer
-  /// shows: its baker status if live; else "ready" if its frames are already on
-  /// disk (sharedBakedKeyIndex — e.g. baked last session, toggle off); else it
-  /// is omitted (idle → no dot). O(motif layers); called on every onStatus,
-  /// updateBakeTargets, and setProject.
-  private recomputeBakeStatuses(): void {
-    if (!this.projectSummary) {
-      if (this.lastBakeStatusSig !== "") { this.lastBakeStatusSig = ""; setLayerBakeStatuses({}); }
-      return;
-    }
-    const byLayer: Record<string, LayerBakeStatus> = {};
-    this.forEachMotifLayer(0, (layer) => {
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, motif);
-      if (!desc) return;
-      const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-      // L0 coverage of this layer's content frames (cheap Map lookups; the
-      // cache `hasFrame` doesn't touch recency). This is the "is preview warm"
-      // signal that drives the green bar.
-      let covered = 0;
-      for (let f = 0; f < desc.contentDurationFrames; f++) {
-        if (sharedMotifFrameCache.hasFrame(desc.cacheKey, f)) covered++;
-      }
-      const status = motifWarmPhase(
-        live ?? null,
-        covered,
-        desc.contentDurationFrames,
-        sharedBakedKeyIndex.has(desc.cacheKey),
-      );
-      if (status) byLayer[layer.id] = status;
-    });
-    const sig = JSON.stringify(byLayer);
-    if (sig === this.lastBakeStatusSig) return;
-    this.lastBakeStatusSig = sig;
-    setLayerBakeStatuses(byLayer);
   }
 }

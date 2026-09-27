@@ -20,8 +20,19 @@ describe("captureMotifFramePngBlob", () => {
       settleRafs: 1,
       contentHash: "",
       coalesceKey: null,
+      fpsNum: null,
+      fpsDen: null,
     });
     expect(blob.type).toBe("image/png");
     expect(await blob.arrayBuffer().then((b) => Array.from(new Uint8Array(b)))).toEqual([1, 2, 3]);
+  });
+
+  it("threads the composition fps through when given", async () => {
+    invokeMock.mockResolvedValue("AQID");
+    await captureMotifFramePngBlob("countdown", 2.5, { seconds: 5 }, 480, 480, 1, "hash", undefined, 30000, 1001);
+    expect(invokeMock).toHaveBeenCalledWith("motif_capture_frame", expect.objectContaining({
+      fpsNum: 30000,
+      fpsDen: 1001,
+    }));
   });
 });

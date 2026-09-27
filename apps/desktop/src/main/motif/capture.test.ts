@@ -7,6 +7,9 @@ import { describe, it, expect, vi } from 'vitest'
 
 let opened = 0
 let screenshotCalls = 0
+/// The last `__motifRender(tSec, props, meta)` expression sent to the host —
+/// the meta.fps assertions parse the third argument out of it.
+let lastRenderExpr: string | null = null
 /// Upcoming Page.captureScreenshot calls to slow down (occupies the chain).
 let slowScreenshots = 0
 /// When true, the waitReady probe (Runtime.evaluate of the __motifRender
@@ -38,6 +41,7 @@ vi.mock('electron', () => {
             if (hangReadyProbe && expr.includes('typeof window.__motifRender')) {
               return new Promise(() => {})
             }
+            if (expr.startsWith('window.__motifRender(')) lastRenderExpr = expr
             return Promise.resolve({ result: { value: true } })
           }
           return Promise.resolve({})
@@ -54,6 +58,27 @@ vi.mock('electron', () => {
 })
 
 const { captureMotifFrameB64, setRuntimeSource, shutdownCaptureHost } = await import('./capture')
+
+/// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
+/// expression is `window.__motifRender(<tSec>, <propsJson>, <metaJson>)` with
+/// JSON args — split on top-level commas (props may itself contain braces).
+function lastRenderMeta(): Record<string, unknown> {
+  const inner = lastRenderExpr!.slice('window.__motifRender('.length, -1)
+  const args: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i]!
+    if (c === '{' || c === '[') depth++
+    else if (c === '}' || c === ']') depth--
+    else if (c === ',' && depth === 0) {
+      args.push(inner.slice(start, i))
+      start = i + 1
+    }
+  }
+  args.push(inner.slice(start))
+  return JSON.parse(args[2]!) as Record<string, unknown>
+}
 
 // An unknown motif id keeps the catalog out of it: no manifest means the default
 // duration, which is all doCapture needs to reach the screenshot.
@@ -95,6 +120,22 @@ describe('capture host shutdown', () => {
     const before = screenshotCalls
     await expect(captureMotifFrameB64(args, 'sprite:layer-2')).resolves.toBe('UE5H')
     expect(screenshotCalls - before).toBe(1)
+  })
+
+  it('meta.fps is the passed fpsNum/fpsDen', async () => {
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 30000, fpsDen: 1001 })).resolves.toBe('UE5H')
+    expect(lastRenderMeta().fps).toBeCloseTo(30000 / 1001)
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 1 })).resolves.toBe('UE5H')
+    expect(lastRenderMeta().fps).toBe(60)
+  })
+
+  it('meta.fps falls back to 30 when fps is absent or invalid', async () => {
+    await expect(captureMotifFrameB64(args)).resolves.toBe('UE5H')
+    expect(lastRenderMeta().fps).toBe(30)
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 0 })).resolves.toBe('UE5H')
+    expect(lastRenderMeta().fps).toBe(30)
+    await expect(captureMotifFrameB64({ ...args, fpsNum: -24, fpsDen: 1 })).resolves.toBe('UE5H')
+    expect(lastRenderMeta().fps).toBe(30)
   })
 
   it('a wedged waitReady probe times out and the next capture rebuilds the host', async () => {

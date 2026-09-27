@@ -21,63 +21,24 @@
 // pulling L0 bitmaps would neuter preview's cached frames and break live
 // preview after an export. (L2 *disk* reads are safe — they decode to a fresh
 // bitmap, not a shared one.)
+//
+// FRAME MATH: `motifFrameDescriptor` is the single authority for (cacheKey,
+// contentFrame, canonicalProps); this module only reconstructs each
+// layer-local frame's `tInLayerUs` (`tInLayerUsForLayerLocalFrame`) and asks.
+// PROPS: canonicalization goes through the descriptor's LENIENT canonicalizer
+// (drop unknown / fill defaults / fall back on invalid) — a deliberate change
+// from the earlier STRICT bake, which threw on invalid props and failed the
+// whole export. Preview already renders such layers via the same lenient
+// path, so export now matches what preview shows instead of rejecting it.
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
 import { compositionLocalUs, forEachLayerInTime, instanceKey } from "./compositionWalk";
-import { getMotif, resolveMotifContentDurationUs, type Motif } from "./motifs/catalog";
-import { canonicalizeProps } from "./motifs/Rasterizer";
+import { getMotif, type Motif } from "./motifs/catalog";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { motifDurationFrames } from "./motifs/motifFrames";
+import { motifDurationFrames, tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-
-const US_PER_SEC = 1_000_000;
-
-/// Compute the content frame to bake into layer-local slot `layerLocalFrame`,
-/// mirroring the preview path (`motifContentFrame` in `motifFrames.ts`)
-/// EXACTLY. The key invariant: a composition frame at index `layerStartFrame +
-/// layerLocalFrame` arrives at the compositor as
-/// `tInLayerUs = snapFrameFloor(compFrameUs) - tStartUs`, and the preview
-/// selects `frameIndexInLayer(srcInUs + tInLayerUs)`. This function reconstructs
-/// that same `tInLayerUs` from the layer-local frame index so both paths always
-/// agree, including when fractional parts of `srcInUs` and `tInLayerUs` would
-/// cause floor(a) + floor(b) ≠ floor(a+b).
-///
-/// `layerStartFrame` = frameIndexInLayer(tStartUs, fpsNum, fpsDen) — the caller
-/// computes it ONCE and passes it rather than recomputing per frame.
-///
-/// Exported so the parity unit-test can import and validate it directly.
-export function bakeContentFrameFor(
-  layerLocalFrame: number,
-  tStartUs: number,
-  srcInUs: number,
-  contentDurationUs: number,
-  fpsNum: number,
-  fpsDen: number,
-): number {
-  const contentDurationFrames = Math.max(
-    1,
-    Math.round((contentDurationUs * fpsNum) / (US_PER_SEC * fpsDen)),
-  );
-  // Reconstruct the absolute comp-frame index for this layer-local slot.
-  const layerStartFrame = frameIndexInLayer(tStartUs, fpsNum, fpsDen);
-  const absFrame = layerStartFrame + layerLocalFrame;
-  // Reconstruct the comp-grid µs for that absolute frame — same as the
-  // compositor's `snapFrameFloor(playheadUs)` for a playhead sitting exactly
-  // on a frame boundary.  absFrame is always an integer, so
-  //   Math.round(absFrame * US_PER_SEC * fpsDen / fpsNum)
-  // is the exact half-up grid value (matches snapFrameFloor on-grid).
-  const compFrameUs = Math.round((absFrame * US_PER_SEC * fpsDen) / fpsNum);
-  const tInLayerUs = compFrameUs - tStartUs;
-  // Single summed floor — mirrors motifContentFrame exactly.
-  const contentTimeUs = srcInUs + Math.max(0, tInLayerUs);
-  const contentFrame = Math.min(
-    contentDurationFrames - 1,
-    frameIndexInLayer(contentTimeUs, fpsNum, fpsDen),
-  );
-  return contentFrame;
-}
 
 /// One Motif layer to bake: its id, the resolved `Motif`, the layer's
 /// `MotifView`, and the comp-fps frame range to raster. `durationFrames` is
@@ -103,7 +64,7 @@ export interface MotifBakeSpec {
   /// Layer start time in microseconds on the composition timeline (`t_start_us`).
   /// Required to reconstruct `tInLayerUs` the same way the compositor does for
   /// each layer-local frame, so the bake's content-frame selection mirrors the
-  /// preview path exactly (see `bakeContentFrameFor`).
+  /// preview path exactly (see `tInLayerUsForLayerLocalFrame`).
   tStartUs: number;
 }
 
@@ -223,49 +184,37 @@ export async function exportBakeMotifs(
   onProgress?.(0, total);
 
   for (const spec of specs) {
-    // Canonicalize props once per layer (identical across the layer's frames;
-    // only the content frame varies). Mirrors the preview path's per-tick
-    // canonicalize against the same manifest, so export pixels == preview.
-    const canonical = canonicalizeProps(spec.view.props, spec.motif.manifest);
-    // Content-window model: src_in offset + intrinsic content duration. Uncapped
-    // motifs fall back to layer-width content with src_in=0 (legacy).
-    const cap = resolveMotifContentDurationUs(spec.motif.manifest, spec.view.props);
-    const contentDurationUs = cap ?? spec.durationUs;
-    // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`),
-    // matching motifFrameDescriptor.ts — a `content_duration_s` holdable always
-    // plays from content frame 0 so preview pixels equal export pixels.
-    const windowed = spec.motif.manifest.content_duration_s == null && cap != null;
-    const srcInUs = windowed ? spec.view.src_in_us : 0;
-
-    // L2 fast path: this layer's content cacheKey (playhead/time-independent →
-    // tInLayerUs=0; only desc.cacheKey is used, mirroring hydrateBakedIndexAndGc).
-    const desc = motifFrameDescriptor(
-      spec.view, 0, spec.durationUs, fpsNum, fpsDen, spec.motif,
-    );
-    const cacheKey = desc?.cacheKey ?? null;
-
     // Allocate up to lastFrame; leave [0, firstFrame) holes for a mid-layer
     // export start. Bitmaps land at their comp-frame index so the Worker's
     // frames[frameIndexInLayer(...)] is a direct hit.
     const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
     for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
-      const contentFrame = bakeContentFrameFor(
-        frame,
-        spec.tStartUs,
-        srcInUs,
-        contentDurationUs,
+      // ONE descriptor per frame is the whole frame math: reconstruct the
+      // `tInLayerUs` the compositor will derive for this layer-local slot,
+      // then read contentFrame / cacheKey / canonicalProps off the same
+      // authority the preview uses. The cacheKey is tInLayerUs-independent
+      // (identity/props/size/fps/durationFrames only), so one call per frame
+      // serves both the L2 lookup and the capture.
+      const desc = motifFrameDescriptor(
+        spec.view,
+        tInLayerUsForLayerLocalFrame(frame, spec.tStartUs, fpsNum, fpsDen),
+        spec.durationUs,
         fpsNum,
         fpsDen,
+        spec.motif,
       );
+      // Defensive: the descriptor never returns null today.
+      if (!desc) continue;
+      const contentFrame = desc.contentFrame;
       // Disk-first: a pre-baked Motif's PNGs are keyed by (cacheKey, content
       // frame); read + decode (a FRESH bitmap, safe to transfer) instead of a
       // ~80 ms CDP re-capture. Gated by the in-RAM baked-key index so an
       // un-baked Motif never pays a per-frame fs probe. Any read error falls
       // through to a live capture, so a disk hiccup can't blank an export.
-      if (cacheKey && sharedBakedKeyIndex.has(cacheKey)) {
+      if (sharedBakedKeyIndex.has(desc.cacheKey)) {
         try {
           // eslint-disable-next-line no-await-in-loop
-          const png = await sharedMotifFrameCache.readPng(cacheKey, contentFrame);
+          const png = await sharedMotifFrameCache.readPng(desc.cacheKey, contentFrame);
           if (png) {
             // eslint-disable-next-line no-await-in-loop
             frames[frame] = await createImageBitmap(png);
@@ -282,7 +231,7 @@ export async function exportBakeMotifs(
       // exported bitmap is pixel-identical to preview AND carries the Motif's
       // transparent backdrop.
       // eslint-disable-next-line no-await-in-loop
-      const bitmap = await bakeMotifFrame(spec.motif, contentFrame, fpsNum, fpsDen, canonical);
+      const bitmap = await bakeMotifFrame(spec.motif, contentFrame, fpsNum, fpsDen, desc.canonicalProps);
       frames[frame] = bitmap;
       baked++;
       onProgress?.(baked, total);

@@ -43,6 +43,11 @@ export class MotifBaker {
   /// Per-cacheKey bake progress. total = contentDurationFrames; done counts
   /// frames persisted OR skipped-as-already-on-disk. Reset each setTargets.
   private status = new Map<string, BakeStatus>();
+  /// cacheKeys with a frame being rendered/persisted RIGHT NOW. Tracked apart
+  /// from specsByKey because a setTargets re-plan retires a spec while its
+  /// in-flight frame keeps writing — and that write's hash dir must stay
+  /// GC-live until the write lands (see `targetCacheKeys`).
+  private readonly inFlightKeys = new Set<string>();
 
   constructor(private readonly deps: MotifBakerDeps) {
     this.batchSize = deps.batchSize ?? 2;
@@ -101,6 +106,7 @@ export class MotifBaker {
       }
       await Promise.all(
         batch.map(async ({ cacheKey, frame, spec }) => {
+          this.inFlightKeys.add(cacheKey);
           try {
             if (await this.deps.isOnDisk(cacheKey, frame)) { this.bump(cacheKey, touched); return; }
             const bmp = await spec.render(frame);
@@ -113,6 +119,8 @@ export class MotifBaker {
             this.bump(cacheKey, touched);
           } catch {
             this.markError(cacheKey, touched);
+          } finally {
+            this.inFlightKeys.delete(cacheKey);
           }
         }),
       );
@@ -143,6 +151,15 @@ export class MotifBaker {
     if (!st) return;
     st.phase = "error";
     touched.add(cacheKey);
+  }
+
+  /// cacheKeys the GC live set must protect: every content currently targeted
+  /// (queued, `specsByKey`) plus any frame writing right now (`inFlightKeys` —
+  /// its spec may already be re-planned away). The Compositor unions these into
+  /// `gcUnreferenced`'s live set so a hash dir the baker is writing into is
+  /// never collected mid-write.
+  targetCacheKeys(): string[] {
+    return [...new Set([...this.specsByKey.keys(), ...this.inFlightKeys])];
   }
 
   dispose(): void {

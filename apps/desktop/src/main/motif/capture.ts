@@ -12,6 +12,11 @@ interface CaptureArgs {
   height: number
   settleRafs: number | null
   contentHash: string
+  /// Composition fps as an exact rational, when the caller knows it. Absent or
+  /// invalid falls back to 30 (the pre-threading behaviour), keeping MCP and
+  /// older callers safe.
+  fpsNum?: number
+  fpsDen?: number
 }
 
 const CAPTURE_TIMEOUT_MS = 5000
@@ -183,7 +188,14 @@ async function doCapture(a: CaptureArgs): Promise<string> {
     BUILTIN_MANIFESTS.get(a.motifId) ?? motifStore?.getMotif(a.motifId)?.manifest
   const props = JSON.parse(a.propsJson) as Record<string, unknown>
   const duration = manifest ? motifCtxDurationS(manifest, props) : 5
-  const meta = { duration, width: a.width, height: a.height, fps: 30, settleRafs: a.settleRafs }
+  // meta.fps must be the rate the caller computed tSec on (the composition's
+  // fps) — a Motif reading it (or ctx.frame = round(t*fps)) renders wrong when
+  // it disagrees. 30 only when no rate arrived (MCP without a project, legacy).
+  const fps =
+    a.fpsNum != null && a.fpsDen != null && a.fpsNum > 0 && a.fpsDen > 0
+      ? a.fpsNum / a.fpsDen
+      : 30
+  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: a.settleRafs }
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {

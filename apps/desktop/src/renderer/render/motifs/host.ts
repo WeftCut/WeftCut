@@ -17,6 +17,9 @@ import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors
  * @param contentHash optional blake3 content hash — threaded to the host URL's
  *                    `?v=` cache-buster so an in-place draft edit reloads the
  *                    capture host (else it re-captures the stale loaded DOM).
+ * @param fpsNum/fpsDen optional composition fps (exact rational) — becomes the
+ *                    `meta.fps` a Motif script reads; must be the rate `tSec`
+ *                    was computed on. Absent → main falls back to 30.
  */
 export async function captureMotifFramePngBlob(
   motifId: string,
@@ -27,6 +30,8 @@ export async function captureMotifFramePngBlob(
   settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
+  fpsNum?: number,
+  fpsDen?: number,
 ): Promise<Blob> {
   const b64: string = await invoke("motif_capture_frame", {
     motifId,
@@ -39,6 +44,8 @@ export async function captureMotifFramePngBlob(
     // Latest-wins queueing on the serial capture chain (main/motif/capture.ts):
     // a newer same-key request replaces a still-queued older one.
     coalesceKey: coalesceKey ?? null,
+    fpsNum: fpsNum ?? null,
+    fpsDen: fpsDen ?? null,
   });
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new Blob([bytes], { type: "image/png" });
@@ -67,8 +74,10 @@ export async function captureMotifFrame(
   settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
+  fpsNum?: number,
+  fpsDen?: number,
 ): Promise<ImageBitmap> {
-  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey);
+  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
   return createImageBitmap(blob);
 }
 
