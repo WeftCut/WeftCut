@@ -74,6 +74,9 @@ export class MotifSprite implements StageableSprite {
   private injectedFrame = -1;
   private source: ImageSource | null = null;
   private texture: Texture | null = null;
+  /// The raster `source` wraps, pinned in the shared cache while bound so an
+  /// LRU eviction can't close it under a texture Pixi may still re-upload.
+  private bound: ImageBitmap | HTMLCanvasElement | null = null;
   private onLoaded: (() => void) | null;
   private disposed = false;
   private boundOnce = false;
@@ -264,6 +267,12 @@ export class MotifSprite implements StageableSprite {
   }
 
   private bindBitmap(bitmap: ImageBitmap | HTMLCanvasElement): void {
+    // Pin the new raster before letting go of the old one, so a rebind of the
+    // same bitmap never drops its count to zero in between. The old pin is
+    // released only after the texture that wraps it is destroyed below.
+    sharedMotifFrameCache.retain(bitmap);
+    const previous = this.bound;
+    this.bound = bitmap;
     // destroy(true) frees this sprite's own ImageSource/GPU texture on every
     // rebind, preventing a per-tick GPU-memory leak. The shared cache's
     // ImageBitmap is NOT closed by destroy(true) — ImageSource inherits
@@ -286,6 +295,7 @@ export class MotifSprite implements StageableSprite {
     this.texture = new Texture({ source: this.source });
     this.sprite.texture = this.texture;
     this.boundOnce = true;
+    if (previous) sharedMotifFrameCache.release(previous);
   }
 
   dispose(): void {
@@ -302,6 +312,8 @@ export class MotifSprite implements StageableSprite {
     }
     this.texture = null;
     this.source = null;
+    if (this.bound) sharedMotifFrameCache.release(this.bound);
+    this.bound = null;
     this.sprite.destroy({ children: true });
   }
 }

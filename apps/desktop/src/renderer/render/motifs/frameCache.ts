@@ -10,7 +10,8 @@
 //   L0 (default, must-have) — an in-RAM, bounded LRU of per-frame
 //   `ImageBitmap`s. This is what preview pulls on-demand while
 //   scrubbing. Evicted bitmaps are `.close()`d so their GPU-side
-//   backing is freed promptly rather than waiting on GC.
+//   backing is freed promptly rather than waiting on GC — except one a
+//   sprite still has bound (`retain`), which closes on its last `release`.
 //
 //   L2 (opt-in, lighter) — a PNG frame sequence persisted to disk
 //   under `<workspace>/Cache/raster/<hash>/<i>.png`. Driven by a global
@@ -71,6 +72,15 @@ export class MotifFrameCache {
   /// to the tail (delete + re-insert) so recency stays accurate.
   private readonly store = new Map<string, Closeable>();
   private readonly maxFrames: number;
+  /// Bound-by-a-sprite counts. A frame that leaves the store while pinned is
+  /// parked in `retired` and closed on its last release: Pixi re-reads a
+  /// texture's resource whenever it (re)creates the GPU copy — after its GC
+  /// unloads an idle texture, or on a deferred first upload — and a closed
+  /// bitmap throws "ImageBitmap has been detached" out of the render. At most
+  /// one parked frame per live sprite, so the overshoot past `maxFrames` is
+  /// bounded by the layer count.
+  private readonly pins = new Map<object, number>();
+  private readonly retired = new Set<Closeable>();
 
   constructor(maxFrames: number = DEFAULT_MAX_FRAMES) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
@@ -110,7 +120,7 @@ export class MotifFrameCache {
   /// makes the write idempotent so a sibling sprite never has its bound bitmap
   /// closed out from under it (which caused "External Image has been detached"
   /// on WebGPU upload). When the store exceeds `maxFrames`, the LRU frame is
-  /// evicted and `.close()`d.
+  /// evicted and `.close()`d (deferred while retained — see `retain`).
   ///
   /// @returns The canonical cache-owned bitmap for this (cacheKey, frameIndex):
   ///   `bmp` itself on first insert, or the EXISTING (possibly already-bound)
@@ -121,7 +131,7 @@ export class MotifFrameCache {
     if (prev !== undefined) {
       // Keep the existing (possibly already-bound) bitmap; drop the redundant
       // incoming one. Refresh recency by re-inserting at the MRU tail.
-      if (prev !== (bmp as unknown as Closeable)) bmp.close();
+      if (prev !== (bmp as unknown as Closeable)) this.retire(bmp);
       this.store.delete(k);
       this.store.set(k, prev);
       return prev as unknown as ImageBitmap;
@@ -139,8 +149,37 @@ export class MotifFrameCache {
       if (oldest.done) break;
       const victim = this.store.get(oldest.value);
       this.store.delete(oldest.value);
-      victim?.close();
+      if (victim) this.retire(victim);
     }
+  }
+
+  /// A frame leaving the store: closed now, or — while a sprite still has it
+  /// bound — on that sprite's last `release`.
+  private retire(bmp: Closeable): void {
+    if (this.pins.has(bmp)) this.retired.add(bmp);
+    else bmp.close();
+  }
+
+  /// Pin a bitmap a sprite has bound, so eviction cannot close it under the
+  /// sprite. Safe on anything — a placeholder canvas or an export-injected
+  /// frame the cache never held is counted but never closed by the cache.
+  retain(bmp: object): void {
+    this.pins.set(bmp, (this.pins.get(bmp) ?? 0) + 1);
+  }
+
+  /// Drop one pin. The last release of a frame that already left the store
+  /// closes it; a frame still in the store stays cached. An unmatched release
+  /// is a no-op.
+  release(bmp: object): void {
+    const n = this.pins.get(bmp);
+    if (n === undefined) return;
+    if (n > 1) {
+      this.pins.set(bmp, n - 1);
+      return;
+    }
+    this.pins.delete(bmp);
+    const parked = bmp as Closeable;
+    if (this.retired.delete(parked)) parked.close();
   }
 
   /// True when (cacheKey, frameIndex) is held, WITHOUT touching recency (unlike
@@ -170,15 +209,19 @@ export class MotifFrameCache {
       if (keyMatchesCacheKey(k, cacheKey)) {
         const bmp = this.store.get(k);
         this.store.delete(k);
-        bmp?.close();
+        if (bmp) this.retire(bmp);
       }
     }
   }
 
-  /// Close every held bitmap and empty the store. Call on teardown.
+  /// Close every held bitmap — parked ones included — and empty the store.
+  /// Call on teardown.
   dispose(): void {
     for (const bmp of this.store.values()) bmp.close();
+    for (const bmp of this.retired) bmp.close();
     this.store.clear();
+    this.retired.clear();
+    this.pins.clear();
   }
 
   /// Frames currently held across all keys, for diagnostics.

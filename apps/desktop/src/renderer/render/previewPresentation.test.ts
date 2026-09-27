@@ -77,4 +77,28 @@ describe("setPixiPresentationVisible", () => {
     setPixiPresentationVisible(app, false);
     expect(remove.mock.calls[1]![0]).toBe(add.mock.calls[0]![0]);
   });
+
+  it("a throwing render never escapes the ticker listener", () => {
+    // Pixi's Ticker re-arms requestAnimationFrame only AFTER `update()`
+    // returns, so one exception out of a listener stops the ticker for good:
+    // the picture freezes, the PlaybackEngine clock is never ticked again and
+    // audio scheduling stops with it. A bad frame must cost that frame only.
+    const add = vi.fn();
+    const render = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Failed to execute 'copyExternalImageToTexture' on 'GPUQueue': ImageBitmap has been detached.");
+      })
+      .mockImplementation(() => {});
+    const app = { ticker: { add, remove: vi.fn() }, render } as unknown as Application;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    installTimedPresent(app);
+    const present = add.mock.calls[0]![0] as () => void;
+    expect(() => present()).not.toThrow();
+    expect(error).toHaveBeenCalledOnce();
+    present(); // the next frame renders normally
+    expect(render).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
 });

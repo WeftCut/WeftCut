@@ -80,6 +80,80 @@ describe("MotifFrameCache — L0 LRU", () => {
     expect(c.size()).toBe(2);
   });
 
+  test("eviction defers closing a retained frame until its last release", () => {
+    // A sprite's bound bitmap must stay uploadable: Pixi re-reads the resource
+    // whenever it (re)creates the GPU texture — after its GC unloads an idle
+    // texture, or on a deferred first upload — and a closed bitmap throws
+    // "ImageBitmap has been detached" out of the render, which kills the ticker.
+    const c = new MotifFrameCache(1);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    c.setFrame("k", 0, a);
+    c.retain(a); // bound by a sprite
+    c.setFrame("k", 1, b); // overflow → a leaves the store
+    expect(c.getFrame("k", 0)).toBeNull();
+    expect(a.close).not.toHaveBeenCalled();
+    c.release(a);
+    expect(a.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("a frame retained twice closes only after both releases", () => {
+    const c = new MotifFrameCache(1);
+    const a = fakeBitmap();
+    c.setFrame("k", 0, a);
+    c.retain(a);
+    c.retain(a); // two sprites share the canonical bitmap
+    c.setFrame("k", 1, fakeBitmap());
+    c.release(a);
+    expect(a.close).not.toHaveBeenCalled();
+    c.release(a);
+    expect(a.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("releasing a frame still in the store does not close it", () => {
+    const c = new MotifFrameCache(2);
+    const a = fakeBitmap();
+    c.setFrame("k", 0, a);
+    c.retain(a);
+    c.release(a);
+    expect(a.close).not.toHaveBeenCalled();
+    expect(c.getFrame("k", 0)).toBe(a);
+  });
+
+  test("clearKey defers closing a retained frame", () => {
+    const c = new MotifFrameCache();
+    const a = fakeBitmap();
+    c.setFrame("k", 0, a);
+    c.retain(a);
+    c.clearKey("k");
+    expect(a.close).not.toHaveBeenCalled();
+    c.release(a);
+    expect(a.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("dispose closes retained frames that already left the store", () => {
+    const c = new MotifFrameCache(1);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    c.setFrame("k", 0, a);
+    c.retain(a);
+    c.setFrame("k", 1, b);
+    c.dispose();
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(b.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("retain/release of a bitmap the cache never held has no close side effect", () => {
+    // Placeholder canvases and export-injected frames go through the same
+    // sprite bind path; the cache must not close what it does not own.
+    const c = new MotifFrameCache();
+    const foreign = fakeBitmap();
+    c.retain(foreign);
+    c.release(foreign);
+    c.release(foreign); // an unmatched release is a no-op, not a negative count
+    expect(foreign.close).not.toHaveBeenCalled();
+  });
+
   test("getFrame refreshes recency so the touched frame survives eviction", () => {
     const c = new MotifFrameCache(2);
     const a = fakeBitmap();

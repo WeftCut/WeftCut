@@ -54,6 +54,8 @@ vi.mock("../motifs/catalog", async (importOriginal) => {
 const getFrameMock = vi.fn(
   (_cacheKey: string, _frame: number): ImageBitmap | null => null,
 );
+const retainMock = vi.fn((_b: unknown) => {});
+const releaseMock = vi.fn((_b: unknown) => {});
 vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../motifs/motifRasterCache")>();
   return {
@@ -61,6 +63,8 @@ vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
     sharedMotifFrameCache: {
       getFrame: (cacheKey: string, frame: number) => getFrameMock(cacheKey, frame),
       setFrame: vi.fn((_k: string, _f: number, b: unknown) => b),
+      retain: (b: unknown) => retainMock(b),
+      release: (b: unknown) => releaseMock(b),
       readPng: vi.fn(async () => null),
     },
     resolveMotifFrame: vi.fn(async () => ({}) as unknown as ImageBitmap),
@@ -229,6 +233,34 @@ describe("MotifSprite.refreshMotif", () => {
 
     // content_hash A→B is part of the cache key → the key changed.
     expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("holds the cache's bitmap for exactly as long as it is bound", () => {
+    // The shared cache may evict a bound frame at any time; the sprite's
+    // retain is what keeps it from being closed while Pixi can still re-upload
+    // it. The previous binding is released only after its texture is gone.
+    getMotifMock.mockReset();
+    getMotifMock.mockReturnValue(motifWith("A"));
+    const frame0 = { width: 480, height: 480 } as unknown as ImageBitmap;
+    const frame1 = { width: 480, height: 480 } as unknown as ImageBitmap;
+    getFrameMock.mockReset();
+    getFrameMock.mockReturnValueOnce(frame0).mockReturnValueOnce(frame1);
+    retainMock.mockClear();
+    releaseMock.mockClear();
+
+    const sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(view, 0, 5_000_000);
+    expect(retainMock.mock.calls).toEqual([[frame0]]);
+    expect(releaseMock).not.toHaveBeenCalled();
+
+    sprite.update(view, 1_000_000, 5_000_000); // a later frame, also cached
+    expect(retainMock.mock.calls).toEqual([[frame0], [frame1]]);
+    expect(releaseMock.mock.calls).toEqual([[frame0]]);
+
+    sprite.dispose();
+    expect(releaseMock.mock.calls).toEqual([[frame0], [frame1]]);
+    getFrameMock.mockReset();
+    getFrameMock.mockImplementation(() => null);
   });
 
   it("refreshMotif is a no-op once the sprite is disposed", () => {

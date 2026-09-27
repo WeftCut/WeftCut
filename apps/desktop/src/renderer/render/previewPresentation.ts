@@ -12,13 +12,30 @@ const timedInstalled = new WeakSet<Application>();
 /// Compositor timer, so the listener slot is the only place it can be measured.
 /// LANDMINE: it runs at LOW priority, i.e. AFTER PlaybackEngine's HIGH tick
 /// already closed the frame, so the sample lands in the NEXT frame's bucket.
+///
+/// The render is fenced: Pixi's Ticker re-arms `requestAnimationFrame` only
+/// after `update()` returns, so an exception escaping this listener stops the
+/// ticker for good — the picture freezes, PlaybackEngine's HIGH tick never runs
+/// again (no clock, no audio scheduling) and play/pause cannot revive it. A
+/// frame that fails to render costs that frame. Logged on the first failure
+/// and every `RENDER_ERROR_LOG_EVERY`th after, so a persistent one stays visible.
+const RENDER_ERROR_LOG_EVERY = 300;
 function timedPresentFor(app: Application): () => void {
   let present = timedPresents.get(app);
   if (!present) {
+    let failures = 0;
     present = (): void => {
       const t = stageNow();
-      app.render();
-      stageAdd(STAGE.Present, t);
+      try {
+        app.render();
+      } catch (e) {
+        if (failures++ % RENDER_ERROR_LOG_EVERY === 0) {
+          // eslint-disable-next-line no-console
+          console.error(`[weftcut/pixi] preview render threw (${failures}×) — keeping ticker alive:`, e);
+        }
+      } finally {
+        stageAdd(STAGE.Present, t);
+      }
     };
     timedPresents.set(app, present);
   }
