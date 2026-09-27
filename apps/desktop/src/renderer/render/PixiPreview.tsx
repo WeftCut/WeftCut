@@ -754,8 +754,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // a real seek and read pixels straight off the composited canvas. Dynamic
       // import behind the static VITE_WEFTCUT_E2E check → stripped from prod.
       if (import.meta.env.VITE_WEFTCUT_E2E === "1") {
-        void import("../testhook/e2eHook").then(({ installPreviewBridge }) => {
+        void Promise.all([
+          import("../testhook/e2eHook"),
+          import("../testhook/previewRecovery"),
+        ]).then(([{ installPreviewBridge }, { previewRecoveryControls }]) => {
           installPreviewBridge({
+            recovery: previewRecoveryControls(app),
             seekUs: (us: number) => {
               engine.seek(us);
             },

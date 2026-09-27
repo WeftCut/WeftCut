@@ -321,6 +321,9 @@ export interface E2EHook {
   weftcutSeekUs(us: number): void;
   /** Stable Preview lifecycle token and presentation counters. Null while closed. */
   previewResourceProbe(): PreviewResourceProbe | null;
+  previewRecovery(action: "evict-and-unload" | "throw-next-present"): Promise<{
+    rendererType: number; sources: number; liveBitmaps: number;
+  }>;
   /// Read one pixel back from the LIVE composited Pixi canvas at (x, y) in
   /// composition pixels. Uses the renderer's `extract` (reliable on
   /// WebGPU/WebGL regardless of preserveDrawingBuffer) and reads the pixel via
@@ -581,6 +584,7 @@ interface PreviewBridge {
   /// Composite + capture PNG and presented-frame metadata in one operation.
   captureFrame(layerId?: string): Promise<PreviewFrameCapture>;
   resourceProbe(): PreviewResourceProbe;
+  recovery: E2EHook["previewRecovery"];
   /// The live Compositor's own per-frame accounting (see
   /// `Compositor.getPerfSnapshot`) — dropped frames, per-clip decode/ring
   /// counters, composite ms, HW handoff barrier percentiles.
@@ -1082,6 +1086,10 @@ export function installMotifHook(): void {
     previewBridge.seekUs(us);
   };
   hookSlot().previewResourceProbe = () => previewBridge?.resourceProbe() ?? null;
+  hookSlot().previewRecovery = (action) => {
+    if (!previewBridge) throw new Error("previewRecovery: preview bridge not registered");
+    return previewBridge.recovery(action);
+  };
   hookSlot().weftcutSampleComposite = async (x: number, y: number) => {
     if (!previewBridge) throw new Error("weftcutSampleComposite: preview bridge not registered");
     return previewBridge.sampleComposite(x, y);

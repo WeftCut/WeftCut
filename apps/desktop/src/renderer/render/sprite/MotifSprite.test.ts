@@ -5,7 +5,7 @@
 // testable without the browser surface. The async capture/bind chain is
 // exercised end-to-end by the Electron e2e (`e2e/electron/motif-capture.spec.ts`).
 
-import { describe, expect, test, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, it, vi } from "vitest";
 
 // Pixi touches WebGL/DOM at module load; the sprite only needs `Sprite`,
 // `Texture`, and `ImageSource` to exist as constructible stubs for the
@@ -80,6 +80,7 @@ import {
 import type { MotifManifest, Motif } from "../motifs/catalog";
 import type { ResolvedMotifView } from "../resolveView";
 import { MotifSprite } from "./MotifSprite";
+import { resolveMotifFrame } from "../motifs/motifRasterCache";
 
 describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
@@ -269,5 +270,125 @@ describe("MotifSprite.refreshMotif", () => {
     const sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
     sprite.dispose();
     expect(() => sprite.refreshMotif()).not.toThrow();
+  });
+
+  describe("capture recovery", () => {
+    let sprite: MotifSprite;
+    const bitmap = () => ({ width: 480, height: 480 }) as ImageBitmap;
+    const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["performance"] });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      getMotifMock.mockReturnValue(motifWith("A"));
+      getFrameMock.mockReset().mockReturnValue(null);
+      retainMock.mockClear();
+      releaseMock.mockClear();
+      vi.mocked(resolveMotifFrame).mockReset();
+      sprite = new MotifSprite({ layerId: "recovery", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    });
+    afterEach(() => {
+      sprite.dispose();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    it("adopts a warmed frame after capture failure without moving the playhead", async () => {
+      vi.mocked(resolveMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"));
+      sprite.update(view, 0, 5_000_000);
+      await flush();
+      const recovered = bitmap();
+      getFrameMock.mockReturnValue(recovered);
+      sprite.update(view, 0, 5_000_000);
+      expect(retainMock).toHaveBeenCalledWith(recovered);
+      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries a failed capture after a delay and stops requesting once bound", async () => {
+      const recovered = bitmap();
+      vi.mocked(resolveMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"))
+        .mockResolvedValueOnce(recovered);
+      sprite.update(view, 0, 5_000_000);
+      await flush();
+      for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
+      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(250);
+      sprite.update(view, 0, 5_000_000);
+      await flush();
+      expect(retainMock).toHaveBeenCalledWith(recovered);
+      for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
+      expect(resolveMotifFrame).toHaveBeenCalledTimes(2);
+    });
+
+    it("backs off repeated failures without abandoning recovery after a prolonged outage", async () => {
+      vi.mocked(resolveMotifFrame).mockRejectedValue(new Error("capture unavailable"));
+      sprite.update(view, 0, 5_000_000);
+      await flush();
+      let attempts = 1;
+      for (const delay of [250, 1_000, 4_000, 4_000]) {
+        vi.advanceTimersByTime(delay - 1);
+        for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
+        expect(resolveMotifFrame).toHaveBeenCalledTimes(attempts);
+        vi.advanceTimersByTime(1);
+        sprite.update(view, 0, 5_000_000);
+        await flush();
+        expect(resolveMotifFrame).toHaveBeenCalledTimes(++attempts);
+      }
+      const recovered = bitmap();
+      vi.mocked(resolveMotifFrame).mockResolvedValueOnce(recovered);
+      vi.advanceTimersByTime(4_000);
+      sprite.update(view, 0, 5_000_000);
+      await flush();
+      expect(retainMock).toHaveBeenCalledWith(recovered);
+    });
+
+    it("does not duplicate an in-flight request", async () => {
+      let finish!: (value: ImageBitmap) => void;
+      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+      for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
+      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      const recovered = bitmap();
+      finish(recovered);
+      await flush();
+      expect(retainMock).toHaveBeenCalledWith(recovered);
+    });
+
+    it("ignores an old failure after another frame has bound", async () => {
+      let fail!: (error: Error) => void;
+      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+      sprite.update(view, 0, 5_000_000);
+      const next = bitmap();
+      getFrameMock.mockReturnValue(next);
+      sprite.update(view, 1_000_000, 5_000_000);
+      fail(new Error("obsolete capture"));
+      await flush();
+      getFrameMock.mockReturnValue(null);
+      vi.advanceTimersByTime(10_000);
+      sprite.update(view, 1_000_000, 5_000_000);
+      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(retainMock.mock.calls).toEqual([[next]]);
+    });
+
+    it("does not bind a stale capture when seeking away and back", async () => {
+      let finish!: (value: ImageBitmap) => void;
+      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }))
+        .mockReturnValue(new Promise(() => {}));
+      sprite.update(view, 0, 5_000_000);
+      sprite.update(view, 1_000_000, 5_000_000);
+      sprite.update(view, 0, 5_000_000);
+      finish(bitmap());
+      await flush();
+      expect(retainMock).not.toHaveBeenCalled();
+    });
+
+    it("does not bind a capture completed after disposal", async () => {
+      let finish!: (value: ImageBitmap) => void;
+      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+      sprite.update(view, 0, 5_000_000);
+      sprite.dispose();
+      finish(bitmap());
+      await flush();
+      expect(retainMock).not.toHaveBeenCalled();
+    });
   });
 });

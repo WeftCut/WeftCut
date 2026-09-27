@@ -56,6 +56,20 @@ export interface MotifSpriteInit {
   onLoaded?: () => void;
 }
 
+interface CaptureTarget {
+  cacheKey: string;
+  frame: number;
+  state: "idle" | "pending" | "bound";
+  failures: number;
+  retryAt: number;
+}
+
+// A paused/capped content frame must recover without a seek, but an unavailable
+// capture host must not receive a new request on every display tick. Saturate
+// the delay, not the number of attempts: a longer outage must still recover.
+// A background cache fill can satisfy the target before its retry is due.
+const CAPTURE_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const;
+
 export class MotifSprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
@@ -63,11 +77,9 @@ export class MotifSprite implements StageableSprite {
   private readonly fpsNum: number;
   private readonly fpsDen: number;
   private motif: Motif | null;
-  /// The (cacheKey, frame) we currently want displayed — set eagerly in
-  /// `update` and read for BOTH the no-op check and the async race-guard
-  /// (a newer `update` supersedes an in-flight rasterize by moving these).
-  private targetCacheKey: string | null = null;
-  private targetFrame = -1;
+  /// Desired frame and its request state. Identity guards async completion,
+  /// including a seek away and back to the same (key, frame).
+  private target: CaptureTarget | null = null;
   /// Last comp-frame index bound from `injectedFrames` (export mode). Lets a
   /// repeated index (output fps < comp fps, or a held frame) skip the rebind +
   /// per-tick GPU texture churn. -1 = nothing bound yet.
@@ -198,20 +210,25 @@ export class MotifSprite implements StageableSprite {
       return;
     }
     const { cacheKey, contentFrame: frame, tSec, durationSec, canonicalProps: canonical } = desc;
-    if (cacheKey === this.targetCacheKey && frame === this.targetFrame) return;
-    this.targetCacheKey = cacheKey;
-    this.targetFrame = frame;
+    if (cacheKey !== this.target?.cacheKey || frame !== this.target.frame) {
+      this.target = { cacheKey, frame, state: "idle", failures: 0, retryAt: 0 };
+    }
+    const target = this.target;
+    if (target.state === "bound" || target.state === "pending") return;
     const cached = sharedMotifFrameCache.getFrame(cacheKey, frame);
     if (cached) {
       this.bindBitmap(cached);
+      target.state = "bound";
       return;
     }
+    if (performance.now() < target.retryAt) return;
     // First-ever cold frame: show a neutral placeholder so the layer doesn't
     // flash empty while frame 0 is captured. Later misses hold the last bitmap.
     if (!this.boundOnce && this.texture === null && typeof document !== "undefined") {
       this.bindBitmap(neutralPlaceholder());
     }
-    void this.captureAndBind(cacheKey, frame, tSec, durationSec, canonical);
+    target.state = "pending";
+    void this.captureAndBind(target, tSec, durationSec, canonical);
   }
 
   /// Re-fetch this layer's Motif from the runtime catalog and reset the render
@@ -222,8 +239,7 @@ export class MotifSprite implements StageableSprite {
   refreshMotif(): void {
     if (this.disposed) return;
     this.motif = getMotif(this.motifId);
-    this.targetCacheKey = null;
-    this.targetFrame = -1;
+    this.target = null;
   }
 
   /// Render + rasterize one frame, store it, and bind it iff the playhead
@@ -234,13 +250,13 @@ export class MotifSprite implements StageableSprite {
   /// synchronous `update()` path so the document-less export Worker doesn't
   /// throw out of the composite loop.
   private async captureAndBind(
-    cacheKey: string,
-    frame: number,
+    target: CaptureTarget,
     tSec: number,
     durationSec: number,
     canonicalProps: Record<string, unknown>,
   ): Promise<void> {
     if (!this.motif) return;
+    const { cacheKey, frame } = target;
     try {
       const bitmap = await resolveMotifFrame(
            this.motif, cacheKey, frame, tSec, durationSec, canonicalProps,
@@ -254,10 +270,21 @@ export class MotifSprite implements StageableSprite {
       // A later `update` may have superseded this request while we awaited;
       // only bind if we still want exactly this (cacheKey, frame).
       if (this.disposed) return;
-      if (this.targetCacheKey !== cacheKey || this.targetFrame !== frame) return;
+      if (this.target !== target) return;
       this.bindBitmap(canonical);
+      target.state = "bound";
       this.onLoaded?.();
     } catch (e) {
+      if (this.disposed || this.target !== target) return;
+      // Callback errors must not turn an already-bound frame into a failed
+      // capture. Otherwise a repaint callback could cause repeated rebinds.
+      if (target.state !== "bound") {
+        target.state = "idle";
+        const delay = CAPTURE_RETRY_DELAYS_MS[Math.min(target.failures++, CAPTURE_RETRY_DELAYS_MS.length - 1)]!;
+        target.retryAt = performance.now() + delay;
+      }
+      // Keep a persistent failure visible without a stream of identical logs.
+      if (target.failures > 3 && target.failures % 10 !== 0) return;
       // eslint-disable-next-line no-console
       console.error(
         `[weftcut/pixi] MotifSprite ${this.layerId}: capture/rasterize failed`,
@@ -301,6 +328,7 @@ export class MotifSprite implements StageableSprite {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.target = null;
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
         // Frees this sprite's own wrapper only — never the cache-owned
