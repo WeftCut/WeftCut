@@ -286,11 +286,18 @@ cache captures each frame index once and reuses it.
   resolves when the frame is visually ready; the screenshot follows. The whole
   render+capture is **serialized** under a lock so the several fill loops (on-demand
   sprite, prewarmer, baker) cannot interleave on the one host and screenshot a stale
-  frame.
+  frame. On-demand sprite requests additionally carry a per-layer **coalesce key**:
+  a newer frame's request replaces a still-queued older one from the same sprite
+  (latest wins, the replaced waiter rejects with a distinct superseded error), so
+  real-time playback can't pile a stale-request backlog onto the one chain ahead of
+  the prewarmer and the baker. Every CDP step is timeout-fenced — a wedged offscreen
+  renderer fails the capture and tears the host down for rebuild rather than hanging
+  the chain for the process's life.
 
 ## Raster cache and escalation
 
-A capture costs tens to ~100 ms — far more than a cheap vector raster — so the cost is
+A capture costs tens of ms for a simple built-in to ~1 s for a heavy 1080p page — far
+more than a cheap vector raster — so the cost is
 managed by **cache dedup, not a second renderer**: a static overlay produces identical
 pixels every content frame, so the cache collapses it to one capture; only Motifs with
 many *distinct* frames pay the per-frame cost repeatedly. Three escalation levers sit
@@ -310,7 +317,12 @@ over the one capture function:
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
   safe to delete (regenerates). Driven by a global **Pre-bake** setting (off by default)
   and a per-layer **Pre-bake now** action; reads are disk-first, gated by an in-RAM
-  baked-key index so un-baked Motifs pay no fs cost.
+  baked-key index so un-baked Motifs pay no fs cost. On project load, hash dirs no live
+  key references are garbage-collected — but only after re-pulling the user-Motif
+  catalog, and the GC is **skipped entirely** while any Motif layer is unresolvable:
+  "can't resolve right now" (catalog sync lost the race with project open, a transient
+  IPC failure) is not "orphaned", and deleting baked frames on a guess costs tens of
+  minutes of serial re-capture.
 
 The key is **source-derived**: `contentHash` is a hash of the Motif's manifest + HTML, so
 editing a Motif's source (or updating an installed one) yields a fresh key and re-captures —
