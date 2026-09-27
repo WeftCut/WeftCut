@@ -47,20 +47,108 @@ interface Host {
 }
 let host: Host | null = null
 
-// Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the one
-// host — single-threaded but await-interleaved.
-let chain: Promise<unknown> = Promise.resolve()
+// Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the
+// one host — single-threaded but await-interleaved. Two FIFO queues replace a
+// bare promise chain so a HIGH ticket (keyed: the on-demand sprite frame the
+// user is looking at NOW) dequeues ahead of any queued LOW ticket (keyless
+// prewarmer/baker/MCP): during playback the prewarmer used to hold the chain
+// while fresh sprite frames waited behind it (5b7cbaec). A RUNNING capture is
+// never preempted, FIFO holds within a priority, and LOW starvation during
+// continuous playback is the intent — prewarmer work is speculative.
+interface Ticket {
+  /// Coalesce key when keyed; lets the pump drop the ticket from queuedKeys
+  /// the moment it passes the replaceable window.
+  key: string | undefined
+  high: boolean
+  /// Set by a superseding same-key request: the waiter was already rejected,
+  /// so the pump must skip this ticket instead of executing a stale frame.
+  stale: boolean
+  reject: (e: Error) => void
+  /// Settles the ticket's own waiter; must never throw (a throw would strand
+  /// every ticket queued behind it).
+  run: () => Promise<void>
+}
+const highQueue: Ticket[] = []
+const lowQueue: Ticket[] = []
+let pumping = false
+
+function schedule(t: Ticket): void {
+  ;(t.high ? highQueue : lowQueue).push(t)
+  void pump()
+}
+
+async function pump(): Promise<void> {
+  if (pumping) return // the running loop drains whatever lands behind it
+  pumping = true
+  try {
+    for (;;) {
+      const t = highQueue.shift() ?? lowQueue.shift()
+      if (!t) return
+      // A superseded ticket must not occupy its HIGH slot when reached.
+      if (t.stale) continue
+      // Past the replaceable window — leave the map before running.
+      if (t.key !== undefined && queuedKeys.get(t.key) === t) queuedKeys.delete(t.key)
+      await t.run()
+    }
+  } finally {
+    pumping = false
+  }
+}
 
 /// Queued (not yet running) keyed captures, latest-wins per key. The on-demand
 /// sprite path keys by layer id, so during playback each tick's fresh frame
 /// replaces the still-queued previous one: its waiter rejects IMMEDIATELY with
-/// CAPTURE_SUPERSEDED_MESSAGE and its chain slot no-ops when reached — the one
-/// serial chain never spends capture-seconds executing a frame nobody wants
+/// CAPTURE_SUPERSEDED_MESSAGE and its queue slot no-ops when reached — the one
+/// serial queue never spends capture-seconds executing a frame nobody wants
 /// anymore. Without this, real-time playback enqueues ~30 requests/s per
-/// visible motif against a ~1 s/capture chain, and the unbounded backlog
+/// visible motif against a ~1 s/capture queue, and the unbounded backlog
 /// starves the prewarmer AND the L2 baker queued behind it. Keyless requests
 /// (prewarmer, baker, MCP) are never superseded: their frames stay wanted.
-const queuedKeys = new Map<string, { reject: (e: Error) => void }>()
+const queuedKeys = new Map<string, Ticket>()
+
+/// Failed lanes: capture errors attributable to the Motif's OWN content
+/// (a throwing or hung __motifRender), keyed by `${motifId}\0${contentHash}`.
+/// The window and CDP transport are healthy, so the host is NOT torn down —
+/// one broken Motif must not force re-navigation + runtime re-injection for
+/// every other Motif. Same-lane captures fast-reject with the recorded error
+/// until the lane key changes; a draft edit changes the blake3 contentHash,
+/// which is the invalidation signal, so recovery is automatic. That kills the
+/// per-sprite backoff retry storm against known-bad content. Empty contentHash
+/// (MCP callers) is never marked: with no hash there is no recovery signal.
+/// Bounded FIFO because drafts churn lane keys on every edit. Navigation
+/// bookkeeping (loadedId/loadedV/readyFor) stays host-global — one window can
+/// only ever hold one page.
+const failedLanes = new Map<string, Error>()
+const FAILED_LANE_CAP = 128
+
+const laneKeyOf = (motifId: string, contentHash: string) => `${motifId}\0${contentHash}`
+
+function failLane(key: string, err: Error): void {
+  if (failedLanes.size >= FAILED_LANE_CAP) failedLanes.delete(failedLanes.keys().next().value!)
+  failedLanes.set(key, err)
+}
+
+/// Resolved user-Motif manifests keyed by `${motifId}\0${contentHash}`:
+/// getMotif is readFileSync + parseManifestIsland — synchronous fs on the
+/// capture hot path, once per frame. The content hash IS the invalidation
+/// signal, so caching by it is exact. Empty contentHash (MCP callers) is never
+/// cached: no invalidation signal. FIFO-evicted at a small cap — drafts churn
+/// keys on every edit. Built-ins never reach here (already in RAM).
+const manifestCache = new Map<string, Manifest | null>()
+const MANIFEST_CACHE_CAP = 32
+
+function manifestFor(a: CaptureArgs): Manifest | undefined {
+  const builtin = BUILTIN_MANIFESTS.get(a.motifId)
+  if (builtin) return builtin
+  if (!motifStore) return undefined
+  if (a.contentHash === '') return motifStore.getMotif(a.motifId)?.manifest
+  const key = laneKeyOf(a.motifId, a.contentHash)
+  if (manifestCache.has(key)) return manifestCache.get(key) ?? undefined
+  const manifest = motifStore.getMotif(a.motifId)?.manifest ?? null
+  if (manifestCache.size >= MANIFEST_CACHE_CAP) manifestCache.delete(manifestCache.keys().next().value!)
+  manifestCache.set(key, manifest)
+  return manifest ?? undefined
+}
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -123,10 +211,11 @@ let shuttingDown = false
 /// calls this.
 ///
 /// The latch is the load-bearing half, not the teardown. Quitting closes every
-/// window ASYNCHRONOUSLY, and a capture still queued on `chain` resumes inside
-/// that gap: it finds `host` null and rebuilds it, so Electron's window list
-/// never empties, `will-quit` never fires, and the process runs forever. Tearing
-/// the host down without also refusing later captures re-opens that race.
+/// window ASYNCHRONOUSLY, and a capture still queued on the capture queues
+/// resumes inside that gap: it finds `host` null and rebuilds it, so
+/// Electron's window list never empties, `will-quit` never fires, and the
+/// process runs forever. Tearing the host down without also refusing later
+/// captures re-opens that race.
 export function shutdownCaptureHost(): void {
   shuttingDown = true
   teardownHost()
@@ -156,9 +245,9 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     ` && location.hostname===${JSON.stringify(motifId)})`
   for (let i = 0; i < READY_ATTEMPTS; i++) {
     // TIMED, unlike a plain send: a wedged offscreen renderer never settles a
-    // sendCommand, and an untimed probe would hang the one serial capture chain
-    // for the rest of the process's life — every motif in every project frozen,
-    // no error anywhere. The timeout converts the wedge into an error, which
+    // sendCommand, and an untimed probe would hang the one serial capture
+    // queue for the rest of the process's life — every motif in every project
+    // frozen, no error anywhere. The timeout converts the wedge into an error, which
     // doCapture's catch answers with teardownHost → the next capture rebuilds.
     // A wedged page does not unwedge between polls, so the throw also skips the
     // remaining attempts (they exist for a LOADING page, which fails fast).
@@ -176,16 +265,19 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
 async function doCapture(a: CaptureArgs): Promise<string> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
+  const lane = laneKeyOf(a.motifId, a.contentHash)
   let h: Host
   try {
     h = await ensureHost(a.motifId, a.contentHash)
     await waitReady(h, a.motifId)
   } catch (e) {
+    // Transport class: no Motif code ran (host build, loadURL, wedged/never-
+    // ready probe), so nothing here is attributable to page content — tear
+    // down and let the next capture rebuild.
     teardownHost()
     throw e
   }
-  const manifest: Manifest | undefined =
-    BUILTIN_MANIFESTS.get(a.motifId) ?? motifStore?.getMotif(a.motifId)?.manifest
+  const manifest = manifestFor(a)
   const props = JSON.parse(a.propsJson) as Record<string, unknown>
   const duration = manifest ? motifCtxDurationS(manifest, props) : 5
   // meta.fps must be the rate the caller computed tSec on (the composition's
@@ -203,11 +295,34 @@ async function doCapture(a: CaptureArgs): Promise<string> {
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       h.lastSize = { w: a.width, h: a.height }
     }
-    const ev = await withTimeout(
+  } catch (e) {
+    teardownHost() // transport: wedged host — rebuild on next call
+    throw e
+  }
+  let ev: any
+  try {
+    ev = await withTimeout(
       h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
       CAPTURE_TIMEOUT_MS, '__motifRender',
     )
-    if (ev?.exceptionDetails) throw new Error('__motifRender threw: ' + JSON.stringify(ev.exceptionDetails))
+  } catch (e) {
+    // A hung __motifRender is the Motif's own script (e.g. an infinite loop) —
+    // content — but it also wedges the renderer for every other lane: mark the
+    // lane failed so its sprites stop retrying AND rebuild the host.
+    if (a.contentHash !== '') failLane(lane, e as Error)
+    teardownHost()
+    throw e
+  }
+  if (ev?.exceptionDetails) {
+    // Content error: the Motif's script threw. The window and CDP transport
+    // answered fine, so tearing the host down would punish every other Motif
+    // with re-navigation + runtime re-injection. Fail the LANE instead —
+    // same-lane captures fast-reject until contentHash changes (see failedLanes).
+    const err = new Error('__motifRender threw: ' + JSON.stringify(ev.exceptionDetails))
+    if (a.contentHash !== '') failLane(lane, err)
+    throw err
+  }
+  try {
     const shot = await withTimeout(h.send('Page.captureScreenshot', { format: 'png' }), CAPTURE_TIMEOUT_MS, 'captureScreenshot')
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string // base64 PNG, no data: prefix
@@ -218,30 +333,46 @@ async function doCapture(a: CaptureArgs): Promise<string> {
 }
 
 export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Promise<string> {
+  // Fast-reject a lane whose content already failed this session: same
+  // (motifId, contentHash) means the same throwing script against the same
+  // page — don't spend queue slots or CDP round trips proving it again.
+  const lane = laneKeyOf(a.motifId, a.contentHash)
+  const laneError = failedLanes.get(lane)
+  if (laneError) return Promise.reject(laneError)
   if (!coalesceKey) {
-    const run = chain.then(() => doCapture(a))
-    // Keep the chain alive even if this capture rejects.
-    chain = run.then(() => undefined, () => undefined)
-    return run
+    // LOW priority: keyless prewarmer/baker/MCP work yields to on-demand
+    // sprite frames queued behind it.
+    return new Promise<string>((resolve, reject) => {
+      schedule({
+        key: undefined, high: false, stale: false, reject,
+        run: async () => {
+          // The lane may have failed while this ticket sat queued.
+          const err = failedLanes.get(lane)
+          if (err) { reject(err); return }
+          try { resolve(await doCapture(a)) } catch (e) { reject(e as Error) }
+        },
+      })
+    })
   }
-  // Latest-wins per key: wake the previous queued waiter right away — its slot
-  // on the chain then does no work when reached (checked below).
-  queuedKeys.get(coalesceKey)?.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
-  const ticket: { reject: (e: Error) => void } = { reject: () => {} }
+  // HIGH priority: a keyed request is the frame the user is looking at NOW.
+  // Latest-wins per key: wake the previous queued waiter right away and stale
+  // its ticket — its queue slot then does no work when reached (pump skips it).
+  const prev = queuedKeys.get(coalesceKey)
+  if (prev) {
+    prev.stale = true
+    prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
+  }
+  const ticket: Ticket = { key: coalesceKey, high: true, stale: false, reject: () => {}, run: async () => {} }
   const out = new Promise<string>((resolve, reject) => {
     ticket.reject = reject
-    const run = chain.then(() => {
-      // Replaced by a newer same-key request while queued (the map moved on):
-      // `out` is already rejected by the supersede above — occupy the slot
-      // cheaply. Otherwise this request is the live one: past the replaceable
-      // window, so leave the map before running.
-      if (queuedKeys.get(coalesceKey) !== ticket) return ''
-      queuedKeys.delete(coalesceKey)
-      return doCapture(a)
-    })
-    chain = run.then(() => undefined, () => undefined)
-    run.then(resolve, reject)
+    ticket.run = async () => {
+      // The lane may have failed while this ticket sat queued.
+      const err = failedLanes.get(lane)
+      if (err) { reject(err); return }
+      try { resolve(await doCapture(a)) } catch (e) { reject(e as Error) }
+    }
   })
   queuedKeys.set(coalesceKey, ticket)
+  schedule(ticket)
   return out
 }
