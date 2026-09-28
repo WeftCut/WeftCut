@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { boundaryDisplayFrameUs } from "../frames";
-import { transportPause, transportSeek } from "../state/playbackStore";
+import { transportPause, transportPreviewSeek, transportSeek } from "../state/playbackStore";
 import { setPlayheadTimeUs, playheadTimeUs } from "../state/playheadStore";
 import { previewLocalUs } from "../state/playheadProjection";
 import { useLayerDragStore } from "./layerDragStore";
@@ -19,8 +19,8 @@ import { constrainedAnchorUs } from "./hooks/useLayerDrag";
 /// The monitor shows the frame the dragged boundary KEEPS: the out side shows
 /// the last kept frame (the traditional NLE tail-trim display — never the frame
 /// past the cut), the in side the first. The playhead is not the preview cursor:
-/// its position is captured once at gesture start and restored when the gesture
-/// ends, so a trim never relocates the user's park position.
+/// its position stays parked throughout the gesture. Only the monitor follows
+/// the boundary, then returns to the parked moment when the gesture ends.
 ///
 /// LANDMINE: the composition gate is not decoration. Every mounted Panel renders
 /// one of these against one module-level store, and each holds its OWN `fpsNum`
@@ -67,7 +67,7 @@ export function LayerDragTrimMonitor({
     }
     // Dedup is the effect dep itself: the value is frame-quantized upstream,
     // so a pointer wiggle inside one frame never re-seeks.
-    transportSeek(trimPreviewUs);
+    transportPreviewSeek(trimPreviewUs);
   }, [trimPreviewUs]);
 
   useEffect(() => {
@@ -76,9 +76,7 @@ export function LayerDragTrimMonitor({
       const restoreUs = trimRestoreUsRef.current;
       trimRestoreUsRef.current = null;
       if (restoreUs === null) return;
-      // Optimistic store write + transport seek (the seekExact pattern in
-      // state/navigation.ts): engine emits during the preview may have moved
-      // the playhead line, so put both the line and the monitor back.
+      // Restore the monitor and resume normal transport time notifications.
       setPlayheadTimeUs(restoreUs);
       transportSeek(previewLocalUs(restoreUs));
     };

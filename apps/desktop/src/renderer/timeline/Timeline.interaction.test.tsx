@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { Ticker } from "pixi.js";
+import { PlaybackEngine } from "../render/PlaybackEngine";
+import type { Compositor } from "../render/Compositor";
 import {
   act,
   cleanup,
@@ -756,6 +759,63 @@ describe("Timeline seek/selection coupling", () => {
     );
   });
 
+  it.each([
+    { edge: "head", fromX: 0, toX: 3, previewUs: 33_333 },
+    { edge: "tail", fromX: 160, toX: 163, previewUs: 2_000_000 },
+  ])("keeps the playhead parked throughout a $edge trim with the real transport", ({ fromX, toX, previewUs }) => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    // Keep the engine's real time notifications: a seek-only mock hides the
+    // feedback from the preview into the timeline's playhead store.
+    const compositeFrame = vi.fn();
+    const compositor = {
+      getAudioGraph: () => null,
+      setClockAnchor: vi.fn(),
+      setScrubbing: vi.fn(),
+      setAnchorTime: vi.fn(),
+      compositeFrame,
+      playableEndUs: () => 5_000_000,
+      compositionDurationUs: () => 5_000_000,
+    } as unknown as Compositor;
+    const ticker = new Ticker();
+    const engine = new PlaybackEngine({ compositor, ticker });
+    engine.bindFps(30, 1);
+    engine.onTimeUpdate(setPlayheadTimeUs);
+    registerTransport(engine);
+    engine.seek(500_000);
+    const { getByText, unmount } = renderTimeline({});
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 160, top: 0, bottom: 48,
+      width: 160, height: 48, x: 0, y: 0, toJSON: () => ({}),
+    });
+    try {
+      fireEvent.pointerDown(block, { button: 0, clientX: fromX, clientY: 30 });
+      expect(playheadTimeUs()).toBe(500_000);
+      fireEvent.pointerMove(window, { clientX: toX, clientY: 30 });
+      expect(compositeFrame).toHaveBeenLastCalledWith(previewUs);
+      expect(playheadTimeUs()).toBe(500_000);
+      act(() => {
+        vi.advanceTimersByTime(60);
+        ticker.update(100);
+      });
+      expect(playheadTimeUs()).toBe(500_000);
+      fireEvent.pointerUp(window, { clientX: toX, clientY: 30 });
+      expect(ipcMocks.trimLayer).toHaveBeenCalled();
+      expect(compositeFrame).toHaveBeenLastCalledWith(500_000);
+      expect(playheadTimeUs()).toBe(500_000);
+      act(() => engine.seek(1_000_000));
+      expect(playheadTimeUs()).toBe(1_000_000);
+    } finally {
+      unmount();
+      releaseTransport(engine);
+      engine.dispose();
+      ticker.destroy();
+    }
+  });
+
   it("drives the monitor to the LAST KEPT frame during a tail trim and restores on release", () => {
     vi.useFakeTimers();
     useAppSettingsStore.setState((s) => ({
@@ -786,11 +846,11 @@ describe("Timeline seek/selection coupling", () => {
     // New end 2_033_333 (exclusive) → the monitor shows the last kept
     // frame's start, 2_000_000 (frame 60 @ 30fps) — not the boundary frame.
     expect(pause).toHaveBeenCalled();
-    expect(seek).toHaveBeenCalledWith(2_000_000);
+    expect(seek).toHaveBeenCalledWith(2_000_000, "preview");
 
     fireEvent.pointerMove(window, { clientX: 168, clientY: 30 });
     // New end 2_100_000 → last kept frame 62 starts at 2_066_667.
-    expect(seek).toHaveBeenCalledWith(2_066_667);
+    expect(seek).toHaveBeenCalledWith(2_066_667, "preview");
 
     fireEvent.pointerUp(window, { clientX: 168, clientY: 30 });
     // Gesture over: the playhead line and the monitor return to the
@@ -827,7 +887,7 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerMove(window, { clientX: 3, clientY: 30 });
 
     // New start 33_333: the in side shows the boundary frame itself.
-    expect(seek).toHaveBeenCalledWith(33_333);
+    expect(seek).toHaveBeenCalledWith(33_333, "preview");
 
     fireEvent.pointerUp(window, { clientX: 3, clientY: 30 });
     expect(playheadTimeUs()).toBe(500_000);

@@ -15,7 +15,7 @@ import { create } from "zustand";
 export interface TransportHandle {
   play(): void;
   pause(): void;
-  seek(tUs: number): void;
+  seek(tUs: number, mode?: "playhead" | "preview"): void;
   isPlaying(): boolean;
 }
 
@@ -65,6 +65,12 @@ export function transportPause(): void {
 
 export function transportSeek(tUs: number): void {
   usePlaybackStore.getState().transport?.seek(tUs);
+}
+
+/// Temporarily show a trim boundary without publishing it as the editor's
+/// moment. The caller pauses first and restores with a normal seek on release.
+export function transportPreviewSeek(tUs: number): void {
+  usePlaybackStore.getState().transport?.seek(tUs, "preview");
 }
 
 /// Atomic hook for React subscribers (primitive → no useSyncExternalStore

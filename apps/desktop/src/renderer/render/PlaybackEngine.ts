@@ -70,6 +70,9 @@ export class PlaybackEngine {
   /// want the intent, not the clock state, so the play button feels
   /// instantly responsive even during the warm-up gate.
   private intendedPlaying = false;
+  /// A trim preview moves the monitor's clock without moving the editor's
+  /// parked moment. Keep ticks silent too, until a normal seek or play.
+  private previewing = false;
   /// Handle for the rAF-driven warm-up poller. Set while `play()` is
   /// waiting for the ring to fill; null otherwise. Cancelled by
   /// `pause()` so the user can abort a warm-up by clicking pause.
@@ -141,6 +144,7 @@ export class PlaybackEngine {
 
   play(): void {
     if (this.intendedPlaying) return;
+    this.previewing = false;
     // If the playhead is parked at the last frame of playable material,
     // treat play as "play from the start". Under the frame-anchor
     // playhead rule, "at end" means `position >= endUs − F` (the start
@@ -190,7 +194,8 @@ export class PlaybackEngine {
   /// Hard seek to a composition time. Clock + visual feedback are
   /// immediate; the precise decoder fetch is deferred through
   /// `scrubCoalescer` (see its field doc for the debounce contract).
-  seek(tUs: number): void {
+  seek(tUs: number, mode: "playhead" | "preview" = "playhead"): void {
+    this.previewing = mode === "preview";
     this.clock.setPosition(tUs);
     // `setPosition` while playing RE-ANCHORS the clock; the compositor must
     // see the fresh anchor BEFORE the composite below, or its audio pass maps
@@ -403,6 +408,7 @@ export class PlaybackEngine {
   };
 
   private emitTime(tUs: number): void {
+    if (this.previewing) return;
     for (const cb of this.timeListeners) cb(tUs);
   }
 
