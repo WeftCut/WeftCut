@@ -118,7 +118,7 @@ test('@serial motif preview survives LRU eviction, GPU unload and a failed prese
   }
 })
 
-test('@serial paused motif recovers after a real capture decode rejection without seeking', async ({}, testInfo) => {
+test('@serial paused motif recovers after a real capture bitmap rejection without seeking', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   const failures: string[] = []
@@ -130,13 +130,14 @@ test('@serial paused motif recovers after a real capture decode rejection withou
   try {
     await setup(page)
     await page.evaluate(() => {
-      // Reject the real producer's PNG decode after the CDP capture returns.
+      // Reject the broker's owned bitmap snapshot after the capture returns.
+      // PNG decode / GPU import now belongs to the isolated preload world.
       // This also blocks the prewarmer, so it cannot hide the initial failure.
       const decode = window.createImageBitmap.bind(window)
       window.__previewRecoveryCaptureBlocked = true
       window.createImageBitmap = ((...args: Parameters<typeof createImageBitmap>) => {
-        if (window.__previewRecoveryCaptureBlocked && args[0] instanceof Blob && args[0].type === 'image/png') {
-          return Promise.reject(new Error('[e2e] temporary PNG decode failure'))
+        if (window.__previewRecoveryCaptureBlocked && args[0] instanceof ImageBitmap) {
+          return Promise.reject(new Error('[e2e] temporary bitmap snapshot failure'))
         }
         return Reflect.apply(decode, window, args)
       }) as typeof createImageBitmap
@@ -153,7 +154,7 @@ test('@serial paused motif recovers after a real capture decode rejection withou
     expect(recovered.positionUs).toBe(0)
     expect(recovered.playing).toBe(false)
     expect(pageErrors).toEqual([])
-    expect(failures.every((failure) => failure.includes('[e2e] temporary PNG decode failure'))).toBe(true)
+    expect(failures.every((failure) => failure.includes('[e2e] temporary bitmap snapshot failure'))).toBe(true)
     await testInfo.attach('paused-recovered-preview.png', { body: (await picture(page)).bytes, contentType: 'image/png' })
   } finally {
     await app.close()

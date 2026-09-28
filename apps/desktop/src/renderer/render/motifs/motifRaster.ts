@@ -24,10 +24,9 @@ export async function rasterMotifFrame(
   return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
 }
 
-/// Capture one ARBITRARY content frame of a Motif directly via CDP, at the
-/// motif's manifest size. The baker is the sole L2 writer and already gates on
-/// `isOnDisk`, so it must NOT read disk-first (that's `resolveMotifFrame`'s
-/// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`;
+/// Portable direct-capture helper, at the motif's manifest size. The editor's
+/// disk baker uses `acquireBakedMotifFrame` to share captures and persist native
+/// textures; this helper always captures. `tSec = frame * fpsDen/fpsNum`;
 /// the fps pair is also forwarded so the capture's `meta.fps` names the same
 /// rate the frame grid was computed on.
 export function bakeMotifFrame(

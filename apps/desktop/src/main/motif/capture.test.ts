@@ -86,7 +86,7 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, setRuntimeSource, setMotifStore, shutdownCaptureHost } = await import('./capture')
+const { captureMotifFrameB64, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture } = await import('./capture')
 type UserMotifStoreT = import('./store').UserMotifStore
 
 /// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
@@ -269,6 +269,28 @@ describe('capture host shutdown', () => {
     await expect(at('', 0)).resolves.toBe('UE5H')
     await expect(at('', 1)).resolves.toBe('UE5H')
     expect(reads).toBe(4)
+  })
+
+  it('promotes a shared background capture when a preview joins it', async () => {
+    slowScreenshots = 1
+    shotOrder.length = 0
+    const running = captureMotifFrameB64({ ...args, motifId: 'running' })
+    const background = captureMotifFrameB64({ ...args, motifId: 'background' }, 'job-bg', false)
+    const joined = captureMotifFrameB64({ ...args, motifId: 'joined' }, 'job-joined', false)
+    controlMotifCapture('job-joined', 'promote')
+    await Promise.all([running, background, joined])
+    expect(shotOrder).toEqual(['running', 'joined', 'background'])
+  })
+
+  it('cancels an abandoned broker ticket without capturing it', async () => {
+    slowScreenshots = 1
+    const before = screenshotCalls
+    const running = captureMotifFrameB64(args)
+    const abandoned = captureMotifFrameB64(args, 'abandoned', false)
+    controlMotifCapture('abandoned', 'cancel')
+    await expect(abandoned).rejects.toThrow('superseded')
+    await running
+    expect(screenshotCalls - before).toBe(1)
   })
 
   it('refuses a capture queued past shutdown instead of reopening the host', async () => {

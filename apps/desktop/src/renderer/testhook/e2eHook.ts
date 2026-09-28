@@ -248,16 +248,16 @@ export interface E2EHook {
     samples: Array<{ tInLayerUs: number; width: number; height: number; checksum: number }>;
   }>;
   /// Trigger a persisted pre-bake of a motif layer (via the prebakeBus) and
-  /// wait until at least `expectedFrames` PNG files appear under
+  /// wait until at least `expectedFrames` .wfrm files appear under
   /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
-  /// dir and the number of PNGs found. Rejects on timeout (default 60 s). The
+  /// dir and the number of frames found. Rejects on timeout (default 60 s). The
   /// cacheKey is computed internally from the current project summary so the
   /// e2e spec doesn't need to import bundled modules.
   prebakeLayerAndWait(args: {
     layerId: string;
     expectedFrames: number;
     timeoutMs?: number;
-  }): Promise<{ hashDir: string; hashName: string; pngCount: number }>;
+  }): Promise<{ hashDir: string; hashName: string; frameCount: number }>;
   /// List the hash dir names currently present under `<workspace>/Cache/raster/`.
   /// Returns an empty array when no project is open or the dir doesn't exist.
   listBakedHashDirs(): Promise<string[]>;
@@ -917,7 +917,7 @@ export function installMotifTestHooks(): void {
   };
 
   // Trigger a full L2 pre-bake of a motif layer (via the prebakeBus) and
-  // wait until `expectedFrames` PNG files appear on disk. The cacheKey is
+  // wait until `expectedFrames` .wfrm files appear on disk. The cacheKey is
   // computed from the live project summary so the spec needs only the layerId.
   hookSlot().prebakeLayerAndWait = async ({ layerId, expectedFrames, timeoutMs = 60_000 }) => {
     // Derive the cacheKey from the current project summary.
@@ -946,21 +946,21 @@ export function installMotifTestHooks(): void {
     const hashDir = await pathJoin(ws, "Cache", "raster", hashName);
 
     const deadline = Date.now() + timeoutMs;
-    let pngCount = 0;
+    let frameCount = 0;
     while (Date.now() < deadline) {
       if (await exists(hashDir)) {
         const entries = await readDir(hashDir);
-        pngCount = entries.filter((e) => !e.isDirectory && e.name?.endsWith(".png")).length;
-        if (pngCount >= expectedFrames) break;
+        frameCount = entries.filter((e) => !e.isDirectory && e.name?.endsWith(".wfrm")).length;
+        if (frameCount >= expectedFrames) break;
       }
       await new Promise((r) => setTimeout(r, 500));
     }
-    if (pngCount < expectedFrames) {
+    if (frameCount < expectedFrames) {
       throw new Error(
-        `prebakeLayerAndWait: timed out — found ${pngCount}/${expectedFrames} PNGs in ${hashDir}`,
+        `prebakeLayerAndWait: timed out — found ${frameCount}/${expectedFrames} frames in ${hashDir}`,
       );
     }
-    return { hashDir, hashName, pngCount };
+    return { hashDir, hashName, frameCount };
   };
 
   hookSlot().listBakedHashDirs = async () => {

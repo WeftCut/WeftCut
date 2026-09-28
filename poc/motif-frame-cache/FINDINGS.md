@@ -1,5 +1,8 @@
 # Motif cache and capture transport
 
+For the subsequent full-bake comparison of PNG, RGBA IPC and native GPU
+readback, plus the capture-reuse experiment, see [BAKE-FINDINGS.md](BAKE-FINDINGS.md).
+
 Electron 44.1.1, Windows, local D3D11 GPU. Reproduce from the repository root
 after `npm run napi:build` in `apps/desktop`:
 

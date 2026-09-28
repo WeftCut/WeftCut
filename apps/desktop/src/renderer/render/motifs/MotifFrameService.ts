@@ -28,11 +28,12 @@ import { getMotif } from "./catalog";
 import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifBaker, type BakeContentSpec } from "./MotifBaker";
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
-import { bakeMotifFrame } from "./motifRaster";
 import {
   resolveMotifFrame,
   sharedBakedKeyIndex,
   sharedMotifFrameCache,
+  acquireBakedMotifFrame,
+  resetMotifFrameRequests,
 } from "./motifRasterCache";
 import { encodeBitmapToPng } from "./pngEncode";
 import { onPrebakeRequest } from "./prebakeBus";
@@ -112,6 +113,7 @@ export class MotifFrameService {
   /// per-tick refresh in `noteFrameBoundary` only fires on a frame change.
   private lastPrewarmFrame = -1;
   private disposed = false;
+  private projectId: string | null = null;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
     this.prewarmer =
@@ -146,9 +148,9 @@ export class MotifFrameService {
               const png = await encodeBitmapToPng(bmp);
               if (this.disposed) return;
               await sharedMotifFrameCache.writeFrame(k, f, png);
-              if (!this.disposed) sharedBakedKeyIndex.add(k);
             },
             warm: (k, f, bmp) => {
+              sharedBakedKeyIndex.add(k);
               sharedMotifFrameCache.setFrame(k, f, bmp);
             },
             onStatus: (cacheKey, status) => {
@@ -168,6 +170,11 @@ export class MotifFrameService {
     this.projectEpoch += 1;
     this.lastPrewarmFrame = -1;
     const summary = this.deps.projectSummary();
+    const projectId = summary?.project_id ?? null;
+    if (projectId !== this.projectId) {
+      this.projectId = projectId;
+      resetMotifFrameRequests();
+    }
     if (!summary) {
       this.prewarmer?.setTargets([]);
       this.baker?.setTargets([]);
@@ -315,8 +322,8 @@ export class MotifFrameService {
   /// every active motif content when the global `prebake_motifs` setting
   /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
   /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
-  /// shape; the baker's `render` closure uses `bakeMotifFrame` (CDP capture,
-  /// no disk read) directly (reading disk-first would be pointless — the baker is the writer).
+  /// shape; acquisition reuses L0/in-flight captures. A fresh capture requests
+  /// native persistence; an existing bitmap uses the compatibility writer.
   private updateBakeTargets(tUs: number): void {
     const summary = this.deps.projectSummary();
     if (!this.baker || !summary) return;
@@ -341,7 +348,7 @@ export class MotifFrameService {
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
+        render: (frame: number) => acquireBakedMotifFrame(motif, desc.cacheKey, frame, fpsNum, fpsDen, canonicalProps),
       });
     });
     const activeKeys = new Set(specs.map((spec) => spec.cacheKey));

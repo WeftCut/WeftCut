@@ -351,6 +351,13 @@ slot. Preload snapshots a fresh ImageBitmap and completes the GPU read before
 acknowledging reuse. The same reader feeds export. Other platforms use native
 LZ4 decoding plus pixel IPC. Live capture retains a PNG fallback.
 
+Baking on Windows reads the OSR texture on a persistent native worker and
+encodes `.wfrm` directly, reusing the staging texture. It avoids PNG and pixel
+IPC; atomic persistence finishes before the baker marks the frame complete.
+Native readback failure keeps the same captured bitmap for the PNG compatibility
+writer. With PNG capture, main persists the original capture without renderer
+re-encoding. The file format is unchanged; no migration is needed.
+
 Live Windows capture retains the CDP clock commands but obtains pixels from
 OSR shared textures. Resize commits before rendering; two native rAFs settle
 painting without advancing Motif time. A GPU copy moves the frame into our pool
@@ -377,14 +384,23 @@ index hydration/GC. `Compositor` only supplies project/playhead changes and disp
 Both background workers use `IdleBatchQueue` for scheduling and cancellation; frame
 ownership stays with the worker until it transfers the bitmap to L0.
 
+Preview, prewarm and baking acquire frames through one broker per cache lane.
+Identical requests share a capture, and L0 hits require none. Every caller owns
+its bitmap clone; L0 is pinned while cloning. The broker does not publish fresh
+results into L0, so each consumer still performs its own stale-result check.
+A later bake attaches its writer to a rendering capture; once texture consumption
+has started, it uses the resulting bitmap's PNG compatibility writer instead.
+Preview joins promote queued work. Superseding a sprite cancels only that
+subscriber, cancelling queued capture only when no consumers remain.
+
 - **Cached and bound are different lifetimes.** L0 owns cached bitmaps; sprites
   retain the bitmap they bind. Eviction removes cache membership immediately but
   defers closing a retained bitmap until its last sprite releases it. An idempotent
   insertion keeps the existing bitmap and closes the duplicate. L0 also owns its
   per-content frame counts, so a newly created preview service sees pre-existing
   coverage through an O(1) query; it needs no subscription or event replay.
-- **Baking transfers ownership exactly once.** The baker owns a rendered bitmap
-  through PNG encoding and persistence. A failed write or disposal closes it in a
+- **Baking transfers ownership exactly once.** The baker owns its acquired bitmap
+  through native or compatibility persistence. A failed write or disposal closes it in a
   `finally`; a successful warm transfers ownership to L0. Disposal is checked after
   the disk check, capture and persistence, preventing late results from warming L0
   or publishing progress. Progress counts distinct completed frame indices across
@@ -406,8 +422,11 @@ ownership stays with the worker until it transfers the bitmap to L0.
 Two remaining limitations are worth keeping explicit. `BakedKeyIndex` is a
 disk-read hint based on directory presence, not a certificate that every frame is
 present: interrupted bakes can still appear ready after reload, although missing
-frames fall back to capture. Also, L2 paths are resolved through the current
-workspace bridge, rather than a workspace handle owned by a bake job. A future
+frames fall back to capture. Native capture writes bind their workspace when
+the bake request is admitted, and project switches reset broker jobs so new
+consumers cannot inherit an old workspace's persistence acknowledgement.
+Compatibility bitmap writes still resolve through the current workspace bridge.
+A future
 workspace-scoped disk module should own writes, completion metadata and collection
 together; that would strengthen project-switch isolation and make persisted
 readiness exact.

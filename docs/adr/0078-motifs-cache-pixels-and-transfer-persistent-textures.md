@@ -30,3 +30,21 @@ Viewport changes settle before rendering, and OSR always waits two native rAFs
 without changing virtual time. Static seeks restart the capturer because
 invalidate alone need not produce a shared texture. See the reproducible
 [conformance and performance evidence](../../poc/motif-frame-cache/FINDINGS.md).
+
+Baking also consumes the OSR lease directly on Windows. A persistent native
+worker reuses a D3D11 staging texture, reads premultiplied RGBA/BGRA, converts
+to straight RGBA and encodes the existing LZ4 frame format. Main atomically
+writes it before acknowledging persistence. There is no format migration.
+The alpha round trip preserves every valid premultiplied channel; straight RGB
+can differ from Chromium's PNG unpremultiplication by one without changing
+composited pixels. Unsupported hardware or failed readback retains the PNG
+writer. In PNG capture mode, main stores the original captured PNG through the
+existing codec without a renderer encode round trip. Disk errors remain bake
+failures, not reasons to recapture.
+
+A renderer frame broker shares L0 hits and in-flight capture between preview,
+prewarm and baking. Each consumer gets an owned bitmap clone; cancelling one
+sprite cannot close another consumer's frame. A bake joining an admitted
+capture can attach persistence until texture consumption begins. Later joins
+and L0 hits use bitmap persistence, avoiding another capture. Overlay gestures
+have a separate broker. See the [bake benchmark](../../poc/motif-frame-cache/BAKE-FINDINGS.md).

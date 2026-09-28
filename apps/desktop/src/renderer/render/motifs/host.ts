@@ -1,5 +1,29 @@
 import { invoke } from "@/bridge/ipc";
 import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors";
+import { captureMotifResult, type CapturedFrame } from './frameTransport';
+import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
+
+export interface CaptureOptions { key: string; high: boolean; bake?: MotifCacheAddress }
+
+export function captureMotifFrameResult(
+  motifId: string, tSec: number, props: Record<string, unknown>, width: number, height: number,
+  settleRafs: number | undefined, contentHash: string | undefined,
+  fpsNum: number | undefined, fpsDen: number | undefined, options: CaptureOptions,
+): Promise<CapturedFrame> {
+  if (typeof window === 'undefined' || typeof window.postMessage !== 'function' || typeof MessageChannel === 'undefined') {
+    return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash,
+      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false }));
+  }
+  if (typeof window !== 'undefined') {
+    const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
+    if (perf) perf.renders++;
+  }
+  return captureMotifResult({
+    motifId, tSec, propsJson: JSON.stringify(props), width, height,
+    settleRafs: settleRafs ?? null, contentHash: contentHash ?? '', fpsNum, fpsDen,
+    coalesceKey: options.key, high: options.high, bake: options.bake,
+  });
+}
 
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.

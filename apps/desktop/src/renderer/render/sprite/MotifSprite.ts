@@ -289,7 +289,7 @@ export class MotifSprite implements StageableSprite {
            `sprite:${this.layerId}`,
            // The rate tSec was derived from — the capture's meta.fps must
            // agree with it (30 fps fallback would render wrong at other rates).
-           this.fpsNum, this.fpsDen,
+           this.fpsNum, this.fpsDen, target.overlay,
          );
       // Hand the bitmap to the target's lane cache. `setFrame` is idempotent:
       // if a sibling sprite already cached this (cacheKey, frame), it keeps

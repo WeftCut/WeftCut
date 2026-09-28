@@ -53,6 +53,16 @@ describe("MotifBaker", () => {
     expect(h.deps.warm).not.toHaveBeenCalled();
   });
 
+  it('warms a natively persisted frame without PNG encoding it again', async () => {
+    const h = harness();
+    h.baker.setTargets([{ ...h.spec, contentDurationFrames: 1, render: async () => ({ bitmap: h.bitmap, persisted: true }) }]);
+    await drain(h.pending);
+    expect(h.deps.persist).not.toHaveBeenCalled();
+    expect(h.deps.warm).toHaveBeenCalledExactlyOnceWith('a', 0, h.bitmap);
+    expect(h.deps.onStatus).toHaveBeenLastCalledWith('a', { phase: 'ready', done: 1, total: 1 });
+    expect(h.bitmap.close).not.toHaveBeenCalled();
+  });
+
   it("recovers from a failed frame when replanning successfully bakes the missing frames", async () => {
     const h = harness();
     h.deps.persist.mockRejectedValueOnce(new Error("temporary write failure"));

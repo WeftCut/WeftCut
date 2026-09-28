@@ -1,5 +1,5 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
-import type { StoredMotifFrame } from '../shared/motifs/frameTransport'
+import type { StoredMotifFrame, MotifCaptureControl } from '../shared/motifs/frameTransport'
 
 // ImageBitmap cannot cross contextBridge. A same-renderer MessagePort transfers
 // ownership to the main world without serializing pixels or changing isolation.
@@ -11,7 +11,8 @@ export function installMotifFrames(
     if (event.source !== window || event.data?.type !== 'weftcut:motif-frame-port') return
     const port = event.ports[0]
     if (!port) return
-    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; capture?: Record<string, unknown> }>) => {
+    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; capture?: Record<string, unknown>; control?: MotifCaptureControl }>) => {
+      if (data.control) { ipcRenderer.send('motif:capture-control', data.control); return }
       let frame: StoredMotifFrame | null = null
       let bitmap: ImageBitmap | null = null
       let failed = true
@@ -29,7 +30,7 @@ export function installMotifFrames(
         } else if (frame?.kind === 'png') {
           bitmap = await createImageBitmap(new Blob([frame.bytes as BlobPart], { type: 'image/png' }))
         }
-        port.postMessage({ id: data.id, bitmap }, bitmap ? [bitmap] : [])
+        port.postMessage({ id: data.id, bitmap, persisted: frame?.persisted === true }, bitmap ? [bitmap] : [])
         bitmap = null
         failed = false
       } catch (error) {

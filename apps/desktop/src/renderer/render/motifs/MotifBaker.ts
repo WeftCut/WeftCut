@@ -1,13 +1,16 @@
 import { planBakeTargets, type BakeContent, type BakeTarget } from "./bakePlan";
 import { IdleBatchQueue } from "./idleBatchQueue";
+import type { CapturedFrame } from './frameTransport';
 
 export type BakePhase = "baking" | "ready" | "error";
 export interface BakeStatus { phase: BakePhase; done: number; total: number; }
 
 /// One content the baker should persist in full. `render(frame)` rasters an
-/// arbitrary content frame (the Compositor's closure → `bakeMotifFrame`, CDP).
+/// arbitrary content frame (the frame service's shared acquisition closure).
 export interface BakeContentSpec extends BakeContent {
-  render: (frame: number) => Promise<ImageBitmap>;
+  /// A capture can already have been atomically persisted in main while its
+  /// OSR surface was leased. Plain bitmaps use the compatibility PNG writer.
+  render: (frame: number) => Promise<ImageBitmap | CapturedFrame>;
 }
 
 export interface MotifBakerDeps {
@@ -77,9 +80,11 @@ export class MotifBaker {
           const onDisk = await this.deps.isOnDisk(cacheKey, frame);
           if (this.loop.isDisposed()) return;
           if (onDisk) { this.bump(cacheKey, frame); return; }
-          owned = await spec.render(frame);
+          const result = await spec.render(frame);
+          const captured = 'bitmap' in result ? result : { bitmap: result, persisted: false };
+          owned = captured.bitmap;
           if (this.loop.isDisposed()) return;
-          await this.deps.persist(cacheKey, frame, owned);
+          if (!captured.persisted) await this.deps.persist(cacheKey, frame, owned);
           if (this.loop.isDisposed()) return;
           this.deps.warm(cacheKey, frame, owned);
           owned = null; // ownership transferred to L0 only after warm succeeds

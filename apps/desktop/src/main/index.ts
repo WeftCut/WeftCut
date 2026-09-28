@@ -13,11 +13,11 @@ import { createUpdates } from './updates.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, type CaptureArgs } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture } from './motif/capture.js'
+import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
-import { CAPTURE_SUPERSEDED_MESSAGE } from '../shared/motifs/captureErrors.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
@@ -1084,8 +1084,14 @@ app.whenReady().then(async () => {
   const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean) => MotifPool }).MotifGpuPool
   const motifGpu = process.platform === 'win32' && motifPoolClass
     ? new MotifGpuTransport((w, h, bgra) => new motifPoolClass(w, h, 1, bgra)) : null
-  let useMotifOsr = !!motifGpu && process.env.WEFTCUT_MOTIF_CAPTURE !== 'png'
-  setTextureCaptureEnabled(useMotifOsr)
+  const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
+  const motifCapture = new MotifCaptureService({
+    store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
+    copy: motifGpu ? (owner, texture) => motifGpu.copy(owner, texture) : null,
+    createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
+    setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
+  }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'png')
+  app.once('before-quit', () => motifCapture.dispose())
   const motifConsumers = new Set<number>()
   const trackMotifConsumer = (owner: Electron.WebContents): void => {
     if (!motifConsumers.has(owner.id)) {
@@ -1101,19 +1107,15 @@ app.whenReady().then(async () => {
       motifGpu ? (file, w, h) => motifGpu.read(owner, file, w, h) : undefined)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
-  ipcMain.handle('motif:capture', async (event, args: CaptureArgs & { coalesceKey?: string }) => {
+  ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
+    if (!control || typeof control.key !== 'string') return
+    const { key, action } = control
+    if (action === 'bake' && control.bake) motifCapture.requestBake(event.sender.id, key, control.bake)
+    else if (action === 'promote' || action === 'cancel') controlMotifCapture(`${event.sender.id}:${key}`, action)
+  })
+  ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
     trackMotifConsumer(event.sender)
-    const { coalesceKey, ...a } = args
-    if (useMotifOsr) {
-      try { return await captureMotifTexture(a, texture => motifGpu!.copy(event.sender, texture), coalesceKey) }
-      catch (error) {
-        if (String(error).includes(CAPTURE_SUPERSEDED_MESSAGE) || isMotifContentFailure(a, error)) throw error
-        useMotifOsr = false
-        setTextureCaptureEnabled(false)
-        console.warn('[motif] shared capture failed; using PNG', error)
-      }
-    }
-    return { kind: 'png', bytes: Buffer.from(await captureMotifFrameB64(a, coalesceKey), 'base64') }
+    return motifCapture.capture(event.sender, args)
   })
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {

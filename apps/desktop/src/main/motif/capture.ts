@@ -355,7 +355,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
   }
 }
 
-function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>): Promise<T> {
+function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>, high = coalesceKey !== undefined): Promise<T> {
   // Fast-reject a lane whose content already failed this session: same
   // (motifId, contentHash) means the same throwing script against the same
   // page — don't spend queue slots or CDP round trips proving it again.
@@ -377,7 +377,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
       })
     })
   }
-  // HIGH priority: a keyed request is the frame the user is looking at NOW.
+  // Legacy keyed requests are HIGH; broker jobs explicitly choose their lane.
   // Latest-wins per key: wake the previous queued waiter right away and stale
   // its ticket — its queue slot then does no work when reached (pump skips it).
   const prev = queuedKeys.get(coalesceKey)
@@ -385,7 +385,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
     prev.stale = true
     prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
   }
-  const ticket: Ticket = { key: coalesceKey, high: true, stale: false, reject: () => {}, run: async () => {} }
+  const ticket: Ticket = { key: coalesceKey, high, stale: false, reject: () => {}, run: async () => {} }
   const out = new Promise<T>((resolve, reject) => {
     ticket.reject = reject
     ticket.run = async () => {
@@ -400,19 +400,36 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
   return out
 }
 
-export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Promise<string> {
+/** Broker jobs have a stable identity separate from their subscribers. A preview
+ * may promote a background job; cancelling one subscriber need not cancel it. */
+export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): void {
+  const ticket = queuedKeys.get(key)
+  if (!ticket) return // already running: finish safely, receiver retires its result
+  if (action === 'cancel') {
+    ticket.stale = true
+    queuedKeys.delete(key)
+    ticket.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
+  } else if (!ticket.high) {
+    const i = lowQueue.indexOf(ticket)
+    if (i >= 0) lowQueue.splice(i, 1)
+    ticket.high = true
+    highQueue.push(ticket)
+  }
+}
+
+export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?: boolean): Promise<string> {
   return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
     const shot = await h.send('Page.captureScreenshot', { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string
-  }))
+  }), high)
 }
 
-export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string): Promise<T> {
+export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string, high?: boolean): Promise<T> {
   if (!textureCaptureEnabled) return Promise.reject(new Error('Motif OSR unavailable'))
   return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
     if (!h.frames) throw new Error('Motif host has no shared texture output')
     const texture = await h.frames.capture(a.width, a.height)
     try { return await consume(texture) } finally { texture.release() }
-  }))
+  }), high)
 }

@@ -21,6 +21,11 @@ export interface FrameCodec {
   motifReadFrame(path: string): Promise<{ width: number; height: number; rgba: Uint8Array }>
 }
 
+export interface FrameWriter {
+  png(png: Uint8Array): Promise<void>
+  encoded(bytes: Uint8Array): Promise<void>
+}
+
 /** Disposable LZ4 frame cache. Native work runs on blocking workers.
  * Callers supply a hash/frame, never a filesystem path. Cache misses render live. */
 export class MotifFrameStore {
@@ -56,15 +61,30 @@ export class MotifFrameStore {
   }
 
   async write(hash: string, frame: number, png: Uint8Array): Promise<void> {
+    const writer = await this.prepareWrite(hash, frame)
+    if (writer) await writer.png(png)
+  }
+
+  /** Bind the destination BEFORE capture: a project switch cannot redirect a
+   * completed frame into the next workspace. Native bytes never cross renderer IPC. */
+  async prepareWrite(hash: string, frame: number): Promise<FrameWriter | null> {
     const stem = await this.stem(hash, frame)
-    if (!stem) return
-    await fs.mkdir(path.dirname(stem), { recursive: true })
-    const bytes = await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength), true)
-    const temp = `${stem}.${randomUUID()}.tmp`
-    try {
-      await fs.writeFile(temp, bytes, { flag: 'wx' })
-      await replaceFile(temp, `${stem}.wfrm`)
-    } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
+    if (!stem) return null
+    const encoded = async (bytes: Uint8Array): Promise<void> => {
+      await fs.mkdir(path.dirname(stem), { recursive: true })
+      const temp = `${stem}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(temp, bytes, { flag: 'wx' })
+        await replaceFile(temp, `${stem}.wfrm`)
+      } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
+    }
+    return {
+      encoded,
+      png: async png => {
+        await fs.mkdir(path.dirname(stem), { recursive: true })
+        await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength), true))
+      },
+    }
   }
 
   async has(hash: string, frame: number): Promise<boolean> {

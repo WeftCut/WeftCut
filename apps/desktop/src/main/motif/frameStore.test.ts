@@ -19,6 +19,17 @@ async function fixture() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 
 describe('MotifFrameStore', () => {
+  it('binds a native write to the workspace at admission and uses the same reader', async () => {
+    const { root, codec } = await fixture()
+    let workspace: string | null = root
+    const store = new MotifFrameStore(async () => workspace, codec)
+    const writer = await store.prepareWrite(hash, 2)
+    workspace = null
+    await writer!.encoded(Buffer.from('native frame'))
+    expect(await fs.readFile(path.join(root, 'Cache', 'raster', hash, '2.wfrm'), 'utf8')).toBe('native frame')
+    expect(codec.motifEncodePng).not.toHaveBeenCalled()
+    expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual(['2.wfrm'])
+  })
   it('persists only the new format, then resolves pixels without PNG decoding', async () => {
     const { root, store, rgba, codec } = await fixture()
     const png = new Uint8Array([1, 2, 3])

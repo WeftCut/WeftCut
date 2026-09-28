@@ -24,6 +24,8 @@ mod audio;
 mod cache;
 mod commands;
 mod events;
+#[cfg(windows)]
+mod motif_bake;
 mod motif_frame;
 #[cfg(windows)]
 mod motif_gpu;

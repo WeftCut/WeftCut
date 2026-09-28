@@ -1,0 +1,3160 @@
+{
+  "measuredAt": "2026-09-28",
+  "source": ".scratch/motif-bake-1790577423119/result.json",
+  "environment": {
+    "electron": "44.1.1",
+    "node": "24.19.0",
+    "platform": "win32",
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13400",
+    "gpu": {
+      "auxAttributes": {
+        "amdSwitchable": false,
+        "canSupportThreadedTextureMailbox": false,
+        "directMLFeatureLevel": "Not supported",
+        "dx12FeatureLevel": "Not supported",
+        "glImplementationParts": "(gl=none,angle=none)",
+        "glResetNotificationStrategy": 0,
+        "inProcessGpu": true,
+        "initializationTime": 0,
+        "isAsan": false,
+        "isClangCoverage": false,
+        "jpegDecodeAcceleratorSupported": false,
+        "optimus": false,
+        "overlayInfo": {
+          "bgra8OverlaySupport": "NONE",
+          "directComposition": false,
+          "nv12OverlaySupport": "NONE",
+          "p010OverlaySupport": "NONE",
+          "rgb10a2OverlaySupport": "NONE",
+          "supportsOverlays": false,
+          "yuy2OverlaySupport": "NONE"
+        },
+        "passthroughCmdDecoder": false,
+        "sandboxed": false,
+        "skiaBackendType": "None",
+        "subpixelFontRendering": true,
+        "supportsD3dSharedImages": false,
+        "supportsDirectML": false,
+        "supportsDx12": false,
+        "supportsVulkan": false,
+        "targetCpuBits": 64,
+        "visibilityCallbackCallCount": 0,
+        "vulkanVersion": "Not supported"
+      },
+      "gpuDevice": [
+        {
+          "active": false,
+          "deviceId": 9480,
+          "deviceString": "NVIDIA GeForce RTX 3050 OEM",
+          "driverVersion": "32.0.16.1060",
+          "gpuPreference": 3,
+          "revision": 161,
+          "subSysId": -914745430,
+          "vendorId": 4318
+        },
+        {
+          "active": false,
+          "deviceId": 42882,
+          "deviceString": "Intel(R) UHD Graphics 730",
+          "driverVersion": "32.0.101.7088",
+          "gpuPreference": 2,
+          "revision": 4,
+          "subSysId": 857806762,
+          "vendorId": 32902
+        },
+        {
+          "active": false,
+          "deviceId": 9480,
+          "deviceString": "NVIDIA GeForce RTX 3050 OEM",
+          "driverVersion": "32.0.16.1060",
+          "gpuPreference": 0,
+          "revision": 161,
+          "subSysId": -914745430,
+          "vendorId": 4318
+        },
+        {
+          "active": false,
+          "deviceId": 140,
+          "deviceString": "Microsoft Basic Render Driver",
+          "driverVersion": "10.0.26100.9549",
+          "gpuPreference": 0,
+          "revision": 0,
+          "subSysId": 0,
+          "vendorId": 5140
+        }
+      ]
+    },
+    "frames": 20,
+    "rounds": 3,
+    "gpuAfterRun": {
+      "auxAttributes": {
+        "amdSwitchable": false,
+        "canSupportThreadedTextureMailbox": false,
+        "directMLFeatureLevel": "Not supported",
+        "displayType": "ANGLE_D3D11",
+        "dx12FeatureLevel": "Not supported",
+        "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_copy_texture_3d GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_multiview_multisample GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_texture_usage GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_compressed_texture GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_external_wrap_modes GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_NV_EGL_stream_consumer_external GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_depth24 GL_OES_depth32 GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object GL_OVR_multiview GL_OVR_multiview2 ",
+        "glImplementationParts": "(gl=egl-angle,angle=d3d11)",
+        "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 OEM (0x00002508) Direct3D11 vs_5_0 ps_5_0, D3D11-32.0.16.1060)",
+        "glResetNotificationStrategy": 33362,
+        "glVendor": "Google Inc. (NVIDIA)",
+        "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28467 git hash: 736ed80c7552)",
+        "glWsExtensions": "EGL_EXT_create_context_robustness EGL_ANGLE_d3d_share_handle_client_buffer EGL_ANGLE_d3d_texture_client_buffer EGL_ANGLE_surface_d3d_texture_2d_share_handle EGL_ANGLE_query_surface_pointer EGL_ANGLE_window_fixed_size EGL_ANGLE_keyed_mutex EGL_ANGLE_surface_orientation EGL_ANGLE_direct_composition EGL_NV_post_sub_buffer EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_stream EGL_KHR_stream_consumer_gltexture EGL_NV_stream_consumer_gltexture_yuv EGL_ANGLE_stream_producer_d3d_texture EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_CHROMIUM_sync_control EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANGLE_image_d3d11_texture EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_KHR_create_context_no_error EGL_KHR_reusable_sync EGL_ANGLE_memory_usage_report ",
+        "glWsVendor": "Google Inc. (NVIDIA)",
+        "glWsVersion": "1.5 (ANGLE 2.1.28467 git hash: 736ed80c7552)",
+        "inProcessGpu": false,
+        "initializationTime": 201.16,
+        "isAsan": false,
+        "isClangCoverage": false,
+        "jpegDecodeAcceleratorSupported": false,
+        "maxMsaaSamples": "8",
+        "optimus": false,
+        "overlayInfo": {
+          "bgra8OverlaySupport": "DIRECT",
+          "directComposition": true,
+          "nv12OverlaySupport": "DIRECT",
+          "p010OverlaySupport": "DIRECT",
+          "rgb10a2OverlaySupport": "DIRECT",
+          "supportsOverlays": true,
+          "yuy2OverlaySupport": "DIRECT"
+        },
+        "passthroughCmdDecoder": true,
+        "pixelShaderVersion": "5.0",
+        "sandboxed": true,
+        "skiaBackendType": "GaneshGL",
+        "subpixelFontRendering": true,
+        "supportsD3dSharedImages": true,
+        "supportsDirectML": false,
+        "supportsDx12": false,
+        "supportsVulkan": false,
+        "targetCpuBits": 64,
+        "vertexShaderVersion": "5.0",
+        "videoDecodeAcceleratorSupportedProfile": {
+          "encrypted_only": false,
+          "maxResolutionHeight": 8192,
+          "maxResolutionWidth": 8192,
+          "minResolutionHeight": 144,
+          "minResolutionWidth": 144,
+          "profile": 29
+        },
+        "visibilityCallbackCallCount": 0,
+        "vulkanVersion": "Not supported"
+      },
+      "gpuDevice": [
+        {
+          "active": true,
+          "deviceId": 9480,
+          "deviceString": "NVIDIA GeForce RTX 3050 OEM",
+          "driverVendor": "NVIDIA",
+          "driverVersion": "32.0.16.1060",
+          "gpuPreference": 3,
+          "revision": 161,
+          "subSysId": -914745430,
+          "vendorId": 4318
+        },
+        {
+          "active": false,
+          "deviceId": 42882,
+          "deviceString": "Intel(R) UHD Graphics 730",
+          "driverVersion": "32.0.101.7088",
+          "gpuPreference": 2,
+          "revision": 4,
+          "subSysId": 857806762,
+          "vendorId": 32902
+        },
+        {
+          "active": false,
+          "deviceId": 9480,
+          "deviceString": "NVIDIA GeForce RTX 3050 OEM",
+          "driverVersion": "32.0.16.1060",
+          "gpuPreference": 0,
+          "revision": 161,
+          "subSysId": -914745430,
+          "vendorId": 4318
+        },
+        {
+          "active": false,
+          "deviceId": 140,
+          "deviceString": "Microsoft Basic Render Driver",
+          "driverVersion": "10.0.26100.9549",
+          "gpuPreference": 0,
+          "revision": 0,
+          "subSysId": 0,
+          "vendorId": 5140
+        }
+      ]
+    }
+  },
+  "summary": [
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "mode": "png",
+      "bakeMs": {
+        "n": 3,
+        "mean": 669.2666666669151,
+        "p50": 667.2000000011176,
+        "p95": 683.1999999992549
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 33.41666666672875,
+          "p50": 33.09999999962747,
+          "p95": 46.80000000074506
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.2633333334388832,
+          "p50": 0.2000000011175871,
+          "p95": 0.599999999627471
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 27.418333333420257,
+          "p50": 27.90000000037253,
+          "p95": 38.5
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 3.1833333330849807,
+          "p50": 2.5,
+          "p95": 6.099999999627471
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 2.5366666667784252,
+          "p50": 2.399999998509884,
+          "p95": 3.200000001117587
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 24.160251666666728,
+          "p50": 24.579200000000128,
+          "p95": 35.327000000000226
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.27118833333332,
+          "p50": 0.945699999999988,
+          "p95": 2.8888999999999214
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 0.9432883333333432,
+          "p50": 0.9132999999992535,
+          "p95": 1.2339999999999236
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.3679616666666807,
+          "p50": 1.2187999999996464,
+          "p95": 2.0520000000005894
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 19828.65,
+          "p50": 19533,
+          "p95": 20848
+        }
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "mode": "rgba",
+      "bakeMs": {
+        "n": 3,
+        "mean": 674.3999999997517,
+        "p50": 672.9000000003725,
+        "p95": 686.1999999992549
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 33.356666666797054,
+          "p50": 32.80000000074506,
+          "p95": 46.30000000074506
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.31666666688397527,
+          "p50": 0.2999999988824129,
+          "p95": 0.7000000011175871
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 28.438333333221575,
+          "p50": 27.5,
+          "p95": 42.100000001490116
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 1.1899999999130766,
+          "p50": 1,
+          "p95": 1.800000000745058
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 3.3866666667784253,
+          "p50": 3,
+          "p95": 6.400000000372529
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 24.94337499999998,
+          "p50": 24.67300000000023,
+          "p95": 37.739700000000084
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.369180000000002,
+          "p50": 0.9083000000000538,
+          "p95": 3.928100000000086
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 0.7150883333332975,
+          "p50": 0.6981000000000677,
+          "p95": 1.019800000000032
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.6463050000000066,
+          "p50": 1.2847000000001572,
+          "p95": 4.1129000000000815
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 19824.9,
+          "p50": 19540,
+          "p95": 20830
+        }
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "mode": "native",
+      "bakeMs": {
+        "n": 3,
+        "mean": 665.7999999995033,
+        "p50": 663.5999999996275,
+        "p95": 672.4000000003725
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 32.92166666671013,
+          "p50": 32.80000000074506,
+          "p95": 46.30000000074506
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.32666666662941374,
+          "p50": 0.2999999988824129,
+          "p95": 0.40000000037252903
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 32.57833333347614,
+          "p50": 32.29999999888241,
+          "p95": 46
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 26.11769833333332,
+          "p50": 26.14370000000008,
+          "p95": 38.08400000000074
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.2098799999999907,
+          "p50": 0.9335999999998421,
+          "p95": 3.1580000000003565
+        },
+        "readbackMs": {
+          "n": 60,
+          "mean": 1.039948333333333,
+          "p50": 0.7943,
+          "p95": 3.0805
+        },
+        "alphaMs": {
+          "n": 60,
+          "mean": 0.24941666666666665,
+          "p50": 0.2411,
+          "p95": 0.2827
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 0.38146333333333327,
+          "p50": 0.3717,
+          "p95": 0.4625
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.4601933333333894,
+          "p50": 1.2554000000000087,
+          "p95": 2.363600000000133
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 19844.8,
+          "p50": 19564,
+          "p95": 20832
+        }
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "mode": "png",
+      "bakeMs": {
+        "n": 3,
+        "mean": 762.4999999993792,
+        "p50": 766.5999999996275,
+        "p95": 792.1999999992549
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 38.079999999888244,
+          "p50": 33.40000000037253,
+          "p95": 56.09999999962747
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.2766666666915019,
+          "p50": 0.2000000011175871,
+          "p95": 0.40000000037252903
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 25.916666666635624,
+          "p50": 22.09999999962747,
+          "p95": 43.69999999925494
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 7.0883333333457506,
+          "p50": 6.299999998882413,
+          "p95": 13.099999999627471
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 4.781666666548699,
+          "p50": 4.699999999254942,
+          "p95": 5.5
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 21.031033333333486,
+          "p50": 18.03019999999924,
+          "p95": 41.12339999999949
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.983788333333238,
+          "p50": 1.3616999999994732,
+          "p95": 5.176900000000387
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 2.6078683333334083,
+          "p50": 2.5991000000003623,
+          "p95": 2.9909999999999854
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.5192950000000716,
+          "p50": 1.3889000000017404,
+          "p95": 2.2815000000009604
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 488921.55,
+          "p50": 488821,
+          "p95": 489562
+        }
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "mode": "rgba",
+      "bakeMs": {
+        "n": 3,
+        "mean": 662.1333333334575,
+        "p50": 660.3000000007451,
+        "p95": 669.7000000011176
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 32.929999999981376,
+          "p50": 31.59999999962747,
+          "p95": 47.29999999888241
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.23999999985098838,
+          "p50": 0.19999999925494194,
+          "p95": 0.40000000037252903
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 27.050000000031044,
+          "p50": 26.199999999254942,
+          "p95": 40.5
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 1.930000000074506,
+          "p50": 1.5,
+          "p95": 5.399999998509884
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 3.6799999999813737,
+          "p50": 3.599999999627471,
+          "p95": 4.799999998882413
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 22.867263333333405,
+          "p50": 21.97689999999966,
+          "p95": 34.94930000000022
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.682276666666606,
+          "p50": 1.032600000000457,
+          "p95": 4.598200000000361
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 1.278393333333482,
+          "p50": 1.2613000000001193,
+          "p95": 1.4488000000001193
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.4621266666668211,
+          "p50": 1.350800000000163,
+          "p95": 2.246399999999994
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 488808.95,
+          "p50": 488788,
+          "p95": 489511
+        }
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "mode": "native",
+      "bakeMs": {
+        "n": 3,
+        "mean": 677.7666666662941,
+        "p50": 666.2999999988824,
+        "p95": 705.0999999996275
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 33.53166666670392,
+          "p50": 31.199999999254942,
+          "p95": 47.69999999925494
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.27833333338300387,
+          "p50": 0.2999999988824129,
+          "p95": 0.40000000037252903
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 33.24666666667908,
+          "p50": 31,
+          "p95": 47.399999998509884
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 24.540719999999965,
+          "p50": 23.293499999999767,
+          "p95": 38.26629999999932
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.3234833333333578,
+          "p50": 0.9520999999986088,
+          "p95": 3.482299999999668
+        },
+        "readbackMs": {
+          "n": 60,
+          "mean": 1.4017266666666663,
+          "p50": 1.0996000000000001,
+          "p95": 3.3598999999999997
+        },
+        "alphaMs": {
+          "n": 60,
+          "mean": 0.6234900000000002,
+          "p50": 0.6345,
+          "p95": 0.7038
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 0.7291316666666667,
+          "p50": 0.736,
+          "p95": 0.8316
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.548025000000022,
+          "p50": 1.3572000000003754,
+          "p95": 2.9827000000004773
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 488986.05,
+          "p50": 489066,
+          "p95": 489423
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "mode": "png",
+      "bakeMs": {
+        "n": 3,
+        "mean": 1241.800000000124,
+        "p50": 1324,
+        "p95": 1364
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 62.028333333476134,
+          "p50": 62.600000001490116,
+          "p95": 80.59999999962747
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.28833333334575095,
+          "p50": 0.2999999988824129,
+          "p95": 0.5
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 39.398333333432674,
+          "p50": 41.30000000074506,
+          "p95": 57.59999999962747
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 14.270000000018626,
+          "p50": 13.200000001117587,
+          "p95": 23.90000000037253
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 8.051666666660457,
+          "p50": 7.900000000372529,
+          "p95": 11.5
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 30.707938333333612,
+          "p50": 32.242200000000594,
+          "p95": 47.25460000000021
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.1356566666665155,
+          "p50": 0.9840999999978521,
+          "p95": 2.1136999999980617
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 6.089191666666435,
+          "p50": 5.8998999999967054,
+          "p95": 8.185600000000704
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.52625166666694,
+          "p50": 1.4045999999998457,
+          "p95": 2.53780000000188
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 51610.25,
+          "p50": 51561,
+          "p95": 51925
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "mode": "rgba",
+      "bakeMs": {
+        "n": 3,
+        "mean": 1343.8666666665424,
+        "p50": 1348.0999999996275,
+        "p95": 1351.5999999996275
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 67.13166666667287,
+          "p50": 67,
+          "p95": 79.70000000111759
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.3150000000993411,
+          "p50": 0.30000000074505806,
+          "p95": 0.5
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 37.40999999999379,
+          "p50": 35.70000000111759,
+          "p95": 54
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 7.8183333332960805,
+          "p50": 7.700000001117587,
+          "p95": 12.599999999627471
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 21.561666666623204,
+          "p50": 20.90000000037253,
+          "p95": 26.40000000037253
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 28.59726833333337,
+          "p50": 27.692800000000716,
+          "p95": 44.66580000000249
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.1602566666665857,
+          "p50": 0.9781000000002678,
+          "p95": 3.0452000000004773
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 5.348278333333261,
+          "p50": 5.050699999999779,
+          "p95": 8.090499999998428
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.6028183333332284,
+          "p50": 1.4006000000008498,
+          "p95": 2.6261999999987893
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 51612.65,
+          "p50": 51574,
+          "p95": 51927
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "mode": "native",
+      "bakeMs": {
+        "n": 3,
+        "mean": 1006.7333333337059,
+        "p50": 957.5,
+        "p95": 1184.1000000014901
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 50.29666666664804,
+          "p50": 49.40000000037253,
+          "p95": 70.80000000074506
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.359999999931703,
+          "p50": 0.30000000074505806,
+          "p95": 0.6999999992549419
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 49.923333333370586,
+          "p50": 49.100000001490116,
+          "p95": 70.19999999925494
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 26.59908000000002,
+          "p50": 25.75890000000072,
+          "p95": 44.655900000001566
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.4583683333338437,
+          "p50": 1.1665000000029977,
+          "p95": 3.0568999999995867
+        },
+        "readbackMs": {
+          "n": 60,
+          "mean": 5.331393333333334,
+          "p50": 4.9455,
+          "p95": 7.643
+        },
+        "alphaMs": {
+          "n": 60,
+          "mean": 2.9690233333333333,
+          "p50": 2.939,
+          "p95": 3.274
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 2.684363333333333,
+          "p50": 2.5286000000000004,
+          "p95": 3.6793
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 1.58892666666646,
+          "p50": 1.3726999999998952,
+          "p95": 2.853399999999965
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 51580.45,
+          "p50": 51537,
+          "p95": 51889
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "mode": "png",
+      "bakeMs": {
+        "n": 3,
+        "mean": 3396.100000000248,
+        "p50": 3409.0999999996275,
+        "p95": 3510.800000000745
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 169.7483333333706,
+          "p50": 168.09999999962747,
+          "p95": 200.5
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.29333333354443314,
+          "p50": 0.30000000074505806,
+          "p95": 0.5
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 36.546666666554906,
+          "p50": 35.80000000074506,
+          "p95": 57.80000000074506
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 81.77166666671013,
+          "p50": 80.40000000037253,
+          "p95": 100.09999999962747
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 51.12333333327745,
+          "p50": 50.19999999925494,
+          "p95": 58.59999999962747
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 24.570921666666436,
+          "p50": 21.871100000003935,
+          "p95": 42.4768999999942
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.9962483333326722,
+          "p50": 1.9115999999994528,
+          "p95": 3.7791999999972177
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 39.43613833333354,
+          "p50": 38.88390000000072,
+          "p95": 44.432300000000396
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 4.417753333333045,
+          "p50": 4.128399999994144,
+          "p95": 7.2413999999989755
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 7692611.1,
+          "p50": 7692428,
+          "p95": 7696739
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "mode": "rgba",
+      "bakeMs": {
+        "n": 3,
+        "mean": 1738.699999999876,
+        "p50": 1736.9000000003725,
+        "p95": 1802.5999999996275
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 86.871666666617,
+          "p50": 87.10000000149012,
+          "p95": 105
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.29166666669771074,
+          "p50": 0.2999999988824129,
+          "p95": 0.40000000037252903
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 37.66666666654249,
+          "p50": 36.59999999962747,
+          "p95": 54.40000000037253
+        },
+        "prepareMs": {
+          "n": 60,
+          "mean": 8.756666666610787,
+          "p50": 8.5,
+          "p95": 14.199999999254942
+        },
+        "persistIpcMs": {
+          "n": 60,
+          "mean": 40.13500000014901,
+          "p50": 39.80000000074506,
+          "p95": 45.80000000074506
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 24.968135000000075,
+          "p50": 23.1278999999995,
+          "p95": 37.80040000000008
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 1.8072799999999916,
+          "p50": 1.868000000002212,
+          "p95": 2.5794000000023516
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 19.483548333333843,
+          "p50": 19.5609000000004,
+          "p95": 21.863799999999173
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 4.875141666666483,
+          "p50": 4.289600000003702,
+          "p95": 8.789400000001478
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 7692381.7,
+          "p50": 7692183,
+          "p95": 7695970
+        }
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "mode": "native",
+      "bakeMs": {
+        "n": 3,
+        "mean": 1532.7333333337058,
+        "p50": 1597.6000000014901,
+        "p95": 1617.5999999996275
+      },
+      "stages": {
+        "frameMs": {
+          "n": 60,
+          "mean": 76.59333333326504,
+          "p50": 76.90000000037253,
+          "p95": 91.5
+        },
+        "hasMs": {
+          "n": 60,
+          "mean": 0.3566666665797432,
+          "p50": 0.30000000074505806,
+          "p95": 0.6000000014901161
+        },
+        "captureIpcMs": {
+          "n": 60,
+          "mean": 76.22500000003105,
+          "p50": 76.59999999962747,
+          "p95": 91.19999999925494
+        },
+        "renderMs": {
+          "n": 60,
+          "mean": 26.363579999999455,
+          "p50": 27.28940000000148,
+          "p95": 35.79479999999967
+        },
+        "gpuCopyMs": {
+          "n": 60,
+          "mean": 2.298138333332584,
+          "p50": 1.9839999999967404,
+          "p95": 5.609899999995832
+        },
+        "readbackMs": {
+          "n": 60,
+          "mean": 5.228043333333333,
+          "p50": 5.1569,
+          "p95": 9.336799999999998
+        },
+        "alphaMs": {
+          "n": 60,
+          "mean": 10.606213333333333,
+          "p50": 10.5448,
+          "p95": 11.3007
+        },
+        "encodeMs": {
+          "n": 60,
+          "mean": 14.759974999999999,
+          "p50": 14.3788,
+          "p95": 17.3181
+        },
+        "writeMs": {
+          "n": 60,
+          "mean": 4.721589999999863,
+          "p50": 4.014899999994668,
+          "p95": 9.432800000002317
+        },
+        "fileBytes": {
+          "n": 60,
+          "mean": 7692499.5,
+          "p50": 7691890,
+          "p95": 7696738
+        }
+      }
+    }
+  ],
+  "runs": [
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 667.2000000011176,
+      "fps": 29.976019184602066,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 664.0999999996275,
+      "fps": 30.115946393632314,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 663.5999999996275,
+      "fps": 30.138637733591363,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 672.9000000003725,
+      "fps": 29.722098380129182,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 661.3999999985099,
+      "fps": 30.238887209018838,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 683.1999999992549,
+      "fps": 29.274004683872676,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 672.4000000003725,
+      "fps": 29.744199881006722,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 657.4000000003725,
+      "fps": 30.422878004241962,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 686.1999999992549,
+      "fps": 29.146021568087605,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 792.1999999992549,
+      "fps": 25.24614996215452,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 669.7000000011176,
+      "fps": 29.86411826185848,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 666.2999999988824,
+      "fps": 30.016509080044344,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 656.3999999985099,
+      "fps": 30.469226081726696,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 705.0999999996275,
+      "fps": 28.36477095448953,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 728.6999999992549,
+      "fps": 27.446136956251475,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 661.9000000003725,
+      "fps": 30.21604471972918,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 766.5999999996275,
+      "fps": 26.089225150025722,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 480,
+        "height": 270,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 660.3000000007451,
+      "fps": 30.289262456425007,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 1037.4000000003725,
+      "fps": 19.278966647380777,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 1348.0999999996275,
+      "fps": 14.835694681407556,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 878.5999999996275,
+      "fps": 22.763487366274163,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 1351.5999999996275,
+      "fps": 14.7972773009807,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 957.5,
+      "fps": 20.887728459530027,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 1364,
+      "fps": 14.662756598240469,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 1184.1000000014901,
+      "fps": 16.89046533229865,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 1324,
+      "fps": 15.105740181268882,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "overlay",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 1331.9000000003725,
+      "fps": 15.016142353025307,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 3268.4000000003725,
+      "fps": 6.1192020560511935,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 1802.5999999996275,
+      "fps": 11.095084877401606,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 0
+      },
+      "elapsedMs": 1617.5999999996275,
+      "fps": 12.363996043524114,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 1676.5999999996275,
+      "fps": 11.92890373374952,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 1383,
+      "fps": 14.461315979754158,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 1
+      },
+      "elapsedMs": 3510.800000000745,
+      "fps": 5.696707303177554,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "native",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 1597.6000000014901,
+      "fps": 12.5187781672392,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "png",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 3409.0999999996275,
+      "fps": 5.866651022264581,
+      "cachedFrames": 20,
+      "captures": 20
+    },
+    {
+      "config": {
+        "mode": "rgba",
+        "width": 1920,
+        "height": 1080,
+        "fixture": "dense",
+        "frames": 20,
+        "round": 2
+      },
+      "elapsedMs": 1736.9000000003725,
+      "fps": 11.514767689559394,
+      "cachedFrames": 20,
+      "captures": 20
+    }
+  ],
+  "reuse": [
+    {
+      "reuse": false,
+      "warmFirst": false,
+      "round": 0,
+      "frames": 12,
+      "perFrame": [
+        114.5,
+        94.5,
+        95,
+        102.09999999962747,
+        93.5,
+        101.90000000037253,
+        103.19999999925494,
+        110.29999999888241,
+        92.30000000074506,
+        97.19999999925494,
+        102.5,
+        95
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 36,
+      "captureByFrame": {
+        "0": 3,
+        "1": 3,
+        "2": 3,
+        "3": 3,
+        "4": 3,
+        "5": 3,
+        "6": 3,
+        "7": 3,
+        "8": 3,
+        "9": 3,
+        "10": 3,
+        "11": 3
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": false,
+      "round": 0,
+      "frames": 12,
+      "perFrame": [
+        65.80000000074506,
+        55.19999999925494,
+        74.90000000037253,
+        64.79999999888241,
+        61.30000000074506,
+        77.80000000074506,
+        63.69999999925494,
+        61.5,
+        64.5,
+        100.5,
+        56.09999999962747,
+        64.30000000074506
+      ],
+      "cloneMs": 3.700000001117587,
+      "cachedHits": 0,
+      "joinedFlights": 24,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    },
+    {
+      "reuse": false,
+      "warmFirst": true,
+      "round": 0,
+      "frames": 12,
+      "perFrame": [
+        59.30000000074506,
+        60.30000000074506,
+        67.60000000149012,
+        56.40000000037253,
+        59.40000000037253,
+        58.70000000111759,
+        58.40000000037253,
+        73.69999999925494,
+        56.40000000037253,
+        61.30000000074506,
+        51,
+        59.80000000074506
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 24,
+      "captureByFrame": {
+        "0": 2,
+        "1": 2,
+        "2": 2,
+        "3": 2,
+        "4": 2,
+        "5": 2,
+        "6": 2,
+        "7": 2,
+        "8": 2,
+        "9": 2,
+        "10": 2,
+        "11": 2
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": true,
+      "round": 0,
+      "frames": 12,
+      "perFrame": [
+        31.699999999254942,
+        30.299999998882413,
+        29.199999999254942,
+        29.5,
+        25.800000000745058,
+        32,
+        29.40000000037253,
+        26.09999999962747,
+        30.90000000037253,
+        27.5,
+        28.299999998882413,
+        28.5
+      ],
+      "cloneMs": 0.2000000011175871,
+      "cachedHits": 12,
+      "joinedFlights": 0,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": false,
+      "round": 1,
+      "frames": 12,
+      "perFrame": [
+        51.29999999888241,
+        65.80000000074506,
+        78.19999999925494,
+        60.5,
+        66.70000000111759,
+        58.90000000037253,
+        74.29999999888241,
+        62.100000001490116,
+        65.59999999962747,
+        73,
+        61.29999999888241,
+        69.40000000037253
+      ],
+      "cloneMs": 3.3000000081956387,
+      "cachedHits": 0,
+      "joinedFlights": 24,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    },
+    {
+      "reuse": false,
+      "warmFirst": false,
+      "round": 1,
+      "frames": 12,
+      "perFrame": [
+        113.69999999925494,
+        88.30000000074506,
+        100,
+        101.70000000111759,
+        98.29999999888241,
+        114.80000000074506,
+        120,
+        103.69999999925494,
+        98,
+        107.80000000074506,
+        90.40000000037253,
+        101.40000000037253
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 36,
+      "captureByFrame": {
+        "0": 3,
+        "1": 3,
+        "2": 3,
+        "3": 3,
+        "4": 3,
+        "5": 3,
+        "6": 3,
+        "7": 3,
+        "8": 3,
+        "9": 3,
+        "10": 3,
+        "11": 3
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": true,
+      "round": 1,
+      "frames": 12,
+      "perFrame": [
+        28,
+        33.20000000111759,
+        31.09999999962747,
+        27.300000000745058,
+        26.90000000037253,
+        27.200000001117587,
+        27.800000000745058,
+        27.5,
+        28.399999998509884,
+        29.399999998509884,
+        28.299999998882413,
+        24.90000000037253
+      ],
+      "cloneMs": 0.19999999925494194,
+      "cachedHits": 12,
+      "joinedFlights": 0,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    },
+    {
+      "reuse": false,
+      "warmFirst": true,
+      "round": 1,
+      "frames": 12,
+      "perFrame": [
+        63.600000001490116,
+        73.5,
+        70.80000000074506,
+        84.5,
+        69.90000000037253,
+        60,
+        69,
+        61.100000001490116,
+        61.29999999888241,
+        66.40000000037253,
+        56.09999999962747,
+        69.89999999850988
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 24,
+      "captureByFrame": {
+        "0": 2,
+        "1": 2,
+        "2": 2,
+        "3": 2,
+        "4": 2,
+        "5": 2,
+        "6": 2,
+        "7": 2,
+        "8": 2,
+        "9": 2,
+        "10": 2,
+        "11": 2
+      }
+    },
+    {
+      "reuse": false,
+      "warmFirst": false,
+      "round": 2,
+      "frames": 12,
+      "perFrame": [
+        115.90000000037253,
+        120.19999999925494,
+        93.59999999962747,
+        95.29999999888241,
+        108,
+        90.80000000074506,
+        111.09999999962747,
+        90.20000000111759,
+        102.29999999888241,
+        97.90000000037253,
+        98.40000000037253,
+        107
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 36,
+      "captureByFrame": {
+        "0": 3,
+        "1": 3,
+        "2": 3,
+        "3": 3,
+        "4": 3,
+        "5": 3,
+        "6": 3,
+        "7": 3,
+        "8": 3,
+        "9": 3,
+        "10": 3,
+        "11": 3
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": false,
+      "round": 2,
+      "frames": 12,
+      "perFrame": [
+        52.09999999962747,
+        61.600000001490116,
+        72.79999999888241,
+        71.20000000111759,
+        55.69999999925494,
+        82.59999999962747,
+        62.29999999888241,
+        62,
+        60.30000000074506,
+        83.79999999888241,
+        62.5,
+        45
+      ],
+      "cloneMs": 2.4000000059604645,
+      "cachedHits": 0,
+      "joinedFlights": 24,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    },
+    {
+      "reuse": false,
+      "warmFirst": true,
+      "round": 2,
+      "frames": 12,
+      "perFrame": [
+        66.40000000037253,
+        64.5,
+        59.20000000111759,
+        57.5,
+        61.40000000037253,
+        57.59999999962747,
+        57.79999999888241,
+        69.59999999962747,
+        57.69999999925494,
+        57.90000000037253,
+        57,
+        71.80000000074506
+      ],
+      "cloneMs": 0,
+      "cachedHits": 0,
+      "joinedFlights": 0,
+      "captures": 24,
+      "captureByFrame": {
+        "0": 2,
+        "1": 2,
+        "2": 2,
+        "3": 2,
+        "4": 2,
+        "5": 2,
+        "6": 2,
+        "7": 2,
+        "8": 2,
+        "9": 2,
+        "10": 2,
+        "11": 2
+      }
+    },
+    {
+      "reuse": true,
+      "warmFirst": true,
+      "round": 2,
+      "frames": 12,
+      "perFrame": [
+        28.799999998882413,
+        27,
+        26.699999999254942,
+        28,
+        28.5,
+        26.5,
+        27.700000001117587,
+        26.100000001490116,
+        28.09999999962747,
+        30,
+        27,
+        25.5
+      ],
+      "cloneMs": 0.09999999962747097,
+      "cachedHits": 12,
+      "joinedFlights": 0,
+      "captures": 12,
+      "captureByFrame": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1,
+        "9": 1,
+        "10": 1,
+        "11": 1
+      }
+    }
+  ],
+  "parity": [
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "rgba",
+      "channels": 524,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 102582,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "native",
+      "channels": 31913,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 30924,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "rgba",
+      "channels": 524,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 102582,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "native",
+      "channels": 31913,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 30924,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "rgba",
+      "channels": 524,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 102582,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "native",
+      "channels": 31913,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 30924,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "rgba",
+      "channels": 23395,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "native",
+      "channels": 46094,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "rgba",
+      "channels": 23395,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "native",
+      "channels": 46094,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "rgba",
+      "channels": 23395,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "native",
+      "channels": 46094,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "rgba",
+      "channels": 569,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 1398998,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "native",
+      "channels": 123331,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 614836,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "rgba",
+      "channels": 569,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 1398998,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "native",
+      "channels": 123331,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 614836,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "rgba",
+      "channels": 569,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 1398998,
+        "expected": 127,
+        "actual": 128
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "native",
+      "channels": 123331,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 614836,
+        "expected": 42,
+        "actual": 43
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "rgba",
+      "channels": 330716,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "native",
+      "channels": 673207,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "rgba",
+      "channels": 330716,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "native",
+      "channels": 673207,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "rgba",
+      "channels": 330716,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 136,
+        "expected": 142,
+        "actual": 143
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "native",
+      "channels": 673207,
+      "alpha": 0,
+      "max": 1,
+      "premultipliedChannels": 0,
+      "first": {
+        "frame": 0,
+        "channel": 120,
+        "expected": 76,
+        "actual": 77
+      }
+    }
+  ],
+  "renderedParity": [
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "mode": "rgba",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "mode": "native",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "mode": "rgba",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "mode": "native",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "mode": "rgba",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "mode": "native",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "mode": "rgba",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "mode": "native",
+      "checks": [
+        {
+          "gpu": true,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": true,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "transparent",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#000000",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#ffffff",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        },
+        {
+          "gpu": false,
+          "background": "#3279bc",
+          "channels": 0,
+          "alpha": 0,
+          "max": 0
+        }
+      ]
+    }
+  ],
+  "determinism": [
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 480,
+      "height": 270,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 0,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 1,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "overlay",
+      "round": 2,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 0,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 1,
+      "mode": "native",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "rgba",
+      "uniqueFrames": 20
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "fixture": "dense",
+      "round": 2,
+      "mode": "native",
+      "uniqueFrames": 20
+    }
+  ]
+}
