@@ -1,6 +1,42 @@
 {
   "tools": [
     {
+      "name": "analyze_audio",
+      "description": "Analyze original source audio from cached waveform peaks; local, read-only, no model. Returns source-absolute microseconds, bounded peak/RMS waveform bins, onset candidates and signed energy changes (dB), plus resolution and event counts. Choose music edit/alignment points, including outside a clip's trim. These are amplitude measurements, not beats, bars or melody recognition. At most 60 s per call; max_points affects only the summary. Peaks are cache-limited, not true-peak or LUFS. Wait for the waveform job if not ready. To place a source event at timeline T: src_in_us = source_us - (T - layer.t_start_us).",
+      "inputSchema": {
+        "properties": {
+          "end_us": {
+            "description": "Source-absolute end, exclusive. Default start + 60 seconds, capped at media end. At most 60 seconds per call.",
+            "type": "integer"
+          },
+          "max_points": {
+            "description": "Maximum waveform summary bins, 1..1000 (default 200). Does not change event detection resolution.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "media_id": {
+            "description": "Imported Audio or Video media id; analyzes its original audio before mix/effects.",
+            "type": "string"
+          },
+          "onset_threshold_db": {
+            "description": "Minimum short-time energy rise for onset candidates, 1..30 dB (default 6). Candidates are not beats or melody labels.",
+            "type": "number"
+          },
+          "start_us": {
+            "description": "Source-absolute start in microseconds, inclusive. Default 0.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "ping",
       "description": "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.",
       "inputSchema": {

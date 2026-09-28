@@ -52,7 +52,9 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  on as it types the argument, in place of prose it would learn by trial. The
  *  way down is merging over-granular families and cutting prose that restates
  *  the schema, not trimming meaning. */
-const CATALOG_BYTE_BUDGET = 126_000
+// +2 KB for analyze_audio: a bounded source window, waveform summary and
+// measured onset/energy candidates with explicit source-time semantics.
+const CATALOG_BYTE_BUDGET = 128_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 

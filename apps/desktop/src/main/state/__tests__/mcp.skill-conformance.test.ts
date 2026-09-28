@@ -50,7 +50,7 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 // with a live tool name (checked below).
 const KNOWN_NON_TOOLS = new Set([
   // SKILL.md — tool params
-  'from', 'pad_us', 't_start_us', 'segments', 'word_timing',
+  'from', 'pad_us', 't_start_us', 'segments', 'word_timing', 'source_us',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
   'adjusted', 'siblings',
   // SKILL.md — the MCP protocol method whose `instructions` the head mirrors

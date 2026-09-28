@@ -1032,6 +1032,7 @@ const zhCN: Resources = {
     "end_agent_session": "结束工作会话",
     "set_history_lock": "设置撤销锁",
     "analyze_clip": "分析片段",
+    "analyze_audio": "分析源音频",
     "describe_clip": "描述片段内容",
     "transcribe_clip": "转写片段",
     "extract_clip_audio": "提取片段音频",

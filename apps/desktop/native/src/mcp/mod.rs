@@ -15,6 +15,8 @@
 //!
 //! Design: `docs/mcp.md`.
 
+#[cfg(feature = "jobs")]
+mod audio_analysis;
 mod catalog;
 #[cfg(feature = "speech")]
 mod clip_audio;

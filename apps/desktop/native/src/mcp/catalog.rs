@@ -138,6 +138,8 @@ macro_rules! tool_table {
 }
 
 tool_table! {
+    #[cfg(feature = "jobs")]
+    "analyze_audio" => ("Analyze original source audio from cached waveform peaks; local, read-only, no model. Returns source-absolute microseconds, bounded peak/RMS waveform bins, onset candidates and signed energy changes (dB), plus resolution and event counts. Choose music edit/alignment points, including outside a clip's trim. These are amplitude measurements, not beats, bars or melody recognition. At most 60 s per call; max_points affects only the summary. Peaks are cache-limited, not true-peak or LUFS. Wait for the waveform job if not ready. To place a source event at timeline T: src_in_us = source_us - (T - layer.t_start_us).", super::audio_analysis::AnalyzeAudioArgs, super::audio_analysis::analyze_audio, ToolAnnotations::READ),
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping, ToolAnnotations::READ),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
     // by the TS def; mergeMcpCatalog filters it out of the Rust side.
@@ -220,6 +222,7 @@ mod tests {
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
         for name in [
+            "analyze_audio",
             "detect_pauses",
             "transcribe_clip",
             "describe_clip",

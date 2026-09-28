@@ -1221,6 +1221,7 @@ const enUS = {
     "end_agent_session": "End work session",
     "set_history_lock": "Set the undo lock",
     "analyze_clip": "Analyze clip",
+    "analyze_audio": "Analyze source audio",
     "describe_clip": "Describe clip content",
     "transcribe_clip": "Transcribe clip",
     "extract_clip_audio": "Extract clip audio",

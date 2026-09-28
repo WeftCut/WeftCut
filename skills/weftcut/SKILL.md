@@ -97,6 +97,13 @@ descriptions:
 - Music, sound effects, a separate voice track: `add_audio_layer`. It is the
   only tool that places audio-only media — `add_video_layer` builds a visual
   layer and refuses an audio file.
+- Music alignment: `analyze_audio { media_id, start_us?, end_us? }` reads source
+  waveform energy, onset candidates and energy changes, at most 60 s per call.
+  Times are source-absolute, including outside existing trims. To align a
+  `source_us` candidate to timeline T, set `src_in_us = source_us - (T -
+  layer.t_start_us)` and keep the clip duration when setting `src_out_us` via
+  `update_layer_params`. Check source bounds and audition: amplitude onsets do
+  not identify beats or main melodies. Missing waveform: wait for generation.
 - A title, a lower third, a credit: `add_text_layer`, then style it with
   `update_layer_params`. Subtitles from a document are `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock

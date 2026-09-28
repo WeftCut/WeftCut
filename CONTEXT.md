@@ -755,6 +755,14 @@ _Avoid_: generated panel, default form, auto form, generic props form
 
 ## Audio effects
 
+**Source audio analysis**:
+Local amplitude measurements of an imported source, before timeline trims,
+mixing and effects. Reports source-absolute times for waveform summaries,
+onset candidates (short energy rises) and energy changes. Candidates suggest
+edit points; they do not identify beats, main melodies or musical sections.
+Distinct from a **Pause**, which describes the audio a layer plays.
+_Avoid_: beat detection, melody detection (for amplitude-only analysis)
+
 **Audio effect**:
 An `Effect` on an Audio layer whose `kind` is in the `audio.*` namespace — the
 same record a visual effect uses, with the opposite lifecycle: it is rendered

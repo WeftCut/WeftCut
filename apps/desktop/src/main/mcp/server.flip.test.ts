@@ -38,6 +38,31 @@ function fakeBackend(mcpCallTool: (n: string, a: string) => Promise<string>) {
 }
 
 describe('handleCallTool flip routing', () => {
+  it('analyzes the actor-owned media without a timeline layer or caller-supplied slice', async () => {
+    const ts = tsHostStub()
+    ts.actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 90_000_000 })
+    const before = ts.actor.snapshot()
+    const spy = vi.fn(async (_name: string, _args: string) => '{"ok":true,"result":{"content":[]}}')
+    await handleCallTool(fakeBackend(spy), () => ts, 'analyze_audio',
+      { media_id: MID, start_us: 20_000_000, end_us: 25_000_000, media: { id: 'untrusted' } })
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(spy.mock.calls[0][1])).toMatchObject({ media_id: MID,
+      start_us: 20_000_000, end_us: 25_000_000, media: before.media_pool[MID] })
+    expect(ts.actor.snapshot()).toBe(before)
+  })
+
+  it('passes missing audio media as null and refuses malformed analysis args before compute', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(async (_name: string, _args: string) => '{"ok":true,"result":{"content":[]}}')
+    const backend = fakeBackend(spy)
+    await handleCallTool(backend, () => ts, 'analyze_audio', { media_id: MID })
+    expect(JSON.parse(spy.mock.calls[0][1]).media).toBeNull()
+    spy.mockClear()
+    const result = await handleCallTool(backend, () => ts, 'analyze_audio', { start_us: 'bad' }) as any
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
   it('holds model files until native inference ends, including a rejected run', async () => {
     let reject!: (reason: Error) => void;
     const native = new Promise<string>((_resolve, fail) => { reject = fail });

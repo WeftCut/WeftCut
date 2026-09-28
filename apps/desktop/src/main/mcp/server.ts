@@ -410,6 +410,14 @@ async function dispatchTool(
     // Two-slice compute (compare_frames) resolves BOTH nested { a, b } clip
     // slices. Kept separate from the single-slice call below, which reads a
     // top-level `layer_id`.
+    if (name === 'analyze_audio') {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
+      // Source analysis deliberately reaches the imported media outside any
+      // layer trim; only the actor may supply the trusted media record.
+      const media = tsHost.actor.snapshot().media_pool[args.media_id as string] ?? null
+      return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify({ ...args, media })), name)
+    }
     if (TWO_SLICE_TOOLS.has(name)) {
       const refused = await refuseBadArgs(backend, name, args)
       if (refused) return refused
