@@ -28,6 +28,7 @@ let slowScreenshots = 0
 /// When true, the waitReady probe (Runtime.evaluate of the __motifRender
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
+let hungCommand: string | null = null
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -47,6 +48,7 @@ vi.mock('electron', () => {
         attach: () => {},
         detach: () => {},
         sendCommand: (method: string, params?: { expression?: string }) => {
+          if (method === hungCommand) return new Promise(() => {})
           if (method === 'Page.captureScreenshot') {
             screenshotCalls++
             shotOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
@@ -191,6 +193,27 @@ describe('capture host shutdown', () => {
     await expect(captureMotifFrameB64({ ...args, motifId: 'healthy-motif' })).resolves.toBe('UE5H')
     expect(opened).toBe(openedBefore)
   })
+
+  it.each(['Emulation.setDeviceMetricsOverride', 'Emulation.setDefaultBackgroundColorOverride'])(
+    'a wedged %s cannot strand the capture queue', async (method) => {
+      vi.useFakeTimers()
+      try {
+        hungCommand = method
+        const request = { ...args, motifId: `emulation-${opened}`, width: 64 }
+        const failure = expect(captureMotifFrameB64(request)).rejects.toThrow(/timed out/)
+        await vi.advanceTimersByTimeAsync(5001)
+        await failure
+        const before = opened
+        hungCommand = null
+        await expect(captureMotifFrameB64(request)).resolves.toBe('UE5H')
+        expect(opened).toBe(before + 1)
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        hungCommand = null
+        vi.useRealTimers()
+      }
+    },
+  )
 
   it('a failed lane fast-rejects until its contentHash changes', async () => {
     // Same (motifId, contentHash) as the failure above: reject without

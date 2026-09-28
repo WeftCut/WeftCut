@@ -151,11 +151,18 @@ function manifestFor(a: CaptureArgs): Manifest | undefined {
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`motif capture timed out after ${ms}ms: ${label}`)), ms)),
-  ])
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`motif capture timed out after ${ms}ms: ${label}`)), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function buildHost(): Promise<Host> {
@@ -184,10 +191,13 @@ async function buildHost(): Promise<Host> {
     await withTimeout(win.loadURL('about:blank'), CAPTURE_TIMEOUT_MS, 'about:blank')
     const dbg = win.webContents.debugger
     dbg.attach('1.3')
-    const send = (method: string, params: object = {}) => dbg.sendCommand(method, params)
-    await withTimeout(send('Page.enable'), CAPTURE_TIMEOUT_MS, 'Page.enable')
-    await withTimeout(send('Runtime.enable'), CAPTURE_TIMEOUT_MS, 'Runtime.enable')
-    await withTimeout(send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource }), CAPTURE_TIMEOUT_MS, 'addScript')
+    // Every CDP command is bounded by construction, including Emulation.
+    // Callers cannot accidentally wedge the serial queue with an untimed send.
+    const send = (method: string, params: object = {}) =>
+      withTimeout(dbg.sendCommand(method, params), CAPTURE_TIMEOUT_MS, method)
+    await send('Page.enable')
+    await send('Runtime.enable')
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource })
     return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null }
   } catch (e) {
     try { win.destroy() } catch { /* already gone */ }
@@ -251,11 +261,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     // doCapture's catch answers with teardownHost → the next capture rebuilds.
     // A wedged page does not unwedge between polls, so the throw also skips the
     // remaining attempts (they exist for a LOADING page, which fails fast).
-    const r = await withTimeout(
-      h.send('Runtime.evaluate', { expression: probe, returnByValue: true }),
-      CAPTURE_TIMEOUT_MS,
-      'waitReady probe',
-    )
+    const r = await h.send('Runtime.evaluate', { expression: probe, returnByValue: true })
     if (r?.result?.value === true) { h.readyFor = motifId; return }
     await delay(READY_POLL_MS)
   }
@@ -301,10 +307,7 @@ async function doCapture(a: CaptureArgs): Promise<string> {
   }
   let ev: any
   try {
-    ev = await withTimeout(
-      h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
-      CAPTURE_TIMEOUT_MS, '__motifRender',
-    )
+    ev = await h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
   } catch (e) {
     // A hung __motifRender is the Motif's own script (e.g. an infinite loop) —
     // content — but it also wedges the renderer for every other lane: mark the
@@ -323,7 +326,7 @@ async function doCapture(a: CaptureArgs): Promise<string> {
     throw err
   }
   try {
-    const shot = await withTimeout(h.send('Page.captureScreenshot', { format: 'png' }), CAPTURE_TIMEOUT_MS, 'captureScreenshot')
+    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string // base64 PNG, no data: prefix
   } catch (e) {

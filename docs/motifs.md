@@ -341,6 +341,48 @@ composite time — moving/scaling/fading never re-captures) and the window posit
 (`src_in_us`; frames are keyed by absolute content-frame index, so trimming reuses cached
 frames). Changing props, the content duration, or the composition fps does change the key.
 
+### Runtime ownership and teardown
+
+`MotifFrameService` owns the preview's prewarmer, baker, bake status and serialized
+index hydration/GC. `Compositor` only supplies project/playhead changes and disposal.
+Both background workers use `IdleBatchQueue` for scheduling and cancellation; frame
+ownership stays with the worker until it transfers the bitmap to L0.
+
+- **Cached and bound are different lifetimes.** L0 owns cached bitmaps; sprites
+  retain the bitmap they bind. Eviction removes cache membership immediately but
+  defers closing a retained bitmap until its last sprite releases it. An idempotent
+  insertion keeps the existing bitmap and closes the duplicate. L0 also owns its
+  per-content frame counts, so a newly created preview service sees pre-existing
+  coverage through an O(1) query; it needs no subscription or event replay.
+- **Baking transfers ownership exactly once.** The baker owns a rendered bitmap
+  through PNG encoding and persistence. A failed write or disposal closes it in a
+  `finally`; a successful warm transfers ownership to L0. Disposal is checked after
+  the disk check, capture and persistence, preventing late results from warming L0
+  or publishing progress. Progress counts distinct completed frame indices across
+  playhead replans, and completed frames are excluded from subsequent work.
+- **Project close stops both planners.** The prewarm and bake targets are cleared;
+  disposing the service additionally cancels its idle workers and invalidates its
+  in-flight hydration/GC epoch. An already-issued capture is not forcibly cancelled.
+  The shared content-addressed L0 can outlive a preview service.
+- **GC has revocable deletion authority.** Only one hydration/GC pass runs at a time;
+  project changes coalesce into one follow-up. Its epoch is checked after hydration
+  and inside the disk collector immediately before each deletion, including after
+  asynchronous path resolution. The live set includes queued/in-flight bake keys.
+  A filesystem removal already submitted to main cannot be retracted by this check.
+- **CDP deadlines belong to the host.** The host's `send` wraps every command in a
+  timeout, including viewport and transparent-background setup. Callers cannot omit
+  the deadline. Settled commands clear their timeout timers; a transport failure
+  tears down the host so the next ticket can rebuild it.
+
+Two remaining limitations are worth keeping explicit. `BakedKeyIndex` is a
+disk-read hint based on directory presence, not a certificate that every frame is
+present: interrupted bakes can still appear ready after reload, although missing
+frames fall back to capture. Also, L2 paths are resolved through the current
+workspace bridge, rather than a workspace handle owned by a bake job. A future
+workspace-scoped disk module should own writes, completion metadata and collection
+together; that would strengthen project-switch isolation and make persisted
+readiness exact.
+
 ### Editing an installed Motif
 
 Editing an installed (or built-in) Motif opens a **working draft** seeded from its source —

@@ -361,129 +361,47 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("capacityBytes returns the budget", () => { expect(new MotifFrameCache(7).capacityBytes()).toBe(7); });
 });
 
-describe("MotifFrameCache — membership events", () => {
-  /// Collect (cacheKey, delta) events from one cache; `unsub` detaches.
-  function collect(c: MotifFrameCache) {
-    const events: { cacheKey: string; delta: number }[] = [];
-    const unsub = c.onMembershipChange((cacheKey, delta) => events.push({ cacheKey, delta }));
-    return { events, unsub };
-  }
-
-  test("a new insert fires +1; an idempotent re-set fires nothing", () => {
-    const c = new MotifFrameCache();
-    const { events } = collect(c);
-    c.setFrame("k", 0, fakeBitmap());
-    expect(events).toEqual([{ cacheKey: "k", delta: 1 }]);
-    // Re-set of an already-present (key, frame): the existing bitmap is kept,
-    // no membership change — double-counting here would poison coverage sums.
-    c.setFrame("k", 0, fakeBitmap());
-    c.setFrame("k", 0, fakeBitmap());
-    expect(events).toHaveLength(1);
-  });
-
-  test("eviction inside setFrame fires -1 with the VICTIM's key", () => {
-    const c = new MotifFrameCache(BYTES_FOR(2));
-    const { events } = collect(c);
-    c.setFrame("a", 0, fakeBitmap());
-    c.setFrame("b", 0, fakeBitmap());
-    c.setFrame("c", 0, fakeBitmap()); // over budget → evicts LRU a#0
-    expect(events).toEqual([
-      { cacheKey: "a", delta: 1 },
-      { cacheKey: "b", delta: 1 },
-      { cacheKey: "c", delta: 1 },
-      { cacheKey: "a", delta: -1 },
-    ]);
-  });
-
-  test("an eviction of the SAME key nets out in the count", () => {
-    const c = new MotifFrameCache(BYTES_FOR(2));
-    const { events } = collect(c);
-    c.setFrame("k", 0, fakeBitmap());
-    c.setFrame("k", 1, fakeBitmap());
-    c.setFrame("k", 2, fakeBitmap()); // evicts k#0
-    const net = events.reduce((n, e) => n + e.delta, 0);
-    expect(net).toBe(2);
-    expect(c.size()).toBe(2);
-  });
-
-  test("clearKey fires -1 per removed frame of that key only", () => {
-    const c = new MotifFrameCache();
-    c.setFrame("a", 0, fakeBitmap());
-    c.setFrame("a", 1, fakeBitmap());
-    c.setFrame("b", 0, fakeBitmap());
-    const { events } = collect(c);
-    c.clearKey("a");
-    expect(events).toEqual([
-      { cacheKey: "a", delta: -1 },
-      { cacheKey: "a", delta: -1 },
-    ]);
-    events.length = 0;
-    c.clearKey("missing"); // no-op: nothing leaves → no events
-    expect(events).toEqual([]);
-  });
-
-  test("clearAll fires -1 per frame; unsubscribe stops the feed", () => {
-    const c = new MotifFrameCache();
-    c.setFrame("a", 0, fakeBitmap());
-    c.setFrame("b", 1, fakeBitmap());
-    const { events, unsub } = collect(c);
-    c.clearAll();
-    expect(events.sort((x, y) => x.cacheKey.localeCompare(y.cacheKey))).toEqual([
-      { cacheKey: "a", delta: -1 },
-      { cacheKey: "b", delta: -1 },
-    ]);
-    unsub();
-    c.setFrame("c", 0, fakeBitmap());
-    expect(events).toHaveLength(2);
-  });
-
-  test("a pinned frame fires -1 when it leaves the store; its later close does not", () => {
-    // Membership is "is in the store" (what hasFrame reads), not "is closed" —
-    // the deferred close on last release is a lifetime detail, not an event.
-    const c = new MotifFrameCache(BYTES_FOR(1));
-    const { events } = collect(c);
-    const a = fakeBitmap();
-    c.setFrame("k", 0, a);
-    c.retain(a);
-    c.setFrame("k", 1, fakeBitmap()); // k#0 leaves the store, pinned → parked
-    c.release(a); // now closed — no further event
-    expect(events).toEqual([
-      { cacheKey: "k", delta: 1 },
-      { cacheKey: "k", delta: 1 },
-      { cacheKey: "k", delta: -1 },
-    ]);
-  });
-
-  test("event-driven counts track hasFrame exactly across a mixed sequence", () => {
-    // The service's coverage counters in miniature: fold the event stream into
-    // per-key counts and check them against ground truth after every op.
+describe("MotifFrameCache — content coverage", () => {
+  test("counts existing frames and follows deduplication, eviction and clearing", () => {
     const c = new MotifFrameCache(BYTES_FOR(3));
-    const counts = new Map<string, number>();
-    c.onMembershipChange((cacheKey, delta) => {
-      const n = (counts.get(cacheKey) ?? 0) + delta;
-      if (n <= 0) counts.delete(cacheKey);
-      else counts.set(cacheKey, n);
-    });
     const expectExact = () => {
-      for (const key of ["a", "b", "c"]) {
+      for (const key of ["a", "b", "c", "missing"]) {
         let truth = 0;
         for (let f = 0; f < 4; f++) if (c.hasFrame(key, f)) truth++;
-        expect(counts.get(key) ?? 0).toBe(truth);
+        expect(c.frameCount(key)).toBe(truth);
+        expect(c.hasKey(key)).toBe(truth > 0);
       }
     };
     c.setFrame("a", 0, fakeBitmap());
     c.setFrame("a", 1, fakeBitmap());
     c.setFrame("b", 0, fakeBitmap());
+    expectExact(); // late readers see existing coverage
+    c.setFrame("c", 0, fakeBitmap()); // evicts a#0
     expectExact();
-    c.setFrame("c", 0, fakeBitmap()); // over budget → evicts a#0
-    expectExact();
-    c.setFrame("b", 0, fakeBitmap()); // idempotent re-set: no count change
+    c.setFrame("b", 0, fakeBitmap()); // duplicate does not count twice
     expectExact();
     c.clearKey("a");
     expectExact();
     c.clearAll();
     expectExact();
-    expect(counts.size).toBe(0);
+    c.setFrame("a", 0, fakeBitmap());
+    c.dispose();
+    expectExact();
+  });
+
+  test("evicted retained frames stop contributing before their last release", () => {
+    const c = new MotifFrameCache(BYTES_FOR(1));
+    const bitmap = fakeBitmap();
+    c.setFrame("a", 0, bitmap);
+    c.retain(bitmap);
+    c.setFrame("b", 0, fakeBitmap());
+    expect(c.frameCount("a")).toBe(0);
+    expect(c.frameCount("b")).toBe(1);
+    expect(bitmap.close).not.toHaveBeenCalled();
+    c.release(bitmap);
+    expect(bitmap.close).toHaveBeenCalledTimes(1);
+    expect(c.frameCount("b")).toBe(1);
+    c.dispose();
   });
 });
 

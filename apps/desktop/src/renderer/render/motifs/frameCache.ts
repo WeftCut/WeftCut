@@ -73,7 +73,7 @@ function keyMatchesCacheKey(mapKey: string, cacheKey: string): boolean {
 
 /// Recover the cacheKey from a composite map key: everything before the LAST
 /// `#` (the all-digits frame-index suffix is guaranteed by `frameMapKey`).
-/// Used where membership events must name the key but only the composite is
+/// Used where membership accounting needs the key but only the composite is
 /// at hand (eviction, clearAll).
 function cacheKeyOf(mapKey: string): string {
   return mapKey.slice(0, mapKey.lastIndexOf("#"));
@@ -106,15 +106,9 @@ export class MotifFrameCache {
   /// bounded by the layer count.
   private readonly pins = new Map<object, number>();
   private readonly retired = new Set<Closeable>();
-  /// Fired SYNCHRONOUSLY when a (cacheKey, frame) ENTERS the store (+1) or
-  /// LEAVES it (−1): new insert, eviction, clearKey, clearAll. The idempotent
-  /// re-set of an existing (key, frame) fires NOTHING (no membership change);
-  /// pins/retirement don't fire either — the signal mirrors what `hasFrame`
-  /// reads, so a subscriber can keep an exact per-key frame count. Re-entrancy
-  /// contract: a listener must not call back into the cache — events fire
-  /// mid-mutation. `dispose` fires nothing (terminal teardown; listeners are
-  /// expected gone).
-  private readonly membershipListeners = new Set<(cacheKey: string, delta: number) => void>();
+  /// Membership belongs to the cache, whose lifetime can exceed a preview
+  /// service's. Late readers see existing frames without replaying events.
+  private readonly frameCounts = new Map<string, number>();
 
   constructor(maxBytes: number = DEFAULT_MAX_BYTES) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
@@ -131,19 +125,15 @@ export class MotifFrameCache {
   // L0 — in-RAM LRU of per-frame ImageBitmaps
   // ----------------------------------------------------------------
 
-  /// Subscribe to store-membership changes (see `membershipListeners`).
-  /// Returns an unsubscribe fn. Only the COMMITTED-content lane
-  /// (`sharedMotifFrameCache`) gets a subscriber — the MotifFrameService's
-  /// bake-status coverage counters; the transient overlay lane never does.
-  onMembershipChange(listener: (cacheKey: string, delta: number) => void): () => void {
-    this.membershipListeners.add(listener);
-    return () => {
-      this.membershipListeners.delete(listener);
-    };
+  private changeMembership(cacheKey: string, delta: number): void {
+    const count = (this.frameCounts.get(cacheKey) ?? 0) + delta;
+    if (count === 0) this.frameCounts.delete(cacheKey);
+    else this.frameCounts.set(cacheKey, count);
   }
 
-  private emitMembership(cacheKey: string, delta: number): void {
-    for (const l of this.membershipListeners) l(cacheKey, delta);
+  /// O(1) coverage of this content, independent of a reader's lifetime.
+  frameCount(cacheKey: string): number {
+    return this.frameCounts.get(cacheKey) ?? 0;
   }
 
   /// Return the cached frame, or null on miss. A hit refreshes recency
@@ -181,7 +171,7 @@ export class MotifFrameCache {
       // Keep the existing (possibly already-bound) bitmap; drop the redundant
       // incoming one. Refresh recency by re-inserting at the MRU tail. Bytes
       // don't change: a given (key, frame) is deterministic, so the incoming
-      // bitmap's dims equal the stored one's. No membership event: the
+      // bitmap's dims equal the stored one's. No membership change: the
       // (key, frame) was already in the store.
       if (prev.bmp !== (bmp as unknown as Closeable)) this.retire(bmp);
       this.store.delete(k);
@@ -191,7 +181,7 @@ export class MotifFrameCache {
     const bytes = frameCostBytes(bmp);
     this.store.set(k, { bmp: bmp as unknown as Closeable, bytes });
     this.bytesUsed += bytes;
-    this.emitMembership(cacheKey, +1);
+    this.changeMembership(cacheKey, +1);
     this.evictToCapacity();
     return bmp;
   }
@@ -211,7 +201,7 @@ export class MotifFrameCache {
       if (victim) {
         this.bytesUsed -= victim.bytes;
         this.retire(victim.bmp);
-        this.emitMembership(cacheKeyOf(oldest.value), -1);
+        this.changeMembership(cacheKeyOf(oldest.value), -1);
       }
     }
   }
@@ -259,10 +249,7 @@ export class MotifFrameCache {
 
   /// True when at least one frame of `cacheKey` is currently held.
   hasKey(cacheKey: string): boolean {
-    for (const k of this.store.keys()) {
-      if (keyMatchesCacheKey(k, cacheKey)) return true;
-    }
-    return false;
+    return this.frameCount(cacheKey) > 0;
   }
 
   /// Drop every frame of `cacheKey`, closing each bitmap. No-op when the
@@ -275,7 +262,7 @@ export class MotifFrameCache {
         if (entry) {
           this.bytesUsed -= entry.bytes;
           this.retire(entry.bmp);
-          this.emitMembership(cacheKey, -1);
+          this.changeMembership(cacheKey, -1);
         }
       }
     }
@@ -288,12 +275,9 @@ export class MotifFrameCache {
   /// also force-closes parked frames and clears the pin table).
   clearAll(): void {
     for (const entry of this.store.values()) this.retire(entry.bmp);
-    const removedKeys = [...this.store.keys()];
     this.store.clear();
     this.bytesUsed = 0;
-    // Emit after the store is empty, so a listener observing mid-callback
-    // (e.g. re-reading `hasFrame`) sees the post-clear state.
-    for (const k of removedKeys) this.emitMembership(cacheKeyOf(k), -1);
+    this.frameCounts.clear();
   }
 
   /// Close every held bitmap — parked ones included — and empty the store.
@@ -305,6 +289,7 @@ export class MotifFrameCache {
     this.bytesUsed = 0;
     this.retired.clear();
     this.pins.clear();
+    this.frameCounts.clear();
   }
 
   /// Frames currently held across all keys, for diagnostics.
@@ -386,9 +371,11 @@ export class MotifFrameCache {
   /// deleted or their props/dims change (a new key → a new hash dir, the
   /// old one becomes unreferenced). A missing `Cache/raster` is treated
   /// as nothing-to-GC, not an error.
-  async gcUnreferenced(activeCacheKeys: string[]): Promise<void> {
+  /// `isCurrent` revokes a snapshot's deletion authority across async I/O;
+  /// it is checked immediately before each removal, not only before GC starts.
+  async gcUnreferenced(activeCacheKeys: string[], isCurrent: () => boolean = () => true): Promise<void> {
     const root = await rasterRootDir();
-    if (root === null) return;
+    if (root === null || !isCurrent()) return;
     const [{ readDir, remove, exists }, { join }] = await Promise.all([
       import("@/bridge/fs"),
       import("@/bridge/path"),
@@ -397,9 +384,13 @@ export class MotifFrameCache {
     const live = new Set(activeCacheKeys.map(hashCacheKey));
     const entries = await readDir(root);
     for (const entry of entries) {
+      if (!isCurrent()) return;
       if (!entry.isDirectory) continue;
       if (live.has(entry.name)) continue;
       const dir = await join(root, entry.name);
+      // Recheck AFTER the last await, immediately before issuing deletion.
+      // Once remove has been sent to main it cannot be retracted.
+      if (!isCurrent()) return;
       await remove(dir, { recursive: true });
     }
   }

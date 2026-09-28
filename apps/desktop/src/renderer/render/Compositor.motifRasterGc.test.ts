@@ -29,7 +29,9 @@ import { Compositor } from "./Compositor";
 import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { hashCacheKey } from "./motifs/frameCache";
+import { sharedBakedKeyIndex } from "./motifs/motifRasterCache";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { useMotifBakeStatusStore } from "../timeline/motifBakeStatusStore";
 import { summaryFixture } from "../testing/summaryFixture";
 
 const RASTER_ROOT = "/ws/Cache/raster";
@@ -170,6 +172,52 @@ describe("Compositor baked-index hydrate/GC epoch serialization", () => {
     compositor.setProject(summaryWith({ seconds: 5 }));
     await vi.waitFor(() => expect(removeMock).toHaveBeenCalledTimes(1));
     expect(removeMock).toHaveBeenCalledWith(`${RASTER_ROOT}/deadbeef`);
+  });
+
+  it("dispose during hydration cannot repopulate the shared index or start GC", async () => {
+    deferFirstReadDir = true;
+    entries = [dirEntry(hashCacheKey(K1)), dirEntry("deadbeef")];
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    await vi.waitFor(() => expect(readDirCalls).toBe(1));
+    compositor.dispose();
+    releaseFirstReadDir!(entries);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sharedBakedKeyIndex.has(K1)).toBe(false);
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
+  it("a project change inside GC's directory read protects newly live content", async () => {
+    let releaseGcRead!: (entries: DirEntry[]) => void;
+    const gcRead = new Promise<DirEntry[]>((resolve) => { releaseGcRead = resolve; });
+    entries = [dirEntry(hashCacheKey(K1)), dirEntry(hashCacheKey(K2))];
+    readDirMock.mockImplementation(() => {
+      readDirCalls += 1;
+      return readDirCalls === 2 ? gcRead : Promise.resolve(entries);
+    });
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    await vi.waitFor(() => expect(readDirCalls).toBe(2));
+    compositor.setProject(summaryWith({ seconds: 7 }));
+    releaseGcRead(entries);
+    await vi.waitFor(() => expect(readDirCalls).toBe(4));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(removeMock).not.toHaveBeenCalledWith(`${RASTER_ROOT}/${hashCacheKey(K2)}`);
+  });
+
+  it("closing a project cancels queued prewarm captures", async () => {
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    compositor.setProject(null);
+    for (const cb of idle.splice(0)) cb();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "motif_capture_frame")).toBe(false);
+  });
+
+  it("stopping a bake removes its live progress instead of leaving a stuck baking status", async () => {
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]?.phase).toBe("baking");
+    useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, prebake_motifs: false } }));
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 10));
   });
 
   it("a superseded run never GCs; the follow-up protects the baker's in-flight key", async () => {

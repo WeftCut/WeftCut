@@ -41,9 +41,11 @@ interface BakeBatchItem extends BakeTarget {
 /// Preview-only (DOM-gated by the Compositor).
 export class MotifBaker {
   private specsByKey = new Map<string, BakeContentSpec>();
-  /// Per-cacheKey bake progress. total = contentDurationFrames; done counts
-  /// frames persisted OR skipped-as-already-on-disk. Reset each setTargets.
+  /// Per-cacheKey bake progress, preserved while the content stays targeted.
   private status = new Map<string, BakeStatus>();
+  /// Completion is frame identity, not number of successful jobs: replanning
+  /// can enqueue a frame that is still in flight or already completed.
+  private completed = new Map<string, Set<number>>();
   /// cacheKeys with a frame being rendered/persisted RIGHT NOW. Tracked apart
   /// from specsByKey because a setTargets re-plan retires a spec while its
   /// in-flight frame keeps writing — and that write's hash dir must stay
@@ -60,30 +62,32 @@ export class MotifBaker {
       cancel: deps.cancel,
       batchSize: deps.batchSize ?? 2,
       take: (target) => {
+        if (this.completed.get(target.cacheKey)?.has(target.frame)) return null;
         const spec = this.specsByKey.get(target.cacheKey);
         if (!spec) return null; // content no longer active
         return { ...target, spec };
       },
       run: async ({ cacheKey, frame, spec }) => {
         this.inFlightKeys.add(cacheKey);
+        let owned: ImageBitmap | null = null;
         try {
           // The disk-skip check runs per-frame inside the batch — a skipped
           // (already-baked) frame just consumes a slot; skips are the cheap
           // case. Each frame's `isOnDisk` is consulted exactly once.
-          if (await this.deps.isOnDisk(cacheKey, frame)) { this.bump(cacheKey); return; }
-          const bmp = await spec.render(frame);
-          if (this.loop.isDisposed()) {
-            // Disposed mid-raster: this bitmap will never be persisted, so
-            // close it to avoid leaking the decoded image.
-            bmp.close();
-            return;
-          }
-          await this.deps.persist(cacheKey, frame, bmp);
-          this.deps.warm(cacheKey, frame, bmp);
-          this.bump(cacheKey);
+          const onDisk = await this.deps.isOnDisk(cacheKey, frame);
+          if (this.loop.isDisposed()) return;
+          if (onDisk) { this.bump(cacheKey, frame); return; }
+          owned = await spec.render(frame);
+          if (this.loop.isDisposed()) return;
+          await this.deps.persist(cacheKey, frame, owned);
+          if (this.loop.isDisposed()) return;
+          this.deps.warm(cacheKey, frame, owned);
+          owned = null; // ownership transferred to L0 only after warm succeeds
+          this.bump(cacheKey, frame);
         } catch {
           this.markError(cacheKey);
         } finally {
+          owned?.close(); // failed persist / teardown: nobody else owns it
           this.inFlightKeys.delete(cacheKey);
         }
       },
@@ -103,7 +107,13 @@ export class MotifBaker {
   setTargets(specs: BakeContentSpec[]): void {
     if (this.loop.isDisposed()) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    this.loop.setQueue(planBakeTargets(specs, () => false));
+    for (const key of this.completed.keys()) {
+      if (!this.specsByKey.has(key)) this.completed.delete(key);
+    }
+    this.loop.setQueue(planBakeTargets(
+      specs.filter((s) => this.status.get(s.cacheKey)?.phase !== "ready"),
+      (key, frame) => this.completed.get(key)?.has(frame) ?? false,
+    ));
     // Preserve status across re-plans: re-calling setTargets with an unchanged
     // active set (every frame, as the playhead moves) must NOT reset a ready
     // content back to baking — that flickers the UI dot. Keep the prior status
@@ -126,10 +136,14 @@ export class MotifBaker {
   /// ready when complete. No-op if the content is not in the "baking" phase —
   /// a re-planned queue can re-process already-counted frames; a ready content
   /// must stay put and must not overshoot.
-  private bump(cacheKey: string): void {
+  private bump(cacheKey: string, frame: number): void {
     const st = this.status.get(cacheKey);
     if (!st || st.phase !== "baking") return;
-    st.done = Math.min(st.total, st.done + 1);
+    let frames = this.completed.get(cacheKey);
+    if (!frames) this.completed.set(cacheKey, frames = new Set());
+    if (frames.has(frame)) return;
+    frames.add(frame);
+    st.done = frames.size;
     if (st.done >= st.total) st.phase = "ready";
     this.touched.add(cacheKey);
   }
@@ -154,6 +168,7 @@ export class MotifBaker {
     this.loop.dispose();
     this.specsByKey.clear();
     this.status.clear();
+    this.completed.clear();
     this.touched.clear();
   }
 }

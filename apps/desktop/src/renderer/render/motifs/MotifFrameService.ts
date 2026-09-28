@@ -87,14 +87,6 @@ export class MotifFrameService {
   /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
   /// entries in `recomputeBakeStatuses`.
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
-  /// Frames of each cacheKey currently in the committed-content L0 lane,
-  /// maintained incrementally by the cache's membership events (L0 starts
-  /// empty per session, so the counts start at zero and stay exact). Reading
-  /// them makes `recomputeBakeStatuses` O(motif layers) instead of
-  /// O(layers × frames) of `hasFrame` probes.
-  private readonly l0CoverageByCacheKey = new Map<string, number>();
-  /// Unsubscribe handle for the L0 membership feed.
-  private cacheMembershipUnsub: (() => void) | null = null;
   /// Signature of the last published bake-status map, so recompute is a no-op
   /// when nothing changed (it runs every frame via updateBakeTargets).
   private lastBakeStatusSig = "";
@@ -122,15 +114,6 @@ export class MotifFrameService {
   private disposed = false;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
-    // Track committed-lane L0 coverage event-driven. The listener is sync and
-    // only touches the count map — per the cache's contract it must not call
-    // back into the cache. The overlay (gesture) lane has no listener, so its
-    // transient frames never move these counts.
-    this.cacheMembershipUnsub = sharedMotifFrameCache.onMembershipChange((cacheKey, delta) => {
-      const n = (this.l0CoverageByCacheKey.get(cacheKey) ?? 0) + delta;
-      if (n <= 0) this.l0CoverageByCacheKey.delete(cacheKey);
-      else this.l0CoverageByCacheKey.set(cacheKey, n);
-    });
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
@@ -160,8 +143,9 @@ export class MotifFrameService {
             isOnDisk: (k, f) => sharedMotifFrameCache.hasPng(k, f),
             persist: async (k, f, bmp) => {
               const png = await encodeBitmapToPng(bmp);
+              if (this.disposed) return;
               await sharedMotifFrameCache.writePng(k, f, png);
-              sharedBakedKeyIndex.add(k);
+              if (!this.disposed) sharedBakedKeyIndex.add(k);
             },
             warm: (k, f, bmp) => {
               sharedMotifFrameCache.setFrame(k, f, bmp);
@@ -179,9 +163,12 @@ export class MotifFrameService {
   /// playhead, re-publishes bake statuses, and kicks the serialized
   /// hydrate/GC.
   handleProjectChanged(): void {
+    if (this.disposed) return;
     this.projectEpoch += 1;
+    this.lastPrewarmFrame = -1;
     const summary = this.deps.projectSummary();
     if (!summary) {
+      this.prewarmer?.setTargets([]);
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
@@ -229,16 +216,16 @@ export class MotifFrameService {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    this.projectEpoch += 1;
+    this.hydrateGcPending = false;
     this.prewarmer?.dispose();
     this.prewarmer = null;
     this.baker?.dispose();
     this.baker = null;
     this.prebakeUnsub?.();
     this.prebakeUnsub = null;
-    this.cacheMembershipUnsub?.();
-    this.cacheMembershipUnsub = null;
-    this.l0CoverageByCacheKey.clear();
     this.manualPrebakeLayers.clear();
     sharedBakedKeyIndex.clear();
     this.bakeStatusByCacheKey.clear();
@@ -356,6 +343,10 @@ export class MotifFrameService {
         render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
       });
     });
+    const activeKeys = new Set(specs.map((spec) => spec.cacheKey));
+    for (const key of this.bakeStatusByCacheKey.keys()) {
+      if (!activeKeys.has(key)) this.bakeStatusByCacheKey.delete(key);
+    }
     this.baker.setTargets(specs);
     this.recomputeBakeStatuses();
   }
@@ -387,7 +378,7 @@ export class MotifFrameService {
     // touching shared state — the pending re-run redoes the work against the
     // new snapshot. (sharedBakedKeyIndex is a module singleton, but this guard
     // is per-Compositor; the preview realm is the only one that runs this.)
-    const stale = () => this.projectEpoch !== epoch;
+    const stale = () => this.disposed || this.projectEpoch !== epoch;
     // Preview-realm only: the export Worker has no window/IPC bridge (the
     // sync would warn-fail) and no L2 to GC (rasterRootDir is null there).
     if (this.baker) await syncUserMotifsFromBackend();
@@ -420,7 +411,7 @@ export class MotifFrameService {
       await sharedMotifFrameCache.gcUnreferenced([
         ...activeKeys,
         ...(this.baker?.targetCacheKeys() ?? []),
-      ]);
+      ], () => !stale());
     } catch (e) {
       console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
     }
@@ -452,6 +443,7 @@ export class MotifFrameService {
   /// is omitted (idle → no dot). O(motif layers); called on every onStatus,
   /// updateBakeTargets, and project change.
   private recomputeBakeStatuses(): void {
+    if (this.disposed) return;
     const summary = this.deps.projectSummary();
     if (!summary) {
       if (this.lastBakeStatusSig !== "") { this.lastBakeStatusSig = ""; setLayerBakeStatuses({}); }
@@ -469,10 +461,9 @@ export class MotifFrameService {
       if (!desc) return;
       const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
       // L0 coverage of this layer's content frames — the "is preview warm"
-      // signal that drives the green bar — read from the event-maintained
-      // counter (the cache's membership feed keeps it exact; no per-frame
-      // `hasFrame` scan).
-      const covered = this.l0CoverageByCacheKey.get(desc.cacheKey) ?? 0;
+      // signal that drives the green bar — the cache owns exact O(1) counts,
+      // including frames that predate this service (e.g. preview remount).
+      const covered = sharedMotifFrameCache.frameCount(desc.cacheKey);
       const status = motifWarmPhase(
         live ?? null,
         covered,

@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { MotifBaker, type BakeContentSpec } from "./MotifBaker";
+import { MotifBaker, type BakeContentSpec, type BakeStatus } from "./MotifBaker";
 
 function makeFakeBitmap(): ImageBitmap {
   return { close: vi.fn(), width: 1, height: 1 } as unknown as ImageBitmap;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 /// Drive the idle loop deterministically: run each scheduled callback, then let
@@ -19,6 +25,83 @@ async function drain(pending: (() => void)[]): Promise<void> {
 }
 
 describe("MotifBaker", () => {
+  function harness() {
+    const pending: (() => void)[] = [];
+    const deps = {
+      schedule: (cb: () => void) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: vi.fn(async (_key: string, _frame: number) => false),
+      persist: vi.fn(async () => {}),
+      warm: vi.fn(),
+      onStatus: vi.fn((_key: string, _status: BakeStatus) => {}),
+      batchSize: 1,
+    };
+    const bitmap = makeFakeBitmap();
+    const spec: BakeContentSpec = {
+      cacheKey: "a", contentFrame: 0, contentDurationFrames: 3,
+      render: vi.fn(async () => bitmap),
+    };
+    return { pending, deps, bitmap, spec, baker: new MotifBaker(deps) };
+  }
+
+  it("closes a rendered bitmap when persistence fails", async () => {
+    const h = harness();
+    h.deps.persist.mockRejectedValue(new Error("disk full"));
+    h.baker.setTargets([{ ...h.spec, contentDurationFrames: 1 }]);
+    await drain(h.pending);
+    expect(h.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(h.deps.warm).not.toHaveBeenCalled();
+  });
+
+  it("does not begin a capture after disposal during the disk check", async () => {
+    const h = harness();
+    const check = deferred<boolean>();
+    h.deps.isOnDisk.mockReturnValue(check.promise);
+    h.baker.setTargets([h.spec]);
+    h.pending.shift()!();
+    h.baker.dispose();
+    check.resolve(false);
+    await drain(h.pending);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.spec.render).not.toHaveBeenCalled();
+  });
+
+  it("closes without warming or publishing when disposed during persistence", async () => {
+    const h = harness();
+    const write = deferred<void>();
+    h.deps.persist.mockReturnValue(write.promise);
+    h.baker.setTargets([h.spec]);
+    h.pending.shift()!();
+    await vi.waitFor(() => expect(h.deps.persist).toHaveBeenCalled());
+    h.baker.dispose();
+    h.deps.onStatus.mockClear();
+    write.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(h.deps.warm).not.toHaveBeenCalled();
+    expect(h.deps.onStatus).not.toHaveBeenCalled();
+  });
+
+  it("counts distinct completed frames across repeated playhead replans", async () => {
+    const h = harness();
+    h.deps.isOnDisk.mockResolvedValue(true);
+    h.baker.setTargets([h.spec]);
+    // Finish frame zero, then repeatedly replan from that same frame.
+    for (let i = 0; i < 3; i++) {
+      h.pending.shift()!();
+      await new Promise((r) => setTimeout(r, 0));
+      h.baker.setTargets([h.spec]);
+    }
+    expect(h.deps.onStatus.mock.lastCall![1]).toEqual({ phase: "ready", done: 3, total: 3 });
+    expect(h.deps.isOnDisk.mock.calls.map(([, frame]) => frame)).toEqual([0, 1, 2]);
+    await drain(h.pending);
+    expect(h.deps.onStatus.mock.lastCall![1]).toEqual({ phase: "ready", done: 3, total: 3 });
+    h.baker.setTargets([h.spec]);
+    await drain(h.pending);
+    expect(h.deps.isOnDisk).toHaveBeenCalledTimes(3);
+    h.baker.dispose();
+  });
+
   it("renders + persists every frame of the active content, skipping on-disk", async () => {
     const pending: (() => void)[] = [];
     const persisted: string[] = [];
