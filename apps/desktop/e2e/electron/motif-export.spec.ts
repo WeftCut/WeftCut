@@ -7,7 +7,7 @@
 // (≈0.33 s, numeral 2) vs frame 50 (≈1.67 s, numeral 1).
 
 import { test, expect } from '@playwright/test'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyzeSelf } from '../lib/analyze.mjs'
@@ -15,54 +15,69 @@ import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-test('motif export: countdown animates in output (frames differ across seconds)', async () => {
-  test.skip(
-    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
-    'WebCodecs H.264 encode needs a GPU not available on headless CI runners; motif export is verified locally',
-  )
-  test.setTimeout(300_000)
-  const OUTPUT = path.join(tmpDir('weftcut-e2e-motif-out-'), 'motif-out.mp4')
-  const PROJECT_PARENT = tmpDir('weftcut-e2e-motif-proj-')
-  rmSync(OUTPUT, { force: true })
-
-  const { app, page } = await launchApp()
-  try {
-    // 480×480 project matches countdown native size: the motif fills the frame
-    // so the self-SSIM threshold has a wide margin.
-    await newProject(page, {
-      parentFolder: PROJECT_PARENT,
-      name: 'e2e-exp-' + Date.now(),
-      canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
-    })
-
-    // exportMotifClip: add a 2 s countdown at t=0, bake, composite, encode.
-    // Phase: preparing (bake) → progress (encode) → complete.
-    const r = await driveExport(
-      page,
-      {
-        motifId: 'countdown',
-        outputAbsPath: OUTPUT,
-        durationUs: 2_000_000,
-      },
-      { hook: 'exportMotifClip', timeout: 280_000 },
+for (const source of ['builtin', 'installed'] as const) {
+  test(`motif export: ${source} countdown animates in output (frames differ across seconds)`, async () => {
+    test.skip(
+      process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+      'WebCodecs H.264 encode needs a GPU not available on headless CI runners; motif export is verified locally',
     )
-    if (!r.done.ok) throw new Error('exportMotifClip failed: ' + r.done.error)
+    test.setTimeout(300_000)
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-motif-out-'), 'motif-out.mp4')
+    const PROJECT_PARENT = tmpDir('weftcut-e2e-motif-proj-')
+    rmSync(OUTPUT, { force: true })
 
-    expect(existsSync(OUTPUT), 'output file must exist after export').toBe(true)
-
-    const report = analyzeSelf({ output: OUTPUT, samples: [10, 50], ssimMax: 0.99 })
-    console.log('[export] motif self-ssim report:', JSON.stringify(report))
-
-    const pair = report.pairs[0]
-    if (!pair) throw new Error('no self-ssim pair returned: ' + JSON.stringify(report))
-    if (!pair.differ) {
-      throw new Error(
-        `motif frames did NOT differ (ssim ${pair.ssim.toFixed(4)} >= 0.99) — ` +
-          `the motif likely rendered static/black (skipped) in export`,
-      )
+    const userDataDir = tmpDir('weftcut-e2e-motif-profile-')
+    const motifId = source === 'builtin' ? 'countdown' : 'e2e-user-countdown'
+    if (source === 'installed') {
+      // Same animation, but resolved through the runtime user catalog. The
+      // export Worker has only built-in manifests: baked pixels must suffice.
+      const motifDir = path.join(userDataDir, 'data', 'motifs', motifId)
+      mkdirSync(motifDir, { recursive: true })
+      const builtinDir = path.join(__dirname, '../../src/shared/motifs/builtin/countdown')
+      const manifest = { ...JSON.parse(readFileSync(path.join(builtinDir, 'manifest.json'), 'utf8')), id: motifId }
+      const html = readFileSync(path.join(builtinDir, 'index.html'), 'utf8')
+        .replace('<head>', `<head><script type="application/json" id="motif-manifest">${JSON.stringify(manifest)}</script>`)
+      writeFileSync(path.join(motifDir, 'index.html'), html)
     }
-    expect(report.pass).toBe(true)
-  } finally {
-    await app.close()
-  }
-})
+    const { app, page } = await launchApp({ userDataDir })
+    try {
+      // 480×480 project matches countdown native size: the motif fills the frame
+      // so the self-SSIM threshold has a wide margin.
+      await newProject(page, {
+        parentFolder: PROJECT_PARENT,
+        name: 'e2e-exp-' + Date.now(),
+        canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
+      })
+
+      // exportMotifClip: add a 2 s countdown at t=0, bake, composite, encode.
+      // Phase: preparing (bake) → progress (encode) → complete.
+      const r = await driveExport(
+        page,
+        {
+          motifId,
+          outputAbsPath: OUTPUT,
+          durationUs: 2_000_000,
+        },
+        { hook: 'exportMotifClip', timeout: 280_000 },
+      )
+      if (!r.done.ok) throw new Error('exportMotifClip failed: ' + r.done.error)
+
+      expect(existsSync(OUTPUT), 'output file must exist after export').toBe(true)
+
+      const report = analyzeSelf({ output: OUTPUT, samples: [10, 50], ssimMax: 0.99 })
+      console.log('[export] motif self-ssim report:', JSON.stringify(report))
+
+      const pair = report.pairs[0]
+      if (!pair) throw new Error('no self-ssim pair returned: ' + JSON.stringify(report))
+      if (!pair.differ) {
+        throw new Error(
+          `motif frames did NOT differ (ssim ${pair.ssim.toFixed(4)} >= 0.99) — ` +
+            `the motif likely rendered static/black (skipped) in export`,
+        )
+      }
+      expect(report.pass).toBe(true)
+    } finally {
+      await app.close()
+    }
+  })
+}

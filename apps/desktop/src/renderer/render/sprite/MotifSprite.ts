@@ -117,7 +117,7 @@ export class MotifSprite implements StageableSprite {
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
     this.motif = getMotif(this.motifId);
-    if (!this.motif) {
+    if (!this.motif && typeof document !== "undefined") {
       // eslint-disable-next-line no-console
       console.warn(
         `[weftcut/pixi] MotifSprite ${this.layerId}: unknown motif "${this.motifId}"`,
@@ -156,7 +156,7 @@ export class MotifSprite implements StageableSprite {
     durationUs: number,
     injectedFrames?: readonly ImageBitmap[],
   ): void {
-    if (this.disposed || !this.motif) return;
+    if (this.disposed) return;
 
     // Transforms first, every tick, BEFORE the frame no-op below: a
     // transform-only change with an unchanged frame must still take.
@@ -210,6 +210,11 @@ export class MotifSprite implements StageableSprite {
       }
       return;
     }
+
+    // Only live capture needs the catalog. The export Worker has built-ins
+    // but no runtime user manifests; its injected bitmaps are already baked
+    // and must render even when this Motif is unknown in the Worker.
+    if (!this.motif) return;
 
     // `layerId` opts the on-screen frame into the preview overlay: a params
     // page mid-gesture renders here and nowhere else (the baker and the export

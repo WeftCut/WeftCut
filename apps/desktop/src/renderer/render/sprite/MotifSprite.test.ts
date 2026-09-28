@@ -84,6 +84,37 @@ import { MotifSprite } from "./MotifSprite";
 import { resolveMotifFrame, sharedMotifOverlayCache } from "../motifs/motifRasterCache";
 import { resetMotifPreview, setMotifPreviewProps } from "../motifs/previewOverlay";
 
+describe("MotifSprite export frames", () => {
+  it("renders baked user Motifs without a runtime catalog in the Worker", () => {
+    getMotifMock.mockReset().mockReturnValue(null);
+    retainMock.mockClear();
+    vi.mocked(resolveMotifFrame).mockClear();
+    const frames = [
+      { width: 480, height: 480 },
+      { width: 480, height: 480 },
+    ] as ImageBitmap[];
+    const view: ResolvedMotifView = {
+      motif_id: "user-animation", x: 0, y: 0, scale_x: 1, scale_y: 1,
+      rotation_deg: 0, anchor_x: 0.5, anchor_y: 0.5,
+      opacity: 1, src_in_us: 0, props: {},
+    };
+    const sprite = new MotifSprite({
+      layerId: "export-layer", motifId: view.motif_id, fpsNum: 30, fpsDen: 1,
+    });
+    try {
+      sprite.update(view, 0, 1_000_000, frames);
+      expect(sprite.stageReady).toBe(true);
+      expect(retainMock).toHaveBeenLastCalledWith(frames[0]);
+      sprite.update({ ...view, opacity: 0.5 }, 33_333, 1_000_000, frames);
+      expect(retainMock).toHaveBeenLastCalledWith(frames[1]);
+      expect(sprite.sprite.alpha).toBe(0.5);
+      expect(resolveMotifFrame).not.toHaveBeenCalled();
+    } finally {
+      sprite.dispose();
+    }
+  });
+});
+
 describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
     // 5 s @ 30 fps = 150 frames.
