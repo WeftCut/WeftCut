@@ -27,7 +27,7 @@ vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
     ...actual,
     sharedBakedKeyIndex: { has: vi.fn(() => false) },
     sharedMotifFrameCache: {
-      readPng: vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" })),
+      readBitmap: vi.fn(async () => ({ tag: "from-disk" }) as unknown as ImageBitmap),
     },
   };
 });
@@ -592,12 +592,12 @@ describe("exportBakeMotifs → L2 disk fast path", () => {
     (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
     (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
     // Default the disk read to a HIT; the miss test below overrides it.
-    (sharedMotifFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(
-      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    (sharedMotifFrameCache.readBitmap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      { tag: "from-disk" } as unknown as ImageBitmap,
     );
   });
 
-  it("reads L2 PNGs off disk and does NOT re-capture when the key is baked", async () => {
+  it("reads L2 frames off disk and does NOT re-capture when the key is baked", async () => {
     const summary = summaryWith([motifLayer("L1", 0, 2_000_000)]);
     const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
     expect(out["L1"]!.length).toBe(60);
@@ -605,10 +605,10 @@ describe("exportBakeMotifs → L2 disk fast path", () => {
     expect(bakeMotifFrame).toHaveBeenCalledTimes(0);
   });
 
-  it("falls back to CDP capture when the key is baked but the PNG is missing on disk", async () => {
+  it("falls back to CDP capture when the key is baked but the frame is missing on disk", async () => {
     // Stale index (key marked baked) but readPng returns null — must NOT blank
     // the export: fall through to a live capture for every such frame.
-    (sharedMotifFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (sharedMotifFrameCache.readBitmap as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     const summary = summaryWith([motifLayer("L1", 0, 2_000_000)]);
     const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
     expect(out["L1"]!.length).toBe(60);

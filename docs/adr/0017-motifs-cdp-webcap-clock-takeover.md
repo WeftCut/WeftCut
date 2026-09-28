@@ -4,6 +4,9 @@ status: accepted
 
 # Motifs render as web pages captured via CDP, deterministic by clock takeover
 
+The PNG-only output decision below is revised by [ADR 0078](0078-motifs-cache-pixels-and-transfer-persistent-textures.md).
+The HTML authoring model and deterministic clock takeover still apply.
+
 ## Context
 
 ADR 0015's SVG `render(t)` engine bounded authoring to what SVG expresses, and

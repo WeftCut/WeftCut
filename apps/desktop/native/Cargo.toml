@@ -98,6 +98,7 @@ tempfile = "3"
 tar = "0.4"
 bzip2 = "0.6"
 flate2 = "1"
+lz4_flex = "0.14"
 # `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —
@@ -108,6 +109,12 @@ flate2 = "1"
 # decodes the PNG bytes; both libs together add ~150 KB to the binary.
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
+] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

@@ -24,6 +24,9 @@ mod audio;
 mod cache;
 mod commands;
 mod events;
+mod motif_frame;
+#[cfg(windows)]
+mod motif_gpu;
 mod napi_backend;
 // Always compiled: `io::probe` spawns ffprobe even in the base build, so the
 // console-window suppression trait can't live behind a feature gate.

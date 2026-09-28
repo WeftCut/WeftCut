@@ -30,7 +30,8 @@ that shapes the design:
   the Worker receives bitmaps**.
 
 webcap clears it: capture happens on the main process, handing bitmaps to the
-Worker for export. CDP `Page.captureScreenshot` is a real browser raster (not a
+Worker for export. Windows now takes shared OSR textures from that browser
+compositor; the portable CDP `Page.captureScreenshot` path is a real browser raster (not a
 canvas read-back), so it sidesteps DOM-rasterization read-back hazards entirely —
 the obvious "rasterize the DOM via an SVG `<foreignObject>`" route. (On Chromium an
 inline `<foreignObject>` raster does not taint — measured, though external-resource
@@ -283,10 +284,11 @@ cache captures each frame index once and reuses it.
   `Emulation.setDeviceMetricsOverride` (arbitrary resolution, independent of the physical
   screen), `Emulation.setDefaultBackgroundColorOverride` (alpha 0, so a Motif's
   `background: transparent` is preserved as real alpha instead of being flattened onto
-  CDP's default opaque white), and `Page.captureScreenshot` (lossless **PNG** — the
+  CDP's default opaque white). The portable output is `Page.captureScreenshot` (lossless **PNG** — the
   Canvas/CDP WebP path is lossy and crisp text edges matter). A `Runtime.evaluate`
   awaiting `window.__motifRender(t, props, meta)` runs `setup`/`frame`/seek/settle and
-  resolves when the frame is visually ready; the screenshot follows. The whole
+  resolves when the frame is visually ready; PNG capture or the Windows OSR
+  texture copy follows (see the transport details below). The whole
   render+capture is **serialized** under a lock so the several fill loops (on-demand
   sprite, prewarmer, baker) cannot interleave on the one host and screenshot a stale
   frame. On-demand sprite requests additionally carry a per-layer **coalesce key**:
@@ -320,7 +322,8 @@ over the one capture function:
   frames, so adding a farther-ahead frame does not evict the next one to play.
   An in-flight prewarm result outside the latest window is closed rather than
   inserted; results still needed by the new plan remain usable after a seek.
-- **L2 — persisted PNG.** One PNG per frame under `<workspace>/Cache/raster/<hash>/`,
+- **L2 — persisted frames.** One disposable `.wfrm`
+  LZ4/straight-RGBA file per frame under `<workspace>/Cache/raster/<hash>/`,
   where `<hash>` is a 128-bit hash (two FNV-1a-64 lanes, 32 hex chars) of
   `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
@@ -332,6 +335,29 @@ over the one capture function:
   "can't resolve right now" (catalog sync lost the race with project open, a transient
   IPC failure) is not "orphaned", and deleting baked frames on a guess costs tens of
   minutes of serial re-capture.
+
+Old PNG caches are ignored: missing new-format frames render again, and pre-baking
+writes only `.wfrm` files. Invalid cache reads also fall back to live rendering.
+Reads, existence checks and writes each use one dedicated IPC operation rather
+than a chain of path and filesystem round trips. Frame files retain exact
+straight-alpha RGBA8 bytes, carry
+version/dimension/checksum validation, and are atomically replaced.
+
+Windows uses a persistent D3D11 transport pool for decoded disk frames and live
+OSR captures, independent of the optional video decoder. The active pool budget
+is 128 MiB / eight size-format pools; it is separate from the 512 MiB bitmap
+cache. Handles are shared once per pool; per-frame messages identify a leased
+slot. Preload snapshots a fresh ImageBitmap and completes the GPU read before
+acknowledging reuse. The same reader feeds export. Other platforms use native
+LZ4 decoding plus pixel IPC. Live capture retains a PNG fallback.
+
+Live Windows capture retains the CDP clock commands but obtains pixels from
+OSR shared textures. Resize commits before rendering; two native rAFs settle
+painting without advancing Motif time. A GPU copy moves the frame into our pool
+before releasing the OSR surface. A capture failure disables this output for
+the session; `WEFTCUT_MOTIF_CAPTURE=png` forces the previous path for diagnosis.
+See [ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md)
+and [the measured conformance cases](../poc/motif-frame-cache/FINDINGS.md).
 
 The key is **source-derived**: `contentHash` is a hash of the Motif's manifest + HTML, so
 editing a Motif's source (or updating an installed one) yields a fresh key and re-captures —
@@ -429,7 +455,9 @@ The export Worker has no DOM and cannot drive a renderer, so before the encode l
 **main process** captures every Motif layer's frames — through the same host, at export
 resolution, on the composition fps grid — and hands the bitmaps to the Worker
 (transferred). This is surfaced through the export "preparing" wait. When a Motif is
-already persisted at L2, the Worker reads its PNG files directly. Either way the bytes
+already persisted at L2, the renderer asks the shared frame reader for fresh
+bitmaps and transfers them to the Worker; the Worker never accesses filesystem IPC.
+Either way the bytes
 come from the same capture path the preview used, so the exported Motif matches the
 preview.
 

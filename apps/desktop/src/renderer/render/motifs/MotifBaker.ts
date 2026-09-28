@@ -13,10 +13,10 @@ export interface BakeContentSpec extends BakeContent {
 export interface MotifBakerDeps {
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  /// True if (cacheKey, frame) PNG already on disk → skip. Consulted ONCE per
+  /// True if (cacheKey, frame) cache file already on disk → skip. Consulted ONCE per
   /// frame (when the frame is pulled into a batch), so the whole bake is O(N).
   isOnDisk: (cacheKey: string, frame: number) => Promise<boolean>;
-  /// Encode + write the PNG, then mark the cacheKey baked. Throws are caught.
+  /// Encode + write the frame, then mark the cacheKey baked. Throws are caught.
   persist: (cacheKey: string, frame: number, bmp: ImageBitmap) => Promise<void>;
   /// Optionally warm L0 with the freshly-baked bitmap (so the just-baked frame
   /// is instantly available without a disk round-trip). The cache OWNS the
@@ -84,7 +84,10 @@ export class MotifBaker {
           this.deps.warm(cacheKey, frame, owned);
           owned = null; // ownership transferred to L0 only after warm succeeds
           this.bump(cacheKey, frame);
-        } catch {
+        } catch (error) {
+          if (this.status.get(cacheKey)?.phase !== "error") {
+            console.warn("[weftcut/motifs] pre-bake frame failed", { frame, error });
+          }
           this.markError(cacheKey);
         } finally {
           owned?.close(); // failed persist / teardown: nobody else owns it
@@ -123,6 +126,10 @@ export class MotifBaker {
     for (const s of specs) {
       const old = prev.get(s.cacheKey);
       if (old) {
+        if (old.phase === "error") {
+          old.phase = "baking";
+          this.deps.onStatus?.(s.cacheKey, { ...old });
+        }
         this.status.set(s.cacheKey, old);
       } else {
         const st: BakeStatus = { phase: "baking", done: 0, total: s.contentDurationFrames };
@@ -133,12 +140,11 @@ export class MotifBaker {
   }
 
   /// A frame completed (persisted or already-on-disk). Advance done; flip to
-  /// ready when complete. No-op if the content is not in the "baking" phase —
-  /// a re-planned queue can re-process already-counted frames; a ready content
-  /// must stay put and must not overshoot.
+  /// ready when complete. Count successes even after another frame failed, so
+  /// a retry only needs the missing frames. A ready content must stay put.
   private bump(cacheKey: string, frame: number): void {
     const st = this.status.get(cacheKey);
-    if (!st || st.phase !== "baking") return;
+    if (!st || st.phase === "ready") return;
     let frames = this.completed.get(cacheKey);
     if (!frames) this.completed.set(cacheKey, frames = new Set());
     if (frames.has(frame)) return;

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
+import { installMotifFrames } from './motifFrames'
 import type {
   WeftcutApi,
   AppNotice,
@@ -319,6 +320,13 @@ const api: WeftcutApi = {
 // Populated once per slot at open by pairing the receiver callbacks (which carry
 // no slot id) to `previewGpu:slot` announces in FIFO order.
 const importedByKey = new Map<string, SharedTextureImported>()
+ipcRenderer.on('evt:motifGpu:close', (_e, { key }: { key: string }) => {
+  importedByKey.get(`${key}:0`)?.release()
+  importedByKey.delete(`${key}:0`)
+  for (let i = announceQueue.length - 1; i >= 0; i--) {
+    if (announceQueue[i].streamId === key) announceQueue.splice(i, 1)
+  }
+})
 // Slot announces awaiting their receiver callback. Main sends one announce
 // immediately before each slot's sendSharedTexture, so the announce is enqueued
 // here before the receiver fires for that slot — pair by shift() (FIFO).
@@ -514,6 +522,8 @@ function forceSharedTextureReadComplete(bmp: ImageBitmap): BarrierCost | null {
   readBarrierCtx.getImageData(0, 0, 1, 1)
   return { drawMs: tRead - tDraw, readMs: performance.now() - tRead }
 }
+
+installMotifFrames(key => importedByKey.get(`${key}:0`), forceSharedTextureReadComplete)
 
 // The one WebGL2 context both GPU-side barriers share. One 1×1 context and ONE
 // texture, created lazily and reused: the binding is set once at creation

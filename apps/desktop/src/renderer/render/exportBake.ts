@@ -16,7 +16,7 @@
 // on comp fps or the indices diverge.
 //
 // CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or a
-// `createImageBitmap` of an on-disk L2 PNG) and never reads the in-RAM
+// an on-disk L2 frame) and never reads the in-RAM
 // `sharedMotifFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
 // pulling L0 bitmaps would neuter preview's cached frames and break live
 // preview after an export. (L2 *disk* reads are safe — they decode to a fresh
@@ -206,18 +206,17 @@ export async function exportBakeMotifs(
       // Defensive: the descriptor never returns null today.
       if (!desc) continue;
       const contentFrame = desc.contentFrame;
-      // Disk-first: a pre-baked Motif's PNGs are keyed by (cacheKey, content
-      // frame); read + decode (a FRESH bitmap, safe to transfer) instead of a
-      // ~80 ms CDP re-capture. Gated by the in-RAM baked-key index so an
+      // Disk-first: persisted frames are keyed by (cacheKey, content frame).
+      // The shared reader returns a FRESH bitmap, safe to transfer, from the
+      // LZ4 frame cache. Gated by the in-RAM baked-key index so an
       // un-baked Motif never pays a per-frame fs probe. Any read error falls
       // through to a live capture, so a disk hiccup can't blank an export.
       if (sharedBakedKeyIndex.has(desc.cacheKey)) {
         try {
           // eslint-disable-next-line no-await-in-loop
-          const png = await sharedMotifFrameCache.readPng(desc.cacheKey, contentFrame);
-          if (png) {
-            // eslint-disable-next-line no-await-in-loop
-            frames[frame] = await createImageBitmap(png);
+          const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, contentFrame);
+          if (bitmap) {
+            frames[frame] = bitmap;
             baked++;
             onProgress?.(baked, total);
             continue;

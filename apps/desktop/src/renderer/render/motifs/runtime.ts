@@ -52,6 +52,10 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
   // resolves after two real browser layout frames. Using the overwritten queued
   // rAF would deadlock every render because seek() is never called during settle.
   var _nativeRaf = window.requestAnimationFrame.bind(window);
+  // Browser paint barrier; unlike the virtual clock this never advances t.
+  window.__motifPaintReady = function () {
+    return new Promise(function (resolve) { _nativeRaf(function () { _nativeRaf(resolve); }); });
+  };
 
   var rt = (${createMotifRuntime.toString()})(window);
   var def = null, didSetup = false, lastPropsKey = null;

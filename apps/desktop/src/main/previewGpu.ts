@@ -21,6 +21,7 @@ import {
   type PreviewGpuTimingReport,
 } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
+import { withSharedTextureQueue } from './sharedTextureQueue.js'
 import {
   createPreviewGpuBudget,
   type PreviewGpuBudgetLease,
@@ -128,7 +129,6 @@ export function hwBudget(): PreviewGpuBudgetSnapshot {
 /// opens mis-key each other's slot textures (wrong pixels, or a slot with no
 /// import at all). Chaining every open through here keeps at most one loop
 /// in flight. Cheap: opens are rare (once per session) and short.
-let openChain: Promise<unknown> = Promise.resolve()
 
 /// Open a native GPU-decode session and hand its whole shared-texture pool to
 /// the renderer up front. For each slot we announce the slot index, import the
@@ -148,9 +148,7 @@ export function openPreviewGpu(
 ): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
   // Serialise: run after whatever open is already in flight, succeeded or not
   // (hence the `.catch`, so one failed open doesn't poison the chain).
-  const mine = openChain
-    .catch(() => {})
-    .then(() =>
+  return withSharedTextureQueue(() =>
       doOpenPreviewGpu(
         backend,
         win,
@@ -162,8 +160,6 @@ export function openPreviewGpu(
         codedHeight,
       ),
     )
-  openChain = mine
-  return mine
 }
 
 async function doOpenPreviewGpu(

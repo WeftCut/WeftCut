@@ -53,6 +53,19 @@ describe("MotifBaker", () => {
     expect(h.deps.warm).not.toHaveBeenCalled();
   });
 
+  it("recovers from a failed frame when replanning successfully bakes the missing frames", async () => {
+    const h = harness();
+    h.deps.persist.mockRejectedValueOnce(new Error("temporary write failure"));
+    h.baker.setTargets([h.spec]);
+    await drain(h.pending);
+    expect(h.deps.onStatus.mock.lastCall![1].phase).toBe("error");
+    h.baker.setTargets([h.spec]);
+    await drain(h.pending);
+    expect(h.deps.onStatus.mock.lastCall![1]).toEqual({ phase: "ready", done: 3, total: 3 });
+    // Successfully persisted frames must not be captured again on retry.
+    expect(h.spec.render).toHaveBeenCalledTimes(4);
+  });
+
   it("does not begin a capture after disposal during the disk check", async () => {
     const h = harness();
     const check = deferred<boolean>();

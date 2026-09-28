@@ -1,10 +1,11 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, type OffscreenSharedTexture } from 'electron'
+import { OffscreenFrames } from './offscreenFrames.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors.js'
 import type { UserMotifStore } from './store.js'
 
-interface CaptureArgs {
+export interface CaptureArgs {
   motifId: string
   tSec: number
   propsJson: string
@@ -37,6 +38,11 @@ export function setMotifStore(s: UserMotifStore): void {
   motifStore = s
 }
 
+export function isMotifContentFailure(a: CaptureArgs, error: unknown): boolean {
+  return failedLanes.get(laneKeyOf(a.motifId, a.contentHash)) === error
+    || String(error).includes('__motifRender threw:')
+}
+
 interface Host {
   win: BrowserWindow
   send: (method: string, params?: object) => Promise<any>
@@ -44,8 +50,15 @@ interface Host {
   loadedV: string | null
   readyFor: string | null
   lastSize: { w: number; h: number } | null
+  frames: OffscreenFrames | null
 }
 let host: Host | null = null
+let textureCaptureEnabled = false
+export function setTextureCaptureEnabled(enabled: boolean): void {
+  if (textureCaptureEnabled === enabled) return
+  textureCaptureEnabled = enabled
+  teardownHost()
+}
 
 // Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the
 // one host — single-threaded but await-interleaved. Two FIFO queues replace a
@@ -173,13 +186,15 @@ async function buildHost(): Promise<Host> {
     // at the same isolation baseline as every other window: OS sandbox on, no Node,
     // context isolation, web security. The complementary egress half (no network /
     // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
-    webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    transparent: textureCaptureEnabled,
+    webPreferences: { offscreen: textureCaptureEnabled ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   })
   // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
   // window votes in the quit decision and the app stops quitting when the editor
   // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
   // same-tick contract.
   markInternalWindow(win)
+  const frames = textureCaptureEnabled ? new OffscreenFrames(win.webContents) : null
   // Navigation lockdown for the untrusted Motif page: deny every `window.open`
   // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
   // browser) and block any page-initiated navigation off the app's content. The
@@ -198,7 +213,7 @@ async function buildHost(): Promise<Host> {
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource })
-    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null }
+    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames }
   } catch (e) {
     try { win.destroy() } catch { /* already gone */ }
     throw e
@@ -207,6 +222,7 @@ async function buildHost(): Promise<Host> {
 
 function teardownHost(): void {
   if (host) {
+    host.frames?.dispose()
     try { host.win.webContents.debugger.detach() } catch { /* already gone */ }
     try { host.win.destroy() } catch { /* already gone */ }
     host = null
@@ -268,7 +284,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined, document not complete, or wrong host page loaded)`)
 }
 
-async function doCapture(a: CaptureArgs): Promise<string> {
+async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Promise<T> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
   const lane = laneKeyOf(a.motifId, a.contentHash)
@@ -293,12 +309,17 @@ async function doCapture(a: CaptureArgs): Promise<string> {
     a.fpsNum != null && a.fpsDen != null && a.fpsNum > 0 && a.fpsDen > 0
       ? a.fpsNum / a.fpsDen
       : 30
-  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: a.settleRafs }
+  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: h.frames ? 2 : a.settleRafs }
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
+      if (h.frames) h.win.setContentSize(a.width, a.height)
       await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height, deviceScaleFactor: 1, mobile: false })
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
+      if (h.frames) {
+        h.win.webContents.startPainting()
+        await h.send('Runtime.evaluate', { expression: 'window.__motifPaintReady()', awaitPromise: true })
+      }
       h.lastSize = { w: a.width, h: a.height }
     }
   } catch (e) {
@@ -307,6 +328,7 @@ async function doCapture(a: CaptureArgs): Promise<string> {
   }
   let ev: any
   try {
+    h.frames?.prepare()
     ev = await h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
   } catch (e) {
     // A hung __motifRender is the Motif's own script (e.g. an infinite loop) —
@@ -326,16 +348,14 @@ async function doCapture(a: CaptureArgs): Promise<string> {
     throw err
   }
   try {
-    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
-    if (!shot?.data) throw new Error('captureScreenshot returned no data')
-    return shot.data as string // base64 PNG, no data: prefix
+    return await output(h)
   } catch (e) {
     teardownHost() // wedged host: rebuild on next call
     throw e
   }
 }
 
-export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Promise<string> {
+function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>): Promise<T> {
   // Fast-reject a lane whose content already failed this session: same
   // (motifId, contentHash) means the same throwing script against the same
   // page — don't spend queue slots or CDP round trips proving it again.
@@ -345,14 +365,14 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Prom
   if (!coalesceKey) {
     // LOW priority: keyless prewarmer/baker/MCP work yields to on-demand
     // sprite frames queued behind it.
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       schedule({
         key: undefined, high: false, stale: false, reject,
         run: async () => {
           // The lane may have failed while this ticket sat queued.
           const err = failedLanes.get(lane)
           if (err) { reject(err); return }
-          try { resolve(await doCapture(a)) } catch (e) { reject(e as Error) }
+          try { resolve(await run()) } catch (e) { reject(e as Error) }
         },
       })
     })
@@ -366,16 +386,33 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Prom
     prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
   }
   const ticket: Ticket = { key: coalesceKey, high: true, stale: false, reject: () => {}, run: async () => {} }
-  const out = new Promise<string>((resolve, reject) => {
+  const out = new Promise<T>((resolve, reject) => {
     ticket.reject = reject
     ticket.run = async () => {
       // The lane may have failed while this ticket sat queued.
       const err = failedLanes.get(lane)
       if (err) { reject(err); return }
-      try { resolve(await doCapture(a)) } catch (e) { reject(e as Error) }
+      try { resolve(await run()) } catch (e) { reject(e as Error) }
     }
   })
   queuedKeys.set(coalesceKey, ticket)
   schedule(ticket)
   return out
+}
+
+export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string): Promise<string> {
+  return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
+    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
+    if (!shot?.data) throw new Error('captureScreenshot returned no data')
+    return shot.data as string
+  }))
+}
+
+export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string): Promise<T> {
+  if (!textureCaptureEnabled) return Promise.reject(new Error('Motif OSR unavailable'))
+  return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
+    if (!h.frames) throw new Error('Motif host has no shared texture output')
+    const texture = await h.frames.capture(a.width, a.height)
+    try { return await consume(texture) } finally { texture.release() }
+  }))
 }

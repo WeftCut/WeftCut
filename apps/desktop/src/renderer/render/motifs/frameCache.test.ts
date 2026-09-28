@@ -423,11 +423,11 @@ describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
     await expect(new MotifFrameCache().gcUnreferenced(["k"])).resolves.toBeUndefined();
   });
 
-  test("readPng / hasPng return the empty result when window is undefined", async () => {
+  test("readBitmap / hasPersistedFrame return the empty result when window is undefined", async () => {
     delete (globalThis as Record<string, unknown>).window;
     const c = new MotifFrameCache();
-    await expect(c.readPng("k", 0)).resolves.toBeNull();
-    await expect(c.hasPng("k", 0)).resolves.toBe(false);
+    await expect(c.readBitmap("k", 0)).resolves.toBeNull();
+    await expect(c.hasPersistedFrame("k", 0)).resolves.toBe(false);
   });
 });
 

@@ -47,7 +47,7 @@ subscribeMotifPreview(() => {
 /// Compositor hydrates it on project load; the baker `add`s on each write.
 export const sharedBakedKeyIndex = new BakedKeyIndex();
 
-/// Obtain one motif frame, preferring a pre-baked PNG on disk over a live
+/// Obtain one motif frame, preferring a pre-baked frame on disk over a live
 /// raster. Read-only: writing is the MotifBaker's job (single writer →
 /// no LRU-eviction race on a fire-and-forget encode). Shared by the on-demand
 /// sprite path and the prewarmer, so disk-first is uniform.
@@ -70,8 +70,8 @@ export async function resolveMotifFrame(
 ): Promise<ImageBitmap> {
   if (sharedBakedKeyIndex.has(cacheKey)) {
     try {
-      const png = await sharedMotifFrameCache.readPng(cacheKey, frame);
-      if (png) return await createImageBitmap(png);
+      const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame);
+      if (bitmap) return bitmap;
     } catch {
       // permission/io hiccup — fall through to live raster.
     }

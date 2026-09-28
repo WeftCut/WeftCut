@@ -54,7 +54,9 @@ export async function captureMotifFramePngBlob(
 }
 
 /**
- * As `captureMotifFramePngBlob`, decoded to an `ImageBitmap` for GPU upload.
+ * Capture to a fresh ImageBitmap. The preload transport consumes a shared GPU
+ * texture on supported Windows hosts, otherwise PNG; virtual-time rendering
+ * is identical. The PNG-only function above remains available for image callers.
  *
  * The bitmap can be uploaded to WebGPU/Pixi without cross-origin tainting.
  *
@@ -79,6 +81,14 @@ export async function captureMotifFrame(
   fpsNum?: number,
   fpsDen?: number,
 ): Promise<ImageBitmap> {
+  if (typeof window !== "undefined" && typeof window.postMessage === "function" && typeof MessageChannel !== "undefined") {
+    const { captureStoredMotifFrame } = await import("./frameTransport");
+    return captureStoredMotifFrame({
+      motifId, tSec, propsJson: JSON.stringify(props), width, height,
+      settleRafs: settleRafs ?? null, contentHash: contentHash ?? "",
+      coalesceKey, fpsNum, fpsDen,
+    });
+  }
   const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
   return createImageBitmap(blob);
 }

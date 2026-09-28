@@ -141,11 +141,11 @@ export class MotifFrameService {
             cancel: (t) => cancelIdle(t),
             // batchSize 1: same head-of-line rationale as the prewarmer above.
             batchSize: 1,
-            isOnDisk: (k, f) => sharedMotifFrameCache.hasPng(k, f),
+            isOnDisk: (k, f) => sharedMotifFrameCache.hasPersistedFrame(k, f),
             persist: async (k, f, bmp) => {
               const png = await encodeBitmapToPng(bmp);
               if (this.disposed) return;
-              await sharedMotifFrameCache.writePng(k, f, png);
+              await sharedMotifFrameCache.writeFrame(k, f, png);
               if (!this.disposed) sharedBakedKeyIndex.add(k);
             },
             warm: (k, f, bmp) => {
@@ -292,7 +292,7 @@ export class MotifFrameService {
         // budget is in bytes, so a small Motif warms deeper than a 1080p one.
         frameBytes: desc.renderW * desc.renderH * 4,
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        // Disk-first: prefer a baked PNG over a live raster, falling through
+        // Disk-first: prefer a baked frame over a live raster, falling through
         // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
         render: (frame: number) =>
           resolveMotifFrame(
@@ -354,7 +354,7 @@ export class MotifFrameService {
 
   /// On project load: rebuild the in-RAM baked-key index from what's on disk
   /// (so the resolver's disk-first read fires only for keys that actually have
-  /// PNGs) and reclaim disk for hash dirs no live key references anymore.
+  /// frames) and reclaim disk for hash dirs no live key references anymore.
   /// Fire-and-forget; any fs error is swallowed so it can never block load.
   ///
   /// Runs only through `scheduleHydrateBakedIndexAndGc` (serialized, epoch-

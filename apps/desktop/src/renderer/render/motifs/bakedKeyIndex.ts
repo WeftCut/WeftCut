@@ -15,7 +15,7 @@ export class BakedKeyIndex {
     return this.keys.has(cacheKey);
   }
 
-  /// Mark a cacheKey baked (called after a successful `writePng`).
+  /// Mark a cacheKey baked (called after a successful `writeFrame`).
   add(cacheKey: string): void {
     this.keys.add(cacheKey);
   }

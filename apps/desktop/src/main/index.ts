@@ -13,8 +13,11 @@ import { createUpdates } from './updates.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
-import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureHost } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, type CaptureArgs } from './motif/capture.js'
 import { UserMotifStore } from './motif/store.js'
+import { MotifFrameStore } from './motif/frameStore.js'
+import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
+import { CAPTURE_SUPERSEDED_MESSAGE } from '../shared/motifs/captureErrors.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
@@ -1074,7 +1077,49 @@ app.whenReady().then(async () => {
   const { callClipComputeTool, readMediaFrameDataUrl, readMediaDescription } = await import('./mcp/server.js')
   const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
+  const motifFrames = new MotifFrameStore(
+    async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null,
+    require_('@weftcut/core') as typeof import('@weftcut/core'),
+  )
+  const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean) => MotifPool }).MotifGpuPool
+  const motifGpu = process.platform === 'win32' && motifPoolClass
+    ? new MotifGpuTransport((w, h, bgra) => new motifPoolClass(w, h, 1, bgra)) : null
+  let useMotifOsr = !!motifGpu && process.env.WEFTCUT_MOTIF_CAPTURE !== 'png'
+  setTextureCaptureEnabled(useMotifOsr)
+  const motifConsumers = new Set<number>()
+  const trackMotifConsumer = (owner: Electron.WebContents): void => {
+    if (!motifConsumers.has(owner.id)) {
+      motifConsumers.add(owner.id)
+      owner.on('render-process-gone', () => motifGpu?.close(owner))
+      owner.once('destroyed', () => { motifConsumers.delete(owner.id); motifGpu?.close(owner) })
+    }
+  }
+  ipcMain.handle('motif:read', (event, args: { hash: string; frame: number }) => {
+    const owner = event.sender
+    trackMotifConsumer(owner)
+    return motifFrames.read(args.hash, args.frame,
+      motifGpu ? (file, w, h) => motifGpu.read(owner, file, w, h) : undefined)
+  })
+  ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
+  ipcMain.handle('motif:capture', async (event, args: CaptureArgs & { coalesceKey?: string }) => {
+    trackMotifConsumer(event.sender)
+    const { coalesceKey, ...a } = args
+    if (useMotifOsr) {
+      try { return await captureMotifTexture(a, texture => motifGpu!.copy(event.sender, texture), coalesceKey) }
+      catch (error) {
+        if (String(error).includes(CAPTURE_SUPERSEDED_MESSAGE) || isMotifContentFailure(a, error)) throw error
+        useMotifOsr = false
+        setTextureCaptureEnabled(false)
+        console.warn('[motif] shared capture failed; using PNG', error)
+      }
+    }
+    return { kind: 'png', bytes: Buffer.from(await captureMotifFrameB64(a, coalesceKey), 'base64') }
+  })
+
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
+    if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)
+    if (channel === 'motif_write_cached_frame') return motifFrames.write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
     if (channel === 'agent_activity_snapshot' || channel === 'agent_session_get' || channel === 'agent_unlock_history') {
       return tsHost!.handleInvoke(channel, args ?? {})

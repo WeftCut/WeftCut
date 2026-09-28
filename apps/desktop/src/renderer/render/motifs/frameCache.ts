@@ -15,8 +15,8 @@
 //   backing is freed promptly rather than waiting on GC — except one a
 //   sprite still has bound (`retain`), which closes on its last `release`.
 //
-//   L2 (opt-in, lighter) — a PNG frame sequence persisted to disk
-//   under `<workspace>/Cache/raster/<hash>/<i>.png`. Driven by a global
+//   L2 (opt-in, lighter) — an LZ4 frame sequence persisted to disk
+//   under `<workspace>/Cache/raster/<hash>/<i>.wfrm`. Driven by a global
 //   "Pre-bake" setting and a per-layer "Pre-bake now" action; read on the
 //   default preview path via `resolveMotifFrame` (disk-first, gated by
 //   an in-RAM baked-key index). The `MotifBaker` is the sole writer.
@@ -314,9 +314,9 @@ export class MotifFrameCache {
   }
 
   // ----------------------------------------------------------------
-  // L2 — opt-in PNG frame sequence on disk
+  // L2 — opt-in LZ4 frame sequence on disk
   //
-  // Layout: `<workspace>/Cache/raster/<hash>/<i>.png`, where `<hash>` is
+  // Layout: `<workspace>/Cache/raster/<hash>/<i>.wfrm`, where `<hash>` is
   // a stable 128-bit hash of `cacheKey` (32 lowercase hex chars — see
   // `hashCacheKey`).
   //
@@ -337,49 +337,40 @@ export class MotifFrameCache {
   // unit test.
   // ----------------------------------------------------------------
 
-  /// Read a persisted PNG frame, or null if it isn't on disk (or no
-  /// project is open). Permission / IO errors other than not-found
-  /// propagate.
-  async readPng(cacheKey: string, frameIndex: number): Promise<Blob | null> {
-    const dir = await rasterDirFor(cacheKey);
-    if (dir === null) return null;
-    const [{ join }, { readFile, exists }] = await Promise.all([
-      import("@/bridge/path"),
-      import("@/bridge/fs"),
-    ]);
-    const path = await join(dir, `${frameIndex}.png`);
-    if (!(await exists(path))) return null;
-    const bytes = await readFile(path);
-    return new Blob([bytes], { type: "image/png" });
+  /// One IPC for the whole read. LZ4 is decompressed on a native worker;
+  /// missing or invalid cache entries return null so callers render again.
+  async readBitmap(cacheKey: string, frameIndex: number): Promise<ImageBitmap | null> {
+    if (typeof window === "undefined") return null;
+    try {
+      const { readStoredMotifFrame } = await import("./frameTransport");
+      return await readStoredMotifFrame(hashCacheKey(cacheKey), frameIndex);
+    } catch { /* lost GPU/port: the CPU read remains available */ }
+    const { invoke } = await import("@/bridge/ipc");
+    const frame = await invoke<
+      | { kind: "rgba"; width: number; height: number; rgba: Uint8Array }
+      | null
+    >("motif_read_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex });
+    if (!frame) return null;
+    const pixels = new Uint8ClampedArray(frame.rgba.buffer as ArrayBuffer, frame.rgba.byteOffset, frame.rgba.byteLength);
+    return createImageBitmap(new ImageData(pixels, frame.width, frame.height));
   }
 
-  /// True if the PNG for (cacheKey, frameIndex) exists on disk. Cheaper than
-  /// `readPng` (no byte read) — the baker uses it to skip already-baked frames.
+  /// True if the new-format frame exists on disk. Cheaper than `readBitmap`
+  /// (no byte read) — the baker uses it to skip already-baked frames.
   /// Null project / not-found → false; permission errors propagate.
-  async hasPng(cacheKey: string, frameIndex: number): Promise<boolean> {
-    const dir = await rasterDirFor(cacheKey);
-    if (dir === null) return false;
-    const [{ join }, { exists }] = await Promise.all([
-      import("@/bridge/path"),
-      import("@/bridge/fs"),
-    ]);
-    const path = await join(dir, `${frameIndex}.png`);
-    return exists(path);
+  async hasPersistedFrame(cacheKey: string, frameIndex: number): Promise<boolean> {
+    if (typeof window === "undefined") return false;
+    const { invoke } = await import("@/bridge/ipc");
+    return invoke<boolean>("motif_has_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex });
   }
 
-  /// Persist a PNG frame, creating the `<hash>` dir as needed. No-op when
+  /// Encode a PNG capture into the LZ4 cache, creating the `<hash>` dir as needed. No-op when
   /// no project is open (nowhere to anchor `<workspace>/Cache/`).
-  async writePng(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
-    const dir = await rasterDirFor(cacheKey);
-    if (dir === null) return;
-    const [{ join }, { mkdir, writeFile }] = await Promise.all([
-      import("@/bridge/path"),
-      import("@/bridge/fs"),
-    ]);
-    await mkdir(dir, { recursive: true });
-    const path = await join(dir, `${frameIndex}.png`);
+  async writeFrame(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { invoke } = await import("@/bridge/ipc");
     const bytes = new Uint8Array(await png.arrayBuffer());
-    await writeFile(path, bytes);
+    await invoke<void>("motif_write_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex, png: bytes });
   }
 
   /// Prune `Cache/raster/<hash>` dirs whose hash isn't referenced by any
@@ -446,15 +437,6 @@ async function rasterRootDir(): Promise<string | null> {
   return join(ws, "Cache", "raster");
 }
 
-/// `<workspace>/Cache/raster/<hash(cacheKey)>`, or null when no project
-/// is open.
-async function rasterDirFor(cacheKey: string): Promise<string | null> {
-  const root = await rasterRootDir();
-  if (root === null) return null;
-  const { join } = await import("@/bridge/path");
-  return join(root, hashCacheKey(cacheKey));
-}
-
 /// Stable hash of a cacheKey for use as an on-disk directory name.
 ///
 /// Two independent FNV-1a 64-bit lanes (different offset bases), each
@@ -467,8 +449,8 @@ async function rasterDirFor(cacheKey: string): Promise<string | null> {
 /// `CacheLayout`), so it does NOT need to match Rust's blake3 scheme.
 ///
 /// Why 128 bits: a collision is NOT self-healing — two colliding keys share
-/// the `<hash>` dir and their frame `<i>.png` files would CLOBBER each other,
-/// since `0.png` means frame 0 of WHICHEVER key wrote last. With the handful
+/// the `<hash>` dir and their frame `<i>.wfrm` files would CLOBBER each other,
+/// since `0.wfrm` means frame 0 of WHICHEVER key wrote last. With the handful
 /// of live keys a workspace ever has, the birthday bound against a 2^128
 /// space (≈2^64 keys to a 50% collision) is negligible; the old 32-bit space
 /// (≈2^16 keys to 50%) was only "probably fine" and one bad roll silently
