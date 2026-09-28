@@ -7,6 +7,7 @@ import { AppSlider } from "./AppSlider";
 import { resolveAnimated } from "../render/animated";
 import { collapseToStatic } from "../keyframe/edits";
 import { AnimatableField, displayValue } from "./AnimatableField";
+import { logMutationFailure } from "../errors/tryMutate";
 
 // Sliders fire onValueChange continuously; debounce the recorded commit so a
 // drag doesn't flood the actor. (Mirrors the inspector's debounce window.)
@@ -68,23 +69,44 @@ export function KeyframeField({
   // Closure-stable timer slot for the slider debounce (mirrors the inspector's
   // useDebouncedCommit).
   const slot = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // A new bound param/layer must not inherit the previous field's draft.
-  useEffect(() => setDraft(null), [layerId, paramKey]);
-  // Clear any pending slider-commit timer on unmount so a debounced commit /
-  // setDraft can't fire against a now-unmounted (e.g. layer switched mid-drag) field.
-  useEffect(() => () => { if (slot.current) clearTimeout(slot.current); }, []);
+  // Each new edit invalidates earlier completions, including saves that finish
+  // while the next slider value is still waiting for its debounce.
+  const revision = useRef(0);
+  useEffect(() => {
+    setDraft(null);
+    return () => {
+      ++revision.current;
+      if (slot.current) clearTimeout(slot.current);
+      slot.current = null;
+    };
+  }, [layerId, paramKey]);
   const value = draft ?? shown;
 
+  const beginEdit = (val: number) => {
+    if (slot.current) clearTimeout(slot.current);
+    slot.current = null;
+    setDraft(val);
+    return ++revision.current;
+  };
+  const save = async (val: number, edit: number) => {
+    try {
+      // The inspector sink includes the snapshot refresh. Until it finishes,
+      // `shown` still evaluates the old track (often opacity 0).
+      await onCommitTrack(paramKey, autoKeyTrack(track, tInLayerUs, val));
+    } catch (error) {
+      logMutationFailure(error, "Edit keyframes");
+    } finally {
+      if (revision.current === edit) setDraft(null);
+    }
+  };
   const commit = (val: number) => {
-    setDraft(null);
-    void onCommitTrack(paramKey, autoKeyTrack(track, tInLayerUs, val));
+    void save(val, beginEdit(val));
   };
   const commitDebounced = (val: number) => {
-    setDraft(val);
-    if (slot.current) clearTimeout(slot.current);
+    const edit = beginEdit(val);
     slot.current = setTimeout(() => {
-      void onCommitTrack(paramKey, autoKeyTrack(track, tInLayerUs, val));
-      setDraft(null);
+      slot.current = null;
+      void save(val, edit);
     }, SLIDER_COMMIT_DEBOUNCE_MS);
   };
 

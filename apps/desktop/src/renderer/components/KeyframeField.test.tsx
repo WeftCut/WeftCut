@@ -1,12 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { AnimTrack } from "../ipc";
+import * as mutationErrors from "../errors/tryMutate";
 import { KeyframeField } from "./KeyframeField";
 
 afterEach(cleanup);
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 
 const keyed = (t_us: number, value: number): AnimTrack<number> => ({
   mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
@@ -65,6 +73,53 @@ describe("KeyframeField (no stopwatch / timeline mode)", () => {
 });
 
 describe("KeyframeField widget composition", () => {
+  it.each(["keyboard", "drag"])("keeps opacity at 1 while the %s commit is awaiting its round trip", async (input) => {
+    vi.useFakeTimers();
+    try {
+      const saved = deferred();
+      const onCommitTrack = vi.fn(() => saved.promise);
+      const field = (track: AnimTrack<number>) => (
+        <KeyframeField
+          layerId="motif" paramKey="opacity" label="opacity" track={track} fallback={1}
+          tInLayerUs={0} playheadInSpan onCommitTrack={onCommitTrack}
+          widgets={["slider", "number"]} step={0.01} min={0} max={1}
+        />
+      );
+      const { rerender } = render(field(keyed(0, 0)));
+      const slider = screen.getByRole("slider");
+      if (input === "drag") {
+        vi.stubGlobal("PointerEvent", MouseEvent);
+        const control = document.querySelector(".app-slider-control")!;
+        vi.spyOn(control, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 10));
+        fireEvent.pointerDown(control, { button: 0, buttons: 1, clientX: 0, clientY: 5 });
+        fireEvent.pointerMove(document, { buttons: 1, clientX: 100, clientY: 5 });
+      } else {
+        fireEvent.keyDown(slider, { key: "End" });
+      }
+      expect(slider.getAttribute("aria-valuenow")).toBe("1");
+      await act(async () => { vi.advanceTimersByTime(250); });
+      expect(onCommitTrack).toHaveBeenCalledTimes(1);
+      expect(onCommitTrack.mock.calls[0]).toEqual(["opacity", expect.objectContaining({
+        mode: "Keyframed", value: [expect.objectContaining({ t_us: 0, value: 1 })],
+      })]);
+      expect(slider.getAttribute("aria-valuenow")).toBe("1");
+      if (input === "drag") fireEvent.pointerUp(document, { clientX: 100, clientY: 5 });
+      await act(async () => {
+        rerender(field(keyed(0, 1)));
+        saved.resolve();
+      });
+      expect(slider.getAttribute("aria-valuenow")).toBe("1");
+      // Once saved, external edits / undo must drive the field again.
+      rerender(field(keyed(0, 0)));
+      expect(slider.getAttribute("aria-valuenow")).toBe("0");
+    } finally {
+      cleanup();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("renders a readout span next to a slider", () => {
     render(
       <KeyframeField
@@ -111,5 +166,87 @@ describe("KeyframeField (stopwatch / inspector mode)", () => {
       />,
     );
     expect(document.querySelector(".anim-stopwatch")).toBeTruthy();
+  });
+});
+
+describe("KeyframeField pending edits", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  function field(onCommitTrack: (key: string, track: AnimTrack<number>) => void | Promise<void>, layerId = "motif") {
+    return <KeyframeField
+      layerId={layerId} paramKey="opacity" label="opacity" track={keyed(0, 0)} fallback={1}
+      tInLayerUs={0} playheadInSpan onCommitTrack={onCommitTrack}
+      widgets={["slider", "number"]} step={0.01} min={0} max={1}
+    />;
+  }
+
+  it("does not let an earlier save clear a newer slider draft", async () => {
+    const first = deferred();
+    const second = deferred();
+    const save = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    render(field(save));
+    const slider = screen.getByRole("slider");
+    fireEvent.keyDown(slider, { key: "End" });
+    await act(async () => { vi.advanceTimersByTime(250); });
+    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+    expect(slider.getAttribute("aria-valuenow")).toBe("0.99");
+    await act(async () => { first.resolve(); });
+    expect(slider.getAttribute("aria-valuenow")).toBe("0.99");
+    await act(async () => { vi.advanceTimersByTime(250); });
+    expect(save.mock.calls[1]![1].value[0].value).toBe(0.99);
+    expect(slider.getAttribute("aria-valuenow")).toBe("0.99");
+  });
+
+  it("cancels a queued slider value when the sibling number field commits", async () => {
+    const save = vi.fn(() => new Promise<void>(() => {}));
+    render(field(save));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "End" });
+    const number = screen.getAllByLabelText("opacity").find(el => (el as HTMLInputElement).type === "text")!;
+    fireEvent.focus(number);
+    fireEvent.change(number, { target: { value: "0.5" } });
+    fireEvent.blur(number);
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(300); });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0]).toEqual(["opacity", expect.objectContaining({
+      value: [expect.objectContaining({ value: 0.5 })],
+    })]);
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("0.5");
+  });
+
+  it("cancels a pending slider timer when the bound layer changes", async () => {
+    const save = vi.fn();
+    const { rerender } = render(field(save));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "End" });
+    rerender(field(save, "other-motif"));
+    await act(async () => { vi.advanceTimersByTime(250); });
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("0");
+  });
+
+  it("does not let a previous layer's save clear the new layer's draft", async () => {
+    const oldSave = deferred();
+    const save = vi.fn(() => oldSave.promise);
+    const { rerender } = render(field(save));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "End" });
+    await act(async () => { vi.advanceTimersByTime(250); });
+    rerender(field(save, "other-motif"));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "ArrowRight" });
+    await act(async () => { oldSave.resolve(); });
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("0.01");
+  });
+
+  it("releases the draft and reports a failed save", async () => {
+    const pending = deferred();
+    const report = vi.spyOn(mutationErrors, "logMutationFailure").mockImplementation(() => {});
+    render(field(() => pending.promise));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "End" });
+    await act(async () => { vi.advanceTimersByTime(250); });
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("1");
+    const error = new Error("Save refused");
+    await act(async () => { pending.reject(error); });
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("0");
+    expect(report).toHaveBeenCalledWith(error, "Edit keyframes");
   });
 });
