@@ -4,6 +4,7 @@
 // screenshot, wedged ready-probe); `opened`/`screenshotCalls` count the side
 // effects under test.
 import { describe, it, expect, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 
 let opened = 0
 let screenshotCalls = 0
@@ -29,6 +30,8 @@ let slowScreenshots = 0
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
 let hungCommand: string | null = null
+let renderedSurface = -1
+let committedSurface = -1
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -40,9 +43,16 @@ function currentLane(): string | null {
 
 vi.mock('electron', () => {
   class FakeBrowserWindow {
-    webContents = {
+    webContents = Object.assign(new EventEmitter(), {
       setZoomFactor: () => {},
-      on: () => {},
+      stopPainting: () => {},
+      startPainting: () => {
+        queueMicrotask(() => this.webContents.emit('paint', { texture: {
+          textureInfo: { codedSize: { width: 32, height: 16 } },
+          surface: committedSurface, release: () => {},
+        } }))
+      },
+      invalidate: () => {},
       setWindowOpenHandler: () => {},
       debugger: {
         attach: () => {},
@@ -50,6 +60,7 @@ vi.mock('electron', () => {
         sendCommand: (method: string, params?: { expression?: string }) => {
           if (method === hungCommand) return new Promise(() => {})
           if (method === 'Page.captureScreenshot') {
+            committedSurface = renderedSurface
             screenshotCalls++
             shotOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
             if (slowScreenshots > 0) {
@@ -66,6 +77,11 @@ vi.mock('electron', () => {
             if (expr.startsWith('window.__motifRender(')) {
               lastRenderExpr = expr
               renderCalls++
+              renderedSurface = JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!)
+              // Model the observed navigation race: rAF completion does not
+              // flush the initial OSR surface. Once committed, normal frame
+              // updates arrive without an additional screenshot readback.
+              if (committedSurface !== -1) committedSurface = renderedSurface
               // The Motif's own script throws; the CDP transport answers fine.
               if (throwingLanes.has(currentLane() ?? '')) {
                 return Promise.resolve({ exceptionDetails: { text: 'boom' } })
@@ -76,17 +92,18 @@ vi.mock('electron', () => {
           return Promise.resolve({})
         },
       },
-    }
+    })
     constructor() {
       opened++
     }
-    loadURL = async (url: string): Promise<void> => { currentUrl = url }
+    loadURL = async (url: string): Promise<void> => { currentUrl = url; committedSurface = -1 }
+    setContentSize = (): void => {}
     destroy = (): void => {}
   }
   return { BrowserWindow: FakeBrowserWindow, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture } = await import('./capture')
+const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture } = await import('./capture')
 type UserMotifStoreT = import('./store').UserMotifStore
 
 /// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
@@ -291,6 +308,26 @@ describe('capture host shutdown', () => {
     await expect(abandoned).rejects.toThrow('superseded')
     await running
     expect(screenshotCalls - before).toBe(1)
+  })
+
+  it('never leases the uninitialized surface after switching motifs', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    setTextureCaptureEnabled(true)
+    try {
+      const before = screenshotCalls
+      const read = (motifId: string, tSec: number) => captureMotifTexture(
+        { ...args, motifId, tSec },
+        async texture => (texture as unknown as { surface: number }).surface,
+      )
+      expect(await read('surface-a', 2)).toBe(2)
+      expect(await read('surface-a', 3)).toBe(3)
+      expect(screenshotCalls - before).toBe(1)
+      expect(await read('surface-b', 4)).toBe(4)
+      expect(await read('surface-a', 5)).toBe(5)
+      expect(screenshotCalls - before).toBe(3)
+    } finally {
+      setTextureCaptureEnabled(false)
+    }
   })
 
   it('refuses a capture queued past shutdown instead of reopening the host', async () => {

@@ -31,6 +31,15 @@ without changing virtual time. Static seeks restart the capturer because
 invalidate alone need not produce a shared texture. See the reproducible
 [conformance and performance evidence](../../poc/motif-frame-cache/FINDINGS.md).
 
+The first GPU capture after navigation additionally fences the entire surface
+with a CDP screenshot readback. Two native rAFs settle layout but can still leave
+OSR holding the initial, pre-setup document while compositor raster work is
+pending. Restarting the capturer can return that surface and bake it permanently.
+A clipped readback is insufficient: tiles outside the clip may remain stale.
+The full readback costs one PNG capture per navigation; subsequent frames retain
+the GPU path. The `surface-v2` cache-key namespace invalidates old baked frames
+without changing the frame file format or the authored Motif.
+
 Baking also consumes the OSR lease directly on Windows. A persistent native
 worker reuses a D3D11 staging texture, reads premultiplied RGBA/BGRA, converts
 to straight RGBA and encodes the existing LZ4 frame format. Main atomically

@@ -174,6 +174,11 @@ describe("motifFrameCacheKey", () => {
     expect(motifFrameCacheKey(base)).toBe(motifFrameCacheKey({ ...base }));
   });
 
+  test("does not reuse frames baked before the initial surface fence", () => {
+    const legacyKey = 'countdown|1||1920|1080|30|1|150|{"from":5}';
+    expect(motifFrameCacheKey(base)).not.toBe(legacyKey);
+  });
+
   test("does NOT embed the frame index (cache appends #<frame>)", () => {
     expect(motifFrameCacheKey(base)).not.toMatch(/#\d+$/);
   });

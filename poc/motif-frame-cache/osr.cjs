@@ -20,10 +20,10 @@ app.whenReady().then(async()=>{
  protocol.handle('motif',()=>new Response(html,{headers:{'Content-Type':'text/html'}}));
  const win=new BrowserWindow({show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),backgroundThrottling:false}});
  await win.loadURL('about:blank');
- let pool,imp,size='',current=0,settle=2;
- const args=()=>({motifId:'synthetic-probe',tSec:current/30,propsJson:'{}',width:process.env.MOTIF_OSR_FIXED_SIZE?'256'|0:current%2?320:256,height:144,settleRafs:settle,contentHash:'fixture-v1',fpsNum:30,fpsDen:1});
+ let pool,imp,size='',current=0,settle=2,navigation=0;
+ const args=()=>({motifId:process.env.MOTIF_OSR_NAVIGATE?'synthetic-probe-'+navigation:'synthetic-probe',tSec:current/30,propsJson:'{}',width:process.env.MOTIF_OSR_FIXED_SIZE?'256'|0:current%2?320:256,height:144,settleRafs:settle,contentHash:'fixture-v1',fpsNum:30,fpsDen:1});
  ipcMain.handle('frame',async(_e,request)=>{
-   if(request.kind==='set'){current=request.frame;settle=request.settle;return null}
+   if(request.kind==='set'){current=request.frame;settle=request.settle;navigation++;return null}
    return {png:Buffer.from(await capture.captureMotifFrameB64(args()),'base64')};
  });
  ipcMain.handle('gpu',()=>capture.captureMotifTexture(args(),async texture=>{

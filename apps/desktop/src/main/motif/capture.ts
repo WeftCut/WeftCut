@@ -284,7 +284,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined, document not complete, or wrong host page loaded)`)
 }
 
-async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Promise<T> {
+async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fenceFirstSurface = false): Promise<T> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
   const lane = laneKeyOf(a.motifId, a.contentHash)
@@ -311,6 +311,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
       : 30
   const meta = { duration, width: a.width, height: a.height, fps, settleRafs: h.frames ? 2 : a.settleRafs }
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
+  const firstPaint = h.lastSize === null
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
       if (h.frames) h.win.setContentSize(a.width, a.height)
@@ -348,6 +349,13 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
     throw err
   }
   try {
+    if (h.frames && firstPaint && fenceFirstSurface) {
+      // A newly navigated OSR surface may still contain the pre-setup document.
+      // Native rAFs settle layout, but don't fence the compositor's raster work.
+      // Read the whole surface: a clipped readback only fences its raster tiles.
+      // This is paid once per navigation, not for subsequent animation frames.
+      await h.send('Page.captureScreenshot', { format: 'png' })
+    }
     return await output(h)
   } catch (e) {
     teardownHost() // wedged host: rebuild on next call
@@ -431,5 +439,5 @@ export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSha
     if (!h.frames) throw new Error('Motif host has no shared texture output')
     const texture = await h.frames.capture(a.width, a.height)
     try { return await consume(texture) } finally { texture.release() }
-  }), high)
+  }, true), high)
 }
