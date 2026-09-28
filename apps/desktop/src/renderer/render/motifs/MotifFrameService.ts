@@ -87,6 +87,14 @@ export class MotifFrameService {
   /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
   /// entries in `recomputeBakeStatuses`.
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
+  /// Frames of each cacheKey currently in the committed-content L0 lane,
+  /// maintained incrementally by the cache's membership events (L0 starts
+  /// empty per session, so the counts start at zero and stay exact). Reading
+  /// them makes `recomputeBakeStatuses` O(motif layers) instead of
+  /// O(layers × frames) of `hasFrame` probes.
+  private readonly l0CoverageByCacheKey = new Map<string, number>();
+  /// Unsubscribe handle for the L0 membership feed.
+  private cacheMembershipUnsub: (() => void) | null = null;
   /// Signature of the last published bake-status map, so recompute is a no-op
   /// when nothing changed (it runs every frame via updateBakeTargets).
   private lastBakeStatusSig = "";
@@ -114,6 +122,15 @@ export class MotifFrameService {
   private disposed = false;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
+    // Track committed-lane L0 coverage event-driven. The listener is sync and
+    // only touches the count map — per the cache's contract it must not call
+    // back into the cache. The overlay (gesture) lane has no listener, so its
+    // transient frames never move these counts.
+    this.cacheMembershipUnsub = sharedMotifFrameCache.onMembershipChange((cacheKey, delta) => {
+      const n = (this.l0CoverageByCacheKey.get(cacheKey) ?? 0) + delta;
+      if (n <= 0) this.l0CoverageByCacheKey.delete(cacheKey);
+      else this.l0CoverageByCacheKey.set(cacheKey, n);
+    });
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
@@ -219,6 +236,9 @@ export class MotifFrameService {
     this.baker = null;
     this.prebakeUnsub?.();
     this.prebakeUnsub = null;
+    this.cacheMembershipUnsub?.();
+    this.cacheMembershipUnsub = null;
+    this.l0CoverageByCacheKey.clear();
     this.manualPrebakeLayers.clear();
     sharedBakedKeyIndex.clear();
     this.bakeStatusByCacheKey.clear();
@@ -448,13 +468,11 @@ export class MotifFrameService {
       );
       if (!desc) return;
       const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-      // L0 coverage of this layer's content frames (cheap Map lookups; the
-      // cache `hasFrame` doesn't touch recency). This is the "is preview warm"
-      // signal that drives the green bar.
-      let covered = 0;
-      for (let f = 0; f < desc.contentDurationFrames; f++) {
-        if (sharedMotifFrameCache.hasFrame(desc.cacheKey, f)) covered++;
-      }
+      // L0 coverage of this layer's content frames — the "is preview warm"
+      // signal that drives the green bar — read from the event-maintained
+      // counter (the cache's membership feed keeps it exact; no per-frame
+      // `hasFrame` scan).
+      const covered = this.l0CoverageByCacheKey.get(desc.cacheKey) ?? 0;
       const status = motifWarmPhase(
         live ?? null,
         covered,

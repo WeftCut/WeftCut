@@ -71,6 +71,14 @@ function keyMatchesCacheKey(mapKey: string, cacheKey: string): boolean {
   return suffix.length > 0 && /^\d+$/.test(suffix);
 }
 
+/// Recover the cacheKey from a composite map key: everything before the LAST
+/// `#` (the all-digits frame-index suffix is guaranteed by `frameMapKey`).
+/// Used where membership events must name the key but only the composite is
+/// at hand (eviction, clearAll).
+function cacheKeyOf(mapKey: string): string {
+  return mapKey.slice(0, mapKey.lastIndexOf("#"));
+}
+
 /// Decoded RGBA cost of one frame: width × height × 4 bytes — the resident
 /// size the budget actually cares about. A test double without dims (or a
 /// degenerate 0×0) falls back to a 1px cost rather than NaN-/zero-poisoning
@@ -98,6 +106,15 @@ export class MotifFrameCache {
   /// bounded by the layer count.
   private readonly pins = new Map<object, number>();
   private readonly retired = new Set<Closeable>();
+  /// Fired SYNCHRONOUSLY when a (cacheKey, frame) ENTERS the store (+1) or
+  /// LEAVES it (−1): new insert, eviction, clearKey, clearAll. The idempotent
+  /// re-set of an existing (key, frame) fires NOTHING (no membership change);
+  /// pins/retirement don't fire either — the signal mirrors what `hasFrame`
+  /// reads, so a subscriber can keep an exact per-key frame count. Re-entrancy
+  /// contract: a listener must not call back into the cache — events fire
+  /// mid-mutation. `dispose` fires nothing (terminal teardown; listeners are
+  /// expected gone).
+  private readonly membershipListeners = new Set<(cacheKey: string, delta: number) => void>();
 
   constructor(maxBytes: number = DEFAULT_MAX_BYTES) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
@@ -113,6 +130,21 @@ export class MotifFrameCache {
   // ----------------------------------------------------------------
   // L0 — in-RAM LRU of per-frame ImageBitmaps
   // ----------------------------------------------------------------
+
+  /// Subscribe to store-membership changes (see `membershipListeners`).
+  /// Returns an unsubscribe fn. Only the COMMITTED-content lane
+  /// (`sharedMotifFrameCache`) gets a subscriber — the MotifFrameService's
+  /// bake-status coverage counters; the transient overlay lane never does.
+  onMembershipChange(listener: (cacheKey: string, delta: number) => void): () => void {
+    this.membershipListeners.add(listener);
+    return () => {
+      this.membershipListeners.delete(listener);
+    };
+  }
+
+  private emitMembership(cacheKey: string, delta: number): void {
+    for (const l of this.membershipListeners) l(cacheKey, delta);
+  }
 
   /// Return the cached frame, or null on miss. A hit refreshes recency
   /// (the entry moves to the MRU end), so a frame the preview keeps
@@ -149,7 +181,8 @@ export class MotifFrameCache {
       // Keep the existing (possibly already-bound) bitmap; drop the redundant
       // incoming one. Refresh recency by re-inserting at the MRU tail. Bytes
       // don't change: a given (key, frame) is deterministic, so the incoming
-      // bitmap's dims equal the stored one's.
+      // bitmap's dims equal the stored one's. No membership event: the
+      // (key, frame) was already in the store.
       if (prev.bmp !== (bmp as unknown as Closeable)) this.retire(bmp);
       this.store.delete(k);
       this.store.set(k, prev);
@@ -158,6 +191,7 @@ export class MotifFrameCache {
     const bytes = frameCostBytes(bmp);
     this.store.set(k, { bmp: bmp as unknown as Closeable, bytes });
     this.bytesUsed += bytes;
+    this.emitMembership(cacheKey, +1);
     this.evictToCapacity();
     return bmp;
   }
@@ -177,6 +211,7 @@ export class MotifFrameCache {
       if (victim) {
         this.bytesUsed -= victim.bytes;
         this.retire(victim.bmp);
+        this.emitMembership(cacheKeyOf(oldest.value), -1);
       }
     }
   }
@@ -240,6 +275,7 @@ export class MotifFrameCache {
         if (entry) {
           this.bytesUsed -= entry.bytes;
           this.retire(entry.bmp);
+          this.emitMembership(cacheKey, -1);
         }
       }
     }
@@ -252,8 +288,12 @@ export class MotifFrameCache {
   /// also force-closes parked frames and clears the pin table).
   clearAll(): void {
     for (const entry of this.store.values()) this.retire(entry.bmp);
+    const removedKeys = [...this.store.keys()];
     this.store.clear();
     this.bytesUsed = 0;
+    // Emit after the store is empty, so a listener observing mid-callback
+    // (e.g. re-reading `hasFrame`) sees the post-clear state.
+    for (const k of removedKeys) this.emitMembership(cacheKeyOf(k), -1);
   }
 
   /// Close every held bitmap — parked ones included — and empty the store.

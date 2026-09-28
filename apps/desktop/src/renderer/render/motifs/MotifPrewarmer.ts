@@ -1,4 +1,5 @@
-import { planPrewarmTargets, type PrewarmContent } from "./prewarmPlan";
+import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from "./prewarmPlan";
+import { IdleBatchQueue } from "./idleBatchQueue";
 
 /// One active motif content the prewarmer can rasterize. The planning fields
 /// (cacheKey, contentFrame, contentDurationFrames) come from
@@ -29,85 +30,56 @@ export interface MotifPrewarmerDeps {
   onProgress?: () => void;
 }
 
-/// Budget-paced background filler. `setTargets` (re)plans; an idle loop rasters
-/// missing frames in priority order until the plan is fully cached, yielding
-/// between batches. Never owns bitmaps (the cache does). Preview-only.
+/// A queued target resolved to its spec at pull time (see `take`).
+interface PrewarmBatchItem extends PrewarmTarget {
+  spec: PrewarmContentSpec;
+}
+
+/// Budget-paced background filler. `setTargets` (re)plans; the shared
+/// `IdleBatchQueue` loop rasters missing frames in priority order until the
+/// plan is fully cached, yielding between batches. Never owns bitmaps (the
+/// cache does). Preview-only.
 export class MotifPrewarmer {
   private specsByKey = new Map<string, PrewarmContentSpec>();
-  private queue: { cacheKey: string; frame: number }[] = [];
-  private scheduled: number | null = null;
-  private running = false;
-  private disposed = false;
-  private readonly batchSize: number;
+  private readonly loop: IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>;
 
   constructor(private readonly deps: MotifPrewarmerDeps) {
-    this.batchSize = deps.batchSize ?? 3;
+    this.loop = new IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>({
+      schedule: deps.schedule,
+      cancel: deps.cancel,
+      batchSize: deps.batchSize ?? 3,
+      take: (target) => {
+        if (this.deps.hasFrame(target.cacheKey, target.frame)) return null; // already cached
+        const spec = this.specsByKey.get(target.cacheKey);
+        if (!spec) return null; // content no longer active
+        return { ...target, spec };
+      },
+      run: async ({ cacheKey, frame, spec }) => {
+        const bmp = await spec.render(frame);
+        if (this.loop.isDisposed()) {
+          // Disposed mid-raster: this bitmap will never be cached, so close
+          // it to avoid leaking the decoded image.
+          bmp.close();
+          return;
+        }
+        this.deps.setFrame(cacheKey, frame, bmp);
+      },
+      onBatchDone: () => {
+        if (!this.loop.isDisposed()) this.deps.onProgress?.();
+      },
+    });
   }
 
   /// Replace the active contents (deduped by cacheKey by the planner) and the
   /// playhead-relative plan, then (re)arm the loop.
   setTargets(specs: PrewarmContentSpec[]): void {
-    if (this.disposed) return;
+    if (this.loop.isDisposed()) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    this.queue = planPrewarmTargets(specs, this.deps.capBytes);
-    this.arm();
-  }
-
-  private arm(): void {
-    if (this.disposed || this.running || this.scheduled != null) return;
-    if (this.queue.length === 0) return;
-    this.scheduled = this.deps.schedule(() => {
-      this.scheduled = null;
-      void this.drainBatch();
-    });
-  }
-
-  private async drainBatch(): Promise<void> {
-    if (this.disposed) return;
-    this.running = true;
-    try {
-      // Pull up to batchSize FRESH targets (skip already-cached / inactive),
-      // then raster them CONCURRENTLY. Renders serialize through the per-
-      // motifId harness (microtask-serialized — safe), but rasters parallelize
-      // across the RasterPool, so the prewarmer fills at pool speed instead of 1x.
-      const batch: { cacheKey: string; frame: number; spec: PrewarmContentSpec }[] = [];
-      while (batch.length < this.batchSize && this.queue.length > 0) {
-        const target = this.queue.shift()!;
-        if (this.deps.hasFrame(target.cacheKey, target.frame)) continue; // already cached
-        const spec = this.specsByKey.get(target.cacheKey);
-        if (!spec) continue; // content no longer active
-        batch.push({ cacheKey: target.cacheKey, frame: target.frame, spec });
-      }
-      await Promise.all(
-        batch.map(async ({ cacheKey, frame, spec }) => {
-          try {
-            const bmp = await spec.render(frame);
-            if (this.disposed) {
-              // Disposed mid-raster: this bitmap will never be cached, so close
-              // it to avoid leaking the decoded image.
-              bmp.close();
-              return;
-            }
-            this.deps.setFrame(cacheKey, frame, bmp);
-          } catch {
-            // Raster failed (e.g. harness/pool disposed) — drop, keep going.
-          }
-        }),
-      );
-    } finally {
-      this.running = false;
-      if (!this.disposed) this.deps.onProgress?.();
-      this.arm(); // more to do? reschedule. else idle.
-    }
+    this.loop.setQueue(planPrewarmTargets(specs, this.deps.capBytes));
   }
 
   dispose(): void {
-    this.disposed = true;
-    if (this.scheduled != null) {
-      this.deps.cancel(this.scheduled);
-      this.scheduled = null;
-    }
-    this.queue = [];
+    this.loop.dispose();
     this.specsByKey.clear();
   }
 }
