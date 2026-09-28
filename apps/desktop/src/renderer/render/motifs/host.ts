@@ -33,7 +33,10 @@ export async function captureMotifFramePngBlob(
   fpsNum?: number,
   fpsDen?: number,
 ): Promise<Blob> {
-  const b64: string = await invoke("motif_capture_frame", {
+  // The channel returns the PNG bytes as a Uint8Array (structured-clone
+  // native) — main decodes the CDP base64 once, so this side pays no
+  // atob/byte-copy on the capture hot path.
+  const bytes = await invoke<Uint8Array>("motif_capture_frame", {
     motifId,
     tSec,
     propsJson: JSON.stringify(props),
@@ -47,8 +50,7 @@ export async function captureMotifFramePngBlob(
     fpsNum: fpsNum ?? null,
     fpsDen: fpsDen ?? null,
   });
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return new Blob([bytes], { type: "image/png" });
+  return new Blob([bytes as BlobPart], { type: "image/png" });
 }
 
 /**

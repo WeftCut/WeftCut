@@ -54,6 +54,7 @@ vi.mock("../motifs/catalog", async (importOriginal) => {
 const getFrameMock = vi.fn(
   (_cacheKey: string, _frame: number): ImageBitmap | null => null,
 );
+const setFrameMock = vi.fn((_k: string, _f: number, b: unknown) => b);
 const retainMock = vi.fn((_b: unknown) => {});
 const releaseMock = vi.fn((_b: unknown) => {});
 vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
@@ -62,7 +63,7 @@ vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
     ...actual,
     sharedMotifFrameCache: {
       getFrame: (cacheKey: string, frame: number) => getFrameMock(cacheKey, frame),
-      setFrame: vi.fn((_k: string, _f: number, b: unknown) => b),
+      setFrame: (k: string, f: number, b: unknown) => setFrameMock(k, f, b),
       retain: (b: unknown) => retainMock(b),
       release: (b: unknown) => releaseMock(b),
       readPng: vi.fn(async () => null),
@@ -80,7 +81,8 @@ import {
 import type { MotifManifest, Motif } from "../motifs/catalog";
 import type { ResolvedMotifView } from "../resolveView";
 import { MotifSprite } from "./MotifSprite";
-import { resolveMotifFrame } from "../motifs/motifRasterCache";
+import { resolveMotifFrame, sharedMotifOverlayCache } from "../motifs/motifRasterCache";
+import { resetMotifPreview, setMotifPreviewProps } from "../motifs/previewOverlay";
 
 describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
@@ -390,5 +392,105 @@ describe("MotifSprite.refreshMotif", () => {
       await flush();
       expect(retainMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("MotifSprite overlay gesture lane", () => {
+  // Frames a params-page gesture produces (pending patch folded into the
+  // descriptor) must NOT enter the committed-content LRU: every drag tick
+  // mints a fresh cacheKey, and the churn would evict frames other layers
+  // depend on. The sprite routes them to the small sharedMotifOverlayCache
+  // instead — the REAL instance here (the module mock spreads the actual
+  // module), since a MotifFrameCache runs fine in Node.
+  function motifWith(contentHash: string): Motif {
+    const manifest: MotifManifest = {
+      id: "d1",
+      name: "Draft 1",
+      version: 1,
+      size: [480, 480],
+      default_duration_s: 5,
+      // A real prop so the pending patch canonicalizes INTO the cache key
+      // (a schema-less motif would canonicalize it away, key unchanged).
+      props_schema: { seconds: { type: "number", default: 5 } },
+      content_hash: contentHash,
+      status: "draft",
+    };
+    return { manifest, hasParamsUi: false };
+  }
+
+  const overlayView: ResolvedMotifView = {
+    motif_id: "d1",
+    x: 0, y: 0, scale_x: 1, scale_y: 1, rotation_deg: 0,
+    anchor_x: 0.5, anchor_y: 0.5, opacity: 1, src_in_us: 0, props: {},
+  };
+
+  const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+  let sprite: MotifSprite | null = null;
+  beforeEach(() => {
+    getMotifMock.mockReset();
+    getMotifMock.mockReturnValue(motifWith("A"));
+    getFrameMock.mockReset().mockReturnValue(null);
+    setFrameMock.mockClear();
+    sharedMotifOverlayCache.clearAll();
+    // Lane entries need dims + close(): the real cache accounts
+    // width × height × 4 per frame and retires via close().
+    vi.mocked(resolveMotifFrame).mockReset();
+    vi.mocked(resolveMotifFrame).mockImplementation(async () =>
+      ({ width: 480, height: 480, close: vi.fn() }) as unknown as ImageBitmap);
+  });
+  afterEach(() => {
+    sprite?.dispose();
+    resetMotifPreview();
+    sharedMotifOverlayCache.clearAll();
+  });
+
+  it("routes gesture frames to the overlay lane, leaving the committed LRU untouched", async () => {
+    setMotifPreviewProps("L1", { seconds: 9 });
+    sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(overlayView, 0, 5_000_000);
+    expect(getFrameMock).not.toHaveBeenCalled(); // no shared-LRU read
+    await flush();
+    expect(setFrameMock).not.toHaveBeenCalled(); // no shared-LRU write
+    expect(sharedMotifOverlayCache.size()).toBe(1); // the frame lives in the lane
+  });
+
+  it("uses the shared LRU exactly as before when no patch is pending", () => {
+    sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(overlayView, 0, 5_000_000);
+    expect(getFrameMock).toHaveBeenCalledTimes(1);
+    expect(sharedMotifOverlayCache.size()).toBe(0);
+  });
+
+  it("wipes the lane when the gesture ends, keeping the bound frame alive via its pin", async () => {
+    setMotifPreviewProps("L1", { seconds: 9 });
+    sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(overlayView, 0, 5_000_000);
+    await flush();
+    expect(sharedMotifOverlayCache.size()).toBe(1);
+
+    // Commit/cancel clears the pending patch → the lane's frames are garbage.
+    resetMotifPreview();
+    expect(sharedMotifOverlayCache.size()).toBe(0);
+    // …and the sprite's still-bound lane frame was parked, not closed under
+    // its texture (same retire path as LRU eviction) — dispose releases it.
+    sprite.dispose();
+  });
+
+  it("a lane-cached gesture frame binds from the lane on a later visit", async () => {
+    setMotifPreviewProps("L1", { seconds: 9 });
+    sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(overlayView, 0, 5_000_000);
+    await flush();
+    expect(vi.mocked(resolveMotifFrame)).toHaveBeenCalledTimes(1);
+
+    // A second sprite at the same gesture state hits the LANE — no recapture,
+    // no committed-LRU read.
+    const sibling = new MotifSprite({ layerId: "L2", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    setMotifPreviewProps("L2", { seconds: 9 });
+    sibling.update(overlayView, 0, 5_000_000);
+    expect(getFrameMock).not.toHaveBeenCalled();
+    expect(vi.mocked(resolveMotifFrame)).toHaveBeenCalledTimes(1);
+    sibling.dispose();
   });
 });

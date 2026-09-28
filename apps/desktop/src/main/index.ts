@@ -1093,10 +1093,16 @@ app.whenReady().then(async () => {
         coalesceKey: string | null; fpsNum: number | null; fpsDen: number | null
       }
       const { coalesceKey, fpsNum, fpsDen, ...captureArgs } = a
-      return await captureMotifFrameB64(
+      const b64 = await captureMotifFrameB64(
         { ...captureArgs, fpsNum: fpsNum ?? undefined, fpsDen: fpsDen ?? undefined },
         coalesceKey ?? undefined,
       )
+      // Decode ONCE at the boundary: IPC structured clone carries a Uint8Array
+      // natively, so the renderer skips the 33%-larger base64 string plus its
+      // atob + byte-copy decode. captureMotifFrameB64 keeps returning base64
+      // internally (CDP speaks base64; the MCP image content type needs it).
+      const buf = Buffer.from(b64, 'base64')
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
     }
     // API-key writes need safeStorage (main-only) + a push into the backend
     // cache. Intercept here; status/test fall through to the Rust dispatcher.

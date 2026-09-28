@@ -117,7 +117,7 @@ export class MotifFrameService {
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
-            cap: sharedMotifFrameCache.capacity(),
+            capBytes: sharedMotifFrameCache.capacityBytes(),
             hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f),
             setFrame: (k, f, b) => {
               sharedMotifFrameCache.setFrame(k, f, b);
@@ -280,6 +280,9 @@ export class MotifFrameService {
         cacheKey: desc.cacheKey,
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
+        // What one warmed frame costs the byte-bounded L0 cache — the planner
+        // budget is in bytes, so a small Motif warms deeper than a 1080p one.
+        frameBytes: desc.renderW * desc.renderH * 4,
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
         // Disk-first: prefer a baked PNG over a live raster, falling through
         // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.

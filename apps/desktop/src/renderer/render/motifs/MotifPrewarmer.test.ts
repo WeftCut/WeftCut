@@ -10,7 +10,7 @@ describe("MotifPrewarmer", () => {
     const renderSpy = vi.fn(async (_f: number) => makeBmp());
     const pending: (() => void)[] = [];
     const prewarmer = new MotifPrewarmer({
-      cap: 240,
+      capBytes: 240,
       hasFrame: (k, f) => cached.has(`${k}#${f}`),
       setFrame: setSpy,
       schedule: (cb) => { pending.push(cb); return pending.length; },
@@ -18,7 +18,7 @@ describe("MotifPrewarmer", () => {
       batchSize: 2,
     });
     const spec: PrewarmContentSpec = {
-      cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render: renderSpy,
+      cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, frameBytes: 1, render: renderSpy,
     };
     prewarmer.setTargets([spec]);
     let guard = 0;
@@ -35,10 +35,10 @@ describe("MotifPrewarmer", () => {
     const pending: (() => void)[] = [];
     const renderSpy = vi.fn(async () => makeBmp());
     const prewarmer = new MotifPrewarmer({
-      cap: 240, hasFrame: () => false, setFrame: () => {},
+      capBytes: 240, hasFrame: () => false, setFrame: () => {},
       schedule: (cb) => { pending.push(cb); return pending.length; }, cancel: () => {}, batchSize: 1,
     });
-    prewarmer.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 5, render: renderSpy }]);
+    prewarmer.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 5, frameBytes: 1, render: renderSpy }]);
     prewarmer.dispose();
     while (pending.length) { pending.shift()!(); await new Promise((r) => setTimeout(r, 0)); }
     expect(renderSpy).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ describe("MotifPrewarmer", () => {
     );
     const pending: (() => void)[] = [];
     const prewarmer = new MotifPrewarmer({
-      cap: 240,
+      capBytes: 240,
       hasFrame: () => false,
       setFrame: () => {},
       schedule: (cb) => {
@@ -72,7 +72,7 @@ describe("MotifPrewarmer", () => {
       batchSize: 3,
     });
     prewarmer.setTargets([
-      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 10, render },
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 10, frameBytes: 1, render },
     ]);
     pending.shift()!(); // run the first scheduled batch
     await Promise.resolve();
@@ -85,7 +85,7 @@ describe("MotifPrewarmer", () => {
     const onProgress = vi.fn();
     let scheduled: (() => void) | null = null;
     const prewarmer = new MotifPrewarmer({
-      cap: 10,
+      capBytes: 10,
       hasFrame: () => false,
       setFrame: () => {},
       schedule: (cb) => { scheduled = cb; return 1; },
@@ -94,7 +94,7 @@ describe("MotifPrewarmer", () => {
       batchSize: 1,
     });
     prewarmer.setTargets([
-      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 2, render: async () => makeBmp() },
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 2, frameBytes: 1, render: async () => makeBmp() },
     ]);
     scheduled!();
     await new Promise((r) => setTimeout(r, 0));
@@ -121,7 +121,7 @@ describe("MotifPrewarmer", () => {
     const setFrame = vi.fn();
     const pending: (() => void)[] = [];
     const prewarmer = new MotifPrewarmer({
-      cap: 240,
+      capBytes: 240,
       hasFrame: () => false,
       setFrame,
       schedule: (cb) => {
@@ -132,7 +132,7 @@ describe("MotifPrewarmer", () => {
       batchSize: 2,
     });
     prewarmer.setTargets([
-      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 5, render },
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 5, frameBytes: 1, render },
     ]);
     pending.shift()!(); // start the batch (2 renders in flight, gated)
     await Promise.resolve();

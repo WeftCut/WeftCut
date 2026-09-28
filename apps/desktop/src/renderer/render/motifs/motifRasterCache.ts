@@ -11,11 +11,37 @@ import { MotifFrameCache } from "./frameCache";
 import { BakedKeyIndex } from "./bakedKeyIndex";
 import type { Motif } from "./catalog";
 import { rasterMotifFrame } from "./motifRaster";
+import { motifPreviewActive, subscribeMotifPreview } from "./previewOverlay";
 
 /// Process-wide per-frame cache shared by every MotifSprite AND the
 /// prewarmer, so identical (motif, props, dims, fps, frame) rasters resolve
 /// from one bitmap. Single instance — import this, never `new`.
 export const sharedMotifFrameCache = new MotifFrameCache();
+
+/// Byte budget for the gesture lane: a params-page drag mints a fresh
+/// cacheKey per tick (previewOverlay folds the pending patch into the key),
+/// so the lane is churn by design — 64 MB holds ~7 1080p / ~71 480×480
+/// gesture frames, deep enough to scrub mid-drag, shallow enough that the
+/// churn can't pressure RAM.
+const OVERLAY_LANE_MAX_BYTES = 64 * 1024 * 1024;
+
+/// The preview-overlay gesture lane: a SEPARATE small LRU for frames whose
+/// descriptor resolved with a pending (uncommitted) params-page patch
+/// (`overlayActive`). Without it, every gesture tick's fresh cacheKey would
+/// enter `sharedMotifFrameCache` and evict COMMITTED content under the
+/// playhead. Frames here never touch L2 (the baker omits `layerId`, so an
+/// overlay key is never in `sharedBakedKeyIndex` and `resolveMotifFrame`'s
+/// disk-first branch never fires for one).
+export const sharedMotifOverlayCache = new MotifFrameCache(OVERLAY_LANE_MAX_BYTES);
+
+// The lane is transient: when the last pending patch clears (gesture commit
+// / cancel / panel teardown), every frame in it is garbage. Wipe on that
+// transition instead of letting stale gesture rasters linger at full byte
+// cost until LRU churn. `clearAll` retires rather than force-closes, so a
+// sprite still binding a lane frame keeps it until its own release.
+subscribeMotifPreview(() => {
+  if (!motifPreviewActive()) sharedMotifOverlayCache.clearAll();
+});
 
 /// Process-wide index of which cacheKeys have frames baked on disk. The
 /// Compositor hydrates it on project load; the baker `add`s on each write.

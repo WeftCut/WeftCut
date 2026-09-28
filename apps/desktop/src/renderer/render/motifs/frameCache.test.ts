@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
+import { DEFAULT_MAX_BYTES, MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
 
 /// Stand-in for the browser `ImageBitmap`. The L0 store treats values
-/// opaquely except for the `close()` call on eviction / clear / dispose,
-/// so a `{ close: vi.fn() }` is enough to assert the close behavior.
-function fakeBitmap(): ImageBitmap & { close: ReturnType<typeof vi.fn> } {
-  return { close: vi.fn() } as unknown as ImageBitmap & {
+/// opaquely except for the `close()` call on eviction / clear / dispose and
+/// the `width × height × 4` byte cost the eviction budget accounts, so a
+/// `{ width, height, close: vi.fn() }` is enough to assert both.
+function fakeBitmap(width = 1, height = 1): ImageBitmap & { close: ReturnType<typeof vi.fn> } {
+  return { width, height, close: vi.fn() } as unknown as ImageBitmap & {
     close: ReturnType<typeof vi.fn>;
   };
 }
+
+/// Byte budget for exactly `n` default (1×1 = 4-byte) fake frames.
+const BYTES_FOR = (n: number) => n * 4;
 
 describe("MotifFrameCache — L0 LRU", () => {
   test("getFrame returns null on miss", () => {
@@ -41,7 +45,7 @@ describe("MotifFrameCache — L0 LRU", () => {
     // closed; the canonical existing bitmap is returned. Prevents "External
     // Image has been detached" on WebGPU upload when concurrent cold-miss
     // rasterizers race to setFrame the same (key, frame).
-    const c = new MotifFrameCache(3);
+    const c = new MotifFrameCache(BYTES_FOR(3));
     const a = fakeBitmap();
     const a2 = fakeBitmap();
     const returned = c.setFrame("k", 0, a);
@@ -64,7 +68,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("capacity eviction closes the least-recently-used frame", () => {
-    const c = new MotifFrameCache(2);
+    const c = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
@@ -85,7 +89,7 @@ describe("MotifFrameCache — L0 LRU", () => {
     // whenever it (re)creates the GPU texture — after its GC unloads an idle
     // texture, or on a deferred first upload — and a closed bitmap throws
     // "ImageBitmap has been detached" out of the render, which kills the ticker.
-    const c = new MotifFrameCache(1);
+    const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k", 0, a);
@@ -98,7 +102,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("a frame retained twice closes only after both releases", () => {
-    const c = new MotifFrameCache(1);
+    const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
     c.setFrame("k", 0, a);
     c.retain(a);
@@ -111,7 +115,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("releasing a frame still in the store does not close it", () => {
-    const c = new MotifFrameCache(2);
+    const c = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap();
     c.setFrame("k", 0, a);
     c.retain(a);
@@ -132,7 +136,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("dispose closes retained frames that already left the store", () => {
-    const c = new MotifFrameCache(1);
+    const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k", 0, a);
@@ -155,7 +159,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("getFrame refreshes recency so the touched frame survives eviction", () => {
-    const c = new MotifFrameCache(2);
+    const c = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
@@ -174,7 +178,7 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("setFrame refreshes recency so a re-set frame survives eviction", () => {
     // Re-`setFrame` of an existing entry must move it to the MRU tail (same as
     // a get-hit), so the OTHER frame becomes the LRU eviction victim.
-    const c = new MotifFrameCache(2);
+    const c = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap();
     const a2 = fakeBitmap();
     const b = fakeBitmap();
@@ -203,12 +207,13 @@ describe("MotifFrameCache — L0 LRU", () => {
     expect(() => c.getFrame("k", -1)).toThrow(/non-negative integer/);
   });
 
-  test("a NaN cap falls back to the default bound (eviction still fires)", () => {
-    // A NaN cap must clamp to the default (240): `size > NaN` is always false,
+  test("a NaN cap falls back to the default byte budget", () => {
+    // A NaN cap must clamp to the default: `bytesUsed > NaN` is always false,
     // so eviction would never fire and the cache would grow unbounded.
     const c = new MotifFrameCache(Number.NaN);
-    for (let i = 0; i < 241; i++) c.setFrame("k", i, fakeBitmap());
-    expect(c.size()).toBe(240);
+    expect(c.capacityBytes()).toBe(DEFAULT_MAX_BYTES);
+    c.setFrame("k", 0, fakeBitmap());
+    expect(c.size()).toBe(1); // the entry is cached, not evicted into the void
   });
 
   test("hasKey reflects presence of any frame for a key", () => {
@@ -268,27 +273,80 @@ describe("MotifFrameCache — L0 LRU", () => {
     expect(c.size()).toBe(0);
   });
 
-  test("default cap is a sensible bound (240)", () => {
+  test("the default budget bounds BYTES, not frames (fakes claim 1080p dims)", () => {
+    // 512 MB ÷ (1920×1080×4) = 64 frames fit; the 65th overflows by one frame
+    // and evicts the LRU. Fakes only REPORT dims — no real allocation — so
+    // this exercises the accounting cheaply.
     const c = new MotifFrameCache();
-    for (let i = 0; i < 240; i++) c.setFrame("k", i, fakeBitmap());
-    expect(c.size()).toBe(240);
-    c.setFrame("k", 240, fakeBitmap()); // overflow by one
-    expect(c.size()).toBe(240);
+    const fit = Math.floor(DEFAULT_MAX_BYTES / (1920 * 1080 * 4)); // 64
+    for (let i = 0; i < fit; i++) c.setFrame("k", i, fakeBitmap(1920, 1080));
+    expect(c.size()).toBe(fit);
+    c.setFrame("k", fit, fakeBitmap(1920, 1080)); // overflow by one frame
+    expect(c.size()).toBe(fit);
     expect(c.getFrame("k", 0)).toBeNull(); // oldest evicted
   });
 
-  test("constructor clamps a non-positive cap to at least 1", () => {
-    const c = new MotifFrameCache(0);
+  test("eviction is by bytes: one large frame can push out several small ones", () => {
+    const c = new MotifFrameCache(24); // six 1×1 frames' worth
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    const d = fakeBitmap();
+    c.setFrame("k", 0, a); // 4 B
+    c.setFrame("k", 1, b); // 8 B
+    c.setFrame("k", 2, d); // 12 B
+    const big = fakeBitmap(2, 2); // 16 B → 28 B total, over the 24 B budget
+    c.setFrame("k", 3, big);
+    // Only `a` (4 B) had to leave to get back under budget.
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(b.close).not.toHaveBeenCalled();
+    expect(d.close).not.toHaveBeenCalled();
+    expect(c.getFrame("k", 3)).toBe(big);
+    expect(c.size()).toBe(3);
+  });
+
+  test("a frame larger than the whole budget stays cached; the next insert evicts it", () => {
+    // The just-inserted frame is the one the caller is about to bind — evicting
+    // it at insert would close it under the binder. The keep-at-least-one rule
+    // parks it until a NEWER insert claims the space.
+    const c = new MotifFrameCache(4); // one 1×1 frame's worth
+    const big = fakeBitmap(4, 4); // 64 B — oversized alone
+    expect(c.setFrame("k", 0, big)).toBe(big);
+    expect(big.close).not.toHaveBeenCalled();
+    expect(c.getFrame("k", 0)).toBe(big);
+    const small = fakeBitmap();
+    c.setFrame("k", 1, small); // big is now the LRU → leaves
+    expect(big.close).toHaveBeenCalledTimes(1);
+    expect(c.getFrame("k", 1)).toBe(small);
+    expect(c.size()).toBe(1);
+  });
+
+  test("clearAll retires every frame; a pinned one closes on its last release", () => {
+    const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k", 0, a);
-    c.setFrame("k", 1, b); // a evicted
+    c.setFrame("k", 1, b);
+    c.retain(a); // bound by a sprite
+    c.clearAll();
+    expect(c.size()).toBe(0);
+    expect(b.close).toHaveBeenCalledTimes(1); // unpinned: closed immediately
+    expect(a.close).not.toHaveBeenCalled();   // pinned: parked, not closed
+    c.release(a);
+    expect(a.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("constructor clamps a non-positive cap to at least 1 byte", () => {
+    const c = new MotifFrameCache(0);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    c.setFrame("k", 0, a); // oversized vs the 1-byte budget: kept (keep-one rule)
+    c.setFrame("k", 1, b); // a is now the LRU → evicted
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(c.size()).toBe(1);
   });
 
   test("hasFrame peeks without changing recency", () => {
-    const cache = new MotifFrameCache(2);
+    const cache = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap(); const b = fakeBitmap(); const c = fakeBitmap();
     cache.setFrame("k", 0, a);
     cache.setFrame("k", 1, b);
@@ -300,7 +358,7 @@ describe("MotifFrameCache — L0 LRU", () => {
     expect(cache.hasFrame("k", 2)).toBe(true);
   });
 
-  test("capacity returns the cap", () => { expect(new MotifFrameCache(7).capacity()).toBe(7); });
+  test("capacityBytes returns the budget", () => { expect(new MotifFrameCache(7).capacityBytes()).toBe(7); });
 });
 
 describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
@@ -330,15 +388,31 @@ describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
 });
 
 describe("hashCacheKey", () => {
-  test("is deterministic and 8-char lowercase hex", () => {
+  test("is deterministic and 32-char lowercase hex (128-bit: two FNV-1a-64 lanes)", () => {
     const h = hashCacheKey("motif|3|640|360|{\"x\":1}");
     expect(h).toBe(hashCacheKey("motif|3|640|360|{\"x\":1}"));
-    expect(h).toMatch(/^[0-9a-f]{8}$/);
+    expect(h).toMatch(/^[0-9a-f]{32}$/);
   });
 
   test("distinct keys hash to distinct dir names (no trivial collision)", () => {
     expect(hashCacheKey("a")).not.toBe(hashCacheKey("b"));
     expect(hashCacheKey("motif|1")).not.toBe(hashCacheKey("motif|2"));
+  });
+
+  test("non-ASCII keys mix fully and stay deterministic", () => {
+    const zh = hashCacheKey("{\"标题\":\"你好\"}");
+    expect(zh).toBe(hashCacheKey("{\"标题\":\"你好\"}"));
+    expect(zh).toMatch(/^[0-9a-f]{32}$/);
+    expect(zh).not.toBe(hashCacheKey("{\"标题\":\"好你\"}"));
+  });
+
+  test("old-format (8-hex) dirs are not live-set members, so gcUnreferenced reclaims them", () => {
+    // The Phase-3 32-bit FNV dirs (8 hex chars) can never equal a live key's
+    // 32-char hash — gcUnreferenced deletes any dir name not in the live set,
+    // with no name-format filter, so the migration is "next GC reclaims them".
+    const legacyDir = "deadbeef";
+    expect(legacyDir).not.toBe(hashCacheKey("motif|3|640|360|{}"));
+    expect(legacyDir.length).not.toBe(hashCacheKey("anything").length);
   });
 });
 

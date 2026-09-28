@@ -21,6 +21,11 @@ export interface MotifFrameDescriptor {
   canonicalProps: Record<string, unknown>;
   tSec: number;
   durationSec: number;
+  /// True when a pending params-page patch was folded into this descriptor
+  /// (layerId given AND the layer has one). The sprite routes such frames to
+  /// the small overlay lane instead of the committed-content LRU, so gesture
+  /// churn can't evict frames other layers depend on.
+  overlayActive: boolean;
 }
 
 /// The cache identity + render inputs for one motif frame at `tInLayerUs`.
@@ -53,6 +58,10 @@ export function motifFrameDescriptor(
   // ahead of the canonicalize that feeds both the frame inputs and the cache
   // key, so no downstream consumer can see one without the other.
   const props = layerId === undefined ? view.props : overlayMotifProps(layerId, view.props);
+  // `overlayMotifProps` returns `view.props` UNCHANGED (same identity) when the
+  // layer has no pending patch — so an identity change IS the "overlay applied"
+  // signal, independent of what the canonicalize keeps or drops.
+  const overlayActive = props !== view.props;
   // Render path is resilient: lenient canonicalize (drop unknown / fill defaults
   // / fall back on invalid) so a layer whose Motif schema changed under it (an
   // in-place update) still renders rather than blanking.
@@ -81,5 +90,6 @@ export function motifFrameDescriptor(
     renderW, renderH, canonicalProps,
     tSec: frameTimeSec(frame, fpsNum, fpsDen),
     durationSec: contentDurationUs / US_PER_SEC,
+    overlayActive,
   };
 }

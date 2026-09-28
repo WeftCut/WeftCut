@@ -38,21 +38,22 @@ test('closing the window quits the app after a Motif has been rendered', async (
 
     // One frame of a builtin Motif is enough to build the offscreen host. The
     // renderer registered the clock-takeover runtime at boot (main.tsx).
-    const png = await page.evaluate(
-      () =>
-        (window as any).api.backend.invoke('motif_capture_frame', {
-          motifId: 'lower-third',
-          tSec: 0.5,
-          propsJson: '{}',
-          width: 320,
-          height: 180,
-          settleRafs: 1,
-          contentHash: '',
-        }) as Promise<string>,
-    )
-    // By signature, not size: a default lower-third is mostly transparent and
-    // compresses to well under a kilobyte.
-    expect(png.startsWith('iVBORw0KGgo')).toBe(true)
+    // The channel returns the PNG BYTES (Uint8Array) — check the magic in-page.
+    const isPng = await page.evaluate(async () => {
+      const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
+        motifId: 'lower-third',
+        tSec: 0.5,
+        propsJson: '{}',
+        width: 320,
+        height: 180,
+        settleRafs: 1,
+        contentHash: '',
+      })) as Uint8Array
+      // By signature, not size: a default lower-third is mostly transparent and
+      // compresses to well under a kilobyte.
+      return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    })
+    expect(isPng).toBe(true)
 
     // The root cause, asserted rather than assumed — the host is now one more
     // window in Electron's own count.

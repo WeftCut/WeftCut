@@ -194,7 +194,10 @@ options that exist).
   backend command, no history entry, nothing in the project file. Only the
   on-screen sprite reads it; the prewarmer, the disk baker, bake status and the
   export bake all describe committed props, so a live gesture can never write a
-  transient frame to disk or move a bake progress bar.
+  transient frame to disk or move a bake progress bar. The sprite routes
+  overlay-affected frames to a separate small in-RAM lane (64 MB) rather than the
+  committed-content L0 LRU, so a drag's per-tick cache keys can't evict committed
+  frames; the lane is wiped when the gesture ends (commit, cancel, teardown).
 - **Previews are throttled, so send freely.** The first patch of a gesture applies
   immediately and the rest coalesce into one update per 250 ms, matching the
   capture cost behind them (~80–100 ms per frame, serialized). Re-sending a value
@@ -304,16 +307,19 @@ many *distinct* frames pay the per-frame cost repeatedly. Three escalation lever
 over the one capture function:
 
 - **L0 — on demand (default).** The playhead frame is captured when needed and bound as
-  a texture, at the resolution the composite needs. An in-RAM LRU of per-frame bitmaps;
-  evicted bitmaps are closed promptly.
+  a texture, at the resolution the composite needs. An in-RAM LRU of per-frame bitmaps
+  bounded by a byte budget (512 MB of decoded RGBA — a frame count cap would let
+  240 × 1080p frames pin ~2 GB); evicted bitmaps are closed promptly.
 - **L1 — in-RAM lookahead (always on).** A budget-paced background prewarmer fills the
   shared L0 cache ahead of the playhead, off the play loop, during playback and while
   paused. Active layers dedupe by content cache key (N identical Motifs warm one content
   set); a pure planner orders playhead-first, then forward, then earlier frames for small
-  backward scrubs; the per-content budget keeps the warm set within the cache cap so the
+  backward scrubs; the per-content budget divides the L0 byte budget by each content's
+  per-frame cost (renderW × renderH × 4), so the warm set always fits and the
   LRU can't evict a still-targeted frame.
-- **L2 — persisted PNG.** One PNG per frame under `<workspace>/Cache/raster/`, keyed by a
-  hash of `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
+- **L2 — persisted PNG.** One PNG per frame under `<workspace>/Cache/raster/<hash>/`,
+  where `<hash>` is a 128-bit hash (two FNV-1a-64 lanes, 32 hex chars) of
+  `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
   safe to delete (regenerates). Driven by a global **Pre-bake** setting (off by default)
   and a per-layer **Pre-bake now** action; reads are disk-first, gated by an in-RAM

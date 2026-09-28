@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { planPrewarmTargets } from "./prewarmPlan";
+import { planPrewarmTargets, type PrewarmContent } from "./prewarmPlan";
+
+/// Caps are BYTES (the L0 budget); `frameBytes: 1` keeps a byte cap equal to
+/// a frame count so the planning math stays readable.
+const content = (
+  cacheKey: string,
+  contentFrame: number,
+  contentDurationFrames: number,
+  frameBytes = 1,
+): PrewarmContent => ({ cacheKey, contentFrame, contentDurationFrames, frameBytes });
 
 describe("planPrewarmTargets", () => {
   it("warms the whole content when it fits the budget, playhead-first then forward then backfill", () => {
-    const plan = planPrewarmTargets([{ cacheKey: "a", contentFrame: 2, contentDurationFrames: 5 }], 240);
+    const plan = planPrewarmTargets([content("a", 2, 5)], 240);
     expect(plan).toEqual([
       { cacheKey: "a", frame: 2 },
       { cacheKey: "a", frame: 3 },
@@ -13,7 +22,7 @@ describe("planPrewarmTargets", () => {
     ]);
   });
   it("windows to the per-content budget when content exceeds it (forward from current)", () => {
-    const plan = planPrewarmTargets([{ cacheKey: "a", contentFrame: 10, contentDurationFrames: 100 }], 4);
+    const plan = planPrewarmTargets([content("a", 10, 100)], 4);
     expect(plan).toEqual([
       { cacheKey: "a", frame: 10 },
       { cacheKey: "a", frame: 11 },
@@ -23,10 +32,7 @@ describe("planPrewarmTargets", () => {
   });
   it("splits the budget across contents and round-robins (union <= cap)", () => {
     const plan = planPrewarmTargets(
-      [
-        { cacheKey: "a", contentFrame: 0, contentDurationFrames: 100 },
-        { cacheKey: "b", contentFrame: 0, contentDurationFrames: 100 },
-      ],
+      [content("a", 0, 100), content("b", 0, 100)],
       4,
     );
     expect(plan).toEqual([
@@ -37,12 +43,27 @@ describe("planPrewarmTargets", () => {
     ]);
     expect(plan.length).toBeLessThanOrEqual(4);
   });
+  it("scales the warm window by the content's real frame cost (bytes)", () => {
+    // 48-byte budget over 2 contents: a 4-byte frame warms 6 deep, a 12-byte
+    // frame only 2 — same memory share, different frame counts.
+    const plan = planPrewarmTargets(
+      [content("small", 0, 100, 4), content("big", 0, 100, 12)],
+      48,
+    );
+    expect(plan).toEqual([
+      { cacheKey: "small", frame: 0 },
+      { cacheKey: "big", frame: 0 },
+      { cacheKey: "small", frame: 1 },
+      { cacheKey: "big", frame: 1 },
+      { cacheKey: "small", frame: 2 },
+      { cacheKey: "small", frame: 3 },
+      { cacheKey: "small", frame: 4 },
+      { cacheKey: "small", frame: 5 },
+    ]);
+  });
   it("dedups contents by cacheKey", () => {
     const plan = planPrewarmTargets(
-      [
-        { cacheKey: "a", contentFrame: 0, contentDurationFrames: 3 },
-        { cacheKey: "a", contentFrame: 0, contentDurationFrames: 3 },
-      ],
+      [content("a", 0, 3), content("a", 0, 3)],
       240,
     );
     expect(plan).toEqual([

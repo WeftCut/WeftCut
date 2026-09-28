@@ -117,6 +117,20 @@ describe("motifFrameDescriptor preview overlay", () => {
     expect(previewed.cacheKey).not.toBe(committed.cacheKey);
   });
 
+  it("flags overlayActive only when a patch actually applied to THIS layer", () => {
+    // The flag — not the key contents — is what routes the sprite's frame to
+    // the overlay lane, so it must track patch PRESENCE exactly: no layerId or
+    // a layer without a pending patch is the committed path; any pending patch
+    // for the layer is the overlay lane (even one the canonicalize drops).
+    const v = view({ seconds: 6, accent: "#ff3366" });
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl)!.overlayActive).toBe(false);
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-a")!.overlayActive).toBe(false);
+    setMotifPreviewProps("layer-a", { accent: "#00ff00" });
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-a")!.overlayActive).toBe(true);
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-b")!.overlayActive).toBe(false);
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl)!.overlayActive).toBe(false);
+  });
+
   it("only the named layer sees the overlay", () => {
     const v = view({ seconds: 6, accent: "#ff3366" });
     setMotifPreviewProps("layer-a", { accent: "#00ff00" });

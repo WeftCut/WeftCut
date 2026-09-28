@@ -9,7 +9,11 @@ export interface PrewarmContentSpec extends PrewarmContent {
 }
 
 export interface MotifPrewarmerDeps {
-  cap: number;
+  /// Warm budget in BYTES, shared across all active contents; the planner
+  /// divides it by each content's `frameBytes`. Sourced from the L0 cache's
+  /// byte budget so the plan's union always fits — the LRU can't evict a
+  /// still-targeted frame behind the prewarmer's back.
+  capBytes: number;
   hasFrame: (cacheKey: string, frame: number) => boolean;
   setFrame: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
   /// Schedule a callback for "later" (idle). Returns a cancel token. Real impl:
@@ -45,7 +49,7 @@ export class MotifPrewarmer {
   setTargets(specs: PrewarmContentSpec[]): void {
     if (this.disposed) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    this.queue = planPrewarmTargets(specs, this.deps.cap);
+    this.queue = planPrewarmTargets(specs, this.deps.capBytes);
     this.arm();
   }
 

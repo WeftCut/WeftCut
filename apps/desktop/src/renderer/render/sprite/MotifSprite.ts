@@ -6,8 +6,11 @@
 // Frames are stored in a process-wide `sharedMotifFrameCache` (an in-RAM
 // LRU keyed by `(cacheKey, frameIndex)`) so two sprites referencing the same
 // Motif with the same canonical props / dims / fps share one bitmap per
-// frame. Sprite dispose tears down the sprite's Pixi Texture wrapper but does
-// NOT close the underlying bitmap — the cache owns its lifetime.
+// frame. Frames whose descriptor resolved with a pending params-page patch
+// (`overlayActive`) go to the separate small `sharedMotifOverlayCache`
+// instead, so gesture churn can't evict committed content. Sprite dispose
+// tears down the sprite's Pixi Texture wrapper but does NOT close the
+// underlying bitmap — the cache (whichever lane holds it) owns its lifetime.
 //
 // Capture is async: on a cache miss the sprite calls `resolveMotifFrame`
 // (in-RAM cache → on-disk PNG → live `rasterMotifFrame` CDP screenshot of the
@@ -21,7 +24,8 @@ import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
-import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from "../motifs/motifRasterCache";
+import type { MotifFrameCache } from "../motifs/frameCache";
 import { isCaptureSuperseded } from "../motifs/host";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
@@ -60,6 +64,11 @@ export interface MotifSpriteInit {
 interface CaptureTarget {
   cacheKey: string;
   frame: number;
+  /// Which lane this target's frames live in: the small overlay LRU when the
+  /// descriptor resolved with a pending params-page patch, else the shared
+  /// committed-content LRU. The overlay flag folds into `cacheKey` (props are
+  /// keyed), so a gesture start/end always mints a fresh target anyway.
+  overlay: boolean;
   state: "idle" | "pending" | "bound";
   failures: number;
   retryAt: number;
@@ -87,9 +96,12 @@ export class MotifSprite implements StageableSprite {
   private injectedFrame = -1;
   private source: ImageSource | null = null;
   private texture: Texture | null = null;
-  /// The raster `source` wraps, pinned in the shared cache while bound so an
+  /// The raster `source` wraps, pinned in its lane cache while bound so an
   /// LRU eviction can't close it under a texture Pixi may still re-upload.
   private bound: ImageBitmap | HTMLCanvasElement | null = null;
+  /// The lane `bound` was pinned in (shared or overlay) — the release on
+  /// rebind/dispose must go to the same lane the retain went to.
+  private boundCache: MotifFrameCache | null = null;
   private onLoaded: (() => void) | null;
   private disposed = false;
   private boundOnce = false;
@@ -211,14 +223,18 @@ export class MotifSprite implements StageableSprite {
       return;
     }
     const { cacheKey, contentFrame: frame, tSec, durationSec, canonicalProps: canonical } = desc;
+    // Gesture frames (pending params-page patch) go to the small overlay lane
+    // so a drag's per-tick cacheKeys can't evict committed content from the
+    // shared LRU. No overlay pending ⇒ the shared lane, exactly as before.
+    const lane = desc.overlayActive ? sharedMotifOverlayCache : sharedMotifFrameCache;
     if (cacheKey !== this.target?.cacheKey || frame !== this.target.frame) {
-      this.target = { cacheKey, frame, state: "idle", failures: 0, retryAt: 0 };
+      this.target = { cacheKey, frame, overlay: desc.overlayActive, state: "idle", failures: 0, retryAt: 0 };
     }
     const target = this.target;
     if (target.state === "bound" || target.state === "pending") return;
-    const cached = sharedMotifFrameCache.getFrame(cacheKey, frame);
+    const cached = lane.getFrame(cacheKey, frame);
     if (cached) {
-      this.bindBitmap(cached);
+      this.bindBitmap(cached, lane);
       target.state = "bound";
       return;
     }
@@ -258,6 +274,7 @@ export class MotifSprite implements StageableSprite {
   ): Promise<void> {
     if (!this.motif) return;
     const { cacheKey, frame } = target;
+    const lane = target.overlay ? sharedMotifOverlayCache : sharedMotifFrameCache;
     try {
       const bitmap = await resolveMotifFrame(
            this.motif, cacheKey, frame, tSec, durationSec, canonicalProps,
@@ -269,17 +286,18 @@ export class MotifSprite implements StageableSprite {
            // agree with it (30 fps fallback would render wrong at other rates).
            this.fpsNum, this.fpsDen,
          );
-      // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
-      // sprite already cached this (cacheKey, frame), it keeps that bitmap and
-      // closes ours, returning the CANONICAL cache-owned bitmap. Bind THAT, so
-      // no sprite ever binds a bitmap a sibling could close (the cause of the
-      // "External Image has been detached" WebGPU error on project reopen).
-      const canonical = sharedMotifFrameCache.setFrame(cacheKey, frame, bitmap);
+      // Hand the bitmap to the target's lane cache. `setFrame` is idempotent:
+      // if a sibling sprite already cached this (cacheKey, frame), it keeps
+      // that bitmap and closes ours, returning the CANONICAL cache-owned
+      // bitmap. Bind THAT, so no sprite ever binds a bitmap a sibling could
+      // close (the cause of the "External Image has been detached" WebGPU
+      // error on project reopen).
+      const canonical = lane.setFrame(cacheKey, frame, bitmap);
       // A later `update` may have superseded this request while we awaited;
       // only bind if we still want exactly this (cacheKey, frame).
       if (this.disposed) return;
       if (this.target !== target) return;
-      this.bindBitmap(canonical);
+      this.bindBitmap(canonical, lane);
       target.state = "bound";
       this.onLoaded?.();
     } catch (e) {
@@ -308,13 +326,23 @@ export class MotifSprite implements StageableSprite {
     }
   }
 
-  private bindBitmap(bitmap: ImageBitmap | HTMLCanvasElement): void {
+  /// `pinCache` is the lane the bitmap belongs to (shared / overlay); the pin
+  /// lands there and the matching release reads `boundCache`, so the two lanes'
+  /// pin tables never cross. Foreign bitmaps (the placeholder canvas, export-
+  /// injected frames) pin in the shared lane as before — retain is safe on
+  /// anything, the cache never closes what it doesn't hold.
+  private bindBitmap(
+    bitmap: ImageBitmap | HTMLCanvasElement,
+    pinCache: MotifFrameCache = sharedMotifFrameCache,
+  ): void {
     // Pin the new raster before letting go of the old one, so a rebind of the
     // same bitmap never drops its count to zero in between. The old pin is
     // released only after the texture that wraps it is destroyed below.
-    sharedMotifFrameCache.retain(bitmap);
+    pinCache.retain(bitmap);
     const previous = this.bound;
+    const previousCache = this.boundCache;
     this.bound = bitmap;
+    this.boundCache = pinCache;
     // destroy(true) frees this sprite's own ImageSource/GPU texture on every
     // rebind, preventing a per-tick GPU-memory leak. The shared cache's
     // ImageBitmap is NOT closed by destroy(true) — ImageSource inherits
@@ -337,7 +365,7 @@ export class MotifSprite implements StageableSprite {
     this.texture = new Texture({ source: this.source });
     this.sprite.texture = this.texture;
     this.boundOnce = true;
-    if (previous) sharedMotifFrameCache.release(previous);
+    if (previous) (previousCache ?? sharedMotifFrameCache).release(previous);
   }
 
   dispose(): void {
@@ -355,8 +383,9 @@ export class MotifSprite implements StageableSprite {
     }
     this.texture = null;
     this.source = null;
-    if (this.bound) sharedMotifFrameCache.release(this.bound);
+    if (this.bound) (this.boundCache ?? sharedMotifFrameCache).release(this.bound);
     this.bound = null;
+    this.boundCache = null;
     this.sprite.destroy({ children: true });
   }
 }

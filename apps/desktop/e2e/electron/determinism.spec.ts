@@ -45,24 +45,35 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
 
   // Retry-until-registered guard: on slow CI the motif runtime may not be
   // registered immediately after domcontentloaded.  We retry up to ~10 s.
+  // The channel returns the PNG BYTES (Uint8Array over IPC structured clone) —
+  // encode to base64 in-page so the Node side can Buffer.from(b64, 'base64').
+  const capB64 = (
+    motifId: string, tSec: number, w: number, h: number, propsJson = '{}',
+  ): Promise<string> =>
+    page.evaluate(
+      async ([id, t, props, width, height]) => {
+        const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
+          motifId: id,
+          tSec: t,
+          propsJson: props,
+          width,
+          height,
+          settleRafs: 3,
+          contentHash: 'det',
+        })) as Uint8Array
+        let bin = ''
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+        }
+        return btoa(bin)
+      },
+      [motifId, tSec, propsJson, w, h] as const,
+    )
   const capWithRetry = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}'): Promise<string> => {
     const MAX = 40
     for (let i = 0; i < MAX; i++) {
       try {
-        const result = (await page.evaluate(
-          ([id, t, props, width, height]) =>
-            (window as any).api.backend.invoke('motif_capture_frame', {
-              motifId: id,
-              tSec: t,
-              propsJson: props,
-              width,
-              height,
-              settleRafs: 3,
-              contentHash: 'det',
-            }) as Promise<string>,
-          [motifId, tSec, propsJson, w, h] as const,
-        )) as string
-        return result
+        return await capB64(motifId, tSec, w, h, propsJson)
       } catch (e: any) {
         if (typeof e?.message === 'string' && e.message.includes('runtime not registered') && i < MAX - 1) {
           await new Promise((r) => setTimeout(r, 250))
@@ -75,20 +86,7 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
   }
 
   try {
-    const cap = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}') =>
-      (await page.evaluate(
-        ([id, t, props, width, height]) =>
-          (window as any).api.backend.invoke('motif_capture_frame', {
-            motifId: id,
-            tSec: t,
-            propsJson: props,
-            width,
-            height,
-            settleRafs: 3,
-            contentHash: 'det',
-          }) as Promise<string>,
-        [motifId, tSec, propsJson, w, h] as const,
-      )) as string
+    const cap = capB64
 
     // ── Positive cases ─────────────────────────────────────────────────────────
     // First capture uses capWithRetry to absorb any runtime-registration delay.

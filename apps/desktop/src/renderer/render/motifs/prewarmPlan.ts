@@ -3,6 +3,11 @@ export interface PrewarmContent {
   /// Content frame at the current playhead (0-based; clamped to the content).
   contentFrame: number;
   contentDurationFrames: number;
+  /// Decoded RGBA bytes per frame of this content (renderW × renderH × 4) —
+  /// what one warmed frame costs the byte-bounded L0 cache. The plan budget
+  /// is in bytes, so a 480×480 Motif warms ~9× more frames than a 1080p one
+  /// while both stay within the same memory bound.
+  frameBytes: number;
 }
 
 export interface PrewarmTarget {
@@ -11,16 +16,16 @@ export interface PrewarmTarget {
 }
 
 /// Plan which (cacheKey, frame) to ensure cached, in priority order. Dedups
-/// contents by cacheKey; each unique content gets a per-content budget =
-/// floor(cap / uniqueContentCount) (>= 1), or the WHOLE content when it fits.
-/// Per content the order is playhead-first: contentFrame, then forward to the
-/// budget edge, then the earlier frames (backfill for small backward scrubs).
-/// Contents are ROUND-ROBINED so one long content can't starve others. The
-/// union never exceeds `cap`, so the cache LRU can't evict a still-targeted
-/// frame.
+/// contents by cacheKey; each unique content gets a per-content budget of
+/// floor(capBytes / uniqueContentCount / frameBytes) FRAMES (>= 1), or the
+/// WHOLE content when it fits. Per content the order is playhead-first:
+/// contentFrame, then forward to the budget edge, then the earlier frames
+/// (backfill for small backward scrubs). Contents are ROUND-ROBINED so one
+/// long content can't starve others. The union's total byte cost never
+/// exceeds `capBytes`, so the cache LRU can't evict a still-targeted frame.
 export function planPrewarmTargets(
   contents: PrewarmContent[],
-  cap: number,
+  capBytes: number,
 ): PrewarmTarget[] {
   const seen = new Set<string>();
   const uniq: PrewarmContent[] = [];
@@ -30,10 +35,10 @@ export function planPrewarmTargets(
     uniq.push(c);
   }
   if (uniq.length === 0) return [];
-  const budget = Math.max(1, Math.floor(cap / uniq.length));
-
   const perContent: number[][] = uniq.map((c) => {
     const n = c.contentDurationFrames;
+    // A degenerate 0 frameBytes must not divide-by-zero into Infinity.
+    const budget = Math.max(1, Math.floor(capBytes / (uniq.length * Math.max(1, c.frameBytes))));
     const want = Math.min(budget, n);
     const start = Math.max(0, Math.min(c.contentFrame, n - 1));
     const order: number[] = [];

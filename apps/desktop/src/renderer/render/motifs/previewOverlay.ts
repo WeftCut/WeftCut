@@ -77,6 +77,13 @@ export function overlayMotifProps(
   return patch ? { ...props, ...patch } : props;
 }
 
+/// True while any layer has a pending patch — i.e. a gesture is live. The
+/// overlay frame lane (motifRasterCache) watches the transition to false to
+/// wipe its transient frames.
+export function motifPreviewActive(): boolean {
+  return pending.size > 0;
+}
+
 /// Drop every layer's pending props. Test teardown, and any host-level reset.
 export function resetMotifPreview(): void {
   if (pending.size === 0) return;

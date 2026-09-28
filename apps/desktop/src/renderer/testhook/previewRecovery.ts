@@ -23,15 +23,13 @@ export function previewRecoveryControls(app: Application) {
     };
     visit(app.stage);
     const bitmaps = new Set([...sources].map((source) => source.resource as ImageBitmap));
-    // Prepare first, then insert synchronously so no ticker/capture can refresh
-    // the LRU between insertions. Tiny real rasters keep pressure cheap.
-    const filler = await Promise.all(Array.from(
-      { length: sharedMotifFrameCache.capacity() + 1 },
-      () => createImageBitmap(new ImageData(1, 1)),
-    ));
-    filler.forEach((bitmap, frame) => sharedMotifFrameCache.setFrame("e2e-pressure", frame, bitmap));
+    // Eviction pressure: the L0 LRU is bounded by BYTES now, so overflowing it
+    // for a test would mean materializing >512 MB of real bitmaps. `clearAll`
+    // drives the same retire path LRU eviction uses — unpinned frames close,
+    // sprite-pinned ones park and stay open — so the survival contract under
+    // test (bound bitmaps must outlive eviction + GPU unload) is identical.
+    sharedMotifFrameCache.clearAll();
     for (const source of sources) source.unload();
-    sharedMotifFrameCache.clearKey("e2e-pressure");
     return {
       rendererType: app.renderer.type,
       sources: sources.size,

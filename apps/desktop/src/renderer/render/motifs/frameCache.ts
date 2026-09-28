@@ -7,8 +7,10 @@
 //
 // Two layers:
 //
-//   L0 (default, must-have) — an in-RAM, bounded LRU of per-frame
-//   `ImageBitmap`s. This is what preview pulls on-demand while
+//   L0 (default, must-have) — an in-RAM LRU of per-frame `ImageBitmap`s,
+//   bounded by a BYTE budget (each frame accounts width × height × 4
+//   decoded RGBA bytes), not a frame count — a count cap lets 240 × 1080p
+//   frames pin ~2 GB. This is what preview pulls on-demand while
 //   scrubbing. Evicted bitmaps are `.close()`d so their GPU-side
 //   backing is freed promptly rather than waiting on GC — except one a
 //   sprite still has bound (`retain`), which closes on its last `release`.
@@ -32,7 +34,11 @@ export interface Closeable {
   close(): void;
 }
 
-const DEFAULT_MAX_FRAMES = 240;
+/// Default L0 byte budget. 512 MB holds ~61 1080p RGBA frames or ~555
+/// 480×480 ones — deep enough that a scrub through a typical Motif stays
+/// warm, shallow enough that a worst-case 1080p Motif can't pin gigabytes
+/// (the old 240-FRAME cap could: 240 × 8.3 MB ≈ 2 GB).
+export const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
 
 /// Composite L0 map key. `frameIndex` is appended after a `#`; callers'
 /// cacheKeys are JSON and may themselves contain `#`, so any code that
@@ -65,32 +71,43 @@ function keyMatchesCacheKey(mapKey: string, cacheKey: string): boolean {
   return suffix.length > 0 && /^\d+$/.test(suffix);
 }
 
+/// Decoded RGBA cost of one frame: width × height × 4 bytes — the resident
+/// size the budget actually cares about. A test double without dims (or a
+/// degenerate 0×0) falls back to a 1px cost rather than NaN-/zero-poisoning
+/// the accounting.
+function frameCostBytes(bmp: ImageBitmap): number {
+  const bytes = bmp.width * bmp.height * 4;
+  return Number.isFinite(bytes) && bytes > 0 ? bytes : 4;
+}
+
 export class MotifFrameCache {
   /// Insertion-ordered store. JS `Map` preserves insertion order, which
   /// we exploit for LRU: the FIRST key is the least-recently-used, the
   /// LAST is the most-recent. `get` and `set` both move a touched entry
   /// to the tail (delete + re-insert) so recency stays accurate.
-  private readonly store = new Map<string, Closeable>();
-  private readonly maxFrames: number;
+  private readonly store = new Map<string, { bmp: Closeable; bytes: number }>();
+  private readonly maxBytes: number;
+  /// Sum of the stored entries' `bytes` — the quantity eviction bounds.
+  private bytesUsed = 0;
   /// Bound-by-a-sprite counts. A frame that leaves the store while pinned is
   /// parked in `retired` and closed on its last release: Pixi re-reads a
   /// texture's resource whenever it (re)creates the GPU copy — after its GC
   /// unloads an idle texture, or on a deferred first upload — and a closed
   /// bitmap throws "ImageBitmap has been detached" out of the render. At most
-  /// one parked frame per live sprite, so the overshoot past `maxFrames` is
+  /// one parked frame per live sprite, so the overshoot past `maxBytes` is
   /// bounded by the layer count.
   private readonly pins = new Map<object, number>();
   private readonly retired = new Set<Closeable>();
 
-  constructor(maxFrames: number = DEFAULT_MAX_FRAMES) {
+  constructor(maxBytes: number = DEFAULT_MAX_BYTES) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
-    // cap is especially dangerous: `store.size > NaN` is always false, so
+    // cap is especially dangerous: `bytesUsed > NaN` is always false, so
     // eviction would never fire and the cache would grow unbounded — fall back
     // to the default in that case rather than clamping NaN (Math.max(1, NaN) is
     // NaN). Non-integer caps floor to a sane bound.
-    this.maxFrames = Number.isFinite(maxFrames)
-      ? Math.max(1, Math.floor(maxFrames))
-      : DEFAULT_MAX_FRAMES;
+    this.maxBytes = Number.isFinite(maxBytes)
+      ? Math.max(1, Math.floor(maxBytes))
+      : DEFAULT_MAX_BYTES;
   }
 
   // ----------------------------------------------------------------
@@ -102,12 +119,12 @@ export class MotifFrameCache {
   /// hitting won't be evicted out from under it.
   getFrame(cacheKey: string, frameIndex: number): ImageBitmap | null {
     const k = frameMapKey(cacheKey, frameIndex);
-    const bmp = this.store.get(k);
-    if (bmp === undefined) return null;
+    const entry = this.store.get(k);
+    if (entry === undefined) return null;
     // Refresh recency: delete + re-insert moves it to the tail.
     this.store.delete(k);
-    this.store.set(k, bmp);
-    return bmp as ImageBitmap;
+    this.store.set(k, entry);
+    return entry.bmp as ImageBitmap;
   }
 
   /// Insert a frame, or keep the bitmap already cached for this (key, frame).
@@ -119,7 +136,7 @@ export class MotifFrameCache {
   /// one; return the CANONICAL cache-owned bitmap the caller should bind. This
   /// makes the write idempotent so a sibling sprite never has its bound bitmap
   /// closed out from under it (which caused "External Image has been detached"
-  /// on WebGPU upload). When the store exceeds `maxFrames`, the LRU frame is
+  /// on WebGPU upload). When the store exceeds `maxBytes`, LRU frames are
   /// evicted and `.close()`d (deferred while retained — see `retain`).
   ///
   /// @returns The canonical cache-owned bitmap for this (cacheKey, frameIndex):
@@ -130,26 +147,37 @@ export class MotifFrameCache {
     const prev = this.store.get(k);
     if (prev !== undefined) {
       // Keep the existing (possibly already-bound) bitmap; drop the redundant
-      // incoming one. Refresh recency by re-inserting at the MRU tail.
-      if (prev !== (bmp as unknown as Closeable)) this.retire(bmp);
+      // incoming one. Refresh recency by re-inserting at the MRU tail. Bytes
+      // don't change: a given (key, frame) is deterministic, so the incoming
+      // bitmap's dims equal the stored one's.
+      if (prev.bmp !== (bmp as unknown as Closeable)) this.retire(bmp);
       this.store.delete(k);
       this.store.set(k, prev);
-      return prev as unknown as ImageBitmap;
+      return prev.bmp as unknown as ImageBitmap;
     }
-    this.store.set(k, bmp as unknown as Closeable);
+    const bytes = frameCostBytes(bmp);
+    this.store.set(k, { bmp: bmp as unknown as Closeable, bytes });
+    this.bytesUsed += bytes;
     this.evictToCapacity();
     return bmp;
   }
 
-  /// Evict LRU entries until at most `maxFrames` remain, closing each.
+  /// Evict LRU entries until the store fits the byte budget, closing each.
+  /// One frame always stays (the store keeps at least the most-recent entry):
+  /// a frame larger than the whole budget is the frame on screen RIGHT NOW —
+  /// evicting it at insert would close the bitmap out from under the caller
+  /// that is about to bind it. It leaves on the NEXT insert instead.
   private evictToCapacity(): void {
-    while (this.store.size > this.maxFrames) {
+    while (this.bytesUsed > this.maxBytes && this.store.size > 1) {
       // The first key in insertion order is the LRU victim.
       const oldest = this.store.keys().next();
       if (oldest.done) break;
       const victim = this.store.get(oldest.value);
       this.store.delete(oldest.value);
-      if (victim) this.retire(victim);
+      if (victim) {
+        this.bytesUsed -= victim.bytes;
+        this.retire(victim.bmp);
+      }
     }
   }
 
@@ -189,9 +217,9 @@ export class MotifFrameCache {
     return this.store.has(frameMapKey(cacheKey, frameIndex));
   }
 
-  /// The max-frames cap (the prewarmer uses it as its warm budget).
-  capacity(): number {
-    return this.maxFrames;
+  /// The byte budget (the prewarmer scales its warm plan against it).
+  capacityBytes(): number {
+    return this.maxBytes;
   }
 
   /// True when at least one frame of `cacheKey` is currently held.
@@ -207,19 +235,34 @@ export class MotifFrameCache {
   clearKey(cacheKey: string): void {
     for (const k of Array.from(this.store.keys())) {
       if (keyMatchesCacheKey(k, cacheKey)) {
-        const bmp = this.store.get(k);
+        const entry = this.store.get(k);
         this.store.delete(k);
-        if (bmp) this.retire(bmp);
+        if (entry) {
+          this.bytesUsed -= entry.bytes;
+          this.retire(entry.bmp);
+        }
       }
     }
+  }
+
+  /// Drop EVERY frame, closing each (deferred while pinned — same retire
+  /// path as eviction/clearKey, so a sprite's bound bitmap is never closed
+  /// under it). Used by transient-lane wipes and e2e pressure, where the
+  /// point is "everything leaves the cache", not a full `dispose` (which
+  /// also force-closes parked frames and clears the pin table).
+  clearAll(): void {
+    for (const entry of this.store.values()) this.retire(entry.bmp);
+    this.store.clear();
+    this.bytesUsed = 0;
   }
 
   /// Close every held bitmap — parked ones included — and empty the store.
   /// Call on teardown.
   dispose(): void {
-    for (const bmp of this.store.values()) bmp.close();
+    for (const entry of this.store.values()) entry.bmp.close();
     for (const bmp of this.retired) bmp.close();
     this.store.clear();
+    this.bytesUsed = 0;
     this.retired.clear();
     this.pins.clear();
   }
@@ -233,7 +276,15 @@ export class MotifFrameCache {
   // L2 — opt-in PNG frame sequence on disk
   //
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.png`, where `<hash>` is
-  // a stable hash of `cacheKey` (FNV-1a 32-bit, hex — see `hashCacheKey`).
+  // a stable 128-bit hash of `cacheKey` (32 lowercase hex chars — see
+  // `hashCacheKey`).
+  //
+  // MIGRATION: the hash was FNV-1a 32-bit (8 hex chars) before the Phase-4
+  // hardening. Workspaces from before carry `<hash>` dirs in the OLD format;
+  // no live key hashes to them anymore, so the next `gcUnreferenced` reclaims
+  // them (it removes every dir not in the live set — there is no name-format
+  // filter to skip them) and the frames re-bake on demand. Regenerable cache,
+  // so the loss is acceptable.
   //
   // Disk I/O goes through `@/bridge/fs` (`window.api.fs.*` → the Electron main
   // process), so `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
@@ -359,29 +410,37 @@ async function rasterDirFor(cacheKey: string): Promise<string | null> {
 
 /// Stable hash of a cacheKey for use as an on-disk directory name.
 ///
-/// FNV-1a-derived (32-bit), rendered as zero-padded 8-char lowercase
-/// hex. Pure FNV-1a for ASCII keys; for non-ASCII code points (e.g.
-/// zh-CN prop values) the UTF-16 unit's high byte is folded in too, so
-/// it's a deterministic variant rather than textbook FNV-1a there.
-/// Chosen for being tiny, dependency-free, and deterministic — the
-/// dir name is JS-owned (`Cache/raster/` is not created by the Rust
-/// `CacheLayout`), so it does NOT need to match Rust's blake3 scheme. A
-/// 32-bit space is ample BECAUSE the number of live keys is tiny: only a
-/// handful of distinct motif-instance keys exist in one workspace, so
-/// the birthday-bound collision probability against a 2^32 space is
-/// negligible. (A collision would NOT be self-healing — two colliding keys
-/// share the `<hash>` dir and their frame `<i>.png` files would CLOBBER each
-/// other, since `0.png` means frame 0 of WHICHEVER key wrote last. The
-/// safety here is the low key count, not the per-frame filenames.)
+/// Two independent FNV-1a 64-bit lanes (different offset bases), each
+/// rendered as 16 zero-padded lowercase hex chars and concatenated — a
+/// 128-bit hash, dependency-free and synchronous (this feeds per-frame
+/// disk paths, so an async crypto/blake3 digest is off the table). The
+/// input is hashed as its UTF-16LE byte stream (low byte, then high byte,
+/// per code unit), so non-ASCII prop values (e.g. zh-CN) mix fully.
+/// The dir name is JS-owned (`Cache/raster/` is not created by the Rust
+/// `CacheLayout`), so it does NOT need to match Rust's blake3 scheme.
+///
+/// Why 128 bits: a collision is NOT self-healing — two colliding keys share
+/// the `<hash>` dir and their frame `<i>.png` files would CLOBBER each other,
+/// since `0.png` means frame 0 of WHICHEVER key wrote last. With the handful
+/// of live keys a workspace ever has, the birthday bound against a 2^128
+/// space (≈2^64 keys to a 50% collision) is negligible; the old 32-bit space
+/// (≈2^16 keys to 50%) was only "probably fine" and one bad roll silently
+/// corrupted two Motifs' baked frames.
 export function hashCacheKey(cacheKey: string): string {
-  let h = 0x811c9dc5; // FNV offset basis
-  for (let i = 0; i < cacheKey.length; i++) {
-    h ^= cacheKey.charCodeAt(i) & 0xff;
-    // Mix high + low bytes too so non-ASCII code points still perturb the
-    // hash; charCodeAt is a UTF-16 unit, so fold the upper byte in.
-    h ^= (cacheKey.charCodeAt(i) >>> 8) & 0xff;
-    // FNV prime multiply via shift-adds to stay in 32-bit int math.
-    h = Math.imul(h, 0x01000193) >>> 0;
+  return fnv1a64Hex(cacheKey, 0xcbf29ce484222325n) + fnv1a64Hex(cacheKey, 0x9e3779b97f4a7c15n);
+}
+
+const FNV64_PRIME = 0x100000001b3n;
+const MASK64 = 0xffffffffffffffffn;
+
+/// One FNV-1a 64-bit lane over the UTF-16LE byte stream of `s`, from the
+/// given offset basis, rendered as 16 zero-padded lowercase hex chars.
+function fnv1a64Hex(s: string, offset: bigint): string {
+  let h = offset;
+  for (let i = 0; i < s.length; i++) {
+    const unit = s.charCodeAt(i);
+    h = ((h ^ BigInt(unit & 0xff)) * FNV64_PRIME) & MASK64;
+    h = ((h ^ BigInt(unit >>> 8)) * FNV64_PRIME) & MASK64;
   }
-  return (h >>> 0).toString(16).padStart(8, "0");
+  return h.toString(16).padStart(16, "0");
 }
