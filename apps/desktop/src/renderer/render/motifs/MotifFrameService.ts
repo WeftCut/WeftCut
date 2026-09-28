@@ -119,6 +119,7 @@ export class MotifFrameService {
         ? new MotifPrewarmer({
             capBytes: sharedMotifFrameCache.capacityBytes(),
             hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f),
+            prioritizeFrames: (targets) => sharedMotifFrameCache.prioritizeFrames(targets),
             setFrame: (k, f, b) => {
               sharedMotifFrameCache.setFrame(k, f, b);
             },

@@ -315,8 +315,11 @@ over the one capture function:
   paused. Active layers dedupe by content cache key (N identical Motifs warm one content
   set); a pure planner orders playhead-first, then forward, then earlier frames for small
   backward scrubs; the per-content budget divides the L0 byte budget by each content's
-  per-frame cost (renderW × renderH × 4), so the warm set always fits and the
-  LRU can't evict a still-targeted frame.
+  per-frame cost (renderW × renderH × 4). Each plan also refreshes L0 retention
+  in that priority order: upcoming cached frames stay more recent than played
+  frames, so adding a farther-ahead frame does not evict the next one to play.
+  An in-flight prewarm result outside the latest window is closed rather than
+  inserted; results still needed by the new plan remain usable after a seek.
 - **L2 — persisted PNG.** One PNG per frame under `<workspace>/Cache/raster/<hash>/`,
   where `<hash>` is a 128-bit hash (two FNV-1a-64 lanes, 32 hex chars) of
   `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.

@@ -12,11 +12,14 @@ export interface PrewarmContentSpec extends PrewarmContent {
 export interface MotifPrewarmerDeps {
   /// Warm budget in BYTES, shared across all active contents; the planner
   /// divides it by each content's `frameBytes`. Sourced from the L0 cache's
-  /// byte budget so the plan's union always fits — the LRU can't evict a
-  /// still-targeted frame behind the prewarmer's back.
+  /// byte budget so the plan fits. `prioritizeFrames` makes the cache prefer
+  /// that window over past frames which playback has recently touched.
   capBytes: number;
   hasFrame: (cacheKey: string, frame: number) => boolean;
   setFrame: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
+  /// Refresh retention priority of cached targets, highest-priority first.
+  /// No bitmap ownership transfer and no change to the cache's byte budget.
+  prioritizeFrames: (targets: readonly PrewarmTarget[]) => void;
   /// Schedule a callback for "later" (idle). Returns a cancel token. Real impl:
   /// requestIdleCallback with a setTimeout fallback. Tests inject a manual one.
   schedule: (cb: () => void) => number;
@@ -41,6 +44,7 @@ interface PrewarmBatchItem extends PrewarmTarget {
 /// cache does). Preview-only.
 export class MotifPrewarmer {
   private specsByKey = new Map<string, PrewarmContentSpec>();
+  private targetFrames = new Map<string, Set<number>>();
   private readonly loop: IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>;
 
   constructor(private readonly deps: MotifPrewarmerDeps) {
@@ -56,9 +60,9 @@ export class MotifPrewarmer {
       },
       run: async ({ cacheKey, frame, spec }) => {
         const bmp = await spec.render(frame);
-        if (this.loop.isDisposed()) {
-          // Disposed mid-raster: this bitmap will never be cached, so close
-          // it to avoid leaking the decoded image.
+        if (this.loop.isDisposed() || !this.targetFrames.get(cacheKey)?.has(frame)) {
+          // A seek/re-plan can retire this request while it is in flight.
+          // Do not let an obsolete result evict the new window's frames.
           bmp.close();
           return;
         }
@@ -75,11 +79,20 @@ export class MotifPrewarmer {
   setTargets(specs: PrewarmContentSpec[]): void {
     if (this.loop.isDisposed()) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    this.loop.setQueue(planPrewarmTargets(specs, this.deps.capBytes));
+    const targets = planPrewarmTargets(specs, this.deps.capBytes);
+    this.targetFrames.clear();
+    for (const { cacheKey, frame } of targets) {
+      let frames = this.targetFrames.get(cacheKey);
+      if (!frames) this.targetFrames.set(cacheKey, frames = new Set());
+      frames.add(frame);
+    }
+    this.deps.prioritizeFrames(targets);
+    this.loop.setQueue(targets);
   }
 
   dispose(): void {
     this.loop.dispose();
     this.specsByKey.clear();
+    this.targetFrames.clear();
   }
 }

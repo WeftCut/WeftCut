@@ -149,6 +149,22 @@ export class MotifFrameCache {
     return entry.bmp as ImageBitmap;
   }
 
+  /// Prefer cached frames in the current prewarm window over recently PLAYED
+  /// frames. Playback reads make past frames recent; plain LRU would otherwise
+  /// evict the unplayed near future when a farther-ahead frame arrives.
+  /// Targets are highest-priority first. This only reorders existing entries:
+  /// it neither allocates nor pins bitmaps, and the byte budget still applies.
+  prioritizeFrames(targets: readonly { cacheKey: string; frame: number }[]): void {
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const { cacheKey, frame } = targets[i]!;
+      const key = frameMapKey(cacheKey, frame);
+      const entry = this.store.get(key);
+      if (!entry) continue;
+      this.store.delete(key);
+      this.store.set(key, entry);
+    }
+  }
+
   /// Insert a frame, or keep the bitmap already cached for this (key, frame).
   /// A given (cacheKey, frameIndex) is deterministic — same motif, props,
   /// size, fps, content-duration and absolute content frame — so a concurrent
