@@ -1,45 +1,7 @@
-// Unit tests for the net-new, pure frame-selection math the MotifSprite
-// uses to map a layer-relative time to (frame, frameTimeSec, cacheKey). The
-// sprite itself constructs a Pixi Sprite + touches `createImageBitmap`, so it
-// can't run in Node — these helpers are extracted so the arithmetic is
-// testable without the browser surface. The async capture/bind chain is
-// exercised end-to-end by the Electron e2e (`e2e/electron/motif-capture.spec.ts`).
+// Frame-selection and capture/cache lifecycle tests with real Pixi objects.
+// GPU uploads are covered by Electron e2e; texture ownership can run in Node.
 
 import { afterEach, beforeEach, describe, expect, test, it, vi } from "vitest";
-
-// Pixi touches WebGL/DOM at module load; the sprite only needs `Sprite`,
-// `Texture`, and `ImageSource` to exist as constructible stubs for the
-// refresh-path tests (which never bind a real bitmap in Node).
-vi.mock("pixi.js", () => {
-  class FakeTexture {
-    // `orig` is what `anchorPivot`'s textureExtent reads for the pivot; real
-    // Pixi always carries it, so the double has to as well. 0×0 ⇒ pivot 0,
-    // which is the correct answer for a texture with no bound raster.
-    static EMPTY = { orig: { width: 0, height: 0 } };
-    source: unknown;
-    orig = { width: 0, height: 0 };
-    constructor(opts?: { source?: unknown }) {
-      this.source = opts?.source ?? null;
-    }
-    destroy() {}
-  }
-  class FakeSprite {
-    texture: unknown = FakeTexture.EMPTY;
-    position = { set: vi.fn() };
-    pivot = { set: vi.fn() };
-    scale = { set: vi.fn() };
-    alpha = 1;
-    zIndex = 0;
-    constructor(tex?: unknown) {
-      this.texture = tex ?? FakeTexture.EMPTY;
-    }
-    destroy() {}
-  }
-  class FakeImageSource {
-    constructor(public opts: unknown) {}
-  }
-  return { Sprite: FakeSprite, Texture: FakeTexture, ImageSource: FakeImageSource };
-});
 
 // `getMotif` is controlled per-test so a "draft edit" (content_hash change) can
 // be simulated between `update()` calls.
@@ -277,7 +239,7 @@ describe("MotifSprite.refreshMotif", () => {
   it("holds the cache's bitmap for exactly as long as it is bound", () => {
     // The shared cache may evict a bound frame at any time; the sprite's
     // retain is what keeps it from being closed while Pixi can still re-upload
-    // it. The previous binding is released only after its texture is gone.
+    // it. The previous pin is released only after the source has been updated.
     getMotifMock.mockReset();
     getMotifMock.mockReturnValue(motifWith("A"));
     const frame0 = { width: 480, height: 480 } as unknown as ImageBitmap;

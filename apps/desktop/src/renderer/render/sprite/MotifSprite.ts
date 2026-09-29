@@ -18,7 +18,7 @@
 // wants that (cacheKey, frame). The export Worker (no `document`) never takes
 // this path — it binds pre-baked `injectedFrames` by index instead.
 
-import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
@@ -30,6 +30,7 @@ import { isCaptureSuperseded } from "../motifs/host";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
+import { MotifTextureSource } from "./MotifTextureSource";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
@@ -94,7 +95,7 @@ export class MotifSprite implements StageableSprite {
   /// repeated index (output fps < comp fps, or a held frame) skip the rebind +
   /// per-tick GPU texture churn. -1 = nothing bound yet.
   private injectedFrame = -1;
-  private source: ImageSource | null = null;
+  private source: MotifTextureSource | null = null;
   private texture: Texture | null = null;
   /// The raster `source` wraps, pinned in its lane cache while bound so an
   /// LRU eviction can't close it under a texture Pixi may still re-upload.
@@ -342,33 +343,29 @@ export class MotifSprite implements StageableSprite {
   ): void {
     // Pin the new raster before letting go of the old one, so a rebind of the
     // same bitmap never drops its count to zero in between. The old pin is
-    // released only after the texture that wraps it is destroyed below.
+    // released only after the source no longer references it below.
     pinCache.retain(bitmap);
     const previous = this.bound;
     const previousCache = this.boundCache;
     this.bound = bitmap;
     this.boundCache = pinCache;
-    // destroy(true) frees this sprite's own ImageSource/GPU texture on every
-    // rebind, preventing a per-tick GPU-memory leak. The shared cache's
-    // ImageBitmap is NOT closed by destroy(true) — ImageSource inherits
-    // TextureSource.destroy(), which calls unload() (GPU texture freed) and
-    // nulls `resource` but never calls ImageBitmap.close(). Each sprite wraps
-    // the cache bitmap in its OWN independent ImageSource, so destroy(true)
-    // only affects this sprite's wrapper + source, not the cache-owned bitmap.
-    if (this.texture && this.texture !== Texture.EMPTY) {
-      try {
-        this.texture.destroy(true);
-      } catch {
-        // ignore
-      }
+    // WebGPU caches batch BindGroups by source identity. Keep one source and
+    // texture per sprite: destroying them each frame leaves the previous
+    // batch bound to a dead source/sampler and produces a warning every tick.
+    if (this.source) {
+      this.source.resource = bitmap;
+      this.source.update(); // uploads new pixels; also resizes when needed
+    } else {
+      this.source = new MotifTextureSource({
+        resource: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+      });
+      // Dynamic keeps Sprite geometry in sync when a placeholder or an edited
+      // Motif changes dimensions while retaining the same Texture identity.
+      this.texture = new Texture({ source: this.source, dynamic: true });
+      this.sprite.texture = this.texture;
     }
-    this.source = new ImageSource({
-      resource: bitmap,
-      width: bitmap.width,
-      height: bitmap.height,
-    });
-    this.texture = new Texture({ source: this.source });
-    this.sprite.texture = this.texture;
     this.boundOnce = true;
     if (previous) (previousCache ?? sharedMotifFrameCache).release(previous);
   }
@@ -377,10 +374,11 @@ export class MotifSprite implements StageableSprite {
     if (this.disposed) return;
     this.disposed = true;
     this.target = null;
+    this.sprite.destroy({ children: true });
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
-        // Frees this sprite's own wrapper only — never the cache-owned
-        // ImageBitmap (see bindBitmap).
+        // Unbinds and frees the sprite-owned texture/source/GPU allocation,
+        // never the cache-owned ImageBitmap.
         this.texture.destroy(true);
       } catch {
         // ignore
@@ -391,6 +389,5 @@ export class MotifSprite implements StageableSprite {
     if (this.bound) (this.boundCache ?? sharedMotifFrameCache).release(this.bound);
     this.bound = null;
     this.boundCache = null;
-    this.sprite.destroy({ children: true });
   }
 }
