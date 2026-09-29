@@ -10,32 +10,49 @@ export interface MotifPool {
   close(): void
 }
 type PoolFactory = (w: number, h: number, bgra: boolean) => MotifPool
-type Session = { owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported }
+type Session = { owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
+const MAX_BYTES = 128 * 1024 * 1024
 
-/** A bounded transport slot, NOT the decoded-frame cache. The receiver snapshots
+/** Bounded transport lanes, NOT the decoded-frame cache. The receiver snapshots
  * into its own ImageBitmap, completes the GPU read, then releases the lease.
  * Old native pools survive until Electron releases all imported references. */
 export class MotifGpuTransport {
   private sessions = new Map<string, Session>()
-  private tail: Promise<unknown> = Promise.resolve()
-  private pending = new Map<string, { owner: number; release: () => void }>()
+  private readonly tails: Promise<unknown>[]
+  private nextLane = 0
+  // Includes imports in progress and retired textures still held by Chromium.
+  private allocatedBytes = 0
+  private allocatedSessions = 0
+  private budgetWaiters = new Set<() => void>()
+  private pending = new Map<string, { owner: number; retire: () => void; release: () => void }>()
   private unavailable = new WeakSet<WebContents>()
-  constructor(private readonly createPool: PoolFactory) {}
+  private generations = new WeakMap<WebContents, number>()
+  constructor(private readonly createPool: PoolFactory, concurrency = 3) {
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('Invalid Motif transport concurrency')
+    this.tails = Array.from({ length: concurrency }, () => Promise.resolve())
+  }
+
+  private budgetChanged(): void {
+    for (const wake of this.budgetWaiters) wake()
+    this.budgetWaiters.clear()
+  }
 
   private retire(owner: WebContents): void {
     for (const [address, s] of this.sessions) if (s.owner === owner) this.retireSession(address, s)
   }
 
   private retireSession(address: string, s: Session): void {
+    if (this.sessions.get(address) !== s) return
     this.sessions.delete(address)
     if (!s.owner.isDestroyed()) s.owner.send('evt:motifGpu:close', { key: s.key })
     try { s.imported.release() } catch { /* renderer/GPU process already gone */ }
+    this.budgetChanged()
   }
 
   release(owner: WebContents, token: string, failed = false): void {
     const lease = this.pending.get(token)
     if (lease?.owner === owner.id) {
-      if (failed) this.retire(owner)
+      if (failed) lease.retire()
       this.pending.delete(token); lease.release()
     }
   }
@@ -55,28 +72,50 @@ export class MotifGpuTransport {
 
   private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', fill: (pool: MotifPool) => Promise<void>): Promise<MotifTextureFrame> {
     if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
-    const previous = this.tail
+    const generation = this.generations.get(owner) ?? 0
+    const assertOpen = (): void => {
+      if (owner.isDestroyed() || (this.generations.get(owner) ?? 0) !== generation) throw new Error('Motif consumer closed')
+    }
+    // Independent leases let native reading/upload overlap the preceding
+    // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
+    const lane = this.nextLane++ % this.tails.length
+    const previous = this.tails[lane]!
     let unlock!: () => void
-    this.tail = new Promise<void>(resolve => { unlock = resolve })
+    this.tails[lane] = new Promise<void>(resolve => { unlock = resolve })
     await previous.catch(() => {})
+    let active: Session | undefined
+    const address = `${owner.id}:${width}:${height}:${format}:${lane}`
     try {
-      if (owner.isDestroyed()) throw new Error('Motif consumer closed')
-      const address = `${owner.id}:${width}:${height}:${format}`
+      assertOpen()
       let s = this.sessions.get(address)
       if (s) { this.sessions.delete(address); this.sessions.set(address, s) }
       if (!s) {
         const bytes = width * height * 4
-        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > 128 * 1024 * 1024) throw new Error('Motif GPU budget exhausted')
-        let resident = [...this.sessions.values()].reduce((n, v) => n + v.width * v.height * 4, 0)
-        for (const [key, old] of this.sessions) {
-          if (resident + bytes <= 128 * 1024 * 1024 && this.sessions.size < 8) break
-          this.retireSession(key, old)
-          resident -= old.width * old.height * 4
+        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > MAX_BYTES) throw new Error('Motif GPU budget exhausted')
+        for (;;) {
+          assertOpen()
+          for (const [key, old] of this.sessions) {
+            if (this.allocatedBytes + bytes <= MAX_BYTES && this.allocatedSessions < 8) break
+            if (old.busy) continue
+            this.retireSession(key, old)
+          }
+          if (this.allocatedBytes + bytes <= MAX_BYTES && this.allocatedSessions < 8) break
+          await new Promise<void>(resolve => this.budgetWaiters.add(resolve))
+        }
+        // Reserve before awaiting the global import queue: another lane must
+        // account for allocations whose import has not completed yet.
+        this.allocatedBytes += bytes
+        this.allocatedSessions++
+        const releaseBudget = (): void => {
+          this.allocatedBytes -= bytes
+          this.allocatedSessions--
+          this.budgetChanged()
         }
         s = await withSharedTextureQueue(async () => {
+          try { assertOpen() } catch (error) { releaseBudget(); throw error }
           let pool: MotifPool
           try { pool = this.createPool(width, height, format === 'bgra') }
-          catch (error) { this.unavailable.add(owner); throw error }
+          catch (error) { releaseBudget(); this.unavailable.add(owner); throw error }
           const key = `motif-${randomUUID()}`
           let imported: SharedTextureImported | undefined
           try {
@@ -86,36 +125,47 @@ export class MotifGpuTransport {
                 colorSpace: { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' },
                 handle: { ntHandle: pool.handles()[0]! },
               },
-              allReferencesReleased: () => pool.close(),
+              allReferencesReleased: () => { try { pool.close() } finally { releaseBudget() } },
             })
             owner.send('evt:previewGpu:slot', { streamId: key, slot: 0 })
             await sharedTexture.sendSharedTexture({ frame: owner.mainFrame, importedSharedTexture: imported })
-            return { owner, key, width, height, pool, imported }
+            assertOpen()
+            return { owner, key, width, height, pool, imported, busy: true }
           } catch (error) {
-            this.unavailable.add(owner)
+            if ((this.generations.get(owner) ?? 0) === generation) this.unavailable.add(owner)
             if (!owner.isDestroyed()) owner.send('evt:motifGpu:close', { key })
-            if (imported) imported.release(); else pool.close()
+            if (imported) imported.release()
+            else { try { pool.close() } finally { releaseBudget() } }
             throw error
           }
         })
         this.sessions.set(address, s)
       }
+      active = s
+      s.busy = true
       await fill(s.pool)
+      assertOpen()
       const token = randomUUID()
       const timeout = setTimeout(() => {
         // Never overwrite a slot whose consumer hasn't acknowledged. Retire it;
         // a later request allocates a different resource, so late reads stay safe.
-        this.retire(owner)
-        this.release(owner, token)
+        this.release(owner, token, true)
       }, 5000)
-      this.pending.set(token, { owner: owner.id, release: () => { clearTimeout(timeout); unlock() } })
+      this.pending.set(token, { owner: owner.id, retire: () => this.retireSession(address, s), release: () => {
+        clearTimeout(timeout); s.busy = false; this.budgetChanged(); unlock()
+      } })
       return { kind: 'texture', key: s.key, token }
-    } catch (error) { this.retire(owner); unlock(); throw error }
+    } catch (error) {
+      if (active) this.retireSession(address, active)
+      this.budgetChanged(); unlock(); throw error
+    }
   }
 
   close(owner: WebContents): void {
+    this.generations.set(owner, (this.generations.get(owner) ?? 0) + 1)
     this.unavailable.delete(owner)
     this.retire(owner)
     for (const [token, lease] of this.pending) if (lease.owner === owner.id) this.release(owner, token)
+    this.budgetChanged()
   }
 }

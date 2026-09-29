@@ -231,10 +231,17 @@ compensating buffer offset.
 (a composition-µs ↔ `AudioContext.currentTime` pair, defined in
 `chunkSchedule.ts` and nowhere else) is owned by the `PlaybackEngine`:
 while the context is running, the playing position is DERIVED from
-`ctx.currentTime` against it — pure mapping, no accumulation — and the
+the audio timeline against it — pure mapping, no accumulation — and the
 engine forwards the same anchor to every `AudioMixer`, which schedules
 chunks against it. Playhead and audio share one clock by construction;
 there is no second clock to reconcile, so there is no reconciler.
+For visual ticks, a fresh `getOutputTimestamp()` pair interpolates audio time
+between device blocks. The render/output offset is calibrated once per anchor
+against `currentTime`; recalibrating every tick would reintroduce block jitter
+and repeated/skipped frames at 60 fps. Audio scheduling retains its original
+anchor. Missing, invalid or stale (>250 ms) timestamps fall back to
+`currentTime`; a >50 ms device discontinuity recalibrates the offset. The source
+remains the hardware timestamp, not an independently accumulating wall clock.
 While the context is suspended (autoplay policy, before the first
 gesture) the clock falls back to `performance.now()` deltas; the flip
 back to audio-derived re-anchors from the current position, so

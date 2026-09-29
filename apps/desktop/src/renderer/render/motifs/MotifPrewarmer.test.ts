@@ -5,6 +5,23 @@ import { MotifFrameCache } from "./frameCache";
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
 
 describe("MotifPrewarmer", () => {
+  it.each([true, false])("pipelines persisted reads but preserves the live capture limit (persisted=%s)", async (persisted) => {
+    const pending: (() => void)[] = [];
+    const release: ((bitmap: ImageBitmap) => void)[] = [];
+    const render = vi.fn(() => new Promise<ImageBitmap>(resolve => release.push(resolve)));
+    const prewarmer = new MotifPrewarmer({
+      capBytes: 64, batchSize: 1,
+      hasFrame: () => false, setFrame: () => {}, prioritizeFrames: () => {},
+      schedule: cb => { pending.push(cb); return pending.length; }, cancel: () => {},
+    });
+    prewarmer.setTargets([{ cacheKey: "cached-animation", contentFrame: 0, contentDurationFrames: 64, frameBytes: 1, persisted, render }]);
+    pending.shift()!();
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledTimes(persisted ? 3 : 1);
+    prewarmer.dispose();
+    release.forEach(resolve => resolve(makeBmp()));
+  });
+
   it("rasters missing targets in plan order, skips cached, stops when done", async () => {
     const cached = new Set<string>();
     const setSpy = vi.fn((k: string, f: number) => cached.add(`${k}#${f}`));

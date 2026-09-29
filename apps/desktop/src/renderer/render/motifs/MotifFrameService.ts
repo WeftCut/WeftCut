@@ -127,11 +127,12 @@ export class MotifFrameService {
             },
             schedule: (cb) => scheduleIdle(cb),
             cancel: (t) => cancelIdle(t),
-            // batchSize 1: captures serialize in the main process (the single
+            // Live captures serialize in the main process (the single
             // capture host's promise chain in main/motif/capture.ts), so a
             // larger batch only adds head-of-line latency for an on-demand
             // scrub. One in-flight capture per loop keeps the shared host
-            // queue short.
+            // queue short. Persisted frames use the prewarmer's three-read
+            // pipeline instead, matching the bounded GPU transport.
             batchSize: 1,
             onProgress: () => this.recomputeBakeStatuses(),
           })
@@ -293,6 +294,7 @@ export class MotifFrameService {
       const durationSec = desc.durationSec;
       specs.push({
         cacheKey: desc.cacheKey,
+        persisted: sharedBakedKeyIndex.has(desc.cacheKey),
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
         // What one warmed frame costs the byte-bounded L0 cache — the planner

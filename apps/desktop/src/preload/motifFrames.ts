@@ -5,7 +5,7 @@ import type { StoredMotifFrame, MotifCaptureControl } from '../shared/motifs/fra
 // ownership to the main world without serializing pixels or changing isolation.
 export function installMotifFrames(
   imported: (key: string) => SharedTextureImported | undefined,
-  finishRead: (bitmap: ImageBitmap) => unknown,
+  finishRead: (bitmap: ImageBitmap) => Promise<ImageBitmap>,
 ): void {
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.type !== 'weftcut:motif-frame-port') return
@@ -23,7 +23,7 @@ export function installMotifFrames(
           if (!texture) throw new Error('Motif texture import missing')
           const vf = texture.getVideoFrame()
           try { bitmap = await createImageBitmap(vf) } finally { vf.close() }
-          if (!finishRead(bitmap)) throw new Error('Motif texture read barrier unavailable')
+          bitmap = await finishRead(bitmap)
         } else if (frame?.kind === 'rgba') {
           const pixels = new Uint8ClampedArray(frame.rgba.buffer as ArrayBuffer, frame.rgba.byteOffset, frame.rgba.byteLength)
           bitmap = await createImageBitmap(new ImageData(pixels, frame.width, frame.height))

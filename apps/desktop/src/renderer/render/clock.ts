@@ -2,9 +2,10 @@
 //
 // Behavior (docs/audio.md §Clock):
 //   - When an `AudioContext` is bound and RUNNING, the playing position is
-//     DERIVED from `ctx.currentTime` against a `ClockAnchor` taken at
+//     DERIVED from the audio timeline against a `ClockAnchor` taken at
 //     play/seek (or at the suspended→running flip): pure mapping, no
-//     accumulation, no drift to correct. The audio hardware clock IS the
+//     accumulation. Output timestamps interpolate between device quanta;
+//     currentTime remains the fallback. The audio hardware clock IS the
 //     playback clock — A/V sync is structural.
 //   - Otherwise (no context, or suspended — e.g. before the first user
 //     gesture under autoplay policy), the clock advances by
@@ -45,12 +46,14 @@ export class SyntheticClock {
   private _lastWallMs: number | null = null;
   private _audioCtx: AudioContext | null = null;
   private _anchor: ClockAnchor | null = null;
+  private _renderLeadSec: number | null = null;
   private _fpsNum = 30;
   private _fpsDen = 1;
 
   bindAudio(ctx: AudioContext | null): void {
     this._audioCtx = ctx;
     this._anchor = null;
+    this._renderLeadSec = null;
   }
 
   /// Bind the composition fps so `positionUs()` and `setPosition` can
@@ -114,13 +117,14 @@ export class SyntheticClock {
       if (this._anchor === null) this.reanchor();
       this._rawTUs = Math.max(
         prevRaw,
-        compUsAtCtxTime(this._anchor!, this._audioCtx!.currentTime),
+        compUsAtCtxTime(this._anchor!, this.audioTime()),
       );
       // Keep the wall timestamp fresh so a running→suspended flip
       // doesn't integrate a stale delta on its first wall tick.
       this._lastWallMs = performance.now();
     } else {
       this._anchor = null;
+      this._renderLeadSec = null;
       const nowMs = performance.now();
       const lastMs = this._lastWallMs ?? nowMs;
       this._lastWallMs = nowMs;
@@ -135,8 +139,37 @@ export class SyntheticClock {
   }
 
   private reanchor(): void {
+    this._renderLeadSec = null;
     this._anchor = this.audioRunning()
-      ? { compUs: this._rawTUs, ctxTime: this._audioCtx!.currentTime }
+      ? { compUs: this._rawTUs, ctxTime: this.audioTime() }
       : null;
+  }
+
+  private audioTime(): number {
+    const ctx = this._audioCtx!;
+    const renderTime = ctx.currentTime;
+    const stamp = ctx.getOutputTimestamp?.();
+    const contextTime = stamp?.contextTime ?? NaN;
+    const ageMs = performance.now() - (stamp?.performanceTime ?? NaN);
+    // Startup, suspended devices and unavailable timestamps use the original
+    // audio clock. Never extrapolate an old device stamp indefinitely.
+    if (!Number.isFinite(contextTime) || contextTime <= 0
+      || !Number.isFinite(ageMs) || ageMs < -10 || ageMs > 250) {
+      this._renderLeadSec = null;
+      return renderTime;
+    }
+    const outputTime = contextTime + ageMs / 1000;
+    // currentTime advances in device blocks, which can repeat/skip video frames
+    // even at a perfect 60 Hz rAF. Interpolate from the hardware timestamp pair.
+    // Calibrate the render/output offset once per anchor, not every tick (that
+    // would put the block jitter back). Audio scheduling keeps its exact anchor.
+    this._renderLeadSec ??= renderTime - outputTime;
+    const smoothTime = outputTime + this._renderLeadSec;
+    if (Math.abs(smoothTime - renderTime) > 0.05) {
+      // Device/latency change: discard the old calibration rather than drift.
+      this._renderLeadSec = renderTime - outputTime;
+      return renderTime;
+    }
+    return smoothTime;
   }
 }

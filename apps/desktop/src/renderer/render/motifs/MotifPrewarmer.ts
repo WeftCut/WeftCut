@@ -6,6 +6,8 @@ import { IdleBatchQueue } from "./idleBatchQueue";
 /// `motifFrameDescriptor`; `render(frame)` rasters an arbitrary content frame
 /// of this content.
 export interface PrewarmContentSpec extends PrewarmContent {
+  /// Disk reads can overlap; live captures retain the configured batch limit.
+  persisted?: boolean;
   render: (frame: number) => Promise<ImageBitmap>;
 }
 
@@ -51,7 +53,8 @@ export class MotifPrewarmer {
     this.loop = new IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>({
       schedule: deps.schedule,
       cancel: deps.cancel,
-      batchSize: deps.batchSize ?? 3,
+      batchSize: () => [...this.specsByKey.values()].every(spec => spec.persisted)
+        ? Math.max(3, deps.batchSize ?? 3) : deps.batchSize ?? 3,
       take: (target) => {
         if (this.deps.hasFrame(target.cacheKey, target.frame)) return null; // already cached
         const spec = this.specsByKey.get(target.cacheKey);

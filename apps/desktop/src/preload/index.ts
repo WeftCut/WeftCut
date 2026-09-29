@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
+import { MotifReadBarrier } from './motifReadBarrier'
 import type {
   WeftcutApi,
   AppNotice,
@@ -523,7 +524,8 @@ function forceSharedTextureReadComplete(bmp: ImageBitmap): BarrierCost | null {
   return { drawMs: tRead - tDraw, readMs: performance.now() - tRead }
 }
 
-installMotifFrames(key => importedByKey.get(`${key}:0`), forceSharedTextureReadComplete)
+const motifReadBarrier = new MotifReadBarrier(bitmap => forceSharedTextureReadComplete(bitmap) !== null)
+installMotifFrames(key => importedByKey.get(`${key}:0`), bitmap => motifReadBarrier.complete(bitmap))
 
 // The one WebGL2 context both GPU-side barriers share. One 1×1 context and ONE
 // texture, created lazily and reused: the binding is set once at creation

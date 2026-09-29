@@ -21,6 +21,20 @@ optional FFmpeg decode component. Other platforms and failures retain CPU/PNG
 paths. Preview and export use the same frame reader; no author-visible engine
 choice is introduced.
 
+Playback uses three independently leased transport lanes. Each lane waits for
+its own read-completion acknowledgment before reuse; disk prewarming admits
+three concurrent reads for fully baked content, while live capture retains its
+single-request limit. The 128 MiB/eight-pool allocation limit includes imports
+in progress and retired textures until Electron releases their references.
+Failed leases retire only their own lane; renderer close cancels queued work.
+
+The Motif read-completion barrier transfers the ImageBitmap to a dedicated
+worker, completes the read there, and returns ownership before acknowledging
+the source slot. This keeps synchronous GPU readback off the UI thread without
+weakening the completion fence. Worker failure rejects outstanding reads and
+uses the synchronous barrier for subsequent requests. The synthetic concurrent
+frame test checks colors and alpha after repeated slot reuse.
+
 The tradeoffs are potentially larger frame files than PNG and explicit GPU
 ownership. A consumer must complete the GPU read before acknowledging a slot;
 a failed/timed-out consumer retires its texture instead of permitting reuse.

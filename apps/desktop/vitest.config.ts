@@ -20,6 +20,7 @@ export default defineConfig({
     include: [
       'src/renderer/**/*.{test,spec}.{ts,tsx}',
       'src/main/**/*.{test,spec}.{ts,tsx}',
+      'src/preload/**/*.{test,spec}.{ts,tsx}',
       'src/shared/**/*.{test,spec}.{ts,tsx}',
       'src/cli/**/*.{test,spec}.{ts,tsx}',
     ],

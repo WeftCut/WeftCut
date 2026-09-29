@@ -13,7 +13,7 @@ export interface IdleBatchQueueDeps<T, I> {
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
   /// Max items pulled into one batch before yielding back to idle.
-  batchSize: number;
+  batchSize: number | (() => number);
   /// Map a queued target to its batch item at PULL time — so a mid-batch
   /// re-plan can't swap the owner's spec out from under an in-flight item —
   /// or return null to drop the target (already-cached / content no longer
@@ -66,7 +66,8 @@ export class IdleBatchQueue<T, I> {
       // harness (microtask-serialized — safe), but async work parallelizes
       // across the RasterPool, so the loop fills at pool speed instead of 1x.
       const batch: I[] = [];
-      while (batch.length < this.deps.batchSize && this.queue.length > 0) {
+      const batchSize = typeof this.deps.batchSize === "function" ? this.deps.batchSize() : this.deps.batchSize;
+      while (batch.length < batchSize && this.queue.length > 0) {
         const item = this.deps.take(this.queue.shift()!);
         if (item !== null) batch.push(item);
       }

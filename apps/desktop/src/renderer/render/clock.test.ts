@@ -1,5 +1,64 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SyntheticClock } from "./clock";
+import { timeUsAtFrame } from "../frames";
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("SyntheticClock audio quantum interpolation", () => {
+  it("recalibrates on seek, suspension and stale output timestamps", () => {
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    let stamp = { contextTime: 99.95, performanceTime: now };
+    const ctx = { state: "running", currentTime: 100, getOutputTimestamp: () => stamp };
+    const clock = new SyntheticClock();
+    clock.bindFps(60, 1);
+    clock.bindAudio(ctx as unknown as AudioContext);
+    clock.play();
+    now += 1000; ctx.currentTime += 1; stamp = { contextTime: 100.95, performanceTime: now };
+    expect(clock.tick().tUs).toBe(1_000_000);
+    clock.setPosition(5_000_000);
+    expect(clock.getAnchor()).toEqual({ compUs: 5_000_000, ctxTime: 101 });
+    now += 1000; ctx.currentTime += 1; // stale timestamp: use currentTime
+    expect(clock.tick().tUs).toBe(6_000_000);
+    stamp = { contextTime: 101.95, performanceTime: now };
+    expect(clock.tick().tUs).toBe(6_000_000);
+    ctx.state = "suspended";
+    clock.tick();
+    expect(clock.getAnchor()).toBeNull();
+    ctx.state = "running"; ctx.currentTime = 500;
+    stamp = { contextTime: 499.95, performanceTime: now };
+    expect(clock.tick().tUs).toBe(6_000_000);
+    now += 1000; ctx.currentTime += 1; stamp = { contextTime: 500.95, performanceTime: now };
+    expect(clock.tick().tUs).toBe(7_000_000);
+  });
+
+  it("presents every 60 fps frame across a 512-sample audio device quantum at any start phase", () => {
+    for (const phase of [0, 3, 7, 9]) {
+      let now = 1000 + phase;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      const ctx = {
+        state: "running",
+        get currentTime() { return 100 + Math.floor((now - 1000) / (512 / 48)) * 512 / 48000; },
+        getOutputTimestamp() {
+          const sampledMs = Math.floor(now / 10) * 10;
+          return { contextTime: 99.95 + (sampledMs - 1000) / 1000, performanceTime: sampledMs };
+        },
+      };
+      const clock = new SyntheticClock();
+      clock.bindFps(60, 1);
+      clock.bindAudio(ctx as unknown as AudioContext);
+      clock.play();
+      const anchor = clock.getAnchor();
+      for (let frame = 1; frame <= 600; frame++) {
+        now = 1000 + phase + frame * 1000 / 60;
+        expect(clock.tick().tUs, `phase ${phase}, frame ${frame}`).toBe(timeUsAtFrame(frame, 60, 1));
+      }
+      // Visual interpolation never shifts audio scheduling's anchor.
+      expect(clock.getAnchor()).toBe(anchor);
+      vi.restoreAllMocks();
+    }
+  });
+});
 
 /// Controllable fake AudioContext for the audio-master derivation tests.
 function fakeCtx(): { state: AudioContextState; currentTime: number } {
