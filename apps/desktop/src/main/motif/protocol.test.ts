@@ -53,17 +53,19 @@ describe('cspForMotifFile', () => {
     expect(cspForMotifFile('assets/params.html')).toBe(MOTIF_CSP)
   })
 
-  it('the params CSP loosens only script-src/style-src and still denies network', () => {
-    // Delta: the `motif:` scheme joins script/style sources so a params page can
-    // ship companion files. Nothing else moves.
+  it('keeps params companion scripts separate from render embedded-asset access', () => {
     expect(MOTIF_PARAMS_CSP).toContain("script-src 'unsafe-inline' motif:")
     expect(MOTIF_PARAMS_CSP).toContain("style-src 'unsafe-inline' motif:")
-    expect(MOTIF_CSP).toContain("script-src 'unsafe-inline';")
-    for (const directive of ["default-src 'none'", 'img-src data: motif:', 'font-src data: motif:']) {
-      expect(MOTIF_PARAMS_CSP).toContain(directive)
-      expect(MOTIF_CSP).toContain(directive)
-    }
-    // No connect-src anywhere → `default-src 'none'` denies fetch/XHR/WebSocket.
+    expect(MOTIF_CSP).toContain("script-src 'unsafe-inline' 'self';")
+    expect(MOTIF_CSP).toContain("style-src 'unsafe-inline' 'self';")
+    expect(MOTIF_PARAMS_CSP).toContain("default-src 'none'")
+    expect(MOTIF_CSP).toContain("default-src 'none'")
+    expect(MOTIF_CSP).toContain("connect-src 'self' data: blob:;")
+    expect(MOTIF_CSP).toContain("img-src 'self' data: blob:;")
+    expect(MOTIF_CSP).toContain("font-src 'self' data:;")
+    expect(MOTIF_CSP).toContain("worker-src 'none'")
+    expect(MOTIF_PARAMS_CSP).toContain('img-src data: motif:;')
+    // The opaque-origin params frame receives no fetch grant.
     expect(MOTIF_PARAMS_CSP).not.toContain('connect-src')
     // `'self'` would match nothing under the frame's opaque origin.
     expect(MOTIF_PARAMS_CSP).not.toContain("'self'")
@@ -71,6 +73,24 @@ describe('cspForMotifFile', () => {
 })
 
 describe('registerMotifProtocol responses', () => {
+  it('serves companion modules and models without stale browser caching', async () => {
+    installUserMotif('scene', { 'index.html': '<html/>', 'scene.mjs': 'export const x = 1', 'scene.glb': 'glTF' })
+    const js = await serve('scene', 'scene.mjs')
+    expect(await js.text()).toBe('export const x = 1')
+    expect(js.headers.get('Content-Type')).toBe('text/javascript; charset=utf-8')
+    expect(js.headers.get('Cache-Control')).toBe('no-store')
+    const model = await serve('scene', 'scene.glb')
+    expect(model.headers.get('Content-Type')).toBe('model/gltf-binary')
+    expect(await model.text()).toBe('glTF')
+  })
+
+  it('refuses encoded path escapes and private draft metadata', async () => {
+    installUserMotif('scene', { 'index.html': '<html/>', 'target': 'private' })
+    expect((await serve('scene', '%2e%2e%2fsecret')).status).toBe(404)
+    expect((await serve('scene', 'target')).status).toBe(404)
+    expect((await serve('scene', 'TARGET')).status).toBe(404)
+    expect((await serve('scene', '%zz')).status).toBe(400)
+  })
   it('serves a user motif params.html with the params CSP', async () => {
     installUserMotif('user-p', { 'index.html': '<html>i</html>', 'params.html': '<html>p</html>' })
     const res = await serve('user-p', 'params.html')

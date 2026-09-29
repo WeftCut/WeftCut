@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,6 +6,7 @@ import { UserMotifStore } from './store'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
 import { builtinMotifs, getMotifSource, motifToPayload, listMotifsInner, type BuiltinMotif } from './authoring'
 import { motifContentHash } from './contentHash'
+import { readMotifDirectory } from './packageFiles'
 
 /** Minimal manifest factory. */
 function m(name: string, id = 'ignored'): Manifest {
@@ -61,6 +62,16 @@ describe('motifToPayload', () => {
 })
 
 describe('listMotifsInner', () => {
+  it('isolates an unreadable package without dropping healthy entries', () => {
+    store.writeDraft('broken', doc(m('Broken', 'broken')))
+    store.writeDraft('healthy', doc(m('Healthy', 'healthy')))
+    const read = store.packageFiles.bind(store)
+    vi.spyOn(store, 'packageFiles').mockImplementation(id => {
+      if (id === 'broken') throw new Error('resource vanished during external save')
+      return read(id)
+    })
+    expect(listMotifsInner(store, BUILTINS).map(e => e.id)).toEqual(['countdown', 'healthy'])
+  })
   it('lists builtins, then installed, then drafts (id-unique, draft shadowed by published)', () => {
     // installed "foo"
     store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
@@ -141,7 +152,7 @@ describe('builtinMotifs', () => {
 })
 
 import {
-  writeMotifDraftCore, amendDraftHtml, createEditDraftCore, importMotifFromSource, deleteMotifCore,
+  writeMotifDraftCore, amendDraftHtml, createEditDraftCore, importMotifPackage, deleteMotifCore,
 } from './authoring'
 import { BUILTIN_IDS } from '../../shared/motifs/catalog'
 
@@ -201,18 +212,78 @@ describe('createEditDraftCore', () => {
   })
 })
 
-describe('importMotifFromSource', () => {
+describe('importMotifPackage with only index.html', () => {
   it('mints a fresh id, ignores the claimed id, records NO target', () => {
     const source = doc(m('Imported', 'countdown'), 'IMPORTED') // island claims a built-in id
-    const id = importMotifFromSource(store, source)
+    const id = importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from(source) }])
     expect(id).not.toBe('countdown')
     const d = store.getDraft(id)!
     expect(d.manifest.id).toBe(id); expect(d.html).toContain('IMPORTED')
     expect(store.readDraftTarget(id)).toBeNull()
   })
   it('rejects a missing island and an invalid manifest', () => {
-    expect(() => importMotifFromSource(store, '<html><body>no island</body></html>')).toThrow()
-    expect(() => importMotifFromSource(store, doc({ ...m('Bad'), size: [0, 0] }))).toThrow()
+    expect(() => importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from('<html><body>no island</body></html>') }])).toThrow()
+    expect(() => importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from(doc({ ...m('Bad'), size: [0, 0] })) }])).toThrow()
+  })
+})
+
+describe('Motif package lifecycle', () => {
+  function sourceFolder(): string {
+    const dir = path.join(root, 'external')
+    mkdirSync(path.join(dir, 'assets'), { recursive: true })
+    writeFileSync(path.join(dir, 'index.html'), '<head></head><script type="module" src="./scene.js"></script>')
+    writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m('Local Scene')))
+    writeFileSync(path.join(dir, 'scene.js'), 'export const color = "red"')
+    writeFileSync(path.join(dir, 'assets', 'mesh.glb'), Buffer.from([0, 255, 1]))
+    return dir
+  }
+
+  it('copies independent resources through import, edit, amend and Update', () => {
+    const dir = sourceFolder()
+    const id = importMotifPackage(store, readMotifDirectory(dir))
+    rmSync(dir, { recursive: true }) // importing creates a snapshot, not a reference
+    expect(store.getDraft(id)!.html).toContain('src="./scene.js"')
+    expect(store.readFile(id, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
+    installMotifCompute(store, [], { draft_id: id, mode: { kind: 'new' } })
+    const edit = createEditDraftCore(store, [], id)
+    amendDraftHtml(store, edit, store.getDraft(edit)!.html.replace('./scene.js', './scene.js?v=2'))
+    expect(store.readFile(edit, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
+    writeFileSync(path.join(root, 'drafts', edit, 'scene.js'), 'export const color = "blue"')
+    expect(store.readFile(id, 'scene.js')?.toString()).toContain('red')
+    installMotifCompute(store, [], { draft_id: edit, mode: { kind: 'update', target_id: id } })
+    expect(store.readFile(id, 'scene.js')?.toString()).toContain('blue')
+    expect(store.readFile(id, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
+  })
+
+  it('invalidates the catalog on asset edits, additions, renames and removals', () => {
+    const id = importMotifPackage(store, readMotifDirectory(sourceFolder()))
+    const hash = () => listMotifsInner(store, []).find(e => e.id === id)!.content_hash
+    const before = hash()
+    const asset = path.join(root, 'drafts', id, 'assets', 'mesh.glb')
+    writeFileSync(asset, Buffer.from([0, 254, 1]))
+    const edited = hash()
+    expect(edited).not.toBe(before)
+    writeFileSync(asset + '.new', Buffer.from([0, 254, 1]))
+    const added = hash()
+    expect(added).not.toBe(edited)
+    rmSync(asset)
+    expect(hash()).not.toBe(added)
+  })
+
+  it('copies built-in companion assets when forking', () => {
+    const builtin = { ...BUILTINS[0]!, files: [{ path: 'assets/font.woff2', bytes: Buffer.from([1, 2]) }] }
+    const id = createEditDraftCore(store, [builtin], builtin.id)
+    expect(store.readFile(id, 'assets/font.woff2')).toEqual(Buffer.from([1, 2]))
+  })
+
+  it('refuses invalid packages before writing any draft', () => {
+    const dir = sourceFolder()
+    writeFileSync(path.join(dir, 'manifest.json'), '{}')
+    expect(() => importMotifPackage(store, readMotifDirectory(dir))).toThrow()
+    expect(store.listDraftIds()).toEqual([])
+    rmSync(path.join(dir, 'index.html'))
+    expect(() => importMotifPackage(store, readMotifDirectory(dir))).toThrow(/index.html/)
+    expect(store.listDraftIds()).toEqual([])
   })
 })
 

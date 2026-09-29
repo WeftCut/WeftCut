@@ -1806,6 +1806,7 @@ app.whenReady().then(async () => {
     isDirectory: (p) => { try { return fs.statSync(p).isDirectory() } catch { return false } },
     readDir: (p) => { try { return fs.readdirSync(p) } catch { return [] } },
     readFileText: (p) => fs.readFileSync(p, 'utf8'),
+    readFileBytes: (p) => fs.readFileSync(p),
     fileSize: (p) => { try { return fs.statSync(p).size } catch { return 0 } },
     mkdirp: (p) => { fs.mkdirSync(p, { recursive: true }) },
     copyFile: (s, d) => { fs.copyFileSync(s, d) },

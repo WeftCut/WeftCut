@@ -72,10 +72,10 @@ document is reachable.
 
 Facts the rest of this document leans on:
 
-- A built-in Motif is a directory of `manifest.json` + `index.html` (plus an
-  optional `assets/` for fonts and images), embedded in the binary via
-  `include_bytes!`; a user or agent Motif is a single self-contained HTML
-  document carrying an injected manifest island. Either way it is served to
+- A built-in Motif is a packaged directory of `manifest.json` + `index.html`
+  and companion assets. A user Motif is either a self-contained HTML document
+  or an imported directory of HTML, scripts, styles, models, textures and fonts.
+  User HTML carries an injected manifest island. Either way it is served to
   the offscreen capture host over the `motif:` URI scheme.
 - Props are validated against the manifest's `props_schema` (unknown keys
   reject, missing keys fall back to defaults) and canonicalized into a stable
@@ -122,8 +122,9 @@ switch. There is no manifest field, so a Motif's UI can change without touching
 its data contract: the catalog payload carries `has_params_ui`, which the main
 process derives by stat'ing the file (built-ins once at boot — their assets are
 packaged read-only; user Motifs on every catalog listing, published copy first
-then draft), and it never enters the manifest island, the content hash, or
-manifest validation. Dropping the file in — or deleting it — switches the panel
+then draft), and the flag never enters the manifest island or manifest
+validation. Companion file bytes now enter the content hash (ADR 0079), including
+the parameter page. Dropping the file in — or deleting it — switches the panel
 on the next catalog refresh, which the Motif directory watcher already triggers
 on any file change. Of the built-ins, `text-fx` ships a page; `countdown` and
 `lower-third` deliberately stay on the fallback form.
@@ -141,15 +142,15 @@ consequences an author designs around:
   `"null"`, so window identity is the only check worth making — which is exactly
   what the host side does.
 - **There is no network.** The params CSP keeps `default-src 'none'` with no
-  `connect-src`, so fetch/XHR/WebSocket/EventSource are denied, the same as for a
-  render document. Assets are relative URLs (they resolve to `motif://<id>/…`) or
+  `connect-src`, so fetch/XHR/WebSocket/EventSource are denied. Render documents
+  separately allow same-origin/data/blob fetches. Assets are relative URLs
+  (they resolve to `motif://<id>/…`) or
   `data:` URIs.
-- **Companion files are allowed.** The params CSP differs from the render
-  document's by exactly two sources: `script-src` and `style-src` additionally
-  allow the `motif:` scheme, so a page may split into `.js`/`.css` files beside it
+- **Companion files are allowed.** The params CSP uses `motif:` for `script-src`
+  and `style-src`, so a page may split into `.js`/`.css` files beside it
   rather than cramming everything inline. Inline script and style still work, so a
-  single self-contained file is fine too. `'self'` appears in neither CSP — on an
-  opaque origin it would match nothing.
+  single self-contained file is fine too. `'self'` is used only by render pages —
+  on the parameter page's opaque origin it would match nothing.
 - **The app frames nothing else.** The renderer's own CSP grants `frame-src
   motif:` and no `'self'`, so a Motif's parameter page is the only embeddable
   context in the app. Full CSP rationale: [`security.md`](security.md).
@@ -447,9 +448,21 @@ selected layer swaps in place onto the draft so the source panel previews it. Fr
 - **Save as new** publishes the draft under its own fresh id; the original is untouched.
 - **Discard** swaps the layer back to the original and deletes the draft.
 
-A Motif can also be **imported** from an external single-file `.html` (its manifest island is
-parsed + validated at import; any id it claims is ignored and a fresh one minted). It lands as a
-draft to preview and install — the same path an agent-authored Motif would take.
+A Motif can also be **imported** through one **Import Motif** action from a
+`.zip` package. Direct HTML and folder imports are not supported; even a
+single-file Motif is packaged as `index.html` in a ZIP. A ZIP holds one complete Motif folder
+rooted at `index.html` (root-level contents are also accepted). The package may
+supply a `manifest.json` if its HTML has no
+manifest island. Import validates the manifest, assigns a fresh id and copies
+all companion files into a draft. Edit/fork and publication preserve the entire
+package. The original import folder is not watched; subsequent edits use the
+stored copy. See the authoring contract for local module and loader rules.
+
+**Export Motif ZIP** packages the selected built-in, installed or draft Motif
+as `<motif-id>/` with all its companion resources. Private draft Update metadata
+is omitted. Recipients import that single ZIP; scripts, models, textures, fonts
+and the parameter page arrive together. Import still creates a fresh draft for
+preview and installation, without overwriting a same-name installed Motif.
 
 ### Status display
 
@@ -483,7 +496,7 @@ preview.
 ## User Motifs
 
 Beyond the built-ins, users (and agents — see below) author their own Motifs. They're the
-same single self-contained `.html` + manifest-island documents, stored globally under
+same `.html` + manifest-island documents with optional companion resources, stored globally under
 `<app_config_dir>/motifs/` (so they're reusable across projects, like built-ins), and they
 render through the exact same capture path — once installed, a user Motif behaves
 indistinguishably from a built-in.
@@ -491,11 +504,12 @@ indistinguishably from a built-in.
 The lifecycle is **draft → preview → install**:
 
 - **Create** — three entry points: the picker's **New** (a starter draft), **Import** of an
-  external single-file `.html`, or an agent over MCP (`write_motif_draft`). A draft gets a
+  external `.zip` package, or an agent over MCP (`write_motif_draft`). A draft gets a
   unique, final-ready id at birth, so installing it needs no layer rebind.
 - **Preview** — a draft is a placeable layer; the compositor renders it **into the real
   project canvas** so the author sees it in context. A draft's frames are keyed by
-  `content_hash`, so every source edit re-captures (see [Raster cache](#raster-cache-and-escalation)).
+  `content_hash`, which covers the manifest, HTML and sorted companion paths/bytes,
+  so resource-only edits re-capture too (ADR 0079).
 - **Edit** — a placed draft layer gets an in-app **source panel** (edit the HTML + island,
   Apply → re-render). The on-disk store is also **watched**: saving a Motif's file from any
   external editor hot-reloads the same way — disk changes coalesce (debounced) into the same
@@ -550,7 +564,9 @@ capture host is the trust boundary. A **single reused offscreen Electron
 BrowserWindow** (driven over `webContents.debugger` / CDP) navigates between Motif
 ids/content hashes; isolation comes from a dedicated window (separate from the
 editor), no preload / disabled Node integration on the `motif:` origin, and CSP
-`default-src 'none'` — fully offline (no `connect-src` → no fetch/XHR/WebSocket).
+`default-src 'none'` — offline, with `connect-src 'self' data: blob:` for its own
+package and embedded buffers. Scripts/styles also load only inline or from the
+same origin; network and cross-Motif resource fetches remain blocked.
 That window-as-sandbox carries both trusted built-ins and untrusted user Motifs. On
 top of it:
 

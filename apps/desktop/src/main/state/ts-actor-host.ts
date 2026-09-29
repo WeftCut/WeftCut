@@ -366,7 +366,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),
-      readFile: deps.readFile,
       emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (motif)', err) } },
     }
     return runMotifTool(name, args, motifToolDeps)

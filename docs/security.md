@@ -62,20 +62,23 @@ offscreen capture window, and its security rests on **two orthogonal axes**:
   scheme with:
 
   ```
-  default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: motif:; font-src data: motif:
+  default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self' data: blob:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'none'
   ```
 
-  With no `connect-src` (and no `https:` anywhere) the page can make **no network
-  request** — no fetch/XHR/WebSocket, no remote `<script>`, no beacon, no iframe. It is
-  fully offline. This bounds what a Motif can *reach*.
+  `'self'` is the render page's own `motif://<id>` origin. It permits local ES
+  modules, styles, models, textures and fonts, plus embedded data/blob fetches and
+  images. It grants no HTTP(S), WebSocket, `file:`, other Motif origins or editor
+  media schemes. Workers and eval remain denied. This bounds what a Motif can
+  *reach* while remaining offline. The file resolver rejects traversal and
+  symbolic links/junctions; private draft metadata (`target`) is not served.
+  Responses use `Cache-Control: no-store` so companion URLs cannot outlive an
+  asset edit. Render hashes cover companion paths and bytes (ADR 0079).
 
   A Motif's **parameter page** (`params.html`, the one document the app frames rather
-  than captures) is served with exactly one delta: `script-src` and `style-src`
-  additionally allow the `motif:` scheme, so a parameter UI may split into companion
-  `.js`/`.css` files instead of cramming everything inline — a render document is one
-  self-contained file by construction, a parameter UI is not. Everything else,
-  including `default-src 'none'` and therefore the absent `connect-src`, is identical:
-  the page is offline too. `'self'` is used in neither CSP, because the page is framed
+  than captures) retains its separate policy: inline and `motif:` scripts/styles,
+  `data:` / `motif:` images/fonts, `default-src 'none'` and no `connect-src`.
+  It cannot fetch resources, including data/blob URLs. `'self'` is not used for
+  this page, because it is framed
   with `sandbox="allow-scripts"` and no `allow-same-origin`, so its origin is opaque
   and `'self'` would match nothing.
 
@@ -91,8 +94,8 @@ A Motif *is* untrusted author code that we intentionally run — that is the who
 So `script-src`'s usual anti-XSS role is moot here: a wholly-untrusted document has no
 trusted-vs-injected boundary to enforce, and a nonce/hash allowlist would add machinery
 for no security gain. The CSP's entire security value for Motifs lives in its *other*
-directives — the egress and remote-load controls (`default-src 'none'`, the absent
-`connect-src`, `img-src`/`font-src` limited to `data:`/`motif:`).
+directives — the egress and remote-load controls (`default-src 'none'`, connections
+limited to the package's own origin and embedded data/blob resources).
 
 ### Invariant: keep the egress axis closed
 

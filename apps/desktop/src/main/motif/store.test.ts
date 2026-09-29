@@ -128,6 +128,16 @@ describe("UserMotifStore reads", () => {
     expect(s.listDraftIds()).toEqual([]);
     expect(s.readFile("foo", "index.html")?.toString()).toContain("draft");
   });
+  it('never fills a published package with resources from a same-id draft', () => {
+    const s = new UserMotifStore(root);
+    s.writeDraft('foo', composeMotifHtml(man('foo', 'Foo', 1), body));
+    s.installDraft('foo', 'foo');
+    s.writeDraftPackage('foo', composeMotifHtml(man('foo', 'Draft', 1), body), [
+      { path: 'secret.bin', bytes: Buffer.from('draft-only') },
+    ]);
+    expect(s.readFile('foo', 'secret.bin')).toBeNull();
+    expect(s.packageFiles('foo').map(f => f.path)).toEqual(['index.html']);
+  });
   it("draft target sidecar round-trips and defaults absent", () => {
     const s = new UserMotifStore(root);
     s.writeDraft("d1", "<html>x</html>");

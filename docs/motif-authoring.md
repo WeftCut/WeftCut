@@ -28,7 +28,7 @@ frame(t) { label.textContent = Math.floor(t); }             // ✓ closed-form i
 | Forbidden pattern | Why | Write instead |
 |---|---|---|
 | `setInterval` / self-advancing rAF accumulating state | stubbed, not seekable | closed-form in `frame(t)` |
-| `fetch()` for data, fonts, images | the document is fully offline | embed as `data:` URI |
+| fetching remote data, fonts, images | the document is fully offline | bundle relative files or embed `data:` / `blob:` resources |
 | reading `Date.now()` for motion | returns virtual time | use `t` |
 | unseeded physics / particle integration | depends on the prior frame | closed-form `f(t)` or seeded `ctx.random()` |
 | global state accreted across instances | leaks after a prop-change rebuild | keep `setup` self-contained |
@@ -92,7 +92,7 @@ animation — deleting it breaks seeking back to earlier times.
   capturing; clamped to `{0, 1, 2}`, default `2`. CSS/DOM-only Motifs MAY set
   `1`; canvas/WebGL Motifs SHOULD keep `2`.
 - **`fonts`** — declares bundled font files; meaningful only for Motifs
-  installed as a directory with an `assets/` folder (built-ins). A single-file
+  installed as a directory with an `assets/` folder. A single-file
   Motif embeds fonts as `data:` URIs instead.
 
 ### Duration: three shapes
@@ -136,12 +136,37 @@ transform.
 
 The document renders in an offline, isolated capture host. Hard limits:
 
-- **One self-contained file.** The render document allows inline `<script>` and
-  `<style>` only — no external `.js`/`.css` files. Images and fonts load from
-  `data:` URIs (or from the Motif's own directory, for directory-installed
-  Motifs).
-- **No network.** No fetch, XHR, WebSocket, or any external URL. Everything the
-  document needs is embedded in it.
+- **A self-contained file or directory.** A directory has `index.html` plus
+  companion JS, CSS, models, textures and fonts. Inline scripts/styles and local
+  ES modules work. Use relative URLs: the app assigns the package's id, including
+  when forking or publishing. Bare imports such as `three` need a local import
+  map or a bundle produced before import; the app does not resolve npm packages.
+- **Local resource loading.** Render pages may fetch their own `motif://<id>/`
+  files and `data:` / `blob:` URLs. Images may use those same sources; fonts may
+  use local files or `data:` URLs. Other Motifs, `file:`, project-media schemes,
+  HTTP(S), WebSocket and remote scripts remain blocked. Workers and eval/WASM
+  compilation are not enabled: decoder-based Draco/KTX2 pipelines require
+  additional support; use uncompressed assets for now.
+- **Import a snapshot.** **Import Motif** accepts only `.zip` packages, including
+  for single-file Motifs: put the HTML in the ZIP as `index.html`.
+  ZIPs contain one Motif folder (or its contents
+  directly at the ZIP root). The folder's index carries a manifest island, or
+  `manifest.json` supplies it when the island is absent. The app copies all
+  companion files into its draft store; editing the original import folder
+  later does not edit that copy. Keep only distributable assets in the folder.
+  Symbolic links/junctions and escaping paths are rejected. Root `target` is
+  reserved for private draft metadata.
+- **Share a complete package.** Select a built-in, installed or draft Motif and
+  choose **Export Motif ZIP**. The ZIP contains `<motif-id>/index.html` and all
+  companion files, including `params.html`, scripts, models, textures and fonts.
+  Private draft `target` metadata is excluded. Import assigns a new identity;
+  sharing never carries an instruction to update an existing Motif. No separate
+  resource import is needed. ZIPs are limited to 256 MiB compressed/expanded and
+  10,000 entries; ambiguous paths and case collisions are rejected.
+- **Edits invalidate frames.** Changes to companion file names or bytes enter
+  the content hash, just like HTML edits. Edit/fork and publish preserve the
+  complete directory. The source panel edits `index.html`; companion files are
+  edited on disk in the stored Motif directory.
 - **The clock is virtual.** `Date.now`, `performance.now`, `setTimeout`,
   `setInterval`, and `requestAnimationFrame` are all owned by the harness. Do
   not capture references to time sources before `motif.define` runs.
@@ -150,6 +175,17 @@ The document renders in an offline, isolated capture host. Hard limits:
   opaque.
 - **Frames time out.** Each capture has a wall-clock cap; an infinite loop or a
   never-resolving `setup` fails the frame instead of hanging the app.
+
+### Three.js
+
+Ship the library and any addons locally. Build the scene and `await` loaders in
+`setup`, then calculate transforms from the absolute `t` and call
+`renderer.render(scene, camera)` in `frame(t)`. For example,
+`mesh.rotation.y = t * speed`, never `mesh.rotation.y += speed`. Keep
+`settle_rafs: 2`, use `alpha: true` for transparent overlays, and dispose the old
+renderer/geometries/materials/textures when rebuilding after a props change.
+Standard `GLTFLoader.loadAsync('./assets/model.glb')` and texture loaders can now
+read local files, including embedded GLB textures materialized as Blob URLs.
 
 ### Fonts
 
@@ -171,8 +207,8 @@ The host-generated form described above is the normal path — a Motif is fully
 editable with zero UI effort. A Motif MAY instead ship a `params.html` beside
 its `index.html` to own its whole parameter panel; presence of the file is the
 only switch. That page is a separate, sandboxed document with its own protocol,
-and it cannot be supplied through the MCP draft surface — drafts always get the
-generated form.
+  and a new HTML-only MCP draft gets the generated form. A draft based on an
+  existing Motif may inherit its parameter page with the rest of its resources.
 
 ## Authoring over MCP
 
@@ -190,3 +226,7 @@ per-tool contracts; the document-level facts that matter when writing:
   and every source rewrite re-captures automatically.
 - Base a new Motif on the closest existing one: read its source with
   `get_motif_source` and keep what already satisfies this contract.
+- `write_motif_draft { from }` copies that Motif's companion files into the new
+  draft as well as recording its Update target. The tool still accepts HTML,
+  not a binary resource upload; import new resource ZIPs through **Import Motif**
+  or author their files in the stored draft directory.

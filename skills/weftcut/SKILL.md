@@ -128,3 +128,19 @@ To author or update a Motif, first read `motif-authoring.md` next to this file
    three timestamps (start, middle, near the end) and once with non-default
    props before involving the user — their confirmation is still the gate.
 4. After installing, remove the trial layer unless the user wants it kept.
+
+**3D Motifs can use Three.js (`WebGLRenderer`).** Current limits:
+
+- Supply Three.js and addons inline or as local package files; there is no
+  built-in `THREE` global, npm resolution or CDN access. Local ES modules may
+  use an import map. Resources must come from the Motif's own directory or
+  supported `data:` / `blob:` URLs.
+- Await asset loading in `setup`; calculate animation from absolute `t` and
+  call `renderer.render(scene, camera)` in `frame(t)`. Avoid accumulated
+  deltas or a self-running animation loop; keep `settle_rafs: 2`.
+- Workers and WASM compilation remain disabled. Use uncompressed models and
+  ordinary image textures; Draco/KTX2 decoder pipelines are not supported yet.
+- MCP drafts accept HTML, not binary uploads. Inline resources, inherit an
+  existing package with `from`, or use the app's **Import Motif** for a resource
+  ZIP. **Export Motif ZIP** shares the complete folder with its resources.
+  See `motif-authoring.md` for the full loading contract.

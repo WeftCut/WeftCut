@@ -124,7 +124,7 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
  *  by runMotifTool. */
 export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
-  'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
+  'create_edit_draft', 'import_motif', 'export_motif', 'delete_motif', 'install_motif',
   'motif_staleness_report', 'acknowledge_motif_staleness',
 ])
 

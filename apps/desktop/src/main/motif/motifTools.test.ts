@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UserMotifStore } from './store'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
 import { runMotifTool, type MotifToolDeps } from './motifTools'
 import type { BuiltinMotif, MotifLayerRef } from './authoring'
+import { unzipSync, zipSync } from 'fflate'
 
 function m(name: string, id = 'ignored'): Manifest {
   return { id, name, version: 1, size: [100, 100], default_duration_s: 1, fonts: [], props_schema: {} }
@@ -32,7 +33,6 @@ beforeEach(() => {
     dispatchRebind: (u) => { rebinds.push(u) },
     emitChanged: () => { emitted++ },
     refreshCatalog: () => { refreshed++ },
-    readFile: (p) => { throw new Error('unexpected readFile ' + p) },
     emitLog: (e) => { logs.push(e.message) },
   }
 })
@@ -60,6 +60,15 @@ describe('runMotifTool', () => {
     expect(store.readDraftTarget(id)).toBe('countdown')
   })
 
+  it('MCP drafts inherit the source package resources', () => {
+    store.writeDraftPackage('source', doc(m('Source', 'source')), [
+      { path: 'assets/mesh.glb', bytes: Buffer.from([1, 255]) },
+    ])
+    store.installDraft('source', 'source')
+    const id = runMotifTool('write_motif_draft', { manifest: m('Revised'), html: '<head></head><body/>', from: 'source' }, deps) as string
+    expect(store.readFile(id, 'assets/mesh.glb')).toEqual(Buffer.from([1, 255]))
+  })
+
   it('amend_motif_draft uses camelCase { draftId, source }', () => {
     store.writeDraft('d1', doc(m('D', 'd1'), 'one'))
     runMotifTool('amend_motif_draft', { draftId: 'd1', source: doc(m('D', 'hacker'), 'TWO') }, deps)
@@ -72,10 +81,65 @@ describe('runMotifTool', () => {
     expect(store.getDraft(id)).not.toBeNull(); expect(emitted).toBe(1)
   })
 
-  it('import_motif reads the file then mints a draft', () => {
-    deps.readFile = vi.fn(() => doc(m('Imported', 'x'), 'IMP'))
-    const id = runMotifTool('import_motif', { path: '/some/file.html' }, deps) as string
-    expect(store.getDraft(id)!.html).toContain('IMP'); expect(emitted).toBe(1)
+  it.each([
+    { path: '/some/file.html' },
+    { path: '/some/folder', directory: true },
+    { path: '/some/folder.zip', directory: true },
+    { path: '/some/file.txt' },
+    {},
+  ])('rejects non-ZIP imports before reading or changing the catalog: %j', args => {
+    expect(() => runMotifTool('import_motif', args, deps)).toThrow(/only .zip/)
+    expect(store.listDraftIds()).toEqual([])
+    expect(emitted).toBe(0); expect(refreshed).toBe(0)
+  })
+
+  it('rejects HTML renamed to .zip', () => {
+    const zipPath = path.join(store.root(), 'fake.zip')
+    writeFileSync(zipPath, doc(m('Not a ZIP')))
+    expect(() => runMotifTool('import_motif', { path: zipPath }, deps)).toThrow()
+    expect(store.listDraftIds()).toEqual([])
+    expect(emitted).toBe(0); expect(refreshed).toBe(0)
+  })
+
+  it('exports, imports and installs a complete package with a fresh identity', () => {
+    const bytes = Buffer.from([0, 255, 128, 3])
+    store.writeDraftPackage('scene', doc(m('Scene', 'scene')), [
+      { path: 'assets/model.glb', bytes }, { path: 'params.html', bytes: Buffer.from('controls') },
+    ])
+    store.writeDraftTarget('scene', 'original')
+    const zipPath = path.join(store.root(), 'scene.ZIP')
+    runMotifTool('export_motif', { id: 'scene', path: zipPath }, deps)
+    expect(emitted).toBe(0)
+    expect(Object.keys(unzipSync(readFileSync(zipPath)))).not.toContain('scene/target')
+    const id = runMotifTool('import_motif', { path: zipPath }, deps) as string
+    expect(id).not.toBe('scene')
+    expect(store.readDraftTarget(id)).toBeNull()
+    runMotifTool('install_motif', { draft_id: id, mode: 'new' }, deps)
+    expect(store.readFile(id, 'assets/model.glb')).toEqual(bytes)
+    expect(store.hasFile(id, 'params.html')).toBe(true)
+    expect(store.getMotif('scene')).not.toBeNull()
+    expect(emitted).toBe(2); expect(refreshed).toBe(2)
+  })
+
+  it('exports built-ins and imports a separate manifest from a ZIP', () => {
+    const zipPath = path.join(store.root(), 'builtin.zip')
+    runMotifTool('export_motif', { id: 'countdown', path: zipPath }, deps)
+    const id = runMotifTool('import_motif', { path: zipPath }, deps) as string
+    expect(store.getDraft(id)!.manifest.name).toBe('Countdown')
+    writeFileSync(zipPath, zipSync({
+      'scene/index.html': Buffer.from('<head></head><body>external</body>'),
+      'scene/manifest.json': Buffer.from(JSON.stringify(m('External'))),
+    }))
+    const external = runMotifTool('import_motif', { path: zipPath }, deps) as string
+    expect(store.getDraft(external)!.manifest.name).toBe('External')
+  })
+
+  it('a rejected ZIP leaves no draft and emits no catalog change', () => {
+    const zipPath = path.join(store.root(), 'bad.zip')
+    writeFileSync(zipPath, zipSync({ 'index.html': Buffer.from(doc(m('Bad'))), '../escape': Buffer.from('x') }))
+    expect(() => runMotifTool('import_motif', { path: zipPath }, deps)).toThrow()
+    expect(store.listDraftIds()).toEqual([])
+    expect(emitted).toBe(0); expect(refreshed).toBe(0)
   })
 
   it('delete_motif removes a published motif and emits', () => {

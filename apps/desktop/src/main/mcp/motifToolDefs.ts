@@ -60,7 +60,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
       '(optional) records an existing Motif id as the draft\'s UPDATE target so a later ' +
       '`install_motif {mode:\'update\'}` republishes over it; omit `from` for a brand-new ' +
       'Motif (installs as new). The manifest\'s `id`/`version` are ignored — app-assigned. ' +
-      'Expose tweakable controls via `props_schema`.',
+      'Companion files are copied from `from` when present. Expose tweakable controls via `props_schema`.',
     inputSchema: {
       type: 'object',
       properties: {

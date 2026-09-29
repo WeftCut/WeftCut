@@ -3058,10 +3058,15 @@ export async function createEditDraft(sourceId: string): Promise<string> {
   return invoke<string>("create_edit_draft", { sourceId });
 }
 
-/// Import an external `.html` Motif file (an absolute path from the OS dialog) as
-/// a draft. Returns the new draft id.
+/// Import a Motif ZIP package from the OS dialog.
+/// Copies a snapshot into a new draft and returns its id.
 export async function importMotif(path: string): Promise<string> {
   return invoke<string>("import_motif", { path });
+}
+
+/// Export the complete package (built-in, installed or draft) as one ZIP folder.
+export async function exportMotif(id: string, path: string): Promise<void> {
+  await invoke("export_motif", { id, path });
 }
 
 /// One row of the on-open staleness report (docs/motifs.md "User Motifs"):

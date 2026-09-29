@@ -68,6 +68,11 @@ function memFs() {
       if (v === undefined) throw new Error('ENOENT ' + p)
       return v
     },
+    readFileBytes: (p) => {
+      const v = files.get(p)
+      if (v === undefined) throw new Error('ENOENT ' + p)
+      return Buffer.from(v)
+    },
     fileSize: (p) => {
       const v = files.get(p)
       return v === undefined ? 0 : Buffer.byteLength(v, 'utf8')
@@ -241,6 +246,17 @@ describe('runCopy', () => {
 })
 
 describe('verify', () => {
+  it('detects same-size resource corruption without an HTML change', () => {
+    const m = memFs()
+    m.write('/old/motifs/scene/index.html', motifHtml('scene'))
+    m.write('/new/motifs/scene/index.html', motifHtml('scene'))
+    m.write('/old/motifs/scene/assets/model.glb', 'AAAA')
+    m.write('/new/motifs/scene/assets/model.glb', 'BBBB')
+    expect(verify('/old', '/new', m.fs, join).ok).toBe(false)
+    m.write('/new/motifs/scene/assets/model.glb', 'AAAA')
+    expect(verify('/old', '/new', m.fs, join).ok).toBe(true)
+  })
+
   it('passes for a faithful copy', () => {
     const m = memFs()
     seedOldRoot(m)

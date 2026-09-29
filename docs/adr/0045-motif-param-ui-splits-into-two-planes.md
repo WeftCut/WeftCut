@@ -4,6 +4,10 @@ status: accepted
 
 # A Motif's parameter surface splits in two: the schema is the data plane, the Motif owns the UI plane
 
+The exclusion of parameter resource bytes from the render hash is revised by
+[ADR 0079](0079-motifs-bundle-local-resources-and-hash-the-package.md). The schema
+and parameter-page protocol remain unchanged.
+
 ## Context
 
 A Motif's parameter panel was generated entirely by the host from the manifest's

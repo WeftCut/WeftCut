@@ -18,6 +18,8 @@ import type { MotifSummary } from "../ipc";
 const ipcMocks = vi.hoisted(() => ({
   listMotifs: vi.fn(),
   addMotif: vi.fn(),
+  importMotif: vi.fn(),
+  exportMotif: vi.fn(),
 }));
 
 vi.mock("../ipc", async (importActual) => {
@@ -32,7 +34,7 @@ vi.mock("../ipc/compositionScoped", () => ({
 vi.mock("@/bridge/events", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
-vi.mock("@/bridge/dialog", () => ({ open: vi.fn() }));
+vi.mock("@/bridge/dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 // The preview's CDP capture has no jsdom stand-in; a never-settling promise
 // parks every preview in its loading state, which the form doesn't depend on.
 vi.mock("../render/motifs/host", () => ({
@@ -41,6 +43,7 @@ vi.mock("../render/motifs/host", () => ({
 
 import { setUserMotifs } from "../render/motifs/catalog";
 import { MotifPicker } from "./MotifPicker";
+import { open, save } from "@/bridge/dialog";
 
 afterEach(() => {
   cleanup();
@@ -91,6 +94,41 @@ async function renderPicker() {
     expect(screen.getByRole("button", { name: "Add to timeline" })).toBeTruthy(),
   );
 }
+
+describe('Motif package actions', () => {
+  it('accepts only ZIP in the import picker, and respects cancellation', async () => {
+    await renderPicker();
+    vi.mocked(open).mockResolvedValueOnce(null).mockResolvedValueOnce('/shared/scene.zip');
+    const button = screen.getByRole('button', { name: 'Import Motif' });
+    fireEvent.click(button);
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(ipcMocks.importMotif).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(ipcMocks.importMotif).toHaveBeenCalledWith('/shared/scene.zip'));
+    expect(open).toHaveBeenLastCalledWith({ multiple: false, filters: [{ name: 'Motif ZIP', extensions: ['zip'] }] });
+    expect(screen.queryByRole('button', { name: 'Import folder' })).toBeNull();
+  });
+
+  it('exports the selected Motif after choosing a ZIP destination', async () => {
+    await renderPicker();
+    vi.mocked(save).mockResolvedValueOnce(null).mockResolvedValueOnce('/shared/badge.zip');
+    const button = screen.getByRole('button', { name: 'Export Motif ZIP' });
+    fireEvent.click(button);
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(ipcMocks.exportMotif).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(ipcMocks.exportMotif).toHaveBeenCalledWith('badge', '/shared/badge.zip'));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ defaultPath: 'badge.zip' }));
+  });
+
+  it('shows export failures in the picker', async () => {
+    await renderPicker();
+    vi.mocked(save).mockResolvedValueOnce('/shared/badge.zip');
+    ipcMocks.exportMotif.mockRejectedValueOnce(new Error('Disk full'));
+    fireEvent.click(screen.getByRole('button', { name: 'Export Motif ZIP' }));
+    await waitFor(() => expect(screen.getByText('Error: Disk full')).toBeTruthy());
+  });
+});
 
 function colorSwatch(pattern: RegExp): HTMLInputElement {
   const el = screen.getByLabelText(pattern) as HTMLInputElement;

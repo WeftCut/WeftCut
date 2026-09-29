@@ -5,12 +5,15 @@
 // `route === 'motif'`). Returns a RAW value (array | object | id string | null);
 // the MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
 import type { Manifest } from '../../shared/motifs/catalog'
+import { writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { encodeMotifZip, readMotifZip } from './archive'
 import type { MotifRebindEntry } from '../state/model'
 import type { UserMotifStore } from './store'
 import {
   type BuiltinMotif, type MotifLayerRef, type InstallArgs,
   getMotifSource, listMotifsInner, writeMotifDraftCore, amendDraftHtml,
-  createEditDraftCore, importMotifFromSource, deleteMotifCore, installMotifCompute,
+  createEditDraftCore, importMotifPackage, motifSourceFiles, deleteMotifCore, installMotifCompute,
 } from './authoring'
 import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness'
 
@@ -25,8 +28,6 @@ export interface MotifToolDeps {
   emitChanged: () => void
   /** Re-pull list_motifs → actor.setUserMotifManifests (content-window clamp). */
   refreshCatalog: () => void
-  /** node:fs readFileSync(utf8) — import_motif reads an external .html. */
-  readFile: (p: string) => string
   /** Emit a record-panel LogBus warn row (the on-open staleness summary).
    *  Best-effort; the host wraps the underlying emit in try/catch. */
   emitLog: (entry: { level: 'warn'; category: { kind: 'Project' }; source: { kind: 'System' }; message: string }) => void
@@ -62,7 +63,9 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     case 'get_motif_source':
       return getMotifSource(deps.store, deps.builtins, a.id as string)
     case 'write_motif_draft': {
-      const id = writeMotifDraftCore(deps.store, a.manifest as Manifest, a.html as string, (a.from as string | undefined) ?? null)
+      const from = (a.from as string | undefined) ?? null
+      const files = from ? motifSourceFiles(deps.store, deps.builtins, from) : []
+      const id = writeMotifDraftCore(deps.store, a.manifest as Manifest, a.html as string, from, files)
       deps.emitChanged(); deps.refreshCatalog()
       return id
     }
@@ -78,9 +81,23 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       return id
     }
     case 'import_motif': {
-      const id = importMotifFromSource(deps.store, deps.readFile(a.path as string))
+      if (a.directory === true || typeof a.path !== 'string' || path.extname(a.path).toLowerCase() !== '.zip') {
+        throw new Error('Import Motif accepts only .zip packages. Package index.html and its resources in a ZIP first.')
+      }
+      const id = importMotifPackage(deps.store, readMotifZip(a.path))
       deps.emitChanged(); deps.refreshCatalog()
       return id
+    }
+    case 'export_motif': {
+      const id = a.id as string
+      const source = getMotifSource(deps.store, deps.builtins, id)
+      const files = motifSourceFiles(deps.store, deps.builtins, id)
+      const bytes = encodeMotifZip(id, [
+        { path: 'index.html', bytes: Buffer.from(source.html) },
+        ...files.filter(f => f.path !== 'index.html'),
+      ])
+      writeFileSync(a.path as string, bytes)
+      return null
     }
     case 'delete_motif': {
       deleteMotifCore(deps.store, a.id as string)

@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app } from "electron";
 import { BUILTIN_IDS } from "../../shared/motifs/catalog";
 import type { UserMotifStore } from "./store";
+import { readMotifFile } from './packageFiles';
 
 /**
  * PRODUCTION-ONLY: base dir of built-in served assets. Mirrors the ffmpeg-sidecar
@@ -24,6 +24,9 @@ export function contentTypeFor(rel: string): string {
     case "js": case "mjs": return "text/javascript; charset=utf-8";
     case "css": return "text/css; charset=utf-8";
     case "json": return "application/json; charset=utf-8";
+    case "gltf": return "model/gltf+json";
+    case "glb": return "model/gltf-binary";
+    case "wasm": return "application/wasm";
     case "svg": return "image/svg+xml";
     case "png": return "image/png";
     case "jpg": case "jpeg": return "image/jpeg";
@@ -35,17 +38,6 @@ export function contentTypeFor(rel: string): string {
     case "otf": return "font/otf";
     default: return "application/octet-stream";
   }
-}
-
-/** Reject a `/`-relative path that could escape the motif dir (built-in side). */
-function safeBuiltinRel(rel: string): string[] | null {
-  const out: string[] = [];
-  for (const seg of rel.split("/")) {
-    if (seg === "" || seg === "." || seg === "..") return null;
-    if (seg.includes("\\") || seg.includes(":")) return null;
-    out.push(seg);
-  }
-  return out.length === 0 ? null : out;
 }
 
 /**
@@ -63,14 +55,9 @@ export function resolveMotifFile(
     // Built-in branch is TERMINAL: a built-in id always wins and never falls
     // through to the user store — a missing/unsafe read returns null rather than
     // letting a same-id user file shadow a built-in.
-    const safe = safeBuiltinRel(rest);
-    if (!safe) return null;
-    try {
-      const bytes = readFileSync(path.join(builtinDir, id, ...safe));
-      return { bytes, contentType: contentTypeFor(rest) };
-    } catch {
-      return null;
-    }
+    if (rest.toLowerCase() === 'target') return null;
+    const bytes = readMotifFile(builtinDir, `${id}/${rest}`);
+    return bytes ? { bytes, contentType: contentTypeFor(rest) } : null;
   }
   const bytes = store.readFile(id, rest);
   return bytes ? { bytes, contentType: contentTypeFor(rest) } : null;

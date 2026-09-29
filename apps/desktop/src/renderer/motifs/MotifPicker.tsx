@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FolderInputIcon, PlusIcon } from "lucide-react";
+import { FolderInputIcon, FolderOutputIcon, PlusIcon } from "lucide-react";
 import { listen } from "@/bridge/events";
-import { open as openDialog } from "@/bridge/dialog";
+import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppDialog } from "../components/AppDialog";
@@ -11,6 +11,7 @@ import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
   importMotif,
+  exportMotif,
   listMotifs,
   MOTIFS_CHANGED_EVENT,
   writeMotifDraft,
@@ -166,13 +167,30 @@ export function MotifPicker({
 
   const importFile = async () => {
     try {
+      setError(null);
       const path = await openDialog({
         multiple: false,
-        filters: [{ name: "Motif HTML", extensions: ["html"] }],
+        filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
       });
       if (typeof path !== "string") return; // cancelled / multiple
       const draftId = await importMotif(path);
       setSelectedId(draftId); // motifs:changed → reload() surfaces the card
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const exportSelected = async () => {
+    if (!selectedId) return;
+    try {
+      setError(null);
+      const path = await saveDialog({
+        title: t("motif_picker.export_button"),
+        defaultPath: `${selectedId}.zip`,
+        filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
+      });
+      if (!path) return;
+      await exportMotif(selectedId, path);
     } catch (e) {
       setError(String(e));
     }
@@ -230,6 +248,16 @@ export function MotifPicker({
                   onClick={() => void importFile()}
                 >
                   <FolderInputIcon size={14} aria-hidden />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={t("motif_picker.export_button")}
+                  aria-label={t("motif_picker.export_button")}
+                  disabled={!selectedId}
+                  onClick={() => void exportSelected()}
+                >
+                  <FolderOutputIcon size={14} aria-hidden />
                 </Button>
               </div>
               <div className="motif-picker-list">
@@ -645,4 +673,3 @@ function MotifCardThumbnail({
   const defaults = useMemo(() => defaultPropsFor(motif), [motif]);
   return <MotifPreview motif={motif} props={defaults} maxWidth={240} fpsNum={fpsNum} fpsDen={fpsDen} />;
 }
-

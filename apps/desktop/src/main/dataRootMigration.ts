@@ -36,6 +36,8 @@ export interface MigrationFs {
   readDir(path: string): string[]
   /** Read a file as utf-8 text (throws on a missing file). */
   readFileText(path: string): string
+  /** Binary Motif resources must be verified without UTF-8 decoding. */
+  readFileBytes(path: string): Buffer
   /** Byte size of a file (0 when it can't be stat'd). */
   fileSize(path: string): number
   mkdirp(path: string): void
@@ -277,10 +279,22 @@ function motifValueAt(dir: string, fs: MigrationFs, join: Join): string | null {
   } catch {
     return null
   }
+  const files: Array<{ path: string; bytes: Buffer }> = []
+  const visit = (folder: string, prefix: string): void => {
+    for (const name of fs.readDir(folder)) {
+      const p = join(folder, name)
+      const rel = prefix + name
+      if (fs.isDirectory(p)) visit(p, rel + '/')
+      else if (rel !== 'index.html' && rel !== 'target') files.push({ path: rel, bytes: fs.readFileBytes(p) })
+    }
+  }
+  // A failed binary read must fail verification, never fall back to HTML-only.
+  visit(dir, '')
   try {
-    return motifContentHash(parseManifestIsland(html), html)
+    return motifContentHash(parseManifestIsland(html), html, files)
   } catch {
-    return 'raw:' + html
+    return 'raw:' + motifContentHash({ id: '', name: '', version: 0, size: [1, 1],
+      default_duration_s: 1, props_schema: {} }, html, files)
   }
 }
 

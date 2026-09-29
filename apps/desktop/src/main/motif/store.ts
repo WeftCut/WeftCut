@@ -4,26 +4,16 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
+import { motifFileSegments, readMotifFile, readMotifDirectory, type MotifFile } from './packageFiles';
 
 export const DRAFTS_DIR = "drafts";
 
 /** Reject an id segment that could traverse or escape. */
 function safeSeg(seg: string): string {
-  if (seg === "" || seg === "." || seg === ".." || seg.includes("/") || seg.includes("\\") || seg.includes(":")) {
+  if (motifFileSegments(seg)?.length !== 1) {
     throw new Error(`unsafe path segment: ${JSON.stringify(seg)}`);
   }
   return seg;
-}
-
-/** Validate a `/`-separated relative path into safe segments, or null. */
-function safeRel(rel: string): string[] | null {
-  const out: string[] = [];
-  for (const seg of rel.split("/")) {
-    if (seg === "" || seg === "." || seg === "..") return null;
-    if (seg.includes("\\") || seg.includes(":")) return null;
-    out.push(seg);
-  }
-  return out.length === 0 ? null : out;
 }
 
 type MotifSource = { manifest: Manifest; html: string };
@@ -35,27 +25,29 @@ export class UserMotifStore {
   root(): string { return this._root; }
   private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }
 
-  /** Published copy first, then draft of the same id. */
-  readFile(id: string, rel: string): Buffer | null {
-    if (id === DRAFTS_DIR) return null;
-    const safeId = safeRel(id);
-    const safe = safeRel(rel);
-    if (!safeId || !safe) return null;
-    const published = path.join(this._root, ...safeId, ...safe);
-    try { return readFileSync(published); } catch { /* fall through */ }
-    const draft = path.join(this.draftsRoot(), ...safeId, ...safe);
-    try { return readFileSync(draft); } catch { return null; }
+  /** Choose one complete package; never fill missing published assets from a draft. */
+  private packageRel(id: string): string | null {
+    if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
+    for (const rel of [id, `${DRAFTS_DIR}/${id}`]) {
+      if (readMotifFile(this._root, `${rel}/index.html`)) return rel;
+    }
+    return null;
   }
 
-  /** Published copy first, then draft — the `readFile` resolution order without
-   *  the read. Used for presence checks on optional companion files. */
+  readFile(id: string, rel: string): Buffer | null {
+    if (!motifFileSegments(rel) || rel.toLowerCase() === 'target') return null;
+    const pkg = this.packageRel(id);
+    return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
+  }
+
+  packageFiles(id: string): MotifFile[] {
+    const rel = this.packageRel(id);
+    return rel ? readMotifDirectory(path.join(this._root, rel)) : [];
+  }
+
+  /** Presence in the selected package, with the same confinement as reads. */
   hasFile(id: string, rel: string): boolean {
-    if (id === DRAFTS_DIR) return false;
-    const safeId = safeRel(id);
-    const safe = safeRel(rel);
-    if (!safeId || !safe) return false;
-    if (existsSync(path.join(this._root, ...safeId, ...safe))) return true;
-    return existsSync(path.join(this.draftsRoot(), ...safeId, ...safe));
+    return this.readFile(id, rel) !== null;
   }
 
   readHtml(id: string): string | null {
@@ -74,6 +66,27 @@ export class UserMotifStore {
     const dir = path.join(this.draftsRoot(), safeSeg(draftId));
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "index.html"), html);
+  }
+
+  /** New drafts copy a validated snapshot, preserving relative asset URLs. */
+  writeDraftPackage(draftId: string, html: string, files: readonly MotifFile[]): void {
+    const dir = path.join(this.draftsRoot(), safeSeg(draftId));
+    if (existsSync(dir)) throw new Error(`draft '${draftId}' already exists`);
+    for (const file of files) {
+      if (!motifFileSegments(file.path)) throw new Error(`Invalid Motif asset path: ${file.path}`);
+    }
+    try {
+      this.writeDraft(draftId, html);
+      for (const file of files) {
+        if (file.path === 'index.html' || file.path.toLowerCase() === 'target') continue;
+        const dest = path.join(dir, ...file.path.split('/'));
+        mkdirSync(path.dirname(dest), { recursive: true });
+        writeFileSync(dest, file.bytes);
+      }
+    } catch (error) {
+      rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   writeDraftTarget(draftId: string, targetId: string): void {

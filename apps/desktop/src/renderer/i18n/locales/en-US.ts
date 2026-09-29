@@ -2256,6 +2256,7 @@ const enUS = {
     adding: "Adding…",
     new_button: "New Motif",
     import_button: "Import Motif",
+    export_button: "Export Motif ZIP",
     untitled_name: "Untitled Motif",
     search_placeholder: "Search motifs…",
     search_clear: "Clear search",

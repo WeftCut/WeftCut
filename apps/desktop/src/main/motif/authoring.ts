@@ -12,8 +12,9 @@ import {
 import type { MotifRebindEntry } from '../state/model'
 import { motifContentHash } from './contentHash'
 import type { UserMotifStore } from './store'
+import { readMotifDirectory, type MotifFile } from './packageFiles'
 
-export interface BuiltinMotif { id: string; manifest: Manifest; html: string; hasParamsUi: boolean }
+export interface BuiltinMotif { id: string; manifest: Manifest; html: string; hasParamsUi: boolean; files?: MotifFile[] }
 export interface MotifSourceTs { manifest: Manifest; html: string }
 
 /** Load each built-in's {id, manifest, html}. Manifest comes from the bundled
@@ -31,7 +32,7 @@ export function builtinMotifs(builtinDir: string): BuiltinMotif[] {
     let html: string
     try { html = readFileSync(path.join(builtinDir, id, 'index.html'), 'utf8') } catch { continue }
     const hasParamsUi = existsSync(path.join(builtinDir, id, PARAMS_PAGE_FILE))
-    out.push({ id, manifest, html, hasParamsUi })
+    out.push({ id, manifest, html, hasParamsUi, files: readMotifDirectory(path.join(builtinDir, id)) })
   }
   return out
 }
@@ -50,15 +51,29 @@ export function getMotifSource(store: UserMotifStore, builtins: BuiltinMotif[], 
  *  so built-in/installed/draft emit the same shape. `html` MUST be the
  *  composed/stored FULL html (island included) — content_hash is computed over it.
  *  `hasParamsUi` is presence of the optional `params.html` companion; it rides
- *  the payload as `has_params_ui` and never enters the island or content hash. */
+ *  the payload as `has_params_ui`. All companion bytes enter the hash because
+ *  render scripts may read any package resource (including shared UI assets). */
 export function motifToPayload(
   manifest: Manifest,
   html: string,
   status: string,
   hasParamsUi = false,
+  files: readonly MotifFile[] = [],
 ): Record<string, unknown> {
-  const content_hash = motifContentHash(manifest, html)
+  const content_hash = motifContentHash(manifest, html, files)
   return { ...manifest, html, status, content_hash, has_params_ui: hasParamsUi }
+}
+
+/** One snapshot supplies HTML, resources and UI presence. A partial external
+ * save or invalid package must not make every other Motif disappear. */
+function userMotifPayload(store: UserMotifStore, id: string, status: string): Record<string, unknown> | null {
+  try {
+    const files = store.packageFiles(id)
+    const html = files.find(f => f.path === 'index.html')?.bytes.toString('utf8')
+    if (html === undefined) return null
+    return motifToPayload(parseManifestIsland(html), html, status,
+      files.some(f => f.path === PARAMS_PAGE_FILE), files)
+  } catch { return null }
 }
 
 /** UI catalog: builtins, then installed, then drafts (id-unique; a draft whose id
@@ -69,19 +84,17 @@ export function motifToPayload(
  *  it takes for a hand-authored `params.html` to appear or vanish. */
 export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
-  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin', b.hasParamsUi))
+  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin', b.hasParamsUi, b.files))
   for (const manifest of store.listManifests()) {
-    // list_manifests already confirmed the island parsed; re-read html for the
-    // payload. readHtml may return null on a TOCTOU (file vanished) — blank card
-    // rather than failing the whole list.
-    const html = store.readHtml(manifest.id) ?? ''
-    out.push(motifToPayload(manifest, html, 'installed', store.hasFile(manifest.id, PARAMS_PAGE_FILE)))
+    const entry = userMotifPayload(store, manifest.id, 'installed')
+    if (entry) out.push(entry)
   }
   const seen = new Set(out.map((e) => e.id as string))
   for (const draft of store.listDrafts()) {
     const draftId = draft.manifest.id
     if (seen.has(draftId)) continue
-    const entry = motifToPayload(draft.manifest, draft.html, 'draft', store.hasFile(draftId, PARAMS_PAGE_FILE))
+    const entry = userMotifPayload(store, draftId, 'draft')
+    if (!entry) continue
     const target = store.readDraftTarget(draftId)
     if (target) entry.target_id = target
     out.push(entry)
@@ -102,11 +115,11 @@ function takenIds(store: UserMotifStore): string[] {
 /** Validate + mint id + compose + write the draft. Identity is app-owned: id is
  *  minted from the name and version forced to 1 (any id/version in `manifest` is
  *  ignored). `from` (when set) is recorded as the draft's Update target. */
-export function writeMotifDraftCore(store: UserMotifStore, manifest: Manifest, html: string, from: string | null): string {
+export function writeMotifDraftCore(store: UserMotifStore, manifest: Manifest, html: string, from: string | null, files: readonly MotifFile[] = []): string {
   validateManifest(manifest)
   const draftId = assignUniqueId(manifest.name, takenIds(store))
   const finalManifest: Manifest = { ...manifest, id: draftId, version: 1 }
-  store.writeDraft(draftId, composeMotifHtml(finalManifest, html))
+  store.writeDraftPackage(draftId, composeMotifHtml(finalManifest, html), files)
   if (from) store.writeDraftTarget(draftId, from)
   return draftId
 }
@@ -139,21 +152,26 @@ export function createEditDraftCore(store: UserMotifStore, builtins: BuiltinMoti
   if (!source) throw new Error(`unknown source motif '${sourceId}'`)
   const draftId = assignUniqueId(source.manifest.name, takenIds(store))
   const manifest: Manifest = { ...source.manifest, id: draftId, version: 1 }
-  store.writeDraft(draftId, composeMotifHtml(manifest, source.html))
+  store.writeDraftPackage(draftId, composeMotifHtml(manifest, source.html), motifSourceFiles(store, builtins, sourceId))
   if (!isBuiltin) store.writeDraftTarget(draftId, sourceId)
   return draftId
 }
 
-/** Parse + validate the island from an external .html, mint a FRESH unique id
- *  (ignoring any claimed id/version), write as a from-scratch draft (no target →
- *  installs as new). */
-export function importMotifFromSource(store: UserMotifStore, source: string): string {
-  const parsed = parseManifestIsland(source)
-  const draftId = assignUniqueId(parsed.name, takenIds(store))
-  const manifest: Manifest = { ...parsed, id: draftId, version: 1 }
-  validateManifest(manifest)
-  store.writeDraft(draftId, composeMotifHtml(manifest, source))
-  return draftId
+/** Binary assets stay on disk, never in the catalog/IPC payload. */
+export function motifSourceFiles(store: UserMotifStore, builtins: BuiltinMotif[], id: string): MotifFile[] {
+  const builtin = builtins.find(b => b.id === id)
+  return builtin ? builtin.files ?? [] : store.packageFiles(id)
+}
+
+/** Import a decoded ZIP snapshot as a fresh draft. An HTML island wins;
+ * manifest.json is accepted when the index has no island. */
+export function importMotifPackage(store: UserMotifStore, files: readonly MotifFile[]): string {
+  const html = files.find(f => f.path === 'index.html')?.bytes.toString('utf8')
+  if (html === undefined) throw new Error('A Motif folder must contain index.html')
+  const manifestFile = files.find(f => f.path === 'manifest.json')
+  const manifest: Manifest = html.includes('id="motif-manifest"') || !manifestFile
+    ? parseManifestIsland(html) : JSON.parse(manifestFile.bytes.toString('utf8')) as Manifest
+  return writeMotifDraftCore(store, manifest, html, null, files)
 }
 
 /** Delete a published user Motif (built-ins rejected). */

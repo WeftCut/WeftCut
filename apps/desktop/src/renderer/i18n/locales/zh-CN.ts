@@ -2002,6 +2002,7 @@ const zhCN: Resources = {
     adding: "添加中…",
     new_button: "新建 Motif",
     import_button: "导入 Motif",
+    export_button: "导出 Motif ZIP",
     untitled_name: "未命名 Motif",
     search_placeholder: "搜索 Motif…",
     search_clear: "清除搜索",
