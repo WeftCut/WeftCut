@@ -616,8 +616,9 @@ export function LayerBlock({
     const selectedAtPointerDown = layerIdsOf(currentSelection());
     // `docs/features.md#links` — match click-selection semantics on
     // pointerdown so drag and click share the same link-aware path.
+    const narrowLinkedSelection = linksOff && linkId !== null && !e.altKey && !e.shiftKey;
     const preserveSelection = kind === "move" && !e.altKey && !e.shiftKey &&
-      selectedAtPointerDown.has(layer.id);
+      !narrowLinkedSelection && selectedAtPointerDown.size > 1 && selectedAtPointerDown.has(layer.id);
     const stillSelected = preserveSelection || onSelectFromClick(layer.id, {
       altKey: e.altKey,
       shiftKey: e.shiftKey,
@@ -648,7 +649,11 @@ export function LayerBlock({
       duplicate: e.altKey && kind === "move",
       escapeLink: e.altKey && kind !== "move",
       wasSelectedAtPointerDown: isSelected,
-      selectedAtPointerDown,
+      // Links off must not resurrect the old linked selection when this same
+      // press becomes a drag. Ordinary multi-selection and Alt-copy keep their
+      // pre-click snapshot.
+      selectedAtPointerDown: narrowLinkedSelection
+        ? layerIdsOf(currentSelection()) : selectedAtPointerDown,
     });
   };
 

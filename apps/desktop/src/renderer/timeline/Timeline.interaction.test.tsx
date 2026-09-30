@@ -69,6 +69,7 @@ import {
 import { setActiveRegion } from "../focus/focusRegionStore";
 import { endRename } from "./renameStore";
 import { setTool } from "../state/toolStore";
+import { setLinkOverride } from "../state/linkOverrideStore";
 import { listCommands, registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
@@ -313,6 +314,7 @@ function renderTimeline(overrides: {
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     clearLayerSelection();
+    setLinkOverride(false);
     // No region by default: a leaked one would arm every timeline-scoped
     // binding for tests that never meant to exercise the keyboard.
     setActiveRegion(null);
@@ -340,6 +342,7 @@ describe("Timeline seek/selection coupling", () => {
   afterEach(() => {
     useMediaDragStore.getState().end();
     cleanup();
+    setLinkOverride(false);
     vi.useRealTimers();
   });
 
@@ -1465,8 +1468,9 @@ describe("Timeline seek/selection coupling", () => {
     expect(zTier(chip)).toBeGreaterThan(Math.max(...blocks.map(zTier)));
   });
 
-  it("moves an unlinked multi-selection together without collapsing it", async () => {
+  it.each([false, true])("moves an unlinked multi-selection together without collapsing it (links off: %s)", async (linksOff) => {
     ipcMocks.moveLayers.mockClear();
+    setLinkOverride(linksOff);
     const { getByText } = renderTimeline({ tracks: [linkedTrack], links: [] });
     act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
     const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
@@ -1481,6 +1485,37 @@ describe("Timeline seek/selection coupling", () => {
       [{ layerId: layer.id, trackId: track.id }, { layerId: linkedLayer.id, trackId: track.id }],
       layer.id, 1_000_000,
     ));
+  });
+
+  it.each(["click", "drag"])("link override narrows an already-selected pair on %s", async (gesture) => {
+    ipcMocks.moveLayers.mockClear();
+    // Leave room for Clip A to move alone without colliding with its partner.
+    const partner = { ...linkedLayer, t_start_us: 4_000_000, t_end_us: 6_000_000 };
+    const { getByText } = renderTimeline({ tracks: [{ ...track, layers: [layer, partner] }], links: [link] });
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    act(() => setLinkOverride(true));
+    const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(first, { button: 0, clientX: 0, clientY: 30 });
+    expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id]));
+    if (gesture === "drag") {
+      fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
+      expect(first.style.left).toBe("80px");
+      expect(second.style.left).toBe("320px");
+    }
+    fireEvent.pointerUp(window, { clientX: gesture === "drag" ? 80 : 0, clientY: 30 });
+    if (gesture === "drag") {
+      await waitFor(() => expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+        layer.id, track.id, 1_000_000, true,
+      ));
+    } else {
+      expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    }
+    expect(ipcMocks.moveLayers).not.toHaveBeenCalled();
+    act(() => setLinkOverride(false));
+    fireEvent.pointerDown(first, { button: 0, clientX: 0, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 30 });
+    expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id, linkedLayer.id]));
   });
 
   it("previews and commits the lane offset for the whole selection", async () => {
