@@ -197,6 +197,12 @@ export class TextSprite implements StageableSprite {
     this.snapToPixels = init.snapToPixels === true;
     this.text = new Text({
       text: "",
+      // Pixi's shadow pass moves black source glyphs off-canvas using pixel
+      // height as a logical distance. Inheriting a preview resolution below 1
+      // can leave those glyphs visible as a second line. Keep glyph textures
+      // at composition resolution and downsample the finished preview instead.
+      // Export already renders at resolution 1.
+      resolution: 1,
       style: new TextStyle({
         fontFamily: "Arial",
         fontSize: 48,
