@@ -109,7 +109,8 @@ describe('the destructive set', () => {
   })
 
   it('a set is idempotent, a creation is not', () => {
-    expect(ann('set_position').idempotentHint).toBe(true)
+    expect(ann('set_position').idempotentHint).toBeUndefined() // replacement generates fresh node/key IDs
+    expect(ann('set_param_track').idempotentHint).toBeUndefined()
     expect(ann('update_layer').idempotentHint).toBe(true)
     expect(ann('add_track').idempotentHint).toBeUndefined()
     expect(ann('paste_layers').idempotentHint).toBeUndefined()

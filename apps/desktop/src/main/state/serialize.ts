@@ -2,6 +2,7 @@ import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project
 import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
+import { isUuid } from './ids'
 
 function serializeLink(g: Link): unknown {
   return { id: g.id, members: [...g.members].sort() }
@@ -389,6 +390,8 @@ export function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
     for (const k of track.value as unknown[]) {
       if (!isObj(k)) continue
       const id = typeof k.id === 'string' ? k.id : '<no id>'
+      if (!isUuid(id))
+        throw new Error(`parseProject: ${path} keyframe ${id} must have a UUID id; repair this project's keyframe IDs before opening`)
       if ('interp' in k) refuse(path, `keyframe ${id} carries the retired per-segment "interp" field`)
       for (const field of ['in', 'out', 'continuity', 'segment'] as const) if (k[field] === undefined) refuse(path, `keyframe ${id} lacks "${field}"`)
       checkTangent(path, id, 'in', k.in)

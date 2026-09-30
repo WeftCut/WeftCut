@@ -2126,7 +2126,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_param_track': {
-          const p = mcpDef('set_param_track').parseDedicated!(a)
+          const p = mcpDef('set_param_track').parseDedicated!(a, idGen)
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
@@ -2242,7 +2242,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       }
       const parse = MCP_ARG_PARSERS[name]
       if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }
-      const { op, args } = parse(a)
+      const { op, args } = parse(a, idGen)
       // `update_effect`'s param check needs the effect's KIND, which only the
       // snapshot knows: an unknown key or an out-of-range value on a catalogued
       // kind is refused here, before dispatch (mcp-commands.ts owns the rule).

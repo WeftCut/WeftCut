@@ -500,16 +500,21 @@ See [ADR 0060](adr/0060-position-has-xy-and-path-modes.md).
   on `set_keyframe` / `set_param_track`. Temporal Auto / Smooth tangents are
   resolved on write. This tool replaces existing motion; it does **not** fit
   or bake it automatically. For geometry edits, read and retain the current
-  progress record; there is no MCP `geometry_only` argument.
-- Each spatial node requires `{ id, point: {x,y}, in_handle: {x,y},
-  out_handle: {x,y}, segment: "Line" | "Cubic",
-  tangent_mode: "Corner" | "Smooth" | "Auto" }`. Points are in composition
+  progress values and curves, omitting read IDs; there is no MCP `geometry_only` argument.
+  Keyframes need only `{t_us, value}`; optional tangents/segment/continuity
+  follow `set_param_track` below. Every replacement generates fresh IDs.
+  The result includes the committed `position` with its generated node/key IDs
+  and snapped layer-local key times.
+- Each spatial node needs only `{ point: {x,y} }`. Optional `in_handle`,
+  `out_handle` default to `{x:0,y:0}`, `segment` defaults to `"Line"`,
+  and `tangent_mode` defaults to `"Corner"`. WeftCut generates node IDs;
+  sending an `id` is refused. Points are in composition
   pixels; handles are relative pixel vectors, not temporal easing controls.
   `segment` describes the span leaving the node. Corner handles are
   independent; Smooth aligns their directions while retaining separate
   lengths; Auto resolves handles from neighboring points on write. Use Cubic
   spans where spatial handles should affect the route. Bounds: 1–128 nodes,
-  unique nonempty node ids, finite coordinates within ±10 million pixels.
+  finite coordinates within ±10 million pixels.
 - `progress` uses fractions, **not percentages**: `0` is the start and `1` is
   the end, traversed by distance rather than by node index. Values outside
   that range extend the endpoint direction; zero-length geometry stays put.
@@ -535,8 +540,8 @@ two-node line (replace `layer_id` with the target layer's id):
     "mode": "Path",
     "path": {
       "nodes": [
-        { "id": "start", "point": { "x": 100, "y": 200 }, "in_handle": { "x": 0, "y": 0 }, "out_handle": { "x": 0, "y": 0 }, "segment": "Line", "tangent_mode": "Corner" },
-        { "id": "end", "point": { "x": 500, "y": 200 }, "in_handle": { "x": 0, "y": 0 }, "out_handle": { "x": 0, "y": 0 }, "segment": "Line", "tangent_mode": "Corner" }
+        { "point": { "x": 100, "y": 200 } },
+        { "point": { "x": 500, "y": 200 } }
       ]
     },
     "progress": { "mode": "Static", "value": 0 }
@@ -576,7 +581,20 @@ Keyframes (animate a layer param's `Animated<T>` track; times are timeline-absol
 - `smooth_keyframes { layer_id, param_key, keyframe_id? }` — set Auto tangents (clamped monotone, solved on write and kept smooth as neighbours move) with Smooth continuity on one key, or on every key when `keyframe_id` is omitted; the adjacent segments become Spline.
 - `set_extrapolation { layer_id, param_key, before?, after? }` — what the track does outside its keys, per side (at least one; the other keeps its value): `Hold` (the end value — the default), `Loop` (repeat the cycle from the first key; a visible jump when first ≠ last, nothing bridges it), `PingPong` (alternate cycles run backwards), `Offset` (each cycle adds the last-minus-first delta), `Continue` (carry the last segment's end velocity on as a line; zero after a Hold or procedural segment). The period is `last.t − first.t`; a single-key track never extrapolates. Refused on a Static track — add keys first.
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
-- `set_param_track { layer_id, param_key, track }` — low-level: replace the whole track in the `get_param_track` record shape (keyframe `t_us` timeline-absolute; each tangent's `x` within `[0, 1]`; `extrapolate` defaults to Hold / Hold when omitted). Auto sides and the `in` side of a Smooth key are re-solved on write, so the coordinates sent for those are overwritten with the solved ones. Retiming many keys, or pasting a whole track, is one commit here.
+- `set_param_track { layer_id, param_key, track }` — replace the whole track in one undo entry. A static value is `{mode:"Static",value:v}`; animation is `{mode:"Keyframed",value:[{t_us,value}, ...]}`. Key times are timeline-absolute. WeftCut generates fresh UUIDs, returned with committed/snapped times; **do not send `id`**, even when copying a read result. Strip read-only `t_local_us` and `preset_id` as well. Keys default to Linear segments, identity Free tangents and Broken continuity. Optional `in`, `out`, `segment` and `continuity` author precise curves; `extrapolate` defaults to Hold / Hold. Auto/Smooth tangents are solved on write. Read IDs remain valid selectors for `update_keyframe` / `delete_keyframe`; use those for individual edits. Bulk replacement generates new identities on every call.
+
+Minimal two-key animation (replace `layer_id` with the layer to animate):
+
+```json
+{
+  "layer_id": "00000000-0000-7000-8000-000000000001",
+  "param_key": "opacity",
+  "track": {
+    "mode": "Keyframed",
+    "value": [{ "t_us": 0, "value": 0 }, { "t_us": 1000000, "value": 1 }]
+  }
+}
+```
 
 Valid `param_key`: VideoClip/ImageOverlay/Text/Motif/CompositionRef →
 `scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity`, plus `x, y` in

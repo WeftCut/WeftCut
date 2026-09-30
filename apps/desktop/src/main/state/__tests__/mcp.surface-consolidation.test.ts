@@ -210,11 +210,11 @@ describe('add_video_layer source bounds', () => {
 })
 
 describe('set_position path nodes', () => {
-  const node = (id: string, x: number) => ({ id, point: { x, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line', tangent_mode: 'Corner' })
+  const node = (x: number) => ({ point: { x, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line', tangent_mode: 'Corner' })
   it('takes snake_case nodes and reads them back the same way', () => {
     const a = actorWithPool()
     const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
-    const position = { mode: 'Path', path: { nodes: [node('a', 0), node('b', 100)] }, progress: { mode: 'Static', value: 0 } }
+    const position = { mode: 'Path', path: { nodes: [node(0), node(100)] }, progress: { mode: 'Static', value: 0 } }
     expect(call(a, 'set_position', { layer_id: layerId, position }).ok).toBe(true)
     const back = text(call(a, 'read_project', { view: 'layer', id: layerId }))
     expect(back).toContain('"tangent_mode": "Corner"')
@@ -223,8 +223,8 @@ describe('set_position path nodes', () => {
   it('refuses the old camelCase spelling', () => {
     const a = actorWithPool()
     const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
-    const old = { id: 'a', point: { x: 0, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line', tangentMode: 'Corner' }
-    const e = refusal(call(a, 'set_position', { layer_id: layerId, position: { mode: 'Path', path: { nodes: [old, node('b', 100)] }, progress: { mode: 'Static', value: 0 } } }))
+    const old = { point: { x: 0, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line', tangentMode: 'Corner' }
+    const e = refusal(call(a, 'set_position', { layer_id: layerId, position: { mode: 'Path', path: { nodes: [old, node(100)] }, progress: { mode: 'Static', value: 0 } } }))
     expect(e.message).toMatch(/tangent_mode/)
   })
 })

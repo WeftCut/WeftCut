@@ -222,7 +222,7 @@ describe('keyframe writers — one range, one easing rule', () => {
     // The documented round trip — read the track, edit it, send it back — is
     // held to the same range as the key-at-a-time writer.
     const track = ok(call(a, 'get_param_track', { layer_id: layer, param_key: key }))
-    const edited = { mode: 'Keyframed', value: (track.keyframes as Array<Record<string, unknown>>).map((k, i) => (i === 1 ? { ...k, value: 500 } : k)) }
+    const edited = { mode: 'Keyframed', value: (track.keyframes as Array<Record<string, unknown>>).map(({ id: _id, t_local_us: _local, preset_id: _preset, ...k }, i) => (i === 1 ? { ...k, value: 500 } : k)) }
     expect(refusal(call(a, 'set_param_track', { layer_id: layer, param_key: key, track: edited }))).toContain('[0, 100]')
   })
 

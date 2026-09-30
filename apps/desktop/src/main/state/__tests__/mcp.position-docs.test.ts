@@ -37,7 +37,7 @@ describe('documented MCP position contract', () => {
   it('accepts the documentation JSON through the public position parser', () => {
     const example = JSON.parse(/```json\s*([\s\S]*?)```/.exec(positionDocs)![1]!)
     const parsed = MCP_ARG_PARSERS.set_position!(example)
-    expect(parsed).toEqual({ op: 'set_position', args: { layer: example.layer_id, position: example.position } })
+    expect(parsed).toMatchObject({ op: 'set_position', args: { layer: example.layer_id, position: example.position } })
     expect(positionProblem(parsed.args.position)).toBeNull()
   })
 

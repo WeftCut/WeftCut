@@ -269,7 +269,10 @@ function changedKeys(before: object, after: object): string[] {
  *  new tool cannot land without saying what it committed. */
 export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // ── layers ──
-  set_position: (c) => layerOf(c),
+  set_position: (c) => {
+    const params = located(c.after, str(c.args.layer_id))?.layer.params
+    return { ...layerOf(c), ...(params && 'transform' in params ? { position: params.transform.position } : {}) }
+  },
   translate_path: (c) => layerOf(c),
   // A Motif whose props shortened its content pulls the layer's end (and its
   // source offset) in; the record says so, since the caller sent neither.
