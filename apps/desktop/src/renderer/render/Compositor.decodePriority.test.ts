@@ -1,4 +1,4 @@
-import { Container, type Application } from "pixi.js";
+import { Container, Texture, type Application } from "pixi.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
@@ -11,6 +11,8 @@ import type {
   SourceHandleInit,
 } from "./decoder/session";
 import { summaryFixture } from "../testing/summaryFixture";
+import { FrameRing } from "./decoder/FrameRing";
+import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
 function video(id: string, startUs: number, endUs: number): LayerSummary {
   return {
@@ -92,6 +94,69 @@ function emptyRing(): FrameStore {
 }
 
 describe("Compositor preview decode priority wiring", () => {
+  it.each(["empty", "future", "revived"])("does not restage a cached tail while a replayed cut refills (%s ring)", (state) => {
+    // Keep real rings, clip lifecycle and Pixi scene graph. Only pixel upload
+    // needs a GPU, so stand it in with a real non-empty texture.
+    const upload = vi.spyOn(VideoClipSprite.prototype, "updateFrame").mockImplementation(function (this: VideoClipSprite) {
+      this.bindExternalTexture(Texture.WHITE);
+    });
+    const sessions = new Map<string, DecodeSession & { ring: FrameRing; disposed: boolean }>();
+    const pool: DecoderPool = {
+      acquire(init) {
+        const s = {
+          mediaId: init.mediaId, ring: new FrameRing(), disposed: false,
+          ensureReady: async () => {}, requestFrameAt: async () => {}, onFirstFrame: vi.fn(),
+          dispose() { this.disposed = true; this.ring.dispose(); },
+        };
+        sessions.set(init.layerId, s);
+        return s;
+      },
+      release: vi.fn(),
+      dispose() { for (const s of sessions.values()) s.dispose(); },
+    };
+    const compositor = new Compositor({
+      app: { stage: new Container() } as unknown as Application,
+      width: 1920, height: 1080, mode: "preview", pool,
+      resolveSource: (id) => ({ engine: "ffmpeg", source: "original", status: "ok", target: id, key: id }),
+      originalAssetUrl: () => null, sourceColor: () => undefined, mediaById: () => undefined,
+    });
+    const push = (id: string, pts: number) => sessions.get(id)!.ring.push(
+      { width: 1, height: 1, close: vi.fn() } as unknown as ImageBitmap, pts, 33_333,
+    );
+    try {
+      compositor.setProject(summary([video("outgoing", 0, 1_000_000), video("incoming", 1_000_000, 2_000_000)]));
+      compositor.compositeFrame(1_800_000);
+      push("incoming", 800_000);
+      compositor.compositeFrame(1_800_000);
+      const scene = compositor.rootNode().container;
+      const cachedIncoming = scene.children[0];
+      compositor.compositeFrame(800_000);
+      push("outgoing", 800_000);
+      compositor.compositeFrame(800_000);
+      const outgoing = scene.children[0];
+      if (state === "revived") sessions.get("incoming")!.dispose();
+      else if (state === "empty") sessions.get("incoming")!.ring.flush();
+      compositor.setAnchorTime(800_000); // real boundary prewarm / revival
+      compositor.compositeFrame(1_000_000); // target has no frame yet
+      expect(scene.children).toHaveLength(1);
+      expect(scene.children[0]).toBe(outgoing);
+      expect(scene.children).not.toContain(cachedIncoming);
+      expect(compositor.activeClipProbe("incoming")?.spriteStaged).toBe(false);
+      push("incoming", 0);
+      compositor.compositeFrame(1_000_000);
+      expect(scene.children).toEqual([cachedIncoming]);
+      expect(compositor.activeClipProbe("incoming")?.boundFramePtsUs).toBe(0);
+      expect(compositor.activeClipProbe("incoming")?.spriteStaged).toBe(true);
+      // Ordinary forward underrun still holds the current clip's valid frame.
+      sessions.get("incoming")!.ring.flush();
+      compositor.compositeFrame(1_033_333);
+      expect(scene.children).toEqual([cachedIncoming]);
+    } finally {
+      compositor.dispose();
+      upload.mockRestore();
+    }
+  });
+
   it("publishes active/upcoming keys before active acquire and boundary prewarm acquire", () => {
     const events: Array<{ kind: "priority" | "acquire"; value: string[] | string }> = [];
     const sessions = new Map<string, DecodeSession>();

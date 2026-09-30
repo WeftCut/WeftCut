@@ -168,6 +168,8 @@ export interface ActiveClipProbe {
   /// reached the sprite" shows up as a bound, correctly-sized texture rather
   /// than a live ImageBitmap resource.
   spriteBound: boolean;
+  /// A bound texture may be retained off-stage from an earlier playback pass.
+  spriteStaged: boolean;
   spriteWidth: number;
   spriteHeight: number;
   /// Identity of the frame currently held by the sprite. Unlike the ring
@@ -322,6 +324,9 @@ interface ActiveClip {
   /// for this media, `ensureClip` starts a no-flash overlap-swap to the new
   /// source. Key semantics: see `ResolvedRendererSource`.
   builtFromKey: string;
+  /// Source target at the last successful bind (not the selected PTS, which
+  /// may legitimately lead the target because of a source's CTS offset).
+  boundFrameTargetUs: number | null;
   /// Presentation identity of the pixels currently held by `sprite`. Kept
   /// independently from the ring because a frameAt miss deliberately holds
   /// the previous image, and independently from builtFromKey because a
@@ -744,6 +749,16 @@ export class CompositionNode {
   compositeVisual(tUs: number, effectOpts: EffectOpts): void {
     if (this.disposed) return;
     this.lastTUs = tUs;
+    // A retained clip sprite can still hold its TAIL from a previous pass even
+    // after the pool reclaimed its decoder. Do not restage those pixels at an
+    // earlier target while the new ring refills: the next decoded frame would
+    // visibly jump backwards. Check before mutating any part of this scene, so
+    // the currently presented composition is held until the cut can be drawn.
+    // Forward underruns and source swaps still keep their valid held frame.
+    if (this.host.mode === "preview" && !this.canPresentHeldClipsAt(tUs)) {
+      this.host.noteLateLayer();
+      return;
+    }
     const tRebuild = stageNow();
     this.container.removeChildren();
     stageAdd(STAGE.SceneRebuild, tRebuild);
@@ -814,6 +829,26 @@ export class CompositionNode {
     // (so any branch's staging is caught) and before the container renders
     // (so the quad samples THIS frame's pixels).
     this.transitionNodes?.finishFrame();
+  }
+
+  private canPresentHeldClipsAt(tUs: number): boolean {
+    let ready = true;
+    for (const cached of this.clips.values()) {
+      if (cached.boundFrameTargetUs === null) continue;
+      const layer = this.layerById.get(cached.layerId);
+      if (!layer?.enabled || layer.params.kind !== "VideoClip") continue;
+      if (!this.trackEnabledByLayer.get(layer.id)) continue;
+      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
+      const srcTUs = layer.params.src_in_us + tUs - layer.t_start_us;
+      if (srcTUs >= cached.boundFrameTargetUs) continue;
+      const clip = this.ensureClip(layer);
+      if (!clip || clip.source.ring.frameAt(srcTUs)) continue;
+      // Keep driving every blocked clip, including freshly revived handles
+      // that anchor() could not nudge before this visual pass acquired them.
+      void clip.source.requestFrameAt(srcTUs);
+      ready = false;
+    }
+    return ready;
   }
 
   /// Nothing to show (the Group's window runs past its composition): an
@@ -1058,6 +1093,7 @@ export class CompositionNode {
       ringLastPtsUs: s.ring.lastPtsUs(),
       ringFate: s.ring.fate ?? null,
       spriteBound: !isEmpty,
+      spriteStaged: clip.sprite.displayObject.parent !== null,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,
       boundFramePtsUs: clip.boundFramePtsUs,
@@ -1322,6 +1358,7 @@ export class CompositionNode {
       sprite,
       effects: new EffectChain(),
       builtFromKey,
+      boundFrameTargetUs: null,
       boundFramePtsUs: null,
       boundFrameDurationUs: null,
       boundFrameSourceKey: null,
@@ -1534,6 +1571,7 @@ export class CompositionNode {
         clip.boundFrameKind = "browser";
       }
       clip.boundFramePtsUs = selected.ptsUs;
+      clip.boundFrameTargetUs = srcTUs;
       clip.boundFrameDurationUs = selected.durationUs;
       clip.boundFrameSourceKey = clip.builtFromKey;
     } else {

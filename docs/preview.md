@@ -73,6 +73,14 @@ handle's `FrameRing` caches 1 s lookahead / 0.5 s
 lookbehind of `ImageBitmap` snapshots around the current playhead.
 The ring is what the compositor reads.
 
+The sprite's held image outlives the decoder ring. On replay, a retained
+sprite may therefore still hold the clip's previous tail even after its
+decoder was reclaimed. Preview checks the source target of that image before
+restaging the clip: if the new target is earlier and the ring cannot serve it,
+the node keeps its current composition until a replacement frame arrives.
+Ordinary forward underruns still hold the clip's current image. This avoids
+flashing the old tail and then jumping backwards when a short cut refills.
+
 Decoders are idle-disposed 5 s after last use and rebuild on the next
 `requestFrameAt`. Hardware-decode failures route through
 `decoderFallback.ts`: a zero-output first-frame error reconfigures
