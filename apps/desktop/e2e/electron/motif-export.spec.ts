@@ -7,10 +7,10 @@
 // (≈0.33 s, numeral 2) vs frame 50 (≈1.67 s, numeral 1).
 
 import { test, expect } from '@playwright/test'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { analyzeSelf } from '../lib/analyze.mjs'
+import { analyze, analyzeSelf } from '../lib/analyze.mjs'
 import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -43,14 +43,14 @@ for (const source of ['builtin', 'installed'] as const) {
     try {
       // 480×480 project matches countdown native size: the motif fills the frame
       // so the self-SSIM threshold has a wide margin.
+      const projectName = 'e2e-exp-' + Date.now()
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
-        name: 'e2e-exp-' + Date.now(),
+        name: projectName,
         canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
       })
 
-      // exportMotifClip: add a 2 s countdown at t=0, bake, composite, encode.
-      // Phase: preparing (bake) → progress (encode) → complete.
+      // Cold export captures and persists only frames the worker consumes.
       const r = await driveExport(
         page,
         {
@@ -76,6 +76,47 @@ for (const source of ['builtin', 'installed'] as const) {
         )
       }
       expect(report.pass).toBe(true)
+
+      const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
+      expect(perf.motif.peakBytes).toBeLessThanOrEqual(128 * 1024 * 1024)
+      expect(perf.motif.framesRead).toBe(60)
+      const rasterDir = path.join(PROJECT_PARENT, projectName, 'Cache', 'raster')
+      const frameDir = path.join(rasterDir, readdirSync(rasterDir)[0]!)
+      expect(readdirSync(frameDir).filter(f => f.endsWith('.wfrm')).length).toBeGreaterThanOrEqual(60)
+
+      if (source === 'builtin') {
+        // Repair both a missing and a corrupt frame, and compare the output.
+        rmSync(path.join(frameDir, '32.wfrm'))
+        writeFileSync(path.join(frameDir, '50.wfrm'), 'corrupt')
+        const repaired = path.join(path.dirname(OUTPUT), 'repaired.mp4')
+        const rerun = await driveExport(page, { outputAbsPath: repaired }, { hook: 'exportTimeline', timeout: 120_000 })
+        if (!rerun.done.ok) throw new Error(rerun.done.error)
+        expect(existsSync(path.join(frameDir, '32.wfrm'))).toBe(true)
+        expect(readFileSync(path.join(frameDir, '50.wfrm')).length).toBeGreaterThan(7)
+        expect(analyze({ output: repaired, source: OUTPUT, samples: [0, 32, 50, 59], ssimMin: 0.995, window: 0 }).pass).toBe(true)
+
+        // Cancellation is reachable in the ordinary progress UI, including
+        // frame waits. A subsequent export must still complete in this app.
+        const cancelled = path.join(path.dirname(OUTPUT), 'cancelled.mp4')
+        await page.evaluate(outputAbsPath => {
+          const w = window as any
+          w.__cancelResult = null
+          void w.__weftcutTest.exportTimeline({ outputAbsPath }).then(
+            () => { w.__cancelResult = 'unexpected success' },
+            () => { w.__cancelResult = 'cancelled' },
+          )
+        }, cancelled)
+        await page.waitForFunction(() => {
+          const s = (window as any).__weftcutExportState
+          return s?.kind === 'progress' && typeof s.onCancel === 'function'
+        })
+        await page.evaluate(() => (window as any).__weftcutExportState.onCancel())
+        await page.waitForFunction(() => (window as any).__cancelResult !== null)
+        expect(await page.evaluate(() => (window as any).__cancelResult)).toBe('cancelled')
+        expect(existsSync(cancelled)).toBe(false)
+        const resumed = await driveExport(page, { outputAbsPath: path.join(path.dirname(OUTPUT), 'resumed.mp4') }, { hook: 'exportTimeline', timeout: 120_000 })
+        expect(resumed.done.ok).toBe(true)
+      }
     } finally {
       await app.close()
     }

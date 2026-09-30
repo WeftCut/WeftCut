@@ -18,6 +18,10 @@ import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
 import { forEachLayer } from "../compositionWalk";
 import { rootCompositionOf } from "../../ipc/compositions";
+import { exportMotifPlanner } from "../exportMotifSource";
+import { motifLayersToBake } from "../exportBake";
+import { MotifFrameProducer } from "./motifStream";
+import { exportFrameCount } from "./frameGrid";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
@@ -53,11 +57,6 @@ export interface RunExportInit {
   /// avoids buffering the whole MP4 in one ArrayBuffer (V8's ~2GB cap OOM'd
   /// long exports at finalize).
   writeChunk: (data: ArrayBuffer) => Promise<void>;
-  /// Pre-rasterized Motif-layer frames (`layerId -> ImageBitmap[]`, comp-frame
-  /// indexed), baked on the MAIN thread by `exportBakeMotifs` (the Worker has
-  /// no DOM to run the SVG capture harness). TRANSFERRED into the Worker's
-  /// `start` message. Absent / empty ⇒ no Motif layers in the export range.
-  motifFrames?: Record<string, ImageBitmap[]>;
   /// Optional cancel signal — the Worker checks at each frame
   /// boundary.
   signal?: AbortSignal;
@@ -101,6 +100,7 @@ function defaultEncoderConfig(
 }
 
 export async function runExport(init: RunExportInit): Promise<RunExportResult> {
+  init.signal?.throwIfAborted();
   const summary = init.summary;
   // Export renders the ROOT, whatever composition the editor has open
   // (compositionAnchorStore.ts); the Groups placed on it enter through the
@@ -192,18 +192,22 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     init.encoderConfig ??
     defaultEncoderConfig(comp.width, comp.height, outFpsNum / outFpsDen);
 
+  // Resolve asynchronous setup before owning a worker. A failed font read or
+  // cancellation here must not leave an idle worker behind.
+  const hasMotifs = motifLayersToBake(summary, startUs, endUs, fpsNum, fpsDen).length > 0;
+  const userFamilies = collectTextFontFamilies(summary);
+  const userBytes = await resolveFontsForFamilies(userFamilies);
+  const fontBytes = { ...(await loadBundledFontBytes()), ...userBytes };
+  init.signal?.throwIfAborted();
+
   // 4. Spawn the Worker. Vite resolves the URL at bundle time via
   // `new URL(..., import.meta.url) + type: "module"`.
   const worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),
     { type: "module" },
   );
-  // Latch the ready handshake NOW, before any await. The Worker posts
-  // {type:"ready"} as soon as its module top level runs; once its code cache is
-  // warm (every export after the session's first) that beats the font fetches
-  // awaited below, and a message dispatched while no listener is attached is
-  // silently dropped — start would never be posted and the export would hang at
-  // "starting" forever. The same window would swallow a worker load/parse error.
+  // Attach immediately: a warm worker can report ready as soon as this turn
+  // yields. Missing either this message or its load error would strand export.
   const workerReady = new Promise<void>((resolve, reject) => {
     function onMsg(e: MessageEvent<ExportEvent>) {
       if (e.data.type !== "ready") return;
@@ -221,8 +225,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     worker.addEventListener("message", onMsg);
     worker.addEventListener("error", onErr);
   });
-  // No-op catch: a worker load failure during the awaits below would otherwise
-  // fire unhandledrejection before the export promise wires its real handler.
+  // Keep load failures handled even if subsequent synchronous setup throws.
   workerReady.catch(() => {});
 
   // 5. Build the tenBitMedia map: sources whose originals Chromium/Electron can decode
@@ -238,12 +241,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     }
   }
 
-  // 6. Build the start request (fonts resolve on the main thread); posted once
-  // the pre-await `workerReady` latch resolves.
-  const motifFrames = init.motifFrames ?? {};
-  const userFamilies = collectTextFontFamilies(summary);
-  const userBytes = await resolveFontsForFamilies(userFamilies);
-  const fontBytes = { ...(await loadBundledFontBytes()), ...userBytes };
+  // 6. Build the start request; post once the ready latch resolves.
   const startReq: Extract<ExportRequest, { type: "start" }> = {
     type: "start",
     project: snapshot,
@@ -254,7 +252,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     outputFpsDen: outFpsDen,
     keyframeIntervalSec: init.keyframeIntervalSec ?? 1,
     canvas: offscreen,
-    motifFrames,
+    motifStream: hasMotifs,
     bitDepth: init.bitDepth ?? 8,
     // Platform gate for the 8-bit WebCodecs decode lane (the Worker can't
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
@@ -276,22 +274,18 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     fonts: fontBytes,
   };
 
-  // ImageBitmaps are transferable; transferring them avoids a structured-clone
-  // copy AND keeps the main-thread originals from being double-owned (transfer
-  // neuters them, which is fine — the bake's bitmaps exist only to ship here).
-  // Flattened across every layer's array; head holes (undefined, for a
-  // mid-layer export start) are skipped.
-  const bitmapTransfers: Transferable[] = [];
-  for (const frames of Object.values(motifFrames)) {
-    for (const bmp of frames) {
-      if (bmp) bitmapTransfers.push(bmp);
-    }
-  }
-
   let framesEncoded = 0;
   let totalFrames = 0;
 
   return new Promise<RunExportResult>((resolve, reject) => {
+    let disposed = false;
+    const motifProducer = hasMotifs ? new MotifFrameProducer({
+      totalFrames: exportFrameCount(Math.max(0, startUs), Math.min(comp.duration_us, endUs), outFpsNum, outFpsDen),
+      plan: exportMotifPlanner(summary, Math.max(0, startUs), outFpsNum, outFpsDen),
+      send: packet => worker.postMessage({ type: "motif:frame", packet } satisfies ExportRequest,
+        [...new Set(Object.values(packet.frames).map(frame => frame.bitmap))]),
+      fail: error => { cleanup(); reject(error); },
+    }) : null;
     // ── Native export-decode relay ───────────────────────────────────────────
     // The renderer main thread is a PURE relay between the export Worker's
     // `NativeExportSourceHandle` and the main-process `NativeDecode` session:
@@ -361,6 +355,10 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     });
 
     const cleanup = () => {
+      if (disposed) return;
+      disposed = true;
+      motifProducer?.dispose();
+      init.signal?.removeEventListener("abort", onAbort);
       offMsg();
       // A terminated Worker may never flush its per-session `nd:close` (on cancel
       // it is torn down before draining; on success it posts `done` before its
@@ -370,11 +368,13 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       worker.terminate();
     };
 
-    init.signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       worker.postMessage({ type: "cancel" } satisfies ExportRequest);
       cleanup();
       reject(new Error("export cancelled"));
-    });
+    };
+    init.signal?.addEventListener("abort", onAbort, { once: true });
+    if (init.signal?.aborted) { onAbort(); return; }
 
     worker.onerror = (e: ErrorEvent) => {
       cleanup();
@@ -385,7 +385,11 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // Rejection = the worker failed to load/parse before ever reporting ready.
     workerReady.then(
       () => {
-        worker.postMessage(startReq, [offscreen, ...bitmapTransfers, ...Object.values(fontBytes)]);
+        if (disposed) return;
+        try {
+          worker.postMessage(startReq, [offscreen, ...Object.values(fontBytes)]);
+          motifProducer?.start();
+        } catch (error) { cleanup(); reject(error); }
       },
       (err: unknown) => {
         cleanup();
@@ -395,7 +399,10 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
     worker.onmessage = (e: MessageEvent<ExportEvent>) => {
       const ev = e.data;
-      if (ev.type === "progress") {
+      if (disposed) return;
+      if (ev.type === "motif:consumed") {
+        motifProducer?.release(ev.index);
+      } else if (ev.type === "progress") {
         framesEncoded = ev.framesEncoded;
         totalFrames = ev.totalFrames;
         init.onProgress?.(framesEncoded, totalFrames);
@@ -406,7 +413,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         init
           .writeChunk(ev.data)
           .then(() => {
-            worker.postMessage({ type: "chunk-ack" } satisfies ExportRequest);
+            if (!disposed) worker.postMessage({ type: "chunk-ack" } satisfies ExportRequest);
           })
           .catch((err: unknown) => {
             cleanup();
@@ -417,7 +424,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         // (stripped from prod by the static env check).
         if (import.meta.env.VITE_WEFTCUT_E2E === "1" && ev.perf) {
           (window as unknown as { __weftcutExportPerf?: unknown }).__weftcutExportPerf =
-            ev.perf;
+            { ...ev.perf, motif: motifProducer?.stats };
         }
         cleanup();
         resolve({ framesEncoded, totalFrames });

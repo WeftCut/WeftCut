@@ -16,6 +16,7 @@
 // Plan: docs/render.md
 
 import { Application, Container } from "pixi.js";
+import type { InjectedMotifFrames } from "./worker/motifStream";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { CompositionSummary, MediaSummary, ProjectSummary } from "../ipc";
@@ -188,10 +189,9 @@ export class Compositor {
   /// only ADDS. A clip the playhead scrolled off of (or a disabled layer) is
   /// never visited by the sweep, so it drops out instead of lingering.
   private unsupportedMedia = new Set<string>();
-  /// Export-only: pre-rasterized Motif-layer frames injected by the export
-  /// Worker (`instanceKey → ImageBitmap[]`, indexed by comp-frame). See
+  /// Export-only borrowed pixels, keyed by Group instance path. See
   /// `setMotifFrames`; empty in preview mode.
-  private motifFrames = new Map<string, readonly ImageBitmap[]>();
+  private motifFrames = new Map<string, InjectedMotifFrames>();
   /// Preview or export. Gates audio setup, decode-source resolution
   /// (`resolveSource` vs `proxyAssetUrl`), and the upcoming-clip prewarm.
   private mode: "preview" | "export";
@@ -498,14 +498,9 @@ export class Compositor {
     this.clockAnchor = anchor;
   }
 
-  /// Export-only: install the pre-rasterized Motif-layer frames the export
-  /// Worker baked on the main thread (`instanceKey → ImageBitmap[]`, comp-frame
-  /// indexed; a Motif inside a Group is keyed by its ref path — exportBake.ts).
-  /// A node's `updateMotif` forwards a layer's array to its
-  /// `MotifSprite.update`, which binds by index synchronously instead of
-  /// running the DOM capture harness (absent in the Worker). Passing an empty
-  /// map (or never calling this) leaves preview's harness/cache path untouched.
-  setMotifFrames(map: Record<string, readonly ImageBitmap[]>): void {
+  /// Export-only borrowed pixels for the current output frame, keyed by Group
+  /// instance path. The worker releases these bitmaps after rendering.
+  setMotifFrames(map: Record<string, InjectedMotifFrames>): void {
     this.motifFrames.clear();
     for (const [key, frames] of Object.entries(map)) {
       this.motifFrames.set(key, frames);
@@ -874,7 +869,7 @@ export class Compositor {
     this.root.dispose();
     this.motifService.dispose();
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
-    // the export caller (`exportBakeMotifs`), not the Compositor — same as
+    // the export worker, not the Compositor — same as
     // `setMotifFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
     this.motifFrames.clear();

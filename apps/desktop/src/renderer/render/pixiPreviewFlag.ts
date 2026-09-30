@@ -49,10 +49,8 @@ export interface PixiPreviewHandle {
     /// Sink for each sequential output-file slice (append-only). Must resolve
     /// once durably written; the worker backpressures on it.
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Pre-rasterized Motif-layer frames (`layerId → ImageBitmap[]`),
-    /// baked on the main thread (the export Worker has no DOM). Transferred
-    /// into the Worker and bound by comp-frame index. Omit ⇒ no motifs.
-    motifFrames?: Record<string, ImageBitmap[]>;
+    /// Cancels export, including pending Motif reads and captures.
+    signal?: AbortSignal;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
     /// Present ⇒ the worker packs frames to this format and streams them to

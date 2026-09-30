@@ -27,7 +27,6 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
-import { forEachLayer } from "../render/compositionWalk";
 import {
   type ExportSettings,
   type WebCodecsCodecId,
@@ -57,8 +56,6 @@ import {
   resolveExportDecodeRouting,
 } from "../render/exportDecodeRouting";
 import { useDecodeComponentStore } from "../settings/decodeComponentStore";
-import { exportBakeMotifs } from "../render/exportBake";
-import { getMotif } from "../render/motifs/catalog";
 import {
   prepareExportMedia,
   runAudioFxGate,
@@ -600,48 +597,7 @@ export function useExportFlow(deps: {
       endUs: range?.endUs ?? comp.duration_us,
     };
 
-    // ---- Bake Motif layers --------------------------------------------
-    // The export Worker has no DOM, so it can't run the SVG capture harness.
-    // Pre-rasterize every Motif layer's frames here (main thread) and pass
-    // them into the export request; the Worker binds them by comp-frame index.
-    // CRITICAL: bake on the COMPOSITION fps (comp.fps_num/den), NOT the export
-    // output fps — the Worker's MotifSprite indexes injected frames with the
-    // Compositor's comp fps, so a different output fps must not change the bake
-    // grid (it would shift the index → out-of-range / duplicated frames). The
-    // output fps only resamples WHICH comp-frame each output frame maps to,
-    // which the Worker handles via the time grid.
-    let motifFrames: Record<string, ImageBitmap[]> = {};
-    try {
-      // Every Motif the bake will reach, Groups included — the labels have to
-      // name what the "preparing" step is actually rastering. Same walk
-      // `motifLayersToBake` runs, so the two can't disagree about which
-      // motifs are in the export.
-      const motifIds = new Set<string>();
-      forEachLayer(summary, comp.id, ({ layer }) => {
-        if (layer.params.kind === "Motif") motifIds.add(layer.params.motif_id);
-      });
-      if (motifIds.size > 0) {
-        const labels = [...motifIds].map(
-          (id) => getMotif(id)?.manifest.name ?? id,
-        );
-        // No cancellable step in the bake loop, so omit onCancel — the panel
-        // hides the Cancel button rather than offering a dead one.
-        setExportState({ kind: "preparing", labels });
-      }
-      motifFrames = await exportBakeMotifs(
-        summary,
-        exportRange.startUs,
-        exportRange.endUs,
-        comp.fps_num,
-        comp.fps_den,
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] motif bake failed:", e);
-      setExportState({ kind: "error", detail: `Motif render failed: ${msg}` });
-      return;
-    }
-    // ---- end bake --------------------------------------------------------
+    // Motif pixels are streamed under the export worker's byte budget.
 
     const dims = resolveOutputDims(comp, settings);
     const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
@@ -793,6 +749,8 @@ export function useExportFlow(deps: {
     };
 
     const startedAtMs = performance.now();
+    const exportController = new AbortController();
+    const onCancel = () => exportController.abort();
     const onProgress = (encoded: number, total: number) => {
       if (total <= 0) return;
       const elapsedSec = (performance.now() - startedAtMs) / 1000;
@@ -805,6 +763,7 @@ export function useExportFlow(deps: {
       const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
       setExportState({
         kind: "progress",
+        onCancel,
         progress: {
           progress: encoded / total,
           currentTimeUs,
@@ -831,7 +790,7 @@ export function useExportFlow(deps: {
           await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
         };
 
-    setExportState({ kind: "starting" });
+    onProgress(0, 1);
     let result;
     try {
       result = await previewRef.current?.runPixiExport({
@@ -842,15 +801,21 @@ export function useExportFlow(deps: {
         endUs: exportRange.endUs,
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
-        motifFrames,
+        signal: exportController.signal,
         bitDepth: compositeBitDepth(settings),
         ...(nativeSink && sinkTarget ? { nativeSinkPixFmt: sinkTarget.pixFmt } : {}),
         ...(decodeRouting ? { decodeRouting } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] export failed:", e);
       if (nativeSink) await exportVideoSinkCancel().catch(() => {});
+      if (exportController.signal.aborted) {
+        void remove(tempVideoPath).catch(() => {});
+        void remove(tempAudioPath).catch(() => {});
+        setExportState(null);
+        return;
+      }
+      console.error("[weftcut/pixi] export failed:", e);
       setExportState({ kind: "error", detail: msg });
       return;
     }

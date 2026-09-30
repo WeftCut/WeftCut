@@ -192,7 +192,7 @@ export interface E2EHook {
   /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
-  /// `exportBakeMotifs` → transfer → Worker `MotifSprite` bind-by-index.
+  /// `exportMotifSource` → bounded transfer → Worker `MotifSprite`.
   /// Proves motifs render in export. The caller (project + editor) must already
   /// be set up via `newProjectAndEnter`.
   exportMotifClip(args: {
@@ -1350,8 +1350,7 @@ export function installExportHook(
       ...(props ? { props } : {}),
     });
     // No video source, so the readiness gate has nothing to wait on — the
-    // export proceeds straight to bake + composite. runExport bakes the
-    // motif frames on the main thread and transfers them into the Worker.
+    // export streams Motif frames to the worker as it composites.
     await runExport(mergeSettings(settings ?? null), outputAbsPath, undefined);
     if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
   };

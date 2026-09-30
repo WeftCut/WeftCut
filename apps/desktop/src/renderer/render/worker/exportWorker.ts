@@ -23,12 +23,8 @@
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
 //   - Captions render as Text layers and export through the normal Text path.
-//   - Motifs DO render: the CDP motif-capture path needs a DOM and a
-//     window, neither of which exists in the Worker, so the main thread
-//     pre-rasterizes each Motif layer's frames (`exportBake.ts`) and
-//     transfers them in via `ExportRequest.start.motifFrames`;
-//     `compositor.setMotifFrames` installs them and `MotifSprite` binds
-//     by comp-frame index.
+//   - Motif pixels arrive in bounded packets from the renderer. The worker
+//     awaits each output frame and returns credits after consuming its pixels.
 //     VideoClip / ImageOverlay / Color / Text render fine.
 
 import { Application, Container, DOMAdapter, RenderTexture, TexturePool, WebWorkerAdapter } from "pixi.js";
@@ -49,6 +45,7 @@ import { PackYuvPlanar } from "../yuv/PackYuvPlanar";
 import { webgpuDeviceOf } from "../webgpuDevice";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
+import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -62,6 +59,7 @@ function post(ev: ExportEvent, transfer: Transferable[] = []): void {
 }
 
 let cancelled = false;
+const motifInbox = new MotifFrameInbox();
 /// Resolver for the in-flight `chunk` write. WritableStream serializes writes,
 /// so at most one is pending at a time.
 let pendingChunkAck: (() => void) | null = null;
@@ -86,10 +84,14 @@ self.onmessage = (e: MessageEvent<ExportRequest>) => {
       const msg = err instanceof Error ? err.message : String(err);
       // eslint-disable-next-line no-console
       console.error("[weftcut/export] worker threw:", err);
+      motifInbox.dispose(err instanceof Error ? err : new Error(String(err)));
       post({ type: "error", message: msg });
     });
   } else if (req.type === "cancel") {
     cancelled = true;
+    motifInbox.dispose();
+  } else if (req.type === "motif:frame") {
+    motifInbox.push(req.packet);
   } else if (req.type === "chunk-ack") {
     const resolve = pendingChunkAck;
     pendingChunkAck = null;
@@ -247,11 +249,6 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // open (compositionAnchorStore.ts). A Group is a source, and a file of one
   // alone is a file nobody asked for.
   compositor.setProject(req.project.summary as ProjectSummary, null);
-  // Inject the main-thread-baked Motif frames (layerId → comp-frame-indexed
-  // ImageBitmap[]). With these, a Motif layer composites in export by binding
-  // the baked bitmap synchronously — the Worker has no DOM, so the live SVG
-  // capture harness can't run here. Empty for a video-only export (no-op).
-  compositor.setMotifFrames(req.motifFrames);
   compositor.setMasterPlayState(false);
   // Pre-load all ImageOverlay image data before the frame loop so that
   // animated GIFs are fully decoded and every output frame sees a valid
@@ -317,6 +314,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // nominal value is fine here; it never feeds the source-time grid above.
   const frameDurUs = approxFrameDurUs(outFpsNum, outFpsDen);
   const totalFrames = exportFrameCount(startUs, endUs, outFpsNum, outFpsDen);
+  post({ type: "progress", framesEncoded: 0, totalFrames });
   // Forced-keyframe cadence at the OUTPUT fps, from the caller's keyframe
   // interval (seconds); defaults to 1 second. Shared formula with the ffmpeg
   // path so both encode routes agree.
@@ -478,68 +476,81 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       }
       waitMs += performance.now() - waitT0;
 
+      const motifWaitT0 = performance.now();
+      const motifPacket = req.motifStream ? await motifInbox.take(i) : null;
+      if (motifPacket) compositor.setMotifFrames(motifPacket.frames);
+      waitMs += performance.now() - motifWaitT0;
       const compT0 = performance.now();
-      compositor.setAnchorTime(tUs);
-      compositor.compositeFrame(tUs);
+      try {
+        compositor.setAnchorTime(tUs);
+        compositor.compositeFrame(tUs);
 
-      if (nativeSink) {
-        // Native-sink path: render into the composite RenderTexture (rgba16float
-        // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
-        // then stream to the Rust sink over the chunk/ack IPC channel.
-        app.renderer.render({ container: app.stage, target: compositeRT! });
-        compositeMs += performance.now() - compT0;
+        if (nativeSink) {
+          // Native-sink path: render into the composite RenderTexture (rgba16float
+          // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
+          // then stream to the Rust sink over the chunk/ack IPC channel.
+          app.renderer.render({ container: app.stage, target: compositeRT! });
+          compositeMs += performance.now() - compT0;
 
-        // Two-deep readback pipelining: submit frame i's pack passes + async
-        // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
-        // had a full frame of wait/composite/pack behind it, so the retrieve
-        // is normally a straight CPU copy out of the PBO rather than a GPU
-        // sync stall.
-        const capT0 = performance.now();
-        pack!.submit(compositeRT!);
-        const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
-        captureMs += performance.now() - capT0;
+          // Two-deep readback pipelining: submit frame i's pack passes + async
+          // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
+          // had a full frame of wait/composite/pack behind it, so the retrieve
+          // is normally a straight CPU copy out of the PBO rather than a GPU
+          // sync stall.
+          const capT0 = performance.now();
+          pack!.submit(compositeRT!);
+          const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
+          captureMs += performance.now() - capT0;
 
-        if (bytes) {
+          if (bytes) {
+            const encT0 = performance.now();
+            // Native-sink frames go to the main thread over the chunk/ack
+            // channel, which forwards them to export_video_sink_write.
+            // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
+            // transport round-trip then overlaps the next frame's composite+pack
+            // instead of serializing after it. `encodeMs` therefore measures the
+            // stall blocked on transport, not the transport itself. retrieve()
+            // hands over a frame-owned buffer, so postChunk transfers it as-is.
+            if (inflightAck) await inflightAck;
+            inflightAck = postChunk(bytes);
+            encodeMs += performance.now() - encT0;
+          }
+        } else {
+          // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
+          // push to the WebCodecs EncoderSink.
+          app.render();
+          compositeMs += performance.now() - compT0;
+
+          const capT0 = performance.now();
+          let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
+          if (scaleCtx && scaleCanvas) {
+            scaleCtx.drawImage(
+              req.canvas as unknown as CanvasImageSource,
+              0,
+              0,
+              outWidth,
+              outHeight,
+            );
+            source = scaleCanvas as unknown as CanvasImageSource;
+          }
+          const captured = new VideoFrame(source, {
+            timestamp: tUs - startUs,
+            duration: frameDurUs,
+          });
+          captureMs += performance.now() - capT0;
+
+          const isKey = i % gop === 0;
           const encT0 = performance.now();
-          // Native-sink frames go to the main thread over the chunk/ack
-          // channel, which forwards them to export_video_sink_write.
-          // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
-          // transport round-trip then overlaps the next frame's composite+pack
-          // instead of serializing after it. `encodeMs` therefore measures the
-          // stall blocked on transport, not the transport itself. retrieve()
-          // hands over a frame-owned buffer, so postChunk transfers it as-is.
-          if (inflightAck) await inflightAck;
-          inflightAck = postChunk(bytes);
+          encoder!.encodeFrame(captured, isKey);
           encodeMs += performance.now() - encT0;
         }
-      } else {
-        // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
-        // push to the WebCodecs EncoderSink.
-        app.render();
-        compositeMs += performance.now() - compT0;
 
-        const capT0 = performance.now();
-        let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
-        if (scaleCtx && scaleCanvas) {
-          scaleCtx.drawImage(
-            req.canvas as unknown as CanvasImageSource,
-            0,
-            0,
-            outWidth,
-            outHeight,
-          );
-          source = scaleCanvas as unknown as CanvasImageSource;
+      } finally {
+        if (motifPacket) {
+          compositor.setMotifFrames({});
+          closeMotifPacket(motifPacket);
+          post({ type: "motif:consumed", index: i });
         }
-        const captured = new VideoFrame(source, {
-          timestamp: tUs - startUs,
-          duration: frameDurUs,
-        });
-        captureMs += performance.now() - capT0;
-
-        const isKey = i % gop === 0;
-        const encT0 = performance.now();
-        encoder!.encodeFrame(captured, isKey);
-        encodeMs += performance.now() - encT0;
       }
 
       // Per-frame evict — drop source frames whose intervals end at
@@ -564,7 +575,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       }
 
       if (i % 5 === 0) {
-        post({ type: "progress", framesEncoded: i, totalFrames });
+        post({ type: "progress", framesEncoded: i + 1, totalFrames });
       }
       const qT0 = performance.now();
       if (!nativeSink) {
@@ -684,6 +695,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   });
 
   // 8. Cleanup.
+  motifInbox.dispose();
   cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
 }
 

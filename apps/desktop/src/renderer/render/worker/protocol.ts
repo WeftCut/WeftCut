@@ -8,6 +8,7 @@
 // worker after `done` to release its heap.
 
 import type { ExportTransportFormat } from "../exportDecodeRouting";
+import type { MotifFramePacket } from "./motifStream";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -118,17 +119,8 @@ export type ExportRequest =
       /// OffscreenCanvas transferred from the main thread. Worker
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;
-      /// `layerId → ImageBitmap[]` — pre-rasterized Motif-layer frames,
-      /// indexed by COMPOSITION-frame. The Worker has no DOM so it can't run
-      /// the CDP motif capture; the main thread bakes these (`exportBake.ts`)
-      /// and TRANSFERS them (the flattened bitmaps are added to the
-      /// `postMessage` transfer list). The Worker's `Compositor`/`MotifSprite`
-      /// binds `motifFrames[layerId][frameIndex]` synchronously. Absent /
-      /// empty ⇒ no Motif layers in range (e.g. a video-only export), and the
-      /// injected-frames path is a clean no-op. The array may have head holes
-      /// (`undefined` before the export-range's first comp-frame) for a
-      /// mid-layer export start — the Worker never requests those indices.
-      motifFrames: Record<string, ImageBitmap[]>;
+      /// Pixels arrive in bounded packets, acknowledged after consumption.
+      motifStream: boolean;
       /// 10 ⇒ f16/WebGL2 composite precision. Whether frames go to the native
       /// sink is `nativeSink` below — the two are independent (8-bit native
       /// composites RGBA8 but still packs + streams).
@@ -167,6 +159,7 @@ export type ExportRequest =
       fonts: Record<string, ArrayBuffer>;
     }
   | { type: "cancel" }
+  | { type: "motif:frame"; packet: MotifFramePacket }
   /// Backpressure ack: the main thread finished writing the most recent
   /// `chunk` to disk; the worker's WritableStream may release the next write.
   | { type: "chunk-ack" }
@@ -219,6 +212,7 @@ export interface ExportPerf {
 
 export type ExportEvent =
   | { type: "ready" }
+  | { type: "motif:consumed"; index: number }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
   /// Keyed on `nativeSink`, not bit depth: absent ⇒ one sequential slice of the
   /// output file (fMP4, append-only) from the WebCodecs path; present ⇒ one raw

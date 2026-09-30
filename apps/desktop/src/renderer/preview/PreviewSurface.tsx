@@ -57,10 +57,8 @@ export interface PreviewSurfaceHandle {
     endUs?: number;
     keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Pre-rasterized Motif-layer frames baked on the main thread before
-    /// launching the export Worker (which has no DOM). Threaded through to
-    /// `runExport` and transferred into the Worker.
-    motifFrames?: Record<string, ImageBitmap[]>;
+    /// Cancels export, including pending Motif reads and captures.
+    signal?: AbortSignal;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
     /// Present ⇒ the worker packs frames to this format and streams them to

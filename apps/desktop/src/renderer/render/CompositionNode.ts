@@ -18,6 +18,7 @@
 // Plan: docs/render.md
 
 import { Container, Texture } from "pixi.js";
+import type { InjectedMotifFrames } from "./worker/motifStream";
 import type { Renderer } from "pixi.js";
 
 import { snapFrameFloor } from "../frames";
@@ -273,7 +274,7 @@ export interface CompositionNodeHost {
   audioSourceUrl(layerId: string, mediaId: string): string | null;
   /// Export-only pre-baked Motif frames for `instanceKey(path, layerId)`;
   /// undefined in preview and for an unbaked layer.
-  motifFrames(key: string): readonly ImageBitmap[] | undefined;
+  motifFrames(key: string): InjectedMotifFrames | undefined;
   ensureTenBitIngest(): TenBitIngest;
   ensureNv12Ingest(): Nv12Ingest;
   /// Drop both ingests' per-clip state for a pool key that is going away.
@@ -1784,9 +1785,8 @@ export class CompositionNode {
     // semantic (a motif animates over its own placed duration).
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
-    // Export mode's pre-baked frames for this layer INSTANCE (exportBake.ts
-    // keys them by the same ref path). Undefined in preview, or when this
-    // layer wasn't baked.
+    // Export pixels for this layer INSTANCE, keyed by its Group path.
+    // The worker waits for these before compositing; undefined in preview.
     const injected = this.host.motifFrames(this.keyFor(layer.id));
     tmpl.sprite.update(
       withTransformOverride(layer.id, resolveMotifView(layer.params, tInLayerUs)),

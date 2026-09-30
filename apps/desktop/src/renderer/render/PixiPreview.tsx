@@ -1184,7 +1184,7 @@ async function handlePixiExport(
     endUs?: number;
     keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    motifFrames?: Record<string, ImageBitmap[]>;
+    signal?: AbortSignal;
     bitDepth?: 8 | 10;
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
     decodeRouting?: ExportDecodeRouting;
@@ -1221,7 +1221,7 @@ async function handlePixiExport(
       ...(opts.keyframeIntervalSec != null
         ? { keyframeIntervalSec: opts.keyframeIntervalSec }
         : {}),
-      ...(opts.motifFrames ? { motifFrames: opts.motifFrames } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
       ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
       ...(opts.nativeSinkPixFmt != null
         ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }

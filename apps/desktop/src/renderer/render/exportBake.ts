@@ -1,44 +1,11 @@
-// Main-thread Motif pre-capture for export.
-//
-// The export Worker has no DOM and no backend `invoke`, so it can't capture
-// Motif frames itself. Instead the MAIN thread captures EVERY frame of each
-// Motif layer in the export range to an `ImageBitmap[]` (indexed by
-// composition-frame) via the SAME CDP path the preview uses (`bakeMotifFrame`
-// → `captureMotifFrame` → the offscreen Motif host window), and the bitmaps are
-// TRANSFERRED into the Worker, where `MotifSprite` binds them by index
-// synchronously. Export pixels are therefore identical to preview (one
-// producer) and carry the Motif's transparent backdrop.
-//
-// The bake runs on the COMPOSITION fps grid — the same grid the Worker's
-// Compositor uses when it constructs each `MotifSprite`. The export OUTPUT fps
-// may differ; the Worker maps each output-frame time back to a composition
-// frame index via `frameIndexInLayer(..., compFps)`, so the bake MUST be keyed
-// on comp fps or the indices diverge.
-//
-// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or a
-// an on-disk L2 frame) and never reads the in-RAM
-// `sharedMotifFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
-// pulling L0 bitmaps would neuter preview's cached frames and break live
-// preview after an export. (L2 *disk* reads are safe — they decode to a fresh
-// bitmap, not a shared one.)
-//
-// FRAME MATH: `motifFrameDescriptor` is the single authority for (cacheKey,
-// contentFrame, canonicalProps); this module only reconstructs each
-// layer-local frame's `tInLayerUs` (`tInLayerUsForLayerLocalFrame`) and asks.
-// PROPS: canonicalization goes through the descriptor's LENIENT canonicalizer
-// (drop unknown / fill defaults / fall back on invalid) — a deliberate change
-// from the earlier STRICT bake, which threw on invalid props and failed the
-// whole export. Preview already renders such layers via the same lenient
-// path, so export now matches what preview shows instead of rejecting it.
+// Pure Motif export-range planning. Pixel acquisition is bounded and demand-driven
+// in exportMotifSource.ts; this module allocates no bitmaps.
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
 import { compositionLocalUs, forEachLayerInTime, instanceKey } from "./compositionWalk";
 import { getMotif, type Motif } from "./motifs/catalog";
-import { bakeMotifFrame } from "./motifs/motifRaster";
-import { motifDurationFrames, tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
-import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
+import { motifDurationFrames } from "./motifs/motifFrames";
 
 /// One Motif layer to bake: its id, the resolved `Motif`, the layer's
 /// `MotifView`, and the comp-fps frame range to raster. `durationFrames` is
@@ -149,94 +116,4 @@ export function motifLayersToBake(
     });
   });
   return out;
-}
-
-/// Progress callback: `(baked, total)` cumulative frames across all layers.
-export type BakeProgress = (baked: number, total: number) => void;
-
-/// Bake every Motif layer overlapping `[startUs, endUs)` to a per-layer
-/// `ImageBitmap[]` indexed by COMPOSITION-frame index. The array is sparse only
-/// at the head when the export range starts mid-layer: indices `[0, firstFrame)`
-/// are left `undefined` (the Worker never requests them — they're outside the
-/// range), so the array's `length` is `lastFrame + 1` and `frames[idx]` is the
-/// capture for comp-frame `idx`. The Worker binds `frames[clamp(idx)]`.
-///
-/// MUST run on the MAIN thread (backend `invoke` / CDP is not available in the
-/// Worker). `fpsNum/fpsDen` are the COMPOSITION fps. Captures fresh bitmaps via
-/// the CDP path (NOT the shared preview cache — see the module header).
-export async function exportBakeMotifs(
-  summary: ProjectSummary,
-  startUs: number,
-  endUs: number,
-  fpsNum: number,
-  fpsDen: number,
-  onProgress?: BakeProgress,
-): Promise<Record<string, ImageBitmap[]>> {
-  const specs = motifLayersToBake(summary, startUs, endUs, fpsNum, fpsDen);
-  const result: Record<string, ImageBitmap[]> = {};
-  if (specs.length === 0) return result;
-
-  const total = specs.reduce(
-    (acc, s) => acc + (s.lastFrame - s.firstFrame + 1),
-    0,
-  );
-  let baked = 0;
-  onProgress?.(0, total);
-
-  for (const spec of specs) {
-    // Allocate up to lastFrame; leave [0, firstFrame) holes for a mid-layer
-    // export start. Bitmaps land at their comp-frame index so the Worker's
-    // frames[frameIndexInLayer(...)] is a direct hit.
-    const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
-    for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
-      // ONE descriptor per frame is the whole frame math: reconstruct the
-      // `tInLayerUs` the compositor will derive for this layer-local slot,
-      // then read contentFrame / cacheKey / canonicalProps off the same
-      // authority the preview uses. The cacheKey is tInLayerUs-independent
-      // (identity/props/size/fps/durationFrames only), so one call per frame
-      // serves both the L2 lookup and the capture.
-      const desc = motifFrameDescriptor(
-        spec.view,
-        tInLayerUsForLayerLocalFrame(frame, spec.tStartUs, fpsNum, fpsDen),
-        spec.durationUs,
-        fpsNum,
-        fpsDen,
-        spec.motif,
-      );
-      // Defensive: the descriptor never returns null today.
-      if (!desc) continue;
-      const contentFrame = desc.contentFrame;
-      // Disk-first: persisted frames are keyed by (cacheKey, content frame).
-      // The shared reader returns a FRESH bitmap, safe to transfer, from the
-      // LZ4 frame cache. Gated by the in-RAM baked-key index so an
-      // un-baked Motif never pays a per-frame fs probe. Any read error falls
-      // through to a live capture, so a disk hiccup can't blank an export.
-      if (sharedBakedKeyIndex.has(desc.cacheKey)) {
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, contentFrame);
-          if (bitmap) {
-            frames[frame] = bitmap;
-            baked++;
-            onProgress?.(baked, total);
-            continue;
-          }
-        } catch {
-          // fall through to a live CDP capture
-        }
-      }
-      // CDP capture of the hidden Motif host — the SAME producer the preview
-      // prewarmer/baker use (manifest size + manifest settle_rafs), so the
-      // exported bitmap is pixel-identical to preview AND carries the Motif's
-      // transparent backdrop.
-      // eslint-disable-next-line no-await-in-loop
-      const bitmap = await bakeMotifFrame(spec.motif, contentFrame, fpsNum, fpsDen, desc.canonicalProps);
-      frames[frame] = bitmap;
-      baked++;
-      onProgress?.(baked, total);
-    }
-    result[spec.layerId] = frames;
-  }
-
-  return result;
 }

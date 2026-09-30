@@ -31,6 +31,7 @@ import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
 import { MotifTextureSource } from "./MotifTextureSource";
+import type { InjectedMotifFrames } from "../worker/motifStream";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
@@ -143,19 +144,15 @@ export class MotifSprite implements StageableSprite {
   /// cache hit the frame binds synchronously; on a miss it's captured +
   /// rasterized async and bound once ready (if still wanted).
   ///
-  /// `injectedFrames` (export mode) is a pre-rasterized `ImageBitmap[]` for
-  /// THIS layer, indexed by composition-frame, baked on the main thread by
-  /// `exportBake.ts`. When present it is consulted FIRST: the frame is bound
-  /// SYNCHRONOUSLY by `frameIndexInLayer(...)` (clamped), bypassing the DOM
-  /// capture harness entirely (the export Worker has no `document`). The frame
-  /// index is computed with the SAME comp-fps math as the preview path, so
-  /// export == preview frame selection. Absent (preview) ⇒ the harness/cache
-  /// path below runs unchanged.
+  /// Export supplies one owned bitmap selected on the composition grid by
+  /// exportMotifSource. Binding is synchronous; the worker releases pixels
+  /// after rendering. Indexed arrays remain supported by isolated render tests.
+  /// Absent (preview) uses the asynchronous cache/capture path below.
   update(
     view: ResolvedMotifView,
     tInLayerUs: number,
     durationUs: number,
-    injectedFrames?: readonly ImageBitmap[],
+    injectedFrames?: InjectedMotifFrames,
   ): void {
     if (this.disposed) return;
 
@@ -187,6 +184,13 @@ export class MotifSprite implements StageableSprite {
     // the content cap (the preview path below does that for live rendering).
     // No canonicalize, no harness, no cache: the bitmaps are already baked.
     if (injectedFrames) {
+      if ("bitmap" in injectedFrames) {
+        // Each streamed bitmap has its own lifetime, even when output fps
+        // repeats the same composition frame. Never reuse a closed binding.
+        if (this.bound !== injectedFrames.bitmap) this.bindBitmap(injectedFrames.bitmap);
+        this.injectedFrame = injectedFrames.frame;
+        return;
+      }
       const durationFrames = motifDurationFrames(
         durationUs,
         this.fpsNum,

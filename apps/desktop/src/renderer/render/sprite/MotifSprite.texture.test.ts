@@ -38,6 +38,14 @@ function batch(sprite: MotifSprite) {
 function frame(width = 480, height = 270) {
   return { width, height, close: vi.fn() } as unknown as ImageBitmap;
 }
+
+it("rebinds a streamed duplicate composition frame after the prior bitmap is consumed", () => {
+  const sprite = makeSprite(), first = frame(), second = frame();
+  sprite.update(view, 0, 1_000_000, { frame: 0, bitmap: first });
+  first.close();
+  sprite.update(view, 0, 1_000_000, { frame: 0, bitmap: second });
+  expect(sprite.sprite.texture.source.resource).toBe(second);
+});
 afterEach(() => {
   for (const group of groups) group.destroy();
   for (const sprite of sprites) sprite.dispose();

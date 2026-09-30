@@ -1,44 +1,11 @@
-// Unit tests for the export Motif bake. The PURE half (`motifLayersToBake`)
-// is fully Node-testable. The bake LOOP
-// (`exportBakeMotifs`) is covered here too by mocking its CDP producer
-// (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
-// the real-Chromium/Electron e2e (`e2e/electron/motif-export.spec.ts`).
-//
-// The load-bearing invariant: a layer's baked frame range is computed on the
-// COMPOSITION fps with the SAME `motifDurationFrames` / `frameIndexInLayer`
-// math the Worker's `MotifSprite.update` uses to look frames up. A drift
-// here = export binds the wrong (or an out-of-range) frame. The first test
-// pins exactly that: the full-range bake covers `[0, motifDurationFrames-1]`.
+// Composition-grid, range and Group selection regressions for Motif export.
+// Pixel streaming and cache recovery are covered by exportMotifSource.test.ts.
 
-import { afterEach, describe, expect, it, test, vi, beforeEach } from "vitest";
-
-// Mock the CDP producer so the bake loop is Node-testable (no host/DOM).
-vi.mock("./motifs/motifRaster", () => ({
-  bakeMotifFrame: vi.fn(
-    async (motif, frame) =>
-      ({ tag: `${motif.manifest.id}#${frame}` }) as unknown as ImageBitmap,
-  ),
-}));
-
-// Mock the disk-path infra (L2 baked key index + frame cache).
-vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./motifs/motifRasterCache")>();
-  return {
-    ...actual,
-    sharedBakedKeyIndex: { has: vi.fn(() => false) },
-    sharedMotifFrameCache: {
-      readBitmap: vi.fn(async () => ({ tag: "from-disk" }) as unknown as ImageBitmap),
-    },
-  };
-});
-
-// Node/jsdom has no createImageBitmap; stub it so the disk-path test works.
-(globalThis as unknown as { createImageBitmap: (b: Blob) => Promise<ImageBitmap> }).createImageBitmap =
-  vi.fn(async () => ({ tag: "from-disk" }) as unknown as ImageBitmap);
+import { afterEach, describe, expect, it, test } from "vitest";
 
 import type { AnimTrack, LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { motifLayersToBake, exportBakeMotifs } from "./exportBake";
+import { motifLayersToBake } from "./exportBake";
 import {
   previewRenderTargetId,
   setPreviewRenderTarget,
@@ -47,8 +14,6 @@ import { useProjectStore } from "../state/projectStore";
 import { motifContentFrame, motifDurationFrames, tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
 import { getMotif, type Motif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-import { bakeMotifFrame } from "./motifs/motifRaster";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -559,61 +524,6 @@ describe("export bake matches preview content frame", () => {
       if (preview !== bake) mismatches.push(f);
     }
     expect(mismatches).toEqual([]);
-  });
-});
-
-describe("exportBakeMotifs → CDP (bakeMotifFrame)", () => {
-  beforeEach(() => {
-    (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
-    (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(false);
-  });
-
-  it("bakes a countdown layer's frames via bakeMotifFrame, indexed by comp frame", async () => {
-    const summary = summaryWith([motifLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
-    const frames = out["L1"]!;
-    expect(frames).toBeDefined();
-    expect(frames.length).toBe(60);
-    expect((frames[0] as unknown as { tag: string }).tag).toBe("countdown#0");
-    expect((frames[59] as unknown as { tag: string }).tag).toBe("countdown#59");
-    expect(bakeMotifFrame).toHaveBeenCalledTimes(60);
-    expect(bakeMotifFrame).toHaveBeenCalledWith(
-      expect.objectContaining({ manifest: expect.objectContaining({ id: "countdown" }) }),
-      0,
-      30,
-      1,
-      expect.any(Object),
-    );
-  });
-});
-
-describe("exportBakeMotifs → L2 disk fast path", () => {
-  beforeEach(() => {
-    (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
-    (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    // Default the disk read to a HIT; the miss test below overrides it.
-    (sharedMotifFrameCache.readBitmap as ReturnType<typeof vi.fn>).mockResolvedValue(
-      { tag: "from-disk" } as unknown as ImageBitmap,
-    );
-  });
-
-  it("reads L2 frames off disk and does NOT re-capture when the key is baked", async () => {
-    const summary = summaryWith([motifLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
-    expect(out["L1"]!.length).toBe(60);
-    expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("from-disk");
-    expect(bakeMotifFrame).toHaveBeenCalledTimes(0);
-  });
-
-  it("falls back to CDP capture when the key is baked but the frame is missing on disk", async () => {
-    // Stale index (key marked baked) but readPng returns null — must NOT blank
-    // the export: fall through to a live capture for every such frame.
-    (sharedMotifFrameCache.readBitmap as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    const summary = summaryWith([motifLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
-    expect(out["L1"]!.length).toBe(60);
-    expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("countdown#0");
-    expect(bakeMotifFrame).toHaveBeenCalledTimes(60);
   });
 });
 
