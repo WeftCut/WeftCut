@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { invokeCmd, launchApp, newProject, summary, tmpDir, waitForHook } from './helpers/driver'
 import type { PositionAnimation } from '../../src/shared/position'
 
@@ -129,7 +130,7 @@ test('conversion refuses missed quality targets and jumping positions without ch
     const source: PositionAnimation = {
       mode: 'XY', y: { mode: 'Static', value: 360 }, x: {
         mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' },
-        value: [0, 1].map(i => ({ id: `quality-${i}`, t_us: i * 33333, value: 300 + i * 600,
+        value: [0, 1].map(i => ({ id: randomUUID(), t_us: i * 33333, value: 300 + i * 600,
           in: { x: 0.95, y: 1, mode: 'Free' }, out: { x: 0.9, y: 0, mode: 'Free' },
           continuity: 'Broken', segment: { kind: 'Spline' } })),
       },
