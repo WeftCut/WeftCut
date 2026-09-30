@@ -173,7 +173,7 @@ describe("Compositor preview decode priority wiring", () => {
           disposed: false,
           ensureReady: async () => {},
           dispose: vi.fn(),
-          requestFrameAt: async () => {},
+          requestFrameAt: vi.fn(async () => {}),
           onFirstFrame: vi.fn(),
         };
         sessions.set(init.layerId, session);
@@ -200,14 +200,15 @@ describe("Compositor preview decode priority wiring", () => {
       pool,
     });
     compositor.setProject(summary([
-      video("active", 4_000_000, 8_000_000),
-      video("upcoming", 5_500_000, 9_000_000),
+      video("active", 4_000_000, 5_500_000),
+      video("upcoming", 5_500_000, 5_700_000),
+      video("after-short", 5_700_000, 9_000_000),
     ]));
 
     compositor.compositeFrame(5_000_000);
     expect(events[0]).toEqual({
       kind: "priority",
-      value: ["active", "active#swap", "upcoming", "upcoming#swap"],
+      value: ["active", "active#swap", "upcoming", "upcoming#swap", "after-short", "after-short#swap"],
     });
     expect(events[1]).toEqual({ kind: "acquire", value: "active" });
 
@@ -220,6 +221,7 @@ describe("Compositor preview decode priority wiring", () => {
       .filter(({ event }) => event.kind === "priority");
     expect(priorityEvents).toHaveLength(1);
     expect(upcomingAcquire).toBeGreaterThan(priorityEvents[0]!.index);
+    expect(sessions.get("after-short")?.requestFrameAt).toHaveBeenCalledWith(0);
     compositor.dispose();
   });
 });

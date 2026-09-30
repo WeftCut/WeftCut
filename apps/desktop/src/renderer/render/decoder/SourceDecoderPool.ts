@@ -648,7 +648,7 @@ export class SourceDecoderPool {
   }
 
   /// Preview declares the decode sessions that own the current frame or the
-  /// nearest upcoming boundary. The pool keeps the lane/capacity mechanics
+  /// bounded upcoming cut window. The pool keeps the lane/capacity mechanics
   /// private: a priority source rejected by main may evict only retained
   /// FFmpeg hardware sessions, never another active/upcoming source.
   setPriorityKeys(keys: readonly string[]): boolean | Promise<boolean> {

@@ -90,7 +90,7 @@ export interface UpcomingClipPrewarmSnapshot {
   anchorUs: number;
   /// Future window scanned for the next clip boundary.
   windowUs: number;
-  /// Start time of the nearest future VideoClip in the window.
+  /// Start time of the nearest future VideoClip in the prewarm plan.
   /// Null means no upcoming VideoClip was found.
   nextStartUs: number | null;
   clips: Array<{
@@ -603,7 +603,7 @@ export class Compositor {
     // Exact-rational snap only — pre-rounded frame durations drift (see
     // `fpsNum`).
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
-    // Declare active + nearest-upcoming ownership before `ensureClip` opens
+    // Declare active + planned-upcoming ownership before `ensureClip` opens
     // any source in the visual sweep. If main rejects an upcoming HW open, the
     // pool may now reclaim only truly retained sessions, never a clip this
     // frame is still presenting (including either overlap-swap key).
@@ -932,9 +932,9 @@ export class Compositor {
     return this.nv12Ingest;
   }
 
-  /// Warm the next VideoClip boundary inside the ring-sized lookahead
+  /// Warm upcoming VideoClip boundaries inside the ring-sized lookahead
   /// window. This keeps normal playback's current-frame pump unchanged
-  /// while giving the next clip's decoder a chance to parse, configure,
+  /// while giving upcoming clips' decoders a chance to parse, configure,
   /// and fill its first-frame ring before the playhead reaches it.
   /// Boundaries are the open composition's own; a Group's inner cuts warm
   /// when its node reaches them.

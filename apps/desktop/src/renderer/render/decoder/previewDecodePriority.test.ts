@@ -78,7 +78,36 @@ function summary(layers: LayerSummary[]): CompositionSummary {
 }
 
 describe("preview decode priority plan", () => {
-  it("protects every active clip and only the nearest upcoming boundary, including swap keys", () => {
+  it("warms across a short intervening clip instead of waiting until that clip starts", () => {
+    const plan = planPreviewDecodePriority(summary([
+      video("active", 0, 2_000_000),
+      video("short", 2_000_000, 2_200_000),
+      video("after-short", 2_200_000, 3_000_000),
+      video("outside-window", 3_000_000, 4_000_000),
+    ]), 1_500_000, 1_000_000);
+    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["short", "after-short"]);
+    expect(plan.poolKeys).toContain("after-short");
+  });
+
+  it("bounds speculation even when many tiny cuts fit inside the window", () => {
+    const plan = planPreviewDecodePriority(summary([
+      video("active", 0, 2_000_000),
+      ...[0, 1, 2, 3].map(i => video(`cut-${i}`, 2_000_000 + i * 100_000, 2_100_000 + i * 100_000)),
+    ]), 1_500_000, 1_000_000);
+    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["cut-0", "cut-1"]);
+    expect(plan.poolKeys).not.toContain("cut-2");
+  });
+
+  it("does not add speculative sessions to a composition with several active videos", () => {
+    const plan = planPreviewDecodePriority(summary([
+      video("active-a", 0, 2_000_000),
+      video("active-b", 0, 3_000_000),
+      video("short", 2_000_000, 2_200_000),
+      video("after-short", 2_200_000, 3_000_000),
+    ]), 1_500_000, 1_000_000);
+    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["short"]);
+  });
+  it("protects the nearest boundary and its swap keys without warming extra overlapping layers", () => {
     const active = video("active", 4_000_000, 8_000_000);
     const retained = video("retained", 0, 4_000_000);
     const upcomingA = video("upcoming-a", 5_500_000, 9_000_000);

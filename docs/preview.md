@@ -312,7 +312,13 @@ mismatches use the ordinary software profile instead.
 `Compositor` publishes one **priority epoch** before any active acquire or
 upcoming prewarm: every currently active VideoClip plus every clip at the
 nearest boundary inside the one-second lookahead, with both its base and
-overlap-swap pool keys. A priority source that receives
+overlap-swap pool keys. For sequential short cuts, the plan also looks past
+the nearest clip to the next non-overlapping boundary in that window. Extra
+speculation is capped at two upcoming clips and three active/upcoming clips
+in total; participants of the nearest boundary are never dropped to meet
+that cap. These are prewarm limits, not hardware admission limits. Warming
+only the nearest cut would give its successor just a few frames of startup
+time, leaving its decoder empty at the cut. A priority source that receives
 `hw-budget-exceeded` may ask `SourceDecoderPool` to close only non-priority
 FFmpeg hardware handles retained from older timeline regions. The pool awaits
 each `previewGpu:close` through main's native close and budget-lease release
