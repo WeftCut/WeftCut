@@ -55,9 +55,11 @@ export const DECODE_COMPONENT_PRESENT: boolean =
 /// context creation fails, preview and the export worker's GL packing alike
 /// (see the renderer assertion in exportWorker.ts).
 ///
-/// Windows and macOS deliberately get NOTHING: both have a real GPU stack on
-/// the runners, and forcing software GL on Windows 11 HANGS the offscreen CDP
-/// capture — see the RENDERER CHOICE note in .github/workflows/electron-ci.yml.
+/// Windows and macOS deliberately get NOTHING: let Chromium select the available
+/// backend. Hosted Windows runners may use software compositing; GPU-specific
+/// gates probe capability instead of inferring it from the OS. Forcing software
+/// GL on Windows 11 can hang offscreen CDP capture — see the RENDERER CHOICE note
+/// in .github/workflows/electron-ci.yml.
 /// WEFTCUT_E2E_GL overrides the table (space-separated switches) so a dev
 /// machine can reproduce a CI leg's GL stack, e.g. ubuntu's SwiftShader:
 /// WEFTCUT_E2E_GL="--use-angle=swiftshader --enable-unsafe-swiftshader"

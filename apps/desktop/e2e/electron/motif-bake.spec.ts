@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 
@@ -14,6 +15,7 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
     const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: needsGpu ? 'texture' : 'png' } })
     try {
       if (needsGpu) {
+        test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures; PNG compatibility cases still run')
         const available = await app.evaluate((_electron, addon) => {
           const native = process.getBuiltinModule('module').createRequire(addon)(addon)
           try { const encoder = new native.MotifTextureEncoder(); encoder.close(); return true }

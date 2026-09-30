@@ -2,11 +2,13 @@ import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, tmpDir } from './helpers/driver'
+import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 
 // Real preload/worker/native texture ownership, with synthetic colored frames.
 test('@serial cached Motif frames survive concurrent reads and slot reuse', async () => {
   const { app, page } = await launchApp({ env: { ELECTRON_RENDERER_URL: '' } })
   try {
+    const sharedTextures = await supportsMotifSharedTextures(app)
     const parent = tmpDir('weftcut-motif-transport-')
     await newProject(page, { parentFolder: parent, name: 'Transport', canvas: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 } })
     const hash = '0123456789abcdef0123456789abcdef'
@@ -75,6 +77,6 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
     }
     const kinds = await app.evaluate(() => (globalThis as any).__motifReadKinds as string[])
     expect(kinds).toHaveLength(36)
-    if (process.platform === 'win32') expect(new Set(kinds)).toEqual(new Set(['texture']))
+    expect(new Set(kinds)).toEqual(new Set([sharedTextures ? 'texture' : 'rgba']))
   } finally { await app.close() }
 })

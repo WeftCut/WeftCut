@@ -115,6 +115,12 @@ Platform evidence and the remaining host requirements are recorded in
 
 ### Run
 
+Motif GPU bake cases require both a native D3D11 device and Chromium's
+`supportsD3dSharedImages` capability. A hosted Windows runner can have the former
+without the latter. Such runners skip the GPU-only bake cases; PNG/warm-cache
+bakes and concurrent frame-read pixel checks still run, requiring the RGBA
+fallback. Hardware-capable Windows runs still require the texture path.
+
 ```
 npm run e2e        # default tier: @serial project, then parallel project
 npm run e2e -- --full                            # + the @matrix cells
