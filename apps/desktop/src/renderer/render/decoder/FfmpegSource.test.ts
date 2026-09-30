@@ -45,6 +45,45 @@ function fakeTransport(opts?: { openRejects?: string; disposeRejects?: string })
 }
 
 describe("FfmpegSource — internal HW→SW fallback", () => {
+  it("refills from ring coverage rather than issuing an IPC request for every display tick", async () => {
+    const gpu = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "refill", mediaId: "m", sourcePath: "clip.mp4", componentAvailable: true, forceLane: "hardware" },
+      { makeGpu: () => gpu.t },
+    );
+    let frontier = -1;
+    gpu.t.requestFrameAt = vi.fn((t: number) => {
+      // Native's existing 500 ms autonomous horizon. Only produce new frames.
+      for (let f = Math.max(frontier + 1, Math.floor(t / 16_667)); f <= Math.floor((t + 500_000) / 16_667); f++) {
+        src.ring.push({width: 16, height: 16, close() {}} as ImageBitmap, f * 16_667, 16_667);
+        frontier = f;
+      }
+    });
+    try {
+      for (let f = 0; f < 180; f++) {
+        await src.requestFrameAt(f * 16_667);
+        expect(src.ring.containsPts(f * 16_667)).toBe(true);
+      }
+      expect(vi.mocked(gpu.t.requestFrameAt).mock.calls.length).toBeLessThan(15);
+      expect(src.ring.size()).toBeLessThan(65);
+    } finally { src.dispose(); }
+  });
+  it("only dispatches the newest target when a cold open completes", async () => {
+    const gpu = fakeTransport();
+    let release!: () => void;
+    gpu.t.open = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    const src = new FfmpegSource(
+      { layerId: "cold", mediaId: "m", sourcePath: "clip.mp4", componentAvailable: true, forceLane: "hardware" },
+      { makeGpu: () => gpu.t },
+    );
+    try {
+      const requests = [0, 33_333, 66_667, 100_000].map(t => src.requestFrameAt(t));
+      release();
+      await Promise.all(requests);
+      expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(1);
+      expect(gpu.t.requestFrameAt).toHaveBeenCalledWith(100_000);
+    } finally { src.dispose(); }
+  });
   it("starts on hardware, and on HW error swaps to software in place keeping the ring", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
@@ -68,6 +107,14 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     expect(onFatal).not.toHaveBeenCalled();      // fully internal — no external signal
     sw.emitFrame(1033);
     expect(src.ring.size()).toBe(2);             // SAME ring kept its earlier frame
+    gpu.emitFrame(10_000_000);                  // retired transport completes late
+    gpu.finishEof();
+    gpu.fail("late old error");
+    expect(src.ring.lastPtsUs()).toBe(1033);
+    await src.requestFrameAt(2_000);
+    expect(sw.t.requestFrameAt).toHaveBeenCalledWith(2_000);
+    expect(onFatal).not.toHaveBeenCalled();
+    src.dispose();
   });
 
   it("fires onFatalError only when SW also fails (total failure)", async () => {
@@ -123,8 +170,8 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(0);
 
     // Playhead advances; the same cached tail is no longer a full window ahead.
-    await src.requestFrameAt(600_000);
-    expect(gpu.t.requestFrameAt).toHaveBeenCalledWith(600_000);
+    await src.requestFrameAt(1_400_000);
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledWith(1_400_000);
   });
 
   it("keeps evicting via the ring anchor after eof, even though the transport is no longer nudged", async () => {

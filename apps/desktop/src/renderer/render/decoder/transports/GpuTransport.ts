@@ -136,6 +136,7 @@ export class GpuTransport implements DecodeTransport {
   /// debounce/ceiling timers.
   private pendingTargetUs: number | null = null;
   private requestInFlight = false;
+  private lastRequestedTargetUs: number | null = null;
 
   /// Wire the port handoff, then open the native session. Throws on failure
   /// (port-handoff timeout, or `previewGpu.open` rejecting — most commonly
@@ -329,9 +330,15 @@ export class GpuTransport implements DecodeTransport {
   /// extra IPC round-trip.
   requestFrameAt(tUs: number): void {
     if (this._disposed) return;
+    if (this.lastRequestedTargetUs === tUs) return;
+    this.lastRequestedTargetUs = tUs;
     this.pendingTargetUs = tUs;
     if (this.requestInFlight) return;
     void this.pumpRequests();
+  }
+
+  resetRequestDedup(): void {
+    this.lastRequestedTargetUs = null;
   }
 
   private async pumpRequests(): Promise<void> {
@@ -343,6 +350,7 @@ export class GpuTransport implements DecodeTransport {
         try {
           await window.api.previewGpu.requestFrameAt({ streamId: this.streamId, targetUs: target });
         } catch {
+          this.lastRequestedTargetUs = null;
           // A dispose racing an in-flight nudge lets main close the session
           // first, and the invoke rejects on the unknown stream. That is the
           // expected shutdown ordering, not an error — and the `void`ed caller

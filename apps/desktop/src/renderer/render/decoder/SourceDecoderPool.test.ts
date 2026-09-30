@@ -164,10 +164,12 @@ describe("SourceDecoderPool hardware priority", () => {
     pool.dispose();
   });
 
-  it("reopens a prewarm spill when the clip becomes active and capacity shifts", async () => {
+  it("keeps the prewarmed ring while upgrading a spill after capacity shifts", async () => {
     const currentGpu = fakeTransport();
     const blockedGpu = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
     const admittedGpu = fakeTransport();
+    let finishAdmission!: () => void;
+    admittedGpu.open = vi.fn(() => new Promise<void>(resolve => { finishAdmission = resolve; }));
     const spillSw = fakeTransport();
     let upcomingGeneration = 0;
     const pool = new SourceDecoderPool({
@@ -175,13 +177,10 @@ describe("SourceDecoderPool hardware priority", () => {
         init: FfmpegSourceInit,
         reclaimRetainedCapacity: () => boolean | Promise<boolean>,
       ) => {
-        const generation = init.layerId === "upcoming"
-          ? upcomingGeneration++
-          : 0;
         return new FfmpegSource(init, {
           makeGpu: () => init.layerId === "current"
             ? currentGpu
-            : generation === 0
+            : upcomingGeneration++ === 0
               ? blockedGpu
               : admittedGpu,
           makeSw: () => spillSw,
@@ -198,14 +197,23 @@ describe("SourceDecoderPool hardware priority", () => {
     await prewarmed.ensureReady();
     expect((prewarmed as FfmpegSource).currentLane()).toBe("software");
     expect((prewarmed as FfmpegSource).isBudgetSpill()).toBe(true);
+    const frame = {width: 16, height: 16, close: vi.fn()} as unknown as ImageBitmap;
+    prewarmed.ring.push(frame, 0, 33_333);
 
-    await pool.setPriorityKeys(["upcoming"]);
+    const rebalancing = pool.setPriorityKeys(["upcoming"]);
+    await vi.waitFor(() => expect(admittedGpu.open).toHaveBeenCalledOnce());
+    expect(prewarmed.ring.frameAt(0)).toBe(frame);
+    expect(frame.close).not.toHaveBeenCalled();
+    finishAdmission();
+    await rebalancing;
     const active = pool.acquire({ ...ffmpegInit("upcoming"), engine: "ffmpeg", proxyAssetUrl: "" });
     await active.ensureReady();
 
     expect(current.disposed).toBe(true);
-    expect(prewarmed.disposed).toBe(true);
-    expect(active).not.toBe(prewarmed);
+    expect(prewarmed.disposed).toBe(false);
+    expect(active).toBe(prewarmed);
+    expect(active.ring.frameAt(0)).toBe(frame);
+    expect(frame.close).not.toHaveBeenCalled();
     expect((active as FfmpegSource).currentLane()).toBe("hardware");
     expect(admittedGpu.open).toHaveBeenCalledOnce();
     pool.dispose();

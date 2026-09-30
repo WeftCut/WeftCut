@@ -78,6 +78,24 @@ function summary(layers: LayerSummary[]): CompositionSummary {
 }
 
 describe("preview decode priority plan", () => {
+  it("plans trimmed Group instances on their visible source time and protects nested keys", () => {
+    const leaf = video("leaf", 0, 4_000_000);
+    const child = { ...summary([leaf]), id: "child" };
+    const base = video("group", 5_000_000, 7_000_000);
+    if (base.params.kind !== "VideoClip") throw new Error("fixture");
+    const group: LayerSummary = { ...base, kind: "CompositionRef", params: {
+      ...base.params, kind: "CompositionRef", composition_id: child.id, composition_label: "Child", src_in_us: 1_000_000,
+    } };
+    const root = summary([group]);
+    const project = summaryFixture({root});
+    project.compositions[child.id] = child;
+    const plan = planPreviewDecodePriority(root, 4_500_000, 1_000_000, project);
+    expect(plan.upcomingTargets).toMatchObject([{key: "group/leaf", path: "group/", sourceUs: 1_000_000, tStartUs: 5_000_000, tEndUs: 7_000_000}]);
+    expect(plan.poolKeys).toEqual(["group/leaf", "group/leaf#swap"]);
+    const playing = planPreviewDecodePriority(root, 5_500_000, 1_000_000, project);
+    expect(playing.activeTargets).toMatchObject([{key: "group/leaf", sourceUs: 1_500_000}]);
+    expect(planPreviewDecodePriority(root, 7_000_000, 1_000_000, project).poolKeys).toEqual([]);
+  });
   it("warms across a short intervening clip instead of waiting until that clip starts", () => {
     const plan = planPreviewDecodePriority(summary([
       video("active", 0, 2_000_000),

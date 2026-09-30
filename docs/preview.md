@@ -81,6 +81,18 @@ the node keeps its current composition until a replacement frame arrives.
 Ordinary forward underruns still hold the clip's current image. This avoids
 flashing the old tail and then jumping backwards when a short cut refills.
 
+The same check covers a first visit with no incoming texture, and recurses
+through Groups before replacing a populated parent scene. While the incoming
+decode catches up, preview retains the last complete composition rather than
+clearing it to black. Empty timeline intervals still clear normally.
+
+The Standard engine advances ring eviction on every tick but requests native
+refill only below 150 ms of cached forward coverage; native already fills a
+500 ms horizon per request. Cold opens in both engines process only the newest
+pending target. Hardware requests for the same target are deduplicated, with
+an explicit reset when the ring is flushed. See
+[ADR 0082](adr/0082-preview-demand-and-buffer-ownership-survive-transport-changes.md).
+
 Decoders are idle-disposed 5 s after last use and rebuild on the next
 `requestFrameAt`. Hardware-decode failures route through
 `decoderFallback.ts`: a zero-output first-frame error reconfigures
@@ -312,7 +324,10 @@ mismatches use the ordinary software profile instead.
 `Compositor` publishes one **priority epoch** before any active acquire or
 upcoming prewarm: every currently active VideoClip plus every clip at the
 nearest boundary inside the one-second lookahead, with both its base and
-overlap-swap pool keys. For sequential short cuts, the plan also looks past
+overlap-swap pool keys. The plan uses the shared recursive placement walk,
+including Group instance paths and source trims. The same plan drives active
+requests and preloading, so their resource protection and source times agree.
+For sequential short cuts, the plan also looks past
 the nearest clip to the next non-overlapping boundary in that window. Extra
 speculation is capped at two upcoming clips and three active/upcoming clips
 in total; participants of the nearest boundary are never dropped to meet
@@ -328,8 +343,13 @@ race the same still-live lease.
 If the priority set itself exceeds physical capacity, the rejected source uses
 the spill profile without retry churn. When the playhead crosses the boundary,
 the priority epoch changes: the just-departed hardware source is now
-reclaimable, and any priority budget-spill handle is disposed and reacquired
-through the normal pool path. That fresh open asks main for hardware again.
+reclaimable. After a lease is reclaimed, a still-priority budget spill retries
+hardware inside its existing source, preserving its decoded ring and sprite.
+The new transport asks main for admission again; a second capacity refusal
+can still fall back to software. Without reclaimed capacity there is no retry.
+Output from the retired transport is ignored, and repeated PTS entries from
+the new transport replace and release the old snapshots instead of consuming
+additional ring capacity.
 Thus the five-second idle retention remains useful in the ordinary case, but
 cannot pin an about-to-play clip to software under measured budget pressure.
 

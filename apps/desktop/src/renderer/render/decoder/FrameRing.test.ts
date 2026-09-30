@@ -23,6 +23,22 @@ beforeEach(() => {
   resetFrameRingBudgetForTest();
 });
 
+it("replaces overlapping transport output without retaining duplicate frame storage", () => {
+  const ring = new FrameRing();
+  let closed = 0;
+  const original = {...makeBitmap(0), close: () => { closed++; }} as ImageBitmap;
+  ring.push(original, 0, 33_333);
+  ring.push(makeBitmap(33_333), 33_333, 33_333);
+  const replacement = makeBitmap(0);
+  ring.push(replacement, 0, 33_333);
+  expect(ring.size()).toBe(2);
+  expect(closed).toBe(1);
+  expect(ring.frameAt(0)).toBe(replacement);
+  expect(ring.retainedBytes).toBe(2 * 1920 * 1080 * 4);
+  expect(ring.fate.pushed).toBe(ring.size() + ring.fate.evicted + ring.fate.flushed);
+  ring.dispose();
+});
+
 /// Stub `ImageBitmap` carrying only the fields `FrameRing` and its
 /// consumers touch. We tag each stub with `ptsUs` so the assertions
 /// below can verify which entry's bitmap came back from `frameAt`.

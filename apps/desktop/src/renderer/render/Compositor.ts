@@ -803,10 +803,9 @@ export class Compositor {
     // for why the pre-rounded `approxFrameDurUs` is not safe here.
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
     this.updateDecodePriorities(tUsSnapped);
-    this.root.anchor(tUsSnapped);
     if (this.mode === "preview") {
-      this.prewarmUpcomingClipBoundary(tUsSnapped);
-    }
+      this.preparePreviewDecode(tUsSnapped);
+    } else this.root.anchor(tUsSnapped);
   }
 
   /// Plain-number perf snapshot for the dev `PerfHUD`. Read whenever
@@ -932,13 +931,12 @@ export class Compositor {
     return this.nv12Ingest;
   }
 
-  /// Warm upcoming VideoClip boundaries inside the ring-sized lookahead
-  /// window. This keeps normal playback's current-frame pump unchanged
-  /// while giving upcoming clips' decoders a chance to parse, configure,
-  /// and fill its first-frame ring before the playhead reaches it.
-  /// Boundaries are the open composition's own; a Group's inner cuts warm
-  /// when its node reaches them.
-  private prewarmUpcomingClipBoundary(tUs: number): void {
+  /// Drive active and upcoming decode from one protected demand plan. Active
+  /// clips get their current target; future clips get their visible source
+  /// start so they can parse, configure and fill before the cut.
+  /// The shared placement walk includes trimmed Group instances, so inner
+  /// cuts warm before their parent reaches them too.
+  private preparePreviewDecode(tUs: number): void {
     if (!this.projectSummary) return;
     // Re-plan here as well as in the owner paths above: this method is the
     // exact point that calls `ensureClip` for speculative sources, so its
@@ -949,19 +947,27 @@ export class Compositor {
         this.root.composition,
         tUs,
         UPCOMING_CLIP_PREWARM_US,
+        this.projectSummary,
       );
-    const candidates = plan.upcomingLayers;
+    // Acquire active instances before speculative ones, using the very same
+    // demand plan that protected their leases. No first-visit tick delay.
+    for (const target of plan.activeTargets) {
+      const source = this.root.prewarmClip(target.layer, target.path);
+      if (source) void source.requestFrameAt(target.sourceUs);
+    }
+    const candidates = plan.upcomingTargets;
 
     const clips: UpcomingClipPrewarmSnapshot["clips"] = [];
-    for (const layer of candidates) {
+    for (const target of candidates) {
+      const layer = target.layer;
       // `candidates` is pre-filtered to VideoClip layers above, but the
       // narrowing is lost through the `LayerSummary[]` array type — re-narrow
       // so `layer.params` exposes the VideoClip fields (media_id, src_in_us).
       if (layer.params.kind !== "VideoClip") continue;
-      const source = this.root.prewarmClip(layer);
+      const source = this.root.prewarmClip(layer, target.path);
       if (!source) {
         clips.push({
-          layerId: layer.id,
+          layerId: target.key,
           mediaId: layer.params.media_id,
           requested: false,
           decodeQueueSize: 0,
@@ -970,10 +976,10 @@ export class Compositor {
         });
         continue;
       }
-      const srcTUs = layer.params.src_in_us;
+      const srcTUs = target.sourceUs;
       void source.requestFrameAt(srcTUs);
       clips.push({
-        layerId: layer.id,
+        layerId: target.key,
         mediaId: layer.params.media_id,
         requested: true,
         decodeQueueSize: source.decodeQueueSize?.() ?? 0,
@@ -990,9 +996,8 @@ export class Compositor {
   }
 
   /// Publish decode ownership without exposing Standard-engine lane policy to
-  /// the Compositor. A true result means the pool recycled an old budget spill;
-  /// repaint once its ordered main-process closes finish so `ensureClip` can
-  /// revive the disposed source through the ordinary acquire path.
+  /// the Compositor. A true result means the pool upgraded a budget spill in
+  /// place after ordered main-process closes; repaint with its retained ring.
   private updateDecodePriorities(tUs: number): PreviewDecodePriorityPlan | null {
     if (this.mode !== "preview" || !this.projectSummary) return null;
     const cached = this.decodePriorityPlanCache;
@@ -1003,6 +1008,7 @@ export class Compositor {
       this.root.composition,
       tUs,
       UPCOMING_CLIP_PREWARM_US,
+      this.projectSummary,
     );
     this.decodePriorityPlanCache = {
       summary: this.projectSummary,

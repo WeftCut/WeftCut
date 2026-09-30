@@ -144,6 +144,7 @@ export class SourceMedia {
 }
 
 export class SourceHandle {
+  private requestVersion = 0;
   readonly layerId: string;
   readonly media: SourceMedia;
   readonly ring: FrameRing;
@@ -474,8 +475,9 @@ export class SourceHandle {
   /// Nudge the decoder's lookahead toward `tUs`. Builds the pipeline lazily
   /// on first call, then delegates to the single-flight `PacketPump`.
   async requestFrameAt(tUs: number): Promise<void> {
+    const version = ++this.requestVersion;
     if (!this.ready || !this.decoder) await this.ensureReady();
-    if (this._disposed || !this.pump) return;
+    if (this._disposed || !this.pump || version !== this.requestVersion) return;
     this.lastUseMs = performance.now();
     this.pump.requestFrameAt(tUs);
   }
@@ -662,8 +664,8 @@ export class SourceDecoderPool {
     // A prewarm source may already have accepted a temporary software spill
     // when every session in the old priority set was genuinely needed. Once
     // the boundary moves, the former active source becomes retained: close it
-    // first, then recycle the spilled handle so the normal next acquire asks
-    // main for hardware again. One recycle per priority epoch avoids retry
+    // first, then upgrade the spilled transport while retaining its ready ring.
+    // One attempt per priority epoch avoids retry
     // churn when the priority set itself exceeds the physical budget.
     const spilled: Array<[string, FfmpegSource]> = [];
     for (const [key, handle] of this.handles) {
@@ -793,9 +795,13 @@ export class SourceDecoderPool {
   private async recyclePrioritySpills(
     spilled: Array<[string, FfmpegSource]>,
   ): Promise<boolean> {
-    await this.reclaimRetainedHardwareCapacity(spilled[0]![0]);
+    const reclaimed = await this.reclaimRetainedHardwareCapacity(spilled[0]![0]);
+    if (!reclaimed) return false;
     await Promise.all(spilled.map(async ([key, handle]) => {
-      await this.releaseFfmpegHandleAndWait(key, handle);
+      // Priority may change while main joins the old decode threads. Never
+      // resurrect a released source or upgrade one that is no longer needed.
+      if (this.handles.get(key) !== handle || !this.priorityKeys.has(key)) return;
+      await handle.retryHardwareAfterReclaim();
     }));
     return true;
   }

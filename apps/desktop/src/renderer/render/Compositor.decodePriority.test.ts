@@ -94,7 +94,7 @@ function emptyRing(): FrameStore {
 }
 
 describe("Compositor preview decode priority wiring", () => {
-  it.each(["empty", "future", "revived"])("does not restage a cached tail while a replayed cut refills (%s ring)", (state) => {
+  it.each(["cold", "cold-group", "empty", "future", "revived"])("keeps the presented scene while an incoming cut refills (%s ring)", (state) => {
     // Keep real rings, clip lifecycle and Pixi scene graph. Only pixel upload
     // needs a GPU, so stand it in with a real non-empty texture.
     const upload = vi.spyOn(VideoClipSprite.prototype, "updateFrame").mockImplementation(function (this: VideoClipSprite) {
@@ -124,11 +124,23 @@ describe("Compositor preview decode priority wiring", () => {
       { width: 1, height: 1, close: vi.fn() } as unknown as ImageBitmap, pts, 33_333,
     );
     try {
-      compositor.setProject(summary([video("outgoing", 0, 1_000_000), video("incoming", 1_000_000, 2_000_000)]));
-      compositor.compositeFrame(1_800_000);
-      push("incoming", 800_000);
-      compositor.compositeFrame(1_800_000);
+      const project = summary([video("outgoing", 0, 1_000_000), video("incoming", 1_000_000, 2_000_000)]);
+      if (state === "cold-group") {
+        const root = project.compositions[project.root_id]!;
+        const incoming = root.tracks[0]!.layers[1]!;
+        if (incoming.params.kind !== "VideoClip") throw new Error("fixture");
+        incoming.kind = "CompositionRef";
+        incoming.params = {...incoming.params, kind: "CompositionRef", composition_id: "child", composition_label: "Child"};
+        const childProject = summary([video("leaf", 0, 1_000_000)]);
+        project.compositions.child = {...childProject.compositions[childProject.root_id]!, id: "child"};
+      }
+      compositor.setProject(project);
       const scene = compositor.rootNode().container;
+      if (!state.startsWith("cold")) {
+        compositor.compositeFrame(1_800_000);
+        push("incoming", 800_000);
+        compositor.compositeFrame(1_800_000);
+      }
       const cachedIncoming = scene.children[0];
       compositor.compositeFrame(800_000);
       push("outgoing", 800_000);
@@ -137,20 +149,24 @@ describe("Compositor preview decode priority wiring", () => {
       if (state === "revived") sessions.get("incoming")!.dispose();
       else if (state === "empty") sessions.get("incoming")!.ring.flush();
       compositor.setAnchorTime(800_000); // real boundary prewarm / revival
+      if (state === "cold-group") expect(sessions.has("incoming/leaf")).toBe(true);
       compositor.compositeFrame(1_000_000); // target has no frame yet
       expect(scene.children).toHaveLength(1);
       expect(scene.children[0]).toBe(outgoing);
       expect(scene.children).not.toContain(cachedIncoming);
-      expect(compositor.activeClipProbe("incoming")?.spriteStaged).toBe(false);
-      push("incoming", 0);
+      const incomingId = state === "cold-group" ? "leaf" : "incoming";
+      expect(compositor.activeClipProbe(incomingId)?.spriteStaged).toBe(false);
+      push(state === "cold-group" ? "incoming/leaf" : "incoming", 0);
       compositor.compositeFrame(1_000_000);
-      expect(scene.children).toEqual([cachedIncoming]);
-      expect(compositor.activeClipProbe("incoming")?.boundFramePtsUs).toBe(0);
-      expect(compositor.activeClipProbe("incoming")?.spriteStaged).toBe(true);
+      expect(scene.children).toHaveLength(1);
+      if (!state.startsWith("cold")) expect(scene.children).toEqual([cachedIncoming]);
+      const incoming = scene.children[0];
+      expect(compositor.activeClipProbe(incomingId)?.boundFramePtsUs).toBe(0);
+      expect(compositor.activeClipProbe(incomingId)?.spriteStaged).toBe(true);
       // Ordinary forward underrun still holds the current clip's valid frame.
-      sessions.get("incoming")!.ring.flush();
+      sessions.get(state === "cold-group" ? "incoming/leaf" : "incoming")!.ring.flush();
       compositor.compositeFrame(1_033_333);
-      expect(scene.children).toEqual([cachedIncoming]);
+      expect(scene.children).toEqual([incoming]);
     } finally {
       compositor.dispose();
       upload.mockRestore();
@@ -205,7 +221,7 @@ describe("Compositor preview decode priority wiring", () => {
       video("after-short", 5_700_000, 9_000_000),
     ]));
 
-    compositor.compositeFrame(5_000_000);
+    compositor.setAnchorTime(5_000_000);
     expect(events[0]).toEqual({
       kind: "priority",
       value: ["active", "active#swap", "upcoming", "upcoming#swap", "after-short", "after-short#swap"],

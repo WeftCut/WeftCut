@@ -755,7 +755,7 @@ export class CompositionNode {
     // visibly jump backwards. Check before mutating any part of this scene, so
     // the currently presented composition is held until the cut can be drawn.
     // Forward underruns and source swaps still keep their valid held frame.
-    if (this.host.mode === "preview" && !this.canPresentHeldClipsAt(tUs)) {
+    if (this.host.mode === "preview" && !this.canPresentClipsAt(tUs) && this.container.children.length > 0) {
       this.host.noteLateLayer();
       return;
     }
@@ -831,16 +831,25 @@ export class CompositionNode {
     this.transitionNodes?.finishFrame();
   }
 
-  private canPresentHeldClipsAt(tUs: number): boolean {
+  private canPresentClipsAt(tUs: number): boolean {
     let ready = true;
-    for (const cached of this.clips.values()) {
-      if (cached.boundFrameTargetUs === null) continue;
-      const layer = this.layerById.get(cached.layerId);
-      if (!layer?.enabled || layer.params.kind !== "VideoClip") continue;
+    for (const layer of this.layerById.values()) {
+      if (!layer.enabled) continue;
       if (!this.trackEnabledByLayer.get(layer.id)) continue;
       if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
+      if (layer.params.kind === "CompositionRef") {
+        const child = this.ensureCompositionRef(layer)?.sprite.node;
+        const localUs = tUs - layer.t_start_us + layer.params.src_in_us;
+        if (child && localUs >= 0 && localUs < child.durationUs() && !child.canPresentClipsAt(localUs)) ready = false;
+        continue;
+      }
+      if (layer.params.kind !== "VideoClip") continue;
       const srcTUs = layer.params.src_in_us + tUs - layer.t_start_us;
-      if (srcTUs >= cached.boundFrameTargetUs) continue;
+      // A first visit has no held texture at all. It needs the same atomic
+      // scene handoff as replay; clearing the outgoing scene here paints black.
+      // Forward underruns may reuse this clip's already presented pixels.
+      const cached = this.clips.get(layer.id);
+      if (cached?.boundFrameTargetUs != null && srcTUs >= cached.boundFrameTargetUs) continue;
       const clip = this.ensureClip(layer);
       if (!clip || clip.source.ring.frameAt(srcTUs)) continue;
       // Keep driving every blocked clip, including freshly revived handles
@@ -1115,7 +1124,13 @@ export class CompositionNode {
 
   /// Open the boundary clip's decode session ahead of the playhead (preview).
   /// Returns null when the clip cannot be built or its handle is stale.
-  prewarmClip(layer: LayerSummary): DecodeSession | null {
+  prewarmClip(layer: LayerSummary, path = ""): DecodeSession | null {
+    if (path) {
+      const slash = path.indexOf("/");
+      const refLayer = this.layerById.get(path.slice(0, slash));
+      if (!refLayer) return null;
+      return this.ensureCompositionRef(refLayer)?.sprite.node.prewarmClip(layer, path.slice(slash + 1)) ?? null;
+    }
     const clip = this.ensureClip(layer);
     if (!clip || clip.source.disposed) return null;
     return clip.source;

@@ -85,7 +85,7 @@ export interface FrameRingFate {
   /// long-GOP source, serving the playhead re-decodes the whole GOP prefix, and
   /// every prefix frame older than the window lands here.
   staleDropped: number;
-  /// Frames removed by `setAnchor`'s lookbehind time window.
+  /// Frames removed by the lookbehind window or replaced at the same PTS.
   evicted: number;
   /// Of `evicted`, those `selectFrame` never returned — decoded, retained, and
   /// discarded without ever reaching the compositor. Work paid for and wasted.
@@ -171,9 +171,9 @@ export class FrameRing {
     return { ...this._fate };
   }
 
-  /// Drop the oldest entry, keeping the byte tally in step.
-  private evictFirst(): void {
-    const first = this.entries.shift();
+  /// Drop an entry, keeping the byte tally and frame-fate accounting in step.
+  private evictAt(index: number): void {
+    const [first] = this.entries.splice(index, 1);
     if (!first) return;
     this._retainedBytes -= FrameRing.bytesOf(first.frame);
     this._fate.evicted += 1;
@@ -209,7 +209,7 @@ export class FrameRing {
     while (this.entries.length > 0) {
       const first = this.entries[0]!;
       if (first.ptsUs + first.durationUs <= minKeepUs) {
-        this.evictFirst();
+        this.evictAt(0);
       } else {
         break;
       }
@@ -242,11 +242,20 @@ export class FrameRing {
     return this.framesAhead() >= MIN_LOOKAHEAD_FRAMES;
   }
 
+  /// Readiness, distinct from capacity: a full ring stranded in the future
+  /// cannot satisfy a seek. Native fills its own horizon after one request;
+  /// consumers use this to refill only when coverage runs low.
+  hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
+    const last = this.lastPtsUs();
+    return this.containsPts(tUs) && last !== null && last >= tUs + minLookaheadUs;
+  }
+
   /// Push a decoded frame. Caller transfers ownership; we close the frame on
   /// eviction. `ptsUs` and `durationUs` come from the source
   /// `VideoFrame.timestamp` / `.duration` (saved before the source frame was
   /// closed, since `ImageBitmap` itself carries no PTS metadata).
   push(frame: TransportFrame, ptsUs: number, durationUs: number): void {
+    if (this.disposed) { frame.close(); return; }
     // If this frame is already behind the lookbehind window, drop it. COUNTED:
     // this is decode output the ring refuses, and it is invisible in
     // `pushCount` (deliberately — that is a throughput measure of frames the
@@ -256,6 +265,14 @@ export class FrameRing {
       this._fate.staleDropped += 1;
       frame.close();
       return;
+    }
+    // In-place transport recovery may decode a range already buffered. Own
+    // exactly one snapshot per PTS; duplicates must not consume the byte
+    // budget and stop forward refill. The common append stays O(1).
+    const tail = this.entries[this.entries.length - 1];
+    if (tail && ptsUs <= tail.ptsUs) {
+      const index = this.findLatestAtOrBefore(ptsUs);
+      if (index >= 0 && this.entries[index]!.ptsUs === ptsUs) this.evictAt(index);
     }
     this._pushCount += 1;
     this._fate.pushed += 1;

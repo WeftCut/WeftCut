@@ -26,6 +26,11 @@ import {
 } from "./budgetSpillProfile";
 
 const IDLE_DISPOSE_MS = 5_000;
+// Both native lanes autonomously fill 500 ms after a request. Refill with
+// 150 ms still available instead of sending a round trip every display tick.
+// Ring anchors/eviction still advance every tick; seeks bypass this gate when
+// their target is not cached, and capacity remains the independent upper bound.
+const REFILL_LOOKAHEAD_US = 150_000;
 let nextStreamSeq = 0;
 
 /// The HW lanes that COPY BACK to CPU frames and ship bytes over the previewSw
@@ -99,6 +104,8 @@ export class FfmpegSource implements PreviewDecodeSession {
   private disposeP: Promise<void> | null = null;
   private lastUseMs = 0;
   private lastTargetUs: number | null = null;
+  private requestVersion = 0;
+  private requestedTargetUs: number | null = null;
   /// Set once the current transport's `onEof` fires; the sole eof gate on
   /// further `requestFrameAt` IPC — transports do not gate internally. Reset
   /// on every fresh `openLane` since a new transport can produce frames again.
@@ -145,6 +152,20 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// preview priority changes.
   isBudgetSpill(): boolean {
     return this.ready && this.budgetSpill && this.lane === "software" && !this._disposed;
+  }
+
+  /// Capacity recovery changes the transport, never the session/ring identity.
+  /// Closing a prewarmed handle here would throw away the very frames meant
+  /// to bridge the cut. Only transient admission spills may retry this way.
+  async retryHardwareAfterReclaim(): Promise<void> {
+    if (!this.isBudgetSpill()) return;
+    this.ready = false;
+    this.budgetSpill = false;
+    this.readyP = (async () => {
+      await this.closeTransportForFallback();
+      if (!this._disposed) await this._doEnsureReady();
+    })();
+    await this.readyP;
   }
   /// True while this source actually HOLDS a main-process admission lease — a
   /// live transport on the shared-texture hardware lane. `currentLane()` alone
@@ -328,7 +349,7 @@ export class FfmpegSource implements PreviewDecodeSession {
       ? this.makeHardwareTransport()
       : this.makeSoftwareTransport();
     t.onFrame((frame, ptsUs, durUs) => {
-      if (this._disposed) { frame.close(); return; }
+      if (this._disposed || this.transport !== t) { frame.close(); return; }
       this.ring.push(frame, ptsUs, durUs);
       if (!this.firedFirstFrame) {
         this.firedFirstFrame = true;
@@ -336,8 +357,8 @@ export class FfmpegSource implements PreviewDecodeSession {
         this.onFirstFrameCb = null;
       }
     });
-    t.onError((reason) => this.onTransportError(lane, reason));
-    t.onEof(() => { this.eof = true; });
+    t.onError((reason) => { if (this.transport === t) this.onTransportError(lane, reason); });
+    t.onEof(() => { if (this.transport === t) this.eof = true; });
     this.transport = t;
     this.lane = lane;
     // A fresh streamId per open so late frames from a swapped-out transport
@@ -358,7 +379,7 @@ export class FfmpegSource implements PreviewDecodeSession {
     // (initial, both fallbacks, and the same-lane playback-resolution re-open),
     // so the trail, not this call site, is what keeps it once-per-transition.
     noteLaneOpen({ layerId: this.layerId, mediaId: this.mediaId, lane, ...(transition ?? {}) });
-    if (this.lastTargetUs !== null) t.requestFrameAt(this.lastTargetUs);
+    if (this.lastTargetUs !== null) t.requestFrameAt(this.requestedTargetUs ?? this.lastTargetUs);
   }
 
   /// Pick the hardware transport by the resolved HW lane: the copy-back lanes
@@ -471,6 +492,8 @@ export class FfmpegSource implements PreviewDecodeSession {
   }
 
   async requestFrameAt(tUs: number): Promise<void> {
+    const version = ++this.requestVersion;
+    this.requestedTargetUs = tUs;
     if (!this.ready) {
       try {
         await this.ensureReady();
@@ -484,7 +507,7 @@ export class FfmpegSource implements PreviewDecodeSession {
       }
     }
     this.lastUseMs = performance.now();
-    if (this._disposed) return;
+    if (this._disposed || version !== this.requestVersion) return;
     const prevTargetUs = this.lastTargetUs;
     this.lastTargetUs = tUs;
     // Backward seek past everything cached: the ring now holds ONLY future-dated
@@ -520,6 +543,7 @@ export class FfmpegSource implements PreviewDecodeSession {
     // wants a full second — deeper than the native pump's own 500 ms horizon, so
     // steady playback never reaches here and the native cursor sets the pace.
     if (this.ring.isLookaheadFull()) return;
+    if (this.ring.hasLookaheadAt(tUs, REFILL_LOOKAHEAD_US)) return;
     this.transport?.requestFrameAt(tUs);
   }
 

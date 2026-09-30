@@ -200,6 +200,22 @@ describe("GpuTransport", () => {
     }
   });
 
+  it("does not spend an IPC round trip on every paused tick, but re-arms after a ring flush", async () => {
+    const { api } = installFakePreviewGpu();
+    const t = new GpuTransport();
+    await t.open({streamId: "paused", path: "clip.mp4"});
+    for (let i = 0; i < 60; i++) {
+      t.requestFrameAt(0);
+      await Promise.resolve();
+    }
+    expect(api.requestFrameAt).toHaveBeenCalledTimes(1);
+    t.resetRequestDedup();
+    t.requestFrameAt(0);
+    await Promise.resolve();
+    expect(api.requestFrameAt).toHaveBeenCalledTimes(2);
+    await t.dispose();
+  });
+
   it("forwards renderer-probed coded dimensions to main admission", async () => {
     const { api } = installFakePreviewGpu();
     const t = new GpuTransport();
