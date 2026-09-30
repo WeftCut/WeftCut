@@ -1401,6 +1401,15 @@ export async function setScaleLinked(layerId: string, linked: boolean): Promise<
   return invoke<void>("set_scale_linked", { layerId, linked });
 }
 
+/// Move an explicit drag set atomically; destinations preserve its lane arrangement.
+export async function moveLayers(
+  placements: { layerId: string; trackId: string }[],
+  anchorLayerId: string,
+  anchorTStartUs: number,
+): Promise<void> {
+  return invoke<void>("move_layers", { placements, anchorLayerId, anchorTStartUs });
+}
+
 export async function moveLayer(
   layerId: string,
   newTrackId: string,

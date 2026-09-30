@@ -22,6 +22,7 @@ import type {
   MediaSummary,
   Rgba,
   TrackSummary,
+  TransitionSummary,
 } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
@@ -98,6 +99,7 @@ const ipcMocks = vi.hoisted(() => ({
   addTrack: vi.fn().mockResolvedValue("spawned-track"),
   addGroupLayer: vi.fn().mockResolvedValue("placed-group-layer"),
   moveLayer: vi.fn().mockResolvedValue(undefined),
+  moveLayers: vi.fn().mockResolvedValue(undefined),
   moveLayersToNewTrack: vi.fn().mockResolvedValue("raised-track"),
   // Answers with one clone per id it was handed, so the pending-ghost swap
   // has a real id per subject.
@@ -140,6 +142,7 @@ vi.mock("../ipc", async (importOriginal) => {
     addMediaLayer: ipcMocks.addMediaLayer,
     addTrack: ipcMocks.addTrack,
     moveLayer: ipcMocks.moveLayer,
+    moveLayers: ipcMocks.moveLayers,
     moveLayersToNewTrack: ipcMocks.moveLayersToNewTrack,
     pasteLayers: ipcMocks.pasteLayers,
     trimLayer: ipcMocks.trimLayer,
@@ -275,6 +278,7 @@ function renderTimeline(overrides: {
   bladeMode?: boolean;
   tracks?: TrackSummary[];
   links?: LinkSummary[];
+  transitions?: TransitionSummary[];
   media?: MediaSummary[];
   onMutated?: () => Promise<void>;
   fpsNum?: number;
@@ -289,6 +293,7 @@ function renderTimeline(overrides: {
       compositionId={overrides.compositionId ?? null}
       tracks={overrides.tracks ?? [track]}
       links={overrides.links ?? []}
+      transitions={overrides.transitions ?? []}
       durationUs={overrides.durationUs ?? 5_000_000}
       keybindings={{}}
       fpsNum={overrides.fpsNum ?? 30}
@@ -1428,6 +1433,76 @@ describe("Timeline seek/selection coupling", () => {
         false,
       );
     });
+  });
+
+  it("moves a selection with an authorized transition overlap", async () => {
+    ipcMocks.moveLayers.mockClear();
+    const incoming = { ...linkedLayer, t_start_us: 1_600_000 };
+    const transition: TransitionSummary = { id: "slide", from_layer: layer.id, to_layer: incoming.id,
+      duration_us: 400_000, extended_us: 0, kind: { kind: "Slide", direction: "up" } };
+    const { getByText, container } = renderTimeline({ tracks: [{ ...track, layers: [layer, incoming] }], transitions: [transition], fpsNum: 60 });
+    act(() => setLayerSelection(layer.id, [layer.id, incoming.id]));
+    fireEvent.pointerDown(getByText("Clip A").closest(".timeline-layer")!, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
+    expect(useLayerDragStore.getState().drag?.validity).toBe("valid");
+    expect(container.querySelector<HTMLElement>('[data-testid="transition-chip"]')!.style.left).toBe("208px");
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
+    await waitFor(() => expect(ipcMocks.moveLayers).toHaveBeenCalledOnce());
+  });
+
+  it("keeps the transition window above linked participant chrome", () => {
+    const incoming = { ...linkedLayer, t_start_us: 1_600_000 };
+    const transition: TransitionSummary = { id: "slide", from_layer: layer.id, to_layer: incoming.id,
+      duration_us: 400_000, extended_us: 0, kind: { kind: "Slide", direction: "up" } };
+    useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, display_mode: "AbRoll" } }));
+    const hidden = { ...layer, id: "hidden-icon" };
+    const { container } = renderTimeline({ tracks: [{ ...track, layers: [layer, incoming] },
+      { ...track, id: "hidden-track", role: null, transient: true, layers: [hidden] }],
+      links: [{ id: "hidden-link", layer_ids: [layer.id, hidden.id] }], transitions: [transition] });
+    const chip = container.querySelector('[data-testid="transition-chip"]')!;
+    const zTier = (el: Element) => Math.max(0, ...[...el.classList].map((c) => Number(/^z-\[(\d+)\]$/.exec(c)?.[1] ?? 0)));
+    const blocks = [...container.querySelectorAll('.timeline-layer')];
+    expect(zTier(chip)).toBeGreaterThan(Math.max(...blocks.map(zTier)));
+  });
+
+  it("moves an unlinked multi-selection together without collapsing it", async () => {
+    ipcMocks.moveLayers.mockClear();
+    const { getByText } = renderTimeline({ tracks: [linkedTrack], links: [] });
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(first, { button: 0, clientX: 0, clientY: 30 });
+    expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id, linkedLayer.id]));
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
+    expect(first.style.left).toBe("80px");
+    expect(second.style.left).toBe("240px");
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+    await waitFor(() => expect(ipcMocks.moveLayers).toHaveBeenCalledWith(
+      [{ layerId: layer.id, trackId: track.id }, { layerId: linkedLayer.id, trackId: track.id }],
+      layer.id, 1_000_000,
+    ));
+  });
+
+  it("previews and commits the lane offset for the whole selection", async () => {
+    ipcMocks.moveLayers.mockClear();
+    const top = { ...track, id: "top", layers: [] };
+    const middle = { ...track, id: "middle", layers: [linkedLayer] };
+    const { container, getByText } = renderTimeline({ tracks: [track, middle, top], links: [] });
+    stubRaiseLayout(container);
+    const lanes = [...container.querySelectorAll<HTMLElement>('[data-testid="track-lane"]')];
+    const sourceLane = lanes.find((el) => el.dataset.trackId === track.id)!;
+    const targetLane = lanes.find((el) => el.dataset.trackId === middle.id)!;
+    const y = sourceLane.getBoundingClientRect().top + 25;
+    const targetY = targetLane.getBoundingClientRect().top + 25;
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    fireEvent.pointerDown(getByText("Clip A").closest(".timeline-layer")!, { button: 0, clientX: 80, clientY: y });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: targetY });
+    expect(getByText("Clip A").closest('[data-testid="track-lane"]')?.getAttribute("data-track-id")).toBe("middle");
+    expect(getByText("Clip B").closest('[data-testid="track-lane"]')?.getAttribute("data-track-id")).toBe("top");
+    fireEvent.pointerUp(window, { clientX: 80, clientY: targetY });
+    await waitFor(() => expect(ipcMocks.moveLayers).toHaveBeenCalledWith(
+      [{ layerId: layer.id, trackId: "middle" }, { layerId: linkedLayer.id, trackId: "top" }], layer.id, 0,
+    ));
   });
 
   it("previews every linked layer during and immediately after a move drag", async () => {
@@ -3145,6 +3220,23 @@ describe("Timeline marquee", () => {
     fireEvent.pointerDown(el, { button: 0, clientX: at[0], clientY: at[1] });
     release(at);
   }
+
+  it("moves every marquee-selected clip when one of their bodies is dragged", async () => {
+    ipcMocks.moveLayers.mockClear();
+    const { container, getByText } = renderTimeline({ tracks: [linkedTrack], links: [] });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+    sweep(lane, [600, 130], [201, 110]);
+    release([201, 110]);
+    expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id, linkedLayer.id]));
+    fireEvent.pointerDown(getByText("Clip B").closest(".timeline-layer")!, { button: 0, clientX: 400, clientY: 130 });
+    fireEvent.pointerMove(window, { clientX: 480, clientY: 130 });
+    expect(getByText("Clip A").closest<HTMLElement>(".timeline-layer")!.style.left).toBe("80px");
+    expect(getByText("Clip B").closest<HTMLElement>(".timeline-layer")!.style.left).toBe("240px");
+    release([480, 130]);
+    await waitFor(() => expect(ipcMocks.moveLayers).toHaveBeenCalledOnce());
+  });
 
   it("draws no box below the arm threshold", () => {
     const { container } = renderTimeline({});

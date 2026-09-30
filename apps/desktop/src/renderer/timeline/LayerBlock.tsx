@@ -522,7 +522,9 @@ export function LayerBlock({
   // non-interactive and visually secondary.
   const dragPreviewTrackId =
     dragSubject && dragState?.kind === "move"
-      ? isDragAnchor
+      ? dragState.destinationByLayerId?.has(dragSubject.layerId)
+        ? previewTrackId(dragState.destinationByLayerId.get(dragSubject.layerId)!, dragSubject.trackId)
+        : isDragAnchor
         ? previewTrackId(dragState.overTrackId, dragSubject.trackId)
         : dragSubject.trackId
       : null;
@@ -614,7 +616,9 @@ export function LayerBlock({
     const selectedAtPointerDown = layerIdsOf(currentSelection());
     // `docs/features.md#links` — match click-selection semantics on
     // pointerdown so drag and click share the same link-aware path.
-    const stillSelected = onSelectFromClick(layer.id, {
+    const preserveSelection = kind === "move" && !e.altKey && !e.shiftKey &&
+      selectedAtPointerDown.has(layer.id);
+    const stillSelected = preserveSelection || onSelectFromClick(layer.id, {
       altKey: e.altKey,
       shiftKey: e.shiftKey,
       metaKey: e.metaKey,

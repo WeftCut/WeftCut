@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
+  moveLayers,
   moveLayersToNewTrack,
   pasteLayers,
   trimLayer,
@@ -8,6 +9,7 @@ import {
   type LayerParamsView,
   type LayerSummary,
   type TrackSummary,
+  type TransitionSummary,
 } from "../../ipc";
 import { linkFanoutActive } from "../linkEligibility";
 import i18n from "../../i18n";
@@ -136,6 +138,7 @@ export function useLayerDrag(opts: {
   compositionId: string | null;
   tracks: TrackSummary[];
   links: LinkSummary[];
+  transitions: TransitionSummary[];
   linkByLayerId: Map<string, string>;
   orderedTracks: VisualTrack[];
   /// Live track-id → lane-element registry, owned by the Timeline. Measured
@@ -166,6 +169,7 @@ export function useLayerDrag(opts: {
     compositionId,
     tracks,
     links,
+    transitions,
     linkByLayerId,
     orderedTracks,
     laneEls,
@@ -295,6 +299,17 @@ export function useLayerDrag(opts: {
         : linkByLayerId.get(seed.layerId);
       const link = linkId ? links.find((candidate) => candidate.id === linkId) : null;
       let candidateIds = link?.layer_ids ?? [seed.layerId];
+      if (seed.kind === "move" && !seed.duplicate && seed.selectedAtPointerDown.has(seed.layerId)) {
+        const ids = new Set(seed.selectedAtPointerDown);
+        if (!seed.escapeLink) {
+          for (const group of links) {
+            if (group.layer_ids.some((id) => ids.has(id))) {
+              for (const id of group.layer_ids) ids.add(id);
+            }
+          }
+        }
+        candidateIds = [...ids];
+      }
       if (seed.duplicate && link && seed.selectedAtPointerDown.has(seed.layerId)) {
         const narrowed = link.layer_ids.filter((id) =>
           seed.selectedAtPointerDown.has(id),
@@ -398,6 +413,8 @@ export function useLayerDrag(opts: {
         // the answer (`layerDragStore.ts`).
         compositionId,
         subjects,
+        selectionMove: seed.kind === "move" && !seed.duplicate &&
+          seed.selectedAtPointerDown.has(seed.layerId) && seed.selectedAtPointerDown.size > 1,
         validity: "valid",
         conflictingLayerIds: [],
         hiddenSubjectCount: subjects.filter(
@@ -556,15 +573,30 @@ export function useLayerDrag(opts: {
       // the strip's ghost slides with the pointer like every other destination.
       const spawning = destinationTrackId === SPAWN_TRACK_ID;
       const projected: TimelinePlacement[] = [];
+      const laneIds = orderedTracks.map(({ track }) => track.id);
+      const laneDelta = laneIds.indexOf(destinationTrackId) - laneIds.indexOf(state.trackId);
+      let outsideLanes = false;
 
       for (const subject of state.subjects) {
         const entry = layerEntryById.get(subject.layerId);
         if (!entry) continue;
         const isAnchor = subject.layerId === state.layerId;
         const landed = landings.get(subject.layerId)!;
+        let targetTrackId = spawning || isAnchor ? destinationTrackId : subject.trackId;
+        if (state.selectionMove && !spawning && laneDelta !== 0) {
+          const index = laneIds.indexOf(subject.trackId);
+          // Hidden linked members retain their lane, matching ordinary link moves.
+          if (index >= 0) {
+            const destination = laneIds[index + laneDelta];
+            if (!destination) {
+              outsideLanes = true;
+            }
+            targetTrackId = destination ?? subject.trackId;
+          }
+        }
         projected.push({
           layerId: subject.layerId,
-          trackId: spawning || isAnchor ? destinationTrackId : subject.trackId,
+          trackId: targetTrackId,
           tStartUs: landed.tStartUs,
           tEndUs: landed.tEndUs,
           overlapClass: layerOverlapClass(entry.layer),
@@ -579,6 +611,7 @@ export function useLayerDrag(opts: {
 
       const evaluation = evaluateTimelinePlacements({
         tracks,
+        transitions,
         placements: projected,
         // A move replaces the source intervals; a duplicate leaves them in
         // place, so the destination must also be checked against its source.
@@ -596,11 +629,11 @@ export function useLayerDrag(opts: {
         })),
         destinationTrackId,
         anchorStartUs,
-        validity: evaluation.validity,
+        validity: outsideLanes ? "collision" : evaluation.validity,
         conflictingLayerIds: evaluation.conflictingLayerIds,
       };
     },
-    [fpsDen, fpsNum, layerEntryById, tracks],
+    [fpsDen, fpsNum, layerEntryById, tracks, orderedTracks, transitions],
   );
 
   const evaluatePointer = useCallback(
@@ -697,6 +730,9 @@ export function useLayerDrag(opts: {
         overTrackId,
         validity: moveProjection?.validity ?? "valid",
         conflictingLayerIds: moveProjection?.conflictingLayerIds ?? [],
+        destinationByLayerId: moveProjection
+          ? new Map(moveProjection.placements.map((p) => [p.layerId, p.trackId]))
+          : new Map(),
       };
 
       const hasCommitChange =
@@ -929,7 +965,13 @@ export function useLayerDrag(opts: {
               placements: moveProjection.placements,
               verified: false,
             });
-            await moveLayer(
+            if (committed.selectionMove) {
+              await moveLayers(
+                moveProjection.placements.map(({ layerId, trackId }) => ({ layerId, trackId })),
+                committed.layerId,
+                moveProjection.anchorStartUs,
+              );
+            } else await moveLayer(
               committed.layerId,
               moveProjection.destinationTrackId,
               moveProjection.anchorStartUs,

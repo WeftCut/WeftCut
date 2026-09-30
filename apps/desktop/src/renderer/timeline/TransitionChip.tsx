@@ -217,7 +217,9 @@ export function TransitionChip({
       role="button"
       aria-label={title}
       className={[
-        "absolute z-[2] flex items-center justify-center overflow-hidden rounded-sm",
+        // Linked clips use z-4 for their hidden-member badge. The transition
+        // must still own its overlap window, including the participant edges.
+        "absolute z-[5] flex items-center justify-center overflow-hidden rounded-sm",
         "border border-fuchsia-200/70 bg-fuchsia-500/40 text-fuchsia-50",
         "cursor-pointer select-none transition-[outline,box-shadow] duration-75",
         "hover:bg-fuchsia-500/55 hover:shadow-[0_2px_6px_rgba(0,0,0,0.4)]",

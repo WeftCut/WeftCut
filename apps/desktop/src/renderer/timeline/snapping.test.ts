@@ -64,6 +64,15 @@ function baseOpts(overrides: {
 }
 
 describe("timeline snapping", () => {
+  it("does not snap a selection to the original edge of another moving member", () => {
+    const delta = snapDragDeltaToTimelineBoundary({
+      ...baseOpts({ visibleTracks: [track([layer("other", 2_000_000, 3_000_000)])], currentTimeUs: 10_000_000 }),
+      state: { kind: "move", layerId: "anchor", originalTStart: 0, originalTEnd: 1_000_000,
+        escapeLink: true, subjects: [{ layerId: "anchor" }, { layerId: "other" }] },
+      frameDeltaUs: 950_000,
+    });
+    expect(delta).toBe(950_000);
+  });
   it("keeps move snapping by aligning a moved edge to the playhead", () => {
     const deltaUs = snapDragDeltaToTimelineBoundary({
       ...baseOpts(),

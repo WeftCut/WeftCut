@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
 import {
+  moveLandings,
   shiftMembersOf,
   useLayerDragForTrack,
   type DragSeed,
@@ -186,6 +187,8 @@ export function TrackLane({
   const dragPreviewTrackId = useCallback(
     (subject: DragSubject): string => {
       if (dragState?.kind !== "move") return subject.trackId;
+      const destination = dragState.destinationByLayerId?.get(subject.layerId);
+      if (destination !== undefined) return previewTrackId(destination, subject.trackId);
       if (subject.layerId !== dragState.layerId) return subject.trackId;
       return previewTrackId(dragState.overTrackId, subject.trackId);
     },
@@ -246,12 +249,21 @@ export function TrackLane({
     track.layers,
   ]);
 
-  // Static per project version (playhead-gate discipline): derives only from
-  // the summary, so playback never re-renders the chip layer.
-  const transitionChips = useMemo(
-    () => transitionChipsForTrack(track, transitions),
-    [track, transitions],
-  );
+  // A transition travels with its participants, including the pending commit
+  // bridge. Use the same landings as the clip bodies; playback never drives it.
+  const transitionChips = useMemo(() => {
+    const landings = dragState?.kind === "move" && !dragState.duplicate
+      ? moveLandings(dragState, dragState.deltaUs, { num: fpsNum, den: fpsDen }).byLayerId
+      : null;
+    const layers = renderedLayers.map((layer) => {
+      const landing = landings?.get(layer.id);
+      return landing ? { ...layer, t_start_us: landing.tStartUs, t_end_us: landing.tEndUs } : layer;
+    });
+    return transitionChipsForTrack({ ...track, layers }, transitions).filter((chip) =>
+      Math.min(chip.fromLayer.t_end_us, chip.toLayer.t_end_us) -
+        Math.max(chip.fromLayer.t_start_us, chip.toLayer.t_start_us) === chip.transition.duration_us,
+    );
+  }, [track, transitions, renderedLayers, dragState, fpsNum, fpsDen]);
 
   // One in-flight clone ghost per duplicate subject landing on THIS lane: the
   // dragged seed follows the pointer's lane, every other member stays on its
@@ -655,8 +667,8 @@ export function TrackLane({
           );
         }
         // Transition chips render AFTER the blocks so they sit above the
-        // participating layers' heads in DOM order (same z tier as a
-        // selected block). Slotted to the incoming layer's slice so they
+        // participating layers' heads, including the raised linked-member
+        // chrome. Slotted to the incoming layer's slice so they
         // hug its block in combined V+A rows.
         for (const chip of transitionChips) {
           blocks.push(

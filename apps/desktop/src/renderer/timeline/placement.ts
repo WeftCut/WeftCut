@@ -1,4 +1,4 @@
-import type { TrackSummary } from "../ipc";
+import type { TrackSummary, TransitionSummary } from "../ipc";
 import {
   layerOverlapClass,
   type LayerOverlapClass,
@@ -83,8 +83,9 @@ function rangesOverlap(
  * projections are checked, which prevents a moving clip colliding with itself.
  *
  * This is the shared overlap seam for incoming-media ghosts and existing-layer
- * move ghosts: visual/visual and audio/audio overlap is invalid, visual/audio
- * overlap is a legal shared lane, and touching half-open ranges are legal.
+ * move ghosts: same-class overlap is invalid except for an existing visual
+ * transition's exact authorized overlap. Visual/audio overlap is a legal
+ * shared lane, and touching half-open ranges are legal.
  *
  * A placement on `SPAWN_TRACK_ID` answers `"spawn"`: the lane it names has no
  * committed content to overlap, so a fresh lane is empty by construction.
@@ -93,10 +94,12 @@ export function evaluateTimelinePlacements({
   tracks,
   placements,
   replacedLayerIds,
+  transitions = [],
 }: {
   tracks: readonly TrackSummary[];
   placements: readonly TimelinePlacement[];
   replacedLayerIds: ReadonlySet<string>;
+  transitions?: readonly TransitionSummary[];
 }): TimelinePlacementEvaluation {
   const trackById = new Map(tracks.map((track) => [track.id, track]));
   const conflictingLayerIds: string[] = [];
@@ -104,6 +107,19 @@ export function evaluateTimelinePlacements({
   let locked = false;
   let sharesLane = false;
   let spawns = false;
+
+  // Match the commit validator: only the named pair with exactly its stored
+  // overlap is authorized. A copy keeps its sources, so their transitions
+  // cannot authorize overlap between the provisional clone placements.
+  const authorized = new Map<string, number>();
+  const pairKey = (a: string, b: string) => a < b ? `${a}|${b}` : `${b}|${a}`;
+  for (const transition of transitions) {
+    authorized.set(pairKey(transition.from_layer, transition.to_layer), transition.duration_us);
+  }
+  const transitionAllows = (
+    aId: string, aStart: number, aEnd: number,
+    bId: string, bStart: number, bEnd: number,
+  ) => authorized.get(pairKey(aId, bId)) === Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
 
   const addConflict = (layerId: string) => {
     if (conflictSet.has(layerId)) return;
@@ -136,6 +152,9 @@ export function evaluateTimelinePlacements({
         continue;
       }
       if (placement.overlapClass === layerOverlapClass(layer)) {
+        if (placement.overlapClass === "visual" && replacedLayerIds.has(placement.layerId) &&
+          transitionAllows(placement.layerId, placement.tStartUs, placement.tEndUs,
+            layer.id, layer.t_start_us, layer.t_end_us)) continue;
         addConflict(layer.id);
       } else {
         sharesLane = true;
@@ -162,6 +181,9 @@ export function evaluateTimelinePlacements({
         continue;
       }
       if (left.overlapClass === right.overlapClass) {
+        if (left.overlapClass === "visual" && replacedLayerIds.has(left.layerId) && replacedLayerIds.has(right.layerId) &&
+          transitionAllows(left.layerId, left.tStartUs, left.tEndUs,
+            right.layerId, right.tStartUs, right.tEndUs)) continue;
         addConflict(left.layerId);
         addConflict(right.layerId);
       } else {

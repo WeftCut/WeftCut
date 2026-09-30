@@ -61,6 +61,28 @@ function placement(
 }
 
 describe("evaluateTimelinePlacements", () => {
+  const transition = { id: "slide", from_layer: "out", to_layer: "in", duration_us: 400_000,
+    extended_us: 0, kind: { kind: "Slide" as const, direction: "up" as const } };
+
+  it.each(["track-1", "track-2", SPAWN_TRACK_ID])("preserves an authorized moving overlap on %s", (destination) => {
+    const result = evaluateTimelinePlacements({
+      tracks: [track("track-1", [layer("out", 0, 2_000_000), layer("in", 1_600_000, 4_000_000)]), track("track-2", [])],
+      placements: [placement("out", destination, 1_000_000, 3_000_000), placement("in", destination, 2_600_000, 5_000_000)],
+      replacedLayerIds: new Set(["out", "in"]), transitions: [transition],
+    });
+    expect(result.validity).toBe(destination === SPAWN_TRACK_ID ? "spawn" : "valid");
+  });
+
+  it.each(["changed overlap", "unrelated pair", "copy", "third clip"])("still rejects %s despite a transition", (reason) => {
+    const result = evaluateTimelinePlacements({
+      tracks: [track("track-1", reason === "third clip" ? [layer("blocker", 2_700_000, 2_900_000)] : [])],
+      placements: [placement("out", "track-1", 1_000_000, 3_000_000),
+        placement(reason === "unrelated pair" ? "other" : "in", "track-1", reason === "changed overlap" ? 2_500_000 : 2_600_000, 5_000_000)],
+      replacedLayerIds: reason === "copy" ? new Set() : new Set(["out", "in", "other"]), transitions: [transition],
+    });
+    expect(result.validity).toBe("collision");
+  });
+
   it("reports a same-class collision while excluding the layer's old position", () => {
     const result = evaluateTimelinePlacements({
       tracks: [

@@ -147,8 +147,9 @@ export interface DragSeed {
   /// short temporal arm delay so a selection click cannot become a move;
   /// selected clips and explicit trim handles respond immediately.
   wasSelectedAtPointerDown: boolean;
-  /// The selection as it stood BEFORE this pointerdown's own click applied. A
-  /// duplicate's subject set reads it (`buildDragSubjects`): the whole link,
+  /// The selection as it stood BEFORE this pointerdown's own click applied.
+  /// A body move carries this set if it contains the seed. A duplicate's
+  /// subject set reads it (`buildDragSubjects`): the whole link,
   /// unless the user had already narrowed the selection to some of its members
   /// — an `Alt`+click first. The selection is the escape, because `Alt` on the
   /// body already means duplicate and the click itself always Alt-selects.
@@ -156,6 +157,9 @@ export interface DragSeed {
 }
 
 export interface DragState extends DragSeed {
+  /// An explicit multi-selection moves across lanes as one arrangement.
+  selectionMove?: boolean;
+  destinationByLayerId?: ReadonlyMap<string, string>;
   /// The composition of the Panel the gesture started in, stamped by
   /// `useLayerDrag` from its own axis rather than carried on the seed — the
   /// block that mints a seed has no reason to know.
@@ -323,6 +327,7 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
 /// per-event render set to "changed lanes" rather than "all lanes".
 function laneParticipates(drag: DragState, trackId: string): boolean {
   if (drag.overTrackId === trackId) return true;
+  if (drag.destinationByLayerId && [...drag.destinationByLayerId.values()].includes(trackId)) return true;
   return drag.subjects.some((subject) => subject.trackId === trackId);
 }
 

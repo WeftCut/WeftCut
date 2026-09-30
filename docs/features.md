@@ -111,7 +111,9 @@ selected. A layer selection and a selected transition chip are mutually
 exclusive: choosing either drops the other, which is what lets Delete and the
 Attribute panel always have exactly one kind of target.
 
-**Click semantics.** Plain click replaces the selection; a click on the blank
+**Click semantics.** Plain click on an unselected clip replaces the selection;
+pressing an already selected clip's body keeps the selection for a group move.
+A click on the blank
 lane space *between two clips* selects that **gap**, and a click on any other
 blank space clears, per *Background clicks* below. `Shift+click` **toggles** — the
 clicked clip (and its link) goes in if it was out and out if it was in. Toggle
@@ -150,6 +152,19 @@ selection.
 and lanes it spans — so one undo brings a swept block back in one step. It takes
 the selection verbatim and never fans out over a link: selection is what carries
 a link, so a clicked or swept member has already brought its siblings along.
+
+**Move takes the whole clip selection, as one undo entry.** Dragging any selected
+clip's body shifts the selection and its active link partners together, keeping
+their timing offsets on each clip's own grid. The earliest member stops the
+whole set at zero. Vertical movement shifts the visible members by the same
+number of displayed lanes; hidden link partners retain their lanes. An occupied
+or locked destination, a locked member, or a lane offset beyond the displayed
+lanes refuses the entire drop. Existing transitions authorize only their own
+participant pair's exact overlap; preserving that overlap allows the pair to
+move together, and its transition chip follows the preview above link chrome.
+Moving onto the drop strip retains its existing
+rule: all members must fit on one new lane. Trimming and Alt-drag duplication
+keep their existing link-based behavior.
 
 **Marquee.** Dragging from blank timeline space draws a box, and **the surface
 the drag started on decides what the box selects** (ADR 0051) — a track lane, the

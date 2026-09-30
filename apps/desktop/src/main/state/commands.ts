@@ -122,6 +122,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_link: a.escapeLink ?? false } }),
+  move_layers: (a) => ({ op: 'move_layers', args: { placements: a.placements, anchor_layer_id: a.anchorLayerId, t_start_us: a.anchorTStartUs } }),
   // The landing is optional and its two halves travel together — the renderer
   // API bundles them into one `anchor` object so a caller cannot supply half,
   // and this flattens the pair onto the wire the way every other op carries its
@@ -240,7 +241,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
+  'move_layer', 'move_layers', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',

@@ -10,7 +10,7 @@ import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
-import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
+import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
@@ -932,6 +932,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
               ? applyShiftLayers(d, a.layers as Uuid[], delta, (a.escape_link as boolean) ?? false, strict)
               : applyShiftLayersFrom(d, (a.composition_id as Uuid | null) ?? null, (a.tracks as Uuid[] | null) ?? null, parseNum(a.from_t_us, 'from_t_us'), delta, strict))
           return { ok: true, value }
+        }
+        case 'move_layers': {
+          const placements = a.placements as MovePlacement[]
+          commit(HISTORY_SUMMARY.layersShift, layerRefs(placements.map((p) => p.layerId)), { kind: 'Coarse' },
+            (d) => applyMoveLayers(d, placements, a.anchor_layer_id as Uuid, parseNum(a.t_start_us, 't_start_us')))
+          return { ok: true, value: null }
         }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042

@@ -3,9 +3,41 @@ import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { floorShiftAtZero, gridForLayerKind, shiftOnGrids, snapOnGrid, type ShiftMember } from '../snap'
 import { applyAddTrack } from './add'
-import { applyDurationAutofit, checkTrackLock, locateLayerIn, locateTrack, pruneEmptiedTrack, requireLayer, requireSameComposition } from './helpers'
+import { applyDurationAutofit, checkTrackLock, insertSorted, locateLayerIn, locateTrack, pruneEmptiedTrack, requireLayer, requireSameComposition } from './helpers'
+import { applyShiftLayers } from './shift'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
 import { CommandFailure } from '../errors'
+
+export interface MovePlacement { layerId: Uuid; trackId: Uuid }
+
+/** The renderer has resolved selection + links and lane offsets. Shift that
+ * exact set, then change lanes inside ONE commit, validating only the final
+ * arrangement. No transient overlap, partial move or intermediate prune. */
+export function applyMoveLayers(p: Project, placements: readonly MovePlacement[], anchorId: Uuid, tStartUs: number): void {
+  const ids = placements.map((x) => x.layerId)
+  if (new Set(ids).size !== ids.length || !ids.includes(anchorId))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'placements', detail: 'unique layers including the anchor are required' })
+  const c = requireSameComposition(p, ids)
+  const located = placements.map(({ layerId, trackId }) => {
+    const src = checkTrackLock(p, layerId)
+    if (src.layer.locked)
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'placements', detail: `layer ${layerId} is locked` })
+    const dst = locateTrack(p, trackId)
+    if (!dst) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
+    if (dst.comp !== c) throw new CommandFailure({ error: 'CrossCompositionMove', layer: layerId, from: c.id, to: dst.comp.id })
+    if (dst.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: trackId })
+    return { src, dest: dst.track }
+  })
+  const anchor = requireLayer(p, anchorId).layer
+  const delta = snapOnGrid(tStartUs, gridForLayerKind(anchor.params.kind, c.fps)) - anchor.t_start_us
+  applyShiftLayers(p, ids, delta, true)
+  const pulled = located.map(({ src, dest }) => ({
+    dest,
+    layer: src.track.layers.splice(src.track.layers.findIndex((l) => l.id === src.layer.id), 1)[0],
+  }))
+  for (const { dest, layer } of pulled) insertSorted(dest, layer)
+  for (const trackId of new Set(located.map(({ src }) => src.track.id))) pruneEmptiedTrack(c, trackId)
+}
 
 /** Move one layer (and its link siblings) within its composition. The target
  *  track names a composition too, and it must be the layer's own: a track in

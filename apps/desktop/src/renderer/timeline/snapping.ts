@@ -11,6 +11,7 @@ export interface TimelineDragSnapState {
   originalTStart: number;
   originalTEnd: number;
   escapeLink: boolean;
+  subjects?: readonly { layerId: string }[];
 }
 
 interface TimelineSnapOptions {
@@ -159,6 +160,7 @@ export function snapDragDeltaToTimelineBoundary(
     opts.links,
     opts.linkByLayerId,
   );
+  for (const subject of opts.state.subjects ?? []) ignored.add(subject.layerId);
   const boundaries = timelineBoundaries(opts, ignored);
   const anchors = dragAnchors(opts.state, opts.frameDeltaUs);
 

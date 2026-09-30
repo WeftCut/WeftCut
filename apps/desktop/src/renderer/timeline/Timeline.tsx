@@ -902,6 +902,7 @@ export function Timeline({
       compositionId,
       tracks,
       links,
+      transitions,
       linkByLayerId,
       orderedTracks,
       laneEls: laneElsRef,

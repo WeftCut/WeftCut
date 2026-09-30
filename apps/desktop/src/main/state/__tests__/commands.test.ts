@@ -37,7 +37,7 @@ describe('PRODUCTION_OPS', () => {
       'ripple_delete_gap',
       'fit_composition_to_layers', 'groups_add_members', 'groups_create', 'groups_rename', 'groups_ungroup',
       'links_create', 'links_dissolve', 'move_effect',
-      'move_layer', 'move_layers_to_new_track',
+      'move_layer', 'move_layers', 'move_layers_to_new_track',
       // The crossing addressed by destination and landing time (ADR 0052/0053).
       'move_layers_to_composition',
       'paste_layer',
