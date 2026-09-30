@@ -1,4 +1,8 @@
 /// <reference types="vite/client" />
+/// <reference types="@webgpu/types" />
+
+// PixiJS 8.21 no longer loads these declarations on TypeScript 6+.
+// lib.dom still omits GPUBufferUsage, GPUTextureUsage, and GPUMapMode.
 
 // Set to "1" only by the E2E build (`VITE_WEFTCUT_E2E=1`); gates the dev-only
 // `window.__weftcutTest` hook so it's dead-code-eliminated from prod bundles.

@@ -13,6 +13,8 @@
 // files is an MCP tool name unless it is listed in KNOWN_NON_TOOLS below.
 // Adding prose that backticks a new non-tool identifier means adding it there —
 // that friction is the point, it is what makes renames fail loudly.
+// URI references likewise require catalog membership or an exact entry in
+// KNOWN_NON_MCP_URIS for application URLs that are not MCP resources.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -64,6 +66,14 @@ const KNOWN_NON_TOOLS = new Set([
   'min', 'max', 'options',
   // motif-authoring.md — lifecycle / code identifiers
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
+  // motif-authoring.md — npm package example and private draft metadata file
+  'three', 'target',
+])
+
+// Exact examples only: do not exempt entire schemes and hide misspelled URIs.
+const KNOWN_NON_MCP_URIS = new Set([
+  // Electron's local Motif asset protocol, not an MCP resource (ADR 0079).
+  'motif://<id>/',
 ])
 
 const BARE_IDENT = /^[a-z][a-z0-9_]*$/
@@ -93,11 +103,11 @@ describe('shipped skill sources ↔ MCP catalog (anti-drift gate)', () => {
     expect(offenders).toEqual([])
   })
 
-  it('every backticked resource URI is advertised', () => {
+  it('every backticked URI is an advertised resource or a known non-MCP URL', () => {
     const offenders = byFile.flatMap(({ file, tokens }) =>
       tokens
         .filter((t) => URI.test(t))
-        .filter((t) => !resourceUris.has(t))
+        .filter((t) => !resourceUris.has(t) && !KNOWN_NON_MCP_URIS.has(t))
         .map((t) => `${file}: \`${t}\``),
     )
     expect(offenders).toEqual([])
@@ -126,5 +136,11 @@ describe('shipped skill sources ↔ MCP catalog (anti-drift gate)', () => {
     // A collision means prose ambiguity: a token the gate can no longer tell
     // apart from a tool reference. Rename one side.
     expect([...KNOWN_NON_TOOLS].filter((t) => toolNames.has(t))).toEqual([])
+  })
+
+  it('KNOWN_NON_MCP_URIS carries no dead entries and no resource-URI collisions', () => {
+    const present = new Set(allTokens)
+    expect([...KNOWN_NON_MCP_URIS].filter((uri) => !present.has(uri))).toEqual([])
+    expect([...KNOWN_NON_MCP_URIS].filter((uri) => resourceUris.has(uri))).toEqual([])
   })
 })
