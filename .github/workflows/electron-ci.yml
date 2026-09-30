@@ -866,9 +866,12 @@ jobs:
             LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           elif [ "$RUNNER_OS" = "macOS" ]; then
+            # VideoToolbox tests share the runner's finite hardware sessions.
+            # Concurrent ProRes decodes can fail with VT -19092; run every
+            # decode test serially while preserving all hardware assertions.
             FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
             DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
-            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop -- --test-threads=1
           fi
 
       # The lint gate: rustfmt drift and every default-set clippy lint, on all
