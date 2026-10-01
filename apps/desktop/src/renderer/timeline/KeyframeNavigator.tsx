@@ -1,8 +1,9 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 import type { SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { StepBack, StepForward, CircleSmall } from "lucide-react";
 import type { Keyframe, TrackSummary } from "../ipc";
-import { readParamTrack, type ParamTrack } from "../keyframe/descriptors";
+import { type ParamTrack } from "../keyframe/descriptors";
 import { keyAt, prevKeyAt, nextKeyAt, resolveNavLayer } from "../keyframe/nav";
 import { upsertKeyframe, removeKeyframe, type TrackValue } from "../keyframe/edits";
 import { resolveParamTrack } from "../keyframe/autoKey";
@@ -52,7 +53,7 @@ export function KeyframeNavigator({
   const focusedLayerId = useKeyframeFocusStore((s) => s.layerId);
 
   const layer = resolveNavLayer(track, paramKey, focusedLayerId);
-  const trk: ParamTrack | null = layer ? readParamTrack(layer.params, paramKey) : null;
+  const trk: ParamTrack | null = layer ? readLayerParamTrack(layer, paramKey) : null;
   const keyed = trk && trk.mode === "Keyframed" ? trk : null;
 
   // 0 is a safe dummy when there's no target layer — every query below guards

@@ -1,8 +1,9 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 import { useTranslation } from "react-i18next";
 import { KeyframeField } from "../components/KeyframeField";
 import { tryMutate } from "../errors/tryMutate";
 import { updateLayerParamTrack, updateLayerParamTracks, type LayerSummary } from "../ipc";
-import { readNumberTrack, type NumberParamDescriptor } from "../keyframe/descriptors";
+import { type NumberParamDescriptor } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
 
 /// Inspector adapter: maps a (layer, NumberParamDescriptor) pair onto the shared
@@ -31,13 +32,13 @@ export function InspectorAnimField({
   layout?: "row" | "cell";
 }) {
   const { t } = useTranslation();
-  const track = readNumberTrack(layer.params, desc) ?? { mode: "Static" as const, value: desc.fallback };
+  const track = readLayerParamTrack(layer, desc) ?? { mode: "Static" as const, value: desc.fallback };
   const fanOut = desc.fanOutKeys;
   return (
     <KeyframeField
       layerId={layer.id}
       paramKey={desc.paramKey}
-      label={t(desc.labelKey)}
+      label={t(desc.labelKey, { defaultValue: desc.labelFallback ?? desc.paramKey })}
       track={track}
       fallback={desc.fallback}
       tInLayerUs={tInLayerUs}

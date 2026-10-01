@@ -1,3 +1,4 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -55,7 +56,6 @@ import {
 } from "../state/projectStore";
 import { currentSelection, layerIdsOf } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
-import { readParamTrack } from "../keyframe/descriptors";
 import {
   EXTRAP_GLYPH_GAP_PX,
   extrapolateClass,
@@ -744,7 +744,7 @@ export function LayerBlock({
     // When the track is expanded the keyframes render in the sub-lanes
     // below (KeyframeLane), so the collapsed in-clip diamonds are hidden.
     if (isTrackExpanded || !focusedParam) return none;
-    const track = kfPreview ?? readParamTrack(layer.params, focusedParam);
+    const track = kfPreview ?? readLayerParamTrack(layer, focusedParam);
     if (!track || track.mode !== "Keyframed") return none;
     // collapsed mode hides out-of-range keys (kept in data)
     const inRange = (k: { t_us: number }) => k.t_us >= 0 && k.t_us <= clipDurationUs;
@@ -1153,7 +1153,7 @@ export function LayerBlock({
           style={{ pointerEvents: "auto" }}
           onContextMenu={(e) => {
             if (!focusedParam) return;
-            const track = readParamTrack(layer.params, focusedParam);
+            const track = readLayerParamTrack(layer, focusedParam);
             if (!track || track.mode !== "Keyframed") return;
             const rect = e.currentTarget.getBoundingClientRect();
             const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
@@ -1172,7 +1172,7 @@ export function LayerBlock({
           }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
-            const paramTrack = readParamTrack(layer.params, focusedParam);
+            const paramTrack = readLayerParamTrack(layer, focusedParam);
             if (!paramTrack || paramTrack.mode !== "Keyframed") return;
             const rect = e.currentTarget.getBoundingClientRect();
             const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
@@ -1219,7 +1219,7 @@ export function LayerBlock({
         </div>
       )}
       {interpMenu && focusedParam && (() => {
-        const track = readParamTrack(layer.params, focusedParam);
+        const track = readLayerParamTrack(layer, focusedParam);
         if (!track || track.mode !== "Keyframed") return null;
         return (
           <EasingMenu

@@ -1,4 +1,4 @@
-import { readPositionMode } from './descriptors';
+import { readLayerParamTrack, layerParams } from "./channels";
 // The app's ONE copy slot, holding either a clip or a set of keyframes.
 //
 // One slot rather than two, because Ctrl+C and Ctrl+V are one pair of keys: two
@@ -31,7 +31,7 @@ import {
   selectionGroups,
   type ParamTrackEntry,
 } from "../timeline/keyframeBatch";
-import { animatableParams, readParamTrack, scaleFanOutFor } from "./descriptors";
+import { scaleFanOutFor } from "./descriptors";
 import type { TrackValue } from "./edits";
 import {
   getSelectedKeyframes,
@@ -147,7 +147,7 @@ export function pasteEntriesFor(args: {
   // does to the scale pair below.
   const byAddress = new Map<string, ParamTrackEntry>();
   for (const layer of args.layers) {
-    const carried = new Set(animatableParams(layer.kind, false, readPositionMode(layer.params)).map((d) => d.paramKey));
+    const carried = new Set(layerParams(layer, true).map((d) => d.paramKey));
     for (const group of args.groups) {
       if (!carried.has(group.paramKey)) {
         skipped.add(group.paramKey);
@@ -157,7 +157,7 @@ export function pasteEntriesFor(args: {
       // the composite reads and the commit's fan-out writes the twin.
       const paramKey = scaleFanOutFor(group.paramKey, layer.params)?.[0] ?? group.paramKey;
       const address = `${layer.id}|${paramKey}`;
-      const running = byAddress.get(address)?.[2] ?? readParamTrack(layer.params, paramKey);
+      const running = byAddress.get(address)?.[2] ?? readLayerParamTrack(layer, paramKey);
       const keyed = running !== null && running.mode === "Keyframed" ? running : null;
       const offsetUs = args.atUs - layer.t_start_us;
       const fresh = group.keys.map((k) => {

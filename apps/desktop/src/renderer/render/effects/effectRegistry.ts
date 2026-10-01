@@ -1,3 +1,4 @@
+import { VISUAL_EFFECT_PARAMS } from "../../../shared/effects/params";
 // Effect registry: maps a kind string to an EffectDescriptor (stock Pixi Filter
 // factory + per-param apply glue + fidelity tier). The TS state model owns
 // effect instances; this module owns the catalog — what filters exist, how to
@@ -116,9 +117,7 @@ function colorMatrixEffect(
     create: () => new ColorMatrixFilter(),
     params: {
       amount: {
-        default: 0,
-        range: [-100, 100],
-        step: 1,
+        ...VISUAL_EFFECT_PARAMS[kind]!.amount!,
         apply: (f, v) => write((f as ColorMatrixFilter).matrix, v),
       },
     },
@@ -135,9 +134,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
     create: () => new BlurFilter({ strength: 8 }),
     params: {
       strength: {
-        default: 8,
-        range: [0, 100],
-        step: 1,
+        ...VISUAL_EFFECT_PARAMS.blur!.strength!,
         apply: (f, v) => {
           (f as BlurFilter).strength = v;
         },
@@ -151,26 +148,12 @@ const REGISTRY: Record<string, EffectDescriptor> = {
     nameI18nKey: "effects.chromakey.name",
     category: "keying",
     create: () => new ChromaKeyFilter(),
-    params: (() => {
-      const p = (name: ChromaParamName, def: number, range: [number, number], step: number) => ({
-        default: def,
-        range,
-        step,
-        apply: (f: Filter, v: number) => (f as ChromaKeyFilter).applyParam(name, v),
-      });
-      return {
-        keyR: p("keyR", 0, [0, 1], 0.01),
-        keyG: p("keyG", 1, [0, 1], 0.01),
-        keyB: p("keyB", 0, [0, 1], 0.01),
-        balance: p("balance", 0.5, [0, 1], 0.01),
-        clipBlack: p("clipBlack", 0, [0, 1], 0.01),
-        clipWhite: p("clipWhite", 1, [0, 1], 0.01),
-        despill: p("despill", 1, [0, 1], 0.01),
-        feather: p("feather", 0, [0, 10], 0.5),
-        shrink: p("shrink", 0, [-5, 5], 0.5),
-        viewMatte: p("viewMatte", 0, [0, 1], 1),
-      };
-    })(),
+    params: Object.fromEntries(
+      Object.entries(VISUAL_EFFECT_PARAMS.chromakey!).map(([name, spec]) => [name, {
+        ...spec,
+        apply: (f: Filter, v: number) => (f as ChromaKeyFilter).applyParam(name as ChromaParamName, v),
+      }]),
+    ),
     colorGroups: [{ params: ["keyR", "keyG", "keyB"] }],
     fidelity: "f16-verified",
     colorspace: "display-gamma",
@@ -189,9 +172,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
       // `blur` is already in the catalog — the picker offers exactly one way to
       // soften an image.
       amount: {
-        default: 0,
-        range: [0, 100],
-        step: 1,
+        ...VISUAL_EFFECT_PARAMS.sharpen!.amount!,
         apply: (f, v) => (f as SharpenFilter).applyParam("amount", v),
       },
     },

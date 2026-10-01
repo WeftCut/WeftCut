@@ -1,10 +1,11 @@
+import { readLayerParamTrack } from "./channels";
 // Pure read-only queries over an AnimTrack for the keyframe navigator, generic
 // over the value type because every one of them reads `t_us` alone.
 // Distinct from the transforms in `edits.ts` (which return new tracks). Times
 // are layer-local microseconds; the caller pre-snaps to the frame grid. Static
 // tracks have no keys, so every query returns null for them.
 import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
-import { isHiddenTwinAxis, readParamTrack } from "./descriptors";
+import { isHiddenTwinAxis } from "./descriptors";
 
 /// The key whose t_us exactly equals tUs (caller pre-snaps), or null.
 export function keyAt<T>(track: AnimTrack<T>, tUs: number): Keyframe<T> | null {
@@ -44,7 +45,7 @@ export function resolveNavLayer(
 ): LayerSummary | null {
   const candidates = track.layers.filter((l) => {
     if (isHiddenTwinAxis(paramKey, l.params)) return false;
-    const t = readParamTrack(l.params, paramKey);
+    const t = readLayerParamTrack(l, paramKey);
     return t?.mode === "Keyframed";
   });
   if (candidates.length === 0) return null;

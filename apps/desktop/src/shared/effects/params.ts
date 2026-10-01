@@ -1,14 +1,7 @@
-// What the VISUAL effect catalog looks like from the outside: each kind's
-// params with their defaults and guidance ranges, and nothing that needs a GPU.
-//
-// The realtime registry (`renderer/render/effects/effectRegistry.ts`) is the
-// authority on how a filter is built and applied, but it imports pixi.js and so
-// cannot be read from the main process. The MCP boundary needs exactly the
-// part below — to refuse an unknown kind, an unknown param key, a value
-// outside the range — before a write reaches the actor, so an agent learns the
-// vocabulary from the refusal instead of storing `audio.compressor` or
-// `strength: 500` and reading success. `effectRegistry.test.ts` pins this table
-// to the registry: a kind or param added to one without the other fails there.
+// The GPU-free authority for visual effect parameter defaults, guidance ranges
+// and editing steps. The realtime registry adds filter construction/apply;
+// inspector fields and timeline channels derive their metadata from here.
+// effectRegistry.test.ts checks that every declared parameter has a renderer.
 //
 // Ranges here are the same GUIDANCE the inspector draws its sliders from. The
 // mutation layer deliberately enforces no range on stored effect params (a
@@ -22,26 +15,27 @@ import { AUDIO_EFFECTS } from '../audioEffects/catalog'
 export interface EffectParamRange {
   default: number
   range: [number, number]
+  step?: number
 }
 
 export const VISUAL_EFFECT_PARAMS: Readonly<Record<string, Readonly<Record<string, EffectParamRange>>>> = {
-  blur: { strength: { default: 8, range: [0, 100] } },
+  blur: { strength: { default: 8, range: [0, 100], step: 1 } },
   chromakey: {
-    keyR: { default: 0, range: [0, 1] },
-    keyG: { default: 1, range: [0, 1] },
-    keyB: { default: 0, range: [0, 1] },
-    balance: { default: 0.5, range: [0, 1] },
-    clipBlack: { default: 0, range: [0, 1] },
-    clipWhite: { default: 1, range: [0, 1] },
-    despill: { default: 1, range: [0, 1] },
-    feather: { default: 0, range: [0, 10] },
-    shrink: { default: 0, range: [-5, 5] },
-    viewMatte: { default: 0, range: [0, 1] },
+    keyR: { default: 0, range: [0, 1], step: 0.01 },
+    keyG: { default: 1, range: [0, 1], step: 0.01 },
+    keyB: { default: 0, range: [0, 1], step: 0.01 },
+    balance: { default: 0.5, range: [0, 1], step: 0.01 },
+    clipBlack: { default: 0, range: [0, 1], step: 0.01 },
+    clipWhite: { default: 1, range: [0, 1], step: 0.01 },
+    despill: { default: 1, range: [0, 1], step: 0.01 },
+    feather: { default: 0, range: [0, 10], step: 0.5 },
+    shrink: { default: 0, range: [-5, 5], step: 0.5 },
+    viewMatte: { default: 0, range: [0, 1], step: 1 },
   },
-  brightness: { amount: { default: 0, range: [-100, 100] } },
-  contrast: { amount: { default: 0, range: [-100, 100] } },
-  saturation: { amount: { default: 0, range: [-100, 100] } },
-  sharpen: { amount: { default: 0, range: [0, 100] } },
+  brightness: { amount: { default: 0, range: [-100, 100], step: 1 } },
+  contrast: { amount: { default: 0, range: [-100, 100], step: 1 } },
+  saturation: { amount: { default: 0, range: [-100, 100], step: 1 } },
+  sharpen: { amount: { default: 0, range: [0, 100], step: 1 } },
 }
 
 /** Every kind `add_effect` accepts: the visual catalog, then the `audio.*`

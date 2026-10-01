@@ -186,7 +186,7 @@ describe("the shared param table (src/shared/effects/params.ts)", () => {
     // A kind or param added to one side without the other fails here.
     const fromRegistry = Object.fromEntries(listEffects().map((d) => [
       d.kind,
-      Object.fromEntries(Object.entries(d.params).map(([k, spec]) => [k, { default: spec.default, range: spec.range }])),
+      Object.fromEntries(Object.entries(d.params).map(([k, spec]) => [k, { default: spec.default, range: spec.range, step: spec.step }])),
     ]));
     expect(VISUAL_EFFECT_PARAMS).toEqual(fromRegistry);
   });

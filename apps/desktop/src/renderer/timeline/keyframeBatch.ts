@@ -1,4 +1,4 @@
-import { readPositionMode } from '../keyframe/descriptors';
+import { readLayerParamTrack, layerParams } from "../keyframe/channels";
 // The one funnel every MULTI-target keyframe operation goes through: group a
 // selection by (layerId, paramKey), fold each group's edit into one next
 // `AnimTrack`, and hand the whole set to `updateParamTracksMulti` so a selection
@@ -28,7 +28,7 @@ import type {
 import { updateParamTracksMulti } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
 import type { Grid } from "../keyframe/batchRetime";
-import { animatableParams, readParamTrack, scaleFanOutFor } from "../keyframe/descriptors";
+import { scaleFanOutFor } from "../keyframe/descriptors";
 import { setAuto, setExtrapolation, setSegmentEasing, type TrackValue } from "../keyframe/edits";
 import { fanOutEntries } from "../keyframe/fanOut";
 import {
@@ -164,10 +164,10 @@ export function selectionGroups(args: {
   for (const group of byAddress.values()) {
     const layer = layerById.get(group.layerId);
     if (layer === undefined) continue;
-    const track = readParamTrack(layer.params, group.paramKey);
+    const track = readLayerParamTrack(layer, group.paramKey);
     if (track === null || track.mode !== "Keyframed") continue;
     const fallback =
-      animatableParams(layer.kind, false, readPositionMode(layer.params)).find((d) => d.paramKey === group.paramKey)?.fallback ?? 0;
+      layerParams(layer, true).find((d) => d.paramKey === group.paramKey)?.fallback ?? 0;
     groups.push({ ...group, layer, track, fallback });
   }
   return groups;

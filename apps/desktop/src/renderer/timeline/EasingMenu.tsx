@@ -14,7 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import type { AnimTrack, Extrapolate, Interpolation, Keyframe } from "../ipc";
+import type { Extrapolate, Interpolation, Keyframe } from "../ipc";
+import type { ParamTrack } from "../keyframe/descriptors";
 import {
   EASING_PRESETS,
   applySegmentEasing,
@@ -335,7 +336,7 @@ function ElasticParamRows({
 /// has no such segment: its stored class is still reported (so a Hold last key
 /// keeps Smooth disabled), with the identity arriving side standing in for a
 /// Spline — there is no right key to read one from.
-function easingLeaving(keys: readonly Keyframe<number>[], kfId: string): Interpolation {
+function easingLeaving<T>(keys: readonly Keyframe<T>[], kfId: string): Interpolation {
   const i = keys.findIndex((k) => k.id === kfId);
   const k = keys[i];
   if (!k) return { kind: "Linear" };
@@ -391,7 +392,7 @@ export function EasingMenu({
   /// pinned params, whether this key is the track's first or last and the
   /// track's extrapolation. Writes never go through it, and the whole
   /// selection is read through the batch fold.
-  track: AnimTrack<number>;
+  track: ParamTrack;
   kfId: string;
   /// Applies the chosen edit to EVERY selected key, folded per
   /// (layerId, paramKey) into one commit (`keyframeBatch.ts`).

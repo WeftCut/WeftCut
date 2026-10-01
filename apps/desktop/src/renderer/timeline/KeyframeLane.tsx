@@ -1,3 +1,4 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 import {
   useCallback,
   useMemo,
@@ -8,8 +9,6 @@ import { useTranslation } from "react-i18next";
 import type { AnimTrack, Rgba, TrackSummary } from "../ipc";
 import { keyframeAbsoluteX, trackKeyframeProperties } from "./geometry";
 import {
-  readParamTrack,
-  readRgbaTrack,
   isHiddenTwinAxis,
   type ParamDescriptor,
   type ParamTrack,
@@ -100,6 +99,10 @@ export function KeyframeLaneHeaders({
     <>
       {props.map((d) => {
         const expanded = d.paramKey === focusedParamKey;
+        const name = t(d.labelKey, { defaultValue: d.paramKey });
+        const label = d.owner
+          ? t(d.owner.labelKey, { defaultValue: d.owner.name }) + ' #' + d.owner.ordinal + ' · ' + name
+          : name;
         return (
           <div
             key={d.paramKey}
@@ -107,7 +110,7 @@ export function KeyframeLaneHeaders({
             style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
           >
             <div className="flex items-center justify-between gap-1" style={{ height: KF_SUBLANE_H }}>
-              <span className="min-w-0 truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
+              <span className="min-w-0 truncate" title={d.owner ? d.owner.layerLabel + " · " + label : label}>{label}</span>
               <KeyframeNavigator
                 track={track}
                 paramKey={d.paramKey}
@@ -205,7 +208,7 @@ export function KeyframeLane({
       {interpMenu && (() => {
         const layer = track.layers.find((l) => l.id === interpMenu.layerId);
         if (!layer) return null;
-        const trk = readParamTrack(layer.params, interpMenu.paramKey);
+        const trk = readLayerParamTrack(layer, interpMenu.paramKey);
         if (!trk || trk.mode !== "Keyframed") return null;
         return (
           <EasingMenu
@@ -266,7 +269,7 @@ function KeyframeSubLaneRow({
       {track.layers.map((layer) => {
         if (isHiddenTwinAxis(paramKey, layer.params)) return null;
         if (desc.valueKind === "rgba") {
-          const rgba = readRgbaTrack(layer.params, desc);
+          const rgba = readLayerParamTrack(layer, desc);
           if (!rgba || rgba.mode !== "Keyframed") return null;
           return (
             <ColorKeyLane
@@ -282,7 +285,7 @@ function KeyframeSubLaneRow({
             />
           );
         }
-        const trk = readParamTrack(layer.params, paramKey);
+        const trk = readLayerParamTrack(layer, desc);
         if (!trk || trk.mode !== "Keyframed") return null;
         return (
           <LayerCurveLane

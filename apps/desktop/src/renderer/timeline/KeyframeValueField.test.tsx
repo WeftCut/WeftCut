@@ -7,6 +7,7 @@ import type { AnimTrack, Rgba, TrackSummary } from "../ipc";
 import { COLOR_FILL, OPACITY } from "../keyframe/descriptors";
 import { KeyframeValueField } from "./KeyframeValueField";
 import { clearKeyframeFocus } from "../keyframe/focusStore";
+import { keyframedParams } from "../keyframe/channels";
 
 afterEach(() => {
   cleanup();
@@ -36,6 +37,26 @@ function renderField(currentTimeUs: number, onCommit = vi.fn()) {
 }
 
 describe("KeyframeValueField", () => {
+  it("edits a discovered effect channel through its instance address", async () => {
+    const track = oneClip({});
+    const layer = track.layers[0]!;
+    layer.kind = "VideoClip";
+    layer.effects = [{ id: "blur-a", kind: "blur", enabled: true, params: {
+      strength: { ...opacityTrack, value: opacityTrack.mode === "Keyframed"
+        ? opacityTrack.value.map((k) => ({ ...k, value: 23 })) : [] },
+    } }];
+    const desc = keyframedParams(track.layers)[0]!;
+    const onCommit = vi.fn();
+    render(<KeyframeValueField track={track} desc={desc} currentTimeUs={0}
+      fpsNum={30} fpsDen={1} onCommitParamTrack={onCommit} />);
+    const input = screen.getByRole("textbox", { name: "Strength" });
+    expect((input as HTMLInputElement).value).toBe("23");
+    await userEvent.clear(input);
+    await userEvent.type(input, "30");
+    await userEvent.click(document.body);
+    expect(onCommit).toHaveBeenCalledWith("L1", "effects[blur-a].params[strength]",
+      expect.objectContaining({ value: [expect.objectContaining({ value: 30 })] }));
+  });
   it("renders a number field (not a slider) showing the value at the playhead", () => {
     renderField(0);
     expect((screen.getByLabelText("Opacity") as HTMLInputElement).value).toBe("0.5");

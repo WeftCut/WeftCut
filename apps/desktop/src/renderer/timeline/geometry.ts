@@ -1,4 +1,3 @@
-import { readPositionMode } from '../keyframe/descriptors';
 import { DEFAULT_TIMELINE_PX_PER_SEC } from "../../shared/view-state";
 import type {
   LinkSummary,
@@ -11,12 +10,8 @@ import {
   layerOverlapClass as sharedOverlapClass,
   type OverlapClass,
 } from "../grid";
-import {
-  animatableParams,
-  readParamTrack,
-  readScaleLinked,
-  type ParamDescriptor,
-} from "../keyframe/descriptors";
+import type { ParamDescriptor } from "../keyframe/descriptors";
+import { keyframedParams } from "../keyframe/channels";
 
 // Zoom + height bounds. DEFAULT_PX_PER_SEC is the fallback for a timeline
 // `view.json` remembers nothing about — the persisted document's own default,
@@ -494,40 +489,7 @@ export function keyframeAbsoluteX(
 /// — one entry per property that at least one layer animates (Keyframed).
 /// Drives the expanded sub-lane rows.
 export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] {
-  const out: ParamDescriptor[] = [];
-  // Stable, de-duped, descriptor-ordered: walk each layer's animatable params;
-  // include a param the first time any layer has it Keyframed. Per-layer
-  // link-aware: a LINKED layer's param list carries the composite Scale and no
-  // scale_y at all, so its keyed twin tracks surface as ONE lane — while an
-  // unlinked neighbour on the same track still contributes scale_x/scale_y.
-  const seen = new Set<string>();
-  for (const layer of track.layers) {
-    for (const desc of animatableParams(layer.kind, readScaleLinked(layer.params), readPositionMode(layer.params))) {
-      if (seen.has(desc.paramKey)) continue;
-      const t = readParamTrack(layer.params, desc.paramKey);
-      if (t && t.mode === "Keyframed") {
-        seen.add(desc.paramKey);
-      }
-    }
-  }
-  // Emit in the stable order defined by ORDER below (not first-seen order).
-  // The descriptor (label "Scale" vs "Scale X", fan-out or not) comes from the
-  // first layer actually KEYED on the param, so a mixed track labels the lane
-  // after the layer whose diamonds it shows; first-defining is the fallback.
-  const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "anchor_x", "anchor_y", "opacity", "color", "gain_db", "pan"];
-  for (const key of ORDER) {
-    if (!seen.has(key)) continue;
-    let picked: ParamDescriptor | null = null;
-    for (const layer of track.layers) {
-      const d = animatableParams(layer.kind, readScaleLinked(layer.params), readPositionMode(layer.params)).find((x) => x.paramKey === key);
-      if (!d) continue;
-      picked ??= d;
-      const t = readParamTrack(layer.params, key);
-      if (t && t.mode === "Keyframed") { picked = d; break; }
-    }
-    if (picked) out.push(picked);
-  }
-  return out;
+  return keyframedParams(track.layers);
 }
 
 /// Nearest diamond id within `radiusPx` of `pointerX`, else null.

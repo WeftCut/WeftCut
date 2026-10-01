@@ -67,21 +67,21 @@ const DENOISE: UiEffectDescriptor = {
 
 describe("EffectParamFields", () => {
   it("renders a row per registry param, reading the effect's current value", () => {
-    const effect: EffectView = { id: "E1", kind: "blur", enabled: true, params: { strength: { mode: "Static", value: 8 } } };
-    render(<EffectParamFields layer={layer} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    const effect: EffectView = { id: "E1", kind: "blur", enabled: true, params: { strength: { mode: "Static", value: 23 } } };
+    render(<EffectParamFields layer={{ ...layer, effects: [effect] }} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     // label "strength" (defaultValue) : value 8
-    expect(screen.getByText("strength:8")).toBeTruthy();
+    expect(screen.getByText("strength:23")).toBeTruthy();
   });
 
   it("falls back to the registry default when the param slot is absent", () => {
     const effect: EffectView = { id: "E1", kind: "blur", enabled: true, params: {} };
-    render(<EffectParamFields layer={layer} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectParamFields layer={{ ...layer, effects: [effect] }} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     expect(screen.getByText("strength:8")).toBeTruthy(); // blur default
   });
 
   it("commits to the nested effects[id].params[key] track key", async () => {
     const effect: EffectView = { id: "E1", kind: "blur", enabled: true, params: {} };
-    render(<EffectParamFields layer={layer} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectParamFields layer={{ ...layer, effects: [effect] }} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("kf-effects[E1].params[strength]"));
     expect(updateLayerParamTrack).toHaveBeenCalledWith("L1", "effects[E1].params[strength]", { mode: "Static", value: 42 });
   });
@@ -89,14 +89,14 @@ describe("EffectParamFields", () => {
   it("renders nothing for an unknown kind", () => {
     const effect: EffectView = { id: "E1", kind: "mystery", enabled: true, params: {} };
     const { container } = render(
-      <EffectParamFields layer={layer} effect={effect} descriptor={null} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectParamFields layer={{ ...layer, effects: [effect] }} effect={effect} descriptor={null} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     expect(container.querySelector("[data-testid^='kf-']")).toBeNull();
   });
 
   it("keeps the stopwatch on a visual param", () => {
     const effect: EffectView = { id: "E1", kind: "blur", enabled: true, params: {} };
-    render(<EffectParamFields layer={layer} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectParamFields layer={{ ...layer, effects: [effect] }} effect={effect} descriptor={BLUR} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     expect(screen.getByTestId("kf-effects[E1].params[strength]").getAttribute("data-stopwatch")).toBe("true");
   });
 });

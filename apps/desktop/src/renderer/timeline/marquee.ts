@@ -1,3 +1,4 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 // What a marquee rectangle takes, for both of the timeline's selectable
 // populations — clips and keyframes — and what that means for the clip
 // selection. Pure: no React, no DOM, so every rule is provable from hand-fed
@@ -11,7 +12,8 @@ import {
   valueToY,
   type CurveGeom,
 } from "../keyframe/curveGraph";
-import { isHiddenTwinAxis, readParamTrack } from "../keyframe/descriptors";
+import { isHiddenTwinAxis } from "../keyframe/descriptors";
+import { isNumberTrack } from "../keyframe/easingPreviewStore";
 import type { SelectedKeyframe } from "../keyframe/selectionStore";
 import {
   computeLayerSlices,
@@ -183,13 +185,13 @@ export function marqueeHitKeyframes(args: {
       // hidden `scale_y` is not on screen, so it cannot be in a box, and a param
       // this layer does not animate draws no diamonds to take.
       if (isHiddenTwinAxis(row.paramKey, layer.params)) continue;
-      const trk = readParamTrack(layer.params, row.paramKey);
+      const trk = readLayerParamTrack(layer, row.paramKey);
       if (trk === null || trk.mode !== "Keyframed") continue;
       const geom: CurveGeom = {
         pxPerSec: args.pxPerSec,
         layerTStartUs: layer.t_start_us,
         height: row.bottom - row.top,
-        ...computeValueRange(trk.value),
+        ...(isNumberTrack(trk) ? computeValueRange(trk.value) : { vmin: 0, vmax: 1 }),
       };
       for (const kf of trk.value) {
         // `timeToXPx` folds in the layer's start and answers absolute ruler px,
@@ -200,7 +202,9 @@ export function marqueeHitKeyframes(args: {
         // origin above the one the user sees.
         if (
           row.expanded &&
-          !containsHalfOpen(row.top + valueToY(kf.value, geom), box.y0, box.y1)
+          !containsHalfOpen(row.top + (typeof kf.value === "number"
+            ? valueToY(kf.value, geom)
+            : geom.height / 2), box.y0, box.y1)
         ) {
           continue;
         }

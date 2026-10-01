@@ -1,9 +1,8 @@
+import { readLayerParamTrack } from "../keyframe/channels";
 import type { SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { AnimTrack, LayerSummary, Rgba, TrackSummary } from "../ipc";
 import {
-  readNumberTrack,
-  readRgbaTrack,
   type NumberParamDescriptor,
   type ParamDescriptor,
   type ParamTrack,
@@ -57,8 +56,8 @@ export function KeyframeValueField({
   const common = { layerId: layer.id, tLocalUs, inSpan, onCommitParamTrack };
 
   return desc.valueKind === "rgba"
-    ? <ColorValueRow {...common} desc={desc} params={layer.params} />
-    : <NumberValueRow {...common} desc={desc} params={layer.params} />;
+    ? <ColorValueRow {...common} desc={desc} layer={layer} />
+    : <NumberValueRow {...common} desc={desc} layer={layer} />;
 }
 
 /// The timeline root's onClick clears the layer selection; stop the bubble so
@@ -67,20 +66,20 @@ const ROW_PROPS = { className: "kf-value-row mx-auto w-20", onClick: stopPropaga
 
 function NumberValueRow({
   layerId,
-  params,
+  layer,
   desc,
   tLocalUs,
   inSpan,
   onCommitParamTrack,
 }: {
   layerId: string;
-  params: LayerSummary["params"];
+  layer: LayerSummary;
   desc: NumberParamDescriptor;
   tLocalUs: number;
   inSpan: boolean;
 } & CommitSink) {
   const { t } = useTranslation();
-  const trk = readNumberTrack(params, desc);
+  const trk = readLayerParamTrack(layer, desc);
   if (!trk || trk.mode !== "Keyframed") return null;
   // exactOptionalPropertyTypes rejects passing `undefined` for `?: number`
   // props, so spread step/min/max only when set (mirrors InspectorAnimField).
@@ -114,20 +113,20 @@ function NumberValueRow({
 /// 80px wide and the inspector row is where a pick belongs.
 function ColorValueRow({
   layerId,
-  params,
+  layer,
   desc,
   tLocalUs,
   inSpan,
   onCommitParamTrack,
 }: {
   layerId: string;
-  params: LayerSummary["params"];
+  layer: LayerSummary;
   desc: RgbaParamDescriptor;
   tLocalUs: number;
   inSpan: boolean;
 } & CommitSink) {
   const { t } = useTranslation();
-  const trk: AnimTrack<Rgba> | null = readRgbaTrack(params, desc);
+  const trk: AnimTrack<Rgba> | null = readLayerParamTrack(layer, desc);
   if (!trk || trk.mode !== "Keyframed") return null;
   const shown = displayValue(trk, tLocalUs, desc.fallback, resolveAnimatedColor);
   const label = t(desc.labelKey, { defaultValue: desc.paramKey });

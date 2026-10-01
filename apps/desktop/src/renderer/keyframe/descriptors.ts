@@ -11,6 +11,9 @@ interface ParamDescriptorBase {
   paramKey: string;
   /// Existing i18n key (reuse the property-panel labels).
   labelKey: string;
+  labelFallback?: string;
+  /// Context for instance-owned parameters; identity remains paramKey.
+  owner?: { labelKey: string; name: string; ordinal: number; layerLabel: string };
   /// Composite marker: commits fan the authored track out to every listed key
   /// (structural twin copies, fresh ids) through the plural batch mutation, so
   /// the whole write is one undo. Reads still come from `paramKey`.
@@ -259,16 +262,10 @@ export const PIXEL_EXTENT_PRECISION: ParamPrecision = { d: 0 };
 
 /** Every effect param, at one precision.
  *
- *  Per-param specs exist (`render/effects/effectRegistry.ts`), but that module
- *  imports `pixi.js`, so the main process — where quantization runs — cannot
- *  read it at all. Splitting it would buy nothing: the whole catalog is `[0,1]`,
- *  `[0,10]`/`[-5,5]` and `[-100,100]` scalars, not one of which needs finer than
- *  0.001 or would visibly suffer from it. The registry already concedes the
- *  point by letting `step` default off the range width.
- *
- *  KNOWN CRACK: `viewMatte` is a boolean wearing `[0, 1]` step 1, so an agent
- *  can still write it 0.5. Its `apply` thresholds, so that is inert today — and
- *  it is the one thing that would justify splitting the registry later. */
+ *  The shared effect catalog carries editing steps, not recorded precision.
+ *  All current scalar effects record to 0.001. A step is UI ergonomics; it
+ *  does not quantize the stored track (viewMatte still thresholds in apply).
+ */
 export const EFFECT_PARAM_DECIMALS = 3;
 
 /** `v` recorded to `d` decimal places, or `v` unchanged when it is not finite

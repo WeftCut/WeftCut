@@ -1,3 +1,5 @@
+import { effectParamDescriptor } from "../keyframe/channels";
+import { InspectorAnimField } from "./InspectorAnimField";
 import { useTranslation } from "react-i18next";
 import { isAudioKind } from "../../shared/audioEffects/catalog";
 import { KeyframeField } from "../components/KeyframeField";
@@ -78,6 +80,16 @@ function EffectParamField({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const desc = effectParamDescriptor(effect, paramName);
+  if (desc) {
+    return (
+      <div className="prop-effect-param" data-testid={`effect-param-${effect.id}-${paramName}`}>
+        <InspectorAnimField layer={layer} desc={desc} tInLayerUs={tInLayerUs}
+          playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      </div>
+    );
+  }
+  if (!isAudioKind(effect.kind)) return null;
   const paramKey = `effects[${effect.id}].params[${paramName}]`;
   // Absent slot ⇒ the catalog default.
   const track: AnimTrack<number> = effect.params[paramName] ?? { mode: "Static", value: spec.default };
@@ -89,7 +101,6 @@ function EffectParamField({
   // An audio effect is an offline whole-clip bake, so its params are static by
   // construction (spec Decision 11) — no stopwatch, and no playhead gate
   // either: there is no "off-clip" for a value that applies to the whole clip.
-  const audio = isAudioKind(effect.kind);
   const commit = async (k: string, next: AnimTrack<number>) => {
     await tryMutate(
       () => updateLayerParamTrack(layer.id, k, next).then(onMutated),
@@ -104,27 +115,23 @@ function EffectParamField({
       track={track}
       fallback={spec.default}
       tInLayerUs={tInLayerUs}
-      playheadInSpan={audio ? true : playheadInSpan}
+      playheadInSpan={true}
       onCommitTrack={commit}
       onMutated={onMutated}
       widgets={["number"]}
       step={step}
       {...(spec.range ? { min: spec.range[0], max: spec.range[1] } : {})}
-      {...(audio ? { showStopwatch: false } : {})}
+      showStopwatch={false}
     />
   );
   // Wrapper carries a stable testid (effect id + param) so the e2e can target
   // this exact field; KeyframeField/AppNumberField don't take a testid prop.
   // Without the stopwatch there is no AnimatableField to render the label, so
   // the audio row states it itself.
-  return audio ? (
+  return (
     <div className="prop-field prop-effect-param" data-testid={`effect-param-${effect.id}-${paramName}`}>
       <span className="prop-field-label">{label}</span>
       <div className="prop-field-control">{field}</div>
-    </div>
-  ) : (
-    <div className="prop-effect-param" data-testid={`effect-param-${effect.id}-${paramName}`}>
-      {field}
     </div>
   );
 }
