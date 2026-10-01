@@ -34,6 +34,8 @@ test('visual effect keyframes: inspector, timeline editing, navigation, easing, 
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
   try {
+    // Match the compact desktop used by the hosted Windows runner.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1024, 720))
     await newProject(page, { parentFolder: tmpDir('weftcut-effect-channels-'), name: 'Effect channels',
       canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 } })
     const id = await invokeCmd<string>(page, 'add_text_layer', {
@@ -92,12 +94,16 @@ test('visual effect keyframes: inspector, timeline editing, navigation, easing, 
     // At time zero the sticky header clips the diamond's left half. Use its
     // visible right half, as a user does, instead of Playwright's centre click.
     const clickFirst = async (button: 'left' | 'right' = 'left') => {
+      // Raw mouse coordinates do not auto-scroll: on compact CI desktops the
+      // expanded curve's low-value key can be below the timeline viewport.
+      await diamond(firstKeyId).scrollIntoViewIfNeeded()
       const box = (await diamond(firstKeyId).boundingBox())!
       await page.mouse.click(box.x + box.width * 0.8, box.y + box.height / 2, { button })
     }
     await clickFirst('right')
     await page.getByTestId('easing-cmd-hold').click()
     await expect.poll(async () => (await firstKeys())[0]?.segment.kind).toBe('Hold')
+    await diamond(lastKeyId).scrollIntoViewIfNeeded()
     const box = (await diamond(lastKeyId).boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
     await page.mouse.down()
