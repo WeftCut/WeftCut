@@ -169,6 +169,33 @@
   background: var(--hover-neutral);
 }
 
+.motif-card-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.motif-card-select:focus-visible {
+  outline: 2px solid var(--selection-border);
+  outline-offset: 3px;
+}
+
+.motif-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.motif-delete-dialog { width: min(420px, 90vw); }
+.motif-delete-dialog > p { margin: 16px; }
+
 .motif-card-selected {
   background: var(--selection-bg);
   border-color: var(--selection-border);

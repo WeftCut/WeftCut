@@ -536,6 +536,19 @@ The lifecycle is driven from the property panel (Install / Edit / Update / Save-
 Discard / Delete) with inline confirms, and equivalently over the MCP tools below. Security
 of the untrusted-document case is covered in [Security](#security).
 
+The library also exposes Export on every card and Export/Delete in its context
+menu (right-click or Shift+F10). Built-ins cannot be deleted. Delete asks for
+confirmation and warns that projects using the package will show missing content.
+
+Library cards use persistent **Motif covers**: default-props PNGs captured at
+the settled entrance time, at a fixed 30 fps, downsampled after rendering to fit
+480×270. Main owns the cache under `<dataRoot>/cache/motif-covers/`; package or
+render-runtime changes invalidate it. Only visible/near-visible cards request
+covers, and a warm app restart needs no capture for them. The selected parameter
+preview still renders at the project's fps and full authored size. Covers are
+derived local data, not part of the exported package or project frame bakes.
+See [ADR 0085](adr/0085-motif-library-covers-are-persistent-derived-resources.md).
+
 ## Agent surface
 
 An MCP agent can both *place* and *author* Motifs, mirroring the human lifecycle through the

@@ -10,7 +10,7 @@
 // Field queries use case-insensitive patterns so they match the label whether
 // it renders as the raw prop key or its Title Case form.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { MotifSummary } from "../ipc";
@@ -20,6 +20,8 @@ const ipcMocks = vi.hoisted(() => ({
   addMotif: vi.fn(),
   importMotif: vi.fn(),
   exportMotif: vi.fn(),
+  deleteMotif: vi.fn(),
+  getMotifCover: vi.fn(() => new Promise(() => {})),
 }));
 
 vi.mock("../ipc", async (importActual) => {
@@ -72,8 +74,8 @@ const MOTIF: MotifSummary = {
 const onClose = vi.fn();
 const onAdded = vi.fn().mockResolvedValue(undefined);
 
-async function renderPicker() {
-  ipcMocks.listMotifs.mockResolvedValue([MOTIF]);
+async function renderPicker(motifs = [MOTIF]) {
+  ipcMocks.listMotifs.mockResolvedValue(motifs);
   ipcMocks.addMotif.mockResolvedValue("layer-new");
   render(
     <MotifPicker
@@ -96,6 +98,46 @@ async function renderPicker() {
 }
 
 describe('Motif package actions', () => {
+  it('exports the card acted on, including through its context menu, without changing selection', async () => {
+    const other = { ...MOTIF, id: 'other', name: 'Other' };
+    await renderPicker([MOTIF, other]);
+    const card = screen.getByTitle('other').closest('.motif-card')! as HTMLElement;
+    expect(document.querySelector('.motif-picker-bar [aria-label="Export Motif ZIP"]')).toBeNull();
+    vi.mocked(save).mockResolvedValue('/shared/other.zip');
+    fireEvent.click(within(card).getByRole('button', { name: 'Export Motif ZIP' }));
+    await waitFor(() => expect(ipcMocks.exportMotif).toHaveBeenCalledWith('other', '/shared/other.zip'));
+    expect(screen.getByTitle('badge').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.contextMenu(card, { clientX: 30, clientY: 30 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Export Motif ZIP' }));
+    await waitFor(() => expect(ipcMocks.exportMotif).toHaveBeenCalledTimes(2));
+    expect(ipcMocks.exportMotif).toHaveBeenLastCalledWith('other', '/shared/other.zip');
+  });
+
+  it('hides delete for built-ins while retaining export and keyboard menu access', async () => {
+    await renderPicker([{ ...MOTIF, status: 'builtin' }]);
+    fireEvent.keyDown(screen.getByTitle('badge'), { key: 'F10', shiftKey: true });
+    expect(await screen.findByRole('menuitem', { name: 'Export Motif ZIP' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Delete Motif' })).toBeNull();
+  });
+
+  it('confirms deletion, reports failures, then refreshes the list and selects a remaining item', async () => {
+    const remaining = { ...MOTIF, id: 'other', name: 'Other', status: 'builtin' as const };
+    await renderPicker([MOTIF, remaining]);
+    fireEvent.contextMenu(screen.getByTitle('badge'), { clientX: 30, clientY: 30 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete Motif' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Delete Motif' });
+    expect(ipcMocks.deleteMotif).not.toHaveBeenCalled();
+    ipcMocks.deleteMotif.mockRejectedValueOnce(new Error('File in use')).mockResolvedValueOnce(undefined);
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Motif' }));
+    expect(await screen.findByText('Error: File in use')).toBeTruthy();
+    ipcMocks.listMotifs.mockResolvedValue([remaining]);
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Motif' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete Motif' })).toBeNull());
+    expect(ipcMocks.deleteMotif).toHaveBeenLastCalledWith('badge');
+    expect(screen.queryByTitle('badge')).toBeNull();
+    expect(screen.getByTitle('other').getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('accepts only ZIP in the import picker, and respects cancellation', async () => {
     await renderPicker();
     vi.mocked(open).mockResolvedValueOnce(null).mockResolvedValueOnce('/shared/scene.zip');

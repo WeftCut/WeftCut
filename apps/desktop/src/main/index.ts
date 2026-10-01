@@ -6,7 +6,11 @@ import os from 'node:os'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, shell } from 'electron'
+import { createHash } from 'node:crypto'
+import { MotifCovers } from './motif/covers.js'
+import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authoring.js'
+import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
@@ -756,7 +760,6 @@ app.whenReady().then(async () => {
 
   // Load built-in Motif sources once (manifest + relocated index.html) for the
   // TS catalog/authoring surface. builtinMotifs reads from motifBuiltinDir.
-  const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
   // Per-workspace view state — resolves the workspace dir per call; no-op pre-workspace.
@@ -1118,7 +1121,26 @@ app.whenReady().then(async () => {
     return motifCapture.capture(event.sender, args)
   })
 
+  let coverRuntimeVersion = ''
+  const motifCovers = new MotifCovers(path.join(dataRoot.cacheDir, 'motif-covers'), {
+    resolve: id => {
+      const source = getMotifSource(motifStore, motifBuiltins, id)
+      return { manifest: source.manifest, contentHash: motifContentHash(source.manifest, source.html, motifSourceFiles(motifStore, motifBuiltins, id)) }
+    },
+    renderVersion: () => `${process.versions.chrome}:${coverRuntimeVersion}`,
+    capture: async args => Buffer.from(await captureMotifFrameB64(args, undefined, false), 'base64'),
+    valid: png => !nativeImage.createFromBuffer(png).isEmpty(),
+    thumbnail: png => {
+      const image = nativeImage.createFromBuffer(png)
+      if (image.isEmpty()) throw new Error('Invalid Motif cover capture')
+      const { width, height } = image.getSize()
+      const scale = Math.min(1, 480 / width, 270 / height)
+      return image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: 'best' }).toPNG()
+    },
+  })
+  await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
     if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return motifFrames.write(args.hash, args.frame, args.png)
@@ -1130,6 +1152,7 @@ app.whenReady().then(async () => {
     // at boot; main injects it into the offscreen capture host via CDP.
     if (channel === 'motif_register_runtime') {
       setRuntimeSource((args as { source: string }).source)
+      coverRuntimeVersion = createHash('sha256').update((args as { source: string }).source).digest('hex')
       return null
     }
     // Motif frame capture: offscreen CDP path — never falls through to Rust.

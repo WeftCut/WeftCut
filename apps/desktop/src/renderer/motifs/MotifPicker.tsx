@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FolderInputIcon, FolderOutputIcon, PlusIcon } from "lucide-react";
+import { FolderInputIcon, PlusIcon } from "lucide-react";
+import { MotifCard } from './MotifCard';
+import { motifPosterTime } from '../../shared/motifs/poster';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -12,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import {
   importMotif,
   exportMotif,
+  deleteMotif,
   listMotifs,
   MOTIFS_CHANGED_EVENT,
   writeMotifDraft,
@@ -79,12 +82,17 @@ export function MotifPicker({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [deleting, setDeleting] = useState<MotifSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const aliveRef = useRef(true);
+  const reloadGeneration = useRef(0);
   const reload = () => {
-    listMotifs().then(
+    const generation = ++reloadGeneration.current;
+    return listMotifs().then(
       (list) => {
-        if (!aliveRef.current) return;
+        if (!aliveRef.current || generation !== reloadGeneration.current) return;
         setMotifs(list);
         // Refresh the runtime frame-math catalog from the SAME fetch the picker
         // shows, so every Motif the picker can add also resolves in the
@@ -92,10 +100,10 @@ export function MotifPicker({
         // listener keeps it fresh (both in `startup/initializeRenderer.ts`);
         // this covers a boot sync that failed or an event that was missed.
         setUserMotifs(list as MotifManifest[]);
-        setSelectedId((prev) => prev ?? list[0]?.id ?? null);
+        setSelectedId((prev) => list.some(m => m.id === prev) ? prev : list[0]?.id ?? null);
       },
       (e) => {
-        if (aliveRef.current) setError(String(e));
+        if (aliveRef.current && generation === reloadGeneration.current) setError(String(e));
       },
     );
   };
@@ -180,20 +188,31 @@ export function MotifPicker({
     }
   };
 
-  const exportSelected = async () => {
-    if (!selectedId) return;
+  const exportItem = async (id: string) => {
     try {
       setError(null);
       const path = await saveDialog({
         title: t("motif_picker.export_button"),
-        defaultPath: `${selectedId}.zip`,
+        defaultPath: `${id}.zip`,
         filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
       });
       if (!path) return;
-      await exportMotif(selectedId, path);
+      await exportMotif(id, path);
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const removeItem = async () => {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteMotif(deleting.id);
+      await reload();
+      setDeleting(null);
+    } catch (e) { setDeleteError(String(e)); }
+    finally { setDeleteBusy(false); }
   };
 
   return (
@@ -249,16 +268,6 @@ export function MotifPicker({
                 >
                   <FolderInputIcon size={14} aria-hidden />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  title={t("motif_picker.export_button")}
-                  aria-label={t("motif_picker.export_button")}
-                  disabled={!selectedId}
-                  onClick={() => void exportSelected()}
-                >
-                  <FolderOutputIcon size={14} aria-hidden />
-                </Button>
               </div>
               <div className="motif-picker-list">
                 {filtered.length === 0 && (
@@ -269,30 +278,15 @@ export function MotifPicker({
                   </p>
                 )}
                 {filtered.map((tpl) => (
-                  <button
+                  <MotifCard
                     key={tpl.id}
-                    type="button"
-                    // The id matters to agents (MCP `add_motif_layer`) and bug
-                    // reports, not to picking — tooltip, not card real estate.
-                    title={tpl.id}
-                    className={
-                      tpl.id === selectedId
-                        ? "motif-card motif-card-selected"
-                        : "motif-card"
-                    }
-                    onClick={() => setSelectedId(tpl.id)}
-                  >
-                    <MotifCardThumbnail motif={tpl} fpsNum={fpsNum} fpsDen={fpsDen} />
-                    <span className="motif-card-title">
-                      <span className="motif-card-name">{tpl.name}</span>
-                      <span className={`motif-card-status status-${tpl.status ?? "builtin"}`}>
-                        {t(`motif_picker.status.${tpl.status ?? "builtin"}`)}
-                      </span>
-                    </span>
-                    <span className="motif-card-meta">
-                      {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
-                    </span>
-                  </button>
+                    motif={tpl}
+                    selected={tpl.id === selectedId}
+                    fpsNum={fpsNum} fpsDen={fpsDen}
+                    onSelect={() => setSelectedId(tpl.id)}
+                    onExport={() => void exportItem(tpl.id)}
+                    onDelete={() => { setDeleteError(null); setDeleting(tpl); }}
+                  />
                 ))}
               </div>
             </div>
@@ -331,6 +325,15 @@ export function MotifPicker({
             </div>
           </div>
         )}
+        {deleting && <AppDialog title={t('motif_picker.delete_button')} panelClassName="settings-panel motif-delete-dialog"
+          onClose={deleteBusy ? undefined : () => setDeleting(null)}>
+          <p>{t('motif_picker.delete_confirm', { name: deleting.name })}</p>
+          {deleteError && <p className="settings-error">{deleteError}</p>}
+          <div className="motif-picker-actions">
+            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(null)}>{t('motif_picker.cancel')}</Button>
+            <Button variant="destructive" disabled={deleteBusy} onClick={() => void removeItem()}>{t('motif_picker.delete_button')}</Button>
+          </div>
+        </AppDialog>}
     </AppDialog>
   );
 }
@@ -521,19 +524,7 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/// Time (seconds) of the static preview frame. The picker shows a still, not an
-/// animation — so capture the Motif's SETTLED state, not content-frame 0. An
-/// animate-in Motif (a fade/slide-in with `fill: both` from opacity 0 — e.g. the
-/// lower third) is invisible at t=0, which would render a blank card.
-/// `content_duration_s` marks the end of the in-animation (the held poster
-/// state), so it's the right still; a Motif without it (e.g. countdown, which
-/// shows its starting number at t=0) captures at 0.
-function posterTSec(motif: MotifSummary): number {
-  const cds = motif.content_duration_s;
-  return typeof cds === "number" && cds > 0 ? cds : 0;
-}
-
-/// Static still of a Motif's poster frame (see `posterTSec`), captured via a
+/// Static still of a Motif's poster frame (see `motifPosterTime`), captured via a
 /// single CDP screenshot (`captureMotifFramePngBlob`).
 /// CDP cost (~80ms) makes continuous animation impractical here, and the
 /// picker's job is "show what this Motif looks like", not animate it.
@@ -563,7 +554,7 @@ function MotifPreview({
   fpsDen?: number | undefined;
 }) {
   const [w, h] = motif.size;
-  const tSec = posterTSec(motif);
+  const tSec = motifPosterTime(motif);
   const [compW, compH] = canvas ?? [0, 0];
   const canvasMode = compW > 0 && compH > 0;
   const { t } = useTranslation();
@@ -591,8 +582,7 @@ function MotifPreview({
     return () => {
       cancelled = true;
     };
-    // `props` identity: MotifForm debounces it (300ms) and MotifCardThumbnail
-    // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
+    // MotifForm debounces props, so capture fires per settled edit.
     // `content_hash` is in the deps so a same-id draft edit (new content, same id)
     // re-captures — the host reloads off the `?v=` cache-buster threaded above.
   }, [motif.id, motif.content_hash, tSec, props, w, h, fpsNum, fpsDen]);
@@ -657,19 +647,4 @@ function MotifPreview({
       {error && <span className="settings-error">{error}</span>}
     </div>
   );
-}
-
-/// Card-grid thumbnail. Renders the same still preview at default props that
-/// the form's large preview uses, so card and form stay visually consistent.
-function MotifCardThumbnail({
-  motif,
-  fpsNum,
-  fpsDen,
-}: {
-  motif: MotifSummary;
-  fpsNum?: number | undefined;
-  fpsDen?: number | undefined;
-}) {
-  const defaults = useMemo(() => defaultPropsFor(motif), [motif]);
-  return <MotifPreview motif={motif} props={defaults} maxWidth={240} fpsNum={fpsNum} fpsDen={fpsDen} />;
 }

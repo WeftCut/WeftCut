@@ -2996,6 +2996,12 @@ export async function listMotifs(): Promise<MotifSummary[]> {
   return invoke<MotifSummary[]>("list_motifs");
 }
 
+/** Default-props catalog cover, persisted by main across app openings. */
+export async function getMotifCover(id: string, contentHash: string): Promise<Blob> {
+  const bytes = await invoke<Uint8Array>("motif_get_cover", { id, contentHash });
+  return new Blob([bytes as BlobPart], { type: "image/png" });
+}
+
 /// Add a motif layer. Mirrors the MCP `add_motif_layer` tool's behavior:
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates

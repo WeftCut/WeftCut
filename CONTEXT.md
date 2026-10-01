@@ -730,6 +730,12 @@ agent-authored Motifs are the same kind of document on the same render path;
 placed, one is a `Motif` layer whose props are its entire instance state.
 _Avoid_: template (that was the SVG predecessor), overlay, animation preset
 
+**Motif cover**:
+A saved image of a Motif's default appearance used by the library. Derived
+from the package and regenerated when its content or capture runtime changes;
+independent of a placed layer's props, project frame rate and frame bake.
+_Avoid_: authored cover field, preview bake
+
 **Props schema (data plane)**:
 A Motif's `props_schema` — the four typed variants (string, color, number, enum)
 its parameters may take. It is the *data* contract and nothing else: validation,
