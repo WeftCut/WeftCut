@@ -8,6 +8,9 @@ export interface BakeStatus { phase: BakePhase; done: number; total: number; }
 /// One content the baker should persist in full. `render(frame)` rasters an
 /// arbitrary content frame (the frame service's shared acquisition closure).
 export interface BakeContentSpec extends BakeContent {
+  /// Restored once per content directory, before planning. Missing coverage
+  /// retains the per-frame disk check as the I/O-error fallback.
+  persistedFrames?: ReadonlySet<number> | undefined;
   /// A capture can already have been atomically persisted in main while its
   /// OSR surface was leased. Plain bitmaps use the compatibility PNG writer.
   render: (frame: number) => Promise<ImageBitmap | CapturedFrame>;
@@ -49,6 +52,7 @@ export class MotifBaker {
   /// Completion is frame identity, not number of successful jobs: replanning
   /// can enqueue a frame that is still in flight or already completed.
   private completed = new Map<string, Set<number>>();
+  private restored = new Map<string, ReadonlySet<number>>();
   /// cacheKeys with a frame being rendered/persisted RIGHT NOW. Tracked apart
   /// from specsByKey because a setTargets re-plan retires a spec while its
   /// in-flight frame keeps writing — and that write's hash dir must stay
@@ -116,7 +120,19 @@ export class MotifBaker {
     if (this.loop.isDisposed()) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
     for (const key of this.completed.keys()) {
-      if (!this.specsByKey.has(key)) this.completed.delete(key);
+      if (!this.specsByKey.has(key)) {
+        this.completed.delete(key);
+        this.restored.delete(key);
+      }
+    }
+    for (const spec of specs) {
+      if (!spec.persistedFrames || this.restored.get(spec.cacheKey) === spec.persistedFrames) continue;
+      this.restored.set(spec.cacheKey, spec.persistedFrames);
+      let frames = this.completed.get(spec.cacheKey);
+      if (!frames) this.completed.set(spec.cacheKey, frames = new Set());
+      for (const frame of spec.persistedFrames) {
+        if (frame >= 0 && frame < spec.contentDurationFrames) frames.add(frame);
+      }
     }
     this.loop.setQueue(planBakeTargets(
       specs.filter((s) => this.status.get(s.cacheKey)?.phase !== "ready"),
@@ -131,13 +147,16 @@ export class MotifBaker {
     for (const s of specs) {
       const old = prev.get(s.cacheKey);
       if (old) {
+        old.done = this.completed.get(s.cacheKey)?.size ?? 0;
+        if (old.done >= old.total) old.phase = "ready";
         if (old.phase === "error") {
           old.phase = "baking";
           this.deps.onStatus?.(s.cacheKey, { ...old });
         }
         this.status.set(s.cacheKey, old);
       } else {
-        const st: BakeStatus = { phase: "baking", done: 0, total: s.contentDurationFrames };
+        const done = this.completed.get(s.cacheKey)?.size ?? 0;
+        const st: BakeStatus = { phase: done >= s.contentDurationFrames ? "ready" : "baking", done, total: s.contentDurationFrames };
         this.status.set(s.cacheKey, st);
         this.deps.onStatus?.(s.cacheKey, { ...st });
       }
@@ -180,6 +199,7 @@ export class MotifBaker {
     this.specsByKey.clear();
     this.status.clear();
     this.completed.clear();
+    this.restored.clear();
     this.touched.clear();
   }
 }

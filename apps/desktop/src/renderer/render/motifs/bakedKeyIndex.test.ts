@@ -23,4 +23,35 @@ describe("BakedKeyIndex", () => {
     idx.clear();
     expect(idx.has("a")).toBe(false);
   });
+
+  it("distinguishes a directory, interrupted coverage and a complete sequence", () => {
+    const idx = new BakedKeyIndex();
+    idx.add("a");
+    expect(idx.isComplete("a", 3)).toBe(false);
+    idx.restoreFrames("a", new Set([0, 2, 3]));
+    expect(idx.isComplete("a", 3)).toBe(false);
+    idx.add("a", 1);
+    expect(idx.isComplete("a", 3)).toBe(true);
+    idx.clear();
+    expect(idx.framesFor("a")).toBeUndefined();
+    expect(idx.isComplete("a", 3)).toBe(false);
+  });
+
+  it("forgets coverage for directories that GC removed before an undo", () => {
+    const idx = new BakedKeyIndex();
+    idx.restoreFrames("a", new Set([0, 1]));
+    idx.setLiveCandidates(["a"]);
+    idx.hydrateFromHashes(new Set());
+    expect(idx.framesFor("a")).toBeUndefined();
+    expect(idx.isComplete("a", 2)).toBe(false);
+  });
+
+  it("a concurrent write does not turn unknown coverage into a scanned inventory", () => {
+    const idx = new BakedKeyIndex();
+    idx.add("a", 2);
+    expect(idx.framesFor("a")).toBeUndefined();
+    idx.restoreFrames("a", new Set([0, 1]));
+    expect(idx.framesFor("a")).toEqual(new Set([0, 1, 2]));
+    expect(idx.isComplete("a", 3)).toBe(true);
+  });
 });

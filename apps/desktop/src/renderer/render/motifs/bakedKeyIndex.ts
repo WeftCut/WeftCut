@@ -7,6 +7,46 @@ import { hashCacheKey } from "./frameCache";
 /// `readDir(Cache/raster)` returned.
 export class BakedKeyIndex {
   private keys = new Set<string>();
+  private frames = new Map<string, Set<number>>();
+  /// A successful write proves one frame, not that the directory was scanned.
+  private enumerated = new Set<string>();
+  private prefixes = new Map<string, number>();
+  private hydration: Promise<void> = Promise.resolve();
+  private releaseHydration: (() => void) | null = null;
+
+  beginHydration(): void {
+    if (!this.releaseHydration) {
+      this.hydration = new Promise((resolve) => { this.releaseHydration = resolve; });
+    }
+  }
+
+  finishHydration(): void {
+    this.releaseHydration?.();
+    this.releaseHydration = null;
+  }
+
+  async whenHydrated(): Promise<void> {
+    // A new snapshot can begin discovery in the microtask that wakes a reader.
+    while (this.releaseHydration) await this.hydration;
+  }
+
+  framesFor(cacheKey: string): ReadonlySet<number> | undefined {
+    return this.enumerated.has(cacheKey) ? this.frames.get(cacheKey) : undefined;
+  }
+
+  isComplete(cacheKey: string, total: number): boolean {
+    return total > 0 && (this.prefixes.get(cacheKey) ?? 0) >= total;
+  }
+
+  restoreFrames(cacheKey: string, frames: ReadonlySet<number>): void {
+    const merged = new Set([...frames, ...(this.frames.get(cacheKey) ?? [])]);
+    this.frames.set(cacheKey, merged);
+    this.enumerated.add(cacheKey);
+    if (merged.size) this.keys.add(cacheKey);
+    let prefix = 0;
+    while (merged.has(prefix)) prefix++;
+    this.prefixes.set(cacheKey, prefix);
+  }
   /// The set of cacheKeys the caller considers "live" this project (active
   /// motif layers). Set by the Compositor before `hydrateFromHashes`.
   private liveCandidates: string[] = [];
@@ -16,12 +56,25 @@ export class BakedKeyIndex {
   }
 
   /// Mark a cacheKey baked (called after a successful `writeFrame`).
-  add(cacheKey: string): void {
+  add(cacheKey: string, frame?: number): void {
     this.keys.add(cacheKey);
+    if (frame !== undefined) {
+      let frames = this.frames.get(cacheKey);
+      if (!frames) this.frames.set(cacheKey, frames = new Set());
+      frames.add(frame);
+      let prefix = this.prefixes.get(cacheKey) ?? 0;
+      while (frames.has(prefix)) prefix++;
+      this.prefixes.set(cacheKey, prefix);
+    }
   }
 
   clear(): void {
     this.keys.clear();
+    this.frames.clear();
+    this.enumerated.clear();
+    this.prefixes.clear();
+    this.liveCandidates = [];
+    this.finishHydration();
   }
 
   /// Tell the index which cacheKeys are live this project (you can't reverse a
@@ -39,6 +92,13 @@ export class BakedKeyIndex {
     hashOf: (cacheKey: string) => string = hashCacheKey,
   ): void {
     this.keys.clear();
+    for (const key of this.frames.keys()) {
+      if (!diskHashes.has(hashOf(key))) {
+        this.frames.delete(key);
+        this.enumerated.delete(key);
+        this.prefixes.delete(key);
+      }
+    }
     for (const k of this.liveCandidates) {
       if (diskHashes.has(hashOf(k))) this.keys.add(k);
     }

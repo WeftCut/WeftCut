@@ -2,10 +2,64 @@ import { test, expect } from '@playwright/test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
+
+for (const missingFrame of [null, 7] as const) {
+test(`Motif pre-bake survives a cold app restart and captures only missing frames (${missingFrame ?? 'complete'}) @serial`, async () => {
+  test.setTimeout(120_000)
+  const userDataDir = tmpDir('weftcut-bake-reopen-user-')
+  let running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  try {
+    await newProject(running.page, {
+      parentFolder: tmpDir('weftcut-bake-reopen-project-'), name: 'persistent-bake',
+      canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
+    })
+    await invokeCmd(running.page, 'app_settings_set', { patch: { prebake_motifs: true } })
+    await waitForHook(running.page, 'prebakeLayerAndWait')
+    const layerId = await running.page.evaluate(() => (window as any).__weftcutTest.addMotifLayer({
+      motifId: 'countdown', durationUs: 1_000_000, props: { seconds: 1 },
+    })) as string
+    const baked = await running.page.evaluate(layerId =>
+      (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), layerId,
+    ) as { hashDir: string }
+    const projectPath = await invokeCmd<string>(running.page, 'workspace_dir')
+    const stamps = await Promise.all(Array.from({ length: 30 }, (_, f) =>
+      fs.stat(path.join(baked.hashDir, `${f}.wfrm`)).then(s => s.mtimeMs),
+    ))
+    await running.app.close()
+    if (missingFrame !== null) await fs.unlink(path.join(baked.hashDir, `${missingFrame}.wfrm`))
+    running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+    await waitForHook(running.page, 'motifReopenProject')
+    await running.page.evaluate(() => { (window as any).__weftcutMotifPerf = { renders: 0 } })
+    await running.page.evaluate(path => (window as any).__weftcutTest.motifReopenProject({ path }), projectPath)
+    await waitForHook(running.page, 'weftcutSampleComposite')
+    await expect.poll(() => running.page.evaluate(async () => {
+      try { await (window as any).__weftcutTest.weftcutSampleComposite(240, 240); return true }
+      catch { return false }
+    }), { timeout: 15_000 }).toBe(true)
+    await waitForHook(running.page, 'renderMotifSpriteFrames')
+    // Exercise the real reader for every frame with a new renderer/L0 cache.
+    await running.page.evaluate(async () => {
+      await (window as any).__weftcutTest.renderMotifSpriteFrames({
+        motifId: 'countdown', fpsNum: 30, fpsDen: 1, durationUs: 1_000_000, props: { seconds: 1 },
+        times: Array.from({ length: 30 }, (_, i) => ({ tInLayerUs: Math.round(i * 1_000_000 / 30) })),
+      })
+    })
+    await running.page.evaluate(layerId =>
+      (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), layerId)
+    expect(await running.page.evaluate(() => (window as any).__weftcutMotifPerf.renders)).toBe(missingFrame === null ? 0 : 1)
+    const after = await Promise.all(Array.from({ length: 30 }, (_, f) =>
+      fs.stat(path.join(baked.hashDir, `${f}.wfrm`)).then(s => s.mtimeMs),
+    ))
+    for (let f = 0; f < 30; f++) {
+      if (f !== missingFrame) expect(after[f]).toBe(stamps[f])
+    }
+  } finally { await running.app.close() }
+})
+}
 
 for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const) {
   test(`Motif bake persists readable transparent frames (${mode}) @serial`, async () => {

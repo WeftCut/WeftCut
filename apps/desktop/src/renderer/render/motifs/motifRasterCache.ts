@@ -88,6 +88,7 @@ export async function resolveMotifFrame(
   if (typeof window !== 'undefined' && typeof MessageChannel !== 'undefined') {
     return (await acquireFrame(motif, cacheKey, frame, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, false, overlay)).bitmap;
   }
+  if (!overlay) await sharedBakedKeyIndex.whenHydrated();
   if (sharedBakedKeyIndex.has(cacheKey)) {
     try {
       const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame);
@@ -117,6 +118,7 @@ function acquireFrame(
   bake: boolean, overlay: boolean,
 ): Promise<CapturedFrame> {
   return (overlay ? overlayBroker : committedBroker).acquire(cacheKey, frame, async ticket => {
+    if (!overlay) await sharedBakedKeyIndex.whenHydrated();
     if (!bake && !overlay && sharedBakedKeyIndex.has(cacheKey)) {
       try {
         const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame);

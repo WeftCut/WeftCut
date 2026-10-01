@@ -114,6 +114,7 @@ export class MotifFrameService {
   private lastPrewarmFrame = -1;
   private disposed = false;
   private projectId: string | null = null;
+  private diskDiscoveryPending = false;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
     this.prewarmer =
@@ -144,14 +145,15 @@ export class MotifFrameService {
             cancel: (t) => cancelIdle(t),
             // batchSize 1: same head-of-line rationale as the prewarmer above.
             batchSize: 1,
-            isOnDisk: (k, f) => sharedMotifFrameCache.hasPersistedFrame(k, f),
+            isOnDisk: async (k, f) => sharedBakedKeyIndex.framesFor(k)?.has(f)
+              ?? sharedMotifFrameCache.hasPersistedFrame(k, f),
             persist: async (k, f, bmp) => {
               const png = await encodeBitmapToPng(bmp);
               if (this.disposed) return;
               await sharedMotifFrameCache.writeFrame(k, f, png);
             },
             warm: (k, f, bmp) => {
-              sharedBakedKeyIndex.add(k);
+              sharedBakedKeyIndex.add(k, f);
               sharedMotifFrameCache.setFrame(k, f, bmp);
             },
             onStatus: (cacheKey, status) => {
@@ -175,7 +177,16 @@ export class MotifFrameService {
     if (projectId !== this.projectId) {
       this.projectId = projectId;
       resetMotifFrameRequests();
+      sharedBakedKeyIndex.clear();
+      this.manualPrebakeLayers.clear();
     }
+    // Disk discovery owns admission: neither the idle loops nor an on-demand
+    // sprite may decide to capture against an index that has not been restored.
+    this.diskDiscoveryPending = !!summary && !!this.baker;
+    this.prewarmer?.setTargets([]);
+    this.baker?.setTargets([]);
+    this.bakeStatusByCacheKey.clear();
+    if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
     if (!summary) {
       this.prewarmer?.setTargets([]);
       this.baker?.setTargets([]);
@@ -275,7 +286,7 @@ export class MotifFrameService {
   /// the cache warms ahead of the playhead in both states.
   private updatePrewarmTargets(tUs: number): void {
     const summary = this.deps.projectSummary();
-    if (!this.prewarmer || !summary) return;
+    if (!this.prewarmer || !summary || this.diskDiscoveryPending) return;
     const specs: PrewarmContentSpec[] = [];
     this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
       const motif = getMotif(layer.params.motif_id);
@@ -294,7 +305,7 @@ export class MotifFrameService {
       const durationSec = desc.durationSec;
       specs.push({
         cacheKey: desc.cacheKey,
-        persisted: sharedBakedKeyIndex.has(desc.cacheKey),
+        persisted: sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames),
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
         // What one warmed frame costs the byte-bounded L0 cache — the planner
@@ -328,7 +339,7 @@ export class MotifFrameService {
   /// native persistence; an existing bitmap uses the compatibility writer.
   private updateBakeTargets(tUs: number): void {
     const summary = this.deps.projectSummary();
-    if (!this.baker || !summary) return;
+    if (!this.baker || !summary || this.diskDiscoveryPending) return;
     const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
     const specs: BakeContentSpec[] = [];
     this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
@@ -347,6 +358,7 @@ export class MotifFrameService {
       const canonicalProps = desc.canonicalProps;
       specs.push({
         cacheKey: desc.cacheKey,
+        persistedFrames: sharedBakedKeyIndex.framesFor(desc.cacheKey),
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
@@ -403,6 +415,26 @@ export class MotifFrameService {
       const hashes = await sharedMotifFrameCache.listBakedHashes();
       if (stale()) return; // don't write a stale run's hydration into the index
       sharedBakedKeyIndex.hydrateFromHashes(hashes);
+      // Read each live content directory once per project opening. Successful
+      // writes extend this inventory; props/source/fps changes mint new keys.
+      for (const key of new Set(activeKeys)) {
+        if (sharedBakedKeyIndex.framesFor(key) !== undefined) continue;
+        if (!sharedBakedKeyIndex.has(key)) {
+          sharedBakedKeyIndex.restoreFrames(key, new Set());
+          continue;
+        }
+        try {
+          const frames = await sharedMotifFrameCache.listPersistedFrames(key);
+          if (stale()) return;
+          sharedBakedKeyIndex.restoreFrames(key, frames);
+        } catch (error) {
+          // Unknown coverage is not empty coverage. The baker's disk checks
+          // remain available when enumeration fails.
+          console.warn("[weftcut/motifs] frame inventory unavailable", error);
+        }
+        if (stale()) return;
+      }
+      this.resumeAfterDiskDiscovery();
       // The index now reflects on-disk frames; recompute so last-session-baked
       // layers (no live baker status) surface as "ready".
       this.recomputeBakeStatuses();
@@ -424,7 +456,19 @@ export class MotifFrameService {
       ], () => !stale());
     } catch (e) {
       console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
+    } finally {
+      if (!stale()) this.resumeAfterDiskDiscovery();
     }
+  }
+
+  private resumeAfterDiskDiscovery(): void {
+    if (!this.diskDiscoveryPending) return;
+    this.diskDiscoveryPending = false;
+    sharedBakedKeyIndex.finishHydration();
+    const tUs = this.deps.currentTimeUs();
+    this.updatePrewarmTargets(tUs);
+    this.updateBakeTargets(tUs);
+    this.recomputeBakeStatuses();
   }
 
   /// Kick `hydrateBakedIndexAndGc` with at most one run in flight. A run that
@@ -478,7 +522,7 @@ export class MotifFrameService {
         live ?? null,
         covered,
         desc.contentDurationFrames,
-        sharedBakedKeyIndex.has(desc.cacheKey),
+        sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames),
       );
       if (status) byLayer[layer.id] = status;
     });

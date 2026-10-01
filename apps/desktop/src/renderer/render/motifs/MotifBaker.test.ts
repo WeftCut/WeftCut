@@ -53,6 +53,29 @@ describe("MotifBaker", () => {
     expect(h.deps.warm).not.toHaveBeenCalled();
   });
 
+  it("restores a complete bake without scheduling per-frame disk checks or renders", async () => {
+    const h = harness();
+    h.baker.setTargets([{ ...h.spec, persistedFrames: new Set([0, 1, 2]) }]);
+    expect(h.deps.onStatus).toHaveBeenLastCalledWith("a", { phase: "ready", done: 3, total: 3 });
+    await drain(h.pending);
+    expect(h.deps.isOnDisk).not.toHaveBeenCalled();
+    expect(h.spec.render).not.toHaveBeenCalled();
+    expect(h.deps.persist).not.toHaveBeenCalled();
+  });
+
+  it("resumes interrupted bakes at holes and renders changed content under a new key", async () => {
+    const h = harness();
+    h.baker.setTargets([{ ...h.spec, persistedFrames: new Set([0, 2, 99]) }]);
+    expect(h.deps.onStatus).toHaveBeenLastCalledWith("a", { phase: "baking", done: 2, total: 3 });
+    await drain(h.pending);
+    expect(h.spec.render).toHaveBeenCalledExactlyOnceWith(1);
+    expect(h.deps.onStatus).toHaveBeenLastCalledWith("a", { phase: "ready", done: 3, total: 3 });
+    h.spec.render = vi.fn(async () => makeFakeBitmap());
+    h.baker.setTargets([{ ...h.spec, cacheKey: "changed" }]);
+    await drain(h.pending);
+    expect(h.spec.render).toHaveBeenCalledTimes(3);
+  });
+
   it('warms a natively persisted frame without PNG encoding it again', async () => {
     const h = harness();
     h.baker.setTargets([{ ...h.spec, contentDurationFrames: 1, render: async () => ({ bitmap: h.bitmap, persisted: true }) }]);

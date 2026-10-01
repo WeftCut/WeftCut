@@ -31,3 +31,27 @@ unwired — nothing read or wrote it.
   global toggle off.
 - Export reading PNGs directly is a possible follow-up, not part of this change.
 - User-facing name is "Pre-bake", never "cache to disk".
+
+## Restoring persisted coverage
+
+ADR 0078 replaces PNGs with atomic `.wfrm` files; the files remain the durable
+truth. On project open, synchronize the Motif catalog and enumerate each live
+content directory before admitting preview captures or background baking.
+Restore exact frame coverage, not merely directory membership: a directory may
+contain an interrupted bake, old PNGs or temporary writes. Complete sequences
+become ready immediately; partial sequences queue only their missing frames.
+The idle baker no longer walks every saved frame through a separate IPC check.
+If enumeration fails, retain the existing per-frame disk checks as a fallback.
+
+The in-memory inventory is scoped to a project opening and extended after
+successful writes. Serialized, epoch-guarded restoration prevents a superseded
+project snapshot from publishing coverage or collecting live directories. An
+on-demand frame waits for the same restoration barrier as the background loops.
+No additional completion manifest or cache-format migration is needed.
+
+Reuse continues to follow the existing content key: package hash (ADR 0079),
+canonical props, authored size, frame rate, content duration and capture-runtime
+namespace. Placement, playhead and compositing transforms do not invalidate
+those pixels. A content change selects a different directory; GC retains its
+existing policy of reclaiming unreferenced content, so undo after collection
+may require another bake.

@@ -415,6 +415,24 @@ export class MotifFrameCache {
     for (const e of entries) if (e.isDirectory) out.add(e.name);
     return out;
   }
+
+  /// One directory read restores exact coverage, including interrupted bakes.
+  /// Ignore old PNGs, temporary writes, directories and noncanonical names.
+  async listPersistedFrames(cacheKey: string): Promise<Set<number>> {
+    const root = await rasterRootDir();
+    if (root === null) return new Set();
+    const [{ readDir }, { join }] = await Promise.all([
+      import("@/bridge/fs"), import("@/bridge/path"),
+    ]);
+    const entries = await readDir(await join(root, hashCacheKey(cacheKey)));
+    const frames = new Set<number>();
+    for (const entry of entries) {
+      if (!entry.isFile || entry.isSymlink || !/^(0|[1-9]\d*)\.wfrm$/.test(entry.name)) continue;
+      const frame = Number(entry.name.slice(0, -5));
+      if (Number.isSafeInteger(frame)) frames.add(frame);
+    }
+    return frames;
+  }
 }
 
 /// `<workspace>/Cache/raster`, or null when no project is open — or when the
