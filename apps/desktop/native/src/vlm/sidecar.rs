@@ -26,6 +26,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::process::Command;
 
+use crate::inference_files::{program_path, InferenceFiles};
 use crate::process::NoConsoleWindow;
 
 use super::describer::{DescribeRequest, Focus, Language, SceneDescriber, TimedFrame};
@@ -99,16 +100,31 @@ impl LlamaMtmdSidecar {
         req: DescribeRequest,
     ) -> Result<(RawDescription, bool), VlmError> {
         let prompt = build_prompt(&req.frames, req.focus, &req.language);
-        let mut args = build_args(&self.model, &self.mmproj, &req.frames, &prompt);
+        let files = InferenceFiles::new()?;
+        let mut frames = Vec::with_capacity(req.frames.len());
+        for (i, frame) in req.frames.iter().enumerate() {
+            frames.push(TimedFrame {
+                t_us: frame.t_us,
+                path: files.input(&frame.path, &format!("frame-{i}.png")).await?,
+            });
+        }
+        // llama supports Unicode weights. Resolve relative config paths before
+        // changing cwd, preserving split GGUFs and adjacent auxiliary files.
+        let mut args = build_args(
+            &std::path::absolute(&self.model)?,
+            &std::path::absolute(&self.mmproj)?,
+            &frames,
+            &prompt,
+        );
         apply_device(&mut args, self.device.as_deref());
         let timeout = sidecar_timeout(req.frames.len());
         let mut cpu = self.device.as_deref() == Some("cpu");
-        let body = match run(&self.binary, &args, timeout).await {
+        let body = match run(&self.binary, &args, files.cwd(), timeout).await {
             Ok(body) => body,
             Err(e) if self.device.is_none() && device_failure(&e) => {
                 apply_device(&mut args, Some("cpu"));
                 cpu = true;
-                run(&self.binary, &args, timeout).await?
+                run(&self.binary, &args, files.cwd(), timeout).await?
             }
             Err(e) => return Err(e),
         };
@@ -225,7 +241,8 @@ pub fn build_args(
     prompt: &str,
 ) -> Vec<OsString> {
     // Landmine: ONE comma-separated --image value; repeated --image keeps only
-    // the last. Frame paths live in a temp dir and contain no commas.
+    // the last. InferenceFiles supplies relative ASCII aliases: even a comma
+    // in TEMP or a username must never become a separator here.
     let mut image = OsString::new();
     for (i, f) in frames.iter().enumerate() {
         if i > 0 {
@@ -272,10 +289,16 @@ fn sidecar_timeout(n_frames: usize) -> Duration {
 /// raw body. Mirrors `speech::backends::sidecar::SidecarRun::run`: conhost guard,
 /// `kill_on_drop` (a timed-out future drops the child → reaped), exit-code →
 /// [`VlmError`] mapping.
-async fn run(program: &Path, args: &[OsString], timeout: Duration) -> Result<String, VlmError> {
-    let child = Command::new(program)
+async fn run(
+    program: &Path,
+    args: &[OsString],
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<String, VlmError> {
+    let child = Command::new(program_path(program)?)
         .no_console_window()
         .kill_on_drop(true)
+        .current_dir(cwd)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

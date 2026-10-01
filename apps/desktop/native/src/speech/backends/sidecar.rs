@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::inference_files::program_path;
 use crate::process::NoConsoleWindow;
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
@@ -67,6 +68,8 @@ pub enum OutputSink {
 pub struct SidecarRun {
     /// The CLI binary to spawn (e.g. `whisper-cli`).
     pub program: PathBuf,
+    /// Private workspace for ASCII relative input/output aliases.
+    pub cwd: PathBuf,
     /// The complete, ordered argument vector.
     pub args: Vec<OsString>,
     /// Hang-guard: kill the child and error with [`SpeechError::Timeout`] if it
@@ -87,9 +90,10 @@ impl SidecarRun {
     /// start, [`SpeechError::Timeout`] if it overruns, [`SpeechError::EngineExit`]
     /// on a non-zero exit.
     pub async fn run(self) -> Result<RawTranscript, SpeechError> {
-        let mut cmd = Command::new(&self.program);
+        let mut cmd = Command::new(program_path(&self.program)?);
         cmd.no_console_window() // Windows: no conhost flash under Electron.
             .kill_on_drop(true) // dropped future (timeout/cancel) reaps the child.
+            .current_dir(&self.cwd)
             .args(&self.args)
             .stdin(Stdio::null())
             .stdout(match self.output {
@@ -137,7 +141,7 @@ impl SidecarRun {
                 });
             }
         }
-        let body = read_body(&self.output, &output.stdout).await?;
+        let body = read_body(&self.output, &output.stdout, &output.stderr).await?;
         Ok(wrap(self.format, body))
     }
 }
@@ -210,13 +214,21 @@ fn abandoned_device(stderr: &str, markers: &[&str]) -> Option<String> {
 /// [`OutputSink::File`] a missing file (engine exited OK but wrote nothing we
 /// can find) surfaces as an `Io` error naming the path, rather than a bare
 /// "file not found".
-async fn read_body(output: &OutputSink, stdout: &[u8]) -> Result<String, SpeechError> {
+async fn read_body(
+    output: &OutputSink,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<String, SpeechError> {
     match output {
         OutputSink::Stdout => Ok(String::from_utf8_lossy(stdout).into_owned()),
         OutputSink::File(path) => tokio::fs::read_to_string(path).await.map_err(|e| {
             SpeechError::Io(std::io::Error::new(
                 e.kind(),
-                format!("read engine output {}: {e}", path.display()),
+                format!(
+                    "engine exited successfully but cannot read output {}: {e}; engine stderr: {}",
+                    path.display(),
+                    String::from_utf8_lossy(stderr).trim()
+                ),
             ))
         }),
     }
@@ -347,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_body_stdout_returns_captured_bytes() {
-        let body = read_body(&OutputSink::Stdout, b"hello stdout")
+        let body = read_body(&OutputSink::Stdout, b"hello stdout", &[])
             .await
             .expect("stdout body");
         assert_eq!(body, "hello stdout");
@@ -375,7 +387,7 @@ mod tests {
         let out = dir.path().join("out.json");
         std::fs::write(&out, OJF).unwrap();
 
-        let body = read_body(&OutputSink::File(out), &[])
+        let body = read_body(&OutputSink::File(out), &[], &[])
             .await
             .expect("read sidecar file");
         let raw = wrap(TranscriptFormat::WhisperJson, body);
@@ -392,10 +404,15 @@ mod tests {
     async fn read_body_missing_file_errors_with_path() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nope.json");
-        let err = read_body(&OutputSink::File(missing.clone()), &[])
-            .await
-            .expect_err("missing file");
+        let err = read_body(
+            &OutputSink::File(missing.clone()),
+            &[],
+            b"failed to open output for writing",
+        )
+        .await
+        .expect_err("missing file");
         let msg = format!("{err}");
+        assert!(msg.contains("failed to open output for writing"));
         assert!(
             msg.contains("nope.json"),
             "error should name the path: {msg}"

@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
+use crate::inference_files::InferenceFiles;
+
 use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
@@ -60,14 +62,10 @@ impl WhisperCpp {
 #[async_trait]
 impl Transcriber for WhisperCpp {
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
-        // Pin a deterministic, disposable output path. RAII: the dir (and the
-        // engine's `.json`/`.srt` inside it) is removed when `tmp` drops at the
-        // end of this call — after `SidecarRun::run` has read the file back.
-        let tmp = tempfile::Builder::new()
-            .prefix("weftcut-whisper")
-            .tempdir()
-            .map_err(SpeechError::Io)?;
-        let of_prefix = tmp.path().join("out");
+        let files = InferenceFiles::new()?;
+        // The CLI sees relative ASCII names; Rust reads through the real path.
+        // Keep files alive until the sidecar has finished and read its result.
+        let of_prefix = Path::new("out");
 
         let (format, ext) = if req.want_word_timing {
             (TranscriptFormat::WhisperJson, "json")
@@ -76,19 +74,11 @@ impl Transcriber for WhisperCpp {
         };
         // whisper-cli appends the extension to the `-of` prefix; mirror that to
         // know which file to read.
-        let out_file = of_prefix.with_extension(ext);
-
-        let mut args = build_args(
-            &self.model,
-            &req.audio_path,
-            &of_prefix,
-            req.want_word_timing,
-            req.language.as_deref(),
-            self.threads,
-        );
+        let out_file = files.cwd().join(of_prefix).with_extension(ext);
+        let mut device_args = Vec::<OsString>::new();
         let mut device_pin = None;
         match self.device.as_deref() {
-            Some("cpu") => args.push("--no-gpu".into()),
+            Some("cpu") => device_args.push("--no-gpu".into()),
             Some(id) => {
                 if id.parse::<u32>().is_err() {
                     return Err(SpeechError::Provider {
@@ -96,7 +86,7 @@ impl Transcriber for WhisperCpp {
                         message: "Whisper device must be cpu or a numeric GPU device ID".into(),
                     });
                 }
-                args.extend(["--device".into(), id.into()]);
+                device_args.extend(["--device".into(), id.into()]);
                 // `--device N` is accepted by a CPU-only build, which then
                 // prints `no GPU found` and transcribes on the CPU at exit 0.
                 device_pin = Some(DevicePin {
@@ -108,10 +98,23 @@ impl Transcriber for WhisperCpp {
             None => {}
         }
 
+        let model = files.speech_model(&self.model, "model.bin").await?;
+        let audio = files.input(&req.audio_path, "audio.wav").await?;
+        let mut args = build_args(
+            &model,
+            &audio,
+            of_prefix,
+            req.want_word_timing,
+            req.language.as_deref(),
+            self.threads,
+        );
+        args.extend(device_args);
+
         let timeout = scaled_timeout(&req.audio_path).await;
 
         SidecarRun {
             program: self.binary.clone(),
+            cwd: files.cwd().to_owned(),
             args,
             timeout,
             output: OutputSink::File(out_file),

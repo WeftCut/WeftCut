@@ -35,6 +35,12 @@ mod napi_backend;
 mod process;
 
 #[cfg(feature = "speech")]
+mod inference_files;
+
+#[cfg(all(test, feature = "speech"))]
+mod inference_paths_live_tests;
+
+#[cfg(feature = "speech")]
 mod speech;
 // Video-understanding sidecar (scene description). Twin of `speech/`; gated on
 // the same `speech` feature — it reuses `jobs` ffmpeg (frame sampling) and the

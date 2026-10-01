@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
+use crate::inference_files::InferenceFiles;
+
 use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
@@ -77,7 +79,6 @@ impl Transcriber for FunAsr {
         // Mandarin), so the request's `language` hint has no CLI flag here — the
         // model choice IS the language. `want_word_timing` is likewise implicit:
         // the JSON always carries per-token timestamps (Exact).
-        let mut args = build_args(&self.model, &self.tokens, &req.audio_path, self.threads);
         let mut device_pin = None;
         if let Some(provider) = &self.device {
             // sherpa names an execution PROVIDER, not a device index. A numeric
@@ -94,7 +95,6 @@ impl Transcriber for FunAsr {
                         .into(),
                 });
             }
-            args.insert(0, format!("--provider={provider}").into());
             if provider != "cpu" {
                 device_pin = Some(DevicePin {
                     backend: crate::speech::SpeechBackend::FunAsr,
@@ -103,10 +103,19 @@ impl Transcriber for FunAsr {
                 });
             }
         }
+        let files = InferenceFiles::new()?;
+        let model = files.speech_model(&self.model, "model.onnx").await?;
+        let tokens = files.speech_model(&self.tokens, "tokens.txt").await?;
+        let audio = files.input(&req.audio_path, "audio.wav").await?;
+        let mut args = build_args(&model, &tokens, &audio, self.threads);
+        if let Some(provider) = &self.device {
+            args.insert(0, format!("--provider={provider}").into());
+        }
         let timeout = scaled_timeout(&req.audio_path).await;
 
         SidecarRun {
             program: self.binary.clone(),
+            cwd: files.cwd().to_owned(),
             args,
             timeout,
             output: OutputSink::Stdout, // sherpa prints the result JSON to stdout
