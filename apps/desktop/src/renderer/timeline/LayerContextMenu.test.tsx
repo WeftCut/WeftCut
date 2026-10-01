@@ -27,6 +27,14 @@ vi.mock("../commands/registry", async () => {
   // this file is where "greys with the reason" is covered, and a stubbed gate
   // would make both halves of that vacuous.
   const { canRippleDeleteSelection } = await import("./rippleEligibility");
+  const { canToggleLinkSelection } = await import("./linkEligibility");
+  const { canGroupSelection, canUngroupSelection, canAddToGroupSelection } = await import("./groupEligibility");
+  const structural: Record<string, { labelKey: string; enabled: () => boolean }> = {
+    toggleLinkSelected: { labelKey: "actions.toggle_link_selected", enabled: canToggleLinkSelection },
+    groupSelected: { labelKey: "actions.group_selected", enabled: canGroupSelection },
+    ungroupSelected: { labelKey: "actions.ungroup_selected", enabled: canUngroupSelection },
+    addToGroup: { labelKey: "actions.add_to_group", enabled: canAddToGroupSelection },
+  };
   return {
     // No commands registered → CommandContextItem drops every registry row,
     // which is exactly what leaves the kind-gated tier alone on screen. The
@@ -41,6 +49,7 @@ vi.mock("../commands/registry", async () => {
             enabled: canRippleDeleteSelection,
             run: () => {},
           }
+        : structural[id] ? { id, ...structural[id], run: () => {} }
         : KIND_GATED_LABELS[id] === undefined
           ? undefined
           : { id, labelKey: KIND_GATED_LABELS[id], run: () => {} },
@@ -48,7 +57,6 @@ vi.mock("../commands/registry", async () => {
     subscribeCommandRegistry: () => () => {},
   };
 });
-vi.mock("../state/linkOverrideStore", () => ({ useLinkOverride: () => false }));
 // The real store, minus the one derived read this file has no fixture for: the
 // ripple row's reason is composed against the live mirror
 // (`errors/formatCommandError.ts` resolves the uuids off it), so a stub with
@@ -66,11 +74,6 @@ vi.mock("../commands/pauseCommands", () => ({
 vi.mock("../describe/describeEligibility", () => ({
   useDescribeState: () => "describe",
 }));
-vi.mock("./groupEligibility", () => ({
-  useAddToGroupState: () => "needs_selection",
-  addToGroupTarget: () => null,
-}));
-vi.mock("./linkEligibility", () => ({ linkFanoutActive: () => false }));
 vi.mock("./moveToCompositionEligibility", () => ({
   useMoveToCompositionState: () => "needs_selection",
   moveDestinations: () => [],
@@ -80,7 +83,7 @@ import i18n from "../i18n";
 import type { CompositionSummary, LayerSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
-import { summaryFixture } from "../testing/summaryFixture";
+import { groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
 import { LayerContextMenu } from "./LayerContextMenu";
 
 const handlers = {
@@ -219,7 +222,7 @@ describe("LayerContextMenu — kind-gated rows", () => {
 // curated refusal line, entity names resolved off the mirror — the same
 // sentence the status bar shows when the actor refuses for real — so the
 // assertions below are on the TEXT, not merely on the attribute.
-describe("LayerContextMenu — the Ripple delete row", () => {
+describe("LayerContextMenu — selection eligibility", () => {
   function clip(over: Partial<LayerSummary> & { id: string }): LayerSummary {
     return {
       label: null,
@@ -278,6 +281,73 @@ describe("LayerContextMenu — the Ripple delete row", () => {
   }
 
   const row = () => screen.getByRole("menuitem", { name: "Ripple delete" });
+
+  it("offers grouping and linking the whole multi-selection", () => {
+    seed();
+    setLayerSelection("layer-2", ["layer-1", "layer-2"]);
+    renderMenu("VideoClip");
+    for (const name of ["Group selected clips", "Link selected clips"]) {
+      expect(screen.getByRole("menuitem", { name }).getAttribute("aria-disabled")).not.toBe("true");
+    }
+  });
+
+  it("explains why a single unlinked clip cannot create a link", () => {
+    seed();
+    setLayerSelection("layer-1", ["layer-1"]);
+    renderMenu("VideoClip");
+    const item = screen.getByRole("menuitem", { name: "Link selected clips" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.title).toBe("Select two or more unlinked clips to link them");
+  });
+
+  it.each([["layer-1"], ["layer-1", "layer-2"]])("offers unlink for a selection inside a link: %j", (...ids) => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [lane("t", [clip({ id: "layer-1" }), clip({ id: "layer-2" })])],
+      links: [{ id: "link-1", layer_ids: ["layer-1", "layer-2"] }],
+    } }));
+    setLayerSelection("layer-1", ids);
+    renderMenu("VideoClip");
+    expect(screen.getByRole("menuitem", { name: "Unlink selected clips" }).getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("explains why linked and unlinked clips cannot be linked together", () => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [lane("t", [clip({ id: "layer-1" }), clip({ id: "layer-2" }), clip({ id: "layer-3" })])],
+      links: [{ id: "link-1", layer_ids: ["layer-1", "layer-2"] }],
+    } }));
+    setLayerSelection("layer-1", ["layer-1", "layer-3"]);
+    renderMenu("VideoClip");
+    const item = screen.getByRole("menuitem", { name: "Link selected clips" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.title).toBe("Select clips that are all unlinked, or all in one link");
+  });
+
+  it("explains that grouping requires unlocking the selected clips", () => {
+    seed([{ ...lane("locked", [clip({ id: "layer-3" })]), locked: true }]);
+    setLayerSelection("layer-1", ["layer-1", "layer-3"]);
+    renderMenu("VideoClip");
+    const item = screen.getByRole("menuitem", { name: "Group selected clips" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.title).toBe("Unlock the selected clips to group them");
+  });
+
+  it("offers Add to Group when right-clicking an ordinary selected member", () => {
+    seed([lane("groups", [groupLayerFixture({ id: "group-1", compositionLabel: "Scene" })])]);
+    setLayerSelection("group-1", ["layer-1", "group-1"]);
+    renderMenu("VideoClip");
+    expect(screen.getByRole("menuitem", { name: /Add to.*Scene/ }).getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("explains why a transformed group cannot be ungrouped", () => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [lane("t", [groupLayerFixture({ id: "layer-1", x: { mode: "Static", value: 10 } })])],
+    } }));
+    setLayerSelection("layer-1", ["layer-1"]);
+    renderMenu("CompositionRef");
+    const item = screen.getByRole("menuitem", { name: "Ungroup" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.title).toBe(i18n.t("quick_actions.ungroup_not_plain_transform"));
+  });
 
   it("is live with a plain selection, and says nothing beyond its label", () => {
     seed();

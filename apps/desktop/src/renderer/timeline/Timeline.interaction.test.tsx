@@ -73,6 +73,8 @@ import { endRename } from "./renameStore";
 import { setTool } from "../state/toolStore";
 import { setLinkOverride } from "../state/linkOverrideStore";
 import { listCommands, registerCommandProvider } from "../commands/registry";
+import { groupSelected } from "../commands/groupCommands";
+import { canGroupSelection } from "./groupEligibility";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
@@ -114,6 +116,8 @@ const ipcMocks = vi.hoisted(() => ({
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   linksCreate: vi.fn().mockResolvedValue("link-created"),
+  linksDissolve: vi.fn().mockResolvedValue(undefined),
+  groupsCreate: vi.fn().mockResolvedValue({ composition_id: "new-group", layer_id: "new-group-layer" }),
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   updateLayerParamTracks: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
@@ -151,6 +155,8 @@ vi.mock("../ipc", async (importOriginal) => {
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     linksCreate: ipcMocks.linksCreate,
+    linksDissolve: ipcMocks.linksDissolve,
+    groupsCreate: ipcMocks.groupsCreate,
     updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
     updateLayerParamTracks: ipcMocks.updateLayerParamTracks,
     updateParamTracksMulti: ipcMocks.updateParamTracksMulti,
@@ -1130,6 +1136,36 @@ describe("Timeline seek/selection coupling", () => {
   // right-press must not arm a drag), which is why the menu handler does the
   // selecting.
   describe("right-click selection", () => {
+    it.each(["link", "unlink", "group"] as const)("runs %s from the menu on the complete selection", async (operation) => {
+      const links = operation === "unlink" ? [link] : [];
+      const previous = useProjectStore.getState().summary;
+      useProjectStore.getState().apply(summaryFixture({ root: { tracks: [linkedTrack], links } }));
+      const unregister = registerCommandProvider(() => [{
+        id: "groupSelected", actionId: "groupSelected", labelKey: "actions.group_selected",
+        enabled: canGroupSelection, run: groupSelected,
+      }]);
+      ipcMocks.linksCreate.mockClear();
+      ipcMocks.linksDissolve.mockClear();
+      ipcMocks.groupsCreate.mockClear();
+      try {
+        const { getByText } = renderTimeline({ tracks: [linkedTrack], links });
+        act(() => setLayerSelection(linkedLayer.id, [layer.id, linkedLayer.id]));
+        fireEvent.contextMenu(getByText("Clip A").closest(".timeline-layer")!, { clientX: 40, clientY: 30 });
+        expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, linkedLayer.id]);
+        const name = { link: "Link selected clips", unlink: "Unlink selected clips", group: "Group selected clips" }[operation];
+        fireEvent.click(await screen.findByRole("menuitem", { name }));
+        await waitFor(() => {
+          if (operation === "unlink") expect(ipcMocks.linksDissolve).toHaveBeenCalledExactlyOnceWith(link.id);
+          else if (operation === "link") expect(ipcMocks.linksCreate).toHaveBeenCalledExactlyOnceWith([layer.id, linkedLayer.id], false);
+          else expect(ipcMocks.groupsCreate).toHaveBeenCalledExactlyOnceWith([layer.id, linkedLayer.id]);
+        });
+      } finally {
+        cleanup();
+        unregister();
+        useProjectStore.getState().apply(previous);
+      }
+    });
+
     it("selects the clicked clip, link-aware, like a left click", () => {
       const { getByText } = renderTimeline({
         tracks: [linkedTrack],

@@ -35,9 +35,17 @@ import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   addToGroupTarget,
   useAddToGroupState,
+  useGroupState,
+  useUngroupState,
   type AddToGroupState,
+  type GroupState,
+  type UngroupState,
 } from "./groupEligibility";
-import { linkFanoutActive } from "./linkEligibility";
+import {
+  linkFanoutActive,
+  useLinkToggleState,
+  type LinkToggleState,
+} from "./linkEligibility";
 import {
   rippleDeleteReason,
   useRippleDeleteState,
@@ -59,14 +67,10 @@ import {
 /// separators. Exported for the test that sweeps them against the command
 /// catalogue — the safety net `CommandContextItem`'s untyped `id` trades away.
 ///
-/// Two families. The clipboard trio first, because that is where every editor's
-/// eye goes on a right-click and where these operations sit in Premiere and
-/// Resolve alike. Then the two structural edits: cut this clip in half, or lift
-/// it onto a lane of its own.
-///
-/// All five act on the SELECTION, which is exactly why right-clicking a clip
-/// now selects it (`Timeline.tsx`'s `onContextMenu`) — the rows would otherwise
-/// be able to act on a clip other than the one under the cursor.
+/// Clipboard and deletion first, then split/lane edits, then links and Groups.
+/// Selection commands retain the whole selection when right-clicking a member
+/// (`Timeline.tsx`'s `onContextMenu`). The link toggle is owned by the focused
+/// Timeline provider, which is mounted whenever this popup can be opened.
 ///
 /// `splitAtPlayhead` and not a cursor-anchored "split here": splitting where
 /// you pointed is the Blade tool's whole job, and it is one key (`C`) and one
@@ -92,30 +96,25 @@ export const LAYER_MENU_COMMAND_IDS = [
   "---",
   "splitAtPlayhead",
   "moveToNewTrack",
+  "---",
+  "toggleLinkSelected",
   "groupSelected",
+  "addToGroup",
   "moveToComposition",
 ] as const;
 
 /// The rows only a Group clip gets, appended when the right-clicked layer is
 /// one. Registry-driven like the tier above and swept by the same test, and they
-/// act on the SELECTION for the same reason the others do — a right-click selects
-/// the clip first (`Timeline.tsx`'s `onContextMenu`), so "the selection" and "the
-/// clip you clicked" are the same thing here.
+/// act on the SELECTION. Their predicates require exactly one Group, so a
+/// multi-selection keeps the rows disabled even when opened over a Group.
 ///
 /// `groupSelected` sits in the always-present tier instead, beside the other
 /// structural edits: pre-composing is offered on ANY clip, which is the whole
-/// point of it. `addToGroup` is here rather than there because the Group clip is
-/// its DESTINATION — the row is only meaningful over the thing being added to.
-///
-/// Still one list even though `addToGroup` is the one row that cannot render
-/// from the id alone (it names its destination and its refusal): the render
-/// below branches inside the `map` rather than lifting the row out beside it,
-/// so the list stays the single statement of what this tier holds and the
-/// sweep in `menu/contextMenuCommands.test.ts` keeps covering every row.
+/// point of it. `addToGroup` also belongs to the selection tier: selecting a
+/// Group and some clips must offer the same action over any selected member.
 export const GROUP_MENU_COMMAND_IDS = [
   "openGroup",
   "ungroupSelected",
-  "addToGroup",
 ] as const;
 
 /// The rows a clip WITH AUDIO gets — a `VideoClip` or an `Audio` layer.
@@ -163,6 +162,22 @@ export const VIDEO_MENU_COMMAND_IDS = ["reviewShots", "describeSelected"] as con
 /// Kinds whose material carries audio — the gate on the tier above. Matches the
 /// two `LayerParams` variants that hold a `media` id with an audio stream.
 const AUDIO_BEARING_KINDS: ReadonlySet<string> = new Set(["VideoClip", "Audio"]);
+
+const LINK_REASON: Record<Exclude<LinkToggleState, "link" | "unlink">, string> = {
+  needs_two: "quick_actions.link_needs_two",
+  mixed: "quick_actions.link_mixed_selection",
+};
+const GROUP_REASON: Record<Exclude<GroupState, "group">, string> = {
+  needs_selection: "quick_actions.group_needs_selection",
+  locked: "quick_actions.group_locked",
+};
+const UNGROUP_REASON: Record<Exclude<UngroupState, "ungroup">, string> = {
+  needs_one_group: "quick_actions.ungroup_needs_one_group",
+  locked: "quick_actions.ungroup_locked",
+  not_plain_transform: "quick_actions.ungroup_not_plain_transform",
+  not_plain_opacity: "quick_actions.ungroup_not_plain_opacity",
+  not_plain_effects: "quick_actions.ungroup_not_plain_effects",
+};
 
 /// Why a greyed *Add to Group* row is greyed, one sentence per state, in the
 /// `quick_actions` namespace the strip's disabled-button reasons already live
@@ -361,6 +376,21 @@ export function LayerContextMenu({
   // reads the same two stores imperatively and is therefore re-read by the very
   // re-render that subscription causes.
   const addToGroup = useAddToGroupState();
+  const linkToggle = useLinkToggleState();
+  const linkLabel = t(
+    linkToggle === "unlink"
+      ? "quick_actions.unlink_selected"
+      : "quick_actions.link_selected",
+  );
+  const linkHint =
+    linkToggle === "link" || linkToggle === "unlink"
+      ? undefined
+      : t(LINK_REASON[linkToggle]);
+  const group = useGroupState();
+  const groupHint = group === "group" ? undefined : t(GROUP_REASON[group]);
+  const ungroup = useUngroupState();
+  const ungroupHint =
+    ungroup === "ungroup" ? undefined : t(UNGROUP_REASON[ungroup]);
   const groupOrdinals = useGroupOrdinals();
   const addToGroupDestination = addToGroupTarget();
   const addToGroupParams =
@@ -473,6 +503,31 @@ export function LayerContextMenu({
                 // Position-keyed: separators have no identity, and the list is
                 // static.
                 <MenuSeparator key={`sep-${i}`} />
+              ) : id === "toggleLinkSelected" ? (
+                <CommandContextItem
+                  key={id}
+                  id={id}
+                  onRun={onClose}
+                  label={linkLabel}
+                  {...(linkHint ? { hint: linkHint } : {})}
+                />
+              ) : id === "groupSelected" ? (
+                <CommandContextItem
+                  key={id}
+                  id={id}
+                  onRun={onClose}
+                  {...(groupHint ? { hint: groupHint } : {})}
+                />
+              ) : id === "addToGroup" ? (
+                (addToGroupDestination || layerKind === "CompositionRef") && (
+                  <CommandContextItem
+                    key={id}
+                    id={id}
+                    onRun={onClose}
+                    {...(addToGroupLabel ? { label: addToGroupLabel } : {})}
+                    {...(addToGroupHint ? { hint: addToGroupHint } : {})}
+                  />
+                )
               ) : id === "moveToComposition" ? (
                 moveToCompositionCommand && destinations.length > 0 ? (
                   <SubMenu key={id} label={t("actions.move_to_composition_submenu")}>
@@ -539,19 +594,16 @@ export function LayerContextMenu({
             {layerKind === "CompositionRef" && (
               <>
                 <MenuSeparator />
-                {GROUP_MENU_COMMAND_IDS.map((id) =>
-                  id === "addToGroup" ? (
-                    <CommandContextItem
-                      key={id}
-                      id={id}
-                      onRun={onClose}
-                      {...(addToGroupLabel ? { label: addToGroupLabel } : {})}
-                      {...(addToGroupHint ? { hint: addToGroupHint } : {})}
-                    />
-                  ) : (
-                    <CommandContextItem key={id} id={id} onRun={onClose} />
-                  ),
-                )}
+                {GROUP_MENU_COMMAND_IDS.map((id) => (
+                  <CommandContextItem
+                    key={id}
+                    id={id}
+                    onRun={onClose}
+                    {...(id === "ungroupSelected" && ungroupHint
+                      ? { hint: ungroupHint }
+                      : {})}
+                  />
+                ))}
                 <MenuItem
                   label={t("timeline.rename_group", {
                     defaultValue: "Rename group…",

@@ -30,7 +30,7 @@ function allHandlers(): HandlerMap {
 const noop = () => {};
 
 function catalogue() {
-  return buildAppCommands(
+  return [...buildAppCommands(
     allHandlers(),
     {
       addColorLayer: noop,
@@ -50,7 +50,13 @@ function catalogue() {
       canRedo: false,
       exportLocked: false,
     },
-  );
+  ), {
+    // The clip popup lives inside Timeline, which owns this provider. Its
+    // actual dispatch is covered in Timeline.interaction.test.tsx.
+    id: "toggleLinkSelected",
+    labelKey: ACTION_DEFS.toggleLinkSelected.labelKey,
+    run: noop,
+  }];
 }
 
 function resolveKey(obj: unknown, dotted: string): unknown {
@@ -79,12 +85,7 @@ describe.each(Object.entries(MENUS))("%s", (_name, entries) => {
     entry !== "---",
   );
 
-  // Both menus draw only from App's own catalogue on purpose. A row backed by
-  // Timeline's provider (the link toggle, the audio nudges) would vanish
-  // whenever the Timeline Panel is closed — and a context menu opened from
-  // inside the timeline that silently loses rows is worse than one that never
-  // offered them.
-  it("resolves every row to a command in App's catalogue", () => {
+  it("resolves every row to an App or Timeline command", () => {
     const available = new Set(catalogue().map((d) => d.id));
     for (const id of ids) {
       expect(available, `no command registered for "${id}"`).toContain(id);
