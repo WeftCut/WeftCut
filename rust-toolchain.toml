@@ -1,5 +1,6 @@
 [toolchain]
-channel = "stable"
+# Keep release builds reproducible; bump with both CI toolchain installs.
+channel = "1.98.1"
 profile = "minimal"
 components = ["rustfmt"]
 targets = ["wasm32-unknown-unknown"]

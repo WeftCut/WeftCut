@@ -30,6 +30,13 @@ argument does not work.
 
 ### Rust
 
+The compiler is pinned in `rust-toolchain.toml` for reproducible releases.
+Upgrade it together with the explicit toolchain versions in
+`.github/actions/rust-artifacts/action.yml` and `.github/workflows/electron-ci.yml`,
+and validate all three platforms' Clippy gates before releasing. A floating
+`stable` changed from 1.98.1 to 1.99.0 between v0.2.1 candidate runs and introduced
+new `async_trait` macro lint failures without any Rust source change.
+
 Three crates under `apps/desktop/native/` (workspace root `weftcut`, members
 `eval` + `decode`). Run from **`apps/desktop`** — both CI and the commands below
 resolve `native/Cargo.toml` and `resources/` relative to it, not the repo root.
