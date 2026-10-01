@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import type { TransitionDirection } from "../ipc";
+import type { LinkSummary, TrackSummary, TransitionDirection } from "../ipc";
 import { moveSelectionToComposition } from "../commands/groupCommands";
 import {
   commandRegistryVersion,
@@ -31,12 +31,14 @@ import {
 } from "../speech/autoCaptionEligibility";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useGroupOrdinals } from "../state/projectStore";
+import { useSelectedLayerIds } from "../state/selectionStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   addToGroupTarget,
   useAddToGroupState,
   useGroupState,
   useUngroupState,
+  selectedWithTracks,
   type AddToGroupState,
   type GroupState,
   type UngroupState,
@@ -295,8 +297,8 @@ export function LayerContextMenu({
   y,
   layerId,
   layerKind,
-  layerEnabled,
-  linkMemberIds,
+  tracks,
+  links,
   escapeLink,
   transitionCut,
   onClose,
@@ -312,10 +314,9 @@ export function LayerContextMenu({
   y: number;
   layerId: string;
   layerKind: string;
-  layerEnabled: boolean;
-  /// Every member of that link, the clicked layer included; `[layerId]` when
-  /// unlinked. The Enable/Disable row's fan-out set (`docs/features.md#links`).
-  linkMemberIds: readonly string[];
+  /// Live data from the owning timeline, including hidden lanes and siblings.
+  tracks: readonly TrackSummary[];
+  links: readonly LinkSummary[];
   /// `Alt` was held on the right-click: the same escape a left click makes,
   /// applied to the row below.
   escapeLink: boolean;
@@ -351,26 +352,32 @@ export function LayerContextMenu({
   // menu left open across `Alt+Shift+G` has to re-label, and only a
   // subscription re-renders it.
   useLinkOverride();
-  // The Enable/Disable row's targets: the link's members unless escaped — by
-  // `Alt` on this right-click or by the session override — or unlinked.
-  const enabledTargets =
-    linkMemberIds.length > 1 && linkFanoutActive({ altKey: escapeLink })
-      ? [...linkMemberIds]
-      : [layerId];
+  // Explicit selections always participate, even under Alt/link override.
+  // Only implicit siblings are suppressed by those escapes. Use every link
+  // touched by the selection, not just the clicked member's link.
+  const selected = useSelectedLayerIds();
+  const targets = new Set(selected.has(layerId) ? selected : [layerId]);
+  if (linkFanoutActive({ altKey: escapeLink })) {
+    for (const link of links) {
+      if (link.layer_ids.some((id) => targets.has(id))) {
+        for (const id of link.layer_ids) targets.add(id);
+      }
+    }
+  }
+  const targetLayers = selectedWithTracks(targets, tracks);
+  const enabledTargets = targetLayers.map(({ layer }) => layer.id);
+  // Mixed state has one predictable result regardless of which member was
+  // right-clicked: enable all. A fully enabled set instead offers disable all.
+  const enableTargets = targetLayers.some(({ layer }) => !layer.enabled);
+  // The actor allows visibility changes on locked clips, but refuses the
+  // entire batch if any owning track is locked.
+  const enabledLocked = targetLayers.some(({ track }) => track.locked);
   const enabledLabel =
     enabledTargets.length > 1
-      ? layerEnabled
-        ? t("timeline.disable_linked_layers", {
-            count: enabledTargets.length,
-            defaultValue: "Disable {{count}} linked clips",
-          })
-        : t("timeline.enable_linked_layers", {
-            count: enabledTargets.length,
-            defaultValue: "Enable {{count}} linked clips",
-          })
-      : layerEnabled
-        ? t("timeline.disable_layer", { defaultValue: "Disable clip" })
-        : t("timeline.enable_layer", { defaultValue: "Enable clip" });
+      ? t(enableTargets ? "timeline.enable_layers" : "timeline.disable_layers", {
+          count: enabledTargets.length,
+        })
+      : t(enableTargets ? "timeline.enable_layer" : "timeline.disable_layer");
   // The *Add to Group* row's label and tooltip. `useAddToGroupState` is the
   // subscription that keeps both live under an open popup; `addToGroupTarget`
   // reads the same two stores imperatively and is therefore re-read by the very
@@ -578,7 +585,11 @@ export function LayerContextMenu({
             />
             <MenuItem
               label={enabledLabel}
-              onSelect={() => onToggleEnabled(enabledTargets, !layerEnabled)}
+              disabled={enabledLocked || enabledTargets.length === 0}
+              {...(enabledLocked
+                ? { hint: t("timeline.enabled_tracks_locked") }
+                : {})}
+              onSelect={() => onToggleEnabled(enabledTargets, enableTargets)}
             />
             {layerKind === "Audio" && (
               <>

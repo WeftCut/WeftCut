@@ -120,8 +120,10 @@ clicked clip (and its link) goes in if it was out and out if it was in. Toggle
 rather than union because that is the additive modifier in Resolve, FCP and
 Premiere alike, and a union-only gesture leaves no way back from an over-wide
 selection except starting over. `Alt+click` selects one member out of a link.
-Right-click also selects, but only when the clip is *outside* the current
-selection, so right-clicking inside a multi-selection keeps it.
+Right-click selects a clip outside the current selection. Inside a
+multi-selection it keeps every member and makes the clicked clip primary, so
+single-clip actions (content description, shot review and pause detection)
+target the clip under the cursor while batch actions retain the whole set.
 
 **A deselecting click never becomes a drag.** Selection and drag arming share one
 pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
@@ -416,10 +418,14 @@ each other and never to their sources, one undo. The escape is the
 selection — `Alt+click` a member first and the copy is that member alone,
 unlinked — because `Alt` on the body already means duplicate. A collision on
 any member's destination shows the drag invalid and creates nothing.
-**Enable / Disable** in a clip's context menu and the inspector's Enabled
-switch send the link's members in one `set_layers_enabled` (the menu row
-reads `Disable 2 linked clips`); `Alt`+right-click narrows the row to the
-clicked layer. Linked layers show a 2 px left accent in a hue derived
+**Enable / Disable** in a clip's context menu sends the whole selection plus
+active link siblings in one `set_layers_enabled`. The row names the total
+deduplicated count (`Disable 2 clips`). A mixed or disabled set offers Enable;
+an entirely enabled set offers Disable. `Alt`+right-click or Link override
+suppresses implicit siblings but keeps explicitly selected members. A locked
+affected track disables the row with a reason; a clip's own lock does not
+block visibility changes. The inspector's Enabled switch still operates on
+its clip and active link siblings. Linked layers show a 2 px left accent in a hue derived
 deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
 Premiere: a selection inside one link unlinks it, two or more unlinked layers
 link, and anything else greys out with the reason in the tooltip. It is one

@@ -299,7 +299,6 @@ export function Timeline({
     y: number;
     layerId: string;
     layerKind: string;
-    layerEnabled: boolean;
     /// `Alt` held on the right-click — the menu's Enable/Disable row escapes
     /// the link fan-out, as the click's selection did.
     escapeLink: boolean;
@@ -1028,7 +1027,6 @@ export function Timeline({
       e: React.MouseEvent,
       layerId: string,
       layerKind: string,
-      layerEnabled: boolean,
     ) => {
       // Right-click SELECTS, the way it does in Premiere, Resolve and FCP —
       // and the way `onLayerPointerDown` deliberately does not (it takes
@@ -1036,7 +1034,7 @@ export function Timeline({
       // The menu's registry rows act on the selection, so without this a
       // "Delete" chosen from one clip's menu could delete a different one.
       //
-      // Only when the clip is OUTSIDE the current selection: right-clicking
+      // Change membership only OUTSIDE the current selection: right-clicking
       // inside a multi-selection keeps it, so "select four clips, right-click
       // one, Delete" behaves the way it reads. Modifier semantics are the
       // click path's (`selectFromClick`): plain takes the whole link,
@@ -1046,6 +1044,9 @@ export function Timeline({
       // its own target and then opened a menu acting on the selection would be
       // the worst reading of this gesture.
       if (!selectedLayerIds.has(layerId)) selectFromClick(layerId, e);
+      // Keep the batch intact, but make single-clip commands and their gates
+      // resolve the clip under the cursor (also the inspector/shot target).
+      else setLayerSelection(layerId, selectedLayerIds);
       let cut: TransitionCut | null = null;
       const canvas = canvasRef.current;
       const track = tracks.find((candidate) =>
@@ -1067,7 +1068,6 @@ export function Timeline({
         y: e.clientY,
         layerId,
         layerKind,
-        layerEnabled,
         escapeLink: e.altKey,
         cut,
       });
@@ -1308,8 +1308,8 @@ export function Timeline({
     [tracks],
   );
 
-  /// The menu hands over the resolved set — the link's members, or the clicked
-  /// layer alone when escaped — and `set_layers_enabled` records it as ONE
+  /// The menu hands over the selection plus any active link siblings;
+  /// `set_layers_enabled` records the whole batch as ONE
   /// history row (`docs/features.md#links`).
   const onToggleEnabled = useCallback(
     async (layerIds: string[], enabled: boolean) => {
@@ -2000,11 +2000,8 @@ export function Timeline({
         y={contextMenu.y}
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
-        layerEnabled={contextMenu.layerEnabled}
-        linkMemberIds={
-          links.find((l) => l.id === linkByLayerId.get(contextMenu.layerId))
-            ?.layer_ids ?? [contextMenu.layerId]
-        }
+        tracks={tracks}
+        links={links}
         escapeLink={contextMenu.escapeLink}
         transitionCut={contextMenu.cut}
         onClose={() => setContextMenu(null)}

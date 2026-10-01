@@ -75,6 +75,7 @@ import { setLinkOverride } from "../state/linkOverrideStore";
 import { listCommands, registerCommandProvider } from "../commands/registry";
 import { groupSelected } from "../commands/groupCommands";
 import { canGroupSelection } from "./groupEligibility";
+import { canDescribeSelection, describeTarget } from "../describe/describeEligibility";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
@@ -118,6 +119,7 @@ const ipcMocks = vi.hoisted(() => ({
   linksCreate: vi.fn().mockResolvedValue("link-created"),
   linksDissolve: vi.fn().mockResolvedValue(undefined),
   groupsCreate: vi.fn().mockResolvedValue({ composition_id: "new-group", layer_id: "new-group-layer" }),
+  setLayersEnabled: vi.fn().mockResolvedValue(undefined),
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   updateLayerParamTracks: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
@@ -157,6 +159,7 @@ vi.mock("../ipc", async (importOriginal) => {
     linksCreate: ipcMocks.linksCreate,
     linksDissolve: ipcMocks.linksDissolve,
     groupsCreate: ipcMocks.groupsCreate,
+    setLayersEnabled: ipcMocks.setLayersEnabled,
     updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
     updateLayerParamTracks: ipcMocks.updateLayerParamTracks,
     updateParamTracksMulti: ipcMocks.updateParamTracksMulti,
@@ -1240,7 +1243,47 @@ describe("Timeline seek/selection coupling", () => {
       const before = currentSelection();
 
       fireEvent.contextMenu(second, { clientX: 200, clientY: 30 });
-      expect(currentSelection()).toEqual(before);
+      expect(layerIdsOf(currentSelection())).toEqual(layerIdsOf(before));
+      expect(primaryLayerIdOf(currentSelection())).toBe(linkedLayer.id);
+    });
+
+    it("describes the right-clicked video even when another selected clip was primary", async () => {
+      const clicked = { ...tinyVideoLayer, id: "clicked-video", label: "Clicked video", t_end_us: 2_000_000 };
+      const tracks = [{ ...track, layers: [layer, clicked] }];
+      const previous = useProjectStore.getState().summary;
+      useProjectStore.getState().apply(summaryFixture({ root: { tracks } }));
+      const describe = vi.fn(() => describeTarget()?.id);
+      const unregister = registerCommandProvider(() => [{
+        id: "describeSelected", labelKey: "actions.describe_selected",
+        enabled: canDescribeSelection, run: () => { describe(); },
+      }]);
+      try {
+        const { getByText } = renderTimeline({ tracks });
+        act(() => setLayerSelection(layer.id, [layer.id, clicked.id]));
+        fireEvent.contextMenu(getByText("Clicked video").closest(".timeline-layer")!, { clientX: 40, clientY: 30 });
+        const item = await screen.findByRole("menuitem", { name: "Describe selected clip content" });
+        expect(item.getAttribute("aria-disabled")).not.toBe("true");
+        fireEvent.click(item);
+        expect(describe).toHaveReturnedWith(clicked.id);
+        expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, clicked.id]);
+      } finally {
+        cleanup();
+        unregister();
+        useProjectStore.getState().apply(previous);
+      }
+    });
+
+    it.each([true, false])("sets the entire selection in one call (all enabled: %s)", async (allEnabled) => {
+      const tracks = [{ ...linkedTrack, layers: [layer, { ...linkedLayer, enabled: allEnabled }] }];
+      ipcMocks.setLayersEnabled.mockClear();
+      const { getByText } = renderTimeline({ tracks });
+      act(() => setLayerSelection(linkedLayer.id, [layer.id, linkedLayer.id]));
+      fireEvent.contextMenu(getByText("Clip A").closest(".timeline-layer")!, { clientX: 40, clientY: 30 });
+      const name = allEnabled ? "Disable 2 clips" : "Enable 2 clips";
+      fireEvent.click(await screen.findByRole("menuitem", { name }));
+      await waitFor(() => expect(ipcMocks.setLayersEnabled).toHaveBeenCalledExactlyOnceWith(
+        [layer.id, linkedLayer.id], !allEnabled,
+      ));
     });
   });
 

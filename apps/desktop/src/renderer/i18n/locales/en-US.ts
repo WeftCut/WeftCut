@@ -1049,6 +1049,11 @@ const enUS = {
     // what one click will touch. `_one` never renders (a fan-out is ≥ 2) but
     // completes the plural pair.
     enable_linked_layers_one: "Enable {{count}} linked clip",
+    enable_layers_one: "Enable {{count}} clip",
+    enable_layers_other: "Enable {{count}} clips",
+    disable_layers_one: "Disable {{count}} clip",
+    disable_layers_other: "Disable {{count}} clips",
+    enabled_tracks_locked: "Unlock the affected tracks to enable or disable these clips",
     enable_linked_layers_other: "Enable {{count}} linked clips",
     disable_linked_layers_one: "Disable {{count}} linked clip",
     disable_linked_layers_other: "Disable {{count}} linked clips",

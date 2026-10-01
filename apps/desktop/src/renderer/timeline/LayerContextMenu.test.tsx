@@ -81,8 +81,9 @@ vi.mock("./moveToCompositionEligibility", () => ({
 
 import i18n from "../i18n";
 import type { CompositionSummary, LayerSummary } from "../ipc";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
+import { setLinkOverride } from "../state/linkOverrideStore";
 import { groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
 import { LayerContextMenu } from "./LayerContextMenu";
 
@@ -97,16 +98,16 @@ const handlers = {
   onAddTransition: vi.fn(),
 };
 
-function renderMenu(layerKind: string) {
+function renderMenu(layerKind: string, escapeLink = false) {
   return render(
     <LayerContextMenu
       x={10}
       y={10}
       layerId="layer-1"
       layerKind={layerKind}
-      layerEnabled
-      linkMemberIds={["layer-1"]}
-      escapeLink={false}
+      tracks={currentOpenComposition()?.tracks ?? []}
+      links={currentOpenComposition()?.links ?? []}
+      escapeLink={escapeLink}
       transitionCut={null}
       {...handlers}
     />,
@@ -117,6 +118,7 @@ afterEach(() => {
   cleanup();
   useProjectStore.getState().apply(null);
   clearLayerSelection();
+  setLinkOverride(false);
 });
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
@@ -281,6 +283,60 @@ describe("LayerContextMenu — selection eligibility", () => {
   }
 
   const row = () => screen.getByRole("menuitem", { name: "Ripple delete" });
+
+  it.each([
+    { alt: false, override: false, ids: ["layer-1", "layer-2", "layer-3", "layer-4"] },
+    { alt: true, override: false, ids: ["layer-1", "layer-3"] },
+    { alt: false, override: true, ids: ["layer-1", "layer-3"] },
+  ])("toggles the selection and active link siblings (Alt: $alt, override: $override)", async ({ alt, override, ids }) => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [
+        lane("t-1", [clip({ id: "layer-1" }), clip({ id: "layer-2" })]),
+        lane("t-2", [clip({ id: "layer-3" }), clip({ id: "layer-4" })]),
+      ],
+      links: [
+        { id: "link-a", layer_ids: ["layer-1", "layer-2"] },
+        { id: "link-b", layer_ids: ["layer-3", "layer-4"] },
+      ],
+    } }));
+    setLayerSelection("layer-1", ["layer-1", "layer-3"]);
+    setLinkOverride(override);
+    renderMenu("VideoClip", alt);
+    await userEvent.click(screen.getByRole("menuitem", { name: `Disable ${ids.length} clips` }));
+    expect(handlers.onToggleEnabled).toHaveBeenCalledExactlyOnceWith(ids, false);
+  });
+
+  it("does not duplicate selected link siblings in the count or mutation", async () => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [lane("t", [clip({ id: "layer-1" }), clip({ id: "layer-2" })])],
+      links: [{ id: "link", layer_ids: ["layer-1", "layer-2"] }],
+    } }));
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+    renderMenu("VideoClip");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Disable 2 clips" }));
+    expect(handlers.onToggleEnabled).toHaveBeenCalledExactlyOnceWith(["layer-1", "layer-2"], false);
+  });
+
+  it("blocks the whole enabled change if an affected track is locked", async () => {
+    seed([{ ...lane("locked", [clip({ id: "layer-3" })]), locked: true }]);
+    setLayerSelection("layer-1", ["layer-1", "layer-3"]);
+    renderMenu("VideoClip");
+    const item = screen.getByRole("menuitem", { name: "Disable 2 clips" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.title).toBe("Unlock the affected tracks to enable or disable these clips");
+    await userEvent.click(item);
+    expect(handlers.onToggleEnabled).not.toHaveBeenCalled();
+  });
+
+  it("allows visibility changes on a locked clip when its track is unlocked", async () => {
+    useProjectStore.getState().apply(summaryFixture({ root: {
+      tracks: [lane("t", [clip({ id: "layer-1", locked: true, enabled: false })])],
+    } }));
+    setLayerSelection("layer-1", ["layer-1"]);
+    renderMenu("VideoClip");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Enable clip" }));
+    expect(handlers.onToggleEnabled).toHaveBeenCalledExactlyOnceWith(["layer-1"], true);
+  });
 
   it("offers grouping and linking the whole multi-selection", () => {
     seed();
