@@ -62,9 +62,9 @@ the `/cut-pauses` recipe could only mark.
   layer, or a locked track holding a layer, that would have to move
   (`RippleLockedLayer`, `TrackLocked`). A locked track with nothing
   downstream does not block. The system never makes room.
-- **A link straddles only when a member reaches across the cut.** A split
-  leaves every piece of a linked clip in one link, so deleting a middle piece
-  always leaves link members before the hole and after it. That is the
+- **A link straddles only when a member reaches across the cut.** A manually
+  linked set can have members before a hole and after it. (Splits now create
+  separate links by side; see ADR 0052's 2026-10-01 refinement.) That is the
   ripple's headline case, not a torn link: a member that ends at or before the
   cut is wholly upstream, and bringing the downstream pieces up to it is the
   point. The refusal fires for the member that starts before the cut and ends

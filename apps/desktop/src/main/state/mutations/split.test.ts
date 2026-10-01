@@ -67,30 +67,56 @@ describe('applySplitLayer', () => {
     expect(markerHibernating(root(p), mk)).toBe(true)    // …and its window is now [500 k, 900 k)
   })
 
-  it('link spanning split: both halves stay in the link; non-spanning members untouched', () => {
-    const p = blankProject(seededGen(), 't')
+  it('link spanning split: left and right halves form separate links', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
     // a:[0,1s] and b:[0,1s] on track B linked; both span t=400k
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], false)
-    const r = applySplitLayer(p, seededGen(), 'a', 400_000, false)
+    const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
+    const r = applySplitLayer(p, gen, 'a', 400_000, false)
     const link = root(p).links.find((g) => g.id === gid)!
-    // a's right-half + b's right-half both joined the link → 4 members
-    expect(link.members.length).toBe(4)
-    expect(link.members).toContain(r.right)
+    expect(link.members).toEqual(['a', 'b'])
+    expect(root(p).links).toHaveLength(2)
+    const rightLink = root(p).links.find((g) => g.id !== gid)!
+    expect(rightLink.members).toEqual([r.right, root(p).tracks[1].layers[1].id].sort())
     expect(root(p).tracks[1].layers.length).toBe(2) // b was spanning → split too
   })
-  it('escape_link splits only the target (sibling not split), but the target stays linked so its right-half joins', () => {
-    const p = blankProject(seededGen(), 't')
+  it('escape_link splits only the target, preserving the original link and leaving the right half unlinked', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], false)
-    const r = applySplitLayer(p, seededGen(), 'a', 400_000, true)
+    const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
+    const r = applySplitLayer(p, gen, 'a', 400_000, true)
     expect(root(p).tracks[1].layers.length).toBe(1) // sibling b NOT split (escape → no spanning fan-out)
     const link = root(p).links.find((g) => g.id === gid)!
-    expect(link.members.length).toBe(3) // target stays linked; its right-half joins
-    expect(link.members).toContain(r.right)
-    expect(link.members).toContain('b')
+    expect(link.members).toEqual(['a', 'b'])
+    expect(root(p).links.some((g) => g.members.includes(r.right))).toBe(false)
+  })
+  it('partitions non-spanning members by side, including members touching the cut', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('before', 0, 400_000), color('after', 400_000, 1_000_000)]
+    const gid = applyLinksCreate(p, gen, ['a', 'before', 'after'], false)
+    const r = applySplitLayer(p, gen, 'a', 400_000, false)
+    expect(root(p).links.find((g) => g.id === gid)!.members).toEqual(['a', 'before'])
+    expect(root(p).links.find((g) => g.id !== gid)!.members).toEqual([r.right, 'after'].sort())
+    expect(root(p).tracks[1].layers.map((l) => [l.id, l.t_start_us, l.t_end_us]))
+      .toEqual([['before', 0, 400_000], ['after', 400_000, 1_000_000]])
+  })
+  it.each(['left', 'right'])('does not leave a singleton link on the %s side', (side) => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [side === 'left' ? color('b', 400_000, 1_000_000) : color('b', 0, 400_000)]
+    const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
+    const r = applySplitLayer(p, gen, 'a', 400_000, false)
+    expect(root(p).links).toHaveLength(1)
+    expect(root(p).links[0].members).toEqual([side === 'left' ? r.right : r.left, 'b'].sort())
+    if (side === 'right') expect(root(p).links[0].id).toBe(gid)
+    else expect(root(p).links[0].id).not.toBe(gid)
   })
   it('splitTrackHalf retains left keyframes and collapses an emptied right half to Static at the boundary value', () => {
     const p = blankProject(seededGen(), 't')

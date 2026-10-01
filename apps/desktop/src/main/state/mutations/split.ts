@@ -4,7 +4,7 @@ import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
 import { cloneLayer, hasSourceWindow, locateLayerIn, requireLayer } from './helpers'
-import { linkSiblingsExcluding, checkLinkLock, indexLinks } from './links'
+import { linkSiblingsExcluding, checkLinkLock } from './links'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
 /** Partition one Animated<T> track for a split at the
@@ -58,7 +58,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   return { left: id, right: right.id }
 }
 
-/** Split with link spanning fan-out. */
+/** Split with link spanning fan-out, partitioning the link at the cut. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): { left: Uuid; right: Uuid } {
   // Pre-flight on the target.
   const target = requireLayer(p, id)
@@ -78,27 +78,60 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
   })
   if (!escapeLink) checkLinkLock(c, id, [id, ...spanning])
 
+  const link = c.links.find((g) => g.members.includes(id))
+
   // Split target FIRST (id-allocation order: target right-half id comes first).
   const targetHalves = splitSingleLayer(p, idGen, id, atTUs)
-  const linkByMember = indexLinks(c.links)
-  const linkById = new Map(c.links.map((g) => [g.id, g]))
+  const rightByLeft = new Map<Uuid, Uuid>([[id, targetHalves.right]])
 
-  // Split each spanning sibling in sorted order; add its right-half to the sibling's link.
+  // Allocate all layer halves before allocating the new right-side link.
   for (const sid of spanning) {
     const { right: rightId } = splitSingleLayer(p, idGen, sid, atTUs)
-    const gid = linkByMember.get(sid)
-    if (gid !== undefined) {
-      const g = linkById.get(gid)
-      if (g) { g.members = [...g.members, rightId].sort() }
-    }
+    rightByLeft.set(sid, rightId)
   }
-  // Add the target's right-half to its link, if any. UNCONDITIONAL:
-  // even with escape_link, the target's left half keeps the original id and stays linked,
-  // so its right half joins too (split.test.ts: an escape_link split leaves 3 members).
-  const tgid = linkByMember.get(targetHalves.left)
-  if (tgid !== undefined) { const g = linkById.get(tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
+  // Link override keeps the original membership and leaves the new half free;
+  // unsplit siblings must not bridge the cut back to that half.
+  if (link && !escapeLink) {
+    const left: Uuid[] = []
+    const right: Uuid[] = []
+    for (const member of link.members) {
+      const half = rightByLeft.get(member)
+      if (half !== undefined) {
+        left.push(member)
+        right.push(half)
+      } else {
+        const loc = locateLayerIn(c, member)
+        if (loc) (loc.layer.t_start_us >= atTUs ? right : left).push(member)
+      }
+    }
+    if (left.length >= 2) link.members = left.sort()
+    else c.links.splice(c.links.indexOf(link), 1)
+    if (right.length >= 2) c.links.push({ id: idGen(), members: right.sort() })
+  }
 
   return targetHalves
+}
+
+/** User-authored batch: validate every cut before splitting; snap, sort and
+ *  deduplicate so unsorted/repeated input never cuts the same segment twice.
+ *  Unlike detector-derived cuts, invalid endpoints are errors, not skipped. */
+export function applySplitLayerBatch(p: Project, idGen: IdGen, id: Uuid, rawCuts: number[], escapeLink: boolean): { layer_ids: Uuid[]; at_t_us: number[] } {
+  const { comp, layer } = requireLayer(p, id)
+  const grid = gridForLayerKind(layer.params.kind, comp.fps)
+  const cuts = [...new Set(rawCuts.map((at) => snapOnGrid(at, grid)))].sort((a, b) => a - b)
+  for (const at of cuts) {
+    if (at <= layer.t_start_us || at >= layer.t_end_us)
+      throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: at })
+  }
+  const ids: Uuid[] = []
+  let currentId = id
+  for (const at of cuts) {
+    const { left, right } = applySplitLayer(p, idGen, currentId, at, escapeLink)
+    ids.push(left)
+    currentId = right
+  }
+  ids.push(currentId)
+  return { layer_ids: ids, at_t_us: cuts }
 }
 
 /** Validate the set of segments a multi-split should delete in its own commit,

@@ -18,7 +18,7 @@ import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
 import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
-import { applySplitLayer, parseDiscardSegments } from './mutations/split'
+import { applySplitLayer, applySplitLayerBatch, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, linkSiblingsExcluding } from './mutations/links'
 import { serveProjectResource } from './resource-views'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
@@ -43,7 +43,7 @@ import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropE
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
-import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitResult, toolRecord, type ResultCtx } from './mcp-results'
+import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
 import { effectsCatalogView } from '../../shared/effects/catalogView'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
@@ -1150,8 +1150,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // inside the ripple — but the ripple can only be planned once the splits
         // exist, so they land AFTER them: produce discards the draft, leaving the
         // clip unsplit and recording nothing, while the ids the split halves drew
-        // from idGen stay spent (one per applied cut, plus one per linked sibling
-        // that spans it). Unavoidable without simulating the whole split, and
+        // from idGen stay spent (one per new layer half and new right-side link).
+        // Unavoidable without simulating the whole split, and
         // harmless — ids are opaque and only ever compared for equality.
         // Returns the ordered target segment layer ids that survived.
         case 'split_layer_multi': {
@@ -1977,11 +1977,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'split_layer': {
           const p = mcpDef('split_layer').parseDedicated!(a)
           const layer = p.layer as string
-          const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_link: (p.escape_link as boolean) ?? false })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          // dispatch('split_layer') (applySplitLayer) names the two halves of the
-          // layer the caller named; the answer adds every link sibling's halves.
-          return { ok: true, result: toolRecord(splitResult(before, current(), r.value as { left: Uuid; right: Uuid }, p.at_t_us)) }
+          // One recipe: validation, reconciliation, history and publication
+          // happen once for the batch, never once per cut.
+          const result = commit(HISTORY_SUMMARY.layerSplit,
+            (r: { layer_ids: Uuid[] }) => layerRefs(r.layer_ids), { kind: 'Coarse' },
+            (d) => applySplitLayerBatch(d, idGen, layer, p.at_t_us as number[], p.escape_link as boolean))
+          return { ok: true, result: toolRecord(result) }
         }
         // The reason's presence is gated in the parser (locking needs one,
         // unlocking refuses one), so this arm reads `locked` and nothing else.

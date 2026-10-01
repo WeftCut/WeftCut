@@ -93,6 +93,28 @@ cannot grow the badge or the outline that would fix this.
    when it reset 10 → 1. The clause expires at first release or at the first
    `.vproj` handed to anyone else; from then on the chain is mandatory.
 
+## Split refinement (2026-10-01)
+
+This supersedes decision 1's unchanged split-membership behavior: a linked
+split partitions the original link at the cut instead of adding all right
+halves to it. Left-side members retain the original link id; right-side
+members receive a new link id. Non-spanning members join their temporal side;
+singletons are unlinked. Link override splits only the target, keeps its left
+half in the original link, and leaves its right half unlinked.
+
+The blade, playhead split, MCP split and multi-cut operations share this rule
+in the actor mutation, within the same undoable edit. It preserves each
+resulting A/V pair while allowing either side to move independently. Previously
+all segments continued moving together, defeating the separation made by a cut.
+
+MCP `split_layer` accepts one non-empty `at_t_us` array, even for one cut.
+It snaps, sorts and deduplicates the cut points, then applies the whole batch
+in one actor commit. Invalid cuts abort the entire edit; success publishes
+one project-change event and records one undo entry. This avoids a series of
+per-cut commits repeatedly refreshing the timeline and filling the history.
+The response is uniformly `{ layer_ids, at_t_us }`: ordered target segments
+and the actual cut points.
+
 ## Considered options
 
 **Keep "Group" for propagation and pick another word for the composition.**

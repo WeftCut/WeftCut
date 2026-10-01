@@ -196,22 +196,22 @@ describe('MCP adapter routing — add_marker (dedicated)', () => {
 // ── Dedicated-exec: split_layer ────────────────────────────────────────────────
 
 describe('MCP adapter routing — split_layer (dedicated)', () => {
-  it('valid call routes, returns {left, right} ids, and state has two layers', () => {
+  it('valid one-cut array routes, returns segment ids, and state has two layers', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerMcp(a, trackId, 0, 4_000_000)
 
     const r = a.mcpCall('split_layer', JSON.stringify({
       layer_id: layerId,
-      at_t_us: 2_000_000,
+      at_t_us: [2_000_000],
     }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const text = r.result.content[0].text
-    const parsed = JSON.parse(text) as { left: string; right: string }
-    expect(typeof parsed.left).toBe('string')
-    expect(typeof parsed.right).toBe('string')
-    expect(parsed.left).toBe(layerId) // original layer id = left
+    const parsed = JSON.parse(text) as { layer_ids: string[] }
+    expect(parsed.layer_ids).toHaveLength(2)
+    expect(typeof parsed.layer_ids[1]).toBe('string')
+    expect(parsed.layer_ids[0]).toBe(layerId) // original layer id = left
     // state: track now has two layers
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(2)
@@ -221,7 +221,7 @@ describe('MCP adapter routing — split_layer (dedicated)', () => {
     const a = freshActor()
     const r = a.mcpCall('split_layer', JSON.stringify({
       layer_id: 123,
-      at_t_us: 1_000_000,
+      at_t_us: [1_000_000],
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return

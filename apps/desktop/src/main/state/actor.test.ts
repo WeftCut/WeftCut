@@ -163,6 +163,46 @@ describe('dispatch: split + links', () => {
     layersOf(actor, track).filter((l) => l.params.kind === kind)
       .map((l) => [l.t_start_us, l.t_end_us]).sort((x, y) => x[0] - y[0])
 
+  it.each(['blade', 'mcp', 'multi'])('%s cuts linked A/V into independently movable links, with undo/redo', (channel) => {
+    const { actor, track, layer, audio } = linkedPair()
+    const before = actor.snapshot()
+    const originalLink = root(before).links[0].id
+    const result = channel === 'blade'
+      ? actor.command('split_layer_linked', { layerId: layer, atTUs: 2_000_000, escapeLink: false })
+      : channel === 'mcp'
+        ? actor.mcpCall('split_layer', JSON.stringify({ layer_id: layer, at_t_us: [2_000_000] }))
+        : actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000] })
+    expect(result.ok).toBe(true)
+    const after = actor.snapshot()
+    const links = root(after).links
+    expect(links).toHaveLength(channel === 'multi' ? 3 : 2)
+    expect(links.find((g) => g.id === originalLink)!.members).toEqual([layer, audio].sort())
+    for (const link of links) {
+      const members = layersOf(actor, track).filter((l) => link.members.includes(l.id))
+      expect(members).toHaveLength(2)
+      expect(members.map((l) => l.params.kind).sort()).toEqual(['Audio', 'VideoClip'])
+      expect(members[0].t_start_us).toBe(members[1].t_start_us)
+      expect(members[0].t_end_us).toBe(members[1].t_end_us)
+    }
+    if (channel === 'mcp' && result.ok && 'result' in result) {
+      const response = JSON.parse(result.result.content[0].text)
+      expect(response.layer_ids[0]).toBe(layer)
+      expect(response.layer_ids).toHaveLength(2)
+      expect(response.at_t_us).toEqual([2_000_000])
+    }
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(before)
+    expect(actor.dispatch('redo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(after)
+    const lastVideo = layersOf(actor, track).find((l) => l.params.kind === 'VideoClip' && l.t_end_us === 6_000_000)!
+    const movingLink = links.find((g) => g.members.includes(lastVideo.id))!
+    const stationary = layersOf(actor, track).filter((l) => !movingLink.members.includes(l.id))
+    expect(actor.dispatch('move_layer', { layer: lastVideo.id, to_track: track, t_start_us: 7_000_000, escape_link: false }).ok).toBe(true)
+    expect(layersOf(actor, track).filter((l) => !movingLink.members.includes(l.id))).toEqual(stationary)
+    expect(layersOf(actor, track).filter((l) => movingLink.members.includes(l.id)).map((l) => l.t_start_us))
+      .toEqual([7_000_000, 7_000_000])
+  })
+
   it('split_layer_multi deletes the named segments in the split commit; one undo restores the pre-split layer', () => {
     const { actor, track, layer } = splittableClip()
     const before = JSON.stringify(actor.snapshot())
@@ -257,8 +297,7 @@ describe('dispatch: split + links', () => {
 
   it('split_layer_multi fan-out never reaches another TARGET segment', () => {
     const { actor, track, layer } = linkedPair()
-    // Every segment of the target joins the link as the splits run, and the two
-    // neighbours of the discarded one abut it. Only the audio under it may go.
+    // Each segment has its own link. Only the discarded segment's audio may go.
     const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: [1] })
     expect(r.ok).toBe(true)
     if (!r.ok) return
@@ -446,10 +485,8 @@ describe('dispatch: split + links', () => {
   it('split_layer_multi with ripple discards an INTERIOR segment of a LINKED clip and closes up behind it', () => {
     const { actor, track, layer } = linkedPair()
     const before = JSON.stringify(actor.snapshot())
-    // Every piece a split makes joins the target's link, so a hole in the middle
-    // of the clip has link members before it and after it. That is not a link
-    // torn apart — the pieces before the cut end exactly at it — and the
-    // planner lets the pieces after it close up, each V/A pair in lockstep.
+    // Each segment has its own link; the planner lets the pieces after the
+    // discarded segment close up, each V/A pair in lockstep.
     // This is the pause cut's shape: a middle slice out, the rest tightens.
     const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3], ripple: true })
     expect(r.ok).toBe(true)

@@ -585,7 +585,11 @@ move, trim, split — fan out to every member (`Link` in `Project.links`; no
 nesting, a layer in at most one). Premiere's Link with any number of members:
 it says "these travel together" and nothing more — no bounds, no timeline of
 its own, no rendering significance, no identity beyond an accent hue. `Ctrl+L`
-toggles it on the selection. UI word: Link / 链接.
+toggles it on the selection. A split partitions the link by side of the cut:
+left-side members retain the original link, right-side members form a new one,
+and a side with fewer than two members is unlinked. With Link override, only
+the target splits; its left half keeps its link and its right half is unlinked.
+UI word: Link / 链接.
 _Avoid_: group (that is a composition placed as a layer), bundle, pair (a link
 may hold more than two)
 

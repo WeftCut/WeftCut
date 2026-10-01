@@ -468,34 +468,6 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
 
 // ── Helpers for the dedicated arms in actor.mcpCall ─────────────────────────
 
-/** `split_layer`'s answer: the two halves the caller named, PLUS every link
- *  sibling the split fanned out to — a sibling's left half keeps its id and its
- *  right half is a new layer starting where the left one now ends — so the
- *  caller never re-links halves by hand. */
-export function splitResult(before: Project, after: Project, halves: { left: Uuid; right: Uuid }, atTUs: unknown): Record<string, unknown> {
-  const right = layerRecord(after, halves.right)
-  const siblings = newLayerIds(before, after).filter((id) => id !== halves.right).map((rid) => {
-    const r = located(after, rid)
-    let left: Uuid | null = null
-    // The left half is the pre-existing layer of the same kind on the same
-    // track that shrank to end where this right half starts. Kind matters: a
-    // paired video and its audio share one track, so "ends at the cut" alone
-    // names two layers.
-    if (r) for (const { track, layer } of eachLayer(after)) {
-      if (track.id !== r.trackId || layer.id === rid || layer.params.kind !== r.layer.params.kind || layer.t_end_us !== r.layer.t_start_us) continue
-      const was = located(before, layer.id)
-      if (was && was.layer.t_end_us > layer.t_end_us) { left = layer.id; break }
-    }
-    return { source: left, left, right: rid }
-  })
-  return {
-    left: halves.left, right: halves.right,
-    layers: layerRecords(after, [halves.left, halves.right]),
-    siblings,
-    adjusted: adjusted([['at_t_us', atTUs, right?.t_start_us]]),
-  }
-}
-
 interface AnimatedLike { mode: string; value: unknown; extrapolate?: unknown }
 interface KeyLike { id: string; t_us: number; value: unknown }
 const keysOf = (t: AnimatedLike): KeyLike[] => (t.mode === 'Keyframed' && Array.isArray(t.value) ? (t.value as KeyLike[]) : [])

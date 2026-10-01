@@ -1944,10 +1944,20 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Split a layer into two halves at the given timeline microsecond. Returns `{ left, right, layers, siblings: [{ source, left, right }] }` — every link sibling's halves too. `at_t_us` must be strictly between the layer's t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.",
-    inputSchema: { type: 'object', properties: { at_t_us: US_SCHEMA('Cut point, timeline; strictly inside the layer'), escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA }, required: ['at_t_us', 'layer_id'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
-      at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
+    description: "Cut at one or more times in ONE atomic edit/notification/undo. Returns {layer_ids,at_t_us} in time order (actual snapped cuts). Linked members split into separate links per segment; escape_link leaves new halves unlinked. Media speed=1.",
+    inputSchema: { type: 'object', properties: {
+      at_t_us: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Interior timeline cuts, µs; snapped, sorted, deduplicated. Any invalid cut rejects all.' },
+      escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA,
+    }, required: ['layer_id', 'at_t_us'] },
+    parseDedicated: (a) => {
+      const common = { layer: parseUuid(a.layer_id, 'layer_id'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) }
+      const cuts = asNonEmptyArray(a.at_t_us, 'at_t_us', 'provide at least one cut').map((v, i) => {
+        const at = parseNum(v, `at_t_us[${i}]`)
+        if (!Number.isSafeInteger(at)) throw new McpArgError(`at_t_us[${i}] must be an integer microsecond`, 'at_t_us')
+        return at
+      })
+      return { ...common, at_t_us: cuts }
+    } },
   { name: 'add_marker', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.",
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: 'string',
