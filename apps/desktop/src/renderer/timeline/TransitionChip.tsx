@@ -3,9 +3,8 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeftRight } from "lucide-react";
 import { boundaryDisplayFrameUs, formatTimecode } from "../frames";
 import { setTransitionSelection } from "../state/selectionStore";
-import { transportPause, transportSeek } from "../state/playbackStore";
-import { previewLocalUs } from "../state/playheadProjection";
-import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
+import { useEditPreview } from "../state/useEditPreview";
+import { usePointerGesture } from "../hooks/usePointerGesture";
 import { useMediaById } from "../state/projectStore";
 import { layerSliceRect, type LayerSlice } from "./geometry";
 import {
@@ -71,6 +70,8 @@ export function TransitionChip({
   onResize: (args: TransitionResizeArgs) => void;
 }) {
   const { t } = useTranslation();
+  const preview = useEditPreview();
+  const beginGesture = usePointerGesture();
   // Live drag ghost: the clamped window while an edge gesture is in flight.
   // Frame-quantized upstream, so a pointer wiggle inside one frame neither
   // re-renders nor re-seeks.
@@ -106,8 +107,8 @@ export function TransitionChip({
   /// pointerup pair, accumulate locally, commit ONCE on pointerup and only
   /// when the snapped destination differs from the start). Destinations are
   /// frame-snapped and live-clamped by the pure kernels; the monitor
-  /// live-seeks to the dragged edge from the first EFFECTIVE move and the
-  /// playhead is restored on release (the useLayerDrag trim discipline).
+  /// previews the dragged edge from the first EFFECTIVE move while the
+  /// playhead stays parked (the shared edit-preview discipline).
   const beginEdgeDrag = (edge: "left" | "right") =>
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
@@ -129,7 +130,6 @@ export function TransitionChip({
       );
       const initialUs = edge === "left" ? bStartUs : aEndUs;
       let lastUs = initialUs;
-      let restoreUs: number | null = null;
       const onMove = (me: PointerEvent) => {
         const targetUs =
           initialUs + ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
@@ -156,19 +156,10 @@ export function TransitionChip({
               });
         if (nextUs === lastUs) return;
         lastUs = nextUs;
-        if (restoreUs === null) {
-          // First effective move: park the transport and remember where the
-          // user left the playhead — the gesture must not relocate it. ROOT
-          // time, because that is what goes back into the store below; the
-          // preview seek beneath it is the chip's edge on the composition's own
-          // clock, which is already the clock the engine runs on.
-          restoreUs = playheadTimeUs();
-          transportPause();
-        }
         // Left edge is an in-style boundary (show the boundary frame), right
         // edge an out-style one (show the last kept frame) — the trim-drag
         // display convention.
-        transportSeek(
+        preview.show(
           boundaryDisplayFrameUs(
             nextUs,
             edge === "left" ? "in" : "out",
@@ -182,16 +173,12 @@ export function TransitionChip({
             : { startUs: bStartUs, endUs: nextUs },
         );
       };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
+      const teardown = () => {
         setGhost(null);
-        if (restoreUs !== null) {
-          // Optimistic store write + transport seek (the seekExact pattern):
-          // put both the playhead line and the monitor back.
-          setPlayheadTimeUs(restoreUs);
-          transportSeek(previewLocalUs(restoreUs));
-        }
+        preview.end();
+      };
+      const onUp = () => {
+        teardown();
         // A stationary pointer never commits.
         if (lastUs === initialUs) return;
         onResize(
@@ -205,8 +192,7 @@ export function TransitionChip({
               ),
         );
       };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
+      beginGesture(e.pointerId, { move: onMove, release: onUp, cancel: teardown });
     };
 
   return (

@@ -211,7 +211,7 @@ describe("in/out end caps", () => {
 /// not about a zoom at which nothing would paint anyway.
 const renderRuler = ({
   onScrub = () => {},
-}: { onScrub?: (clientX: number) => void } = {}) =>
+}: { onScrub?: (event: React.PointerEvent) => void } = {}) =>
   render(
     <TimelineRuler
       compositionId={null}
@@ -266,7 +266,7 @@ describe("markers are not the ruler's", () => {
   it("scrubs across a marker's x exactly as it does anywhere else", () => {
     const scrubs: number[] = [];
     seed([point({ t_us: 1_000_000 })]);
-    const { container } = renderRuler({ onScrub: (x) => scrubs.push(x) });
+    const { container } = renderRuler({ onScrub: (event) => scrubs.push(event.clientX) });
     const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
     fireEvent.pointerDown(ruler, { button: 0, clientX: 2000 });
     fireEvent.pointerDown(ruler, { button: 0, clientX: 2400 });

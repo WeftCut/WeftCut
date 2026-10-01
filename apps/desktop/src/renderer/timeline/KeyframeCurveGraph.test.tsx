@@ -97,17 +97,19 @@ describe("KeyframeCurveGraph", () => {
     // seek away from what the menu is about to edit.
     expect(onFocusSeek).not.toHaveBeenCalled();
   });
-  it("pressing a dot selects it, then focuses and seeks to it", () => {
+  it("pressing a dot selects it and only a click release seeks to it", () => {
     const onFocusSeek = vi.fn();
     const { container } = renderGraph({ onFocusSeek });
     fireEvent.pointerDown(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { button: 0 });
-    expect(onFocusSeek).toHaveBeenCalledWith("k0");
+    expect(onFocusSeek).not.toHaveBeenCalled();
     // The selection is the DRAG's business now, not the callback's: pressing an
     // unselected key replaces the selection with it, and pressing one already in
     // a swept group leaves the group standing.
     expect(getSelectedKeyframes()).toEqual([
       { layerId: "L1", paramKey: "opacity", kfId: "k0" },
     ]);
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    expect(onFocusSeek).toHaveBeenCalledWith("k0");
   });
   it("keeps a swept group when the press lands on a key already in it", () => {
     const { container } = renderGraph({ isSelected: () => true });

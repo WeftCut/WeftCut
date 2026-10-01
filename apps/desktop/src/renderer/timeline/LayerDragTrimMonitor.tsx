@@ -3,11 +3,9 @@
 // and drives the transport. Everything about how that boundary is computed —
 // snapping, the causality gates, the commit — stays in `hooks/useLayerDrag.ts`.
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { boundaryDisplayFrameUs } from "../frames";
-import { transportPause, transportPreviewSeek, transportSeek } from "../state/playbackStore";
-import { setPlayheadTimeUs, playheadTimeUs } from "../state/playheadStore";
-import { previewLocalUs } from "../state/playheadProjection";
+import { useEditPreview } from "../state/useEditPreview";
 import { useLayerDragStore } from "./layerDragStore";
 import { constrainedAnchorUs } from "./hooks/useLayerDrag";
 
@@ -52,35 +50,19 @@ export function LayerDragTrimMonitor({
         ),
   );
   const trimPreviewActive = trimPreviewUs !== null;
-  const trimRestoreUsRef = useRef<number | null>(null);
+  const preview = useEditPreview();
 
   useEffect(() => {
     if (trimPreviewUs === null) return;
-    if (trimRestoreUsRef.current === null) {
-      // ROOT time, because that is what goes back into the store below; the
-      // preview seek beneath it is the trim boundary on the composition's own
-      // clock, which is already the clock the engine runs on.
-      trimRestoreUsRef.current = playheadTimeUs();
-      // Trimming while playing would fight the running transport for the
-      // monitor — park it first (Premiere stops playback on a trim drag too).
-      transportPause();
-    }
     // Dedup is the effect dep itself: the value is frame-quantized upstream,
     // so a pointer wiggle inside one frame never re-seeks.
-    transportPreviewSeek(trimPreviewUs);
-  }, [trimPreviewUs]);
+    preview.show(trimPreviewUs);
+  }, [trimPreviewUs, preview]);
 
   useEffect(() => {
     if (!trimPreviewActive) return;
-    return () => {
-      const restoreUs = trimRestoreUsRef.current;
-      trimRestoreUsRef.current = null;
-      if (restoreUs === null) return;
-      // Restore the monitor and resume normal transport time notifications.
-      setPlayheadTimeUs(restoreUs);
-      transportSeek(previewLocalUs(restoreUs));
-    };
-  }, [trimPreviewActive]);
+    return () => preview.end();
+  }, [trimPreviewActive, preview]);
 
   return null;
 }

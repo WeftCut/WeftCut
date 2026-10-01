@@ -218,9 +218,11 @@ export function KeyframeCurveGraph({
       paramKey,
       kfId,
       clientX: e.clientX,
+      clientY: e.clientY,
+      pointerId: e.pointerId,
       pxPerSec: geomRef.current.pxPerSec,
       altKey: e.altKey,
-      onPress: () => onFocusSeek(kfId),
+      onClick: () => onFocusSeek(kfId),
     });
   }
 

@@ -415,7 +415,7 @@ describe("chip two-edge drag (spec D6)", () => {
     fireEvent.pointerMove(window, { clientX: 240, clientY: 30 }); // R → 3M
     // Out-style boundary: show the last kept frame (89 @ 30fps), not R itself.
     expect(pause).toHaveBeenCalled();
-    expect(seek).toHaveBeenCalledWith(2_966_667);
+    expect(seek).toHaveBeenCalledWith(2_966_667, "preview");
     fireEvent.pointerUp(window, { clientX: 240, clientY: 30 });
     // Playhead line AND monitor return to the park position.
     expect(playheadTimeUs()).toBe(300_000);
@@ -435,7 +435,7 @@ describe("chip two-edge drag (spec D6)", () => {
     });
     fireEvent.pointerDown(zone(container, "left"), { button: 0, clientX: 160 });
     fireEvent.pointerMove(window, { clientX: 120, clientY: 30 }); // L → 1.5M
-    expect(seek).toHaveBeenCalledWith(1_500_000);
+    expect(seek).toHaveBeenCalledWith(1_500_000, "preview");
     fireEvent.pointerUp(window, { clientX: 120, clientY: 30 });
     expect(playheadTimeUs()).toBe(300_000);
     releaseTransport(transport);
@@ -647,4 +647,3 @@ describe("chip context menu", () => {
     expect(ipcMocks.removeTransition).not.toHaveBeenCalled();
   });
 });
-

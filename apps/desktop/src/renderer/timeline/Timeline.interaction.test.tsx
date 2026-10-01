@@ -26,6 +26,7 @@ import type {
 } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
+import { TransitionChip } from "./TransitionChip";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
@@ -54,6 +55,7 @@ import {
   clearKeyframeSelection,
   getSelectedKeyframes,
   selectKeyframe,
+  setKeyframeSelection,
 } from "../keyframe/selectionStore";
 import {
   clearKeyframeFocus,
@@ -824,6 +826,57 @@ describe("Timeline seek/selection coupling", () => {
     }
   });
 
+  it.each(["left", "right"].flatMap((edge) =>
+    ["release", "cancel", "escape", "blur", "unmount"].map((ending) => ({ edge, ending })),
+  ))("keeps the playhead parked throughout a transition $edge edge drag ending in $ending", ({ edge, ending }) => {
+    const compositeFrame = vi.fn();
+    const compositor = {
+      getAudioGraph: () => null,
+      setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
+      compositeFrame,
+      playableEndUs: () => 5_000_000,
+      compositionDurationUs: () => 5_000_000,
+    } as unknown as Compositor;
+    const ticker = new Ticker();
+    const engine = new PlaybackEngine({ compositor, ticker });
+    engine.bindFps(30, 1);
+    engine.onTimeUpdate(setPlayheadTimeUs);
+    registerTransport(engine);
+    engine.seek(500_000);
+    const onResize = vi.fn();
+    const { container, unmount } = render(<TransitionChip
+      chip={{ transition: { id: "transition", from_layer: layer.id, to_layer: "incoming",
+        duration_us: 400_000, extended_us: 0, kind: { kind: "Crossfade" } },
+        fromLayer: layer, toLayer: { ...layer, id: "incoming", t_start_us: 1_600_000, t_end_us: 4_000_000 },
+        startUs: 1_600_000, endUs: 2_000_000 }}
+      pxPerSec={100} laneHeight={48} slice="full" isSelected={false}
+      bladeMode={false} fpsNum={30} fpsDen={1} onContextMenu={vi.fn()} onResize={onResize}
+    />);
+    try {
+      const handle = container.querySelector(`[data-testid="transition-chip-edge-${edge}"]`)!;
+      expect(handle).not.toBeNull();
+      fireEvent.pointerDown(handle, { button: 0, clientX: 200 });
+      fireEvent.pointerMove(window, { clientX: 190 });
+      expect(playheadTimeUs()).toBe(500_000);
+      expect(compositeFrame).toHaveBeenLastCalledWith(edge === "left" ? 1_500_000 : 1_866_667);
+      if (ending === "release") fireEvent.pointerUp(window, { clientX: 190 });
+      else if (ending === "cancel") fireEvent.pointerCancel(window);
+      else if (ending === "escape") fireEvent.keyDown(window, { key: "Escape" });
+      else if (ending === "blur") fireEvent.blur(window);
+      else unmount();
+      expect(onResize).toHaveBeenCalledTimes(ending === "release" ? 1 : 0);
+      expect(compositeFrame).toHaveBeenLastCalledWith(500_000);
+      expect(playheadTimeUs()).toBe(500_000);
+      fireEvent.pointerMove(window, { clientX: 180 });
+      fireEvent.pointerUp(window, { clientX: 180 });
+      expect(onResize).toHaveBeenCalledTimes(ending === "release" ? 1 : 0);
+      expect(playheadTimeUs()).toBe(500_000);
+    } finally {
+      fireEvent.pointerUp(window);
+      unmount(); releaseTransport(engine); engine.dispose(); ticker.destroy();
+    }
+  });
+
   it("drives the monitor to the LAST KEPT frame during a tail trim and restores on release", () => {
     vi.useFakeTimers();
     useAppSettingsStore.setState((s) => ({
@@ -1212,6 +1265,23 @@ describe("Timeline seek/selection coupling", () => {
 
     fireEvent.pointerLeave(block);
     expect(container.querySelector('[data-testid="timeline-blade-preview"]')).toBeNull();
+  });
+
+  it.each(["cancel", "blur", "escape", "unmount"])("does not leave ruler seeking armed after %s", (ending) => {
+    const onSeek = vi.fn();
+    const { container, unmount } = renderTimeline({ onSeek });
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 100, pointerId: 1 });
+    expect(onSeek).toHaveBeenCalled();
+    if (ending === "cancel") fireEvent.pointerCancel(window, { pointerId: 1 });
+    else if (ending === "blur") fireEvent.blur(window);
+    else if (ending === "escape") fireEvent.keyDown(window, { key: "Escape" });
+    else unmount();
+    onSeek.mockClear();
+    fireEvent.pointerMove(window, { clientX: 300, pointerId: 1 });
+    // Even another edit gesture must not inherit the abandoned scrub.
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(onSeek).not.toHaveBeenCalled();
   });
 
   it("dragging on the ruler scrubs the playhead repeatedly", () => {
@@ -4700,6 +4770,84 @@ describe("collapsed keyframe row", () => {
     parseFloat(
       container.querySelector<HTMLElement>(`.kf-diamond[data-kf-id="${kfId}"]`)!.style.left,
     );
+
+  it.each([
+    ...["color", "number"].flatMap((kind) => [false, true].flatMap((expanded) =>
+      ["drag", "click"].map((ending) => ({ kind, expanded, ending })),
+    )),
+    ...["return", "cancel", "escape", "blur", "unmount", "alt", "vertical", "release-only"].map((ending) =>
+      ({ kind: "color", expanded: false, ending }),
+    ),
+  ])("arbitrates $kind keyframe clicks and drags (expanded: $expanded, ending: $ending) with the real transport", ({ kind, expanded, ending }) => {
+    ipcMocks.updateParamTracksMulti.mockClear();
+    clearKeyframeSelection();
+    const compositor = {
+      getAudioGraph: () => null,
+      setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
+      compositeFrame: vi.fn(),
+      playableEndUs: () => 5_000_000,
+      compositionDurationUs: () => 5_000_000,
+    } as unknown as Compositor;
+    const ticker = new Ticker();
+    const engine = new PlaybackEngine({ compositor, ticker });
+    engine.bindFps(30, 1);
+    engine.onTimeUpdate(setPlayheadTimeUs);
+    registerTransport(engine);
+    engine.seek(500_000);
+    const testTrack = kind === "color" ? fillTrack : {
+      ...fillTrack,
+      layers: [{ ...tinyVideoLayer, id: "fill-1", t_end_us: 2_000_000,
+        params: { ...tinyVideoLayer.params, opacity: {
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [0, 1].map((value) => ({ ...colorKey(`c${value}`, value * 1_000_000, RED), value })),
+        } } as LayerSummary["params"],
+      }],
+    };
+    const { container, unmount } = renderTimeline({ tracks: [testTrack], selectedLayerId: "fill-1" });
+    const paramKey = kind === "color" ? "color" : "opacity";
+    act(() => setKeyframeFocus("fill-1", paramKey));
+    if (expanded) fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    const diamond = container.querySelector(`${expanded ? '.kf-sublane-diamond' : '.kf-diamond'}[data-kf-id="c1"]`)!;
+    const fromX = parseFloat((diamond as HTMLElement).style.left);
+    expect(Number.isFinite(fromX)).toBe(true);
+    if (ending === "alt") act(() => {
+      setKeyframeSelection([
+        { layerId: "fill-1", paramKey, kfId: "c0" },
+        { layerId: "fill-1", paramKey, kfId: "c1" },
+      ]);
+    });
+    try {
+      fireEvent.pointerDown(diamond, { button: 0, clientX: fromX, clientY: 20, altKey: ending === "alt" });
+      expect(playheadTimeUs()).toBe(500_000);
+      let toX = ending === "click" ? fromX + 1 : ending === "vertical" ? fromX : fromX + 40;
+      const toY = ending === "vertical" ? 40 : 20;
+      if (ending !== "release-only") fireEvent.pointerMove(window, { clientX: toX, clientY: toY });
+      expect(playheadTimeUs()).toBe(500_000);
+      if (ending === "return") {
+        toX = fromX;
+        fireEvent.pointerMove(window, { clientX: toX, clientY: 20 });
+      }
+      if (ending === "cancel") fireEvent.pointerCancel(window);
+      else if (ending === "escape") fireEvent.keyDown(window, { key: "Escape" });
+      else if (ending === "blur") fireEvent.blur(window);
+      else if (ending === "unmount") unmount();
+      else fireEvent.pointerUp(window, { clientX: toX, clientY: toY });
+      expect(playheadTimeUs()).toBe(ending === "click" ? 1_000_000 : 500_000);
+      expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(
+        ["drag", "alt", "release-only"].includes(ending) ? 1 : 0,
+      );
+      fireEvent.pointerMove(window, { clientX: fromX + 60, clientY: 20 });
+      fireEvent.pointerUp(window, { clientX: fromX + 60, clientY: 20 });
+      expect(playheadTimeUs()).toBe(ending === "click" ? 1_000_000 : 500_000);
+    } finally {
+      fireEvent.pointerCancel(window);
+      unmount();
+      releaseTransport(engine);
+      engine.dispose();
+      ticker.destroy();
+      clearKeyframeSelection();
+    }
+  });
 
   it("draws an armed COLOUR preview in place of the committed colour track", () => {
     const { container } = renderTimeline({ tracks: [fillTrack], selectedLayerId: "fill-1" });

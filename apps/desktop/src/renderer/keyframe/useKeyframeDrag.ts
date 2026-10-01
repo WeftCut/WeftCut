@@ -14,6 +14,8 @@
 // and the arithmetic itself is `batchRetime.ts`; this measures, and
 // `KeyframeBatch.commitEntries` writes.
 import { useCallback } from "react";
+import { setKeyframeFocus } from "./focusStore";
+import { usePointerGesture } from "../hooks/usePointerGesture";
 
 import {
   clearTrackPreview,
@@ -40,14 +42,16 @@ export interface KeyframeDragStart {
   /// Where the pointer went down, and the pixels-per-second the surface draws
   /// at — the two numbers that turn travel into time.
   clientX: number;
+  clientY: number;
+  pointerId: number;
   pxPerSec: number;
   /// `Alt` AT POINTERDOWN arms the time-scale. Read once and never again: a
   /// modifier picked up or dropped mid-drag would change what the gesture means
   /// halfway through it, and the anchor is already fixed by then.
   altKey: boolean;
-  /// The surface's own click side effects, run once the selection has settled —
-  /// parking the transport on the key, moving keyframe focus to its sub-lane.
-  onPress?: () => void;
+  /// Navigation is only legal after a release that never became a drag.
+  /// Selection and focus happen on press; neither moves the transport.
+  onClick?: () => void;
 }
 
 /// Arms a drag from a diamond's pointerdown. Pressing a key OUTSIDE the
@@ -56,6 +60,7 @@ export interface KeyframeDragStart {
 /// which is what makes a swept group draggable at all.
 export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
   const ops = useKeyframeOps();
+  const beginGesture = usePointerGesture();
   return useCallback(
     (start: KeyframeDragStart) => {
       if (start.pxPerSec <= 0) return;
@@ -63,7 +68,7 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
       if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
         selectKeyframe(key);
       }
-      start.onPress?.();
+      setKeyframeFocus(start.layerId, start.paramKey);
 
       const groups = retimeGroupsOf({
         selected: getSelectedKeyframes(),
@@ -73,21 +78,21 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
         (g) => g.layerId === start.layerId && g.paramKey === start.paramKey,
       );
       const hit = hitGroup?.track.value.find((k) => k.id === start.kfId);
-      if (hitGroup === undefined || hit === undefined) return;
-
-      const hitUs = hitGroup.tStartUs + hit.t_us;
+      const hitUs = hitGroup && hit ? hitGroup.tStartUs + hit.t_us : null;
       // Alt on an END key is the time-scale, and the opposite end is its
       // anchor: grabbing anything between the ends names no anchor and stays a
       // translate, as does a selection with no span to scale.
       const extent = selectionExtent(groups);
       let anchorUs: number | null = null;
-      if (start.altKey && extent !== null && extent.distinct >= 2) {
+      if (hitUs !== null && start.altKey && extent !== null && extent.distinct >= 2) {
         if (hitUs === extent.firstUs) anchorUs = extent.lastUs;
         else if (hitUs === extent.lastUs) anchorUs = extent.firstUs;
       }
 
       let entries: readonly ParamTrackEntry[] = [];
       let drew = false;
+      // Latched: dragging away and back (or into a clamp) is still a drag.
+      let dragged = false;
       const draw = (next: readonly ParamTrackEntry[]) => {
         entries = next;
         drew = true;
@@ -102,6 +107,8 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
       };
 
       const onMove = (ev: PointerEvent) => {
+        dragged ||= Math.hypot(ev.clientX - start.clientX, ev.clientY - start.clientY) >= 3;
+        if (!dragged || hitUs === null) return;
         const dxUs = ((ev.clientX - start.clientX) / start.pxPerSec) * 1_000_000;
         if (anchorUs === null) {
           draw(translateSelection(groups, dxUs, ops.fps).entries);
@@ -115,10 +122,6 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
       };
 
       const teardown = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", release);
-        window.removeEventListener("pointercancel", cancel);
-        window.removeEventListener("keydown", onKey);
         // Scoped to the groups this gesture set, and skipped entirely when it
         // set none: a press that never moved must not clear a preview it did
         // not put there — an armed menu row's, say.
@@ -126,24 +129,19 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
       };
       /// Escape — and an abort, which is not a release either — leaves the
       /// committed times exactly as the press found them.
-      const cancel = () => teardown();
       /// A release commits whatever the last move computed. Nothing moved (the
       /// pointer never travelled a whole frame, or the walls held) means no
       /// entries, and no entries means no undo row for a gesture that did
       /// nothing.
-      const release = () => {
+      const release = (ev: PointerEvent) => {
+        // Release can carry the last movement even without a pointermove.
+        onMove(ev);
         teardown();
-        if (entries.length > 0) ops.commitEntries(entries);
+        if (!dragged) start.onClick?.();
+        else if (entries.length > 0) ops.commitEntries(entries);
       };
-      const onKey = (ev: KeyboardEvent) => {
-        if (ev.key === "Escape") cancel();
-      };
-
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", release);
-      window.addEventListener("pointercancel", cancel);
-      window.addEventListener("keydown", onKey);
+      beginGesture(start.pointerId, { move: onMove, release, cancel: teardown });
     },
-    [ops],
+    [ops, beginGesture],
   );
 }

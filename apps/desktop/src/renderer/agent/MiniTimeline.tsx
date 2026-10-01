@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
+import { usePointerGesture } from "../hooks/usePointerGesture";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
 /// row + project marker pips + timecode readout. No track lanes — the
@@ -95,10 +96,8 @@ export function MiniTimeline({
     return () => ro.disconnect();
   }, []);
 
-  // Click / drag anywhere on the strip → seek. We use pointer
-  // capture so a drag started inside the strip continues to update
-  // even when the cursor leaves the bar (matches the editor
-  // timeline's UX).
+  // Click / drag anywhere on the strip → seek. The shared pointer session
+  // tracks outside the strip and releases every listener if scrubbing aborts.
   const seekFromClientX = useCallback(
     (clientX: number) => {
       const el = stripRef.current;
@@ -111,19 +110,18 @@ export function MiniTimeline({
     [durationUs, onSeek],
   );
 
+  const beginGesture = usePointerGesture();
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
+      beginGesture(e.pointerId, {
+        move: (ev) => seekFromClientX(ev.clientX),
+        release: () => {},
+        cancel: () => {},
+      });
       seekFromClientX(e.clientX);
-      const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
     },
-    [seekFromClientX],
+    [seekFromClientX, beginGesture],
   );
 
   const width = stripWidth;

@@ -125,6 +125,7 @@ import { useTimelineView } from "./hooks/useTimelineView";
 import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useWheelScroll } from "./hooks/useWheelScroll";
 import { useHeightDrag } from "./hooks/useHeightDrag";
+import { usePointerGesture } from "../hooks/usePointerGesture";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
 import { useIsLayerDragging } from "./layerDragStore";
@@ -1534,23 +1535,21 @@ export function Timeline({
   // Ruler-only seek: the time ruler is the SOLE surface that moves the
   // playhead. Begins a drag-scrub from the ruler's pointerdown. Decoupled
   // from selection — seeking never clears the selected clip.
+  const beginScrubGesture = usePointerGesture();
   const beginRulerScrub = useCallback(
-    (clientX: number) => {
+    (event: React.PointerEvent) => {
       // Hold the view still for the length of the drag: the user is aiming at a
       // point they can see, and a follow-page mid-gesture would move the target
       // out from under the pointer (see `useFollowPlayhead`).
+      beginScrubGesture(event.pointerId, {
+        move: (ev) => seekFromClientX(ev.clientX),
+        release: () => setFollowScrubbing(false),
+        cancel: () => setFollowScrubbing(false),
+      });
       setFollowScrubbing(true);
-      seekFromClientX(clientX);
-      const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
-      const onUp = () => {
-        setFollowScrubbing(false);
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
+      seekFromClientX(event.clientX);
     },
-    [seekFromClientX, setFollowScrubbing],
+    [seekFromClientX, setFollowScrubbing, beginScrubGesture],
   );
 
   // The primary at pointerdown, which `resolveMarqueeSelection` needs on every

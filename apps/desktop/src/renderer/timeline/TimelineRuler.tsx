@@ -137,7 +137,7 @@ export function TimelineRuler({
   /// Begin a playhead scrub at the given client X. The ruler is the sole
   /// scrub surface (ruler-only seek); Timeline.tsx installs the drag-scrub
   /// loop via this callback.
-  onScrub: (clientX: number) => void;
+  onScrub: (event: React.PointerEvent) => void;
 }) {
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
   // The strip's own menu: the in/out and marker COMMANDS. A right-click
@@ -205,7 +205,7 @@ export function TimelineRuler({
         // The scroll body above this strip starts a selection marquee on
         // pointerdown; a press here is a scrub and only a scrub.
         e.stopPropagation();
-        if (e.button === 0) onScrub(e.clientX);
+        if (e.button === 0) onScrub(e);
       }}
       onClick={(e) => e.stopPropagation()}
       // Right-click anywhere on the strip. One menu, because the strip holds one

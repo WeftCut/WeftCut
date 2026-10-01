@@ -416,9 +416,11 @@ function ColorKeyLane({
                 paramKey,
                 kfId: k.id,
                 clientX: e.clientX,
+                clientY: e.clientY,
+                pointerId: e.pointerId,
                 pxPerSec,
                 altKey: e.altKey,
-                onPress: () => focusSeek(k.id),
+                onClick: () => focusSeek(k.id),
               });
             }}
             onContextMenu={(e) => {

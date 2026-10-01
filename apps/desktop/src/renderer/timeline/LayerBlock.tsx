@@ -1180,17 +1180,19 @@ export function LayerBlock({
             const key = paramTrack.value.find((k) => k.id === hitId);
             if (!key) return;
             e.stopPropagation();
-            // Pressing a diamond parks the transport on it, whether or not the
-            // press goes on to drag: the row is the collapsed track's only
-            // handle, so landing on a key IS how you get to that moment.
+            // Only a resolved click parks the transport on the diamond.
+            // The shared gesture owns click/drag arbitration so pressing a
+            // key never relocates the playhead before the intent is known.
             beginKeyframeDrag({
               layerId: layer.id,
               paramKey: focusedParam,
               kfId: hitId,
               clientX: e.clientX,
+              clientY: e.clientY,
+              pointerId: e.pointerId,
               pxPerSec,
               altKey: e.altKey,
-              onPress: () => transportSeek(layer.t_start_us + key.t_us),
+              onClick: () => transportSeek(layer.t_start_us + key.t_us),
             });
           }}
         >
