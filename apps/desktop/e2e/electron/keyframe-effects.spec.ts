@@ -25,7 +25,11 @@ async function capture(page: Page, name: string) {
 }
 
 async function seek(page: Page, us: number) {
+  // The hook is installed before async Pixi initialization registers the
+  // transport. Seeking in that gap is a no-op, even though the timeline exists.
+  await page.waitForFunction(() => (window as any).__weftcutTest?.previewResourceProbe?.() != null)
   await page.evaluate(us => (window as any).__weftcutTest.transportSeekUs(us), us)
+  await expect.poll(() => page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs())).toBe(us)
 }
 
 test('visual effect keyframes: inspector, timeline editing, navigation, easing, drag and instance identity', async () => {
