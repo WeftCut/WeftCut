@@ -1,4 +1,4 @@
-// The marquee gesture: one pointerdown handler that four timeline surfaces opt
+// The marquee gesture: one pointerdown handler that track editing surfaces opt
 // into explicitly. A whitelist rather than a root-level funnel, so a future
 // clickable child does not have to remember to `stopPropagation` out of it.
 //
@@ -38,9 +38,9 @@ const EDGE_BAND_PX = 28;
 const EDGE_SPEED_PX = 12;
 
 /// Where a background click landed, for the surface that decides what it means.
-/// `trackId` is the lane the press started on — null from the drop strip, the
-/// scroll body and a sub-lane, which sit on no lane — and `canvasX` is the
-/// press's x in the `timeline-canvas` space, which is the ruler's own axis
+/// `trackId` is the lane the press started on — null from the background and
+/// a sub-lane, which name no clip lane — and `canvasX` is the
+/// press's x in the `timeline-canvas` overlay space, sharing the ruler's axis
 /// (x = 0 is t = 0). Together they are what a lane click needs to resolve to the
 /// gap under it (ADR 0069); the gesture itself still knows nothing of gaps.
 export interface BackgroundPress {
@@ -90,7 +90,7 @@ export function beginMarquee(
   if (e.button !== 0) return;
   // Event-time read, deliberately not a subscription: blade mode hijacks the
   // timeline's pointer surface, and `useActiveTool()` here would re-render all
-  // four anchor surfaces on every tool switch (`state/toolStore.ts`).
+  // anchor surfaces on every tool switch (`state/toolStore.ts`).
   if (activeTool() === "blade") return;
   const canvas = anchor.canvasRef.current;
   if (canvas === null) return;

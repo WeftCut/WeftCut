@@ -564,8 +564,8 @@ test.describe("timeline marquee — the rectangles are the ones we think they ar
       const playhead = await rectOf(page.locator('[data-testid="timeline-playhead"]'));
       expect(playhead.bottom).toBeGreaterThan(last.bottom + 100);
       const headerColumnBottom = await page.evaluate(() => {
-        const corner = document.querySelector('[data-testid="timeline-ruler-corner"]');
-        return corner?.parentElement?.getBoundingClientRect().bottom ?? null;
+        const header = document.querySelector('[data-testid="timeline-track-header-background"]');
+        return header?.getBoundingClientRect().bottom ?? null;
       });
       expect(headerColumnBottom).not.toBeNull();
       expect(headerColumnBottom!).toBeGreaterThan(last.bottom + 100);

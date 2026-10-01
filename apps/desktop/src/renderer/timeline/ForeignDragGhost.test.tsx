@@ -200,6 +200,8 @@ function mountGhost(
     ["d-2", boxed(DEST_LANE_2)],
   ]);
   document.body.appendChild(canvas);
+  document.body.appendChild(strip);
+  detach.push(strip);
   detach.push(canvas);
 
   const srcSurface = boxed(SRC_SURFACE);
@@ -224,6 +226,7 @@ function mountGhost(
         tracks={tracks}
         orderedTracks={tracks.map((t) => ({ track: t, isRoleSectionStart: false }))}
         laneEls={{ current: lanes }}
+        trackViewportRef={{ current: boxed({ ...DEST_SURFACE, left: 440, top: 34 }) }}
         dropStripEl={{ current: strip }}
         canvasRef={{ current: canvas }}
         pxPerSec={DEST_PX_PER_SEC}
@@ -244,7 +247,7 @@ function mountGhost(
 
   const ghosts = () =>
     Array.from(
-      canvas.querySelectorAll<HTMLElement>(
+      document.querySelectorAll<HTMLElement>(
         '[data-testid="timeline-foreign-ghost"]',
       ),
     );

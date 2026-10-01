@@ -13,7 +13,6 @@ import { DROP_STRIP_HEIGHT_PX } from "./geometry";
 import type { PendingLayerPlacement } from "./LayerBlock";
 import { placementRefuses, SPAWN_TRACK_ID } from "./placement";
 import { playheadClockUs } from "../state/playheadProjection";
-import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
@@ -405,9 +404,6 @@ export function DropStrip({
   // cross-Panel ghost applies to this row from outside it, which is what makes
   // the two boxes coincide instead of merely resembling each other.
   const stripGhostBand = dragGhostBand(DROP_STRIP_HEIGHT_PX, SPAWN_TRACK_ID);
-  // The strip is a clip surface for selection too: a sweep may start on the
-  // reserved row and reach down into the lanes.
-  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });
   return (
     <div
       ref={elRef}
@@ -426,7 +422,6 @@ export function DropStrip({
                 : ""
       }`}
       style={{ height: DROP_STRIP_HEIGHT_PX }}
-      onPointerDown={onMarqueeDown}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}

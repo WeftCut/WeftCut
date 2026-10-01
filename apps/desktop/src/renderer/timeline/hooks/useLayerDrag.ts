@@ -19,8 +19,6 @@ import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
   layerOverlapClass,
-  trackIdAtClientY,
-  type MeasuredTrackRow,
   type VisualTrack,
 } from "../geometry";
 import { type PendingLayerPlacement } from "../LayerBlock";
@@ -34,6 +32,7 @@ import {
 } from "../layerDragStore";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
 import { refuseCrossCompositionCopy } from "../crossCompositionRefusal";
+import { timelineDestination } from "../timelineDestination";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
 import { playheadClockUs } from "../../state/playheadProjection";
 import {
@@ -150,6 +149,7 @@ export function useLayerDrag(opts: {
   /// separately and folded into the same measured rows instead — one band rule
   /// still decides every destination.
   dropStripEl: React.RefObject<HTMLElement | null>;
+  trackViewportRef: React.RefObject<HTMLElement | null>;
   pxPerSec: number;
   fpsNum: number;
   fpsDen: number;
@@ -174,6 +174,7 @@ export function useLayerDrag(opts: {
     orderedTracks,
     laneEls,
     dropStripEl,
+    trackViewportRef,
     pxPerSec,
     fpsNum,
     fpsDen,
@@ -457,32 +458,11 @@ export function useLayerDrag(opts: {
   /// Cost is one forced reflow per pointer event; the remaining rect reads then
   /// hit clean layout.
   const destinationUnderPointer = useCallback(
-    (clientY: number): string | null => {
-      const rows: MeasuredTrackRow[] = [];
-      // Walk `orderedTracks`, not the registry: only rendered lanes are
-      // droppable, and the AB display filter hides some tracks entirely.
-      for (const { track } of orderedTracks) {
-        const el = laneEls.current.get(track.id);
-        if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        rows.push({ trackId: track.id, top: rect.top, bottom: rect.bottom });
-      }
-      // The strip joins the SAME row list, so the seam between it and the
-      // topmost lane is decided by the one band rule that already hands an
-      // expanded track's sub-lanes to their owner. A second hit-test would be a
-      // second chance to disagree with this one at exactly that boundary.
-      const stripEl = dropStripEl.current;
-      if (stripEl) {
-        const rect = stripEl.getBoundingClientRect();
-        rows.push({
-          trackId: SPAWN_TRACK_ID,
-          top: rect.top,
-          bottom: rect.bottom,
-        });
-      }
-      return trackIdAtClientY(rows, clientY);
-    },
-    [dropStripEl, laneEls, orderedTracks],
+    (clientX: number, clientY: number): string | null => timelineDestination({
+      viewport: trackViewportRef.current, strip: dropStripEl.current,
+      lanes: laneEls.current, orderedTracks,
+    }, clientX, clientY)?.trackId ?? null,
+    [dropStripEl, laneEls, orderedTracks, trackViewportRef],
   );
 
   /// Snap a raw drag delta so the dragged edge / clip-start lands on
@@ -677,7 +657,7 @@ export function useLayerDrag(opts: {
           : null;
       const hitTrackId =
         state.kind === "move" && movedVertically && foreignCompositionId === null
-          ? destinationUnderPointer(clientY)
+          ? destinationUnderPointer(clientX, clientY)
           : null;
       // Alt+drag lowers to `pasteLayers`, which needs a lane that already exists,
       // and there is no create-and-paste operation — so the strip is simply not a

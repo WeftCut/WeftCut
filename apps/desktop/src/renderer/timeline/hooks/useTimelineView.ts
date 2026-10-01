@@ -44,6 +44,7 @@ export function useTimelineView(opts: {
   /// summary names a root: it shows no composition, so it remembers nothing.
   compositionId: string | null;
   rootRef: React.RefObject<HTMLDivElement | null>;
+  eventRef?: React.RefObject<HTMLDivElement | null>;
   tracks: TrackSummary[];
   durationUs: number;
 }): {
@@ -59,7 +60,7 @@ export function useTimelineView(opts: {
   /// straight to a shortcut handler.
   zoomBySteps: (steps: number, anchorTimeUs: number) => void;
 } {
-  const { compositionId, rootRef, tracks, durationUs } = opts;
+  const { compositionId, rootRef, eventRef = rootRef, tracks, durationUs } = opts;
   const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
   const [trackHeights, setTrackHeights] = useState<Record<string, number>>({});
   // Track ids whose keyframe sub-lanes are expanded. Persisted to view.json.
@@ -250,11 +251,12 @@ export function useTimelineView(opts: {
       setPendingScrollLeftPx(null);
       setPxPerSec(newPxPerSec);
     };
-    root.addEventListener("wheel", onWheel, { passive: false });
+    const eventHost = eventRef.current ?? root;
+    eventHost.addEventListener("wheel", onWheel, { passive: false });
     return () => {
-      root.removeEventListener("wheel", onWheel);
+      eventHost.removeEventListener("wheel", onWheel);
     };
-  }, [rootRef]);
+  }, [rootRef, eventRef]);
 
   /// Keyboard zoom. Same bounds and same re-anchor as the wheel; the anchor is
   /// the playhead instead of the cursor, and the step is a doubling instead of

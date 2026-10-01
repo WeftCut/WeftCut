@@ -14,6 +14,7 @@ import { wheelScrollPlan } from "../wheelScroll";
 /// on every unrelated settings write.
 export function useWheelScroll(
   rootRef: React.RefObject<HTMLDivElement | null>,
+  eventRef: React.RefObject<HTMLDivElement | null> = rootRef,
 ): void {
   useEffect(() => {
     const root = rootRef.current;
@@ -39,7 +40,8 @@ export function useWheelScroll(
     // Not passive: the handler calls preventDefault whenever it claims the
     // gesture, and React's JSX `onWheel` is registered passive in modern React,
     // where preventDefault silently fails.
-    root.addEventListener("wheel", onWheel, { passive: false });
-    return () => root.removeEventListener("wheel", onWheel);
-  }, [rootRef]);
+    const eventHost = eventRef.current ?? root;
+    eventHost.addEventListener("wheel", onWheel, { passive: false });
+    return () => eventHost.removeEventListener("wheel", onWheel);
+  }, [rootRef, eventRef]);
 }

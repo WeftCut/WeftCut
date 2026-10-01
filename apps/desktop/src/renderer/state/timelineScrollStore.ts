@@ -5,9 +5,9 @@
 // keyframe sub-lane and layer chip on every wheel tick — the regression class
 // e2e/scripts/memory-ratchet.mjs exists to catch.
 //
-// Timeline's scroll container publishes here (rAF-coalesced); TimelineRuler is
-// the only subscriber and re-renders alone, which is what lets its tick set
-// follow the viewport instead of spanning the whole project.
+// Timeline's track viewport publishes here (rAF-coalesced). Fixed chrome rows
+// synchronize their transforms imperatively; the ruler and marker leaves use
+// the offset to window their painted contents without rendering the track tree.
 //
 // Keyed by composition, because a timeline Panel is one composition (ADR 0053)
 // and two of them scroll independently: one shared offset would have every

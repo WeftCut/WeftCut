@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -97,6 +96,7 @@ import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip, DropStripHeader, DropStripSeam } from "./DropStrip";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
+import { TimelineFixedRow } from "./TimelineFixedRow";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -324,6 +324,7 @@ export function Timeline({
     layerId: string;
     atUs: number;
   } | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
@@ -336,14 +337,14 @@ export function Timeline({
     toggleExpanded,
     viewportWidthPx,
     zoomBySteps,
-  } = useTimelineView({ compositionId, rootRef, tracks, durationUs });
+  } = useTimelineView({ compositionId, rootRef, eventRef: shellRef, tracks, durationUs });
 
   // Publish this Panel's surface so a clip drag that wanders out of it can name
   // the composition it wandered into (`timelineSurfaces.ts`). Only while on
   // screen: a tab behind another still holds a rect, and one that overlapped a
   // visible neighbour would make an ordinary in-Panel drag look like a crossing.
   useEffect(() => {
-    const el = rootRef.current;
+    const el = shellRef.current;
     if (compositionId === null || !visible || el === null) return;
     return registerTimelineSurface(compositionId, el);
   }, [compositionId, visible]);
@@ -352,7 +353,7 @@ export function Timeline({
   // the same node because the two gestures are separate concerns and neither
   // reads the other's state; they stay disjoint by keying on modifiers
   // (Ctrl/Alt zoom, bare/Shift scroll), not on listener order.
-  useWheelScroll(rootRef);
+  useWheelScroll(rootRef, shellRef);
 
   // Horizontal scroll-to-time for palette jumps.
   // pxPerSec is React state; the registered closure reads it through a ref
@@ -906,6 +907,7 @@ export function Timeline({
       linkByLayerId,
       orderedTracks,
       laneEls: laneElsRef,
+      trackViewportRef: rootRef,
       dropStripEl: dropStripElRef,
       pxPerSec,
       fpsNum,
@@ -1692,7 +1694,7 @@ export function Timeline({
   /// On a LANE, blank space between two clips is a gap, and the click selects it
   /// (ADR 0069) — Premiere's and Resolve's gesture, with no modifier. Only a
   /// press that resolves to a gap through the one gap rule selects: trailing
-  /// space, an empty lane, the drop strip and the scroll body all still clear.
+  /// space, an empty lane and the track background all still clear.
   /// A locked lane's blank space clears too, for `marqueeHitClips`'s reason —
   /// its gap can never close (its own downstream clip would have to move), so
   /// selecting it would arm a Delete the actor always refuses. The keyframe
@@ -1730,7 +1732,7 @@ export function Timeline({
   const groupDepthTint = `color-mix(in srgb, var(--card) ${100 - tintPct}%, var(--foreground))`;
 
   // Memoized: the provider hands this to every anchor surface, so a fresh
-  // object would re-render all four on every Timeline render.
+  // object would re-render every anchor on every Timeline render.
   const marqueeAnchor = useMemo<MarqueeAnchor>(
     () => ({
       canvasRef,
@@ -1744,157 +1746,79 @@ export function Timeline({
 
   const dropSeamIntoLanePx =
     orderedTracks.length > 0 ? DROP_STRIP_SEAM_OVERLAP_PX : 0;
+  const firstTrackHasLinkBadge = orderedTracks[0]?.track.layers.some(
+    (layer) => (linkTabByLayerId.get(layer.id)?.hidden.length ?? 0) > 0,
+  ) ?? false;
 
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
-    <KeyframeBatchContext.Provider value={keyframeBatch}>
-    <div
-      ref={rootRef}
-      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
-        insideGroup ? "" : "bg-card"
-      } ${isLayerDragging ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
-      // One step off the panel surface for every depth below the root, capped so
-      // a deep nest cannot walk the background into the foreground. Resolve tints
-      // a compound clip's timeline the same way, and it is the one signal that
-      // reads without leaving the timeline: the tab says which composition this
-      // is, the tint says how deep it sits, and neither can be scrolled past.
-      //
-      // The armed cursor is inline rather than a `cursor-*` class: three of
-      // those are already conditional on this element, and Tailwind's emit
-      // order — not the class list's — would decide which one won.
-      style={{
-        ...(insideGroup ? { backgroundColor: groupDepthTint } : {}),
-        ...(armedRegion !== null ? { cursor: "not-allowed" } : {}),
-      }}
-      // Capture phase, because the clip blocks stop every press they take: the
-      // one press that must NOT spend the arm is a press on the armed clip, and
-      // only a handler that runs before the block's own can tell the two apart.
-      // Nothing else about the press changes — it goes on to be handled
-      // normally.
-      onPointerDownCapture={
-        armedRegion === null
-          ? undefined
-          : (e) => {
-              const block = (e.target as Element | null)?.closest?.(
-                "[data-layer-id]",
-              );
-              if (
-                block?.getAttribute("data-layer-id") !== armedRegion.layerId
-              ) {
-                disarmRegionSelect();
-              }
-            }
-      }
-    >
-      {/* Renders nothing. A leaf so the trim preview's per-frame seek stays a
-          leaf subscription — read here, it would re-render every lane. */}
-      <LayerDragTrimMonitor
-        compositionId={compositionId}
-        fpsNum={fpsNum}
-        fpsDen={fpsDen}
-      />
-      {/* `min-h-full` so the lanes' container fills the panel even on a short
-          project: the leftover band below the last track then belongs to the
-          scrolling body, which makes it a `clip` anchor — click it to clear,
-          or start a box there and drag up over the tracks. Owned by the root
-          instead, that band reached no anchor at all and was dead space. The
-          playhead and the header column's divider run the panel's full height
-          as a result, which is what they do in every other NLE. */}
-      <div className="flex min-h-full min-w-max">
-        {/* sticky header column */}
-        <div className="sticky left-0 z-10 flex-none border-r border-border bg-card" style={{ width: HEADER_COL_PX }}>
-          <div
-            data-testid="timeline-ruler-corner"
-            className="sticky top-0 z-[1] h-5 border-b border-border-soft bg-card"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          /> {/* ruler corner */}
-          {/* The two columns paint the same rows in the same order; a row
-              present in one and missing from the other slides every header
-              beneath it out of line with its lane. The next two are the paired
-              halves of the marker lane and the drop strip.
-
-              Both halves of the marker lane read `markers_visible` themselves,
-              so the row cannot vanish from one column and stay in the other.
-              The header names the row; it is not a spacer like the drop
-              strip's, but it is exactly as tall. */}
-          <MarkerLaneHeader />
-          <DropStripHeader />
-          <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
-          {orderedTracks.map(({ track }) => (
-            <Fragment key={track.id}>
-              <TrackHeader
-                compositionId={compositionId}
-                track={track}
-                height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
-                isRevealed={track.id === (revealedTrackId ?? null)}
-                isExpanded={expandedTracks.has(track.id)}
-                hasKeyframes={trackKeyframeProperties(track).length > 0}
-                onToggleExpand={() => toggleExpanded(track.id)}
-                onMutated={onMutated}
-              />
-              {expandedTracks.has(track.id) && (
-                <KeyframeLaneHeaders
-                  track={track}
-                  compositionId={compositionId}
-                  fpsNum={fpsNum}
-                  fpsDen={fpsDen}
-                  visible={visible}
-                  onCommitParamTrack={onCommitParamTrack}
-                />
-              )}
-            </Fragment>
-          ))}
-        </div>
-        {/* scrolling body. The marquee anchors HERE and not on the root: the
-            root spans the sticky header column, so a box could start from the
-            header's blank space. This column excludes it structurally, with no
-            HEADER_COL_PX coordinate test. Timeline provides the anchor context,
-            so it cannot consume its own provider — hence `beginMarquee`. */}
+      <KeyframeBatchContext.Provider value={keyframeBatch}>
         <div
-          className="relative grow"
-          onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}
+          ref={shellRef}
+          data-testid="timeline-layout"
+          className={`relative grid min-h-0 min-w-0 w-full flex-1 grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden ${insideGroup ? "" : "bg-card"}`}
+          // One step off the panel surface for every depth below the root, capped so
+          // a deep nest cannot walk the background into the foreground. Resolve tints
+          // a compound clip's timeline the same way, and it is the one signal that
+          // reads without leaving the timeline: the tab says which composition this
+          // is, the tint says how deep it sits, and neither can be scrolled past.
+          //
+          style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
         >
-          <TimelineRuler
+          {/* Renders nothing. A leaf so the trim preview's per-frame seek stays a
+          leaf subscription — read here, it would re-render every lane. */}
+          <LayerDragTrimMonitor
             compositionId={compositionId}
-            pxPerSec={pxPerSec}
-            totalSec={totalSec}
-            widthPx={widthPx}
-            viewportWidthPx={viewportWidthPx}
-            fpsNum={fpsNum}
-            fpsDen={fpsDen}
-            onScrub={beginRulerScrub}
-          />
-          {/* Above the drop strip because markers belong to the RULER family —
-              they measure time — while the strip belongs to the track family. */}
-          <MarkerLane
-            compositionId={compositionId}
-            pxPerSec={pxPerSec}
-            widthPx={widthPx}
-            viewportWidthPx={viewportWidthPx}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
           />
-          <div
-            ref={canvasRef}
-            data-testid="timeline-canvas"
-            className="relative min-w-full"
-            style={{ width: widthPx }}
-          >
-            <DropStrip
-              elRef={dropStripElRef}
-              compositionId={compositionId}
-              pxPerSec={pxPerSec}
-              fpsNum={fpsNum}
-              fpsDen={fpsDen}
-              mediaDropSnap={mediaDropSnap}
-              pendingPlacements={pendingPlacements}
-              pendingLayerById={pendingLayerById}
-              onMediaDrop={onMediaDrop}
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx}
+            header={<div data-testid="timeline-ruler-corner" className="h-5 border-b border-border-soft bg-card" />}>
+            <TimelineRuler
+              compositionId={compositionId} pxPerSec={pxPerSec} totalSec={totalSec}
+              widthPx={widthPx} viewportWidthPx={viewportWidthPx}
+              fpsNum={fpsNum} fpsDen={fpsDen} onScrub={beginRulerScrub}
             />
-            <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
-            {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
-            {/*
+            <TimelinePlayhead compositionId={compositionId} anchorFrame={anchorFrame}
+              pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} head />
+          </TimelineFixedRow>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<MarkerLaneHeader />}>
+            <MarkerLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
+              viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
+          </TimelineFixedRow>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<DropStripHeader />}>
+            <DropStrip elRef={dropStripElRef} compositionId={compositionId} pxPerSec={pxPerSec}
+              fpsNum={fpsNum} fpsDen={fpsDen} mediaDropSnap={mediaDropSnap}
+              pendingPlacements={pendingPlacements} pendingLayerById={pendingLayerById} onMediaDrop={onMediaDrop} />
+          </TimelineFixedRow>
+          <div ref={rootRef} data-testid="timeline-track-viewport"
+            className={`scrollbar-hidden relative isolate min-h-0 overflow-auto ${isLayerDragging ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
+            style={armedRegion !== null ? { cursor: "not-allowed" } : undefined}
+            // Capture phase, because the clip blocks stop every press they take: the
+            // one press that must NOT spend the arm is a press on the armed clip, and
+            // only a handler that runs before the block's own can tell the two apart.
+            // Nothing else about the press changes — it goes on to be handled
+            // normally.
+            onPointerDownCapture={
+              armedRegion === null
+                ? undefined
+                : (e) => {
+                  const block = (e.target as Element | null)?.closest?.(
+                    "[data-layer-id]",
+                  );
+                  if (
+                    block?.getAttribute("data-layer-id") !== armedRegion.layerId
+                  ) {
+                    disarmRegionSelect();
+                  }
+                }
+            }
+          >
+            <div className="relative flex min-h-full flex-col" style={{ width: HEADER_COL_PX + widthPx }}>
+              <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
+              {/* Reserve the first lane's upward link badge inside the viewport. */}
+              {firstTrackHasLinkBadge && <div className="h-3 shrink-0" />}
+              {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
               is the top (see `docs/data-model.md`). `visualOrderedTracks`
               reverses that, so the tail of the array is the TOP row here — it
@@ -1902,140 +1826,161 @@ export function Timeline({
               by kind. The role-less section is the one at the top, which is
               where the strip above spawns into.
             */}
-            {orderedTracks.map(({ track }) => (
-              <Fragment key={track.id}>
-              <TrackLane
-                track={track}
-                compositionId={compositionId}
-                registerLaneEl={registerLaneEl}
-                pxPerSec={pxPerSec}
-                height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
-                isExpanded={expandedTracks.has(track.id)}
-                selectedLayerId={primaryLayerId}
-                selectedLayerIds={selectedLayerIds}
-                selectedGap={
-                  selectedGap !== null && selectedGap.trackId === track.id
-                    ? selectedGap
-                    : null
-                }
-                transitions={transitions}
-                selectedTransitionId={selectedTransitionId}
-                linkByLayerId={linkByLayerId}
-                linkTabByLayerId={linkTabByLayerId}
-                pendingPlacements={pendingPlacements}
-                pendingLayerById={pendingLayerById}
-                dragLayerById={dragLayerById}
-                bladeMode={bladeMode}
-                onBladeSplit={splitFromClientX}
-                onBladePreview={updateBladePreview}
-                onSelectFromClick={selectFromClick}
-                onDragStart={(state) => setDrag(state)}
-                onContextMenu={onContextMenu}
-                onChipContextMenu={onChipContextMenu}
-                onGapContextMenu={onGapContextMenu}
-                onChipResize={(args) => void onChipResize(args)}
-                onCommitLabel={onCommitLabel}
-                onCommitGroupLabel={onCommitGroupLabel}
-                onMediaDrop={onMediaDrop}
-                isRevealed={track.id === (revealedTrackId ?? null)}
-                isResizing={heightDrag !== null}
-                onHeightDragStart={beginHeightDrag(track.id)}
-                fpsNum={fpsNum}
-                fpsDen={fpsDen}
-                mediaDropSnap={mediaDropSnap}
-              />
-              {expandedTracks.has(track.id) && (
-                <KeyframeLane
-                  track={track}
-                  pxPerSec={pxPerSec}
-                  registerSubLaneEl={registerSubLaneEl}
-                  onCommitParamTrack={onCommitParamTrack}
-                />
-              )}
-              </Fragment>
-            ))}
-            {bladePreview && (
-              <BladeCutPreview
-                x={(bladePreview.atUs / 1_000_000) * pxPerSec}
-                label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
-                width={widthPx}
-              />
-            )}
-            <OutOfRangeDim pxPerSec={pxPerSec} />
-            {/* Draws only while a clip from ANOTHER Panel is over this one.
+              {orderedTracks.map(({ track }) => (
+                <div key={track.id} className="grid" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
+                  <div className="sticky left-0 z-10 border-r border-border bg-card">
+                    <TrackHeader compositionId={compositionId} track={track}
+                      height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+                      isRevealed={track.id === (revealedTrackId ?? null)}
+                      isExpanded={expandedTracks.has(track.id)}
+                      hasKeyframes={trackKeyframeProperties(track).length > 0}
+                      onToggleExpand={() => toggleExpanded(track.id)} onMutated={onMutated} />
+                  </div>
+                  <TrackLane
+                    track={track}
+                    compositionId={compositionId}
+                    registerLaneEl={registerLaneEl}
+                    pxPerSec={pxPerSec}
+                    height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+                    isExpanded={expandedTracks.has(track.id)}
+                    selectedLayerId={primaryLayerId}
+                    selectedLayerIds={selectedLayerIds}
+                    selectedGap={
+                      selectedGap !== null && selectedGap.trackId === track.id
+                        ? selectedGap
+                        : null
+                    }
+                    transitions={transitions}
+                    selectedTransitionId={selectedTransitionId}
+                    linkByLayerId={linkByLayerId}
+                    linkTabByLayerId={linkTabByLayerId}
+                    pendingPlacements={pendingPlacements}
+                    pendingLayerById={pendingLayerById}
+                    dragLayerById={dragLayerById}
+                    bladeMode={bladeMode}
+                    onBladeSplit={splitFromClientX}
+                    onBladePreview={updateBladePreview}
+                    onSelectFromClick={selectFromClick}
+                    onDragStart={(state) => setDrag(state)}
+                    onContextMenu={onContextMenu}
+                    onChipContextMenu={onChipContextMenu}
+                    onGapContextMenu={onGapContextMenu}
+                    onChipResize={(args) => void onChipResize(args)}
+                    onCommitLabel={onCommitLabel}
+                    onCommitGroupLabel={onCommitGroupLabel}
+                    onMediaDrop={onMediaDrop}
+                    isRevealed={track.id === (revealedTrackId ?? null)}
+                    isResizing={heightDrag?.trackId === track.id}
+                    onHeightDragStart={beginHeightDrag(track.id)}
+                    fpsNum={fpsNum}
+                    fpsDen={fpsDen}
+                    mediaDropSnap={mediaDropSnap}
+                  />
+                  {expandedTracks.has(track.id) && (
+                    <>
+                      <div className="sticky left-0 z-10 border-r border-border bg-card">
+                        <KeyframeLaneHeaders track={track} compositionId={compositionId}
+                          fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} onCommitParamTrack={onCommitParamTrack} />
+                      </div>
+                      <div>
+                        <KeyframeLane track={track} pxPerSec={pxPerSec}
+                          registerSubLaneEl={registerSubLaneEl} onCommitParamTrack={onCommitParamTrack} />
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="grid min-h-4 flex-1" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
+                <div data-testid="timeline-track-header-background" className="sticky left-0 z-10 border-r border-border bg-card" />
+                <div data-testid="timeline-track-background" onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}>
+                  {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
+                </div>
+              </div>
+              <div ref={canvasRef} data-testid="timeline-canvas" className="pointer-events-none absolute inset-y-0"
+                style={{ left: HEADER_COL_PX, width: widthPx }}>
+                {bladePreview && (
+                  <BladeCutPreview
+                    x={(bladePreview.atUs / 1_000_000) * pxPerSec}
+                    label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
+                    width={widthPx}
+                  />
+                )}
+                <OutOfRangeDim pxPerSec={pxPerSec} />
+                {/* Draws only while a clip from ANOTHER Panel is over this one.
                 A leaf, so following the pointer costs this Panel one render
                 and nothing below it. */}
-            <ForeignDragGhost
-              compositionId={compositionId}
-              tracks={tracks}
-              orderedTracks={orderedTracks}
-              laneEls={laneElsRef}
-              dropStripEl={dropStripElRef}
-              canvasRef={canvasRef}
-              pxPerSec={pxPerSec}
-              fpsNum={fpsNum}
-              fpsDen={fpsDen}
-              snapTracks={visibleSnapTracks}
-              links={links}
-              linkByLayerId={linkByLayerId}
-              tailSnapEnabled={tailSnapEnabled}
-              tailSnapStrengthPx={tailSnapStrengthPx}
-            />
-            <MarqueeOverlay />
+                <ForeignDragGhost
+                  compositionId={compositionId}
+                  tracks={tracks}
+                  orderedTracks={orderedTracks}
+                  laneEls={laneElsRef}
+                  trackViewportRef={rootRef}
+                  dropStripEl={dropStripElRef}
+                  canvasRef={canvasRef}
+                  pxPerSec={pxPerSec}
+                  fpsNum={fpsNum}
+                  fpsDen={fpsDen}
+                  snapTracks={visibleSnapTracks}
+                  links={links}
+                  linkByLayerId={linkByLayerId}
+                  tailSnapEnabled={tailSnapEnabled}
+                  tailSnapStrengthPx={tailSnapStrengthPx}
+                />
+                <MarqueeOverlay />
+                <TimelinePlayhead
+                  compositionId={compositionId}
+                  anchorFrame={anchorFrame}
+                  pxPerSec={pxPerSec}
+                  fpsNum={fpsNum}
+                  fpsDen={fpsDen}
+                  visible={visible}
+                />
+              </div>
+            </div>
           </div>
-          <TimelinePlayhead
-            compositionId={compositionId}
-            anchorFrame={anchorFrame}
-            pxPerSec={pxPerSec}
+        </div>
+        {contextMenu && (
+          <LayerContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            layerId={contextMenu.layerId}
+            layerKind={contextMenu.layerKind}
+            tracks={tracks}
+            links={links}
+            escapeLink={contextMenu.escapeLink}
+            transitionCut={contextMenu.cut}
+            onClose={() => setContextMenu(null)}
+            onRename={onRename}
+            onRenameGroup={onRenameGroup}
+            onToggleEnabled={onToggleEnabled}
+            onSeparateAudio={onSeparateAudio}
+            onPrebakeNow={onPrebakeNow}
+            onMarkShotCuts={(id) => void onMarkShotCuts(id)}
+            onAddTransition={(cut, kind, direction) =>
+              void onAddTransition(cut, kind, direction)
+            }
+          />
+        )}
+        {chipMenu && (
+          <TransitionChipMenu
+            x={chipMenu.x}
+            y={chipMenu.y}
+            transition={chipMenu.transition}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
-            visible={visible}
+            onClose={() => setChipMenu(null)}
+            onUpdate={(args) => void onChipMenuUpdate(args)}
+            onDelete={(id) => void onChipMenuDelete(id)}
           />
-        </div>
-      </div>
-    </div>
-    {contextMenu && (
-      <LayerContextMenu
-        x={contextMenu.x}
-        y={contextMenu.y}
-        layerId={contextMenu.layerId}
-        layerKind={contextMenu.layerKind}
-        tracks={tracks}
-        links={links}
-        escapeLink={contextMenu.escapeLink}
-        transitionCut={contextMenu.cut}
-        onClose={() => setContextMenu(null)}
-        onRename={onRename}
-        onRenameGroup={onRenameGroup}
-        onToggleEnabled={onToggleEnabled}
-        onSeparateAudio={onSeparateAudio}
-        onPrebakeNow={onPrebakeNow}
-        onMarkShotCuts={(id) => void onMarkShotCuts(id)}
-        onAddTransition={(cut, kind, direction) =>
-          void onAddTransition(cut, kind, direction)
-        }
-      />
-    )}
-    {chipMenu && (
-      <TransitionChipMenu
-        x={chipMenu.x}
-        y={chipMenu.y}
-        transition={chipMenu.transition}
-        fpsNum={fpsNum}
-        fpsDen={fpsDen}
-        onClose={() => setChipMenu(null)}
-        onUpdate={(args) => void onChipMenuUpdate(args)}
-        onDelete={(id) => void onChipMenuDelete(id)}
-      />
-    )}
-    {gapMenu && (
-      <GapContextMenu
-        x={gapMenu.x}
-        y={gapMenu.y}
-        onClose={() => setGapMenu(null)}
-      />
-    )}
-    </KeyframeBatchContext.Provider>
+        )}
+        {gapMenu && (
+          <GapContextMenu
+            x={gapMenu.x}
+            y={gapMenu.y}
+            onClose={() => setGapMenu(null)}
+          />
+        )}
+      </KeyframeBatchContext.Provider>
     </MarqueeAnchorContext.Provider>
   );
 }
@@ -2116,6 +2061,7 @@ function TimelinePlayhead({
   fpsNum,
   fpsDen,
   visible,
+  head = false,
 }: {
   compositionId: string | null;
   anchorFrame: AnchorFrame | null;
@@ -2123,6 +2069,7 @@ function TimelinePlayhead({
   fpsNum: number;
   fpsDen: number;
   visible: boolean;
+  head?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const shadowRef = useRef<HTMLDivElement | null>(null);
@@ -2152,7 +2099,7 @@ function TimelinePlayhead({
   return (
     <div
       ref={ref}
-      data-testid="timeline-playhead"
+      data-testid={head ? "timeline-ruler-playhead" : "timeline-playhead"}
       className="pointer-events-none absolute bottom-0 top-0 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
       style={{
         left: ((firstPaintUs ?? 0) / 1_000_000) * pxPerSec,
@@ -2161,11 +2108,11 @@ function TimelinePlayhead({
     >
       <div
         ref={shadowRef}
-        data-testid="timeline-playhead-frame-shadow"
+        data-testid={head ? "timeline-ruler-frame-shadow" : "timeline-playhead-frame-shadow"}
         className="pointer-events-none absolute bottom-0 top-0 bg-red-500/10"
         style={{ display: "none" }}
       />
-      <div
+      {head && <div
         data-testid="timeline-playhead-head"
         className="sticky top-0 h-4 w-0"
       >
@@ -2177,7 +2124,7 @@ function TimelinePlayhead({
           data-testid="timeline-playhead-head-shape"
           className="absolute -left-1.5 top-0.5 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]"
         />
-      </div>
+      </div>}
     </div>
   );
 }

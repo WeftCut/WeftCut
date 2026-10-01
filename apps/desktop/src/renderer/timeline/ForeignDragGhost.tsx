@@ -26,6 +26,8 @@
 // is: only the composition under the pointer can name a lane and a time on its
 // own axis, so it is the one that sends `move_layers_to_composition`.
 
+import { createPortal } from "react-dom";
+import { timelineDestination } from "./timelineDestination";
 import { useEffect, useRef } from "react";
 import {
   moveLayersToComposition,
@@ -40,8 +42,6 @@ import { playheadClockUs } from "../state/playheadProjection";
 import { DragGhostChip, dragGhostBand } from "./DragGhostChip";
 import {
   overlapClassForKind,
-  trackIdAtClientY,
-  type MeasuredTrackRow,
   type VisualTrack,
 } from "./geometry";
 import {
@@ -74,6 +74,7 @@ export interface ForeignDragGhostProps {
   /// drag measures them (`useLayerDrag`'s `destinationUnderPointer`).
   laneEls: React.RefObject<Map<string, HTMLElement>>;
   dropStripEl: React.RefObject<HTMLElement | null>;
+  trackViewportRef: React.RefObject<HTMLElement | null>;
   /// `timeline-canvas` — this component's own positioning context, and the
   /// origin the pointer's x is turned into a time against.
   canvasRef: React.RefObject<HTMLElement | null>;
@@ -314,25 +315,11 @@ function resolveForeignDrop(
   // block above was drawn with, and the set's phase would land off its preview.
   const anchorTStartUs = anchor.originalTStart + phaseDeltaUs;
 
-  const rows: MeasuredTrackRow[] = [];
-  const rowRects = new Map<string, { top: number; height: number }>();
-  for (const { track } of opts.orderedTracks) {
-    const el = opts.laneEls.current.get(track.id);
-    if (!el) continue;
-    const rect = el.getBoundingClientRect();
-    rows.push({ trackId: track.id, top: rect.top, bottom: rect.bottom });
-    rowRects.set(track.id, { top: rect.top, height: rect.height });
-  }
-  // The strip joins the SAME row list the lanes are in, so the seam between it
-  // and the topmost lane is decided by the one band rule — the arrangement
-  // `destinationUnderPointer` already relies on.
-  const stripEl = opts.dropStripEl.current;
-  if (stripEl) {
-    const rect = stripEl.getBoundingClientRect();
-    rows.push({ trackId: SPAWN_TRACK_ID, top: rect.top, bottom: rect.bottom });
-    rowRects.set(SPAWN_TRACK_ID, { top: rect.top, height: rect.height });
-  }
-  const trackId = trackIdAtClientY(rows, pointer.clientY);
+  const destination = timelineDestination({
+    viewport: opts.trackViewportRef.current, strip: opts.dropStripEl.current,
+    lanes: opts.laneEls.current, orderedTracks: opts.orderedTracks,
+  }, pointer.clientX, pointer.clientY);
+  const trackId = destination?.trackId ?? null;
 
   if (trackId === null) {
     // Inside the Panel, over no row — its ruler, or the band under the last
@@ -393,12 +380,12 @@ function resolveForeignDrop(
   // from — `dragGhostBand` is the rule, and the raise's own ghost reads it too,
   // so a clip carried in from next door and one raised at home draw the same box
   // on the same row.
-  const rowRect = rowRects.get(trackId);
+  const rowRect = destination?.rect;
   let band: ForeignLanding["band"] = null;
   if (rowRect !== undefined) {
     const slice = dragGhostBand(rowRect.height, trackId);
     band = {
-      top: rowRect.top - canvasRect.top + slice.top,
+      top: (trackId === SPAWN_TRACK_ID ? 0 : rowRect.top - canvasRect.top) + slice.top,
       height: slice.height,
     };
   }
@@ -527,7 +514,7 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
   const band = landing.band;
   const trackId = landing.trackId;
 
-  return (
+  const ghost = (
     <>
       {landing.blocks.map((block) => (
         <DragGhostChip
@@ -549,4 +536,7 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
       ))}
     </>
   );
+  return trackId === SPAWN_TRACK_ID && props.dropStripEl.current
+    ? createPortal(ghost, props.dropStripEl.current)
+    : ghost;
 }

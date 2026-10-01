@@ -300,7 +300,7 @@ function renderTimeline(overrides: {
   const onSeek = overrides.onSeek ?? vi.fn();
   const selectedLayerId = overrides.selectedLayerId ?? null;
   setLayerSelection(selectedLayerId, selectedLayerId ? [selectedLayerId] : []);
-  return render(
+  const view = render(
     <Timeline
       compositionId={overrides.compositionId ?? null}
       tracks={overrides.tracks ?? [track]}
@@ -320,6 +320,13 @@ function renderTimeline(overrides: {
       onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
     />,
   );
+  // jsdom has no layout. The viewport includes the sticky header; lane fixtures
+  // below use x=0 as time zero and supply their own measured row bands.
+  vi.spyOn(view.container.querySelector('[data-testid="timeline-track-viewport"]')!, "getBoundingClientRect").mockReturnValue({
+    left: -160, right: 2000, top: 0, bottom: 2000, width: 2160, height: 2000,
+    x: -160, y: 0, toJSON: () => ({}),
+  });
+  return view;
 }
 
 describe("Timeline seek/selection coupling", () => {
@@ -1391,8 +1398,7 @@ describe("Timeline seek/selection coupling", () => {
 
     expect(ruler.className).toContain("sticky");
     expect(ruler.className).toContain("top-0");
-    expect(rulerCorner.className).toContain("sticky");
-    expect(rulerCorner.className).toContain("top-0");
+    expect(rulerCorner.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
     expect(playheadHead.className).toContain("sticky");
     expect(playheadHead.classList.contains("top-0")).toBe(true);
     expect(playheadHeadShape.classList.contains("top-0.5")).toBe(true);
@@ -2230,7 +2236,7 @@ describe("Timeline seek/selection coupling", () => {
     const seams = [
       ...container.querySelectorAll('[data-testid="timeline-drop-strip-seam"]'),
     ];
-    expect(seams).toHaveLength(2);
+    expect(seams).toHaveLength(1);
     for (const seam of seams) {
       expect(seam.className).toContain("h-px");
       expect((seam as HTMLElement).style.top).toBe(
@@ -2248,25 +2254,9 @@ describe("Timeline seek/selection coupling", () => {
     expect(
       spacer.querySelector('[data-testid="timeline-drop-strip-seam"]'),
     ).toBeNull();
-    expect(
-      spacer.nextElementSibling?.querySelector(
-        '[data-testid="timeline-drop-strip-seam"]',
-      ),
-    ).not.toBeNull();
-    expect(
-      strip.nextElementSibling?.querySelector(
-        '[data-testid="timeline-drop-strip-seam"]',
-      ),
-    ).not.toBeNull();
-    expect(
-      spacer.querySelector('[data-testid="timeline-drop-strip-add"]'),
-    ).not.toBeNull();
-    expect(
-      strip.querySelector('[data-testid="timeline-drop-strip-add"]'),
-    ).toBeNull();
-    expect(
-      strip.querySelector('[data-testid="timeline-drop-strip-hint"]'),
-    ).toBeNull();
+    expect(spacer.querySelector('[data-testid="timeline-drop-strip-add"]')).not.toBeNull();
+    expect(strip.querySelector('[data-testid="timeline-drop-strip-add"]')).toBeNull();
+    expect(strip.querySelector('[data-testid="timeline-drop-strip-hint"]')).toBeNull();
   });
 
   it("parks the dashed rule on the strip edge when there is no lane yet", () => {
@@ -2274,7 +2264,7 @@ describe("Timeline seek/selection coupling", () => {
     const seams = container.querySelectorAll(
       '[data-testid="timeline-drop-strip-seam"]',
     );
-    expect(seams.length).toBe(2);
+    expect(seams.length).toBe(1);
     for (const seam of seams) {
       expect((seam as HTMLElement).style.top).toBe("0px");
     }
@@ -2701,9 +2691,6 @@ describe("Timeline row alignment", () => {
   const q = (c: HTMLElement, id: string): HTMLElement =>
     c.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
 
-  const testids = (parent: Element): (string | undefined)[] =>
-    Array.from(parent.children).map((el) => (el as HTMLElement).dataset.testid);
-
   /// One keyed param, so expanding the track adds exactly one sub-lane row to
   /// both columns — the row the arithmetic hit-tests used to lose.
   const keyedTrack: TrackSummary = {
@@ -2737,25 +2724,13 @@ describe("Timeline row alignment", () => {
     ],
   ];
 
-  it("puts the marker lane between the ruler and the drop strip, in both columns", () => {
+  it("keeps ruler, marker and add-track surfaces outside track editing", () => {
     const { container } = renderTimeline({});
-    // Markers belong to the RULER family — they measure time — while the drop
-    // strip belongs to the track family, so the lane sits between them.
-    expect(testids(q(container, "timeline-ruler-corner").parentElement!).slice(0, 3))
-      .toEqual([
-        "timeline-ruler-corner",
-        "timeline-marker-lane-header",
-        "timeline-drop-strip-header",
-      ]);
-    expect(testids(q(container, "timeline-ruler").parentElement!).slice(0, 3))
-      .toEqual([
-        "timeline-ruler",
-        "timeline-marker-lane",
-        "timeline-canvas",
-      ]);
-    expect(testids(q(container, "timeline-canvas"))[0]).toBe(
-      "timeline-drop-strip",
-    );
+    const viewport = q(container, "timeline-track-viewport");
+    for (const id of ["timeline-ruler", "timeline-marker-lane", "timeline-drop-strip"]) {
+      expect(viewport.contains(q(container, id))).toBe(false);
+    }
+    expect(viewport.contains(q(container, "track-lane"))).toBe(true);
   });
 
   it("keeps every header cell as tall as its lane, at every track count", () => {
@@ -2795,13 +2770,6 @@ describe("Timeline row alignment", () => {
     expect(
       container.querySelector('[data-testid="timeline-marker-lane"]'),
     ).toBeNull();
-    // The drop strip is now the first row under the ruler, still aligned.
-    expect(
-      testids(q(container, "timeline-ruler-corner").parentElement!).slice(0, 2),
-    ).toEqual(["timeline-ruler-corner", "timeline-drop-strip-header"]);
-    expect(
-      testids(q(container, "timeline-ruler").parentElement!).slice(0, 2),
-    ).toEqual(["timeline-ruler", "timeline-canvas"]);
     expect(q(container, "timeline-drop-strip-header").style.height).toBe(
       q(container, "timeline-drop-strip").style.height,
     );
@@ -3454,7 +3422,7 @@ describe("Timeline marquee", () => {
     release([404, 260]);
   });
 
-  it("draws a clip box from the drop strip", () => {
+  it("does not start a clip box from the independent drop strip", () => {
     const { container } = renderTimeline({});
     stubMarqueeLayout(container);
     const strip = container.querySelector(
@@ -3463,15 +3431,15 @@ describe("Timeline marquee", () => {
 
     sweep(strip, [400, 120], [420, 300]);
 
-    expect(marquee(container)?.getAttribute("data-kind")).toBe("clip");
+    expect(marquee(container)).toBeNull();
     release([420, 300]);
   });
 
   it("draws a clip box from the scroll body", () => {
     const { container } = renderTimeline({});
-    const canvas = stubMarqueeLayout(container);
+    stubMarqueeLayout(container);
 
-    sweep(canvas.parentElement!, [400, 400], [500, 300]);
+    sweep(container.querySelector('[data-testid="timeline-track-background"]')!, [400, 400], [500, 300]);
 
     expect(marquee(container)?.getAttribute("data-kind")).toBe("clip");
     release([500, 300]);

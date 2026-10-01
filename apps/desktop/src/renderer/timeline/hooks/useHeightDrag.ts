@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePointerGesture } from "../../hooks/usePointerGesture";
 import {
   DEFAULT_TRACK_HEIGHT,
   MAX_TRACK_HEIGHT,
@@ -24,50 +25,40 @@ export function useHeightDrag(opts: {
 } {
   const { trackHeightsRef, setTrackHeights } = opts;
   const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
+  const beginGesture = usePointerGesture();
 
   // -------- Track-height drag --------
 
   const beginHeightDrag = useCallback(
     (trackId: string) => (e: React.PointerEvent) => {
       if (e.button !== 0) return;
-      // The lane below the handle would normally start a seek; stop the
-      // pointerdown here so the seek-on-empty-canvas path never fires.
+      // A height drag must not also start the lane's selection marquee.
       e.stopPropagation();
       e.preventDefault();
       const current =
         trackHeightsRef.current[trackId] ?? DEFAULT_TRACK_HEIGHT;
-      setHeightDrag({
-        trackId,
-        startY: e.clientY,
-        startHeight: current,
+      const startY = e.clientY;
+      const previous = trackHeightsRef.current[trackId];
+      beginGesture(e.pointerId, {
+        move: (event) => {
+          const next = clamp(Math.round(current + event.clientY - startY), MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT);
+          setTrackHeights((prev) => prev[trackId] === next ? prev : { ...prev, [trackId]: next });
+        },
+        release: () => setHeightDrag(null),
+        cancel: () => {
+          setHeightDrag(null);
+          setTrackHeights((prev) => {
+            const next = { ...prev };
+            if (previous === undefined) delete next[trackId];
+            else next[trackId] = previous;
+            return next;
+          });
+        },
       });
+      setHeightDrag({ trackId, startY, startHeight: current });
     },
-    [trackHeightsRef],
+    [trackHeightsRef, setTrackHeights, beginGesture],
   );
-
-  useEffect(() => {
-    if (!heightDrag) return;
-    const onMove = (e: PointerEvent) => {
-      const dy = e.clientY - heightDrag.startY;
-      const next = clamp(
-        Math.round(heightDrag.startHeight + dy),
-        MIN_TRACK_HEIGHT,
-        MAX_TRACK_HEIGHT,
-      );
-      setTrackHeights((prev) =>
-        prev[heightDrag.trackId] === next
-          ? prev
-          : { ...prev, [heightDrag.trackId]: next },
-      );
-    };
-    const onUp = () => setHeightDrag(null);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [heightDrag, trackHeightsRef, setTrackHeights]);
 
   return { heightDrag, beginHeightDrag };
 }

@@ -21,7 +21,7 @@
 // This module owns no drag state, no refusal and no claim: it answers, and the
 // callers decide.
 
-/// `composition_id → that Panel's scroll root`. Only Panels currently on screen
+/// `composition_id → that Panel's layout shell`. Only Panels currently on screen
 /// are entered, so a tab hidden behind another cannot claim a point that is
 /// visibly inside its neighbour.
 const surfaces = new Map<string, HTMLElement>();

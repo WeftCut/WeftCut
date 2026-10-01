@@ -4,6 +4,10 @@ status: accepted
 
 # A marquee's target kind comes from the anchor surface, not from the coordinates
 
+The layout and add-track-strip anchor portions of this decision are superseded
+by [ADR 0084](0084-timeline-chrome-is-outside-the-track-viewport.md). The target-kind
+and selection rules below still apply within the track editing viewport.
+
 ## Context
 
 The timeline holds two selectable populations, interleaved vertically. A track
