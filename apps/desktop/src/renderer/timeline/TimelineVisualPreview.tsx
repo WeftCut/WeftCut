@@ -184,7 +184,7 @@ export function TimelineVisualPreview({
       case "ImageOverlay":
         return resourceEnabled && imageMedia?.available ? (
           <img
-            className="h-full w-full object-cover"
+            className="h-full w-full object-contain"
             src={convertFileSrc(imageMedia.path)}
             alt=""
             draggable={false}
@@ -216,7 +216,7 @@ export function TimelineVisualPreview({
       case "CompositionRef":
         return resourceEnabled && groupPosterSrc !== null ? (
           <img
-            className="h-full w-full object-cover"
+            className="h-full w-full object-contain"
             src={groupPosterSrc}
             alt=""
             draggable={false}

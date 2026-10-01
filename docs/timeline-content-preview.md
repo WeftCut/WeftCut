@@ -114,8 +114,9 @@ looks like a compact NLE clip with filmstrip above waveform.
 ### ImageOverlay
 
 Image clips render the source image directly when the file is available —
-`convertFileSrc(media.path)` with `object-fit: cover` — and fall back to
-the layer color hint when it isn't.
+`convertFileSrc(media.path)` with `object-fit: contain`, preserving the full
+image and its aspect ratio with margins where needed — and fall back to
+the layer color hint when it isn't. Group posters also use `contain`.
 
 ### Text
 
