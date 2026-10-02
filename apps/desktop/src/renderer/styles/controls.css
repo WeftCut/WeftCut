@@ -33,6 +33,20 @@
   cursor: not-allowed;
 }
 
+.font-select { min-width: 0; width: 100%; }
+.font-select .app-select { width: 100%; }
+.font-select .app-select > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.font-select small { display: block; color: var(--muted-foreground); }
+.font-select-popup {
+  max-height: min(360px, var(--available-height));
+  max-width: min(480px, calc(100vw - 32px));
+  overflow-y: auto;
+}
+
 /* AppSlider — track/thumb skin replacing the native range input. */
 .app-slider {
   display: flex;

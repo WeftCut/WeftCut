@@ -25,28 +25,43 @@ const FONT_DIRS: Record<string, string[]> = {
   ],
 };
 
-let familyMap: Map<string, string> | null = null;
+interface FontEntry { family: string; file: string }
+
+// One lazy, in-flight-inclusive cache for listing AND export resolution. The
+// snapshot lasts until app restart; opening another picker never scans again.
+let familyMap: Promise<Map<string, FontEntry>> | null = null;
+
+function getFamilyMap(): Promise<Map<string, FontEntry>> {
+  return familyMap ??= buildFamilyMap().catch((error: unknown) => {
+    familyMap = null;
+    throw error;
+  });
+}
+
+export async function listSystemFontFamilies(): Promise<string[]> {
+  return [...(await getFamilyMap()).values()]
+    .map((entry) => entry.family).sort((a, b) => a.localeCompare(b));
+}
 
 export async function resolveSystemFont(family: string): Promise<Buffer | null> {
-  if (!familyMap) familyMap = buildFamilyMap();
-  const hit = familyMap.get(family.toLowerCase());
+  const hit = (await getFamilyMap()).get(family.toLowerCase());
   if (!hit) return null;
   try {
-    return fs.readFileSync(hit);
+    return await fs.promises.readFile(hit.file);
   } catch {
     return null;
   }
 }
 
-function buildFamilyMap(): Map<string, string> {
-  const map = new Map<string, string>();
+async function buildFamilyMap(): Promise<Map<string, FontEntry>> {
+  const map = new Map<string, FontEntry>();
   const dirs = FONT_DIRS[process.platform] ?? [];
   for (const dir of dirs) {
-    for (const file of walk(dir)) {
+    for await (const file of walk(dir)) {
       if (!/\.(ttf|otf|ttc)$/i.test(file)) continue;
       try {
-        const name = readFamilyName(fs.readFileSync(file));
-        if (name) map.set(name.toLowerCase(), file);
+        const name = readFamilyName(await fs.promises.readFile(file));
+        if (name) map.set(name.toLowerCase(), { family: name, file });
       } catch {
         // skip unreadable / unparsable
       }
@@ -55,20 +70,18 @@ function buildFamilyMap(): Map<string, string> {
   return map;
 }
 
-function walk(dir: string): string[] {
-  let out: string[] = [];
+async function* walk(dir: string): AsyncGenerator<string> {
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
-    return out;
+    return;
   }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) out = out.concat(walk(p));
-    else out.push(p);
+    if (e.isDirectory()) yield* walk(p);
+    else if (e.isFile()) yield p;
   }
-  return out;
 }
 
 /// Read the family name (nameID 1) from an sfnt `name` table. Handles the

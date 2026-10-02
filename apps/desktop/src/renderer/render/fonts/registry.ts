@@ -12,7 +12,8 @@
 import notoCjkUrl from "../../../../assets/fonts/NotoSansSC-VF.ttf?url";
 import liberationUrl from "../../../../assets/fonts/LiberationSans-Regular.woff2?url";
 
-export const BUNDLED_FONT_FAMILIES = ["Liberation Sans", "Noto Sans SC"] as const;
+import { BUNDLED_FONT_FAMILIES } from "../../../shared/fonts";
+export { BUNDLED_FONT_FAMILIES } from "../../../shared/fonts";
 
 // Re-exported, not defined here: the main process stamps this family onto every
 // new Text layer and cannot import from renderer/. See src/shared/fonts.ts.

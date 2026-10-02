@@ -19,6 +19,24 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('persists and clears the default text font across independent readers', () => {
+    const { fs, files } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    s.apply({ default_text_font: '  Example Sans  ' })
+    const reader = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(reader.get().default_text_font).toBe('Example Sans')
+    reader.apply({ language: 'en-US' })
+    expect(s.get().default_text_font).toBe('Example Sans')
+    reader.apply({ default_text_font: '  ' })
+    expect(s.get().default_text_font).toBeUndefined()
+    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('default_text_font')
+    expect(() => s.apply({ default_text_font: 42 } as never)).toThrow('must be a string')
+  })
+
+  it.each([undefined, null, 42, false, '', '   '])('uses the bundled default for invalid saved font %s', (font) => {
+    expect(store({ [PATH]: JSON.stringify({ default_text_font: font }) }).get().default_text_font).toBeUndefined()
+  })
+
   it('empty-track cleanup defaults on for old/invalid config and persists an explicit off choice', () => {
     expect(store().get().auto_delete_empty_tracks).toBe(true)
     expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().auto_delete_empty_tracks).toBe(true)

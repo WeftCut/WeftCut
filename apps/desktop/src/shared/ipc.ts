@@ -463,7 +463,11 @@ export interface WeftcutApi {
   metrics: { get(): Promise<SystemStats> }
   /// Best-effort OS font-file lookup by family name (main-side scan); null when
   /// not found, so the renderer falls back to the bundled font chain.
-  font: { resolve(family: string): Promise<Uint8Array | null> }
+  font: {
+    resolve(family: string): Promise<Uint8Array | null>
+    /** Session snapshot; family names only, never filesystem paths. */
+    listFamilies(): Promise<string[]>
+  }
   /// Native GPU-decode preview (Windows). Session commands only — per-frame
   /// `ImageBitmap`s do NOT travel over this bridge (a MessagePort/frame can't
   /// cross contextBridge). Instead `requestPort(streamId)` hands a MessagePort to

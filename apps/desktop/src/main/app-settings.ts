@@ -129,6 +129,8 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.language === 'string' && parsed.language.trim() !== ''
           ? parsed.language
           : d.language,
+      default_text_font: typeof parsed.default_text_font === 'string'
+        ? parsed.default_text_font.trim() || undefined : d.default_text_font,
     }
   }
 
@@ -165,6 +167,10 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       // Empty / whitespace-only clears back to unset (→ auto-detect); any other
       // value stored verbatim. Storing undefined keeps it off disk.
       if (patch.language !== undefined) current.language = patch.language.trim() === '' ? undefined : patch.language
+      if (patch.default_text_font !== undefined) {
+        if (typeof patch.default_text_font !== 'string') throw new Error('default_text_font must be a string')
+        current.default_text_font = patch.default_text_font.trim() || undefined
+      }
       write(current)
       return current
     },

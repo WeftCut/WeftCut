@@ -16,6 +16,7 @@ interface AppSelectProps {
   /// Extra trigger classes on top of the shared `.app-select` skin —
   /// context rules like `.export-select` (min-width) hang off this.
   className?: string;
+  popupClassName?: string;
   disabled?: boolean;
   ariaLabel?: string;
 }
@@ -30,6 +31,7 @@ export function AppSelect({
   onValueChange,
   options,
   className,
+  popupClassName,
   disabled,
   ariaLabel,
 }: AppSelectProps) {
@@ -61,7 +63,7 @@ export function AppSelect({
           alignItemWithTrigger={false}
           className="app-popup-positioner"
         >
-          <Select.Popup className="app-menu-list">
+          <Select.Popup className={cn("app-menu-list", popupClassName)}>
             {options.map((o) => (
               <Select.Item
                 key={o.value}

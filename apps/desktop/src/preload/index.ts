@@ -160,6 +160,7 @@ const api: WeftcutApi = {
     get: (): Promise<SystemStats> => ipcRenderer.invoke('app:metrics') as Promise<SystemStats>,
   },
   font: {
+    listFamilies: (): Promise<string[]> => ipcRenderer.invoke('font:listFamilies') as Promise<string[]>,
     resolve: (family: string): Promise<Uint8Array | null> =>
       ipcRenderer.invoke('font:resolve', { family }) as Promise<Uint8Array | null>,
   },

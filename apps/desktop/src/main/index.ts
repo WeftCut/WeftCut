@@ -34,7 +34,7 @@ import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
-import { resolveSystemFont } from './fonts/resolveSystemFont.js'
+import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
@@ -2300,8 +2300,20 @@ app.whenReady().then(async () => {
     fs.mkdirSync(await guardFsPath(p), { recursive: recursive ?? false })
   })
   ipcMain.handle('fs:readFile', async (_e, { path: p }: { path: string }) => fs.readFileSync(await guardFsPath(p)))
-  ipcMain.handle('font:resolve', async (_e, { family }: { family: string }) => {
-    return resolveSystemFont(family)
+  const assertFontSender = (event: Electron.IpcMainInvokeEvent) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame)
+      throw new Error('Untrusted font request')
+  }
+  ipcMain.handle('font:listFamilies', (event) => {
+    assertFontSender(event)
+    return listSystemFontFamilies()
+  })
+  ipcMain.handle('font:resolve', async (event, args: unknown) => {
+    assertFontSender(event)
+    const family = (args as { family?: unknown } | null)?.family
+    if (typeof family !== 'string' || !family.trim() || family.length > 512)
+      throw new Error('Invalid font family')
+    return resolveSystemFont(family.trim())
   })
 
   // Native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),

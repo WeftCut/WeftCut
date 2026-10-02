@@ -13,6 +13,7 @@ import { createRecentsStore } from '../recents'
 import { createWorkspaceStore } from '../workspace'
 import { EDITING_WORKSPACE_ID, activeWorkspaceProfile, type WorkspaceDocument } from '../../shared/workspace'
 import { root } from './__tests__/fixtures/project'
+import { DEFAULT_CAPTION_FONT_FAMILY } from '../../shared/fonts'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the project:changed payload shape, refs included', () => {
@@ -81,6 +82,30 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     return { deps, vfs, napiCalls, sent }
   }
+
+  it('applies the live font preference to UI and MCP text without rewriting existing clips', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    const trackId = root(host.actor.snapshot()).tracks[0].id
+    const fonts = () => root(host.actor.snapshot()).tracks.flatMap((t) => t.layers)
+      .flatMap((l) => l.params.kind === 'Text' ? [l.params.font.family] : [])
+    expect(host.actor.command('add_text_layer', { trackId, tStartUs: 0, durationUs: 1_000_000 }).ok).toBe(true)
+    const snapshot = host.actor.snapshot(), history = host.actor.historyStatus()
+    await host.handleInvoke('app_settings_set', { patch: { default_text_font: 'Example Sans' } })
+    expect(host.actor.snapshot()).toBe(snapshot)
+    expect(host.actor.historyStatus()).toEqual(history)
+    expect(host.actor.command('add_text_layer', { trackId, tStartUs: 1_000_000, durationUs: 1_000_000 }).ok).toBe(true)
+    const spec = { content: 'Title', track_id: trackId, t_start_us: 2_000_000, t_end_us: 3_000_000 }
+    expect(host.actor.mcpCall('dry_run', JSON.stringify({ operations: [{ kind: 'add_text_layer', ...spec }] })).ok).toBe(true)
+    expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans'])
+    expect(host.actor.mcpCall('add_text_layer', JSON.stringify(spec)).ok).toBe(true)
+    await host.handleInvoke('app_settings_set', { patch: { default_text_font: '' } })
+    expect(host.actor.command('add_text_layer', { trackId, tStartUs: 3_000_000, durationUs: 1_000_000 }).ok).toBe(true)
+    expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans', 'Example Sans', DEFAULT_CAPTION_FONT_FAMILY])
+    host.actor.dispatch('undo', {})
+    host.actor.dispatch('redo', {})
+    expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans', 'Example Sans', DEFAULT_CAPTION_FONT_FAMILY])
+  })
 
   it('app settings immediately control cleanup without changing project state or history', async () => {
     const { deps } = makeInMemoryDeps()

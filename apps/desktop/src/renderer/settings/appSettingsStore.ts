@@ -127,6 +127,8 @@ export const useLanguage = (): string | undefined =>
   useAppSettingsStore((s) => s.settings.language);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
+export const useDefaultTextFont = (): string | undefined =>
+  useAppSettingsStore((s) => s.settings.default_text_font);
 
 /// Apply a patch through IPC. Returns the post-patch snapshot. The
 /// store updates twice for the same mutation — once synchronously when

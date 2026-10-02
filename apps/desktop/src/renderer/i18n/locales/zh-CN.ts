@@ -5,6 +5,12 @@ import type { Resources } from "./en-US";
 // 术语：英文里的 layer 与 clip 在界面上一律写作「片段」，不写「图层」——图层在 NLE 里
 // 名不副实，还会被读成「轨道」的同义词。见 CONTEXT.md 的 Layer 词条。
 const zhCN: Resources = {
+  fonts: {
+    app_default: "应用默认（Liberation Sans / Noto Sans SC）",
+    loading: "正在读取已安装字体…",
+    load_failed: "无法读取已安装字体。",
+    retry: "重试",
+  },
   models: {
     current_label: "当前模型", none_selected: "未选择", none_active: "尚未选择模型",
     switch_hint: "选择后自动检查并切换；需要下载或首次配置时会先提示。",
@@ -1502,6 +1508,8 @@ const zhCN: Resources = {
     },
   },
   settings: {
+    default_text_font: "默认文字字体",
+    default_text_font_hint: "用于新建文字片段。请通过操作系统安装字体，然后重启 WeftCut 更新字体列表。",
     heading: "设置",
     cat_general: "通用",
     cat_project: "项目",

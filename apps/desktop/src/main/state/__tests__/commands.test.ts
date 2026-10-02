@@ -214,7 +214,7 @@ describe('prodTextParams', () => {
 
   // One factory, or the bundled-font determinism guarantee stops holding: a
   // local default here can name a family the renderer does not ship. This pins
-  // that the wire arm adds nothing to the factory but the content default.
+  // that with no app preference the wire arm retains the bundled default.
   it('is textParamsDefault with the content arg read off the wire', () => {
     expect(prodTextParams({ content: 'x' }, COMP)).toEqual(textParamsDefault('x', COMP))
     expect(prodTextParams({}, COMP)).toEqual(textParamsDefault('Text', COMP))

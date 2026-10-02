@@ -41,7 +41,9 @@ import {
   useTailSnapStrengthPx,
   useTimelineWheelAxis,
   useAutoDeleteEmptyTracks,
+  useDefaultTextFont,
 } from "./appSettingsStore";
+import { FontSelect } from "../components/FontSelect";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 import {
   FPS_OPTIONS,
@@ -151,6 +153,7 @@ export function SettingsPanel({
 }: Props) {
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
+  const defaultTextFont = useDefaultTextFont();
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
   // Project-scoped sections (composition pin, per-project toggles) talk to
   // workspace IPC, so the whole category unmounts — not just hides — when
@@ -269,6 +272,16 @@ export function SettingsPanel({
                   </span>
                 </span>
               </label>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.default_text_font")}</h3>
+              <p className="settings-blurb">{t("settings.default_text_font_hint")}</p>
+              <FontSelect value={defaultTextFont ?? ""} defaultValue=""
+                ariaLabel={t("settings.default_text_font")}
+                onValueChange={(family) => {
+                  void setAppSettings({ default_text_font: family }).catch((err) => setError(String(err)));
+                }} />
             </section>
 
             <section className="settings-section">

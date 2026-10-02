@@ -3,6 +3,12 @@
 // UI word for a placed item is `clip` — never `layer`, which stays the model word in
 // code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
+  fonts: {
+    app_default: "App default (Liberation Sans / Noto Sans SC)",
+    loading: "Loading installed fonts…",
+    load_failed: "Could not load installed fonts.",
+    retry: "Retry",
+  },
   text_correction: {
     title: "Text correction", script: "Reference text", placeholder: "Paste your reference text here…",
     saved_with_project: "Saved with your project. Applying correction splits or joins captions at manuscript line breaks and sentence endings, estimating cuts when word timing is unavailable.",
@@ -1739,6 +1745,8 @@ const enUS = {
     },
   },
   settings: {
+    default_text_font: "Default text font",
+    default_text_font_hint: "Used for new text clips. Install fonts through your operating system, then restart WeftCut to update the list.",
     heading: "Settings",
     cat_general: "General",
     cat_project: "Project",

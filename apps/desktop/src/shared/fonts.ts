@@ -16,3 +16,4 @@
 /// cross-OS determinism guarantee true on the DEFAULT authoring path and not
 /// only on imported captions (ADR 0049).
 export const DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans SC";
+export const BUNDLED_FONT_FAMILIES = ["Liberation Sans", "Noto Sans SC"] as const;

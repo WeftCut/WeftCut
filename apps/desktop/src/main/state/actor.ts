@@ -143,6 +143,8 @@ export interface ActorOptions {
   initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog
   /** Live app preference, sampled for each edit and dry-run; never part of history. */
   autoDeleteEmptyTracks?: () => boolean
+  /** Live default for authored text, shared by UI, MCP and rehearsals. */
+  defaultTextFont?: () => string | undefined
   /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
    *  omitted (tests that do not care about logging). Called AFTER a successful
    *  commit is recorded; a throwing emit is caught and must never abort. */
@@ -1533,7 +1535,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(scope, t0, t1)
-          const params = prodTextParams(wireArgs, scope)
+          const params = prodTextParams(wireArgs, scope, opts.defaultTextFont?.())
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
@@ -1739,7 +1741,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const track = parseUuid(spec.track_id, 'track_id')
         const comp = locateTrack(current(), track)?.comp ?? scopeComposition(current(), null)
         return { kind: 'AddLayer', track_id: track,
-          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y }, comp),
+          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y }, comp, opts.defaultTextFont?.()),
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       }
       case 'update_layer':
@@ -1926,7 +1928,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('add_text_layer').parseDedicated!(a)
           const track = p.track as string
           checkTrackInComposition(track, p.composition_id as string | null)
-          const params = prodTextParams({ content: p.content, x: p.x, y: p.y }, requireTrack(current(), track).comp)
+          const params = prodTextParams({ content: p.content, x: p.x, y: p.y }, requireTrack(current(), track).comp, opts.defaultTextFont?.())
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolRecord(addedLayer(id, p)) }

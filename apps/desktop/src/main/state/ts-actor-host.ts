@@ -205,6 +205,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const actor = createActor({
     initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
     autoDeleteEmptyTracks: () => deps.appSettings?.get().auto_delete_empty_tracks ?? true,
+    defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },

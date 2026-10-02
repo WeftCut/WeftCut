@@ -13,6 +13,7 @@ import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
+import { FontSelect } from "../components/FontSelect";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -1008,13 +1009,13 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.font_family")}>
-        <AppSelect
+        <FontSelect
           value={family}
+          ariaLabel={t("property_panel.font_family")}
           onValueChange={(v) => {
             setFamily(v);
             commit({ kind: "Text", font_family: v });
           }}
-          options={FONT_FAMILIES.map((f) => ({ value: f, label: f }))}
         />
       </Field>
       <Field label={t("property_panel.font_size_px")}>
@@ -1952,15 +1953,6 @@ function AudioAdvancedFields({
   );
 }
 
-const FONT_FAMILIES = [
-  "Noto Sans SC",
-  "Liberation Sans",
-  "Arial",
-  "Times New Roman",
-  "Courier New",
-  "Verdana",
-  "Tahoma",
-];
 
 /**
  * Hook: returns a debounced commit function. Continuous-input controls

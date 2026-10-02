@@ -36,8 +36,8 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
 }
 
 /** Default text layer: `textParamsDefault`'s params, with "Text" as the body
- *  when the caller names none. No local defaults — this arm exists only to read
- *  the wire args.
+ *  when the caller names none. The actor supplies the live app font preference
+ *  separately from wire args, for UI, MCP and dry-run alike.
  *
  *  `x`/`y` place the layer: they are the ANCHOR point (ADR 0049 — a Text
  *  layer's position names its anchor), so with the factory's centred anchor
@@ -45,8 +45,9 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
  *  at the boundary rather than paired with a guessed axis, the way ADR 0049
  *  refuses a `(null, set)` box. Unclamped on purpose — a title that starts
  *  partly out of frame is a legitimate thing to author. */
-export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
+export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }, defaultFont?: string): LayerParams {
   const params = textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
+  if (defaultFont?.trim()) params.font.family = defaultFont.trim()
   const x = parseNumOpt(a.x, 'x')
   const y = parseNumOpt(a.y, 'y')
   if ((x === undefined) !== (y === undefined)) {
