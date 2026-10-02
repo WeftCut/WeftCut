@@ -103,6 +103,10 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.markers_visible === 'boolean'
           ? parsed.markers_visible
           : d.markers_visible,
+      auto_delete_empty_tracks:
+        typeof parsed.auto_delete_empty_tracks === 'boolean'
+          ? parsed.auto_delete_empty_tracks
+          : d.auto_delete_empty_tracks,
       // Additive boolean defaulting FALSE, so "absent" and "off" collapse
       // harmlessly here — the opposite of the pair above.
       safe_area_guides_visible:
@@ -152,6 +156,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       if (patch.timeline_wheel_axis !== undefined) current.timeline_wheel_axis = patch.timeline_wheel_axis
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
+      if (patch.auto_delete_empty_tracks !== undefined) current.auto_delete_empty_tracks = patch.auto_delete_empty_tracks
       if (patch.markers_visible !== undefined) current.markers_visible = patch.markers_visible
       if (patch.safe_area_guides_visible !== undefined) current.safe_area_guides_visible = patch.safe_area_guides_visible
       // Empty / whitespace-only clears the field back to unset (→ default root);

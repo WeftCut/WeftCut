@@ -16,6 +16,7 @@ import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
 import { applyRestackLayer, applyRestackLayerAgainstTrack, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
+import { withTrackCleanup } from './mutations/trackCleanup'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
 import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, applySplitLayerBatch, parseDiscardSegments } from './mutations/split'
@@ -140,6 +141,8 @@ export interface ActorLogEntry {
 
 export interface ActorOptions {
   initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog
+  /** Live app preference, sampled for each edit and dry-run; never part of history. */
+  autoDeleteEmptyTracks?: () => boolean
   /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
    *  omitted (tests that do not care about logging). Called AFTER a successful
    *  commit is recorded; a throwing emit is caught and must never abort. */
@@ -251,7 +254,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     let droppedMarkers: DroppedMarker[] = []
     // produce: a throw inside the recipe aborts and discards the draft.
     const next = produce(current(), (draft) => {
-      value = recipe(draft)
+      value = withTrackCleanup(opts.autoDeleteEmptyTracks?.() ?? true, () => recipe(draft))
       droppedTransitions = reconcileTransitions(draft)
       droppedMarkers = reconcileMarkers(draft)
     })
@@ -838,7 +841,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     for (const op of ops) {
       try {
         let value: DryRunOutput = { kind: 'Void' }
-        const next = produce(scratch, (d) => {
+        const next = withTrackCleanup(opts.autoDeleteEmptyTracks?.() ?? true, () => produce(scratch, (d) => {
           switch (op.kind) {
             case 'AddLayer': value = { kind: 'AddLayer', layer_id: applyAddLayer(d, idGen, op.track_id, op.params, op.t_start_us, op.t_end_us) }; break
             case 'DeleteLayers':
@@ -867,7 +870,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // succeed-with-drop outcome instead of a spurious ValidationFailed.
           // Drop info is discarded: DryRunOutput has no vocabulary for it.
           reconcileTransitions(d)
-        })
+        }))
         runValidate(next)
         scratch = next
         results.push({ ok: true, value })

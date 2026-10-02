@@ -280,10 +280,13 @@ in the renderer, never stored, because only the renderer can localize it.
 _Avoid_: auto label, placeholder name, default label
 
 **Cleanup**:
-The one rule that removes a track: *a track disappears when its last layer
-leaves it* — `transient && !locked`, applied to the track an edit just emptied,
+When the app-level **Automatically delete empty tracks / 自动删除空轨道** preference
+is on (the default), *a track disappears when its last layer leaves it* —
+`transient && !locked`, applied to the track an edit just emptied,
 never as a project-wide sweep. A track that was born empty was never emptied, so
-one an agent creates on purpose survives.
+one an agent creates on purpose survives. Turning the preference off preserves
+emptied tracks across all projects; turning it on does not sweep existing empty
+tracks. Explicit track deletion is independent of this preference.
 _Avoid_: prune (that is the function), auto-delete, garbage collection
 
 **Marker lane**:

@@ -74,6 +74,9 @@ export interface AppSettings {
   /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
   /// the view only ever moves because the user moved it.
   timeline_follow_playhead: boolean;
+  /// Remove an unlocked, non-reserved track when an edit empties it. App-level;
+  /// changing this preference does not sweep tracks that are already empty.
+  auto_delete_empty_tracks: boolean;
   /// Show the timeline's marker lane (`renderer/timeline/MarkerLane.tsx`) — the
   /// ROW, not merely its contents. One switch owns the whole surface: off, the
   /// lane's 20 px go back to the tracks, and the reflow that costs is the point
@@ -128,6 +131,7 @@ export interface AppSettingsPatch {
   media_pool_layout?: MediaPoolLayout;
   timeline_wheel_axis?: TimelineWheelAxis;
   timeline_follow_playhead?: boolean;
+  auto_delete_empty_tracks?: boolean;
   markers_visible?: boolean;
   safe_area_guides_visible?: boolean;
   /// New data-root path. An empty string clears it back to unset (→ default).
@@ -163,6 +167,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // On, like every mainstream NLE ships it: a playhead that walks off-screen
   // mid-playback is the surprising state, not the followed one.
   timeline_follow_playhead: true,
+  auto_delete_empty_tracks: true,
   // On, like every NLE that has markers ships it: a mark nobody can see is
   // indistinguishable from one that was never written.
   markers_visible: true,

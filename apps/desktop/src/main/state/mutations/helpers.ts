@@ -3,6 +3,7 @@ import type { Composition, Layer, LayerParams, Marker, Project, Track, Uuid } fr
 import { CommandFailure } from '../errors'
 import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
+import { trackCleanupEnabled } from './trackCleanup'
 
 /** Deep-clone a layer whether it came from an Immer recipe or plain test data. */
 export function cloneLayer(layer: Layer): Layer {
@@ -127,8 +128,10 @@ export function applyDurationAutofit(c: Composition): void {
  *  than the narrower import-spawned marker its name suggests. `!locked` because
  *  locking is the user pinning a row, and cleanup does not out-rank that.
  *
+ *  The app preference can disable cleanup for the whole editing recipe.
  *  Returns the removed track id, so a caller can report what went with the edit. */
 export function pruneEmptiedTrack(c: Composition, trackId: Uuid): Uuid | null {
+  if (!trackCleanupEnabled()) return null
   const idx = c.tracks.findIndex((t) => t.id === trackId)
   if (idx < 0) return null
   const t = c.tracks[idx]

@@ -19,6 +19,21 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('empty-track cleanup defaults on for old/invalid config and persists an explicit off choice', () => {
+    expect(store().get().auto_delete_empty_tracks).toBe(true)
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().auto_delete_empty_tracks).toBe(true)
+    expect(store({ [PATH]: '{ "auto_delete_empty_tracks": "false" }' }).get().auto_delete_empty_tracks).toBe(true)
+    const { fs } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    s.apply({ auto_delete_empty_tracks: false })
+    const reader = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(reader.get().auto_delete_empty_tracks).toBe(false)
+    reader.apply({ display_mode: 'AllTracks' })
+    expect(reader.get().auto_delete_empty_tracks).toBe(false)
+    reader.apply({ auto_delete_empty_tracks: true })
+    expect(s.get().auto_delete_empty_tracks).toBe(true)
+  })
+
   it('defaults when no file', () => {
     expect(store().get()).toEqual(APP_SETTINGS_DEFAULTS)
   })

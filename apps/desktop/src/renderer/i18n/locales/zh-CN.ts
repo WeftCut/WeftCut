@@ -1548,6 +1548,9 @@ const zhCN: Resources = {
     timeline_wheel_axis_vertical: "跨轨道（纵向）",
     timeline_wheel_axis_hint:
       "Shift+滚轮始终滚动另一个方向；Ctrl+滚轮与 Alt+滚轮为缩放。",
+    auto_delete_empty_tracks: "自动删除空轨道",
+    auto_delete_empty_tracks_hint:
+      "移走或删除轨道中的最后一个片段时，自动删除该轨道。关闭后保留空轨道；预留轨道和锁定轨道始终保留。适用于所有项目。",
     tail_snap_enabled: "启用片段吸附",
     tail_snap_enabled_hint:
       "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",

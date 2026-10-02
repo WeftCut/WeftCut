@@ -577,8 +577,12 @@ Cleanup has one rule: **a track disappears when its last layer leaves
 it.** `transient && !locked` is the predicate, and every path that can
 empty a track — `delete_layers`, `move_layer`, `move_layers_to_new_track`
 and `separate_audio` — calls the same prune with the track it just
-emptied, once per distinct track a multi-layer edit emptied. No
-preference gates it.
+emptied, once per distinct track a multi-layer edit emptied. The app-level
+`auto_delete_empty_tracks` preference gates this rule, defaulting to true even
+for older app_settings.json files. General settings → Timeline can turn it off
+to preserve emptied tracks across projects. Changing the preference neither
+sweeps existing empty tracks nor enters project history; explicit track deletion
+is independent of it. Dry-runs use the same current preference as real edits.
 
 `remove_media --force` is the one deliberate exception: it removes layers
 inline and calls no prune, so it can strand an empty track.

@@ -1789,6 +1789,9 @@ const enUS = {
     timeline_wheel_axis_vertical: "Across tracks (vertical)",
     timeline_wheel_axis_hint:
       "Shift+wheel always scrolls the other axis. Ctrl+wheel and Alt+wheel zoom.",
+    auto_delete_empty_tracks: "Automatically delete empty tracks",
+    auto_delete_empty_tracks_hint:
+      "Remove a track when its last clip is moved or deleted. Turn off to keep empty tracks; reserved and locked tracks always stay. Applies to all projects.",
     tail_snap_enabled: "Clip snapping",
     tail_snap_enabled_hint:
       "Snap clips to nearby clip edges or the playhead while dragging or trimming.",

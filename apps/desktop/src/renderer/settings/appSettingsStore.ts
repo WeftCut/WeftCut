@@ -53,6 +53,7 @@ const FALLBACK: AppSettings = {
   media_pool_layout: "large",
   timeline_wheel_axis: "horizontal",
   timeline_follow_playhead: true,
+  auto_delete_empty_tracks: true,
   markers_visible: true,
   safe_area_guides_visible: false,
 };
@@ -107,6 +108,8 @@ export const useTimelineWheelAxis = (): AppSettings["timeline_wheel_axis"] =>
 /// Whether the timeline pages its view to keep the playhead visible.
 export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
+export const useAutoDeleteEmptyTracks = (): boolean =>
+  useAppSettingsStore((s) => s.settings.auto_delete_empty_tracks);
 /// Whether the timeline shows its marker lane at all — both halves of the row,
 /// glyphs and header cell alike (see `markers_visible` in
 /// `shared/app-settings.ts`).

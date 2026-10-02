@@ -82,6 +82,27 @@ describe('createTsActorHost — persistence-route integration', () => {
     return { deps, vfs, napiCalls, sent }
   }
 
+  it('app settings immediately control cleanup without changing project state or history', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    const idOf = (r: ReturnType<typeof host.actor.dispatch>): string => {
+      if (!r.ok) throw new Error(JSON.stringify(r.error))
+      return r.value as string
+    }
+    const track = idOf(host.actor.dispatch('add_track', {}))
+    const layer = idOf(host.actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
+    const snapshot = host.actor.snapshot(), history = host.actor.historyStatus()
+    await host.handleInvoke('app_settings_set', { patch: { auto_delete_empty_tracks: false } })
+    expect(host.actor.snapshot()).toBe(snapshot)
+    expect(host.actor.historyStatus()).toEqual(history)
+    expect(host.actor.dispatch('delete_layers', { layers: [layer] }).ok).toBe(true)
+    expect(root(host.actor.snapshot()).tracks.find((t) => t.id === track)?.layers).toEqual([])
+    host.actor.dispatch('undo', {})
+    await host.handleInvoke('app_settings_set', { patch: { auto_delete_empty_tracks: true } })
+    expect(host.actor.dispatch('delete_layers', { layers: [layer] }).ok).toBe(true)
+    expect(root(host.actor.snapshot()).tracks.some((t) => t.id === track)).toBe(false)
+  })
+
   it('project_open flushes pending edits to the current workspace before switching', async () => {
     vi.useFakeTimers()
     const { deps, vfs } = makeInMemoryDeps()

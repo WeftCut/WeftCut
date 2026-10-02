@@ -40,6 +40,7 @@ import {
   useTailSnapEnabled,
   useTailSnapStrengthPx,
   useTimelineWheelAxis,
+  useAutoDeleteEmptyTracks,
 } from "./appSettingsStore";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 import {
@@ -281,6 +282,7 @@ export function SettingsPanel({
             <section className="settings-section">
               <h3>{t("settings.timeline_heading")}</h3>
               <TimelineWheelSection onError={setError} />
+              <EmptyTrackCleanupSection onError={setError} />
               <TimelineSnapSection onError={setError} />
             </section>
 
@@ -432,6 +434,31 @@ function TimelineWheelSection({
         {t("settings.timeline_wheel_axis_hint")}
       </p>
     </>
+  );
+}
+
+function EmptyTrackCleanupSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const enabled = useAutoDeleteEmptyTracks();
+  return (
+    <label className="settings-toggle-row">
+      <AppSwitch
+        checked={enabled}
+        ariaLabel={t("settings.auto_delete_empty_tracks")}
+        onCheckedChange={async (next) => {
+          onError("");
+          try {
+            await setAppSettings({ auto_delete_empty_tracks: next });
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">{t("settings.auto_delete_empty_tracks")}</span>
+        <span className="settings-toggle-hint">{t("settings.auto_delete_empty_tracks_hint")}</span>
+      </span>
+    </label>
   );
 }
 

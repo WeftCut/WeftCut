@@ -55,6 +55,19 @@ create a track** on both halves of the strip. Release feedback and geometry stay
 the same. This amendment supersedes the no-human-removal statements below;
 the original rationale is retained as historical context.
 
+### Amendment: optional cleanup (2026-10-02)
+
+General settings → Timeline now offers **Automatically delete empty tracks**,
+persisted as `auto_delete_empty_tracks` in app_settings.json and defaulting to
+true, including for older files without the field. This supersedes item 6 below:
+users can preserve emptied tracks across projects. The explicit track-deletion
+surface added above gives them a way to remove those tracks themselves.
+
+The preference gates the shared cleanup predicate for all editing paths and
+dry-runs. Reserved and locked tracks retain their protections. Changing the
+preference does not sweep existing empty tracks or enter project history; an
+edit and any cleanup it performs still undo together.
+
 ### Original decision
 
 The user places media; tracks appear and disappear around that. There is no
