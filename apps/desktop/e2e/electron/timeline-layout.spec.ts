@@ -1,6 +1,61 @@
 import { expect, test } from '@playwright/test'
 import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 
+test('playhead stays continuous from the ruler through fixed rows to the tracks', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-playhead-layout-'), name: 'playhead-layout',
+      canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+    })
+    await expect(page.locator('.splash-screen')).toHaveCount(0)
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 10_000_000 })
+    await page.locator('button[data-quick-action="toggleDisplayMode"]').click()
+    for (let i = 0; i < 3; i++) {
+      await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 10_000_000 })
+    }
+    const ruler = (await page.getByTestId('timeline-ruler').boundingBox())!
+    await page.mouse.click(ruler.x + 100, ruler.y + 10)
+
+    // One painted line means gradients, glow and frame shading cannot restart
+    // at row boundaries. Check its real geometry rather than individual rows.
+    await expect(page.locator('[data-testid$="playhead"]')).toHaveCount(1)
+    const continuity = () => page.getByTestId('timeline-layout').evaluate(layout => {
+      const line = layout.querySelector('[data-testid="timeline-playhead"]')!.getBoundingClientRect()
+      const ruler = layout.querySelector('[data-testid="timeline-ruler"]')!.getBoundingClientRect()
+      const viewport = layout.querySelector('[data-testid="timeline-track-viewport"]')!.getBoundingClientRect()
+      return Math.max(Math.abs(line.top - ruler.top), Math.abs(line.bottom - viewport.bottom))
+    })
+    const expectContinuous = async () => {
+      await expect.poll(continuity).toBeLessThan(0.1)
+    }
+    await expectContinuous()
+    await page.locator('button[data-quick-action="toggleMarkersVisible"]').click()
+    await expect(page.getByTestId('timeline-marker-lane')).toHaveCount(0)
+    await expectContinuous()
+    await page.locator('button[data-quick-action="toggleMarkersVisible"]').click()
+    await expect(page.getByTestId('timeline-marker-lane')).toBeVisible()
+    await expectContinuous()
+
+    // Position follows the time axis while vertical track scrolling leaves it fixed.
+    await page.mouse.click(ruler.x + 200, ruler.y + 10)
+    await expect.poll(async () => (await page.getByTestId('timeline-playhead').boundingBox())!.x).toBeGreaterThan(ruler.x + 150)
+    await expectContinuous()
+    const headX = (await page.getByTestId('timeline-playhead').boundingBox())!.x
+    const scroll = await page.getByTestId('timeline-track-viewport').evaluate(el => {
+      el.scrollLeft = 80; el.scrollTop = 30
+      return { left: el.scrollLeft, top: el.scrollTop }
+    })
+    expect(scroll.left).toBeGreaterThan(0)
+    expect(scroll.top).toBeGreaterThan(0)
+    await expect.poll(async () => (await page.getByTestId('timeline-playhead').boundingBox())!.x).toBeCloseTo(headX - scroll.left, 0)
+    await expectContinuous()
+    await page.getByTestId('timeline-layout').screenshot({ path: test.info().outputPath('playhead-continuity.png') })
+  } finally {
+    await app.close()
+  }
+})
+
 test('track resize handles cannot cover the ruler after vertical scrolling', async () => {
   const { app, page } = await launchApp()
   try {

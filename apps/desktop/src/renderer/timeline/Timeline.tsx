@@ -81,7 +81,6 @@ import {
   computeTimelineExtent,
   indexLinks,
   indexLinkTabs,
-  playheadFrameShadowPx,
   trackKeyframeProperties,
   visualOrderedTracks,
   type MeasuredTrackRow,
@@ -97,6 +96,7 @@ import { DropStrip, DropStripHeader, DropStripSeam } from "./DropStrip";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineFixedRow } from "./TimelineFixedRow";
+import { TimelinePlayhead } from "./TimelinePlayhead";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -132,14 +132,11 @@ import { useIsLayerDragging } from "./layerDragStore";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import {
   localClockUsOf,
-  localPlayheadIn,
   playheadClockUs,
   rootUsOf,
   seekLocalUs,
-  subscribeLocalPlayhead,
   useAnchorFrame,
 } from "../state/playheadProjection";
-import type { AnchorFrame } from "../render/timeProjection";
 import {
   useRangeInUs,
   useRangeOutUs,
@@ -1779,8 +1776,6 @@ export function Timeline({
               widthPx={widthPx} viewportWidthPx={viewportWidthPx}
               fpsNum={fpsNum} fpsDen={fpsDen} onScrub={beginRulerScrub}
             />
-            <TimelinePlayhead compositionId={compositionId} anchorFrame={anchorFrame}
-              pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} head />
           </TimelineFixedRow>
           <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<MarkerLaneHeader />}>
             <MarkerLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
@@ -1927,17 +1922,11 @@ export function Timeline({
                   tailSnapStrengthPx={tailSnapStrengthPx}
                 />
                 <MarqueeOverlay />
-                <TimelinePlayhead
-                  compositionId={compositionId}
-                  anchorFrame={anchorFrame}
-                  pxPerSec={pxPerSec}
-                  fpsNum={fpsNum}
-                  fpsDen={fpsDen}
-                  visible={visible}
-                />
               </div>
             </div>
           </div>
+          <TimelinePlayhead compositionId={compositionId} anchorFrame={anchorFrame}
+            pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} />
         </div>
         {contextMenu && (
           <LayerContextMenu
@@ -2031,100 +2020,6 @@ function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
           style={{ left: outPx }}
         />
       )}
-    </div>
-  );
-}
-
-/// The playhead line, updated at frame rate via a TRANSIENT playhead-store
-/// subscription (tier 2, see playheadStore.ts): the engine emits once per
-/// composition frame during playback, and routing that through React state
-/// re-renders the whole Timeline per frame.
-/// Here the subscription mutates `style.left` on the ref'd node directly —
-/// zero React commits while playing.
-///
-/// PROJECTED (ADR 0053 decision 2): what is drawn is THIS composition's reading
-/// of the one moment. A moment its placement does not reach draws nothing — a
-/// Group that is off screen has no position, and a line clamped to the nearest
-/// edge would claim the film is somewhere it is not.
-///
-/// `anchorFrame` arrives already resolved because resolving one walks the
-/// summary, and this callback runs once per composition frame per open Panel.
-///
-/// The one-frame-wide shadow (child node) makes the display convention
-/// visible at frame-level zoom: the playhead shows the frame to its RIGHT
-/// (half-open intervals — see docs/data-model.md, boundary semantics). Same
-/// transient subscription, same zero-commit rule.
-function TimelinePlayhead({
-  compositionId,
-  anchorFrame,
-  pxPerSec,
-  fpsNum,
-  fpsDen,
-  visible,
-  head = false,
-}: {
-  compositionId: string | null;
-  anchorFrame: AnchorFrame | null;
-  pxPerSec: number;
-  fpsNum: number;
-  fpsDen: number;
-  visible: boolean;
-  head?: boolean;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const shadowRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!visible) return;
-    const apply = (tUs: number | null) => {
-      if (ref.current) ref.current.style.display = tUs === null ? "none" : "block";
-      if (tUs === null) return;
-      const leftPx = (tUs / 1_000_000) * pxPerSec;
-      if (ref.current) ref.current.style.left = `${leftPx}px`;
-      if (shadowRef.current) {
-        const shadow = playheadFrameShadowPx(tUs, fpsNum, fpsDen, pxPerSec);
-        if (shadow) {
-          shadowRef.current.style.display = "block";
-          // Offset relative to the playhead root, which sits at `tUs`.
-          shadowRef.current.style.left = `${shadow.leftPx - leftPx}px`;
-          shadowRef.current.style.width = `${shadow.widthPx}px`;
-        } else {
-          shadowRef.current.style.display = "none";
-        }
-      }
-    };
-    return subscribeLocalPlayhead(compositionId, anchorFrame, apply);
-  }, [anchorFrame, compositionId, pxPerSec, fpsNum, fpsDen, visible]);
-  // The frame is already in hand, so the first paint costs no second walk.
-  const firstPaintUs = localPlayheadIn(compositionId, anchorFrame);
-  return (
-    <div
-      ref={ref}
-      data-testid={head ? "timeline-ruler-playhead" : "timeline-playhead"}
-      className="pointer-events-none absolute bottom-0 top-0 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
-      style={{
-        left: ((firstPaintUs ?? 0) / 1_000_000) * pxPerSec,
-        display: firstPaintUs === null ? "none" : undefined,
-      }}
-    >
-      <div
-        ref={shadowRef}
-        data-testid={head ? "timeline-ruler-frame-shadow" : "timeline-playhead-frame-shadow"}
-        className="pointer-events-none absolute bottom-0 top-0 bg-red-500/10"
-        style={{ display: "none" }}
-      />
-      {head && <div
-        data-testid="timeline-playhead-head"
-        className="sticky top-0 h-4 w-0"
-      >
-        <div
-          data-testid="timeline-playhead-line-cap"
-          className="absolute -left-1.5 top-0 h-0.5 w-3.5 bg-card"
-        />
-        <div
-          data-testid="timeline-playhead-head-shape"
-          className="absolute -left-1.5 top-0.5 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]"
-        />
-      </div>}
     </div>
   );
 }

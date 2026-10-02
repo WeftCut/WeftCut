@@ -1404,7 +1404,8 @@ describe("Timeline seek/selection coupling", () => {
     expect(ruler.className).toContain("sticky");
     expect(ruler.className).toContain("top-0");
     expect(rulerCorner.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
-    expect(playheadHead.className).toContain("sticky");
+    expect(playheadHead.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
+    expect(playheadHead.closest('[data-testid="timeline-playhead-overlay"]')).not.toBeNull();
     expect(playheadHead.classList.contains("top-0")).toBe(true);
     expect(playheadHeadShape.classList.contains("top-0.5")).toBe(true);
   });
@@ -1424,7 +1425,7 @@ describe("Timeline seek/selection coupling", () => {
       '[data-testid="timeline-playhead-head-shape"]',
     ) as HTMLElement | null;
 
-    expect(playhead.classList.contains("top-0")).toBe(true);
+    expect(playhead.classList.contains("inset-y-0")).toBe(true);
     expect(playheadHead.classList.contains("top-0")).toBe(true);
     expect(lineCap?.classList.contains("h-0.5")).toBe(true);
     expect(headShape?.classList.contains("top-0.5")).toBe(true);

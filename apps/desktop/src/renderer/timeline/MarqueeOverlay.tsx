@@ -1,7 +1,7 @@
 // The drag rectangle. Sole subscriber of `marqueeStore.ts`, mounted as the LAST
 // child of `timeline-canvas` — which is what puts it over every chip (max
 // `z-[3]`) and over the out-of-range wash (`z-[4]`, an earlier sibling) while
-// leaving it under the playhead (`z-[4]`, a later sibling of the canvas).
+// leaving it under the playhead overlay above the track viewport.
 
 import { useMarqueeBox, useMarqueeKind } from "./marqueeStore";
 

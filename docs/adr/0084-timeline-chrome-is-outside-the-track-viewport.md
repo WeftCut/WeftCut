@@ -25,8 +25,12 @@ still an explicit selection surface.
 The track viewport owns both scroll offsets. Fixed rows consume horizontal
 offsets through the existing per-composition scroll store, applying transforms
 without re-rendering the track tree. Wheel gestures on the shell continue to
-operate that one viewport. Playback draws a separate head in the ruler and a
-line in the track viewport, both reading the same projected moment.
+operate that one viewport. A pointer-inert playhead overlay spans the shell's
+time area outside all four rows. It paints the head, line, gradient, glow and
+frame shadow once, clipped away from the header column. It follows horizontal
+scroll through the same store and reads one projected moment, without React
+commits during playback or scrolling. Vertical scrolling and marker-row
+collapse do not split or reposition it.
 
 Editing cursor state and sample-region pointer capture handling belong to the
 track viewport. Height drags highlight only their own handle and use the shared
