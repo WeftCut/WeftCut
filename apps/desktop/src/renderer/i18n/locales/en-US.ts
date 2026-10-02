@@ -1409,6 +1409,8 @@ const enUS = {
     quit: "Quit anyway",
   },
   transport: {
+    preparing_audio: "Preparing audio…",
+    audio_failed: "Audio playback failed. Press Play to retry.",
     play_pause_hint: "Play / pause",
     to_start_hint: "Jump to start",
     to_end_hint: "Jump to end",

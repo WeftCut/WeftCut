@@ -18,7 +18,6 @@ import {
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
-import { setPlayheadFromPreview } from "../state/playheadProjection";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 
@@ -33,7 +32,6 @@ import { WindowControls } from "../components/WindowControls";
 /// agent mode the record panel IS the surface for activity.
 interface AgentModeProps {
   summary: ProjectSummary | null;
-  onPausedChange: (paused: boolean) => void;
   onSeek: (tUs: number) => void;
   /// Switch the renderer layout back to the editor.
   onExit: () => void;
@@ -57,7 +55,7 @@ function clampRecordWidth(width: number, viewportWidth: number): number {
 export const AgentMode = forwardRef(function AgentMode(
   {
     summary,
-    onPausedChange,
+
     onSeek,
     onExit,
   }: AgentModeProps,
@@ -133,8 +131,6 @@ export const AgentMode = forwardRef(function AgentMode(
           <PreviewSurface
             ref={previewRef}
             hasContent={(summary?.layer_count ?? 0) > 0}
-            onTimeUpdate={setPlayheadFromPreview}
-            onPausedChange={onPausedChange}
           />
         </div>
       </section>

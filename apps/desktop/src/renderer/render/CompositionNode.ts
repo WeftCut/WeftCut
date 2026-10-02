@@ -1,5 +1,4 @@
-// One composition INSTANCE's sprites, mixers and Pixi `Container`, and the
-// two sweeps that drive them — the audio pass and the visual pass — at a time
+// One composition INSTANCE's sprites and Pixi Container, drawn at a time
 // on that composition's own clock. The Compositor holds one node for the open
 // composition and stages its container; a `CompositionRefSprite` holds one for
 // the Group layer it draws and renders its container into a texture. Same
@@ -11,9 +10,10 @@
 // sets of sprites. Anything the node hands to a shared service is keyed by
 // `instanceKey(path, layerId)` for the same reason.
 //
-// What the node does NOT own: the decoder pool, the ingest shaders, the audio
-// bus, the motif prewarm/bake planners, underrun accounting, presentation.
-// Those are the Compositor's, reached through `CompositionNodeHost`.
+// What the node does NOT own: the decoder pool, the ingest shaders, the
+// motif prewarm/bake planners, underrun accounting, presentation.
+// Those are the Compositor's, reached through CompositionNodeHost.
+// Audio belongs to the editor session, independently of this visual tree.
 //
 // Plan: docs/render.md
 
@@ -27,14 +27,9 @@ import type {
   LayerSummary,
   MediaSummary,
   ProjectSummary,
-  RoleMixView,
 } from "../ipc";
 import { anchorPivot } from "./anchorPivot";
 import { withTextBoxOverride, withTransformOverride } from "./transformOverrides";
-import type { AudioGraph } from "./audio/AudioGraph";
-import { AudioMixer } from "./audio/AudioMixer";
-import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./audio/roleGate";
-import type { ClockAnchor } from "./audio/chunkSchedule";
 import {
   resolveColorView,
   resolveCompositionRefView,
@@ -69,7 +64,6 @@ import { STAGE, stageAdd, stageNow } from "./perf/stageTimers";
 import { judgeFrameSelection } from "./underrunTracker";
 import {
   childFrame,
-  compositionLocalUs,
   instanceKey,
   MAX_COMPOSITION_DEPTH,
   placeLayer,
@@ -255,27 +249,18 @@ export interface CompositionNodeHost {
   /// needs it.
   readonly renderer: Renderer | undefined;
   readonly pool: DecoderPool;
-  /// Preview or export. Gates audio setup, decode-source resolution
+  /// Preview or export. Gates decode-source resolution
   /// (`resolveSource` vs `proxyAssetUrl`), and underrun judging.
   readonly mode: "preview" | "export";
   fpsNum(): number;
   fpsDen(): number;
   playing(): boolean;
   scrubbing(): boolean;
-  clockAnchor(): ClockAnchor | null;
-  /// Master audio bus (preview only; null in the export Worker).
-  audioGraph(): AudioGraph | null;
-  audioRoles(): readonly RoleMixView[];
   resolveSource(mediaId: string): ResolvedRendererSource | null;
   proxyAssetUrl(mediaId: string): string | null;
   originalAssetUrl(mediaId: string): string | null;
   sourceColor(mediaId: string): VideoColorSpaceInit | undefined;
   mediaById(mediaId: string): MediaSummary | undefined;
-  /// The audio artifact one LAYER's mixer reads — its baked effect-chain
-  /// sibling, else the media's raw conform PCM; null while neither exists.
-  audioSourceUrl(layerId: string, mediaId: string): string | null;
-  /// Export-only pre-baked Motif frames for `instanceKey(path, layerId)`;
-  /// undefined in preview and for an unbaked layer.
   motifFrames(key: string): InjectedMotifFrames | undefined;
   ensureTenBitIngest(): TenBitIngest;
   ensureNv12Ingest(): Nv12Ingest;
@@ -301,7 +286,7 @@ export interface CompositionNodeInit {
   /// Instance identity — see `compositionWalk.ts` `refPath` / `instanceKey`.
   path: string;
   depth: number;
-  /// Root-time frame for the audio pass and the export handle keys.
+  /// Root-time frame for the export handle keys.
   offsetUs: number;
   windowStartUs: number;
   windowEndUs: number;
@@ -398,28 +383,6 @@ interface ActiveRef {
   effects: EffectChain;
 }
 
-interface ActiveAudio {
-  layerId: string;
-  mediaId: string;
-  mixer: AudioMixer;
-  /// The artifact `mixer` was opened on. `AudioMixer` opens its `ConformSource`
-  /// once, so a bake landing (or an effect being disabled) is served by
-  /// disposing the mixer and building a new one at the same placement — see
-  /// `ensureAudio`.
-  sourceUrl: string;
-  /// Change detection for `updateView`: the params object reference is
-  /// stable between `setComposition` calls, so per-tick comparison is one
-  /// identity check; on a new summary the JSON guard avoids tearing down
-  /// the mixer's schedule when nothing audio-relevant actually changed.
-  lastParamsRef: unknown;
-  lastParamsJson: string;
-  /// Last role-bus linear gain folded into the mixer. A role-gain change
-  /// (or role mute/solo flip changing audibility) must re-derive the mixer
-  /// even when `layer.params` is reference-stable, so it joins the
-  /// change-detection guard. Sentinel `NaN` forces the first `updateView`.
-  lastRoleGain: number;
-}
-
 export interface EffectOpts {
   previewEffectsEnabled: boolean;
   effectInput?: import('./effects/EffectInputCapture').EffectInputRequest;
@@ -451,12 +414,11 @@ export class CompositionNode {
   private texts = new Map<string, ActiveText>();
   private activeMotifs = new Map<string, ActiveMotif>();
   private refs = new Map<string, ActiveRef>();
-  private audios = new Map<string, ActiveAudio>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
   /// Preview-only; empty in export mode (export URLs are fixed per run).
   private swaps = new Map<string, SwapState>();
   /// O(1) layer lookup by id. Rebuilt in `setComposition` whenever the
-  /// snapshot changes; read on every tick from `anchor` and `hasLookaheadAt`.
+  /// snapshot changes; read on every tick from `anchor`.
   /// Without this map those would be O(layers) per active clip per tick —
   /// quadratic for long timelines.
   private layerById = new Map<string, LayerSummary>();
@@ -471,7 +433,6 @@ export class CompositionNode {
   private transitionNodes: TransitionNodeManager | null = null;
   /// Media ids already warned about a missing conform (once per media,
   /// cleared when the conform shows up).
-  private conformWarned = new Set<string>();
   /// Depth-cap refusal logged once per node.
   private warnedDepth = false;
   /// Most recent LOCAL composition time this node composited at; the swap
@@ -560,12 +521,6 @@ export class CompositionNode {
         this.activeMotifs.delete(layerId);
       }
     }
-    for (const [layerId, a] of this.audios) {
-      if (!livingLayerIds.has(layerId)) {
-        a.mixer.dispose();
-        this.audios.delete(layerId);
-      }
-    }
     for (const [layerId, r] of this.refs) {
       const layer = this.layerById.get(layerId);
       const target =
@@ -625,121 +580,6 @@ export class CompositionNode {
   // ============================================================
   // The two sweeps
   // ============================================================
-
-  /// Audio pass at LOCAL time `tUs` (already on the frame grid). Ensures a
-  /// mixer for every audible Audio layer, ticks it against the root clock, and
-  /// recurses into Group layers inside their window. Mixers and children the
-  /// gates skipped this tick get a pause-shaped tick so their pre-scheduled
-  /// chunks stop now, not when the gate flips back.
-  ///
-  /// VideoClip layers are NOT eligible. Mirrors `audio::mix`'s canonical
-  /// export routing: only Audio layers are audible; VideoClips are
-  /// video-only. Import's `auto_pair_audio_on_import` (default-on)
-  /// places a sibling Audio layer on the same media for the audio
-  /// track. Treating the VideoClip as also audio-bearing here would
-  /// play the same audio twice — the audible doubling bug.
-  compositeAudio(tUs: number): void {
-    if (this.disposed) return;
-    // Audio gates — mirror audio/mix.rs audible_audio_layers semantics:
-    // whole-track disable still gates, but audio mute/solo now lives on
-    // ROLES (mute wins over solo; an absent role defaults audible iff no
-    // role is soloed). Gated-out layers are skipped here, then swept below
-    // with a pause-shaped tick so their pre-scheduled chunks stop
-    // immediately. (Preview ignores `locked`, matching the live behavior.)
-    const roles = this.host.audioRoles();
-    const anySolo = anyRoleSolo(roles);
-    const playing = this.host.playing();
-    const anchor = this.host.clockAnchor();
-    // The mixers schedule against the ROOT clock: a layer inside a Group is
-    // placed at its root-time interval, clipped to the Group's window, and
-    // reads its source `headUs` in — the Rust mixer's `PlacedAudio` frame.
-    const tRootUs = tUs + this.offsetUs;
-    const tickedAudio = new Set<string>();
-    const tickedRefs = new Set<string>();
-    for (const track of this.composition.tracks) {
-      if (!track.enabled) continue; // whole-track disable still gates
-      for (const layer of track.layers) {
-        if (!layer.enabled) continue;
-        if (layer.params.kind === "CompositionRef") {
-          if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-          const ref = this.ensureCompositionRef(layer);
-          if (!ref) continue;
-          tickedRefs.add(layer.id);
-          // The same mapping the visual pass makes through
-          // `CompositionRefSprite.update`, so both sweeps agree on which frame
-          // of the Group they are looking at.
-          ref.sprite.node.compositeAudio(
-            compositionLocalUs(
-              layer.params.src_in_us + (tUs - layer.t_start_us),
-              this.host.fpsNum(),
-              this.host.fpsDen(),
-            ),
-          );
-          continue;
-        }
-        if (layer.params.kind !== "Audio") continue;
-        if (!roleAudible(layer.params.role, roles, anySolo)) continue;
-        const audio = this.ensureAudio(layer);
-        if (!audio) continue;
-        const placed = placeLayer(layer, this.offsetUs, this.windowStartUs, this.windowEndUs);
-        if (placed.tStartUs >= placed.tEndUs) continue;
-        // Audition override (live fader drag) folds in place of the
-        // committed Role gain; equal to `roleGainLinear` when idle.
-        const rGain = auditionedRoleGainLinear(layer.params.role, roles);
-        // The clipped head/tail become a source trim so the mixer needs no
-        // notion of Groups. The unclipped case hands the params object
-        // through untouched, keeping the identity fast path.
-        const params =
-          placed.headUs === 0 && placed.tailUs === 0
-            ? layer.params
-            : {
-                ...layer.params,
-                src_in_us: layer.params.src_in_us + placed.headUs,
-                src_out_us: layer.params.src_out_us - placed.tailUs,
-              };
-        if (audio.lastParamsRef !== params || audio.lastRoleGain !== rGain) {
-          const json =
-            JSON.stringify(params) + `|${placed.tStartUs}|${placed.tEndUs}|${rGain}`;
-          if (json !== audio.lastParamsJson) {
-            audio.mixer.updateView(params, placed.tStartUs, placed.tEndUs, rGain);
-            audio.lastParamsJson = json;
-          }
-          audio.lastParamsRef = params;
-          audio.lastRoleGain = rGain;
-        }
-        tickedAudio.add(layer.id);
-        audio.mixer.tick(tRootUs, playing, placed.tEndUs, anchor);
-      }
-    }
-    // Mixers gated out above (track mute/solo/disable, layer disable)
-    // would otherwise never tick again, leaving their pre-scheduled
-    // chunks (≤ LOOKAHEAD_S ≈ 3 s) audible after the gate flips. Tick
-    // them with pause semantics (playing=false, null anchor — the exact
-    // branch a transport pause exercises) so the mixer's own teardown
-    // stops every live node this frame.
-    for (const [layerId, audio] of this.audios) {
-      if (tickedAudio.has(layerId)) continue;
-      audio.mixer.tick(tRootUs, false, this.pausedEndUs(layerId), null);
-    }
-    for (const [layerId, ref] of this.refs) {
-      if (tickedRefs.has(layerId)) continue;
-      ref.sprite.node.silenceAudio(tRootUs);
-    }
-  }
-
-  /// The pause-shaped tick for every mixer below this node — a Group layer
-  /// that left the window, or was disabled, goes quiet the same frame.
-  silenceAudio(tRootUs: number): void {
-    for (const [layerId, audio] of this.audios) {
-      audio.mixer.tick(tRootUs, false, this.pausedEndUs(layerId), null);
-    }
-    for (const ref of this.refs.values()) ref.sprite.node.silenceAudio(tRootUs);
-  }
-
-  private pausedEndUs(layerId: string): number {
-    const layer = this.layerById.get(layerId);
-    return layer ? this.offsetUs + layer.t_end_us : 0;
-  }
 
   /// Visual pass at LOCAL time `tUs` (already on the frame grid): rebuild the
   /// container from the layers active at `tUs`, in track order, each staged
@@ -939,47 +779,6 @@ export class CompositionNode {
     }
   }
 
-  /// True if every active VideoClip at LOCAL `tUs` — this node's and those in
-  /// Group layers under the playhead — has its frame plus `minLookaheadUs` of
-  /// ring past it. True with no active clip at all.
-  hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
-    for (const c of this.clips.values()) {
-      const layer = this.layerById.get(c.layerId);
-      if (!layer || layer.params.kind !== "VideoClip") continue;
-      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-      const layerLocalUs = tUs - layer.t_start_us;
-      const srcTUs = layer.params.src_in_us + layerLocalUs;
-      const ring = c.source.ring;
-      if (!ring.containsPts(srcTUs)) return false;
-      const last = ring.lastPtsUs();
-      if (last === null || last < srcTUs + minLookaheadUs) return false;
-    }
-    for (const ref of this.refs.values()) {
-      const layer = this.layerById.get(ref.layerId);
-      if (!layer || layer.params.kind !== "CompositionRef") continue;
-      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-      if (!ref.sprite.node.hasLookaheadAt(tUs - layer.t_start_us + layer.params.src_in_us, minLookaheadUs)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /// End of the last piece of playable material in THIS composition — the
-  /// maximum `t_end_us` across enabled layers in enabled tracks; 0 with none.
-  /// A Group layer bounds its content, so no recursion.
-  playableEndUs(): number {
-    let end = 0;
-    for (const t of this.composition.tracks) {
-      if (!t.enabled) continue;
-      for (const l of t.layers) {
-        if (!l.enabled) continue;
-        if (l.t_end_us > end) end = l.t_end_us;
-      }
-    }
-    return end;
-  }
-
   /// Every live (non-disposed) clip below this node, this node's first.
   forEachClip(f: (clip: { layerId: string; mediaId: string; source: DecodeSession }) => void): void {
     for (const c of this.clips.values()) {
@@ -1150,8 +949,6 @@ export class CompositionNode {
       c.effects.dispose();
     }
     this.clips.clear();
-    for (const a of this.audios.values()) a.mixer.dispose();
-    this.audios.clear();
     this.container.removeChildren();
     this.cancelAllSwaps();
     this.transitionNodes?.reset();
@@ -1177,8 +974,6 @@ export class CompositionNode {
     this.activeMotifs.clear();
     for (const r of this.refs.values()) { r.sprite.dispose(); r.effects.dispose(); }
     this.refs.clear();
-    for (const a of this.audios.values()) a.mixer.dispose();
-    this.audios.clear();
     this.cancelAllSwaps();
     this.transitionNodes?.dispose();
     this.transitionNodes = null;
@@ -1928,74 +1723,4 @@ export class CompositionNode {
     ref.sprite.sprite.zIndex = z;
   }
 
-  // ============================================================
-  // Audio
-  // ============================================================
-
-  /// The mixer for one Audio layer, built on first need and rebuilt whenever
-  /// the artifact it should be reading changes.
-  ///
-  /// Resolved on EVERY tick rather than once: an effect-chain bake landing, or
-  /// the chain being emptied, swaps the layer's audio under a live mixer. The
-  /// rebuild is a dispose + construct at the same placement — `AudioMixer`
-  /// opens its `ConformSource` once and the playback anchor is engine-owned, so
-  /// nothing clock-shaped lives in the mixer to preserve, and the new one's
-  /// trim-gain micro-fade covers the seam.
-  private ensureAudio(layer: LayerSummary): ActiveAudio | null {
-    if (layer.params.kind !== "Audio") return null;
-    const graph = this.host.audioGraph();
-    if (graph === null) return null;
-    const existing = this.audios.get(layer.id);
-    const mediaId = layer.params.media_id;
-    // The mixer Range-reads PCM — no decode in the renderer. `null` until the
-    // conform job lands: the layer stays silent and we retry on a later tick
-    // (the media summary updates when the job completes). A url that goes null
-    // under a LIVE mixer keeps that mixer: the audio it already holds is the
-    // closest thing to the truth there is, and silence would be a worse answer.
-    const url = this.host.audioSourceUrl(layer.id, mediaId);
-    if (!url) {
-      if (existing) return existing;
-      if (!this.conformWarned.has(mediaId)) {
-        this.conformWarned.add(mediaId);
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/pixi] no conform PCM yet for media ${mediaId} (layer ${layer.id}); audio silent until the conform job completes`,
-        );
-      }
-      return null;
-    }
-    this.conformWarned.delete(mediaId);
-    if (existing) {
-      if (existing.sourceUrl === url) return existing;
-      existing.mixer.dispose();
-      this.audios.delete(layer.id);
-    }
-    const placed = placeLayer(layer, this.offsetUs, this.windowStartUs, this.windowEndUs);
-    const mixer = new AudioMixer(
-      {
-        layerId: this.keyFor(layer.id),
-        conformUrl: url,
-        view: layer.params,
-        layerTStartUs: placed.tStartUs,
-        layerTEndUs: placed.tEndUs,
-      },
-      graph,
-    );
-    const audio: ActiveAudio = {
-      layerId: layer.id,
-      mediaId,
-      mixer,
-      sourceUrl: url,
-      lastParamsRef: layer.params,
-      lastParamsJson:
-        JSON.stringify(layer.params) + `|${placed.tStartUs}|${placed.tEndUs}`,
-      // Sentinel: the constructor derived the mixer at unity role gain, so
-      // the first selection-loop pass must re-derive with the real role gain.
-      lastRoleGain: NaN,
-    };
-    this.audios.set(layer.id, audio);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] audio ${layer.id} → media ${mediaId} attached`);
-    return audio;
-  }
 }

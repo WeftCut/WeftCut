@@ -8,7 +8,8 @@ writes them at export. Neither path re-derives the model, so preview
 and export cannot disagree about what a curve means; the only thing
 either path owns is playback (or encoding) mechanics.
 
-Decision record: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md).
+Decision records: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md)
+and [ADR 0087](adr/0087-preview-audio-belongs-to-the-editor-session.md) (session transport).
 
 Both paths read the same bytes: a **conform cache** holds every
 audio-bearing source as canonical PCM, produced once at import. The
@@ -218,7 +219,8 @@ deliberately *not* the per-role processing bus the Roles section defers:
 `weftcut-media://` HTTP Range requests (loop-read until the exact byte
 count, the established Range discipline) and de-interleaved into
 `AudioBuffer`s — **no decode in the renderer, ever**. Chunk length 1 s, lookahead 3 s,
-at most 8 live chunks per layer (~3 MB). Mono conform produces mono
+at most 8 live chunks and 8 cached PCM buffers per layer. Buffers are shared
+with their scheduled nodes rather than copied; mixers outside lookahead are released. Mono conform produces mono
 buffers; the pan matrix routes the single channel to both outputs via
 the mono pan law (2 gains).
 
@@ -229,7 +231,7 @@ compensating buffer offset.
 
 **Clock:** the audio hardware clock is the master. One `ClockAnchor`
 (a composition-µs ↔ `AudioContext.currentTime` pair, defined in
-`chunkSchedule.ts` and nowhere else) is owned by the `PlaybackEngine`:
+`chunkSchedule.ts` and nowhere else) is owned by `PreviewAudioEngine`:
 while the context is running, the playing position is DERIVED from
 the audio timeline against it — pure mapping, no accumulation — and the
 engine forwards the same anchor to every `AudioMixer`, which schedules
@@ -242,19 +244,37 @@ and repeated/skipped frames at 60 fps. Audio scheduling retains its original
 anchor. Missing, invalid or stale (>250 ms) timestamps fall back to
 `currentTime`; a >50 ms device discontinuity recalibrates the offset. The source
 remains the hardware timestamp, not an independently accumulating wall clock.
-While the context is suspended (autoplay policy, before the first
-gesture) the clock falls back to `performance.now()` deltas; the flip
-back to audio-derived re-anchors from the current position, so
-switching sources never jumps the playhead. The anchor is re-taken on
-play and on seek-during-play; mixers detect the identity change and
-reschedule behind a ~5 ms micro-fade.
+Play resumes the context and prepares the first 100 ms of PCM before releasing
+the clock, with a common 10 ms scheduling lead. The actual session never runs
+on a wall-clock fallback through a suspended device: preparation holds the
+position and an interruption stops playback with an observable error. Audio
+scheduling uses raw time; the displayed Moment is frame-snapped.
 
-**Edits during playback:** a parameter change re-derives the layer's
-envelopes and reschedules that layer (`cancelAndHoldAtTime`, then
-fresh curves — `setValueCurveAtTime` forbids overlapping automation,
-so rescheduling is the only correct move). Seek/pause cancel all
-scheduled sources; resume re-anchors. Mute, track-silenced, and
-out-of-window layers simply don't schedule.
+**Transport ownership:** the editor session owns the graph and mixers, even
+with Preview closed. A 16 ms timer fills the three-second schedule without a
+Pixi/rAF dependency. The recursive composition walk supplies upcoming audio,
+including clipped Group instances, before they are drawn. Video readiness no
+longer gates audio start. Paused positions are preloaded too.
+
+The state store distinguishes paused, preparing, playing and error, plus
+requested intent. Missing conform data keeps the transport preparing; the
+10-second preparation deadline and source/device failures are visible errors.
+Play retries failed reads. Playing means scheduling against a running context,
+not a measurement at the speaker.
+
+**Edits and cancellation:** project snapshots, bake changes and Role gain
+overrides notify the session directly. Changed parameters reschedule their
+layer; unchanged audio retains its mixer. Pause stops sources synchronously
+and invalidates pending work, without awaiting a visual tick. Seek, project
+replacement and disposal invalidate the request generation; read cancellation
+and per-slot identity prevent late completions from reviving old audio.
+Completed PCM stays cached on pause for resume. A monitor-only edit preview
+does not move the transport clock or the editor Moment.
+
+**Diagnostics:** the performance monitor exposes preparation and stop-command
+handling times, plus separate AudioContext base/output latency estimates.
+These are not physical speaker measurements. Thread isolation remains a
+separate future step; UI stalls can still delay command delivery or refill.
 
 **Layer skip rules (preview and export share rules 1–6):**
 
@@ -289,7 +309,7 @@ and roles alike. `state/masterMeterStore.ts` is the single renderer
 publication seam for all of them and owns the silence floor consumers
 threshold against (`SILENCE_DB`, printed as "−∞"). The master UI reading
 (`publishMasterMeter`) and the per-role slice (`publishRoleMeters`) are
-published TOGETHER by one fast tap, from one instant at one rate quick
+published TOGETHER by the audio session’s fast tap, from one instant at one rate quick
 enough for a meter to move rather than step, so the master's line and the
 role columns beside it read as one clock; the tap runs only while a reader
 holds a ref-counted lease (`acquireRoleMeterDemand`) and the transport
@@ -511,9 +531,9 @@ so a loud floor left at the filter's default makes the whole filter a no-op.
 
 ### The three seams
 
-- **Preview.** `PixiPreview.tsx`'s `audioSourceUrl(layerId, mediaId)` answers
-  the baked path when the layer has one and the raw `conform_path` otherwise;
-  `CompositionNode.ensureAudio` disposes and recreates the `AudioMixer` when
+- **Preview.** `audio/previewAudioSession.ts` resolves each layer to
+  its baked path when available and the raw `conform_path` otherwise;
+  `PreviewAudioEngine.refresh` disposes and recreates the `AudioMixer` when
   the url changes, so the swap lands behind the existing ~5 ms micro-fade. A
   url that goes null under a live mixer keeps that mixer — the audio it already
   holds is closer to the truth than silence.

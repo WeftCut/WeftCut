@@ -79,7 +79,7 @@ export class AudioGraph {
   constructor() {
     // 48 kHz to match the conform canonical rate; if the device forces a
     // different rate the context resamples AudioBuffers transparently.
-    this.ctx = new AudioContext({ sampleRate: 48_000 });
+    this.ctx = new AudioContext({ sampleRate: 48_000, latencyHint: "interactive" });
 
     this.inputNode = this.ctx.createGain();
     this.inputNode.gain.value = 1;

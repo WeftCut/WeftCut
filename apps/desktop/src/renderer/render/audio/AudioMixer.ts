@@ -30,6 +30,7 @@ import { ConformSource } from "./conformSource";
 import {
   type ClockAnchor,
   MICRO_FADE_S,
+  MAX_LIVE_CHUNKS,
   SAMPLE_RATE,
   framesToUs,
   planChunks,
@@ -54,6 +55,13 @@ interface LiveChunkSlot {
   node: AudioBufferSourceNode | null;
 }
 
+interface PreparedChunk {
+  frames: number;
+  controller: AbortController;
+  ready: Promise<AudioBuffer>;
+  buffer?: AudioBuffer;
+}
+
 export class AudioMixer {
   readonly layerId: string;
 
@@ -69,6 +77,10 @@ export class AudioMixer {
   /// Latched by `dispose()`. `openSource`'s continuation checks it — the
   /// conform fetch can outlive the layer that asked for it.
   private disposed = false;
+  private readonly sourceAbort = new AbortController();
+  private readonly ready: Promise<void>;
+  private prepared = new Map<number, PreparedChunk>();
+  private preparationEpoch = 0;
 
   private view: AudioView;
   /// The Role bus `trim` is currently wired to. The Role rides on the view, so
@@ -83,7 +95,7 @@ export class AudioMixer {
   private panEnv: Envelope;
   /// The Role's linear gain, folded onto this layer's own gain envelope — the
   /// preview twin of `plan_for_project`'s `role_gain` fold; see roleGate.ts.
-  /// Unity until the Compositor passes one.
+  /// Unity until the session engine passes one.
   private roleGainLinear = 1;
 
   /// The engine's clock anchor as of the last tick — by REFERENCE. The
@@ -113,14 +125,17 @@ export class AudioMixer {
     this.panEnv = { stepUs: 10_000, spanUs: 0, values: [0] };
     this.deriveFromView();
 
-    void this.openSource(init.conformUrl);
+    this.ready = this.openSource(init.conformUrl);
+    // The session observes preparation errors. Avoid an unhandled rejection
+    // when a speculative source open fails before prepare() is called.
+    void this.ready.catch(() => {});
   }
 
   private async openSource(url: string): Promise<void> {
     if (this.sourcePending) return;
     this.sourcePending = true;
     try {
-      const source = await ConformSource.open(url);
+      const source = await ConformSource.open(url, this.sourceAbort.signal);
       // A dispose that landed during the fetch already severed this mixer's
       // graph and nulled `source` — assigning here would resurrect it:
       // `installPanGraph` rebuilds and reconnects a fresh pan graph (leaked
@@ -130,14 +145,59 @@ export class AudioMixer {
       this.source = source;
       this.installPanGraph(this.source.header.channels);
       this.deriveFromView();
-    } catch (e) {
-      console.warn(
-        `[weftcut/audio] conform open failed for layer ${this.layerId}:`,
-        e,
-      );
     } finally {
       this.sourcePending = false;
     }
+  }
+
+  /// Read/cache PCM before releasing the transport clock. This has no audio
+  /// side effects and works for clips ahead of the parked moment as well.
+  async prepare(masterUs: number, lookaheadUs?: number): Promise<void> {
+    const epoch = this.preparationEpoch;
+    await this.ready;
+    if (this.disposed || epoch !== this.preparationEpoch) throw new DOMException("Cancelled", "AbortError");
+    const chunks = planChunks({ masterUs, anchor: { compUs: masterUs, ctxTime: 0 },
+      ctxNow: 0, layerTStartUs: this.layerTStartUs, layerTEndUs: this.layerTEndUs,
+      srcInFrame: this.srcInFrame, srcOutFrame: this.srcOutFrame,
+      liveChunkStarts: [], lookaheadUs });
+    await Promise.all(chunks.map((c) => this.bufferFor(c.srcStartFrame, c.frames).ready));
+  }
+
+  private bufferFor(start: number, frames: number): PreparedChunk {
+    const cached = this.prepared.get(start);
+    if (cached?.frames === frames) {
+      this.prepared.delete(start);
+      this.prepared.set(start, cached);
+      return cached;
+    }
+    cached?.controller.abort();
+    const controller = new AbortController();
+    const entry: PreparedChunk = { frames, controller, ready: null! };
+    entry.ready = this.source!.readWindow(start, frames, controller.signal).then((channels) => {
+      if (this.disposed || controller.signal.aborted) throw new DOMException("Cancelled", "AbortError");
+      const buffer = this.graph.ctx.createBuffer(channels.length, frames, SAMPLE_RATE);
+      channels.forEach((data, c) => buffer.copyToChannel(data, c));
+      entry.buffer = buffer;
+      return buffer;
+    }).catch((error: unknown) => {
+      if (this.prepared.get(start) === entry) this.prepared.delete(start);
+      throw error;
+    });
+    this.prepared.set(start, entry);
+    while (this.prepared.size > MAX_LIVE_CHUNKS) {
+      const [key, oldest] = this.prepared.entries().next().value!;
+      this.prepared.delete(key);
+      oldest.controller.abort();
+    }
+    return entry;
+  }
+
+  /// A command, never a future visual tick. In-flight work loses ownership
+  /// synchronously; completed PCM stays cached for a quick resume.
+  stop(): void {
+    this.preparationEpoch++;
+    this.teardown(false);
+    this.lastAnchor = null;
   }
 
   /// Splice the pan matrix graph between gainNode and trim, sized to the
@@ -230,8 +290,7 @@ export class AudioMixer {
     this.layerTEndUs = layerTEndUs;
     if (!this.source) return;
 
-    const inside =
-      masterUs >= this.layerTStartUs && masterUs < this.layerTEndUs;
+    const inside = masterUs < this.layerTEndUs;
     if (!playing || !inside || this.view.mute || anchor === null) {
       // Keep the resume nudge: the first play often starts with the
       // context suspended (autoplay policy) and a null anchor — resuming
@@ -292,9 +351,12 @@ export class AudioMixer {
   ): Promise<void> {
     const source = this.source;
     if (!source) return;
-    let channels: Float32Array<ArrayBuffer>[];
+    let buffer: AudioBuffer;
     try {
-      channels = await source.readWindow(srcStartFrame, frames);
+      const entry = this.bufferFor(srcStartFrame, frames);
+      // Prepared starts are synchronous, so every layer can share a future
+      // anchor without an extra promise turn between scheduling and start.
+      buffer = entry.buffer ?? await entry.ready;
     } catch (e) {
       // A teardown or newer same-key reservation superseded this request.
       // Its failure belongs to the old schedule and must not release or warn
@@ -344,8 +406,6 @@ export class AudioMixer {
       }
     }
 
-    const buffer = ctx.createBuffer(channels.length, frames, SAMPLE_RATE);
-    channels.forEach((data, c) => buffer.copyToChannel(data, c));
     const node = ctx.createBufferSource();
     node.buffer = buffer;
     node.connect(this.gainNode);
@@ -438,6 +498,9 @@ export class AudioMixer {
   /// Stop everything scheduled. `microFade` masks the discontinuity with a
   /// 5 ms trim ramp (re-anchor / live edit); pause paths skip it.
   private teardown(microFade: boolean): void {
+    for (const [key, entry] of this.prepared) {
+      if (!entry.buffer) { this.prepared.delete(key); entry.controller.abort(); }
+    }
     const ctxNow = this.graph.ctx.currentTime;
     const stopAt = microFade ? ctxNow + MICRO_FADE_S : ctxNow;
     if (microFade) {
@@ -476,7 +539,9 @@ export class AudioMixer {
 
   dispose(): void {
     this.disposed = true;
-    this.teardown(false);
+    this.stop();
+    this.sourceAbort.abort();
+    this.prepared.clear();
     try {
       this.gainNode.disconnect();
       this.panGraph?.input.disconnect();

@@ -209,7 +209,6 @@ function sampleHot(s: PerfHudSample): boolean {
   if (cap !== null && cap > 0.85) return true;
   if (s.aud && Number.isFinite(s.aud.peakDb) && s.aud.peakDb > -1) return true;
   if (s.snap?.clips.some((c) => !c.lookaheadFull)) return true;
-  if (s.warmup.lastReason === "deadline-hit") return true;
   return false;
 }
 
@@ -365,7 +364,7 @@ function PerfDashboard({
           warn={(snap?.compositeMsMax ?? 0) > 24}
         />
         <StatTile
-          label="Warmup"
+          label="Audio prepare"
           value={
             warmup.lastMs === null ? (
               <span className="perf-muted">idle</span>
@@ -375,17 +374,17 @@ function PerfDashboard({
           }
           meta={
             warmup.lastMs === null
-              ? "no warmup yet"
-              : `max ${formatMs(warmup.maxMs)} ms · ${
-                  warmup.lastReason === "deadline-hit"
-                    ? "cap hit"
-                    : warmup.lastReason === "lookahead-ready"
-                      ? "lookahead"
-                      : "—"
-                }`
+              ? "not started yet"
+              : `max ${formatMs(warmup.maxMs)} ms · audio ready`
           }
-          warn={warmup.lastReason === "deadline-hit"}
-          title="Preview warmup before play. 'cap hit' = WARMUP_MAX_WAIT_MS reached before the ring filled (possible initial-frame stutter)."
+          warn={false}
+          title="Audio preparation before playback. Video readiness does not gate the audio clock."
+        />
+        <StatTile
+          label="Audio stop"
+          value={warmup.stopCommandMs == null ? "—" : `${formatMs(warmup.stopCommandMs)} ms`}
+          meta={`base ${warmup.baseLatencyMs == null ? "—" : formatMs(warmup.baseLatencyMs)} ms · output ${warmup.outputLatencyMs == null ? "—" : formatMs(warmup.outputLatencyMs)} ms`}
+          title="Stop command handling time. Device latency estimates are separate; this is not a physical speaker measurement."
         />
         <StatTile
           label="Drop / late"
@@ -683,6 +682,9 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
     lastMs: null,
     maxMs: 0,
     lastReason: null,
+    stopCommandMs: null,
+    baseLatencyMs: null,
+    outputLatencyMs: null,
   });
   // Live decode fps per clip, derived each poll tick by diffing each
   // clip's cumulative `decodedFrameCount` against the previous sample.
@@ -772,13 +774,13 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
         prevSamplesRef.current = nextSamples;
         setFpsByLayer(nextFps);
         setSnap(s);
-        setAud(c.getAudioGraph()?.meterSnapshot() ?? null);
       }
       const { p50, p99 } = p50p99FromRing(intervalsRef.current!);
       setRafP50(p50);
       setRafP99(p99);
       setMemory(readMemory());
       const e = engineRef.current;
+      setAud(e?.getAudioMeter() ?? null);
       setPlayheadUs(e?.positionUs() ?? 0);
       if (e) setWarmup(e.getWarmupStats());
     }, 500);
@@ -868,7 +870,7 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
   const onResetPeaks = useCallback(() => {
     compositorRef.current?.resetPerfPeaks();
     engineRef.current?.resetWarmupStats();
-    setWarmup({ lastMs: null, maxMs: 0, lastReason: null });
+    setWarmup((s) => ({ ...s, lastMs: null, maxMs: 0, lastReason: null, stopCommandMs: null }));
   }, [compositorRef, engineRef]);
 
   // Reset requested from the monitor (which has no Compositor ref of its own).

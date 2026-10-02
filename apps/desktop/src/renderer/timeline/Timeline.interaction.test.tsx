@@ -1,3 +1,5 @@
+import { PreviewAudioEngine } from "../render/audio/PreviewAudioEngine";
+import type { AudioGraph } from "../render/audio/AudioGraph";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Ticker } from "pixi.js";
@@ -797,6 +799,7 @@ describe("Timeline seek/selection coupling", () => {
     // feedback from the preview into the timeline's playhead store.
     const compositeFrame = vi.fn();
     const compositor = {
+      setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(),
       setScrubbing: vi.fn(),
@@ -806,9 +809,9 @@ describe("Timeline seek/selection coupling", () => {
       compositionDurationUs: () => 5_000_000,
     } as unknown as Compositor;
     const ticker = new Ticker();
-    const engine = new PlaybackEngine({ compositor, ticker });
-    engine.bindFps(30, 1);
-    engine.onTimeUpdate(setPlayheadTimeUs);
+    const audio = new PreviewAudioEngine({ ctx: { state: "running", currentTime: 0 }, dispose() {} } as unknown as AudioGraph, () => null);
+    audio.onTimeUpdate(setPlayheadTimeUs);
+    const engine = new PlaybackEngine({ compositor, ticker, audio });
     registerTransport(engine);
     engine.seek(500_000);
     const { getByText, unmount } = renderTimeline({});
@@ -838,6 +841,7 @@ describe("Timeline seek/selection coupling", () => {
       unmount();
       releaseTransport(engine);
       engine.dispose();
+      audio.dispose();
       ticker.destroy();
     }
   });
@@ -847,6 +851,7 @@ describe("Timeline seek/selection coupling", () => {
   ))("keeps the playhead parked throughout a transition $edge edge drag ending in $ending", ({ edge, ending }) => {
     const compositeFrame = vi.fn();
     const compositor = {
+      setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
       compositeFrame,
@@ -854,9 +859,9 @@ describe("Timeline seek/selection coupling", () => {
       compositionDurationUs: () => 5_000_000,
     } as unknown as Compositor;
     const ticker = new Ticker();
-    const engine = new PlaybackEngine({ compositor, ticker });
-    engine.bindFps(30, 1);
-    engine.onTimeUpdate(setPlayheadTimeUs);
+    const audio = new PreviewAudioEngine({ ctx: { state: "running", currentTime: 0 }, dispose() {} } as unknown as AudioGraph, () => null);
+    audio.onTimeUpdate(setPlayheadTimeUs);
+    const engine = new PlaybackEngine({ compositor, ticker, audio });
     registerTransport(engine);
     engine.seek(500_000);
     const onResize = vi.fn();
@@ -4829,6 +4834,7 @@ describe("collapsed keyframe row", () => {
     ipcMocks.updateParamTracksMulti.mockClear();
     clearKeyframeSelection();
     const compositor = {
+      setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
       compositeFrame: vi.fn(),
@@ -4836,9 +4842,9 @@ describe("collapsed keyframe row", () => {
       compositionDurationUs: () => 5_000_000,
     } as unknown as Compositor;
     const ticker = new Ticker();
-    const engine = new PlaybackEngine({ compositor, ticker });
-    engine.bindFps(30, 1);
-    engine.onTimeUpdate(setPlayheadTimeUs);
+    const audio = new PreviewAudioEngine({ ctx: { state: "running", currentTime: 0 }, dispose() {} } as unknown as AudioGraph, () => null);
+    audio.onTimeUpdate(setPlayheadTimeUs);
+    const engine = new PlaybackEngine({ compositor, ticker, audio });
     registerTransport(engine);
     engine.seek(500_000);
     const testTrack = kind === "color" ? fillTrack : {
@@ -4891,6 +4897,7 @@ describe("collapsed keyframe row", () => {
       unmount();
       releaseTransport(engine);
       engine.dispose();
+      audio.dispose();
       ticker.destroy();
       clearKeyframeSelection();
     }

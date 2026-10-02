@@ -10,57 +10,44 @@ covers the preview-side surface and transport.
 ## Component tree
 
 ```
-<PreviewSurface>             — React mount, canvas host, transport handle
-  └─ Compositor              — PixiJS Application owner; per-frame composite
-       ├─ PlaybackEngine     — play / pause / seek / scrub
-       │    ├─ clock         — audio-master clock (anchor-derived; wall fallback)
-       │    └─ AudioGraph    — Web Audio mixer
-       ├─ SourceDecoderPool  — per-clip VideoDecoder + ring; shared mediabunny Input per source
-       └─ LiveLayers         — per-layer Sprite instances mounted on the stage
-            ├─ VideoClipSprite
-            ├─ ImageOverlaySprite
-            ├─ TextSprite
-            ├─ MotifSprite
-            └─ ColorSprite
+Editor session
+  ├─ PreviewAudioEngine — transport state, clock, AudioGraph, PCM scheduling
+  └─ PreviewSurface / PixiPreview — optional visual attachment
+       ├─ PlaybackEngine — read audio clock, present/seek pictures
+       └─ Compositor — visual CompositionNodes and decoder pool
 ```
 
-`PreviewSurface.tsx` is the only React file. Everything below it is plain
-TypeScript driven by an imperative handle (`play()`, `pause()`,
-`seekTo(usec)`, `runPixiExport(...)`).
+Playback is independent of panel lifetime. Closing Preview releases Pixi
+resources and its visual attachment; the session transport, audio and meters
+continue. The App session disposes the audio owner when the editor closes or
+the project opening is replaced.
 
-## Clock
+## Clock and transport
 
-The audio hardware clock is the master. While the `AudioContext` is
-running, the playing position is DERIVED from `ctx.currentTime`
-against the engine's `ClockAnchor` — the same pair every `AudioMixer`
-schedules its chunks against, so playhead and audio share one clock by
-construction ([`audio.md`](audio.md) §Clock). While the context is
-suspended (autoplay policy, before the first gesture) the clock falls
-back to `performance.now()` deltas; the flip back re-anchors from the
-current position, so switching sources never jumps the playhead.
-While paused the position is set directly by `seekTo`.
+The audio hardware clock remains master. The session owns the single
+`ClockAnchor` used by all AudioMixers; the visual attachment reads its
+frame-snapped position. PCM scheduling uses unsnapped time. The session's
+16 ms timer publishes deduplicated Moment updates and refills a three-second
+audio schedule, without relying on visual frames.
 
-Internally the clock keeps the raw (unsnapped) position. Externally
-observable `positionUs()` and the `onTimeUpdate` emit stream return
-the value snapped to the composition-frame grid, deduped per snap — at
-30 fps comp on a 60 Hz display, time-update listeners fire ~30/s
-instead of every rAF. Timecode display is SMPTE `HH:MM:SS:FF`, NDF;
-see [data-model.md](data-model.md) for the snap rule that anchors it.
+Play resumes the AudioContext and prepares the first 100 ms of PCM, then
+starts all audio against one anchor with a 10 ms lead. Video lookahead is
+independent: the old 150 ms lookahead / 250 ms video warmup gate is removed.
+A missing conform stays preparing, bounded by a 10-second deadline; read or
+device failures produce an error that Play can retry. The clock is held
+while preparing rather than advancing through missing audio.
 
-`play()` releases the clock only once the decoder has filled
-`WARMUP_MIN_LOOKAHEAD_US` (~150 ms) of ring past the play position,
-or after a `WARMUP_MAX_WAIT_MS` (~250 ms) safety cap. The UI play
-state flips immediately, so the button feels responsive; the rAF
-loop's `compositeFrame` keeps running at the held position during
-the gate, so the canvas shows the start frame still rather than
-stuttering through partial decoder outputs. `pause()` cancels the
-warm-up. This eliminates the cold-start stutter that hardware
-decoders' first-frame init latency would otherwise cause.
+Pause directly cancels scheduled audio and pending work. A normal seek starts
+a fresh preparation generation when playing. An editing gesture's temporary
+monitor preview changes the presented frame without moving the audio clock
+or publishing a different Moment.
 
-`PlaybackEngine` exposes one frame-time per tick to every sprite in
-`LiveLayers`; sprites read project state out of their own `LayerSummary`
-and compute on-the-fly per-channel sample values via the shared
-`Animated<T>::sample(t)` interpolation helper.
+The UI observes paused / preparing / playing / error, with requested intent
+kept separately so a repeated play/pause command can cancel preparation.
+Playing describes a running AudioContext with its initial schedule submitted,
+not an acoustic measurement. The execution remains renderer JavaScript plus
+Web Audio; native real-time audio is a separately deferred change. See
+[ADR 0087](adr/0087-preview-audio-belongs-to-the-editor-session.md).
 
 ## Decode
 
@@ -523,11 +510,10 @@ displays:
   doesn't pollute the ring with the multi-second pause interval.
 - **composite ms (last · max)** — `compositeFrame` body duration.
   The running max persists until the reset button is clicked.
-- **warmup ms (last · max + reason)** — time from `play()` to the
-  clock actually starting. The `(lh)` suffix means the lookahead
-  check fired; `(cap)` in amber means the `WARMUP_MAX_WAIT_MS` cap
-  fired without the ring being ready (possible initial-frame
-  stutter).
+- **audio preparation ms (last · max)** — time spent resuming the context and
+  preparing initial PCM before releasing the audio clock.
+- **audio stop ms** — synchronous command handling, shown separately from
+  AudioContext base/output latency estimates; not physical speaker latency.
 - **heap** — Chromium's `performance.memory.usedJSHeapSize /
   totalJSHeapSize`. Chromium/Electron exposes this.
 - **per-clip** — `decodeQueueSize`, ring entry count, ring's latest
@@ -535,7 +521,7 @@ displays:
   filtered out).
 
 The HUD's reset button clears the Compositor's `compositeMsMax` AND
-the engine's warmup max so a one-off cold-start spike doesn't pin
+the audio preparation max so a one-off cold-start spike doesn't pin
 the displayed max forever. The HUD's z-index sits below page
 chrome popovers / settings dialogs so it doesn't obscure them.
 

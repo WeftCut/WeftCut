@@ -85,6 +85,7 @@ describe("PerfTelemetryBridge", () => {
     };
     const engine = {
       positionUs: vi.fn(() => 0),
+      getAudioMeter: vi.fn(() => null),
       getWarmupStats: vi.fn(() => ({ lastMs: null, maxMs: 0, lastReason: null })),
       resetWarmupStats: vi.fn(),
     };
@@ -113,6 +114,7 @@ describe("PerfTelemetryBridge", () => {
     };
     const engine = {
       positionUs: vi.fn(() => 123),
+      getAudioMeter: vi.fn(() => null),
       getWarmupStats: vi.fn(() => ({ lastMs: null, maxMs: 0, lastReason: null })),
       resetWarmupStats: vi.fn(),
     };

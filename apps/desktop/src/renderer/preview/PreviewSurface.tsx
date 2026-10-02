@@ -1,3 +1,4 @@
+import { transportPlay, transportPause, transportSeek, usePlaybackStore } from "../state/playbackStore";
 /// Project preview surface. Renders the project through the Pixi
 /// compositor (the only preview path) inside a PixiErrorBoundary, or an
 /// empty-state / loading placeholder when there is no content or no
@@ -24,12 +25,6 @@ interface Props {
   /// True when the project has at least one layer. When false we
   /// render the empty-state placeholder.
   hasContent: boolean;
-  /// Master clock callback in microseconds. Engine throttles to
-  /// ~30 Hz so this is safe to drop into React state directly.
-  onTimeUpdate: (tUs: number) => void;
-  /// Mirror of `engine.isPlaying()`, inverted to the "paused" boolean the
-  /// parent's transport button expects.
-  onPausedChange: (paused: boolean) => void;
   /// Live accessor for the session decodability verdict (App's
   /// decodeProbeMemo). When it returns true for a source, the preview
   /// resolver shows the original immediately instead of waiting on a proxy.
@@ -71,7 +66,7 @@ export interface PreviewSurfaceHandle {
 
 export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
   function PreviewSurface(
-    { hasContent, onTimeUpdate, onPausedChange, previewDecodableOf, visible = true },
+    { hasContent, previewDecodableOf, visible = true },
     forwardedRef,
   ) {
     const { t } = useTranslation();
@@ -93,16 +88,16 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       forwardedRef,
       (): PreviewSurfaceHandle => ({
         play() {
-          pixiRef.current?.play();
+          transportPlay();
         },
         pause() {
-          pixiRef.current?.pause();
+          transportPause();
         },
         seekTo(tUs: number) {
-          pixiRef.current?.seek(tUs);
+          transportSeek(tUs);
         },
         paused() {
-          return pixiRef.current?.paused() ?? true;
+          return !usePlaybackStore.getState().requestedPlaying;
         },
         refreshSources() {
           pixiRef.current?.refreshSources();
@@ -144,8 +139,6 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         <PixiErrorBoundary>
           <PixiPreview
             ref={pixiRef}
-            onTimeUpdate={onTimeUpdate}
-            onPausedChange={onPausedChange}
             previewDecodableOf={previewDecodableOf}
             visible={visible}
           />

@@ -9,7 +9,7 @@
 // in export — through a `CompositionNode` staged into `stage`; that node's
 // sweep recurses into Group layers through `CompositionRefSprite`s, each
 // with a node of its own. What lives here is what every node shares: the
-// decoder pool, the ingest shaders, the audio bus, underrun and presentation
+// decoder pool, the ingest shaders, underrun and presentation
 // state. The motif raster lifecycle (prewarm/bake/hydrate/GC/status) lives in
 // the `MotifFrameService` collaborator.
 //
@@ -18,11 +18,9 @@
 import { Application, Container } from "pixi.js";
 import type { InjectedMotifFrames } from "./worker/motifStream";
 
-import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
+import { snapFrameFloor } from "../frames";
 import type { CompositionSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { compositionOrRoot, EMPTY_COMPOSITION } from "../ipc/compositions";
-import { AudioGraph } from "./audio/AudioGraph";
-import type { ClockAnchor } from "./audio/chunkSchedule";
 import { SourceDecoderPool } from "./decoder/SourceDecoderPool";
 import type { DecoderPool } from "./decoder/session";
 import {
@@ -37,7 +35,7 @@ import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { installCjkLineBreaking } from "./fonts/lineBreak";
 import type { TextFit } from "./textBox";
-import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
+import { STAGE, stageAdd, stageRecord } from "./perf/stageTimers";
 import {
   UnderrunTracker,
   type UnderrunSessionSummary,
@@ -54,7 +52,7 @@ export type { ActiveClipProbe, ResolvedRendererSource } from "./CompositionNode"
 
 /// Match the preview ring's default lookahead window
 /// (`FrameRing.DEFAULT_LOOKAHEAD_US`). We only use this to warm the next clip
-/// boundary; the play() warm-up gate stays smaller so play stays responsive.
+/// boundary; video preparation never gates the session's audio clock.
 const UPCOMING_CLIP_PREWARM_US = 1_000_000;
 
 /// Plain-numbers diagnostic snapshot for the dev `PerfHUD`. All fields
@@ -156,15 +154,6 @@ export interface CompositorInit {
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
-  /// Resolver for the asset URL a LAYER's audio mixer reads: its baked
-  /// effect-chain sibling when one is ready, else the media's raw conform PCM
-  /// (VCONF). Drives the buffer-scheduled preview audio mixer; `null` while the
-  /// conform job hasn't completed (the layer stays silent). Optional: the
-  /// export Worker omits it (export audio mixes in Rust).
-  ///
-  /// Per layer AND media: the layer decides which artifact, the media is what
-  /// the raw fallback resolves against. See ADR 0063.
-  audioSourceUrl?: (layerId: string, mediaId: string) => string | null;
   /// Optional decoder pool override. Defaults to a preview-tuned
   /// `SourceDecoderPool` with per-frame lookahead + ring eviction. The
   /// export Worker injects an `ExportDecoderPool` that drives decoding
@@ -204,12 +193,6 @@ export class Compositor {
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
-  private audioSourceUrl: (layerId: string, mediaId: string) => string | null;
-  /// Master audio bus (preview mode only; null in the export Worker).
-  private audioGraph: AudioGraph | null = null;
-  /// The engine's clock anchor, forwarded each tick (null while paused
-  /// or while the AudioContext is suspended). Consumed by the audio pass.
-  private clockAnchor: ClockAnchor | null = null;
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
@@ -232,8 +215,7 @@ export class Compositor {
   private readonly motifService: MotifFrameService;
   private repaintScheduled = false;
   /// Engine's playing state — written by PlaybackEngine on play /
-  /// pause / seek. AudioMixers consult this to decide whether to
-  /// `play()` or `pause()` their `<audio>` elements.
+  /// pause / seek. Decoder targeting reads this presentation state.
   private playing = false;
   /// When true, `setAnchorTime` is a no-op. PlaybackEngine flips this
   /// during rapid scrub so the decoder isn't hammered with a new
@@ -246,7 +228,7 @@ export class Compositor {
   /// `setSuspended`).
   private suspended = false;
   /// Dock-tab presentation state. Hidden Preview retains every owned resource
-  /// and keeps the audio pass alive, but skips decoder targeting and visual
+  /// but skips decoder targeting and visual
   /// scene mutation until the Panel becomes visible again.
   private presentationVisible = true;
   private presentationDirty = false;
@@ -299,7 +281,6 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
-    this.audioSourceUrl = init.audioSourceUrl ?? ((): string | null => null);
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
     this.host = {
@@ -310,15 +291,11 @@ export class Compositor {
       fpsDen: () => this.fpsDen,
       playing: () => this.playing,
       scrubbing: () => this.scrubbing,
-      clockAnchor: () => this.clockAnchor,
-      audioGraph: () => this.audioGraph,
-      audioRoles: () => this.projectSummary?.audio_roles ?? [],
       resolveSource: (id) => this.resolveSource(id),
       proxyAssetUrl: (id) => this.proxyAssetUrl(id),
       originalAssetUrl: (id) => this.originalAssetUrl(id),
       sourceColor: (id) => this.sourceColor(id),
       mediaById: (id) => this.mediaById(id),
-      audioSourceUrl: (layerId, mediaId) => this.audioSourceUrl(layerId, mediaId),
       motifFrames: (key) => this.motifFrames.get(key),
       ensureTenBitIngest: () => this.ensureTenBitIngest(),
       ensureNv12Ingest: () => this.ensureNv12Ingest(),
@@ -363,7 +340,6 @@ export class Compositor {
       void loadBundledFontBytes().then((b) =>
         loadFontsIntoFaceSet(document.fonts, b),
       );
-      this.audioGraph = new AudioGraph();
     }
   }
 
@@ -389,12 +365,6 @@ export class Compositor {
   /// The node drawing the open composition — for tests and diagnostics.
   rootNode(): CompositionNode {
     return this.root;
-  }
-
-  /// The preview master audio bus, for the dev PerfHUD meter row and the
-  /// MCP meter report. Null in export mode.
-  getAudioGraph(): AudioGraph | null {
-    return this.audioGraph;
   }
 
   /// Coalesced repaint at the current playhead time. Called by
@@ -468,7 +438,7 @@ export class Compositor {
   }
 
   /// PlaybackEngine writes its current play state here on play /
-  /// pause / seek so the audio pass knows whether to schedule.
+  /// pause / seek so decoder targeting knows whether to advance.
   setMasterPlayState(playing: boolean): void {
     // Master-clock release = new play session: reset the dropped-frame
     // counters so the indicator reflects this run, not history.
@@ -490,14 +460,6 @@ export class Compositor {
     return this.underrun.takeSessionSummary();
   }
 
-  /// PlaybackEngine forwards its clock anchor every tick. The AudioMixers
-  /// schedule chunks against this exact pair — the same one the playhead
-  /// derives from — so playhead and audio share ONE clock
-  /// (docs/audio.md §Clock). Null while paused or audio-suspended.
-  setClockAnchor(anchor: ClockAnchor | null): void {
-    this.clockAnchor = anchor;
-  }
-
   /// Export-only borrowed pixels for the current output frame, keyed by Group
   /// instance path. The worker releases these bitmaps after rendering.
   setMotifFrames(map: Record<string, InjectedMotifFrames>): void {
@@ -509,7 +471,7 @@ export class Compositor {
 
   /// Suspend / resume the compositor. While suspended, every
   /// VideoClip's decoder is closed (releasing its hardware decode
-  /// slot), audio mixers are torn down, and `compositeFrame` /
+  /// slot), and `compositeFrame` /
   /// `setAnchorTime` are short-circuited so the engine's rAF loop
   /// can't lazily re-create decoders. The next `compositeFrame` after
   /// `setSuspended(false)` re-acquires fresh handles via the normal
@@ -611,17 +573,9 @@ export class Compositor {
 
     const prevChildCount = this.stage.children.length;
 
-    // First pass: the audio mixers, every node's. Skipped entirely in export
-    // mode — export audio mixes in Rust (`audio::mix`, docs/audio.md).
-    if (this.audioGraph !== null) {
-      const tAudio = stageNow();
-      this.root.compositeAudio(tUsSnapped);
-      stageAdd(STAGE.Audio, tAudio);
-    }
-
     this.ownerCompositeCount += 1;
-    // The audio owner above must keep scheduling against the live clock while
-    // hidden. Everything below this point is visual/presentation-only work.
+    // Hidden dock tabs retain decoder ownership but skip presentation.
+    // Audio is independently scheduled by the editor session.
     if (!this.presentationVisible) {
       this.presentationDirty = true;
       // The tick clock must be stamped on THIS exit too: composites keep
@@ -731,56 +685,9 @@ export class Compositor {
   }
 
   /// Authored duration of the composition being drawn, in microseconds.
-  /// Returns 0 when no project is loaded. Used by PlaybackEngine to
-  /// auto-pause once the playhead crosses the end — the alternative is
-  /// letting the clock run past the last layer into the empty black region
-  /// forever, which is never the user's intent.
+  /// Returns 0 when no project is loaded.
   compositionDurationUs(): number {
     return this.root.durationUs();
-  }
-
-  /// Exact-rational "last frame start" for an exclusive `endUs` boundary,
-  /// against the current project's fps. Returns 0 if no project / degenerate
-  /// fps / `endUs <= 0`. Exposed so PlaybackEngine can park the playhead on
-  /// auto-pause without carrying its own fps state or a drift-prone
-  /// pre-rounded frame duration (see `fpsNum`).
-  lastFrameAnchorUs(endUs: number): number {
-    return computeLastFrameStartUs(endUs, this.fpsNum, this.fpsDen);
-  }
-
-  /// End of the last piece of *playable material* in the composition being
-  /// drawn — the maximum `t_end_us` across enabled layers in enabled tracks.
-  /// Returns 0 when no enabled layer exists.
-  ///
-  /// Distinct from `compositionDurationUs()` only when the user pins
-  /// composition duration past the last visible frame (`set_composition
-  /// { duration_us: D }`, D > max layer end). For unpinned projects the
-  /// two values are equal by construction (see ADR 0005). PlaybackEngine
-  /// uses this for auto-pause so the playhead lands on the final visible
-  /// frame even when a pinned duration would otherwise carry the clock
-  /// into a black tail.
-  playableEndUs(): number {
-    if (!this.projectSummary) return 0;
-    return this.root.playableEndUs();
-  }
-
-  /// True if every active VideoClip layer at composition time `tUs` —
-  /// inside Groups under the playhead too — has a decoded frame at its
-  /// source-time mapping AND at least `minLookaheadUs` of additional ring
-  /// contents past it.
-  ///
-  /// Used by `PlaybackEngine.play()` to defer the clock start until
-  /// the decoder pipeline has produced enough output to absorb its
-  /// own first-frame warm-up latency. Without this gate, hardware-
-  /// decoder init burns ~50–200 ms on cold start while the clock
-  /// races ahead — the painter clamps to the latest-emitted frame
-  /// and the user sees a stutter for the first dozen frames.
-  ///
-  /// Returns true immediately when no VideoClip is active (e.g. the
-  /// playhead is over an empty region, or only non-decoded layers).
-  hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
-    if (!this.projectSummary) return true;
-    return this.root.hasLookaheadAt(tUs, minLookaheadUs);
   }
 
   /// Tell the decoder pool which time we're at so it can manage
@@ -872,8 +779,6 @@ export class Compositor {
     // `setMotifFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
     this.motifFrames.clear();
-    this.audioGraph?.dispose();
-    this.audioGraph = null;
     this.tenBitIngest?.dispose();
     this.tenBitIngest = null;
     this.nv12Ingest?.dispose();

@@ -120,8 +120,6 @@ import {
 export interface DockPanelContracts {
   summary: ProjectSummary | null;
   previewRef: RefObject<PreviewSurfaceHandle | null>;
-  paused: boolean;
-  onPausedChange: (paused: boolean) => void;
   onSeek: (timeUs: number) => void;
   onTogglePlay: () => void;
   previewDecodableOf: (mediaId: string) => boolean;
@@ -249,8 +247,6 @@ function PreviewDockPanel() {
     <PreviewSection
       previewRef={contracts.previewRef}
       summary={contracts.summary}
-      paused={contracts.paused}
-      onPausedChange={contracts.onPausedChange}
       onTogglePlay={contracts.onTogglePlay}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}

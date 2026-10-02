@@ -57,6 +57,7 @@ export interface ChunkPlanInput {
   srcOutFrame: number;
   /// Source start frames of chunks already scheduled and still live.
   liveChunkStarts: number[];
+  lookaheadUs?: number | undefined;
 }
 
 export interface PlannedChunk {
@@ -81,7 +82,7 @@ export function planChunks(input: ChunkPlanInput): PlannedChunk[] {
   const playSrc =
     input.srcInFrame + usToFrames(input.masterUs - input.layerTStartUs);
   const aheadUs = Math.min(
-    input.masterUs + LOOKAHEAD_S * 1_000_000,
+    input.masterUs + (input.lookaheadUs ?? LOOKAHEAD_S * 1_000_000),
     input.layerTEndUs,
   );
   const aheadSrc = input.srcInFrame + usToFrames(aheadUs - input.layerTStartUs);

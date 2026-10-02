@@ -19,13 +19,7 @@ import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
 import type { PlaybackResolution } from "../../shared/app-settings";
 
-import {
-  registerTransport,
-  releaseTransport,
-  setTransportPlaying,
-} from "../state/playbackStore";
-import { previewLocalUs } from "../state/playheadProjection";
-import { playheadTimeUs } from "../state/playheadStore";
+import { previewAudioEngine } from "./audio/previewAudioSession";
 import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
 import {
   previewRenderTargetId,
@@ -60,7 +54,6 @@ import {
   slotFenceBackendForRenderer,
 } from "./decoder/transports/slotFenceQueue";
 import { proxyIntent } from "../state/proxyPreferenceStore";
-import { layerFxState, readyAudioPath } from "../state/audioFxStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
   fitScale,
@@ -73,7 +66,7 @@ import {
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
-import { logEmit, type MediaSummary, reportAudioMeter } from "../ipc";
+import { logEmit, type MediaSummary } from "../ipc";
 import {
   resetUnderrunState,
   setUnderrunState,
@@ -81,7 +74,6 @@ import {
 import {
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
-import { subscribeRoleGainOverrides } from "./audio/roleGainOverrides";
 import { subscribeTransformOverrides } from "./transformOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { subscribeMotifPreview } from "./motifs/previewOverlay";
@@ -95,23 +87,12 @@ import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
 import { webgpuDeviceOf } from "./webgpuDevice";
 import {
-  clearMasterMeter,
-  publishMasterMeter,
-  publishMasterMeterSilent,
-  publishRoleMeters,
-  publishRoleMetersSilent,
-  roleMeterDemandWanted,
-  subscribeRoleMeterDemand,
-} from "../state/masterMeterStore";
-import {
   installTimedPresent,
   setPixiPresentationVisible,
 } from "./previewPresentation";
 import type { PreviewFrameCapture } from "../testhook/e2eHook";
 
 interface Props {
-  onTimeUpdate?: (tUs: number) => void;
-  onPausedChange?: (paused: boolean) => void;
   // Explicit `| undefined` (not just `?`) so PreviewSurface can pass its own
   // optional prop straight through under `exactOptionalPropertyTypes`, where a
   // bare `?:` would reject an explicitly-`undefined` value. Handled internally
@@ -122,15 +103,6 @@ interface Props {
 
 const LOG = "[weftcut/pixi]";
 let previewResourceSequence = 0;
-
-/// Period of the preview mixer's UI meter tap — master output AND per-Role,
-/// sampled together at this one rate. Fast enough that a level meter moves
-/// rather than steps, which is why it is a second timer and not a faster
-/// version of the agent-facing meter push (the ~2 Hz Rust report), whose slow
-/// rate is deliberate. The master's UI reading rides this tap so it moves at the
-/// same rate as the Role meters shown beside it; only its agent-facing report
-/// stays at the slow cadence.
-const PREVIEW_METER_SAMPLE_MS = 50;
 
 /// The render-target half of Playback Resolution, with the display fit folded
 /// in: rasterize at `composition × fraction`, the fraction being the smaller of
@@ -215,7 +187,7 @@ function sameHostBox(a: HostBox, b: HostBox): boolean {
 }
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
-  { onTimeUpdate, onPausedChange, previewDecodableOf, visible = true },
+  { previewDecodableOf, visible = true },
   ref,
 ) {
   const compositorRef = useRef<Compositor | null>(null);
@@ -226,13 +198,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // the visibility effect owns every subsequent transition.
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
-  /// MCP meter push timer; set in `onInit`, cleared on unmount (the mount
-  /// effect is async and can't return a cleanup itself).
-  const meterTimerRef = useRef<number | null>(null);
-  /// Per-Role UI meter tap; runs only while a consumer holds a demand lease and
-  /// the transport plays. Same teardown path as `meterTimerRef`.
-  const roleMeterTimerRef = useRef<number | null>(null);
-  const unsubRoleMeterDemandRef = useRef<(() => void) | null>(null);
   const samplerRef = useRef<PreviewSampler | null>(null);
   const gizmoProbeRef = useRef<GizmoProbe | null>(null);
   /// The canvas box the gizmo probe hands out, cached because its readers are
@@ -253,7 +218,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const hostRef = useRef<HTMLDivElement | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
-  const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
   const unsubTransformOverridesRef = useRef<(() => void) | null>(null);
   const [initializing, setInitializing] = useState(true);
   // On-screen media the Compositor can't decode with any engine — fed ONLY
@@ -280,7 +244,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         engineRef.current?.seek(tUs);
       },
       paused() {
-        return !(engineRef.current?.isPlaying() ?? false);
+        return !previewAudioEngine().isPlayRequested();
       },
       refreshSources() {
         const compositor = compositorRef.current;
@@ -316,9 +280,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const targetId = usePreviewRenderTargetId();
   const composition = compositionOrRoot(summary, targetId) ?? undefined;
   useEffect(() => resetPreviewView(), [targetId]);
-  /// The composition the engine's clock is currently running on. Seeded on the
-  /// first pass so the re-base below fires only on a real change of target.
-  const previewTargetRef = useRef<string | null | undefined>(undefined);
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -408,10 +369,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // the Playback Resolution knob changes the backing pixels alone and never
       // the on-panel size.
 
-      // Dispose any prior Compositor (StrictMode re-mount). Release its
-      // transport registration first so the store never holds a disposed
-      // engine (the new engine re-registers below).
-      if (engineRef.current) releaseTransport(engineRef.current);
+      // Replace only the visual attachment. The session transport survives.
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
 
@@ -469,19 +427,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
-      // The audio a layer's mixer reads: the baked effect-chain sibling when
-      // one is ready for THIS layer, else the media's raw conform PCM (null
-      // while the conform job hasn't landed). Keyed by LAYER and not by media
-      // on purpose — two layers can share one media and carry different
-      // chains, so a per-media answer would play one layer's effects on the
-      // other. See ADR 0063.
-      const audioSourceUrl = (layerId: string, mediaId: string): string | null => {
-        const baked = readyAudioPath(layerFxState(layerId));
-        if (baked !== null) return convertFileSrc(baked);
-        const m = useProjectStore.getState().mediaById.get(mediaId);
-        const p = m?.conform_path;
-        return p ? convertFileSrc(p) : null;
-      };
+      const audio = previewAudioEngine();
 
       const compositor = new Compositor({
         app,
@@ -507,7 +453,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
-        audioSourceUrl,
       });
       // Playback resolution: seed the pool BEFORE the first `ensureClip` so the
       // very first source opens at the user's setting instead of full res and
@@ -531,37 +476,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const initialTargetId = previewRenderTargetId();
       compositor.setProject(initialSummary, initialTargetId);
 
-      const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
+      const engine = new PlaybackEngine({ compositor, ticker: app.ticker, audio });
       const resourceGeneration = ++previewResourceSequence;
-      const initialComposition = compositionOrRoot(initialSummary, initialTargetId);
-      engine.bindFps(
-        initialComposition?.fps_num ?? 30,
-        initialComposition?.fps_den ?? 1,
-      );
-      // Seed the fresh engine from the live playhead store, AFTER bindFps so
-      // the position snaps on the composition's real frame grid. Application
-      // init is async, and every seek issued in that window (keyboard
-      // shortcuts, timecode commits) writes the store optimistically while
-      // `engineRef`/the transport registration are still null — this engine
-      // never heard them. Its first tick emits ITS position over the store
-      // (`lastEmittedUs` starts unset), so without the seed a playhead parked
-      // during init — or across any preview remount — teleports back to 0.
-      // The store is ROOT time and the engine's clock is the composition it
-      // draws, so the seed is projected on the way in.
-      const restoreUs = previewLocalUs(playheadTimeUs());
-      if (restoreUs !== 0) engine.seek(restoreUs);
-      if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
-      if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
-
       compositorRef.current = compositor;
       engineRef.current = engine;
-
-      // Global transport: expose this engine to code outside the React ref
-      // chain (backend event handlers, MCP-driven mutations, dialogs) via the
-      // playback store. Mirror the play state so store subscribers track
-      // play/pause without polling.
-      engine.onPlayStateChange(setTransportPlaying);
-      registerTransport(engine);
 
       // Session-end underrun summary → status log. FCP-style "warn after
       // playback": the transport indicator shows the counts live; this row
@@ -665,16 +583,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       unsubOverridesRef.current = subscribeEffectOverrides(() => {
         compositor.compositeFrame(engine.positionUs());
       });
-      // Role Gain fader audition: the audio pass re-derives the mixer from the
-      // renderer-local override only inside compositeFrame, so poke one on every
-      // change (the change-detection guard skips a reschedule when the folded
-      // gain is unchanged). Playing already composites per rAF; this keeps the
-      // audition responsive at the very start/end of a gesture.
-      unsubRoleOverridesRef.current?.();
-      unsubRoleOverridesRef.current = subscribeRoleGainOverrides(() => {
-        compositor.compositeFrame(engine.positionUs());
-      });
-
       // On-canvas gizmo drag: same reason as the two above — the transient
       // delta is only read inside compositeFrame, and while paused nothing
       // else calls it, so the dragged layer would not move until the commit.
@@ -682,72 +590,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       unsubTransformOverridesRef.current = subscribeTransformOverrides(() => {
         compositor.compositeFrame(engine.positionUs());
       });
-
-      // Master-bus meter REPORT (~2 Hz while playing) for the MCP
-      // `composition://meter` resource. This is the agent-facing push only — the
-      // master's UI reading is published by the fast preview tap below, at the
-      // Role meters' rate, so the two do not read as two clocks. dB values clamp
-      // at -120 — JSON can't carry the analyser's -Infinity silence reading.
-      // Clear any prior timer first (StrictMode re-mount).
-      if (meterTimerRef.current !== null) {
-        window.clearInterval(meterTimerRef.current);
-      }
-      meterTimerRef.current = window.setInterval(() => {
-        const g = compositor.getAudioGraph();
-        if (!g || !engine.isPlaying()) return;
-        const snap = g.meterSnapshot();
-        void reportAudioMeter({
-          rmsDb: Number.isFinite(snap.rmsDb) ? snap.rmsDb : -120,
-          peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
-        }).catch(() => {});
-      }, 500);
-      // The push samples only while playing, so a pause would leave the store
-      // holding the last playing reading — beside Role meters that fall to the
-      // floor the moment their tap stops. One silent sample on the transition
-      // keeps the master's reading truthful. The store only: the MCP resource's
-      // contract is a reading sampled while playing, and it is not touched here.
-      engine.onPlayStateChange((playing) => {
-        if (!playing) publishMasterMeterSilent();
-      });
-
-      // The preview mixer's UI meter tap: master output AND the four Roles, from
-      // one instant at one rate, for the Role Mixer Panel. Independent of the
-      // agent report above. It samples only while a consumer holds a demand
-      // lease AND the transport plays, and publishes one silent sample whenever
-      // it stops — a held last reading would show level over a silent mix.
-      const stopRoleMeterTap = (): void => {
-        if (roleMeterTimerRef.current === null) return;
-        window.clearInterval(roleMeterTimerRef.current);
-        roleMeterTimerRef.current = null;
-        publishRoleMetersSilent();
-      };
-      const syncRoleMeterTap = (): void => {
-        const wanted = roleMeterDemandWanted() && engine.isPlaying();
-        if (wanted === (roleMeterTimerRef.current !== null)) return;
-        if (!wanted) {
-          stopRoleMeterTap();
-          return;
-        }
-        roleMeterTimerRef.current = window.setInterval(() => {
-          const g = compositor.getAudioGraph();
-          if (!g) return;
-          // Master and Roles carry the SAME sample time, so the master's line
-          // and the four Role columns move as one clock rather than two.
-          const sampledAtMs = performance.now();
-          publishMasterMeter(g.meterSnapshot(), sampledAtMs);
-          publishRoleMeters(g.roleMeterSnapshots(), sampledAtMs);
-        }, PREVIEW_METER_SAMPLE_MS);
-      };
-      // Drop a prior mount's timer and subscription (StrictMode re-mount).
-      if (roleMeterTimerRef.current !== null) {
-        window.clearInterval(roleMeterTimerRef.current);
-        roleMeterTimerRef.current = null;
-      }
-      unsubRoleMeterDemandRef.current?.();
-      unsubRoleMeterDemandRef.current =
-        subscribeRoleMeterDemand(syncRoleMeterTap);
-      engine.onPlayStateChange(syncRoleMeterTap);
-      syncRoleMeterTap();
 
       // E2E-only: register a live bridge so the WebDriver hooks
       // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
@@ -759,6 +601,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           import("../testhook/previewRecovery"),
         ]).then(([{ installPreviewBridge }, { previewRecoveryControls }]) => {
           installPreviewBridge({
+            setTickerEnabled: (enabled) => { if (enabled) app.ticker.start(); else app.ticker.stop(); },
             recovery: previewRecoveryControls(app),
             seekUs: (us: number) => {
               engine.seek(us);
@@ -906,11 +749,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         });
       }
 
+      const restoreUs = engine.positionUs();
       compositor.setAnchorTime(restoreUs);
       compositor.compositeFrame(restoreUs);
       setInitializing(false);
     },
-    [onTimeUpdate, onPausedChange, previewDecodableOf],
+    [previewDecodableOf],
   );
 
   useEffect(() => {
@@ -996,26 +840,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   useEffect(() => {
     if (!compositorRef.current) return;
     compositorRef.current.setProject(summary, targetId);
-    engineRef.current?.bindFps(
-      composition?.fps_num ?? 30,
-      composition?.fps_den ?? 1,
-    );
-    // A change of TARGET re-bases the engine's clock. It reads and emits one
-    // number and that number is the composition it draws, so without this the
-    // next emit would be read as the new composition's while still naming the
-    // old one's, and the playhead would jump by the offset between them. Guarded
-    // on the id alone: a summary update leaves the engine's position meaning
-    // exactly what it meant before.
-    //
-    // A target whose own `t = 0` is later than the moment re-bases to a negative
-    // time, which the engine's clock floors at zero — so it sits at its first
-    // frame until the film reaches it. The film is NOT dragged there:
-    // `setPlayheadFromPreview` drops that floor rather than reading it as the
-    // one moment.
-    if (previewTargetRef.current !== targetId) {
-      previewTargetRef.current = targetId;
-      engineRef.current?.seek(previewLocalUs(playheadTimeUs()));
-    }
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
@@ -1058,9 +882,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // disposes the Application itself.
   useEffect(() => {
     return () => {
-      // Identity-guarded release: a stale unmount can't tear down a newer
-      // mount's registration.
-      if (engineRef.current) releaseTransport(engineRef.current);
       resetUnderrunState();
       if (samplerRef.current) clearPreviewSampler(samplerRef.current);
       samplerRef.current = null;
@@ -1074,8 +895,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       logicalSizeRef.current = null;
       unsubOverridesRef.current?.();
       unsubOverridesRef.current = null;
-      unsubRoleOverridesRef.current?.();
-      unsubRoleOverridesRef.current = null;
       unsubTransformOverridesRef.current?.();
       unsubTransformOverridesRef.current = null;
       engineRef.current?.dispose();
@@ -1086,17 +905,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // The device goes with the Application. Slots already pending keep their
       // own probes and still ack — see `SlotFenceQueue.setBackend`.
       setSlotFenceBackend(null);
-      clearMasterMeter();
-      if (meterTimerRef.current !== null) {
-        window.clearInterval(meterTimerRef.current);
-        meterTimerRef.current = null;
-      }
-      unsubRoleMeterDemandRef.current?.();
-      unsubRoleMeterDemandRef.current = null;
-      if (roleMeterTimerRef.current !== null) {
-        window.clearInterval(roleMeterTimerRef.current);
-        roleMeterTimerRef.current = null;
-      }
       // E2E-only: clear the preview bridge so seek/readback hooks don't
       // hold a stale closure over the disposed engine + compositor.
       if (import.meta.env.VITE_WEFTCUT_E2E === "1") {
@@ -1202,7 +1010,7 @@ async function handlePixiExport(
   // wedges fighting for the same slot. Engine is paused first so its
   // rAF loop can't squeeze in another setAnchorTime tick before
   // suspend takes effect.
-  const wasPlaying = engine?.isPlaying() ?? false;
+  const wasPlaying = engine?.isPlayRequested() ?? false;
   engine?.pause();
   compositor?.setSuspended(true);
 

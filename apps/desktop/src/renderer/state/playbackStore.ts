@@ -1,17 +1,12 @@
-// Global playback transport registry. The active preview's PlaybackEngine
-// is reachable only through the React ref chain (PixiPreview → PreviewSurface
-// → App.tsx), so nothing outside that chain — backend event handlers, MCP-driven
-// mutation paths, dialogs, deep components — can stop playback. This store is
-// the module-importable escape hatch: `PixiPreview` registers the live engine
-// on mount, anyone can call `transportPause()` (etc.) without threading a ref.
-//
-// React subscribers must use ATOMIC selectors (per
-// `feedback_zustand_composite_selector` — never select a composite object).
+// Session transport registry and observable actual state. Commands work with
+// no Preview panel mounted. UI toggles use requestedPlaying so a second Play
+// gesture cancels preparation; playing is true only after audio is running.
 
 import { create } from "zustand";
+import type { PlaybackPhase, PlaybackSnapshot } from "../render/audio/PreviewAudioEngine";
 
-/// Narrow imperative surface of the active preview's PlaybackEngine.
-/// `PlaybackEngine` satisfies this structurally — register the engine itself.
+/// Commands exposed by the editor session. Preview edits may borrow the
+/// monitor with mode="preview" without changing the session Moment.
 export interface TransportHandle {
   play(): void;
   pause(): void;
@@ -20,41 +15,47 @@ export interface TransportHandle {
 }
 
 interface State {
-  /// Live transport, or null when no preview is mounted.
+  /// Live session transport, or null outside the editor.
   transport: TransportHandle | null;
-  /// Mirror of the engine's intended play state. Fed by
-  /// `setTransportPlaying` from the engine's onPlayStateChange
-  /// subscription so React subscribers don't need to poll the handle.
+  /// Actual running state; preparing is represented separately.
   playing: boolean;
+  requestedPlaying: boolean;
+  phase: PlaybackPhase;
+  error: string | null;
 }
 
 export const usePlaybackStore = create<State>(() => ({
   transport: null,
   playing: false,
+  requestedPlaying: false,
+  phase: "paused",
+  error: null,
 }));
 
-/// Called by `PixiPreview` once its PlaybackEngine is wired. Re-registering
-/// replaces the prior transport (StrictMode re-mount / project swap).
+/// Registered by the editor session, replaced on project/session changes.
 export function registerTransport(handle: TransportHandle): void {
-  usePlaybackStore.setState({ transport: handle, playing: handle.isPlaying() });
+  usePlaybackStore.setState({ transport: handle });
+  setTransportPlaying(handle.isPlaying());
 }
 
-/// Called by `PixiPreview` on unmount. Identity-guarded so a stale cleanup
-/// (old mount unmounting after a new mount already registered) can't tear
-/// down the live transport.
+/// Identity-guarded session cleanup cannot release a newer registration.
 export function releaseTransport(handle: TransportHandle): void {
   if (usePlaybackStore.getState().transport !== handle) return;
-  usePlaybackStore.setState({ transport: null, playing: false });
+  usePlaybackStore.setState({ transport: null });
+  setTransportPlaying(false);
 }
 
-/// Mirror the engine's play state into the store. Wired by `PixiPreview`
-/// via `engine.onPlayStateChange(setTransportPlaying)`.
+/// Seed a simple stopped/running registration. Subsequent updates carry the
+/// full snapshot, including preparation and errors.
 export function setTransportPlaying(playing: boolean): void {
-  usePlaybackStore.setState({ playing });
+  setTransportSnapshot({ phase: playing ? "playing" : "paused", requestedPlaying: playing, error: null });
 }
 
-/// Safe no-ops while no preview is mounted — callers (event handlers,
-/// dialogs) shouldn't have to care whether the editor is showing.
+export function setTransportSnapshot(snapshot: PlaybackSnapshot): void {
+  usePlaybackStore.setState({ ...snapshot, playing: snapshot.phase === "playing" });
+}
+
+/// Safe no-ops when there is no editor session.
 export function transportPlay(): void {
   usePlaybackStore.getState().transport?.play();
 }

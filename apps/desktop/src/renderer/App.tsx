@@ -1,3 +1,5 @@
+import { startPreviewAudioSession } from "./render/audio/previewAudioSession";
+import { transportPlay, transportPause, transportSeek, usePlaybackStore } from "./state/playbackStore";
 import { save as saveDialog } from "@/bridge/dialog";
 import { listen } from "@/bridge/events";
 import { MODEL_EVENTS } from "../shared/inference-models";
@@ -212,7 +214,6 @@ export function App({ onCloseProject }: AppProps) {
   // App-root state re-rendered the whole tree per frame (dev-mode memory
   // ratchet + prod CPU). It lives in playheadStore; consumers pick their tier
   // (transient / throttled / imperative) — see playheadStore.ts.
-  const [paused, setPaused] = useState<boolean>(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     let disposed = false;
@@ -235,9 +236,8 @@ export function App({ onCloseProject }: AppProps) {
   const systemNotices = useAppNotices();
   const logReady = useLogStore((state) => state.ready);
   const loggedSystemNoticeCodes = useRef(new Set<string>());
-  // The project preview is the Pixi compositor behind `<PreviewSurface>` (see
-  // docs/preview.md). The transport buttons here delegate to its imperative
-  // handle (play / pause / seek); playhead state flows back up via callbacks.
+  // The preview ref owns visual/export operations. Playback belongs to the
+  // editor session, independently of which preview panel is mounted.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
   const [workspaceController, setWorkspaceController] =
     useState<DockWorkspaceController | null>(null);
@@ -308,6 +308,10 @@ export function App({ onCloseProject }: AppProps) {
     clearLayerSelection();
   }, []);
 
+  useEffect(() => {
+    return startPreviewAudioSession();
+  }, []);
+
   // Centralised playhead clamp — see "Boundary semantics" in docs/data-model.md.
   // Every UI seek funnels through here so callers can pass raw boundary
   // values (`duration_us`, `playheadTimeUs() + step`, parsed timecode) and
@@ -320,10 +324,10 @@ export function App({ onCloseProject }: AppProps) {
   // it draws one composition and reads one number.
   const seekTo = useCallback((tUs: number) => {
     const clamped = clampSeekUs(tUs);
-    // Optimistic store write: with no preview mounted (empty composition)
-    // there is no engine emit, yet the playhead UI must still move.
+    // Optimistic store write also covers the brief session initialization
+    // window before the transport is registered.
     setPlayheadTimeUs(clamped);
-    previewRef.current?.seekTo(previewLocalUs(clamped));
+    transportSeek(previewLocalUs(clamped));
   }, []);
 
   // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
@@ -417,13 +421,8 @@ export function App({ onCloseProject }: AppProps) {
   }, [primaryLayerId, comp, revealedTrackId]);
 
   const togglePlay = useCallback(() => {
-    const handle = previewRef.current;
-    if (!handle) return;
-    if (handle.paused()) {
-      handle.play();
-    } else {
-      handle.pause();
-    }
+    if (usePlaybackStore.getState().requestedPlaying) transportPause();
+    else transportPlay();
   }, []);
 
   const openSettings = useCallback((category: SettingsCategory = "general") => {
@@ -1126,8 +1125,6 @@ export function App({ onCloseProject }: AppProps) {
     () => ({
       summary,
       previewRef,
-      paused,
-      onPausedChange: setPaused,
       onSeek: seekTo,
       onTogglePlay: togglePlay,
       previewDecodableOf,
@@ -1145,7 +1142,6 @@ export function App({ onCloseProject }: AppProps) {
     }),
     [
       summary,
-      paused,
       seekTo,
       togglePlay,
       previewDecodableOf,
@@ -1175,7 +1171,6 @@ export function App({ onCloseProject }: AppProps) {
         <AgentMode
           ref={previewRef}
           summary={summary}
-          onPausedChange={setPaused}
           onSeek={seekTo}
           onExit={exitAgentMode}
         />

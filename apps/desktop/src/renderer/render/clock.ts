@@ -65,11 +65,12 @@ export class SyntheticClock {
     this._fpsDen = den > 0 ? den : 1;
   }
 
-  play(): void {
+  play(startDelayS = 0): void {
     if (this._playing) return;
     this._playing = true;
     this._lastWallMs = performance.now();
     this.reanchor();
+    if (this._anchor) this._anchor.ctxTime += startDelayS;
   }
 
   pause(): void {
@@ -93,6 +94,12 @@ export class SyntheticClock {
 
   positionUs(): number {
     return snapFrameRound(this._rawTUs, this._fpsNum, this._fpsDen);
+  }
+
+  /// Audio scheduling keeps sample precision; only the displayed moment is
+  /// snapped to video frames.
+  rawPositionUs(): number {
+    return this._rawTUs;
   }
 
   /// The live clock anchor, or null while paused / while the context

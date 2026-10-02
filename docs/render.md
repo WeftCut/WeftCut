@@ -35,7 +35,7 @@ apps/desktop/src/renderer/render/
   CompositionNode.ts         — one composition INSTANCE's sprites, mixers and Container; the two sweeps
   compositionWalk.ts         — THE recursive walk over a project's layers (offset + window + per-instance key)
   clock.ts                   — audio-master clock (anchor-derived; wall fallback)
-  PlaybackEngine.ts          — transport (play/pause/seek/scrub)
+  PlaybackEngine.ts          — visual attachment to the session transport
   decoder/
     SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared mediabunny Input per source; idle-dispose
     mediaInput.ts            — opens a mediabunny Input over a weftcut-media:// Range CustomSource (AssetRangeSource)
@@ -61,6 +61,8 @@ apps/desktop/src/renderer/render/
     encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
     protocol.ts              — postMessage protocol (start/cancel/progress/chunk/done)
   audio/
+    PreviewAudioEngine.ts    — session transport, clock, PCM preparation/scheduling
+    previewAudioSession.ts   — App/store/meter wiring, independent of panel lifetime
     AudioGraph.ts            — master bus (meter + soft limiter)
     AudioMixer.ts            — per-layer buffer-scheduled playback
     conformSource.ts         — VCONF Range reader (zero decode)
@@ -426,7 +428,7 @@ drag works without churn.
 ## Playhead updates
 
 The engine emits the playhead position once per composition frame during
-playback (`PlaybackEngine.emitTime`). That stream fans out through
+playback (`PreviewAudioEngine.emitTime`). That stream fans out through
 `renderer/state/playheadStore.ts` — a zustand store — and deliberately
 never through React state above a leaf component: a frame-rate value in
 App-level state re-renders the entire tree 30–60×/s while playing, which

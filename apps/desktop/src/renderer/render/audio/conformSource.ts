@@ -17,8 +17,8 @@ export class ConformSource {
     readonly header: ConformHeader,
   ) {}
 
-  static async open(url: string): Promise<ConformSource> {
-    const head = await rangeRead(url, 0, CONFORM_HEADER_LEN);
+  static async open(url: string, signal?: AbortSignal): Promise<ConformSource> {
+    const head = await rangeRead(url, 0, CONFORM_HEADER_LEN, signal);
     const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
     const magic = new TextDecoder().decode(head.subarray(0, 5));
     if (magic !== "VCONF") throw new Error(`bad conform magic at ${url}`);
@@ -45,6 +45,7 @@ export class ConformSource {
   async readWindow(
     startFrame: number,
     frameCount: number,
+    signal?: AbortSignal,
   ): Promise<Float32Array<ArrayBuffer>[]> {
     const ch = this.header.channels;
     const out = Array.from(
@@ -59,6 +60,7 @@ export class ConformSource {
       this.url,
       CONFORM_HEADER_LEN + readStart * ch * 4,
       (readEnd - readStart) * ch * 4,
+      signal,
     );
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const dstOff = readStart - startFrame;
@@ -78,6 +80,7 @@ async function rangeRead(
   url: string,
   offset: number,
   len: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const out = new Uint8Array(len);
   let got = 0;
@@ -85,6 +88,7 @@ async function rangeRead(
     const start = offset + got;
     const end = offset + len - 1;
     const res = await fetch(url, {
+      signal: signal ?? null,
       headers: { Range: `bytes=${start}-${end}` },
     });
     if (!res.ok && res.status !== 206) {

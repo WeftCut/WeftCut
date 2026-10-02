@@ -387,8 +387,6 @@ function drivableEvent() {
 const contracts: DockPanelContracts = {
   summary: null,
   previewRef: { current: null },
-  paused: true,
-  onPausedChange: vi.fn(),
   onSeek: vi.fn(),
   onTogglePlay: vi.fn(),
   previewDecodableOf: () => false,

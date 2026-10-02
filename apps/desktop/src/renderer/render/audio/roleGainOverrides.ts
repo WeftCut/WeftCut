@@ -34,8 +34,7 @@ export function roleGainOverrideDb(role: AudioRole): number | undefined {
   return overrides.get(role);
 }
 
-/// PixiPreview subscribes to re-composite on change — the audio pass only
-/// re-derives the mixer from the override inside `compositeFrame`.
+/// The audio session subscribes directly; faders do not depend on a redraw.
 export function subscribeRoleGainOverrides(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);

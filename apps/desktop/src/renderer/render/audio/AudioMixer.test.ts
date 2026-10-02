@@ -129,8 +129,7 @@ const view: AudioView = {
 };
 
 async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
 function createMixer(): {

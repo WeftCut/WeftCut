@@ -1,3 +1,5 @@
+import { activePreviewAudioEngine } from "../render/audio/previewAudioSession";
+import type { PlaybackSnapshot, AudioTransportStats } from "../render/audio/PreviewAudioEngine";
 // Dev/E2E-only control surface. Installed ONLY when
 // import.meta.env.VITE_WEFTCUT_E2E === "1" (set by the e2e build), so it is
 // absent from normal production bundles (the dynamic import behind that static
@@ -491,6 +493,8 @@ export interface E2EHook {
   dockWorkspaceProbe(): DockWorkspaceProbe | null;
   /// Start REAL playback through the global transport (`playbackStore`), so the
   /// playback bench never has to click the DOM or press Space.
+  audioTransportSnapshot(): (PlaybackSnapshot & AudioTransportStats & { positionUs: number; contextTime: number; rmsDb: number }) | null;
+  previewTickerEnabled(enabled: boolean): void;
   transportPlay(): void;
   /// Stop real playback through the global transport. Safe no-op with no preview.
   transportPause(): void;
@@ -573,6 +577,7 @@ export interface CompositeSample {
 /// readback, and the Compositor's own probes. Registered via
 /// `installPreviewBridge`.
 interface PreviewBridge {
+  setTickerEnabled(enabled: boolean): void;
   /// Seek the live preview to composition-time `us` (clock + re-composite).
   seekUs(us: number): void;
   /// Extract an (x,y) pixel from the live composited canvas as RGBA bytes,
@@ -746,6 +751,16 @@ export function installPlaybackBenchHooks(): void {
   // Playback control via the global transport store, not the preview bridge:
   // the bench needs the SAME entry point the UI's play/pause uses.
   hookSlot().transportPlay = () => transportPlay();
+  hookSlot().audioTransportSnapshot = () => {
+    const engine = activePreviewAudioEngine();
+    if (!engine) return null;
+    const meter = engine.graph.meterSnapshot();
+    return { ...engine.snapshot(), positionUs: engine.positionUs(),
+      contextTime: engine.graph.ctx.currentTime,
+      rmsDb: Number.isFinite(meter.rmsDb) ? meter.rmsDb : -120,
+      ...engine.stats() };
+  };
+  hookSlot().previewTickerEnabled = (enabled) => previewBridge?.setTickerEnabled(enabled);
   hookSlot().transportPause = () => transportPause();
   hookSlot().transportSeekUs = (us: number) => transportSeek(us);
   hookSlot().compositorPerfSnapshot = () => previewBridge?.perfSnapshot() ?? null;

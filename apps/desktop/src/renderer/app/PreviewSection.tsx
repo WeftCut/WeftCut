@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Menu } from "@base-ui/react/menu";
 import {
   CheckIcon,
+  LoaderCircleIcon,
   ChevronDownIcon,
   PauseIcon,
   PlayIcon,
@@ -26,7 +27,6 @@ import {
 import {
   previewClockUs,
   seekPreviewLocalUs,
-  setPlayheadFromPreview,
 } from "../state/playheadProjection";
 import { AppSelect } from "../components/AppSelect";
 import { AppTimecodeField } from "../components/AppTimecodeField";
@@ -41,6 +41,7 @@ import {
 } from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
+import { usePlaybackStore } from "../state/playbackStore";
 import {
   PREVIEW_ZOOM_STEPS,
   setPreviewZoom,
@@ -50,8 +51,6 @@ import {
 interface PreviewSectionProps {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
   summary: ProjectSummary | null;
-  paused: boolean;
-  onPausedChange: (paused: boolean) => void;
   onTogglePlay: () => void;
   previewDecodableOf: (id: string) => boolean;
   visible: boolean;
@@ -60,18 +59,18 @@ interface PreviewSectionProps {
 /// The preview quadrant: the render-target control, `PreviewSurface`, and the
 /// transport strip (editable timecode, skip/play buttons, canvas + duration
 /// meta). Owns the timecode-edit state — purely local to this transport UI.
-/// `paused` stays App state (AgentMode also writes it) and arrives as
-/// a prop with `onPausedChange` forwarded back up.
+/// Playback state comes directly from the session transport store.
 export function PreviewSection({
   previewRef,
   summary,
-  paused,
-  onPausedChange,
+
   onTogglePlay,
   previewDecodableOf,
   visible,
 }: PreviewSectionProps) {
   const { t } = useTranslation();
+  const phase = usePlaybackStore((s) => s.phase);
+  const playbackError = usePlaybackStore((s) => s.error);
   // Timecode-edit state doubles as the field's seed value: capturing the
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
@@ -102,8 +101,6 @@ export function PreviewSection({
         <PreviewSurface
           ref={previewRef}
           hasContent={(summary?.layer_count ?? 0) > 0}
-          onTimeUpdate={setPlayheadFromPreview}
-          onPausedChange={onPausedChange}
           previewDecodableOf={previewDecodableOf}
           visible={visible}
         />
@@ -147,8 +144,11 @@ export function PreviewSection({
             title={t("transport.play_pause_hint")}
             aria-label={t("transport.play_pause_hint")}
             disabled={(summary?.layer_count ?? 0) === 0}
+            aria-busy={phase === "preparing"}
           >
-            {paused ? (
+            {phase === "preparing" ? (
+              <LoaderCircleIcon size={16} className="animate-spin" aria-hidden />
+            ) : phase !== "playing" ? (
               <PlayIcon size={16} aria-hidden />
             ) : (
               <PauseIcon size={16} aria-hidden />
@@ -165,6 +165,8 @@ export function PreviewSection({
           </button>
         </div>
         <span className="preview-meta-cell">
+          {phase === "preparing" && <span role="status">{t("transport.preparing_audio")}</span>}
+          {phase === "error" && <span role="alert" title={playbackError ?? undefined}>{t("transport.audio_failed")}</span>}
           <DroppedFramesIndicator />
           <span className="preview-meta" aria-hidden="true">
             {comp && (

@@ -1,8 +1,7 @@
 // The single renderer publication seam for the preview mixer's real analyser
 // readings — the master output and the per-Role metering taps
 // (`render/audio/AudioGraph.ts`) — plus the silence-floor contract every
-// consumer thresholds against. It owns no sampling: `render/PixiPreview.tsx`
-// runs the timers and publishes here.
+// consumer thresholds against. The audio session owns the sampling timers.
 
 import { create } from "zustand";
 
