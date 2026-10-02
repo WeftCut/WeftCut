@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { BetweenHorizontalStart } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import type { LayerParamsView, LayerSummary } from "../ipc";
@@ -84,25 +84,25 @@ export function DropStripSeam({ intoLanePx }: { intoLanePx: number }) {
 }
 
 /// Header-column half of the drop-strip row. Same height as the body, or every
-/// header beneath it loses its lane. The plus is a landmark in the cell, not a
-/// control: ADR 0042 has no click-to-spawn-empty-track, and a button here would
-/// teach the mental model the strip exists to remove. It sits at the bottom of
-/// the hit row (`items-end`) so leftover pixels fall above the plus, not as a
+/// header beneath it loses its lane. The insertion arrow is a drag landmark,
+/// with a tooltip explaining how to spawn a lane (ADR 0042). It sits at the
+/// bottom of the hit row (`items-end`) so leftover pixels fall above the icon, not as a
 /// gutter between the strip and the first track. The dashed rule itself is the
 /// overlay `DropStripSeam` Timeline mounts after this cell.
 export function DropStripHeader() {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="timeline-drop-strip-header"
       className="relative flex items-end justify-center bg-card pb-px"
       style={{ height: DROP_STRIP_HEIGHT_PX }}
-      aria-hidden="true"
+      title={t("timeline.drop_spawn_drag_hint")}
     >
       <span
         data-testid="timeline-drop-strip-add"
         className="relative z-[1] text-muted-foreground/40"
       >
-        <Plus size={10} strokeWidth={2.25} aria-hidden />
+        <BetweenHorizontalStart size={12} strokeWidth={1.75} aria-hidden />
       </span>
     </div>
   );
@@ -111,8 +111,8 @@ export function DropStripHeader() {
 /// The permanently reserved row above the topmost lane: releasing a drag here
 /// spawns a lane at the top of the z-stack and places the clip on it (ADR 0042).
 ///
-/// Idle it is a plus in the header half and a dashed rule that Timeline paints
-/// as `DropStripSeam` after this row — a seam, not a lane. No fill, nothing
+/// Idle it is an insertion arrow in the header half and a dashed rule that
+/// Timeline paints as `DropStripSeam` after this row — a seam, not a lane. No fill, nothing
 /// that reads as an empty track the editor is supposed to manage, because that
 /// mental model is what tracks-as-a-by-product removes. It lights up only while
 /// a drag is in flight, and it claims the highlight through the SAME drop-target
@@ -410,6 +410,7 @@ export function DropStrip({
       data-testid="timeline-drop-strip"
       data-armed={armed ? "true" : "false"}
       data-lit={lit ? "true" : "false"}
+      title={t("timeline.drop_spawn_drag_hint")}
       className={`relative ${
         lockRefused
           ? "bg-amber-500/25 outline outline-1 outline-dashed -outline-offset-1 outline-amber-400/80"

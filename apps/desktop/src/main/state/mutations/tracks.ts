@@ -1,13 +1,17 @@
 import type { Project, Uuid } from '../model'
-import { requireTrack } from './helpers'
+import { applyDurationAutofit, dropLayerFromLinks, requireTrack } from './helpers'
 import { CommandFailure } from '../errors'
 
-/** Remove a track; reserved tracks are not removable, non-empty ones need `force`. */
+/** Remove a track and its contents; A/B roll stay, non-empty lanes need `force`.
+ *  Role is the protection boundary, including legacy audio/caption lanes whose
+ *  stored `removable` flag predates the explicit deletion surface. */
 export function applyDeleteTrack(p: Project, id: Uuid, force: boolean): void {
   const { comp: c, track, trackIndex } = requireTrack(p, id)
-  if (!track.removable) throw new CommandFailure({ error: 'TrackNotRemovable', track: id })
+  if (track.role === 'ARoll' || track.role === 'BRoll') throw new CommandFailure({ error: 'TrackNotRemovable', track: id })
   if (!force && track.layers.length > 0) throw new CommandFailure({ error: 'TrackNotEmpty', track: id })
+  for (const layer of track.layers) dropLayerFromLinks(c, layer.id)
   c.tracks.splice(trackIndex, 1)
+  applyDurationAutofit(c)
 }
 
 /** Name a track. Every lane is renameable — a reserved role is a naming

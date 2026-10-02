@@ -40,6 +40,23 @@ An audit of what a user actually cannot do found the gap somewhere else. Track
 
 ## Decision
 
+### Amendment: explicit deletion and clearer drop affordance (2026-10-02)
+
+User feedback revises the original restriction on human track removal: the
+header's context menu now offers **Delete track and clips** for every lane except
+A roll and B roll, identified by role rather than by its displayed name. The
+renderer issues one `delete_track` command with `force: true`; track removal,
+clip removal, link cleanup and duration autofit share one history entry. One undo
+restores them together. Legacy audio/caption roles are also deletable.
+
+Creation still happens through placement. The idle drop-strip landmark is an
+insertion arrow rather than a plus, with the localized hint **Drag a clip here to
+create a track** on both halves of the strip. Release feedback and geometry stay
+the same. This amendment supersedes the no-human-removal statements below;
+the original rationale is retained as historical context.
+
+### Original decision
+
 The user places media; tracks appear and disappear around that. There is no
 human entry point for adding, removing or reordering a track.
 

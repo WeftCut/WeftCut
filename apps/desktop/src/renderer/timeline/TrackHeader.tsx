@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { tryMutate } from "../errors/tryMutate";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
-import { renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
+import { deleteTrack, renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
 import { AppInput } from "../components/AppInput";
 import { trackDisplayName } from "../lib/trackName";
 import { handCaretToEditor } from "../menu/Menu";
@@ -196,6 +196,13 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isExpand
         <TrackContextMenu
           x={menu.x}
           y={menu.y}
+          canDelete={track.role !== "a-roll" && track.role !== "b-roll"}
+          onDelete={async () => {
+            setMenu(null);
+            if (await tryMutate(() => deleteTrack(track.id), "Delete track")) {
+              await onMutated();
+            }
+          }}
           onClose={() => setMenu(null)}
           onRename={() => {
             setMenu(null);

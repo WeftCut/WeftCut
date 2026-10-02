@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "../i18n"; // real en-US bundle, so a derived lane name is the shipped string
 import type { TrackSummary } from "../ipc";
 import { TrackHeader } from "./TrackHeader";
@@ -9,13 +9,14 @@ import { endRename } from "./renameStore";
 const ipcMocks = vi.hoisted(() => ({
   renameTrack: vi.fn().mockResolvedValue(undefined),
   updateTrackFlags: vi.fn().mockResolvedValue(undefined),
+  deleteTrack: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Only the two commands the header issues are stubbed; every other ipc export
+// Only the commands the header issues are stubbed; every other ipc export
 // (types, helpers) stays real.
 vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
-  return { ...actual, renameTrack: ipcMocks.renameTrack, updateTrackFlags: ipcMocks.updateTrackFlags };
+  return { ...actual, ...ipcMocks };
 });
 
 function track(partial: Partial<TrackSummary> = {}): TrackSummary {
@@ -61,6 +62,7 @@ describe("TrackHeader inline rename", () => {
     endRename(); // the store is module-global; a leaked edit would open every header
     ipcMocks.renameTrack.mockClear();
     ipcMocks.updateTrackFlags.mockClear();
+    ipcMocks.deleteTrack.mockClear();
   });
   afterEach(() => {
     cleanup();
@@ -151,6 +153,23 @@ describe("TrackHeader inline rename", () => {
 
     fireEvent.click(item);
     await waitFor(() => expect(input(container)!.value).toBe("Titles"));
+  });
+
+  it.each([null, "audio-a", "audio-b", "caption"] as const)("deletes a %s track and its clips in one call", async (role) => {
+    const { container, onMutated } = renderHeader(track({ role }));
+    fireEvent.contextMenu(nameCell(container), { clientX: 40, clientY: 12 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete track and clips" }));
+    await waitFor(() => expect(onMutated).toHaveBeenCalledTimes(1));
+    expect(ipcMocks.deleteTrack).toHaveBeenCalledExactlyOnceWith("T1");
+    expect(ipcMocks.updateTrackFlags).not.toHaveBeenCalled();
+  });
+
+  it.each(["a-roll", "b-roll"] as const)("does not offer deletion for %s even when renamed", async (role) => {
+    const { container } = renderHeader(track({ role, label: "Interview", transient: false }));
+    fireEvent.contextMenu(nameCell(container), { clientX: 40, clientY: 12 });
+    await screen.findByRole("menuitem", { name: "Rename" });
+    expect(screen.queryByRole("menuitem", { name: "Delete track and clips" })).toBeNull();
+    expect(ipcMocks.deleteTrack).not.toHaveBeenCalled();
   });
 
   // The lane menu's half of the LANDMINE the clip menu's rows carry too

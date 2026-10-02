@@ -107,6 +107,10 @@
   cursor: not-allowed;
 }
 
+.app-menu-item--destructive:not([data-disabled]) {
+  color: var(--destructive);
+}
+
 .app-menu-item-check {
   width: 16px;
   flex: 0 0 16px;

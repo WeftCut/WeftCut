@@ -1595,6 +1595,28 @@ describe('dispatch: caption tracks', () => {
 })
 
 describe('dispatch: delete_track + move_track', () => {
+  it('deletes a populated linked track in one renderer command and one undo entry', () => {
+    const { actor, aRoll } = fresh()
+    const t = (actor.dispatch('add_track', { label: 'Titles' }) as { ok: true; value: string }).value
+    const add = (track: string, start: number) => (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: start, t_end_us: start + 1_000_000 }) as { ok: true; value: string }).value
+    const first = add(t, 0)
+    const second = add(t, 1_000_000)
+    const survivor = add(aRoll, 0)
+    expect(actor.dispatch('links_create', { layers: [first, survivor] }).ok).toBe(true)
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    expect(actor.command('delete_track', { trackId: t, force: true }).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(len + 1)
+    expect(root(actor.snapshot()).tracks.some((track) => track.id === t)).toBe(false)
+    expect(root(actor.snapshot()).links).toHaveLength(0)
+    expect(root(actor.snapshot()).duration_us).toBe(1_000_000)
+    expect(root(actor.snapshot()).tracks.flatMap((track) => track.layers).map((layer) => layer.id)).toEqual([survivor])
+    expect(actor.command('project_undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(before)
+    expect(root(actor.snapshot()).tracks.find((track) => track.id === t)?.layers.map((layer) => layer.id)).toEqual([first, second])
+    expect(actor.command('project_redo', {}).ok).toBe(true)
+    expect(root(actor.snapshot()).tracks.some((track) => track.id === t)).toBe(false)
+  })
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
     a1.dispatch('move_track', { track: root(a1.snapshot()).tracks[0].id, new_position: 0 }) // no-op

@@ -2235,8 +2235,8 @@ describe("Timeline seek/selection coupling", () => {
     expect(spacer.className).toContain("items-end");
     expect(spacer.className).not.toContain("overflow-hidden");
     expect(strip.dataset.armed).toBe("false");
-    // Idle the body is a dashed rule and the header a plus — a seam, not a
-    // lane. No hint, no ghost. The plus is a landmark, not a control: it must
+    // Idle the body is a dashed rule and the header an insertion arrow — a seam, not a
+    // lane. No release hint, no ghost. The arrow is a landmark, not a control: it must
     // not sit on the canvas where a drop lands.
     expect(strip.textContent).toBe("");
     const seams = [
@@ -2261,6 +2261,8 @@ describe("Timeline seek/selection coupling", () => {
       spacer.querySelector('[data-testid="timeline-drop-strip-seam"]'),
     ).toBeNull();
     expect(spacer.querySelector('[data-testid="timeline-drop-strip-add"]')).not.toBeNull();
+    expect(spacer.title).toBe("Drag a clip here to create a track");
+    expect(strip.title).toBe(spacer.title);
     expect(strip.querySelector('[data-testid="timeline-drop-strip-add"]')).toBeNull();
     expect(strip.querySelector('[data-testid="timeline-drop-strip-hint"]')).toBeNull();
   });

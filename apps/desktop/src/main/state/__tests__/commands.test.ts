@@ -30,7 +30,7 @@ describe('PRODUCTION_OPS', () => {
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       // Groups (ADR 0052): pre-compose / ungroup / rename, and the orphan delete.
       'compositions_delete',
-      'delete_layers',
+      'delete_layers', 'delete_track',
       // The selection's delete that also closes the span it vacated (ADR 0062).
       'ripple_delete_layers',
       // A selected gap closing: the same sweep with nothing deleted (ADR 0069).

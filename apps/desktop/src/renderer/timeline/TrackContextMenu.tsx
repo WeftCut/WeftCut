@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { contextMenuFinalFocus, MenuItem } from "../menu/Menu";
+import { contextMenuFinalFocus, MenuItem, MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 
 /// Right-click menu on a lane header. Its own component rather than an arm of
@@ -15,11 +15,15 @@ export function TrackContextMenu({
   y,
   onClose,
   onRename,
+  canDelete,
+  onDelete,
 }: {
   x: number;
   y: number;
   onClose: () => void;
   onRename: () => void;
+  canDelete: boolean;
+  onDelete: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const anchor = useCursorAnchor(x, y);
@@ -49,6 +53,17 @@ export function TrackContextMenu({
               label={t("timeline.rename", { defaultValue: "Rename" })}
               onSelect={onRename}
             />
+            {canDelete && (
+              <>
+                <MenuSeparator />
+                <MenuItem
+                  label={t("timeline.delete_track")}
+                  hint={t("timeline.delete_track_hint")}
+                  className="app-menu-item--destructive"
+                  onSelect={onDelete}
+                />
+              </>
+            )}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>

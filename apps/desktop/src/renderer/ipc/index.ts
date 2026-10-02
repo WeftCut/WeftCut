@@ -1217,6 +1217,11 @@ export async function renameTrack(
   return invoke<void>("rename_track", { trackId, label });
 }
 
+/// Delete a lane and all its clips in one recorded command / undo entry.
+export async function deleteTrack(trackId: string): Promise<void> {
+  return invoke<void>("delete_track", { trackId, force: true });
+}
+
 /// Drop a point marker at `tUs` (frame-snapped actor-side); returns the new
 /// marker id. RECORDED. The label is deliberately empty — a human marker stays
 /// unnamed until renamed, so the ruler tooltip falls back to the translated

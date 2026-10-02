@@ -194,6 +194,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // `label: null` clears the name back to the derived one, so the header's
   // cleared field must reach the actor as null rather than as an absent field.
   rename_track: (a) => ({ op: 'rename_track', args: { track: a.trackId, label: a.label ?? null } }),
+  delete_track: (a) => ({ op: 'delete_track', args: { track: a.trackId, force: a.force ?? false } }),
   set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: a.role, gain_db: a.gainDb } }),
   update_role_flags: (a) => ({ op: 'update_role_flags', args: { role: a.role, patch: a.patch } }),
   separate_audio_to_new_track: (a) => ({ op: 'separate_audio', args: { layer: a.layerId } }),
@@ -251,7 +252,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'update_path_transform',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',
-  'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',
+  'update_track_flags', 'rename_track', 'delete_track', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',
   'add_marker', 'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'separate_audio_to_new_track', 'restyle_captions',

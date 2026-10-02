@@ -996,6 +996,9 @@ const enUS = {
     // A Group released inside itself, or inside a Group it already contains.
     drop_cycle: "A Group cannot contain itself",
     drop_spawn_hint: "Release to create a track",
+    drop_spawn_drag_hint: "Drag a clip here to create a track",
+    delete_track: "Delete track and clips",
+    delete_track_hint: "Delete this track and all its clips. Undo restores them together.",
     toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab_roll_hint: "A/B Roll, other tracks hidden. Click to show all.",
     mode_all_tracks_hint: "All Tracks, nothing hidden. Click for A/B Roll.",

@@ -1030,7 +1030,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
     case 'TrackNotEmpty':
       return { code: 'invalid_params', message: `track ${e.track} still holds layers: delete_track { track_id, force: true } deletes them with it, or move_layer / delete_layers them first. Nothing was removed` }
     case 'TrackNotRemovable':
-      return { code: 'invalid_params', message: `track ${e.track} is a reserved track (A roll / B roll / audio / captions) and is never removed; its layers can be — delete_layers them, and the track stays empty` }
+      return { code: 'invalid_params', message: `track ${e.track} is a reserved A roll / B roll track and is never removed; its layers can be — delete_layers them, and the track stays empty` }
     case 'TrackLocked':
       return { code: 'invalid_params', message: `track ${e.track} is locked and refuses edits to the layers on it (a locked track blocks the WHOLE batch it appears in). set_track_flags { track_id: "${e.track}", locked: false } clears it; a layer's own \`locked\` is separate (update_layer)`, data: { error: 'TrackLocked', track: e.track, options: [{ action: 'unlock_track', tool: 'set_track_flags', track_id: e.track, locked: false }] } }
     case 'SplitOutsideLayer':
@@ -1432,7 +1432,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   { name: 'delete_track', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Remove a track. Refuses a track with layers unless force=true (`TrackNotEmpty`); with force the layers go with it, and a Group layer among them leaves its composition in place with `ref_count 0` (`project://compositions`) — `delete_composition` removes that. The reserved A roll / B roll / audio / caption tracks are never removed (`TrackNotRemovable`).",
+    description: "Remove a track. Refuses a track with layers unless force=true (`TrackNotEmpty`); with force the layers go with it and their links are cleaned up in the same undo entry. A Group layer among them leaves its composition in place with `ref_count 0` (`project://compositions`) — `delete_composition` removes that. Only A roll / B roll tracks are protected (`TrackNotRemovable`); audio and caption tracks can be deleted.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, force: { type: 'boolean', description: 'Also delete the layers still on it. Default false, which refuses a non-empty track (TrackNotEmpty).' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   { name: 'rename_track', exec: 'table', annotations: ANN_SET,

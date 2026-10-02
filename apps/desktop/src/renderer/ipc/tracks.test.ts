@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { trackStatic, type AnimTrack } from "./index";
+import { describe, expect, it, vi } from "vitest";
+
+const invoke = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/bridge/ipc", () => ({ invoke }));
+
+import { deleteTrack, trackStatic, type AnimTrack } from "./index";
+
+it("deletes a track and its clips with one backend invocation", async () => {
+  await deleteTrack("track-1");
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("delete_track", { trackId: "track-1", force: true });
+});
 
 describe("trackStatic", () => {
   it("returns the static value", () => {
