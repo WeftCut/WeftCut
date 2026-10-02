@@ -104,6 +104,7 @@ describe('createTsActorHost — persistence-route integration', () => {
   })
   it('tracks project operations until settlement and clears the counter on failure',async()=>{
     const {deps}=makeInMemoryDeps(); const host=createTsActorHost(deps)
+    expect(await host.handleInvoke('project_open_state',{})).toBeNull()
     const failed=host.handleInvoke('project_open',{path:'/missing'})
     expect(host.projectOperationPending?.()).toBe(true)
     await expect(failed).rejects.toThrow()
@@ -112,6 +113,7 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(host.projectOperationPending?.()).toBe(true)
     await created
     expect(host.projectOperationPending?.()).toBe(false)
+    expect(await host.handleInvoke('project_open_state',{})).toMatchObject({dir:'/projects/pending'})
     host.stop()
   })
 
