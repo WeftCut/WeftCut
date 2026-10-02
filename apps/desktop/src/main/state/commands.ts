@@ -130,7 +130,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds, anchor_layer_id: a.anchorLayerId ?? null, t_start_us: a.anchorTStartUs ?? null } }),
   // Anchored z-reorder (ADR 0044) — the Playhead Panel's drop gesture. Pure renaming;
   // position/anchor validation lives with the mutation.
-  restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
+  restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId,
+    ...(a.anchorLayerId === undefined ? {} : { anchor: a.anchorLayerId }),
+    ...(a.anchorTrackId === undefined ? {} : { anchor_track: a.anchorTrackId }), position: a.position } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_link: a.escapeLink ?? false } }),
   // The selection's delete — a set in, one undo entry out. Same rename as
   // move_layers_to_new_track's, which takes the selection the same way.

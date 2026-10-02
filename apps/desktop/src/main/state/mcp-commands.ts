@@ -1535,13 +1535,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         : { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
     } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
-    description: "Restack a visual layer in z-order relative to an ANCHOR layer: `position` 'above' | 'below' puts it directly above/below the anchor's track, resolved at apply time (anchors are layers, not indices, which drift between read and write). A mover that is its track's sole occupant moves the whole track; a mover sharing its track splits onto a new track at the target, and the source is pruned only if that emptied it; a role-stamped A/B-roll track never moves. Front/back are not variants — anchor on the top or bottom of the visual stack. Audio never stacks (`WrongLayerKind`), nor may the anchor be the mover. Already in place = no-op, nothing recorded. One recorded commit.",
+    description: "Restack a visual layer above/below a stable layer or track anchor. Supply exactly one anchor; track anchors work through gaps. A sole occupant carries its track; shared or reserved sources split onto a fresh track. Reserved tracks stay put. Audio, cross-composition and self-anchors reject. Already in place records nothing. One undo step.",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'The visual layer to restack.' },
-      anchor_layer_id: { type: 'string', description: 'The visual layer to place it against; may sit on a reserved track.' },
+      anchor_layer_id: { type: 'string', description: 'The visual layer to place it against; supply exactly one of anchor_layer_id / anchor_track_id.' },
+      anchor_track_id: { type: 'string', description: 'A visual track to place it against, including an empty reserved lane. Supply instead of anchor_layer_id.' },
       position: { type: 'string', enum: ['above', 'below'], description: "Place the layer directly above or directly below the anchor layer's track." },
-    }, required: ['anchor_layer_id', 'layer_id', 'position'] },
-    parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
+    }, required: ['layer_id', 'position'], oneOf: [
+      { required: ['anchor_layer_id'], not: { required: ['anchor_track_id'] } },
+      { required: ['anchor_track_id'], not: { required: ['anchor_layer_id'] } },
+    ] },
+    parseArgs: (a) => {
+      const hasLayer = a.anchor_layer_id !== undefined && a.anchor_layer_id !== null
+      const hasTrack = a.anchor_track_id !== undefined && a.anchor_track_id !== null
+      if (hasLayer === hasTrack) throw new McpArgError('provide exactly one of anchor_layer_id / anchor_track_id', 'anchor_layer_id')
+      return { op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'),
+        ...(hasTrack ? { anchor_track: parseUuid(a.anchor_track_id, 'anchor_track_id') } : { anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id') }),
+        position: parseRestackPosition(a.position) } }
+    } },
   { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
     description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it unless `escape_link=true`. A target past the other edge or past the source (of any member) is refused naming the legal window, never clamped. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },

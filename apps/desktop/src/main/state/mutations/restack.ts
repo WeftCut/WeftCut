@@ -3,7 +3,7 @@ import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { applyAddTrack } from './add'
-import { pruneEmptiedTrack, requireLayer } from './helpers'
+import { pruneEmptiedTrack, requireLayer, requireTrack, type LocatedLayer, type LocatedTrack } from './helpers'
 
 export type RestackPosition = 'above' | 'below'
 
@@ -48,6 +48,30 @@ export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, ancho
   if (anchor.layer.params.kind === 'Audio')
     throw new CommandFailure({ error: 'WrongLayerKind', layer: anchorId, expected: 'visual' })
 
+  return restackAtTrack(p, idGen, mover, anchor, position)
+}
+
+/** Stable track addressing also works when the reference lane has no clip. */
+export function applyRestackLayerAgainstTrack(p: Project, idGen: IdGen, layerId: Uuid, anchorTrackId: Uuid, position: RestackPosition): Uuid | null {
+  if (position !== 'above' && position !== 'below')
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: "expected 'above' | 'below'" })
+  const mover = requireLayer(p, layerId)
+  const anchor = requireTrack(p, anchorTrackId)
+  if (mover.comp !== anchor.comp)
+    throw new CommandFailure({ error: 'CrossCompositionMove', layer: layerId, from: mover.comp.id, to: anchor.comp.id })
+  if (mover.layer.params.kind === 'Audio')
+    throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'visual' })
+  if (anchor.track.role === 'AudioA' || anchor.track.role === 'AudioB' ||
+      (anchor.track.role === null && anchor.track.layers.length > 0 && anchor.track.layers.every(l => l.params.kind === 'Audio')))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor_track', detail: 'audio tracks do not participate in visual stacking' })
+  if (mover.track === anchor.track)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor_track', detail: 'anchor must be a different track' })
+  return restackAtTrack(p, idGen, mover, anchor, position)
+}
+
+/** Both address forms share movement, no-op, cleanup and history semantics. */
+function restackAtTrack(p: Project, idGen: IdGen, mover: LocatedLayer, anchor: LocatedTrack, position: RestackPosition): Uuid | null {
+  const layerId = mover.layer.id
   const c = mover.comp
   const mi = mover.trackIndex
   const ai = anchor.trackIndex

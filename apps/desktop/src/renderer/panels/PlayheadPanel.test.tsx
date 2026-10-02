@@ -52,7 +52,7 @@ vi.mock("../ipc", async (importActual) => {
   };
 });
 
-import { PlayheadPanel } from "./PlayheadPanel";
+import { PlayheadPanel, type PlayheadPanelProps } from "./PlayheadPanel";
 
 // jsdom has no PointerEvent constructor; MouseEvent carries the same client
 // coordinates the pointer sequence needs (EffectsSection.test.tsx prior art).
@@ -150,11 +150,7 @@ function renderPanel(
     onPick?: (layerId: string, trackId: string) => void;
     onGoTo?: (layerId: string, trackId: string, startUs: number) => void;
     onRename?: (layerId: string, nextLabel: string) => void;
-    onRestack?: (
-      layerId: string,
-      anchorLayerId: string,
-      position: "above" | "below",
-    ) => void;
+    onRestack?: PlayheadPanelProps["onRestack"];
   } = {},
   links: LinkSummary[] = [],
 ) {
@@ -188,6 +184,80 @@ function renderPanel(
     );
   return { onPick, container, rerenderPanel };
 }
+
+describe("PlayheadPanel reserved visual track references", () => {
+  function reservedStack(): TrackSummary[] {
+    return [
+      { ...makeTrack("a", "A Roll", "Video", []), role: "a-roll", transient: false },
+      { ...makeTrack("b", "B Roll", "Video", [makeLayer("b-clip", "Cutaway", "Color", 0, 2_000_000)]), role: "b-roll", transient: false },
+      makeTrack("overlay", "Overlay", "Video", [makeLayer("overlay-clip", "Logo", "ImageOverlay", 0, 2_000_000)]),
+      { ...makeTrack("audio", "Dialogue", "Audio", []), role: "audio-a", transient: false },
+    ];
+  }
+
+  it("shows occupied and empty references in real stack order, without grips or audio references", () => {
+    const { onPick } = renderPanel(reservedStack(), { onRestack: vi.fn() });
+    const stack = screen.getByRole("region", { name: "Now playing" });
+    expect(Array.from(stack.querySelectorAll("li")).map(el => el.textContent)).toEqual([
+      expect.stringContaining("Logo"), expect.stringContaining("B Roll"), expect.stringContaining("A Roll"),
+    ]);
+    expect(screen.getByText("No clip at playhead")).toBeTruthy();
+    expect(screen.queryByText("Dialogue")).toBeNull();
+    expect(screen.queryByLabelText("Drag to restack Cutaway")).toBeNull();
+    fireEvent.click(screen.getByTitle("Cutaway"));
+    expect(onPick).toHaveBeenCalledWith("b-clip", "b");
+  });
+
+  it("keeps empty references when the entire observation window is empty", () => {
+    const tracks = reservedStack().filter(t => t.role === "a-roll" || t.role === "b-roll").map(t => ({ ...t, layers: [] }));
+    renderPanel(tracks);
+    expect(screen.getByRole("region", { name: "Now playing" }).querySelectorAll("li")).toHaveLength(2);
+    expect(screen.getAllByText("No clip at playhead")).toHaveLength(2);
+  });
+
+  it("preserves references under a category filter and distinguishes filtered contents from gaps", async () => {
+    renderPanel(reservedStack());
+    await userEvent.click(screen.getByRole("checkbox", { name: "Text" }));
+    expect(screen.getByText("B Roll")).toBeTruthy();
+    expect(screen.getByText("A Roll")).toBeTruthy();
+    expect(screen.getByText("Content filtered")).toBeTruthy();
+    expect(screen.queryByTitle("Cutaway")).toBeNull();
+  });
+
+  it("measures reference rows as drop targets and emits one command below an empty A Roll", () => {
+    const onRestack = vi.fn();
+    renderPanel(reservedStack(), { onRestack });
+    const stack = screen.getByRole("region", { name: "Now playing" });
+    Array.from(stack.querySelectorAll("li")).forEach((row, i) => {
+      row.getBoundingClientRect = () => ({ top: i * 40, bottom: i * 40 + 40, height: 40, left: 0, right: 120, width: 120, x: 0, y: i * 40, toJSON: () => ({}) }) as DOMRect;
+    });
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), { button: 0, clientX: 8, clientY: 10 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 115 });
+    expect(onRestack).not.toHaveBeenCalled();
+    expect(stack.querySelector(".playhead-row--drop-after")?.textContent).toContain("A Roll");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 115 });
+    expect(onRestack).toHaveBeenCalledExactlyOnceWith("overlay-clip", { kind: "track", id: "a" }, "below");
+  });
+
+  it("provides a keyboard menu action to place the clip below empty A Roll", async () => {
+    const onRestack = vi.fn();
+    renderPanel(reservedStack(), { onRestack });
+    fireEvent.keyDown(screen.getByTitle("Logo"), { key: "F10", shiftKey: true });
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Place below A Roll" }));
+    expect(onRestack).toHaveBeenCalledExactlyOnceWith("overlay-clip", { kind: "track", id: "a" }, "below");
+  });
+
+  it("freezes reference contents through playhead ticks during a drag and restores live contents on cancel", () => {
+    const { rerenderPanel } = renderPanel(reservedStack(), { onRestack: vi.fn() });
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), { button: 0, clientX: 8, clientY: 10 });
+    playhead.timeUs = 3_000_000;
+    rerenderPanel();
+    expect(screen.getByTitle("Cutaway")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTitle("Cutaway")).toBeNull();
+    expect(screen.getAllByText("No clip at playhead")).toHaveLength(2);
+  });
+});
 
 /// Row titles inside `root`, in DOM order — the row button carries the
 /// layer's display name as its title.
@@ -619,7 +689,7 @@ describe("PlayheadPanel drag restack", () => {
 
       fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
       expect(onRestack).toHaveBeenCalledTimes(1);
-      expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+      expect(onRestack).toHaveBeenCalledWith("l-logo", { kind: "layer", id: "l-wash" }, "below");
       expect(dragstart).not.toHaveBeenCalled();
     } finally {
       document.removeEventListener("dragstart", dragstart);
@@ -674,7 +744,7 @@ describe("PlayheadPanel drag restack", () => {
     expect(stackRows()[0]!.className).toContain("playhead-row--drop-before");
     fireEvent.pointerUp(window, { clientX: 8, clientY: 5 });
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-wash", "l-logo", "above");
+    expect(onRestack).toHaveBeenCalledWith("l-wash", { kind: "layer", id: "l-logo" }, "above");
   });
 
   it("dropping at a no-op gap shows no indicator and emits nothing", () => {
@@ -741,7 +811,7 @@ describe("PlayheadPanel drag restack", () => {
 
     fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+    expect(onRestack).toHaveBeenCalledWith("l-logo", { kind: "layer", id: "l-wash" }, "below");
 
     // The gesture is over: the list snaps back to live data.
     expect(
@@ -777,7 +847,7 @@ describe("PlayheadPanel drag restack", () => {
     fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+    expect(onRestack).toHaveBeenCalledWith("l-logo", { kind: "layer", id: "l-wash" }, "below");
   });
 });
 
@@ -906,7 +976,7 @@ describe("PlayheadPanel row context menu", () => {
     await user.click(menuItem("Bring forward"));
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-logo", "above");
+    expect(onRestack).toHaveBeenCalledWith("l-cap", { kind: "layer", id: "l-logo" }, "above");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
@@ -919,7 +989,7 @@ describe("PlayheadPanel row context menu", () => {
     await user.click(menuItem("Send backward"));
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-wash", "below");
+    expect(onRestack).toHaveBeenCalledWith("l-cap", { kind: "layer", id: "l-wash" }, "below");
   });
 
   it("bring to front anchors above the top of the visible stack, not the adjacent row", async () => {
@@ -933,7 +1003,7 @@ describe("PlayheadPanel row context menu", () => {
     await user.click(menuItem("Bring to front"));
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-wash", "l-logo", "above");
+    expect(onRestack).toHaveBeenCalledWith("l-wash", { kind: "layer", id: "l-logo" }, "above");
   });
 
   it("send to back anchors below the bottom of the visible stack, not the adjacent row", async () => {
@@ -945,7 +1015,7 @@ describe("PlayheadPanel row context menu", () => {
     await user.click(menuItem("Send to back"));
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+    expect(onRestack).toHaveBeenCalledWith("l-logo", { kind: "layer", id: "l-wash" }, "below");
   });
 
   it("clicking a disabled item emits nothing", async () => {
@@ -997,7 +1067,7 @@ describe("PlayheadPanel row context menu", () => {
     await user.click(menuItem("Send backward"));
 
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+    expect(onRestack).toHaveBeenCalledWith("l-logo", { kind: "layer", id: "l-wash" }, "below");
   });
 
   it("Shift+F10 opens the row menu from the keyboard; arrow + Enter fires the action", async () => {
@@ -1015,7 +1085,7 @@ describe("PlayheadPanel row context menu", () => {
     await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
     await user.keyboard("{ArrowDown}{Enter}");
     expect(onRestack).toHaveBeenCalledTimes(1);
-    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-logo", "above");
+    expect(onRestack).toHaveBeenCalledWith("l-cap", { kind: "layer", id: "l-logo" }, "above");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 

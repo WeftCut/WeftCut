@@ -1162,6 +1162,10 @@ const enUS = {
     restack_backward: "Send backward",
     restack_front: "Bring to front",
     restack_back: "Send to back",
+    restack_above_track: "Place above {{label}}",
+    restack_below_track: "Place below {{label}}",
+    reference_empty: "No clip at playhead",
+    reference_filtered: "Content filtered",
     // Folded link rows. `link_count_aria` names the `×N` glyph; N is the link's
     // full member count, so it is never 1.
     link_count_aria: "Link of {{count}} clips",

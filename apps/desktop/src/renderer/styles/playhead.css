@@ -72,6 +72,28 @@
   transition: background var(--transition-fast);
 }
 
+/* Reserved visual lanes are stable references, including through a gap. */
+.playhead-reference-row {
+  min-height: 42px;
+  border-block: 1px solid var(--border-soft);
+  background: var(--surface-sunken);
+}
+
+.playhead-reference-row .playhead-label {
+  color: var(--muted-foreground);
+}
+
+.playhead-reference-row .playhead-reference-placeholder {
+  cursor: default;
+}
+
+.playhead-drop-hint {
+  min-height: 18px;
+  margin: 4px 10px 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
 .playhead-item-row:hover {
   background: var(--hover-neutral);
 }

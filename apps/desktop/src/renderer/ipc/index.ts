@@ -1445,15 +1445,16 @@ export async function moveLayersToNewTrack(
   });
 }
 
-/// Restack a visual layer directly above/below an anchor layer in the z-stack
-/// (ADR 0044) — the Playhead Panel's drop gesture. One undoable step; degradation and no-op
+/// Restack a visual layer above/below a stable layer or track reference
+/// (ADR 0088) — the Playhead Panel's drop gesture. One undoable step; degradation and no-op
 /// semantics live on the mutation (main/state/mutations/restack.ts).
 export async function restackLayer(
   layerId: string,
-  anchorLayerId: string,
+  anchor: import("../../shared/restack").RestackAnchor,
   position: "above" | "below",
 ): Promise<void> {
-  return invoke<void>("restack_layer", { layerId, anchorLayerId, position });
+  return invoke<void>("restack_layer", { layerId,
+    ...(anchor.kind === "track" ? { anchorTrackId: anchor.id } : { anchorLayerId: anchor.id }), position });
 }
 
 /** `docs/features.md#links` — link-aware trim. `edge` is `"in"` or `"out"`. */

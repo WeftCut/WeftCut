@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
-import { applyRestackLayer } from './restack'
+import { applyRestackLayer, applyRestackLayerAgainstTrack } from './restack'
 import { isCommandFailure } from '../errors'
 import type { CommandError } from '../errors'
 import { createActor } from '../actor'
@@ -225,6 +225,53 @@ function actorWithSharedStack() {
 }
 
 describe('restack_layer through the actor', () => {
+  it('restacks below an empty reserved track in one entry, with undo and redo', () => {
+    const { actor, x } = actorWithSharedStack()
+    const before = actor.snapshot()
+    const aRoll = root(before).tracks[0].id
+    const len = actor.historyStatus().len
+    expect(actor.dispatch('restack_layer', { layer: x, anchor_track: aRoll, position: 'below' }).ok).toBe(true)
+    const after = actor.snapshot()
+    expect(root(after).tracks[0].layers.map(l => l.id)).toEqual([x])
+    expect(root(after).tracks[1].id).toBe(aRoll)
+    expect(root(after).tracks.filter(t => t.role !== null)).toEqual(root(before).tracks.filter(t => t.role !== null))
+    expect(actor.historyStatus().len).toBe(len + 1)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(before)
+    expect(actor.dispatch('redo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(after)
+  })
+
+  it('supports empty-track anchors over MCP and refuses ambiguous anchors without writing', () => {
+    const { actor, y } = actorWithSharedStack()
+    const aRoll = root(actor.snapshot()).tracks[0].id
+    expect(actor.mcpCall('restack_layer', JSON.stringify({ layer_id: y, anchor_track_id: aRoll, position: 'above' })).ok).toBe(true)
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    expect(actor.mcpCall('restack_layer', JSON.stringify({ layer_id: y, anchor_track_id: aRoll, position: 'above' })).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(len) // same placement records nothing
+    expect(actor.mcpCall('restack_layer', JSON.stringify({ layer_id: y, anchor_track_id: aRoll, anchor_layer_id: y, position: 'below' })).ok).toBe(false)
+    expect(actor.snapshot()).toEqual(before)
+    expect(actor.historyStatus().len).toBe(len)
+  })
+
+  it('rejects audio-track, missing-track, and absent anchors without a history entry', () => {
+    const { actor, y } = actorWithSharedStack()
+    const initial = structuredClone(actor.snapshot())
+    root(initial).tracks[0].role = 'AudioA'
+    const idGen = seededGen()
+    const a = createActor({ initial, idGen, clock: () => '<TS>' })
+    const len = a.historyStatus().len
+    const audio = root(initial).tracks[0].id
+    for (const args of [
+      { layer: y, anchor_track: audio, position: 'below' },
+      { layer: y, anchor_track: 'missing', position: 'above' },
+      { layer: y, position: 'above' },
+    ]) expect(a.dispatch('restack_layer', args).ok).toBe(false)
+    expect(a.snapshot()).toEqual(initial)
+    expect(a.historyStatus().len).toBe(len)
+  })
+
   it('records ONE entry with its own history label, and a single undo restores layer, track and source together', () => {
     const { actor, x, y } = actorWithSharedStack()
     const before = actor.snapshot()
@@ -348,6 +395,15 @@ describe('restack_layer over MCP', () => {
 })
 
 describe('applyRestackLayer inside a Group', () => {
+  it('rejects a track reference from another composition or the mover own track without writing', () => {
+    const { p, idGen, groupId, innerId } = groupedProject()
+    const before = structuredClone(p)
+    const dest = root(p).tracks[0].id
+    expect(cmdErr(() => applyRestackLayerAgainstTrack(p, idGen, innerId, dest, 'below'))).toMatchObject({ error: 'CrossCompositionMove' })
+    const own = group(p, groupId).tracks.find(t => t.layers.some(l => l.id === innerId))!.id
+    expect(cmdErr(() => applyRestackLayerAgainstTrack(p, idGen, innerId, own, 'above'))).toMatchObject({ error: 'InvalidArgument', field: 'anchor_track' })
+    expect(p).toEqual(before)
+  })
   it('restacks within the Group; an anchor in another composition is CrossCompositionMove', () => {
     const { p, idGen, groupId, innerId, refLayerId } = groupedProject()
     const g = group(p, groupId)

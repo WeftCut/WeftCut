@@ -461,12 +461,12 @@ function PlayheadDockPanel() {
             await contracts.onMutated();
           }
         }}
-        onRestack={async (layerId, anchorLayerId, position) => {
+        onRestack={async (layerId, anchor, position) => {
           // One completed drag = one anchored restack op (ADR 0044); the
           // actor owns the sole-occupant/split degradation and the undo entry.
           if (
             await tryMutate(
-              () => restackLayer(layerId, anchorLayerId, position),
+              () => restackLayer(layerId, anchor, position),
               "Restack layer",
             )
           ) {

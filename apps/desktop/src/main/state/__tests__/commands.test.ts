@@ -58,6 +58,11 @@ describe('PRODUCTION_OPS', () => {
 })
 
 describe('parseMechanical restack_layer', () => {
+  it('preserves track addressing for an empty reference lane', () => {
+    expect(parseMechanical('restack_layer', { layerId: 'layer-1', anchorTrackId: 'track-2', position: 'below' })).toEqual({
+      op: 'restack_layer', args: { layer: 'layer-1', anchor_track: 'track-2', position: 'below' },
+    })
+  })
   it('maps the renderer wire args onto the anchored op unchanged', () => {
     expect(
       parseMechanical('restack_layer', {

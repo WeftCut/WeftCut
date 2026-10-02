@@ -69,7 +69,8 @@ async function threeOverlappingOverlays(
 /// top-of-stack first — the panel's own presentation order.
 const atPlayheadStack = (page: Page) => page.getByRole('region', { name: 'Now playing' })
 const stackRows = (page: Page) => atPlayheadStack(page).locator('.right-panel-playhead-list > li')
-const rowLabels = (page: Page) => stackRows(page).locator('.playhead-label').allTextContents()
+const overlayRows = (page: Page) => atPlayheadStack(page).locator('.right-panel-playhead-list > li:not([data-testid="playhead-track-reference"])')
+const rowLabels = (page: Page) => overlayRows(page).locator('.playhead-label').allTextContents()
 
 /// Boot into a project with the Playhead Panel ACTIVE. It ships inactive in the
 /// default layout (tabbed behind Attribute), so the spec clicks its tab — the
@@ -82,7 +83,7 @@ async function openPlayheadPanelOverStack(page: Page): Promise<void> {
   await expect.poll(() => rowLabels(page), { timeout: 15_000 }).toEqual(['Over', 'Mid', 'Under'])
 }
 
-test('a Playhead Panel grip drag restacks the real project and one undo restores it', async () => {
+test('a Playhead Panel grip drag restacks below empty A roll and one undo restores it', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
@@ -99,12 +100,15 @@ test('a Playhead Panel grip drag restacks the real project and one undo restores
     // ── Drag the top row's grip to the section bottom ─────────────────────
     // Real mouse input, one protocol round trip per step (the gesture's window
     // listeners must observe committed React state between events). The drop
-    // point sits past the bottom row's midline, so the gap hit-test resolves
-    // the section-bottom slot: anchor = bottom row (Under), position below.
+    // point sits past the empty A-roll reference's midline, so the gap resolves
+    // below a real reserved track even though there is no clip to anchor on.
     const grip = page.getByLabel('Drag to restack Over')
-    await expect(stackRows(page)).toHaveCount(3)
+    await expect(overlayRows(page)).toHaveCount(3)
+    await expect(page.getByTestId('playhead-track-reference')).toHaveCount(2)
+    await page.screenshot({ path: testInfo.outputPath('playhead-references.png') })
     const gripBox = await grip.boundingBox()
-    const bottomRowBox = await stackRows(page).nth(2).boundingBox()
+    const bottomRow = stackRows(page).last()
+    const bottomRowBox = await bottomRow.boundingBox()
     if (!gripBox || !bottomRowBox) throw new Error('grip or bottom row has no layout box')
     const x = gripBox.x + gripBox.width / 2
     await page.mouse.move(x, gripBox.y + gripBox.height / 2)
@@ -115,7 +119,7 @@ test('a Playhead Panel grip drag restacks the real project and one undo restores
     // styling armed and the insertion indicator on the section-bottom gap. If
     // Dockview had captured the gesture as a panel drag, neither appears.
     await expect(atPlayheadStack(page)).toHaveClass(/playhead-stack--reordering/)
-    await expect(stackRows(page).nth(2)).toHaveClass(/playhead-row--drop-after/)
+    await expect(bottomRow).toHaveClass(/playhead-row--drop-after/)
 
     await page.mouse.up()
 
@@ -129,6 +133,8 @@ test('a Playhead Panel grip drag restacks the real project and one undo restores
       .toEqual([over, under, mid])
 
     const after = await stackSummary(page)
+    expect(after.tracks[0]!.layers.map(l => l.id)).toEqual([over])
+    expect(after.tracks.filter(t => t.role !== null).map(t => t.id)).toEqual(before.tracks.filter(t => t.role !== null).map(t => t.id))
     // ONE anchored op per completed drag — the gesture must not decompose into
     // a track-add + move pair.
     expect(after.history.len).toBe(before.history.len + 1)
@@ -138,6 +144,8 @@ test('a Playhead Panel grip drag restacks the real project and one undo restores
     expect(after.tracks.map((t) => t.id).sort()).toEqual(before.tracks.map((t) => t.id).sort())
     // The panel re-renders to the new z order, top-of-stack first.
     await expect.poll(() => rowLabels(page)).toEqual(['Mid', 'Under', 'Over'])
+    await page.getByTestId('playhead-track-reference').last().scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath('playhead-restacked-below-a-roll.png') })
 
     // ── One undo restores the whole restack ───────────────────────────────
     await invokeCmd(page, 'project_undo', {})

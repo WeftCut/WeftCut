@@ -334,15 +334,17 @@ Anchored z-reorder of one visual layer — `restack_layer(layer, above|below
 anchor)`, the verb behind the Playhead Panel's stack ordering and the MCP command
 of the same name. Operates on the layer, not its container: a sole occupant
 carries its whole track, a layer sharing its track splits onto a fresh one, and
-a role-stamped source never moves. Anchors are layers, never indices; audio
-neither moves nor anchors. The op's exact contract lives in data-model.md.
+a role-stamped source never moves. Anchors are stable layer or track identities,
+never indices; a track reference works through a gap. Audio neither moves nor
+anchors. The op's exact contract lives in data-model.md (ADR 0088).
 _Avoid_: raise (that is spawn-at-top), reorder tracks, move above/below
 
 **Playhead Panel**:
 The A/B Roll context Panel, which takes its name from the origin everything in
 it is measured against. Its two sections name the distance from that origin:
-*Now playing* is the stack composited under the playhead — the only section
-that restacks — and *Nearby* is the rest of the ±Δ window, each row carrying
+*Now playing* is the visual stack under the playhead, including persistent
+references for reserved visual tracks even through gaps — the only section
+that restacks — and *Nearby* is the hidden clips in the rest of the ±Δ window, each row carrying
 its signed offset. Δ is the user's to set, from the dial in the Panel's own
 toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
 dock tab is the title. The default layout gives it an area of its own above the

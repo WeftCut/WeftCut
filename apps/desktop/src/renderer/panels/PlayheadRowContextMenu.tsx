@@ -1,9 +1,10 @@
+import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
 import { contextMenuFinalFocus, MenuItem, MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "../timeline/contextMenuAnchor";
-import type { RestackMenuTargets, RestackTarget } from "./playheadItems";
+import type { RestackMenuTargets, RestackTarget, RestackReferenceTargets } from "./playheadItems";
 
 /// Right-click menu on a Playhead Panel row. Two item groups, each present
 /// only where it applies, so no row ever gets an empty menu:
@@ -24,6 +25,7 @@ export function PlayheadRowContextMenu({
   y,
   label,
   targets,
+  references,
   link,
   onClose,
   onAction,
@@ -35,6 +37,7 @@ export function PlayheadRowContextMenu({
   label: string;
   /// Null when the row is not in the visible visual stack.
   targets: RestackMenuTargets | null;
+  references: RestackReferenceTargets[];
   /// The link a folded row stands for; null on a plain layer row.
   link: { id: string } | null;
   onClose: () => void;
@@ -87,6 +90,13 @@ export function PlayheadRowContextMenu({
                 {item(targets.sendToBack, t("playhead_panel.restack_back"))}
               </>
             )}
+            {references.length > 0 && <MenuSeparator />}
+            {references.map(reference => (
+              <Fragment key={reference.trackId}>
+                {item(reference.above, t("playhead_panel.restack_above_track", { label: reference.label }))}
+                {item(reference.below, t("playhead_panel.restack_below_track", { label: reference.label }))}
+              </Fragment>
+            ))}
             {targets && link && <MenuSeparator />}
             {link && (
               <MenuItem

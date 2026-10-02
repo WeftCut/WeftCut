@@ -57,19 +57,27 @@ import { useCloseOnAnchorMove } from "../timeline/contextMenuAnchor";
 import { linkHue } from "../timeline/geometry";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { PlayheadRowContextMenu } from "./PlayheadRowContextMenu";
+import type { RestackAnchor } from "../../shared/restack";
 import {
   buildPlayheadItems,
+  buildPlayheadTrackReferences,
+  isTrackReference,
+  stackRowId,
   formatPlayheadWindow,
   playheadCategory,
   playheadDeltaLabels,
   PLAYHEAD_CATEGORY_ORDER,
   PLAYHEAD_WINDOW_PRESETS_US,
   restackMenuTargets,
+  restackReferenceTargets,
   restackTargetForGap,
   splitPlayheadSections,
   type PlayheadCategory,
   type PlayheadItem,
   type PlayheadSections,
+  type PlayheadStackRow,
+  type PlayheadTrackReference,
+  type RestackReferenceTargets,
   type RestackMenuTargets,
 } from "./playheadItems";
 
@@ -121,14 +129,14 @@ export interface PlayheadPanelProps {
   /// Commit a lightweight inline rename through the recorded Layer label
   /// command. The host wires this to `updateLayer` + summary refresh.
   onRename?: ((layerId: string, nextLabel: string) => void) | undefined;
-  /// Restack `layerId` directly above/below `anchorLayerId` in the z-stack —
+  /// Restack `layerId` directly above/below a stable layer or track anchor —
   /// ONE anchored op per completed drag (ADR 0044). The host wires this to
   /// the `restack_layer` command + summary refresh. When omitted, the
   /// At-playhead rows render without grips.
   onRestack?:
     | ((
         layerId: string,
-        anchorLayerId: string,
+        anchor: RestackAnchor,
         position: "above" | "below",
       ) => void)
     | undefined;
@@ -168,9 +176,13 @@ export function PlayheadPanel({
     return buildPlayheadItems(tracks, currentTimeUs, deltaWindowUs, t, links);
   }, [tracks, links, currentTimeUs, deltaWindowUs, displayMode, t]);
 
+  const references = useMemo(
+    () => displayMode === "AbRoll" ? buildPlayheadTrackReferences(tracks, currentTimeUs, t) : [],
+    [tracks, currentTimeUs, displayMode, t],
+  );
   const live = useMemo(
-    () => splitPlayheadSections(items, filter),
-    [items, filter],
+    () => splitPlayheadSections(items, filter, references),
+    [items, filter, references],
   );
 
   // ── Folded link rows ───────────────────────────────────────────────────
@@ -214,7 +226,7 @@ export function PlayheadPanel({
   // reports an active drag; they go stale (not cleared) after the gesture
   // and the next pointerdown overwrites them.
   const [frozen, setFrozen] = useState<PlayheadSections | null>(null);
-  const gestureRowsRef = useRef<PlayheadItem[]>([]);
+  const gestureRowsRef = useRef<PlayheadStackRow[]>([]);
 
   // Gesture presentation (the semantics above stay in the hook): the grabbed
   // row follows the pointer through --playhead-drag-y — written imperatively per
@@ -229,7 +241,7 @@ export function PlayheadPanel({
   const reorder = usePointerReorder({
     // Read per render. A pointerdown can only start on the displayed rows,
     // which are the live ones whenever no gesture is armed.
-    rowIds: live.atPlayheadVisual.map((row) => row.layer.id),
+    rowIds: live.stack.map(stackRowId),
     onDragFrame: (offsetY) => {
       stackSectionRef.current?.style.setProperty("--playhead-drag-y", `${offsetY}px`);
     },
@@ -239,19 +251,23 @@ export function PlayheadPanel({
       const rows = gestureRowsRef.current;
       const target = restackTargetForGap(rows, fromIndex, gap);
       const mover = rows[fromIndex];
-      if (!target || !mover) return;
+      if (!target || !mover || isTrackReference(mover)) return;
       // Measured now, while the row still sits at its pointer-follow
       // position — the drag class (and its transform) is gone by the
       // post-drop render.
       const el = rowEls.current.get(mover.layer.id);
       if (el) settle.arm(mover.layer.id, el);
-      onRestack?.(mover.layer.id, target.anchorId, target.position);
+      onRestack?.(mover.layer.id, target.anchor, target.position);
     },
   });
 
   const sections = reorder.drag && frozen ? frozen : live;
   const { atPlayhead, nearby } = sections;
-  const visualRows = sections.atPlayheadVisual;
+  const visualRows = sections.stack;
+  const audioRows = atPlayhead.slice(sections.atPlayheadVisual.length);
+  const playingCount = atPlayhead.length + visualRows.filter(
+    row => isTrackReference(row) && row.layer !== null && !row.filtered,
+  ).length;
 
   const startRestackDrag = (index: number, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -278,6 +294,7 @@ export function PlayheadPanel({
     layerId: string;
     label: string;
     targets: RestackMenuTargets | null;
+    references: RestackReferenceTargets[];
     link: { id: string } | null;
   } | null>(null);
 
@@ -302,7 +319,7 @@ export function PlayheadPanel({
     y: number,
   ) => {
     const inStack =
-      stackIndex !== undefined && visualRows[stackIndex]?.layer.id === item.layer.id;
+      stackIndex !== undefined && visualRows[stackIndex] !== undefined && stackRowId(visualRows[stackIndex]!) === item.layer.id;
     const link =
       item.linkMembers.length > 0 && item.linkId !== null
         ? { id: item.linkId }
@@ -314,6 +331,7 @@ export function PlayheadPanel({
       layerId: item.layer.id,
       label: rowLabel(item, t, groupOrdinals),
       targets: inStack && onRestack ? restackMenuTargets(visualRows, stackIndex) : null,
+      references: inStack && onRestack ? restackReferenceTargets(visualRows, stackIndex) : [],
       link,
     });
   };
@@ -330,6 +348,17 @@ export function PlayheadPanel({
   // member; when expanded, its members follow as indented plain rows
   // (`member` set) — no grip, no menu, no rect registration, because the fold
   // above them already holds the nearest member's slot in every one of those.
+  const stackRowClassName = (index: number, id: string) => {
+    const dragging = reorder.drag?.id === id;
+    const gap = reorder.indicatorGap;
+    return [
+      dragging ? "playhead-row--dragging" : "",
+      !dragging && gap !== null && index >= gap ? "playhead-row--parted" : "",
+      gap === index ? "playhead-row--drop-before" : "",
+      gap === visualRows.length && index === visualRows.length - 1 ? "playhead-row--drop-after" : "",
+    ].filter(Boolean).join(" ");
+  };
+
   const renderRow = (
     item: PlayheadItem,
     stackIndex?: number,
@@ -337,23 +366,8 @@ export function PlayheadPanel({
   ): ReactNode => {
     const draggable =
       !member && stackIndex !== undefined && stackIndex < visualRows.length;
-    const dragging = draggable && reorder.drag?.id === item.layer.id;
-    const gap = reorder.indicatorGap;
     const rowClassName = draggable
-      ? [
-          dragging ? "playhead-row--dragging" : "",
-          // Rows at/past the active gap part downward to open the slot; the
-          // dragged row never parts — its transform is the pointer follow.
-          !dragging && gap !== null && stackIndex >= gap
-            ? "playhead-row--parted"
-            : "",
-          gap === stackIndex ? "playhead-row--drop-before" : "",
-          gap === visualRows.length && stackIndex === visualRows.length - 1
-            ? "playhead-row--drop-after"
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
+      ? stackRowClassName(stackIndex, item.layer.id)
       : "";
     const folded = !member && item.linkMembers.length > 0;
     const expanded = folded && item.linkId !== null && expandedLinks.has(item.linkId);
@@ -409,6 +423,29 @@ export function PlayheadPanel({
     );
   };
 
+  const renderReference = (row: PlayheadTrackReference, index: number) => {
+    const id = stackRowId(row);
+    return (
+      <PlayheadReferenceRow
+        key={id}
+        row={row}
+        selected={row.layer?.id === selectedLayerId}
+        rowClassName={stackRowClassName(index, id)}
+        rowRef={(el) => reorder.setRowEl(index, el)}
+        onPick={onPick}
+      />
+    );
+  };
+
+  const dropTarget = reorder.drag ? restackTargetForGap(visualRows, reorder.drag.fromIndex, reorder.drag.gap) : null;
+  const dropAnchor = dropTarget ? visualRows.find(row =>
+    dropTarget.anchor.kind === "track" ? row.trackId === dropTarget.anchor.id : row.layer?.id === dropTarget.anchor.id,
+  ) : undefined;
+  const dropHint = dropTarget && dropAnchor ? t(
+    dropTarget.position === "above" ? "playhead_panel.restack_above_track" : "playhead_panel.restack_below_track",
+    { label: isTrackReference(dropAnchor) ? dropAnchor.trackLabel : rowLabel(dropAnchor, t, groupOrdinals) },
+  ) : "";
+
   // All Tracks has no hidden tracks to surface, so nothing in the Panel
   // applies — not the sections, not the chips, not the window. It is the one
   // state that replaces the Panel body outright.
@@ -448,7 +485,7 @@ export function PlayheadPanel({
                 role="checkbox"
                 aria-checked={checked}
                 className={`playhead-filter-chip ${checked ? "is-active" : ""}`}
-                disabled={items.length === 0}
+                disabled={items.length === 0 && references.every(row => row.layer === null)}
                 onClick={() => toggleCategory(category)}
               >
                 {t(`playhead_panel.cat_${category}`, { defaultValue: category })}
@@ -459,7 +496,7 @@ export function PlayheadPanel({
         <PlayheadWindowControl valueUs={deltaWindowUs} />
       </div>
       <div className="right-panel-playhead-results">
-        {items.length === 0 ? (
+        {items.length === 0 && references.length === 0 ? (
           // An empty ±Δ window is a fact about where the playhead is, not a
           // broken Panel — and the sentence names both ways out, one of which
           // is the dial sitting directly above it.
@@ -471,7 +508,7 @@ export function PlayheadPanel({
               })}
             </p>
           </>
-        ) : atPlayhead.length === 0 && nearby.length === 0 ? (
+        ) : visualRows.length === 0 && atPlayhead.length === 0 && nearby.length === 0 ? (
           <p className="playhead-filter-empty">{t("playhead_panel.filter_empty")}</p>
         ) : (
           <>
@@ -500,16 +537,20 @@ export function PlayheadPanel({
                   at zero: the empty line below already says it. */}
               <div className="playhead-section-header">
                 {t("playhead_panel.section_at_playhead")}
-                {atPlayhead.length > 0 && (
-                  <span className="playhead-section-count">{atPlayhead.length}</span>
+                {playingCount > 0 && (
+                  <span className="playhead-section-count">{playingCount}</span>
                 )}
               </div>
-              {atPlayhead.length === 0 ? (
+              {visualRows.length === 0 && audioRows.length === 0 ? (
                 <p className="playhead-stack-empty">{t("playhead_panel.at_playhead_empty")}</p>
               ) : (
                 <ul className="right-panel-playhead-list">
-                  {atPlayhead.map((item, i) => renderRow(item, i))}
+                  {visualRows.map((row, i) => isTrackReference(row) ? renderReference(row, i) : renderRow(row, i))}
+                  {audioRows.map(item => renderRow(item))}
                 </ul>
+              )}
+              {onRestack && visualRows.length > 0 && (
+                <p className="playhead-drop-hint" role="status" aria-live="polite">{dropHint || "\u00a0"}</p>
               )}
             </section>
             {nearby.length > 0 && (
@@ -536,11 +577,12 @@ export function PlayheadPanel({
           y={rowMenu.y}
           label={rowMenu.label}
           targets={rowMenu.targets}
+          references={rowMenu.references}
           link={rowMenu.link}
           onClose={() => setRowMenu(null)}
           onAction={(target) => {
             setRowMenu(null);
-            onRestack?.(rowMenu.layerId, target.anchorId, target.position);
+            onRestack?.(rowMenu.layerId, target.anchor, target.position);
           }}
           onUnlink={(linkId) => {
             setRowMenu(null);
@@ -619,6 +661,40 @@ function Explainer({
         </p>
       )}
     </section>
+  );
+}
+
+function PlayheadReferenceRow({ row, selected, rowClassName, rowRef, onPick }: {
+  row: PlayheadTrackReference;
+  selected: boolean;
+  rowClassName: string;
+  rowRef: (el: HTMLLIElement | null) => void;
+  onPick: (layerId: string, trackId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const groupOrdinals = useGroupOrdinals();
+  const layer = row.filtered ? null : row.layer;
+  const label = layer ? layerDisplayName(layer, t, groupOrdinals) : t(
+    row.filtered ? "playhead_panel.reference_filtered" : "playhead_panel.reference_empty",
+  );
+  const content = <>
+    <span className="playhead-thumb playhead-thumb-fallback" aria-hidden="true">
+      {iconForCategory(row.layer ? playheadCategory(row.layer.params.kind) : row.trackKind === "Text" ? "text" : "video")}
+    </span>
+    <span className="playhead-meta">
+      <span className="playhead-label">{row.trackLabel}</span>
+      <span className="playhead-sublabel">{label}</span>
+    </span>
+  </>;
+  return (
+    <li ref={rowRef} className={rowClassName} data-testid="playhead-track-reference" data-track-id={row.trackId}>
+      <div className={`playhead-item-row playhead-reference-row ${selected && layer ? "is-selected" : ""}`}>
+        {layer ? (
+          <button type="button" className="playhead-item" title={label}
+            onClick={() => onPick(layer.id, row.trackId)}>{content}</button>
+        ) : <div className="playhead-item playhead-reference-placeholder">{content}</div>}
+      </div>
+    </li>
   );
 }
 

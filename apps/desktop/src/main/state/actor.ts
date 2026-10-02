@@ -13,7 +13,7 @@ import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, color
 import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
-import { applyRestackLayer, type RestackPosition } from './mutations/restack'
+import { applyRestackLayer, applyRestackLayerAgainstTrack, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
@@ -974,10 +974,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // honest.
         case 'restack_layer': {
           const layer = a.layer as Uuid
+          const hasLayer = a.anchor !== undefined && a.anchor !== null
+          const hasTrack = a.anchor_track !== undefined && a.anchor_track !== null
+          if (hasLayer === hasTrack)
+            throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor', detail: 'provide exactly one layer or track anchor' })
           commit(HISTORY_SUMMARY.layerRestack,
             (destTrack: Uuid | null) => destTrack === null ? layerRef(layer) : [...layerRef(layer), ...trackRef(destTrack)],
             { kind: 'Coarse' },
-            (d) => applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
+            (d) => hasTrack
+              ? applyRestackLayerAgainstTrack(d, idGen, layer, a.anchor_track as Uuid, a.position as RestackPosition)
+              : applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
           return { ok: true, value: null }
         }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }

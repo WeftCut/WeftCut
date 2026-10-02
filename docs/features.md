@@ -960,12 +960,14 @@ for the round trip in which the destination still has no id, which is what keeps
 a released raise from flashing back to where it started.
 
 The top is the **only** spawn point. A lane below A-roll composites underneath it
-and is invisible unless A-roll has a gap, so a bottom entry point would lie about
-what it does. Z-order is therefore rearranged by **raising to the top, repeatedly**
-— any order composes from a sequence of raises, and each one empties its source
-lane, which cleanup then removes, so restacking leaves no residue. Ordering n
-overlapping overlays costs n−1 operations rather than one drag; it is a
-low-frequency operation. **Move to a new track** is the same operation without a
+and is invisible unless A-roll has a gap. A **raise** moves clips to that topmost
+position; its emptied source is cleaned up. In A/B Roll, anchored **restacking**
+belongs to the Playhead Panel's Now playing stack (ADRs 0044 and 0088). Its
+reserved A-roll, B-roll and caption reference rows persist through gaps and
+category filters, so a clip can be placed above, between or below them in one
+drag or menu action. References are targets, never draggable sources; audio
+does not participate in visual ordering. One undo restores the entire change.
+**Move to a new track** is the raise operation without a
 pointer (search palette, Edit menu, and a clip's own context menu; no default
 binding, disabled when the selection would overlap itself on one lane). A drag
 gesture is unreachable from the keyboard, so the command is not a convenience.

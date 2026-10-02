@@ -974,6 +974,10 @@ const zhCN: Resources = {
     restack_backward: "下移一层",
     restack_front: "置于顶层",
     restack_back: "置于底层",
+    restack_above_track: "置于 {{label}} 上方",
+    restack_below_track: "置于 {{label}} 下方",
+    reference_empty: "当前为空",
+    reference_filtered: "内容已筛选",
     // 折叠的链接行。`link_count_aria` 是 `×N` 字形的无障碍名；N 是链接的全部成员数，
     // 因此不会是 1。
     link_count_aria: "链接（{{count}} 个片段）",

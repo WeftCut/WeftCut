@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPlayheadItems,
+  buildPlayheadTrackReferences,
+  stackRowId,
+  restackReferenceTargets,
   formatPlayheadDelta,
   playheadCategory,
   playheadDeltaLabels,
@@ -298,21 +301,21 @@ describe("restackTargetForGap", () => {
   it("maps an interior gap to 'directly above the visible row below it'", () => {
     // Dragging the top row to the gap between mid and bottom.
     expect(restackTargetForGap(rows(), 0, 2)).toEqual({
-      anchorId: "bottom",
+      anchor: { kind: "layer", id: "bottom" },
       position: "above",
     });
   });
 
   it("maps the top gap to above the first visible row", () => {
     expect(restackTargetForGap(rows(), 2, 0)).toEqual({
-      anchorId: "top",
+      anchor: { kind: "layer", id: "top" },
       position: "above",
     });
   });
 
   it("maps the section-bottom gap to below the last visible row", () => {
     expect(restackTargetForGap(rows(), 0, 3)).toEqual({
-      anchorId: "bottom",
+      anchor: { kind: "layer", id: "bottom" },
       position: "below",
     });
   });
@@ -337,11 +340,11 @@ describe("restackTargetForGap", () => {
       item("bottom", "VideoClip", { trackIndex: 1 }),
     ];
     expect(restackTargetForGap(visible, 1, 0)).toEqual({
-      anchorId: "top",
+      anchor: { kind: "layer", id: "top" },
       position: "above",
     });
     expect(restackTargetForGap(visible, 0, 2)).toEqual({
-      anchorId: "bottom",
+      anchor: { kind: "layer", id: "bottom" },
       position: "below",
     });
   });
@@ -368,17 +371,17 @@ describe("restackMenuTargets", () => {
     expect(restackMenuTargets(rows(), 0)).toEqual({
       bringForward: null,
       bringToFront: null,
-      sendBackward: { anchorId: "mid", position: "below" },
-      sendToBack: { anchorId: "bottom", position: "below" },
+      sendBackward: { anchor: { kind: "layer", id: "mid" }, position: "below" },
+      sendToBack: { anchor: { kind: "layer", id: "bottom" }, position: "below" },
     });
   });
 
   it("middle row: all four available, front/back anchored at the stack ends", () => {
     expect(restackMenuTargets(rows(), 1)).toEqual({
-      bringForward: { anchorId: "top", position: "above" },
-      sendBackward: { anchorId: "bottom", position: "below" },
-      bringToFront: { anchorId: "top", position: "above" },
-      sendToBack: { anchorId: "bottom", position: "below" },
+      bringForward: { anchor: { kind: "layer", id: "top" }, position: "above" },
+      sendBackward: { anchor: { kind: "layer", id: "bottom" }, position: "below" },
+      bringToFront: { anchor: { kind: "layer", id: "top" }, position: "above" },
+      sendToBack: { anchor: { kind: "layer", id: "bottom" }, position: "below" },
     });
   });
 
@@ -386,8 +389,8 @@ describe("restackMenuTargets", () => {
     // bringForward hops one visible step; bringToFront jumps the whole stack —
     // on the bottom row of three the two anchors differ.
     expect(restackMenuTargets(rows(), 2)).toEqual({
-      bringForward: { anchorId: "mid", position: "above" },
-      bringToFront: { anchorId: "top", position: "above" },
+      bringForward: { anchor: { kind: "layer", id: "mid" }, position: "above" },
+      bringToFront: { anchor: { kind: "layer", id: "top" }, position: "above" },
       sendBackward: null,
       sendToBack: null,
     });
@@ -423,11 +426,11 @@ describe("restackMenuTargets", () => {
       item("bottom", "VideoClip", { trackIndex: 1 }),
     ];
     expect(restackMenuTargets(visible, 0).sendBackward).toEqual({
-      anchorId: "bottom",
+      anchor: { kind: "layer", id: "bottom" },
       position: "below",
     });
     expect(restackMenuTargets(visible, 1).bringToFront).toEqual({
-      anchorId: "top",
+      anchor: { kind: "layer", id: "top" },
       position: "above",
     });
   });
@@ -479,6 +482,42 @@ const NOW = 1_000_000;
 /// without pinning the English copy.
 const T = (key: string, values: Record<string, unknown>): string =>
   values.n === undefined ? key : `${key}#${String(values.n)}`;
+
+describe("reserved visual track references", () => {
+  const tracks = () => [
+    track("a", "a-roll", []),
+    track("b", "b-roll", [layer("outgoing", 0, NOW), layer("incoming", NOW, 2 * NOW)]),
+    track("o", null, [layer("overlay", 0, 2 * NOW)]),
+    track("c", "caption", [layer("caption", 0, 2 * NOW, "Text")]),
+    track("au", "audio-a", []),
+  ];
+
+  it("keeps all visual skeleton lanes, resolves cuts to incoming, and excludes audio lanes", () => {
+    const refs = buildPlayheadTrackReferences(tracks(), NOW, T);
+    expect(refs.map(r => [r.trackId, r.layer?.id ?? null])).toEqual([["a", null], ["b", "incoming"], ["c", "caption"]]);
+  });
+
+  it("merges references into real z order while Nearby remains scoped to hidden clips", () => {
+    const rows = tracks();
+    const items = buildPlayheadItems(rows, NOW, NOW, T);
+    const sections = splitPlayheadSections(items, new Set(), buildPlayheadTrackReferences(rows, NOW, T));
+    expect(sections.stack.map(stackRowId)).toEqual(["track:c", "overlay", "track:b", "track:a"]);
+    expect(sections.atPlayhead.map(r => r.layer.id)).toEqual(["overlay"]);
+    expect(sections.nearby).toEqual([]);
+    expect(restackTargetForGap(sections.stack, 1, 4)).toEqual({ anchor: { kind: "track", id: "a" }, position: "below" });
+    expect(restackTargetForGap(sections.stack, 1, 0)).toEqual({ anchor: { kind: "track", id: "c" }, position: "above" });
+    expect(restackTargetForGap(sections.stack, 0, 4)).toBeNull(); // references never move
+  });
+
+  it("keeps filtered references, exposes track targets, and disables already-adjacent menu actions", () => {
+    const rows = tracks();
+    const sections = splitPlayheadSections(buildPlayheadItems(rows, NOW, NOW, T), new Set(["video"]), buildPlayheadTrackReferences(rows, NOW, T));
+    expect(sections.stack.map(stackRowId)).toEqual(["track:c", "overlay", "track:b", "track:a"]);
+    expect(sections.stack[0]).toMatchObject({ reference: true, filtered: true });
+    expect(restackMenuTargets(sections.stack, 1).sendToBack).toEqual({ anchor: { kind: "track", id: "a" }, position: "below" });
+    expect(restackReferenceTargets(sections.stack, 1)).toContainEqual({ trackId: "b", label: "b", above: null, below: { anchor: { kind: "track", id: "b" }, position: "below" } });
+  });
+});
 
 describe("buildPlayheadItems windowing", () => {
   it("keeps only role-null layers that intersect the ±window", () => {

@@ -9,6 +9,7 @@ import { frameIndexRound } from "../frames";
 import type { LayerSummary, LinkSummary, TrackSummary } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
 import { indexLinks } from "../timeline/geometry";
+import type { RestackAnchor } from "../../shared/restack";
 
 /// One row in the Playhead Panel. Carries enough state to render the row +
 /// drive selection / reveal on click.
@@ -53,6 +54,47 @@ export interface PlayheadItem {
   remainingUs: number;
   /// True when `playhead ∈ [t_start, t_end]`.
   spansPlayhead: boolean;
+}
+
+/** A reserved visual lane is a reference, never a draggable clip or a fold. */
+export interface PlayheadTrackReference {
+  reference: true;
+  trackId: string;
+  trackIndex: number;
+  trackLabel: string;
+  trackKind: string;
+  layer: LayerSummary | null;
+  filtered: boolean;
+}
+
+export type PlayheadStackRow = PlayheadItem | PlayheadTrackReference;
+
+export function isTrackReference(row: PlayheadStackRow): row is PlayheadTrackReference {
+  return "reference" in row;
+}
+
+export function stackRowId(row: PlayheadStackRow): string {
+  return isTrackReference(row) ? `track:${row.trackId}` : row.layer.id;
+}
+
+export function buildPlayheadTrackReferences(
+  tracks: TrackSummary[],
+  currentTimeUs: number,
+  t: (key: string, values: Record<string, unknown>) => string,
+): PlayheadTrackReference[] {
+  return tracks.flatMap((track, trackIndex) => {
+    if (track.role !== "a-roll" && track.role !== "b-roll" && track.role !== "caption") return [];
+    return [{
+      reference: true as const,
+      trackId: track.id,
+      trackIndex,
+      trackLabel: trackDisplayName(track, tracks, t),
+      trackKind: track.kind,
+      // At a cut the incoming clip owns this frame, not the outgoing clip.
+      layer: track.layers.find(layer => layer.params.kind !== "Audio" && layer.t_start_us <= currentTimeUs && currentTimeUs < layer.t_end_us) ?? null,
+      filtered: false,
+    }];
+  });
 }
 
 /// `t` is injected rather than imported so this module stays DOM- and
@@ -314,6 +356,8 @@ export function playheadCategory(layerKind: string): PlayheadCategory {
 /// The panel's two sections (ADR 0044): the boundary is the playhead,
 /// not the category.
 export interface PlayheadSections {
+  /** Full visual stack, including reserved references even under a filter. */
+  stack: PlayheadStackRow[];
   /// Exactly the window items spanning the playhead — the stack being
   /// composited right now. Visual kinds merged into one list ordered
   /// top-of-stack first (descending track index, the layer-panel
@@ -348,6 +392,7 @@ export interface PlayheadSections {
 export function splitPlayheadSections(
   items: PlayheadItem[],
   filter: ReadonlySet<PlayheadCategory>,
+  references: readonly PlayheadTrackReference[] = [],
 ): PlayheadSections {
   const visual: PlayheadItem[] = [];
   const audio: PlayheadItem[] = [];
@@ -368,18 +413,40 @@ export function splitPlayheadSections(
   }
   visual.sort((a, b) => b.trackIndex - a.trackIndex);
   return {
+    stack: [...visual, ...references.map(row => ({ ...row, filtered: row.layer !== null && filter.size > 0 && !filter.has(playheadCategory(row.layer.params.kind)) }))]
+      .sort((a, b) => b.trackIndex - a.trackIndex),
     atPlayhead: [...visual, ...audio],
     atPlayheadVisual: visual,
     nearby,
   };
 }
 
-/// The anchored restack a drop means: the op's own addressing (ADR 0044
-/// decision 3) — a layer, not an index, because an index drifts between the
-/// gesture's read and the op's apply.
+/// Stable layer or track addressing (ADR 0088), never a positional index.
 export interface RestackTarget {
-  anchorId: string;
+  anchor: RestackAnchor;
   position: "above" | "below";
+}
+
+function targetForRow(row: PlayheadStackRow, position: "above" | "below"): RestackTarget {
+  return { anchor: isTrackReference(row) ? { kind: "track", id: row.trackId } : { kind: "layer", id: row.layer.id }, position };
+}
+
+export interface RestackReferenceTargets {
+  trackId: string;
+  label: string;
+  above: RestackTarget | null;
+  below: RestackTarget | null;
+}
+
+export function restackReferenceTargets(rows: readonly PlayheadStackRow[], index: number): RestackReferenceTargets[] {
+  const mover = rows[index];
+  if (!mover || isTrackReference(mover)) return [];
+  return rows.filter(isTrackReference).map(row => ({
+    trackId: row.trackId,
+    label: row.trackLabel,
+    above: mover.trackIndex === row.trackIndex + 1 ? null : targetForRow(row, "above"),
+    below: mover.trackIndex === row.trackIndex - 1 ? null : targetForRow(row, "below"),
+  }));
 }
 
 /// Map a drop gap in the At-playhead visual stack to its anchored restack
@@ -398,21 +465,22 @@ export interface RestackTarget {
 ///    pair usePointerReorder's isNoopGap suppresses — restated here so the
 ///    mapping is total on its own).
 export function restackTargetForGap(
-  visibleRows: readonly PlayheadItem[],
+  visibleRows: readonly PlayheadStackRow[],
   fromIndex: number,
   gap: number,
 ): RestackTarget | null {
-  if (visibleRows.length === 0 || gap < 0 || gap > visibleRows.length) {
+  const mover = visibleRows[fromIndex];
+  if (!mover || isTrackReference(mover) || gap < 0 || gap > visibleRows.length) {
     return null;
   }
   if (gap === fromIndex || gap === fromIndex + 1) return null;
   const below = visibleRows[gap];
   if (below !== undefined) {
-    return { anchorId: below.layer.id, position: "above" };
+    return targetForRow(below, "above");
   }
   // gap === visibleRows.length: the section's bottom.
   const last = visibleRows[visibleRows.length - 1]!;
-  return { anchorId: last.layer.id, position: "below" };
+  return targetForRow(last, "below");
 }
 
 /// The row context menu's four ordering actions, each resolved to its
@@ -427,8 +495,7 @@ export interface RestackMenuTargets {
 /// Map a row of the visible At-playhead visual stack to its four
 /// context-menu actions (ADR 0044 decision 4). Front/back are not op
 /// variants: they derive as above-the-top / below-the-bottom of the visible
-/// non-reserved stack, so the op surface stays above/below and the menu can
-/// never compose a move under the reserved skeleton.
+/// stack, including reserved visual track references (ADR 0088).
 ///
 /// `visibleRows` is exactly what the user sees — the filtered visual rows,
 /// top-of-stack first (the same contract as `restackTargetForGap`, so a
@@ -437,11 +504,11 @@ export interface RestackMenuTargets {
 /// bottom row's backward/back are the extremes' no-ops; a single-row stack
 /// disables all four.
 export function restackMenuTargets(
-  visibleRows: readonly PlayheadItem[],
+  visibleRows: readonly PlayheadStackRow[],
   index: number,
 ): RestackMenuTargets {
   const row = visibleRows[index];
-  if (row === undefined) {
+  if (row === undefined || isTrackReference(row)) {
     return {
       bringForward: null,
       sendBackward: null,
@@ -457,16 +524,16 @@ export function restackMenuTargets(
     bringForward:
       above === undefined
         ? null
-        : { anchorId: above.layer.id, position: "above" },
+        : targetForRow(above, "above"),
     sendBackward:
       below === undefined
         ? null
-        : { anchorId: below.layer.id, position: "below" },
+        : targetForRow(below, "below"),
     bringToFront:
-      above === undefined ? null : { anchorId: top.layer.id, position: "above" },
+      above === undefined ? null : targetForRow(top, "above"),
     sendToBack:
       below === undefined
         ? null
-        : { anchorId: bottom.layer.id, position: "below" },
+        : targetForRow(bottom, "below"),
   };
 }
