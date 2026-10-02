@@ -14,9 +14,8 @@ import {
 } from "./playheadItems";
 import type { LayerSummary, LinkSummary, TrackSummary } from "../ipc";
 
-// Unlinked unless a test says otherwise: the link fields are the fold's
-// business (`buildPlayheadItems`), and every other function here takes
-// whatever it is handed.
+// Unlinked unless a test says otherwise: link identity marks associations.
+// Each fixture represents one clip, as the panel renders it.
 function item(
   id: string,
   kind: string,
@@ -37,8 +36,6 @@ function item(
       effects: [],
     },
     linkId: null,
-    linkSize: 0,
-    linkMembers: [],
     trackId: `track-${id}`,
     trackLabel: id,
     trackKind: kind,
@@ -643,156 +640,60 @@ describe("section membership at the window edges", () => {
   });
 });
 
-describe("buildPlayheadItems link folding", () => {
-  const link = (id: string, layerIds: string[]): LinkSummary => ({
-    id,
-    layer_ids: layerIds,
-  });
+describe("buildPlayheadItems linked clips", () => {
+  const link = (id: string, layerIds: string[]): LinkSummary => ({ id, layer_ids: layerIds });
 
-  it("folds a link's listed members into one entry standing on the member nearest the playhead", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-far", null, [layer("far", 1_300_000, 1_450_000)]),
-        track("t-near", null, [layer("near", 1_100_000, 1_200_000)]),
-        track("t-solo", null, [layer("solo", 800_000, 900_000)]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["far", "near"])],
-    );
-
-    // One row for the pair, sorted by its nearest member's start.
-    expect(items.map((i) => i.layer.id)).toEqual(["solo", "near"]);
-    const fold = items[1]!;
-    expect(fold.linkId).toBe("g");
-    expect(fold.linkSize).toBe(2);
-    expect(fold.linkMembers.map((m) => m.layer.id)).toEqual(["near", "far"]);
-    // Members wear the accent but hold no fold of their own.
-    for (const m of fold.linkMembers) {
-      expect(m.linkId).toBe("g");
-      expect(m.linkMembers).toEqual([]);
-    }
-  });
-
-  it("leaves an unlinked layer untouched", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-a", null, [layer("a", 1_100_000, 1_200_000)]),
-        track("t-b", null, [layer("b", 1_300_000, 1_400_000)]),
-        track("t-solo", null, [layer("solo", 800_000, 900_000)]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["a", "b"])],
-    );
-    const solo = items.find((i) => i.layer.id === "solo")!;
-    expect(solo).toMatchObject({
-      linkId: null,
-      linkSize: 0,
-      linkMembers: [],
-    });
-  });
-
-  it("three listed members fold to one", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-a", null, [layer("a", 1_100_000, 1_200_000)]),
-        track("t-b", null, [layer("b", 1_300_000, 1_400_000)]),
-        track("t-c", null, [layer("c", 700_000, 800_000)]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["a", "b", "c"])],
-    );
-    expect(items).toHaveLength(1);
-    expect(items[0]!.linkMembers).toHaveLength(3);
-    expect(items[0]!.linkSize).toBe(3);
-    // Nearest first: a is 100ms off, c 200ms, b 300ms.
-    expect(items[0]!.linkMembers.map((m) => m.layer.id)).toEqual(["a", "c", "b"]);
-  });
-
-  // The fold is one item to the split, and it is the nearest member that
-  // decides which side of the playhead it lands on.
-  it("folding preserves the At-playhead / Nearby split by the nearest member", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-live", null, [layer("live", 800_000, 1_200_000)]),
-        track("t-live-partner", null, [layer("live-partner", 1_200_000, 1_400_000)]),
-        track("t-soon", null, [layer("soon", 1_100_000, 1_200_000)]),
-        track("t-soon-partner", null, [layer("soon-partner", 1_300_000, 1_400_000)]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g-live", ["live", "live-partner"]), link("g-soon", ["soon", "soon-partner"])],
-    );
-
-    const sections = splitPlayheadSections(items, new Set());
-    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live"]);
-    expect(sections.atPlayhead[0]!.linkMembers.map((m) => m.layer.id)).toEqual([
-      "live",
-      "live-partner",
+  it("keeps each linked clip in chronological order with its own identity", () => {
+    const items = buildPlayheadItems([
+      track("t-far", null, [layer("far", 1_300_000, 1_450_000)]),
+      track("t-near", null, [layer("near", 1_100_000, 1_200_000)]),
+      track("t-solo", null, [layer("solo", 800_000, 900_000)]),
+    ], NOW, 500_000, T, [link("g", ["far", "near"])]);
+    expect(items.map(i => [i.layer.id, i.linkId])).toEqual([
+      ["solo", null], ["near", "g"], ["far", "g"],
     ]);
-    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["soon"]);
-    expect(sections.nearby[0]!.spansPlayhead).toBe(false);
   });
 
-  // A member on a role-carrying lane is the timeline's to show; the panel
-  // folds only what it lists, so the lone listed member stays a single row —
-  // still marked as linked, with the link's full size.
-  it("a link's lone listed member is not folded, only marked", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-hidden", null, [layer("hidden", 800_000, 1_200_000)]),
-        track("t-shown", "a-roll", [layer("shown", 800_000, 1_200_000)]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["hidden", "shown"])],
-    );
+  it("orders linked visual clips around unlinked clips by actual z-order", () => {
+    const items = buildPlayheadItems([
+      track("t-bottom", null, [layer("bottom", 800_000, 1_200_000)]),
+      track("t-middle", null, [layer("middle", 800_000, 1_200_000)]),
+      track("t-top", null, [layer("top", 800_000, 1_200_000)]),
+    ], NOW, 500_000, T, [link("g", ["bottom", "top"])]);
+    expect(splitPlayheadSections(items, new Set()).atPlayheadVisual.map(i => i.layer.id))
+      .toEqual(["top", "middle", "bottom"]);
+  });
+
+  it("routes each linked member to Now playing or Nearby by its own time", () => {
+    const items = buildPlayheadItems([
+      track("t-live", null, [layer("live", 800_000, 1_200_000)]),
+      track("t-partner", null, [layer("partner", 1_200_000, 1_400_000)]),
+      track("t-soon", null, [layer("soon", 1_100_000, 1_200_000)]),
+    ], NOW, 500_000, T, [link("g", ["live", "partner", "soon"])]);
+    const sections = splitPlayheadSections(items, new Set());
+    expect(sections.atPlayhead.map(i => i.layer.id)).toEqual(["live"]);
+    expect(sections.nearby.map(i => i.layer.id)).toEqual(["soon", "partner"]);
+  });
+
+  it("marks a clip whose linked partner is on a reserved lane", () => {
+    const items = buildPlayheadItems([
+      track("t-hidden", null, [layer("hidden", 800_000, 1_200_000)]),
+      track("t-shown", "a-roll", [layer("shown", 800_000, 1_200_000)]),
+    ], NOW, 500_000, T, [link("g", ["hidden", "shown"])]);
     expect(items).toHaveLength(1);
-    expect(items[0]!.layer.id).toBe("hidden");
-    expect(items[0]!.linkId).toBe("g");
-    expect(items[0]!.linkSize).toBe(2);
-    expect(items[0]!.linkMembers).toEqual([]);
+    expect(items[0]).toMatchObject({ layer: { id: "hidden" }, linkId: "g" });
   });
 
-  // Cut together, both members are exactly as near; the fold stands on the
-  // visual one so it lands in the reorderable stack rather than the audio tail.
-  it("an equidistant A/V pair stands on its visual member", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-a", null, [layer("a", 800_000, 1_200_000, "Audio")]),
-        track("t-v", null, [layer("v", 800_000, 1_200_000, "VideoClip")]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["a", "v"])],
-    );
-    expect(items.map((i) => i.layer.id)).toEqual(["v"]);
-    expect(splitPlayheadSections(items, new Set()).atPlayheadVisual).toHaveLength(1);
-  });
-
-  it("a fold passes a category filter when any of its members is of a checked kind", () => {
-    const items = buildPlayheadItems(
-      [
-        track("t-a", null, [layer("a", 800_000, 1_200_000, "Audio")]),
-        track("t-v", null, [layer("v", 800_000, 1_200_000, "VideoClip")]),
-      ],
-      NOW,
-      500_000,
-      T,
-      [link("g", ["a", "v"])],
-    );
-    // The fold stands on the video member, yet the Audio chip keeps it.
-    expect(
-      splitPlayheadSections(items, new Set(["audio"])).atPlayhead.map((i) => i.layer.id),
-    ).toEqual(["v"]);
+  it("keeps linked audio in the audio tail and filters each member by its own kind", () => {
+    const items = buildPlayheadItems([
+      track("t-a", null, [layer("a", 800_000, 1_200_000, "Audio")]),
+      track("t-v", null, [layer("v", 800_000, 1_200_000, "VideoClip")]),
+    ], NOW, 500_000, T, [link("g", ["a", "v"])]);
+    const sections = splitPlayheadSections(items, new Set());
+    expect(sections.atPlayhead.map(i => i.layer.id)).toEqual(["v", "a"]);
+    expect(sections.atPlayheadVisual.map(i => i.layer.id)).toEqual(["v"]);
+    expect(splitPlayheadSections(items, new Set(["audio"])).atPlayhead.map(i => i.layer.id)).toEqual(["a"]);
+    expect(splitPlayheadSections(items, new Set(["video"])).atPlayhead.map(i => i.layer.id)).toEqual(["v"]);
     expect(splitPlayheadSections(items, new Set(["text"])).atPlayhead).toEqual([]);
   });
 });

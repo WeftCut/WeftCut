@@ -23,6 +23,7 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 
 interface StackSummary {
   history: { len: number }
+  links: Array<{ id: string; layer_ids: string[] }>
   tracks: Array<{ id: string; role: string | null; layers: Array<{ id: string }> }>
 }
 
@@ -48,11 +49,11 @@ const trackOf = (s: StackSummary, layerId: string): string | null =>
 async function threeOverlappingOverlays(
   page: Page,
 ): Promise<{ under: string; mid: string; over: string }> {
-  const add = () =>
-    invokeCmd<string>(page, 'add_color_layer', { tStartUs: 0, durationUs: 4_000_000 })
-  const under = await add()
-  const mid = await add()
-  const over = await add()
+  const add = (color: { r: number; g: number; b: number; a: number }) =>
+    invokeCmd<string>(page, 'add_color_layer', { tStartUs: 0, durationUs: 4_000_000, color })
+  const under = await add({ r: 56, g: 132, b: 255, a: 255 })
+  const mid = await add({ r: 64, g: 190, b: 120, a: 255 })
+  const over = await add({ r: 240, g: 144, b: 48, a: 128 })
   const rename = (layerId: string, label: string) =>
     invokeCmd(page, 'update_layer', { layerId, patch: { label } })
   await rename(under, 'Under')
@@ -83,7 +84,7 @@ async function openPlayheadPanelOverStack(page: Page): Promise<void> {
   await expect.poll(() => rowLabels(page), { timeout: 15_000 }).toEqual(['Over', 'Mid', 'Under'])
 }
 
-test('a Playhead Panel grip drag restacks below empty A roll and one undo restores it', async ({}, testInfo) => {
+test('a linked Playhead clip restacks independently below empty A roll and one undo restores it', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
@@ -93,7 +94,16 @@ test('a Playhead Panel grip drag restacks below empty A roll and one undo restor
       canvas: CANVAS,
     })
     const { under, mid, over } = await threeOverlappingOverlays(page)
+    await invokeCmd(page, 'links_create', { layerIds: [under, over] })
     await openPlayheadPanelOverStack(page)
+
+    await expect(atPlayheadStack(page).getByRole('img', { name: 'Linked' })).toHaveCount(2)
+    await expect(page.getByTestId('playhead-row-link-count')).toHaveCount(0)
+    await expect(page.getByTestId('playhead-row-expand')).toHaveCount(0)
+    const overThumb = page.getByTitle('Over', { exact: true }).locator('.playhead-thumb')
+    await expect(overThumb.locator('svg')).toHaveCount(0)
+    // Chromium may serialize 128/255 alpha as 0.5 after color quantization.
+    await expect(overThumb.locator('.playhead-color-fill')).toHaveCSS('background-color', /^rgba\(240, 144, 48, (0\.5|0\.502)\)$/)
 
     const before = await stackSummary(page)
 
@@ -133,6 +143,8 @@ test('a Playhead Panel grip drag restacks below empty A roll and one undo restor
       .toEqual([over, under, mid])
 
     const after = await stackSummary(page)
+    expect(after.links).toEqual(before.links)
+    expect(trackOf(after, under)).toBe(trackOf(before, under))
     expect(after.tracks[0]!.layers.map(l => l.id)).toEqual([over])
     expect(after.tracks.filter(t => t.role !== null).map(t => t.id)).toEqual(before.tracks.filter(t => t.role !== null).map(t => t.id))
     // ONE anchored op per completed drag — the gesture must not decompose into

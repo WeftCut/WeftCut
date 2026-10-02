@@ -41,6 +41,23 @@ function cmdErr(fn: () => void): CommandError {
 }
 
 describe('applyRestackLayer — smart degradation', () => {
+  it.each([false, true])('restacks one linked clip without changing its partner or link (shared track: %s)', (shared) => {
+    const { p, g, washId, logoId, x, y } = overlayStack()
+    const partnerTrack = applyAddTrack(p, g, 'partner')
+    const partner = applyAddLayer(p, g, partnerTrack, C, 0, 1_000_000)
+    root(p).links.push({ id: 'link', members: [x, partner] })
+    if (shared) track(p, washId)!.layers.push(audioL('au', 0, 1_000_000))
+    const beforePartner = structuredClone(track(p, partnerTrack)!)
+    const beforeMover = structuredClone(track(p, washId)!.layers[0])
+    const beforeLinks = structuredClone(root(p).links)
+    const dest = applyRestackLayer(p, g, x, y, 'above')!
+    expect(order(p).indexOf(dest)).toBe(order(p).indexOf(logoId) + 1)
+    expect(track(p, dest)!.layers).toEqual([beforeMover])
+    expect(track(p, partnerTrack)).toEqual(beforePartner)
+    expect(order(p).indexOf(partnerTrack)).toBeGreaterThan(order(p).indexOf(dest))
+    expect(root(p).links).toEqual(beforeLinks)
+  })
+
   it('sole-occupant mover: the whole track splices above the anchor, keeping id, label, lock and height', () => {
     const { p, g, washId, logoId, x, y } = overlayStack()
     const wash = track(p, washId)!

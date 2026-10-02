@@ -72,19 +72,38 @@
   transition: background var(--transition-fast);
 }
 
-/* Reserved visual lanes are stable references, including through a gap. */
+/* Reserved visual lanes share the clip rows' full-width surface, with a
+   neutral fill and muted text. Their li still
+   supplies the measured boundary for restack drops, including through a gap. */
 .playhead-reference-row {
-  min-height: 42px;
-  border-block: 1px solid var(--border-soft);
-  background: var(--surface-sunken);
-}
-
-.playhead-reference-row .playhead-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  background: var(--surface-raised);
   color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  cursor: default;
 }
 
-.playhead-reference-row .playhead-reference-placeholder {
-  cursor: default;
+.playhead-reference-track {
+  flex: 0 0 auto;
+  max-width: 40%;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playhead-reference-info {
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .playhead-drop-hint {
@@ -158,10 +177,33 @@
   color: var(--muted-foreground);
 }
 
+.playhead-thumb--color {
+  background: repeating-conic-gradient(
+    var(--surface-raised) 0% 25%, var(--border-soft) 0% 50%
+  ) 50% / 8px 8px;
+}
+
+.playhead-color-fill {
+  width: 100%;
+  height: 100%;
+}
+
 .playhead-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.playhead-name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.playhead-link-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .playhead-label {

@@ -19,10 +19,20 @@ actual track order. A reference shows its current visual clip, or an empty
 placeholder. At a cut the incoming clip owns the reference. Audio-role tracks
 are excluded. Nearby remains the time-ordered discovery list of hidden clips.
 
-Reference rows are measured drop targets, never draggable sources. An occupied
-reference can select its clip without seeking. Category filters hide content
+Reference rows are measured drop targets, never draggable sources. They are
+read-only, compact single-line rows showing the track name and current clip or gap.
+They share the clip rows' full-width shape, with neutral fill and muted text;
+occupied references have no selection action or hover/selection highlight.
+Category filters hide content
 but retain references and distinguish filtered content from a gap. References
-do not fold with linked clips, so a link cannot erase a reserved boundary.
+remain separate from clip rows, so a link cannot erase a reserved boundary.
+
+Every listed clip has its own row, including linked clips. Each row keeps its
+own category, time information and position in the visual stack. A chain icon
+and shared accent identify links without a member count, stacked thumbnails or
+disclosure. Restacking addresses only the dragged visual clip; link membership
+and the other members' content and timing remain unchanged. Each linked row
+retains the Unlink action in its context menu.
 
 `restack_layer` accepts exactly one of `anchor_layer_id` and `anchor_track_id`.
 Both resolve stable identity at apply time; track anchors work when empty.

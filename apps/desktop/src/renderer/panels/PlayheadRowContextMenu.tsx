@@ -15,7 +15,7 @@ import type { RestackMenuTargets, RestackTarget, RestackReferenceTargets } from 
 ///   anchored restack (or null = disabled) via `restackMenuTargets` at open
 ///   time, so this component is purely presentational and the op surface
 ///   stays above/below.
-/// - Link (`link`), on a folded link row wherever it sits: dissolve the link.
+/// - Link (`link`), on a linked clip row wherever it sits: dissolve the link.
 ///
 /// Same virtual-anchor Base UI menu as the timeline's and the media pool's:
 /// placement from the right-click coordinates, outside-press + Escape close
@@ -38,7 +38,7 @@ export function PlayheadRowContextMenu({
   /// Null when the row is not in the visible visual stack.
   targets: RestackMenuTargets | null;
   references: RestackReferenceTargets[];
-  /// The link a folded row stands for; null on a plain layer row.
+  /// The link this clip belongs to; null on an unlinked row.
   link: { id: string } | null;
   onClose: () => void;
   /// Fires exactly once per chosen item with the item's anchored restack.

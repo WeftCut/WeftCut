@@ -195,24 +195,28 @@ describe("PlayheadPanel reserved visual track references", () => {
     ];
   }
 
-  it("shows occupied and empty references in real stack order, without grips or audio references", () => {
+  it("shows occupied and empty references as read-only boundaries in real stack order, without grips or audio references", () => {
     const { onPick } = renderPanel(reservedStack(), { onRestack: vi.fn() });
     const stack = screen.getByRole("region", { name: "Now playing" });
     expect(Array.from(stack.querySelectorAll("li")).map(el => el.textContent)).toEqual([
       expect.stringContaining("Logo"), expect.stringContaining("B Roll"), expect.stringContaining("A Roll"),
     ]);
-    expect(screen.getByText("No clip at playhead")).toBeTruthy();
+    expect(screen.getByText("No visual content")).toBeTruthy();
     expect(screen.queryByText("Dialogue")).toBeNull();
     expect(screen.queryByLabelText("Drag to restack Cutaway")).toBeNull();
+    for (const reference of screen.getAllByTestId("playhead-track-reference")) {
+      expect(within(reference).queryByRole("button")).toBeNull();
+      expect(reference.querySelector(".playhead-item-row")).toBeNull();
+    }
     fireEvent.click(screen.getByTitle("Cutaway"));
-    expect(onPick).toHaveBeenCalledWith("b-clip", "b");
+    expect(onPick).not.toHaveBeenCalled();
   });
 
   it("keeps empty references when the entire observation window is empty", () => {
     const tracks = reservedStack().filter(t => t.role === "a-roll" || t.role === "b-roll").map(t => ({ ...t, layers: [] }));
     renderPanel(tracks);
     expect(screen.getByRole("region", { name: "Now playing" }).querySelectorAll("li")).toHaveLength(2);
-    expect(screen.getAllByText("No clip at playhead")).toHaveLength(2);
+    expect(screen.getAllByText("No visual content")).toHaveLength(2);
   });
 
   it("preserves references under a category filter and distinguishes filtered contents from gaps", async () => {
@@ -255,7 +259,7 @@ describe("PlayheadPanel reserved visual track references", () => {
     expect(screen.getByTitle("Cutaway")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTitle("Cutaway")).toBeNull();
-    expect(screen.getAllByText("No clip at playhead")).toHaveLength(2);
+    expect(screen.getAllByText("No visual content")).toHaveLength(2);
   });
 });
 
@@ -268,6 +272,48 @@ function rowTitles(root: HTMLElement): (string | null)[] {
 }
 
 describe("PlayheadPanel", () => {
+  it.each([255, 128, 0])("shows a Color clip's actual RGB and alpha (%s) instead of a video icon", (alpha) => {
+    const track = nearbyTrack();
+    track.layers[0]!.params = {
+      kind: "Color", width: 640, height: 360,
+      color: { mode: "Static", value: { r: 12, g: 34, b: 56, a: alpha } },
+    };
+    renderPanel([track]);
+    const thumb = screen.getByTitle("Clip one").querySelector(".playhead-thumb")!;
+    expect(thumb.querySelector("svg")).toBeNull();
+    expect(thumb.classList.contains("playhead-thumb--color")).toBe(true);
+    const fill = thumb.querySelector<HTMLElement>(".playhead-color-fill")!;
+    if (alpha === 255) expect(fill.style.backgroundColor).toBe("rgb(12, 34, 56)");
+    else expect(fill.style.backgroundColor).toBe(`rgba(12, 34, 56, ${Math.round(alpha / 255 * 1000) / 1000})`);
+  });
+
+  it("updates a keyframed Color thumbnail using clip-local time and the nearest edge for Nearby clips", () => {
+    const track = nearbyTrack();
+    track.layers[0]!.params = {
+      kind: "Color", width: 640, height: 360,
+      color: {
+        mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+        value: [
+          { id: "red", t_us: 0, value: { r: 255, g: 0, b: 0, a: 255 },
+            in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" },
+            continuity: "Broken", segment: { kind: "Hold" } },
+          { id: "green", t_us: 1_000_000, value: { r: 0, g: 255, b: 0, a: 255 },
+            in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" },
+            continuity: "Broken", segment: { kind: "Hold" } },
+        ],
+      },
+    };
+    const { rerenderPanel } = renderPanel([track]);
+    const fillColor = () => screen.getByTitle("Clip one").querySelector<HTMLElement>(".playhead-color-fill")!.style.backgroundColor;
+    expect(fillColor()).toBe("rgb(255, 0, 0)");
+    playhead.timeUs = 2_000_000;
+    rerenderPanel();
+    expect(fillColor()).toBe("rgb(0, 255, 0)");
+    playhead.timeUs = 0;
+    rerenderPanel();
+    expect(fillColor()).toBe("rgb(255, 0, 0)");
+  });
+
   it("explains All Tracks instead of collapsing to a blank Panel", () => {
     settings.displayMode = "AllTracks";
     const { container } = render(
@@ -438,7 +484,9 @@ describe("PlayheadPanel", () => {
     const onGoTo = vi.fn();
     renderPanel([nearbyTrack()], { onGoTo });
 
-    fireEvent.click(screen.getByLabelText("Go to Clip one"));
+    const button = screen.getByLabelText("Jump to clip start");
+    expect(button.getAttribute("title")).toBe("Jump to clip start");
+    fireEvent.click(button);
     expect(onGoTo).toHaveBeenCalledWith("layer-1", "track-1", 500_000);
   });
 
@@ -1161,180 +1209,120 @@ describe("PlayheadPanel row context menu", () => {
   });
 });
 
-describe("PlayheadPanel folded link rows", () => {
-  // Playhead at 1s. Cam (video) and Cam audio are cut together and linked;
-  // Wash is an unlinked layer under them. Both link members span the
-  // playhead, so the fold stands on the visual one (Cam) and sits in the
-  // visual stack above Wash.
+describe("PlayheadPanel linked clip rows", () => {
   const LINK = { id: "link-1", layer_ids: ["l-v", "l-a"] };
   function linkedTracks(): TrackSummary[] {
     return [
-      makeTrack("t-wash", "Wash lane", "Video", [
-        makeLayer("l-wash", "Wash", "Color", 0, 2_000_000),
-      ]),
-      makeTrack("t-v", "Cam lane", "Video", [
-        makeLayer("l-v", "Cam", "VideoClip", 500_000, 1_500_000),
-      ]),
-      makeTrack("t-a", "Cam audio lane", "Audio", [
-        makeLayer("l-a", "Cam audio", "Audio", 500_000, 1_500_000),
-      ]),
+      makeTrack("t-wash", "Wash lane", "Video", [makeLayer("l-wash", "Wash", "Color", 0, 2_000_000)]),
+      makeTrack("t-v", "Cam lane", "Video", [makeLayer("l-v", "Cam", "VideoClip", 500_000, 1_500_000)]),
+      makeTrack("t-a", "Cam audio lane", "Audio", [makeLayer("l-a", "Cam audio", "Audio", 500_000, 1_500_000)]),
     ];
   }
-
   function openMenuOn(title: string): HTMLElement {
     fireEvent.contextMenu(screen.getByTitle(title), { clientX: 40, clientY: 40 });
     return screen.getByRole("menu");
   }
 
-  it("folds two linked members into one row wearing ×2 and the link accent", () => {
+  it("shows each linked clip with a chain icon and no count, disclosure or link tooltip", () => {
     renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
-
-    expect(screen.getAllByTitle("Cam")).toHaveLength(1);
-    expect(screen.queryByTitle("Cam audio")).toBeNull();
-    expect(screen.getByTestId("playhead-row-link-count").textContent).toBe("×2");
-    const li = screen.getByTitle("Cam").closest("li")!;
-    expect(li.getAttribute("data-link-id")).toBe("link-1");
-    expect(li.querySelector<HTMLElement>(".playhead-item-row")!.style.boxShadow).toContain(
-      "inset 2px 0 0",
-    );
-    // The unlinked neighbour carries neither.
-    const wash = screen.getByTitle("Wash").closest("li")!;
-    expect(wash.getAttribute("data-link-id")).toBeNull();
-    expect(wash.querySelector("[data-testid='playhead-row-link-count']")).toBeNull();
+    const stack = screen.getByRole("region", { name: "Now playing" });
+    expect(rowTitles(stack)).toEqual(["Cam", "Wash", "Cam audio"]);
+    expect(screen.getAllByRole("img", { name: "Linked" })).toHaveLength(2);
+    expect(screen.queryByTestId("playhead-row-link-count")).toBeNull();
+    expect(screen.queryByTestId("playhead-row-expand")).toBeNull();
+    for (const title of ["Cam", "Cam audio"]) {
+      const row = screen.getByTitle(title).closest("li")!;
+      expect(row.getAttribute("data-link-id")).toBe("link-1");
+      const icon = within(row).getByRole("img", { name: "Linked" });
+      expect(icon.getAttribute("title")).toBeNull();
+      expect(icon.textContent).toBe("");
+      expect(row.querySelector<HTMLElement>(".playhead-item-row")!.style.boxShadow).toContain("inset 2px 0 0");
+    }
+    expect(screen.getByTitle("Wash").closest("li")!.querySelector(".playhead-link-indicator")).toBeNull();
+    expect(screen.queryByLabelText("Drag to restack Cam audio")).toBeNull();
   });
 
-  it("prints the nearest member's name on the fold — a link has none of its own", () => {
+  it("selects and seeks each linked clip independently", () => {
+    const onGoTo = vi.fn();
+    const { onPick } = renderPanel(linkedTracks(), { onGoTo }, [LINK]);
+    for (const [title, id, trackId] of [["Cam", "l-v", "t-v"], ["Cam audio", "l-a", "t-a"]]) {
+      const button = screen.getByTitle(title!);
+      fireEvent.click(button);
+      expect(onPick).toHaveBeenLastCalledWith(id, trackId);
+      fireEvent.click(within(button.closest("li")!).getByLabelText("Jump to clip start"));
+      expect(onGoTo).toHaveBeenLastCalledWith(id, trackId, 500_000);
+    }
+  });
+
+  it("shows two linked visual clips in actual z-order, with one thumbnail and grip each", () => {
+    const tracks = linkedTracks();
+    tracks[2] = makeTrack("t-a", "Second lane", "Video", [{
+      ...makeLayer("l-a", "Second", "VideoClip", 500_000, 1_500_000),
+      params: { kind: "VideoClip", media_id: "media-second" } as LayerSummary["params"],
+    }]);
+    tracks[1]!.layers[0]!.params = { kind: "VideoClip", media_id: "media-cam" } as LayerSummary["params"];
+    renderPanel(tracks, { onRestack: vi.fn() }, [LINK]);
+    expect(rowTitles(screen.getByRole("region", { name: "Now playing" }))).toEqual(["Second", "Cam", "Wash"]);
+    for (const title of ["Cam", "Second"]) {
+      const row = screen.getByTitle(title).closest("li")!;
+      expect(within(row).getAllByText("thumbnail")).toHaveLength(1);
+      expect(within(row).getByLabelText("Drag to restack " + title)).toBeTruthy();
+    }
+  });
+
+  it("filters linked members independently", async () => {
     renderPanel(linkedTracks(), {}, [LINK]);
-    expect(screen.getByTitle("Cam")).toBeTruthy();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Audio" }));
+    expect(screen.getByTitle("Cam audio")).toBeTruthy();
+    expect(screen.queryByTitle("Cam")).toBeNull();
+    expect(screen.queryByTitle("Wash")).toBeNull();
   });
 
-  it("expanding lists the members as indented rows; collapsing hides them again", () => {
-    renderPanel(linkedTracks(), {}, [LINK]);
-    const expand = screen.getByTestId("playhead-row-expand");
-    expect(expand.getAttribute("aria-expanded")).toBe("false");
-    expect(document.querySelectorAll(".playhead-row--member")).toHaveLength(0);
-
-    fireEvent.click(expand);
-    const members = Array.from(document.querySelectorAll(".playhead-row--member"));
-    expect(members).toHaveLength(2);
-    expect(
-      members.map((m) => m.querySelector(".playhead-item")!.getAttribute("title")),
-    ).toEqual(["Cam", "Cam audio"]);
-    expect(screen.getByTestId("playhead-row-expand").getAttribute("aria-expanded")).toBe(
-      "true",
-    );
-    // Members carry the accent, not the count — the fold above them does.
-    expect(screen.getAllByTestId("playhead-row-link-count")).toHaveLength(1);
-
-    fireEvent.click(screen.getByTestId("playhead-row-expand"));
-    expect(document.querySelectorAll(".playhead-row--member")).toHaveLength(0);
+  it("a linked visual row's ordering action addresses only that clip", async () => {
+    const onRestack = vi.fn();
+    renderPanel(linkedTracks(), { onRestack }, [LINK]);
+    const menu = openMenuOn("Cam");
+    expect(within(menu).getByRole("menuitem", { name: "Unlink" })).toBeTruthy();
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Send to back" }));
+    expect(onRestack).toHaveBeenCalledExactlyOnceWith("l-v", { kind: "layer", id: "l-wash" }, "below");
   });
 
-  it("clicking the fold picks the nearest member; clicking a member picks that member alone", () => {
-    const { onPick } = renderPanel(linkedTracks(), {}, [LINK]);
-
-    fireEvent.click(screen.getByTitle("Cam"));
-    expect(onPick).toHaveBeenLastCalledWith("l-v", "t-v");
-
-    fireEvent.click(screen.getByTestId("playhead-row-expand"));
-    const audioMember = document
-      .querySelectorAll(".playhead-row--member")[1]!
-      .querySelector(".playhead-item")!;
-    fireEvent.click(audioMember);
-    expect(onPick).toHaveBeenLastCalledWith("l-a", "t-a");
-  });
-
-  it("stacks one thumbnail per member with media", () => {
-    const withMedia = (layer: LayerSummary, mediaId: string): LayerSummary => ({
-      ...layer,
-      params: { kind: "VideoClip", media_id: mediaId } as LayerSummary["params"],
-    });
-    const tracks = [
-      makeTrack("t-a", "A lane", "Video", [
-        withMedia(makeLayer("l-a", "A", "VideoClip", 500_000, 1_500_000), "m-a"),
-      ]),
-      makeTrack("t-b", "B lane", "Video", [
-        withMedia(makeLayer("l-b", "B", "VideoClip", 500_000, 1_500_000), "m-b"),
-      ]),
-    ];
-    renderPanel(tracks, {}, [{ id: "link-2", layer_ids: ["l-a", "l-b"] }]);
-
-    expect(screen.getAllByText("thumbnail")).toHaveLength(2);
-  });
-
-  it("the fold's context menu offers Unlink beside the ordering items", () => {
+  it("linked audio and Nearby clips offer a link-only menu", () => {
     renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
-    const menu = openMenuOn("Cam");
-    expect(
-      within(menu)
-        .getAllByRole("menuitem")
-        .map((el) => el.textContent),
-    ).toEqual([
-      "Bring forward",
-      "Send backward",
-      "Bring to front",
-      "Send to back",
-      "Unlink",
-    ]);
+    openMenuOn("Cam audio");
+    const audioMenu = screen.getByRole("menu", { name: "Link Cam audio" });
+    expect(within(audioMenu).getAllByRole("menuitem").map(el => el.textContent)).toEqual(["Unlink"]);
+    fireEvent.keyDown(window, { key: "Escape" });
+    playhead.timeUs = 0;
+    cleanup();
+    renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
+    expect(within(openMenuOn("Cam")).getAllByRole("menuitem").map(el => el.textContent)).toEqual(["Unlink"]);
   });
 
-  it("a fold outside the visual stack opens a link-only menu", () => {
-    // Both members strictly in the future → the fold lands in Nearby, where
-    // no row has ordering items; the link's own actions still apply.
-    const tracks = [
-      makeTrack("t-v", "Cam lane", "Video", [
-        makeLayer("l-v", "Cam", "VideoClip", 2_000_000, 3_000_000),
-      ]),
-      makeTrack("t-a", "Cam audio lane", "Audio", [
-        makeLayer("l-a", "Cam audio", "Audio", 2_000_000, 3_000_000),
-      ]),
-    ];
-    renderPanel(tracks, {}, [LINK]);
-    const menu = openMenuOn("Cam");
-    expect(
-      within(menu)
-        .getAllByRole("menuitem")
-        .map((el) => el.textContent),
-    ).toEqual(["Unlink"]);
-  });
-
-  it("Unlink dissolves the link through IPC", async () => {
-    const user = userEvent.setup();
+  it("Unlink dissolves the selected clip's link through IPC", async () => {
     renderPanel(linkedTracks(), {}, [LINK]);
-    openMenuOn("Cam");
-
-    await user.click(screen.getByRole("menuitem", { name: "Unlink" }));
-
-    expect(ipcMocks.linksDissolve).toHaveBeenCalledTimes(1);
-    expect(ipcMocks.linksDissolve).toHaveBeenCalledWith("link-1");
+    await userEvent.click(within(openMenuOn("Cam audio")).getByRole("menuitem", { name: "Unlink" }));
+    expect(ipcMocks.linksDissolve).toHaveBeenCalledExactlyOnceWith("link-1");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("a fold has no name to rename: double-click opens no editor", () => {
+  it("renames a linked clip independently", () => {
     const onRename = vi.fn();
     renderPanel(linkedTracks(), { onRename }, [LINK]);
-
-    fireEvent.doubleClick(screen.getByTitle("Cam"));
-
-    expect(screen.queryByLabelText("Rename Cam")).toBeNull();
-    expect(onRename).not.toHaveBeenCalled();
-  });
-
-  it("a link's lone listed member keeps its own row, marked with the accent and ×2", () => {
-    // The audio member sits on a role-carrying lane the panel never lists.
-    const tracks = linkedTracks();
-    tracks[2] = { ...tracks[2]!, role: "dialogue" as TrackSummary["role"] };
-    const onRename = vi.fn();
-    renderPanel(tracks, { onRename }, [LINK]);
-
-    expect(screen.getByTitle("Cam")).toBeTruthy();
-    expect(screen.getByTestId("playhead-row-link-count").textContent).toBe("×2");
-    expect(screen.queryByTestId("playhead-row-expand")).toBeNull();
-    // Not a fold: double-click renames the layer, as on any plain row.
     fireEvent.doubleClick(screen.getByTitle("Cam"));
     const input = screen.getByLabelText("Rename Cam");
     fireEvent.change(input, { target: { value: "Cam 2" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onRename).toHaveBeenCalledWith("l-v", "Cam 2");
+    expect(onRename).toHaveBeenCalledExactlyOnceWith("l-v", "Cam 2");
+    expect(screen.getByTitle("Cam audio")).toBeTruthy();
+  });
+
+  it("marks a clip even when its linked partner is on a reserved lane", () => {
+    const tracks = linkedTracks();
+    tracks[2] = { ...tracks[2]!, role: "dialogue" as TrackSummary["role"] };
+    renderPanel(tracks, {}, [LINK]);
+    expect(screen.getByTitle("Cam")).toBeTruthy();
+    expect(screen.queryByTitle("Cam audio")).toBeNull();
+    expect(screen.getAllByRole("img", { name: "Linked" })).toHaveLength(1);
   });
 });
