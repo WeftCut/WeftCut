@@ -1153,7 +1153,7 @@ const RGBA_SCHEMA = { type: 'object', description: 'Colour, integer channels 0..
 // rather than a choice; the third for a read or an edit over existing captions.
 const COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition to create in — a Group\'s id from `project://compositions`; omit for the root.' }
 const CAPTIONS_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition whose captions are meant — a Group\'s id from `project://compositions`; omit for the root.' }
-const TRACK_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Optional cross-check: the composition `track_id` belongs to; refused on mismatch. The track alone fixes the composition.' }
+const TRACK_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Optional composition check for track_id; mismatch rejects. track_id fixes the composition.' }
 export function parseCompositionIdOpt(v: unknown): string | null {
   return v === undefined || v === null ? null : parseUuid(v, 'composition_id')
 }
@@ -1225,7 +1225,6 @@ const TANGENT_XY_SCHEMA = {
 }
 const EXTRAPOLATE_SCHEMA = {
   type: 'string', enum: [...EXTRAPOLATES],
-  description: 'Hold = the end value; Loop = repeat the cycle; PingPong = alternate cycles reversed; Offset = each cycle adds the last-minus-first delta; Continue = carry the end velocity on as a line.',
 }
 const EXTRAPOLATION_SCHEMA = {
   type: 'object',
@@ -1335,7 +1334,7 @@ export const PARAM_KEYS = ['x', 'y', 'path_progress', 'scale_x', 'scale_y', 'rot
 export const EFFECT_PARAM_KEY_PATTERN = '^effects\\[[0-9a-fA-F-]{36}\\]\\.params\\[[A-Za-z0-9_]+\\]$'
 const PARAM_KEY_SCHEMA = {
   type: 'string',
-  description: 'Animatable param: visual kinds x, y (path_progress in Path mode), scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity; Text and Color color; Audio gain_db, pan; or an effect param as effects[<effect_id>].params[<key>].',
+  description: 'Visual: x/y (XY), path_progress (Path), scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity; Text/Color: color; Audio: gain_db, pan; effects[<effect_id>].params[<key>].',
   anyOf: [{ enum: [...PARAM_KEYS] }, { pattern: EFFECT_PARAM_KEY_PATTERN }],
 }
 
@@ -2057,8 +2056,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'set_extrapolation', exec: 'dedicated', annotations: ANN_SET,
     description: "Set what a keyframed track does outside its keys: `before` the first and/or `after` the last (at least one; the other keeps its value). \"Hold\" (the end value, default), \"Loop\" (repeat from the first key — a visible jump when first ≠ last), \"PingPong\" (alternate cycles run backwards), \"Offset\" (each cycle adds the last-minus-first delta), \"Continue\" (carry the last segment's end velocity on as a line). The period is last.t − first.t; a single-key track never extrapolates. Refused on a Static track. For path_progress, only Hold / Loop / PingPong are supported. Reads back as `extrapolate` on `get_param_track`.",
     inputSchema: { type: 'object', properties: {
-      after: { ...EXTRAPOLATE_SCHEMA, description: 'After the last key. ' + EXTRAPOLATE_SCHEMA.description },
-      before: { ...EXTRAPOLATE_SCHEMA, description: 'Before the first key. ' + EXTRAPOLATE_SCHEMA.description },
+      after: { ...EXTRAPOLATE_SCHEMA, description: 'After the last key; modes as described by this tool.' },
+      before: { ...EXTRAPOLATE_SCHEMA, description: 'Before the first key; modes as described by this tool.' },
       layer_id: LAYER_ID_SCHEMA,
       param_key: PARAM_KEY_SCHEMA,
     }, required: ['layer_id', 'param_key'] },
@@ -2081,7 +2080,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a motif layer and return its record. `motif_id` from `list_motifs`; `t_start_us` timeline µs; `t_end_us` defaults to `t_start_us + default_duration_s`; `track_id` omitted always spawns a fresh track (never reuses one, so consecutive auto-inserts cannot collide); `props` is matched against the motif's `props_schema` — unknown keys reject, missing keys take defaults. Rendering is lazy: the motif rasterizes on first render and is cached by content.",
+    description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props use defaults. Unknown props reject.",
     inputSchema: { type: 'object',
       properties: {
         motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx").' },

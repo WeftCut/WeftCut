@@ -18,6 +18,7 @@
 // snapshot plus the TS-owned tables, exactly what ListTools returns.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { Buffer } from 'node:buffer'
 import { MCP_TOOL_DEFS, type ToolAnnotations } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
@@ -46,7 +47,7 @@ const COMPLEX: ReadonlySet<string> = new Set([
 ])
 /** A nested schema `description` is a hint on one field, not a second essay. */
 const PROPERTY_DESCRIPTION_CAP = 260
-/** The whole catalog, compact JSON, as the wire carries it — descriptions,
+/** The tools array in compact UTF-8 JSON — descriptions,
  *  schemas and annotations. A raise is a review decision that names what the
  *  bytes bought: an enum, a return shape, a meaning on a property an agent acts
  *  on as it types the argument, in place of prose it would learn by trial. The
@@ -128,8 +129,15 @@ describe('MCP catalog context budget', () => {
   })
 
   it('fits the whole catalog in the byte budget', () => {
-    // Annotations ride on the wire too, so they count.
-    const bytes = merged.reduce((n, t) => n + compact({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations }).length, 0)
-    expect(bytes, `catalog is ${bytes} bytes (~${Math.round(bytes / 4)} tokens)`).toBeLessThanOrEqual(CATALOG_BYTE_BUDGET)
+    // Count annotations and array punctuation, excluding the protocol envelope.
+    const tools = merged.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations }))
+    const bytes = Buffer.byteLength(compact(tools), 'utf8')
+    const largest = tools
+      .map((t) => ({ name: t.name, bytes: Buffer.byteLength(compact(t), 'utf8') }))
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, 10)
+      .map((t) => `${t.name}: ${t.bytes}`)
+      .join('\n')
+    expect(bytes, `catalog is ${bytes}/${CATALOG_BYTE_BUDGET} UTF-8 bytes; largest tools:\n${largest}`).toBeLessThanOrEqual(CATALOG_BYTE_BUDGET)
   })
 })

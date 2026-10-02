@@ -812,7 +812,9 @@ kilobytes. The two pressures meet at a budget:
 - **The budget is a gate.** `mcp.description-budget.test.ts` caps each
   description at 700 characters (an explicit, size-limited allowlist of
   complex tools at 1100), each nested schema `description` at 260, and the
-  whole compact catalog at 126 KB, annotations included. A raise is a review
+  compact tools array at 128,000 UTF-8 bytes, including annotations and array
+  punctuation but excluding the protocol envelope. On overflow, the gate lists
+  the ten largest tools by byte size. A raise is a review
   decision that names what the bytes bought — an enum, a return shape, a
   meaning on a property an agent acts on as it types the argument — and the
   way down is merging over-granular families and cutting prose that restates
