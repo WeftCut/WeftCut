@@ -39,6 +39,8 @@ import { MCP_INSTRUCTIONS } from './instructions.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS } from './exportTools.js'
+import type { ExportJobs } from '../exportJobs.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -235,7 +237,7 @@ function readOnlyTools(backend: Backend): Promise<Set<string>> {
   let p = readOnlySets.get(backend)
   if (!p) {
     const names = (rust: ReadonlyArray<{ name: string; annotations?: ToolAnnotations }>): Set<string> =>
-      new Set(mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]).filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name))
+      new Set(mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS]).filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name))
     // A backend that throws synchronously (no catalog method at all, as some
     // test doubles have) is the same case as one whose catalog rejects.
     const attempt = Promise.resolve().then(() => rustCatalog(backend)).then((c) => names(c.tools))
@@ -266,7 +268,23 @@ export async function handleCallTool(
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
   client?: string,
+  exportJobs?: ExportJobs,
 ): Promise<ServerResult> {
+  if (EXPORT_TOOLS.has(name)) {
+    if (['get_export_options','start_export'].includes(name) && noProjectOpen(getTsHost())) return noProjectOpenResult()
+    try {
+      if (!exportJobs) throw new Error('Export service unavailable')
+      const def = EXPORT_TOOL_DEFS.find(t => t.name === name)!
+      const problem = argProblemMessage(name, def.inputSchema, args)
+      if (problem) throw new Error(problem)
+      if (Object.keys(args).some(k => !Object.keys((def.inputSchema.properties ?? {}) as object).includes(k))) throw new Error('Unknown export argument')
+      const result = name === 'get_export_options' ? await exportJobs.options()
+        : name === 'start_export' ? await exportJobs.start({...args, agent:true})
+        : name === 'get_export_status' ? exportJobs.status(args.job_id as string)
+        : await exportJobs.cancel(args.job_id as string)
+      return toolRecord(result as object) as ServerResult
+    } catch (e) { return toolErrorResult({code:'invalid_params',message:e instanceof Error ? e.message : String(e)}) }
+  }
   const route = routeMcpTool(name)
   // Nothing the user can see is open: every project tool refuses before it
   // reaches a project (the startup placeholder, or the one the user closed).
@@ -277,6 +295,7 @@ export async function handleCallTool(
     return noProjectOpenResult()
   }
   try {
+    if (exportJobs?.isActive() && !(await readOnlyTools(backend)).has(name)) exportJobs.assertWritable()
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
@@ -662,6 +681,7 @@ export function mcpCommitObserver(getTsHost: () => TsActorHost | null): (tool: s
  *  positionals: `log` is the fourth and every one of them is optional, and each
  *  omitted seam must keep the behaviour it had before it existed. */
 export interface McpServerOptions {
+  exportJobs?: ExportJobs
   connectionId?: string
   /** What `initialize` reports as the server version. `startMcpHost` injects
    *  `app.getVersion()`, which is package.json's — this file stays
@@ -726,13 +746,13 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // tool logged with nothing to remember. See `docs/status-log.md`.
   server.setRequestHandler(ListToolsRequestSchema, track('tools/list', async () => {
     const rust = (await rustCatalog(backend)).tools
-    return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
+    return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
   // A retired tool name is rewritten to the advertised one BEFORE `track`, so
   // the log row, the activity service's read/write split and the dispatcher all
   // read the same single name (`toolAliases.ts`).
   const callTool = track('tools/call', async (req: CallToolRequest) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, clientInfo()?.name),
+    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, clientInfo()?.name, opts.exportJobs),
   log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(withCanonicalToolName(req), extra))

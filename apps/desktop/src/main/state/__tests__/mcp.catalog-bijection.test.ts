@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { routeMcpTool, HYBRID_TOOLS } from '../../mcp/mutationTools'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS } from '../../mcp/exportTools'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
 
 const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as {
@@ -30,7 +31,7 @@ const tsNames = new Set(MCP_TOOL_DEFS.map((d) => d.name))
 const motifNames = new Set(MOTIF_TOOL_DEFS.map((d) => d.name))
 
 // The catalog the MCP host actually advertises at runtime (server.ts ListTools).
-const merged = mergeMcpCatalog(rust.tools, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS])
+const merged = mergeMcpCatalog(rust.tools, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS])
 const mergedNames = merged.map((t) => t.name)
 
 // ── Assertion 6: structural-field exclusions ─────────────────────────────────
@@ -52,12 +53,13 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
     expect([...rustNames].filter((n) => tsNames.has(n))).toEqual([])
     expect([...rustNames].filter((n) => motifNames.has(n))).toEqual([])
     expect([...tsNames].filter((n) => motifNames.has(n))).toEqual([])
+    expect([...EXPORT_TOOLS].filter(n => rustNames.has(n) || tsNames.has(n) || motifNames.has(n))).toEqual([])
   })
 
   it('2. the merged catalog is an exact, duplicate-free union of the three buckets', () => {
-    expect(new Set(mergedNames)).toEqual(new Set([...rustNames, ...tsNames, ...motifNames]))
+    expect(new Set(mergedNames)).toEqual(new Set([...rustNames, ...tsNames, ...motifNames, ...EXPORT_TOOLS]))
     // Disjoint (assertion 1) ⇒ nothing dropped, so the count is the plain sum.
-    expect(mergedNames.length).toBe(rustNames.size + tsNames.size + motifNames.size)
+    expect(mergedNames.length).toBe(rustNames.size + tsNames.size + motifNames.size + EXPORT_TOOLS.size)
     expect(new Set(mergedNames).size).toBe(mergedNames.length) // no duplicate names
   })
 
@@ -72,7 +74,7 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
         // preview_motif_draft, whose def is TS-sourced but whose execution is the
         // CDP-capture special-case in server.ts rather than the backend catalog.
         expect(
-          rustNames.has(n) || n === 'preview_motif_draft',
+          rustNames.has(n) || n === 'preview_motif_draft' || EXPORT_TOOLS.has(n),
           `${n} routes 'rust' but is neither in the live Rust snapshot nor the preview capture special-case`,
         ).toBe(true)
       }

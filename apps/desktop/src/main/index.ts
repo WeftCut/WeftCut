@@ -14,6 +14,9 @@ import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
+import { ExportJobs } from './exportJobs.js'
+import { createQuitFlush } from './quitFlush.js'
+import { exportBlocksChannel } from './state/router.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
@@ -101,6 +104,7 @@ function emitToRenderer(event: string, payload: unknown): void {
 // `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
+let exportJobs: ExportJobs | null = null
 // Audio-effect bake orchestrator (ADR 0063). Module-scoped for the same reason
 // as `tsHost`: the `backend:invoke` handler and the before-quit hook both reach
 // it, and it does not exist until whenReady has built the actor it subscribes to.
@@ -290,6 +294,8 @@ async function createWindow(): Promise<BrowserWindow> {
   if (geometry.maximized) win.maximize()
 
   mainWindow = win
+  win.webContents.on('render-process-gone', () => { void exportJobs?.rendererGone() })
+  win.webContents.on('destroyed', () => { void exportJobs?.rendererGone() })
   hardenWindow(win)
   // Start tracking moves/resizes. Wired after the restore above so the initial
   // maximize() doesn't bounce straight back into the store. `geometry` is passed
@@ -809,6 +815,7 @@ app.whenReady().then(async () => {
   })
 
   tsHost = createTsActorHost({
+    assertProjectWritable: () => exportJobs?.assertWritable(),
     send: (event, payload) => emitToRenderer(event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     fileExists: (p) => fs.existsSync(p),
@@ -929,7 +936,16 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
+  exportJobs = new ExportJobs({
+    host: () => tsHost,
+    send: emitToRenderer,
+    native: async (channel, args) => JSON.parse(await backend!.invoke(channel, JSON.stringify(args))),
+    // Renderer process loss cannot send exportSw:closeAll. Join any orphan
+    // native decoder threads before export admission is released.
+    cleanupNativeSessions: () => { if (nd.backend) closeAllExportSw(nd.backend) },
+  })
   const mcpHost = await startMcpHost(backend, {
+    exportJobs,
     getTsHost: () => tsHost,
     getPreferredEngine,
     getVlm,
@@ -1064,7 +1080,7 @@ app.whenReady().then(async () => {
   // app's designated requirement — for ad-hoc that is this build's own code
   // hash, so no later build can. The Help dialog says so and links the releases
   // page.
-  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
+  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin' && process.env.WEFTCUT_DISABLE_UPDATES !== '1'
     ? electronUpdater.autoUpdater : null)
   ipcMain.handle('updates:status', () => updates.status())
   ipcMain.handle('updates:check', () => {
@@ -1140,6 +1156,17 @@ app.whenReady().then(async () => {
   })
   await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel.startsWith('export_job_')) {
+      if (_e.sender !== mainWindow?.webContents) throw new Error('Export control is restricted to the main editor')
+      if (!exportJobs) throw new Error('Export service unavailable')
+      if (channel === 'export_job_ready') { if (args?.ready === false) await exportJobs.rendererDetaching(); else exportJobs.rendererReady(); return null }
+      if (channel === 'export_job_start') return exportJobs.start({...args,agent:false})
+      if (channel === 'export_job_update') return exportJobs.update(args ?? {})
+      if (channel === 'export_job_cancel') return exportJobs.cancel(args?.job_id)
+      if (channel === 'export_job_status') return exportJobs.status(args?.job_id)
+      throw new Error('Unknown export job channel')
+    }
+    if (exportBlocksChannel(channel)) exportJobs?.assertWritable()
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
     if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)
@@ -2391,9 +2418,14 @@ app.on('window-all-closed', () => app.quit())
 // (autosave.stop() drops the pending timer rather than firing it). `shutdown`
 // shuts the MCP project gate, then autosave.forceFlush()es, a no-op when no
 // workspace is set (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
-// quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.
+// createQuitFlush prevents reentrant quits until cleanup and autosave settle.
 // A null tsHost early-returns: nothing to flush before whenReady constructs the host.
-let quitFlushed = false
+const quitFlush = createQuitFlush({
+  destroyRenderer: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy() },
+  flush: async () => { await exportJobs?.rendererGone(); await tsHost?.shutdown() },
+  onError: (e) => console.warn('[main] autosave quit-flush failed', e),
+  quit: () => app.quit(),
+})
 app.on('before-quit', (event) => {
   motifWatcher?.close(); motifWatcher = null
   // Abort an in-flight content download so its file handle closes at a chunk
@@ -2413,14 +2445,9 @@ app.on('before-quit', (event) => {
   // (covering macOS ⌘W, which never quits); this covers quitting via the app
   // menu / Cmd+Q, where before-quit precedes the window close.
   windowGeometryStore?.flush()
-  if (quitFlushed || !tsHost) return
-  event.preventDefault()
-  quitFlushed = true
+  if (!tsHost) return
   // `shutdown`, not a plain save: it also shuts the MCP gate first, so an
   // agent write racing the quit is refused rather than answered as success and
   // then lost with the dropped autosave timer.
-  void tsHost
-    .shutdown()
-    .catch((e) => console.warn('[main] autosave quit-flush failed', e))
-    .finally(() => app.quit())
+  quitFlush(event)
 })

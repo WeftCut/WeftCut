@@ -23,7 +23,7 @@ engine itself see [`audio.md`](audio.md).
 ## Export settings and range
 
 The renderer owns the `ExportSettings` schema in
-`apps/desktop/src/render/exportSettings.ts`; Rust persists the saved blob as
+`apps/desktop/src/shared/exportSettings.ts`; the host persists the saved blob as
 opaque JSON. Audio settings are persisted:
 
 - `include`: when false, JS skips audio export and produces video-only output.
@@ -105,7 +105,7 @@ dialog-local state: full project, or a custom `[startUs, endUs)` selected with
 In/Out SMPTE timecode fields and "set to playhead" buttons. `clampExportRange`
 keeps the span ordered and inside `[0, durationUs]`.
 
-`App.tsx` threads the resolved range through all export stages:
+The shared renderer export flow threads the resolved range through all export stages:
 
 - The readiness gate checks only video sources referenced by the export range.
 - Motif layer frames are baked only for the export range before the Worker
@@ -114,6 +114,67 @@ keeps the span ordered and inside `[0, durationUs]`.
   half-open range and resets output video timestamps to start at 0.
 - `exportProjectAudioOnly` receives the same range so Rust trims the final
   audio mix to match.
+
+## Agent export jobs
+
+The Export UI and MCP agents share the renderer export flow. The Electron main
+process owns job admission and status; the renderer retains the compositor
+worker, media readiness gate, Motif baking, effects and native encode bridge.
+An agent starts a job rather than waiting for one long MCP call to render.
+
+`get_export_options {}` exposes saved/default settings, supported values and
+root-composition output metadata. It can return `validation_issue` when saved
+settings need compatible overrides before starting; inspection remains
+available for an empty composition. `start_export` accepts an absolute
+`output_path`, optional partial `settings`, optional half-open
+`range: { startUs, endUs }` in timeline microseconds, and optional
+`allow_experimental_10bit`. `get_export_status` and `cancel_export` address the
+returned `job_id`. These tools are registered by the TypeScript host and are
+available through the stdio shim's live catalog too.
+
+Settings use the existing camelCase `ExportSettings` schema (including partial
+nested `audio`) rather than a second MCP-only settings model. Omitted values
+use saved settings with existing default backfills; invalid explicit overrides
+fail instead of being repaired silently. Every existing export control is
+available: stream inclusion, resolution/fps, codec/container, quality/bitrate,
+rate control, profiles, CRF/preset, keyframe cadence, acceleration, decode/encode
+engines, bit depth and audio codec/bitrate/sample rate/channels. Composition fps
+remains rational when the fps override is omitted.
+
+Omitted range exports the full root composition. Explicit ranges must be
+nonempty and inside its duration. They snap to the composition frame grid and
+return the resolved bounds; reject a span that becomes empty or invalid after
+snapping. Both streams disabled is invalid. Audio-only
+output uses `.m4a` for AAC or `.mka` for Opus; video output uses the selected
+container's extension. Destination extensions must match. Existing destinations
+are refused. Experimental 10-bit delivery exports require explicit opt-in.
+The agent path uses no save dialog and no interactive encoder fallback.
+
+Jobs report `preparing`, `rendering`, `finalizing`, then `completed`, `failed`
+or `cancelled`, with progress where available. `completed` is reported only
+after encoding/muxing and successful publication. Output is staged beside the
+destination and published without overwriting, so a file created there while
+the export runs is preserved. Agent publication uses an atomic hard link;
+the destination directory must already exist and its filesystem must support
+hard links (for example, NTFS). Filesystems without hard-link support, including
+FAT/exFAT and some network shares, fail publication; choose a supported local
+destination. There is no copy fallback that could expose a partial final file.
+Failure and cancellation remove staged and
+intermediate files instead of leaving a completed destination.
+
+Only one export runs across agents and the Export UI. Project mutations,
+undo/redo and project switching pause for the entire job; reads, status and
+cancellation remain available. Terminal outcomes release this gate. Native
+encoding, audio mixing and muxing participate in cancellation alongside the
+worker and preparation stages. Renderer failure fails the job and releases
+resources; project shutdown cancels before closing its backend. If native
+cleanup fails, `phase: "cleanup_failed"` and `error` explain the failure, and
+the mutation gate stays held until cleanup succeeds; retry cancellation.
+
+MCP disconnect does not cancel the job. Any reconnected client can inspect its
+job ID while the app process remains alive. Job records are process-session
+state, not persisted project data, and app restart ends retention. Export does
+not add a timeline undo entry. See [ADR 0089](adr/0089-agent-export-jobs-share-the-renderer-pipeline.md).
 
 ## Audio-only export
 

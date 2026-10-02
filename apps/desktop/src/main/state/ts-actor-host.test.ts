@@ -13,6 +13,8 @@ import { createRecentsStore } from '../recents'
 import { createWorkspaceStore } from '../workspace'
 import { EDITING_WORKSPACE_ID, activeWorkspaceProfile, type WorkspaceDocument } from '../../shared/workspace'
 import { root } from './__tests__/fixtures/project'
+import { mediaItemTemplate } from './mutations/media'
+import { applyDerivativesEvent, applyWorkspacePathsEvent } from './jobs-writeback'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the project:changed payload shape, refs included', () => {
@@ -81,6 +83,39 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     return { deps, vfs, napiCalls, sent }
   }
+
+  it('allows internal readiness writebacks during export but rejects delayed timeline writes', async () => {
+    const {deps}=makeInMemoryDeps()
+    const guard=vi.fn(()=>{throw new Error('ExportInProgress')})
+    const host=createTsActorHost({...deps,assertProjectWritable:guard})
+    const p=structuredClone(host.actor.snapshot()), id='00000000-0000-0000-0000-0000000000aa'
+    p.media_pool[id]=mediaItemTemplate(id,'Video',1_000_000)
+    host.actor.replaceState(p)
+    expect(applyDerivativesEvent(host.actor,{media_id:id,patch:{conform_path:'ready.wav'}}).ok).toBe(true)
+    expect(host.actor.snapshot().media_pool[id].conform_path).toBe('ready.wav')
+    expect(applyWorkspacePathsEvent(host.actor,{media_id:id,path_abs:'/workspace/clip.mp4',path_rel:'Media/clip.mp4',file_hash_blake3:'hash',file_size:12,file_mtime:1}).ok).toBe(true)
+    expect(host.actor.snapshot().media_pool[id].path_abs).toBe('/workspace/clip.mp4')
+    expect(guard).not.toHaveBeenCalled()
+    expect(()=>host.hybridDeps.actor.dispatch('add_track',{kind:'Video',name:'delayed edit'})).toThrow('ExportInProgress')
+    await expect(host.handleInvoke('project_open',{path:'/other'})).rejects.toThrow('ExportInProgress')
+    expect(await host.handleInvoke('get_project_settings',{})).toBeDefined()
+    await expect(host.shutdown()).resolves.toBeUndefined()
+    host.stop()
+  })
+  it('tracks project operations until settlement and clears the counter on failure',async()=>{
+    const {deps}=makeInMemoryDeps(); const host=createTsActorHost(deps)
+    expect(await host.handleInvoke('project_open_state',{})).toBeNull()
+    const failed=host.handleInvoke('project_open',{path:'/missing'})
+    expect(host.projectOperationPending?.()).toBe(true)
+    await expect(failed).rejects.toThrow()
+    expect(host.projectOperationPending?.()).toBe(false)
+    const created=host.handleInvoke('project_new_workspace',{parentFolder:'/projects',name:'pending',width:1920,height:1080,fpsNum:30,fpsDen:1})
+    expect(host.projectOperationPending?.()).toBe(true)
+    await created
+    expect(host.projectOperationPending?.()).toBe(false)
+    expect(await host.handleInvoke('project_open_state',{})).toMatchObject({dir:'/projects/pending'})
+    host.stop()
+  })
 
   it('project_open flushes pending edits to the current workspace before switching', async () => {
     vi.useFakeTimers()

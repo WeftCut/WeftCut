@@ -66,7 +66,7 @@ import {
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
-import { logEmit, type MediaSummary } from "../ipc";
+import { logEmit, type MediaSummary, type ProjectSummary } from "../ipc";
 import {
   resetUnderrunState,
   setUnderrunState,
@@ -985,6 +985,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 /// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
+    summary?: ProjectSummary;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };
@@ -1001,7 +1002,7 @@ async function handlePixiExport(
   engine: PlaybackEngine | null,
 ): Promise<PixiExportResult> {
   const store = useProjectStore.getState();
-  const summary = store.summary;
+  const summary = opts.summary ?? store.summary;
   if (!summary) {
     throw new Error("No project loaded");
   }
@@ -1017,7 +1018,7 @@ async function handlePixiExport(
   try {
     const result = await runExport({
       summary,
-      mediaById: store.mediaById,
+      mediaById: opts.summary ? new Map(opts.summary.media.map((media) => [media.id, media])) : store.mediaById,
       writeChunk: opts.writeChunk,
       // Conditional spreads: under exactOptionalPropertyTypes an optional
       // field may be absent but not explicitly `undefined`.

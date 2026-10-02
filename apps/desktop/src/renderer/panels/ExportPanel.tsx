@@ -19,7 +19,7 @@ export interface ExportComplete {
 
 export type ExportState =
   // Readiness waits and frame export provide their own cancellation handler.
-  | { kind: "starting" }
+  | { kind: "starting"; onCancel?: () => void }
   | { kind: "preparing"; labels: string[]; onCancel?: () => void }
   | { kind: "progress"; progress: ExportProgress; onCancel?: () => void }
   // The tail after the last frame is encoded: flush the native sink, render
@@ -28,7 +28,7 @@ export type ExportState =
   // liveness probe watching the frame counter could not tell that tail apart
   // from a wedge (which is what `export_eos_tail` exists to catch). Naming the
   // step makes both the user's wait and the probe's stall budget honest.
-  | { kind: "finalizing"; step: FinalizeStep }
+  | { kind: "finalizing"; step: FinalizeStep; onCancel?: () => void }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
 
@@ -158,9 +158,9 @@ export function ExportPanel({
                 style={{ width: `${state.kind === "error" ? 100 : percent}%` }}
               />
             </div>
-            {(((state.kind === "preparing" || state.kind === "progress") && state.onCancel) || dismissable) && (
+            {(((state.kind === "starting" || state.kind === "preparing" || state.kind === "progress" || state.kind === "finalizing") && state.onCancel) || dismissable) && (
               <div className="export-actions">
-                {(state.kind === "preparing" || state.kind === "progress") && state.onCancel && (
+                {(state.kind === "starting" || state.kind === "preparing" || state.kind === "progress" || state.kind === "finalizing") && state.onCancel && (
                   <Button size="lg" onClick={state.onCancel}>
                     {t("export.preparing_cancel")}
                   </Button>

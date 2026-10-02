@@ -9,6 +9,7 @@ import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { compositionOrRoot, useProjectStore } from "../state/projectStore";
+import type { ProjectSummary } from "../ipc";
 import { PixiPreview } from "../render/PixiPreview";
 import type {
   PixiExportResult,
@@ -45,6 +46,8 @@ export interface PreviewSurfaceHandle {
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
   runPixiExport(opts: {
+    /// Admitted timeline snapshot with ready media paths; avoids store lag.
+    summary?: ProjectSummary;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };

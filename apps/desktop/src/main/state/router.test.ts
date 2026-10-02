@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
   HYBRID_CHANNELS, SLICE_INJECTED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
-  CLIP_COMPUTE_CHANNELS, DIRECT_NAPI_READS, AUDIO_FX_CHANNELS,
+  CLIP_COMPUTE_CHANNELS, DIRECT_NAPI_READS, AUDIO_FX_CHANNELS, EXPORT_JOB_CHANNELS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -27,7 +27,7 @@ const ALL_CHANNELS: readonly string[] = [
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   'restyle_captions', 'add_motif',
   // router special-cases (summary / history read / settings / persistence seam / agent-session)
-  'project_summary', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
+  'project_summary', 'project_history_view', 'get_project_settings', 'project_open_state', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
   // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
@@ -35,7 +35,7 @@ const ALL_CHANNELS: readonly string[] = [
   'motif_staleness_report', 'acknowledge_motif_staleness',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
-  'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
+  'export_video_sink_cancel', 'export_begin', 'export_cancel', ...EXPORT_JOB_CHANNELS, 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
   // audio-fx baker route (main-served: the baker holds the derived bake state)
@@ -113,6 +113,7 @@ describe('router partition gate', () => {
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['CLIP_COMPUTE_CHANNELS', CLIP_COMPUTE_CHANNELS],
       ['AUDIO_FX_CHANNELS', AUDIO_FX_CHANNELS],
+      ['EXPORT_JOB_CHANNELS', EXPORT_JOB_CHANNELS],
       ['MOTIF_CHANNELS', MOTIF_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],

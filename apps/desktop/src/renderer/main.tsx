@@ -3,10 +3,12 @@
 // effects subsystem would be dead on the preview). We instead let PixiJS use
 // its real `new Function()` codegen and allow `'unsafe-eval'` in the packaged
 // CSP (see electron.vite.config.ts). Filters then work on WebGPU + WebGL alike.
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@/bridge/window";
 import { listen } from "@/bridge/events";
+import { invoke } from "@/bridge/ipc";
+import { createProjectRoute } from "./startup/projectRoute";
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { useFocusRegions } from "./focus/useFocusRegions";
@@ -87,22 +89,15 @@ function Root() {
   // editor already on screen remounts on the new project exactly as a UI Close
   // + Open would, and no store of the previous project survives.
   const [projectEpoch, setProjectEpoch] = useState(0);
+  const projectRoute = useMemo(() => createProjectRoute({
+    listen: (opened) => listen<ProjectOpenedPayload>(PROJECT_OPENED_EVENT, opened),
+    read: () => invoke<ProjectOpenedPayload | null>("project_open_state"),
+    editor: (remount) => { if (remount) setProjectEpoch(n => n + 1); setStage("editor"); },
+    startup: () => setStage("startup"),
+    onError: (error) => console.warn("project route hydration failed:", error),
+  }), []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<ProjectOpenedPayload>(PROJECT_OPENED_EVENT, () => {
-      setProjectEpoch((n) => n + 1);
-      setStage("editor");
-    }).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  useEffect(() => projectRoute.mount(), [projectRoute]);
 
   // Focus regions (ADR 0041). Mounted here rather than in `App` so it also
   // covers the startup screen and the splash: its listeners are on `window`
@@ -184,32 +179,36 @@ function Root() {
     let cancelled = false;
     (async () => {
       try {
+        await projectRoute.ready
+        if (cancelled || projectRoute.selected) return;
         const enabled = await recentsGetReopenOnLaunch();
+        if (cancelled || projectRoute.selected) return;
         if (!enabled) {
-          if (!cancelled) setStage("startup");
+          if (!cancelled) projectRoute.startup();
           return;
         }
         const recent = await recentsMostRecent();
+        if (cancelled || projectRoute.selected) return;
         if (!recent) {
-          if (!cancelled) setStage("startup");
+          if (!cancelled) projectRoute.startup();
           return;
         }
         try {
           await projectOpen(recent.path);
-          if (!cancelled) setStage("editor");
+          if (!cancelled) projectRoute.editor();
         } catch (err) {
           console.warn("reopen-on-launch failed; falling back to startup", err);
-          if (!cancelled) setStage("startup");
+          if (!cancelled) projectRoute.startup();
         }
       } catch (err) {
         console.warn("startup pref read failed:", err);
-        if (!cancelled) setStage("startup");
+        if (!cancelled) projectRoute.startup();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [projectRoute]);
 
   // E2E-only: expose `window.__weftcutTest.newProjectAndEnter` so the E2E
   // suite can create a project + enter the editor headlessly. The dynamic
@@ -219,8 +218,8 @@ function Root() {
     void import("./testhook/e2eHook").then(
       ({ installBootstrapHook, installMotifTestHooks, installMotifHook, installAudioTestHooks, installDecodeBenchHooks }) => {
         installBootstrapHook(
-          () => setStage("editor"),
-          () => setStage("startup"),
+          () => projectRoute.editor(),
+          () => projectRoute.close(),
         );
         installMotifTestHooks();
         installMotifHook();
@@ -249,8 +248,8 @@ function Root() {
     return () => window.clearTimeout(t);
   }, []);
 
-  const onWorkspaceReady = useCallback(() => setStage("editor"), []);
-  const onCloseProject = useCallback(() => setStage("startup"), []);
+  const onWorkspaceReady = useCallback(() => projectRoute.editor(), [projectRoute]);
+  const onCloseProject = useCallback(() => projectRoute.close(), [projectRoute]);
   const onSplashIntroComplete = useCallback(() => setSplashIntroDone(true), []);
   const onSplashComplete = useCallback(() => {
     setSplashVisible(false);

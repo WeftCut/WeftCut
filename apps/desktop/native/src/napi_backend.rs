@@ -31,6 +31,8 @@ pub struct Backend {
     #[cfg(feature = "jobs")]
     pub(crate) audio_meter: crate::commands::media::AudioMeterState,
     #[cfg(feature = "export")]
+    pub(crate) export_cancellation: crate::export::cancellation::ExportCancellation,
+    #[cfg(feature = "export")]
     pub(crate) video_sink: crate::export::videosink::VideoSinkState,
     #[cfg(feature = "export")]
     pub(crate) encoder_registry: crate::export::EncoderRegistry,
@@ -83,6 +85,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         import_queue,
         #[cfg(feature = "jobs")]
         audio_meter: crate::commands::media::AudioMeterState::default(),
+        #[cfg(feature = "export")]
+        export_cancellation: crate::export::cancellation::ExportCancellation::default(),
         #[cfg(feature = "export")]
         video_sink: crate::export::videosink::VideoSinkState::default(),
         #[cfg(feature = "export")]
@@ -670,6 +674,10 @@ impl Backend {
         &self,
         bytes: napi::bindgen_prelude::Buffer,
     ) -> napi::Result<()> {
+        let _stage = self
+            .export_cancellation
+            .stage()
+            .map_err(napi::Error::from_reason)?;
         // Time the per-frame copy (deferred-opt signal — see docs/export-ipc-transport.md).
         let t = std::time::Instant::now();
         let data = bytes.to_vec();
@@ -914,10 +922,23 @@ impl Backend {
                 ser(crate::commands::media::report_audio_meter(self, a.report).await)
             }
             #[cfg(feature = "export")]
+            "export_begin" => ser(self.export_cancellation.begin()),
+            #[cfg(feature = "export")]
+            "export_cancel" => {
+                self.export_cancellation.cancel();
+                crate::export::videosink::export_video_sink_cancel(&self.video_sink).await?;
+                self.export_cancellation.drained().await;
+                // A start that was resolving encoder capabilities when cancelled
+                // may have published a sink after the first cancellation pass.
+                ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
+            }
+            #[cfg(feature = "export")]
             "export_project_audio_only" => {
+                let _stage = self.export_cancellation.stage()?;
                 let a: crate::commands::ExportAudioOnlyArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::export::export_project_audio_only(
+                    self,
                     a.project,
                     a.output_path,
                     a.audio,
@@ -929,12 +950,16 @@ impl Backend {
             }
             #[cfg(feature = "export")]
             "mux_export" => {
+                let _stage = self.export_cancellation.stage()?;
                 let a: crate::commands::MuxExportArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(
-                    crate::commands::export::mux_export(a.video_path, a.audio_path, a.output_path)
-                        .await,
+                ser(crate::commands::export::mux_export(
+                    self,
+                    a.video_path,
+                    a.audio_path,
+                    a.output_path,
                 )
+                .await)
             }
             #[cfg(feature = "export")]
             "ensure_export_audio_conform" => {
@@ -947,6 +972,7 @@ impl Backend {
             }
             #[cfg(feature = "export")]
             "export_video_sink_start" => {
+                let _stage = self.export_cancellation.stage()?;
                 #[derive(serde::Deserialize)]
                 struct A {
                     args: crate::export::videosink::VideoSinkStartArgs,
@@ -962,7 +988,13 @@ impl Backend {
             }
             #[cfg(feature = "export")]
             "export_video_sink_finish" => {
-                ser(crate::export::videosink::export_video_sink_finish(&self.video_sink).await)
+                let _stage = self.export_cancellation.stage()?;
+                let result =
+                    crate::export::videosink::export_video_sink_finish(&self.video_sink).await;
+                self.export_cancellation
+                    .check()
+                    .map_err(|e| e.to_string())?;
+                ser(result)
             }
             #[cfg(feature = "export")]
             "export_video_sink_cancel" => {
@@ -1304,6 +1336,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out, "[]", "blank project has no audio layers to conform");
+    }
+
+    #[cfg(feature = "export")]
+    #[tokio::test]
+    async fn export_cancel_stays_latched_until_explicit_begin() {
+        let backend = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        backend.dispatch("export_begin", "{}").await.unwrap();
+        backend.dispatch("export_cancel", "{}").await.unwrap();
+        backend.dispatch("export_cancel", "{}").await.unwrap();
+        for channel in [
+            "export_project_audio_only",
+            "mux_export",
+            "export_video_sink_start",
+            "export_video_sink_finish",
+        ] {
+            assert!(
+                backend
+                    .dispatch(channel, "{}")
+                    .await
+                    .unwrap_err()
+                    .contains("cancelled"),
+                "{channel} must reject a late native stage"
+            );
+        }
+        backend.dispatch("export_begin", "{}").await.unwrap();
+        let args = serde_json::json!({ "args": {
+            "width": 64, "height": 64, "fpsNum": 30, "fpsDen": 1,
+            "codec": "hevc", "bitrate": 0, "cbr": false, "gop": 30,
+            "software": false, "outputPath": ""
+        }})
+        .to_string();
+        backend
+            .dispatch("export_video_sink_start", &args)
+            .await
+            .unwrap();
+        backend.dispatch("export_cancel", "{}").await.unwrap();
+        assert!(backend.video_sink.0.lock().unwrap().is_none());
     }
 
     /// IPC-only sink (empty outputPath = no ffmpeg / byte-count only): start

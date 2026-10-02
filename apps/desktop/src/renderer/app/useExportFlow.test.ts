@@ -5,9 +5,10 @@ import { createRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enUS from "../i18n/locales/en-US";
-import { DEFAULT_EXPORT_SETTINGS } from "../render/exportSettings";
+import { DEFAULT_EXPORT_SETTINGS, type ExportSettings } from "../render/exportSettings";
 import { ROOT_ID, summaryFixture } from "../testing/summaryFixture";
-import type { LayerSummary, TrackSummary } from "../ipc";
+import type { LayerSummary, TrackSummary, MediaSummary } from "../ipc";
+import type { PreviewSurfaceHandle } from "../preview/PreviewSurface";
 
 // The export's audio-effect gate, at both of the two sites that run it: the
 // audio-only path and the full pipeline. Everything the hook reaches is driven
@@ -21,6 +22,7 @@ const bridge = vi.hoisted(() => ({
   /// Every backend call and every listener registration, in order.
   log: [] as string[],
   handlers: new Map<string, Array<(e: { payload: unknown }) => void>>(),
+  removed: [] as string[],
 }));
 
 vi.mock("@/bridge/ipc", () => ({
@@ -70,9 +72,10 @@ vi.mock("@/bridge/notification", () => ({
 }));
 
 vi.mock("@/bridge/fs", () => ({
-  remove: async () => {},
-  writeFile: async () => {},
+  remove: async (path: string) => { bridge.removed.push(path); },
+  writeFile: async () => { await bridge.answers.get("fs_write_file")?.({}); },
 }));
+vi.mock("../render/exportCodecProbe", () => ({ smokeEncode: async () => true }));
 
 vi.mock("@/bridge/shell", () => ({ reveal: async () => {} }));
 
@@ -99,6 +102,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 import { useExportFlow } from "./useExportFlow";
+import { runExportPipeline } from "./runExportPipeline";
 
 const AUDIO_LAYER: LayerSummary = {
   id: "layer-vo",
@@ -193,6 +197,26 @@ describe("useExportFlow audio-effect gate", () => {
     bridge.handlers.clear();
     bridge.answers.set("ensure_export_audio_conform", () => []);
     bridge.answers.set("audio_fx_snapshot", () => ({}));
+    // Model main admission and publication through the same backend/event seam.
+    // Deliberately deliver run before the start reply: real IPC can do that.
+    let nextJob = 0;
+    const jobs = new Map<string, Record<string, unknown>>();
+    bridge.answers.set("export_job_start", (raw) => {
+      const args = raw as Record<string, unknown>;
+      const job_id = `test-export-${++nextJob}`;
+      const job = { job_id, state: "preparing", ...args };
+      jobs.set(job_id, job);
+      for (const handler of bridge.handlers.get("export:run") ?? []) handler({ payload: job });
+      return job;
+    });
+    bridge.answers.set("export_job_update", (raw) => {
+      const args = raw as Record<string, unknown>;
+      const job_id = args.job_id as string;
+      const job = { ...jobs.get(job_id), ...args };
+      jobs.set(job_id, job);
+      return job;
+    });
+
   });
 
   it("gates the audio-only export and names the layer and the effect", async () => {
@@ -328,5 +352,136 @@ describe("useExportFlow audio-effect gate", () => {
 
     expect(calls).toEqual([{ startUs: 0, endUs: 2_000_000 }]);
     expect(summary([]).compositions[ROOT_ID]).toBeDefined();
+  });
+});
+
+describe("shared export pipeline cancellation and cleanup", () => {
+  beforeEach(() => {
+    bridge.answers.clear();
+    bridge.log.length = 0;
+    bridge.removed.length = 0;
+    bridge.handlers.clear();
+    bridge.answers.set("project_summary", () => summary([track("track-v", "Video", [COLOR_LAYER])]));
+  });
+
+  function render(runPixiExport: PreviewSurfaceHandle["runPixiExport"], signal = new AbortController().signal, overrides: Partial<ExportSettings> = {}) {
+    return runExportPipeline(
+      { ...DEFAULT_EXPORT_SETTINGS, ...overrides, includeAudio: false, audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false } },
+      "/output/.staging.mp4",
+      { startUs: 0, endUs: 2_000_000 },
+      {
+        previewRef: { current: {
+          play() {}, pause() {}, seekTo() {}, paused: () => true, refreshSources() {}, runPixiExport,
+        } },
+        proxyStateRef: { current: new Map() },
+        decodeProbeMemo: { current: new Map() },
+        signal,
+        t: translate,
+        onState: vi.fn(),
+      },
+    );
+  }
+
+  const rendered = { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
+
+  it("cancels an already-aborted request before any backend stage", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const worker = vi.fn(async () => rendered);
+    expect(await render(worker, abort.signal)).toEqual({ state: "cancelled" });
+    expect(bridge.log).not.toContain("invoke project_summary");
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it("reaps the native sink and scratch files when the worker rejects", async () => {
+    const outcome = await render(async () => { throw new Error("Worker failed."); });
+    expect(outcome).toEqual({ state: "failed", error: "Worker failed." });
+    expect(bridge.log).toContain("invoke export_video_sink_cancel");
+    expect(bridge.removed).toEqual(expect.arrayContaining([
+      expect.stringMatching(/weftcut-pixi-.*\.mp4$/),
+      expect.stringMatching(/weftcut-pixi-.*\.m4a$/),
+    ]));
+    expect(bridge.log).not.toContain("invoke mux_export");
+  });
+
+  it("never opens a fallback modal for an agent when native encoding fails", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    bridge.answers.set("export_video_sink_start", () => { throw new Error("Encoder unavailable."); });
+    const outcome = await render(async () => rendered);
+    expect(outcome).toEqual({ state: "failed", error: "Failed to start the native encoder: Encoder unavailable." });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(bridge.removed.length).toBe(2);
+    confirm.mockRestore();
+  });
+
+  it("checks cancellation after encoder start before launching a worker", async () => {
+    const abort = new AbortController();
+    bridge.answers.set("export_video_sink_start", () => { abort.abort(); });
+    const worker = vi.fn(async () => rendered);
+    expect(await render(worker, abort.signal)).toEqual({ state: "cancelled" });
+    expect(worker).not.toHaveBeenCalled();
+    expect(bridge.log).toContain("invoke export_video_sink_cancel");
+    expect(bridge.removed.length).toBe(2);
+  });
+
+  it("checks cancellation after sink finalization before starting audio or mux", async () => {
+    const abort = new AbortController();
+    bridge.answers.set("export_video_sink_finish", () => { abort.abort(); });
+    expect(await render(async () => rendered, abort.signal)).toEqual({ state: "cancelled" });
+    expect(bridge.log).not.toContain("invoke export_project_audio_only");
+    expect(bridge.log).not.toContain("invoke mux_export");
+    expect(bridge.removed.length).toBe(2);
+  });
+
+  it("cleans scratch files on successful video-only completion", async () => {
+    const outcome = await render(async () => rendered);
+    expect(outcome).toEqual({ state: "completed", outputPath: "/output/.staging.mp4", durationUs: 2_000_000 });
+    expect(bridge.log).toContain("invoke mux_export");
+    expect(bridge.log).not.toContain("invoke export_project_audio_only");
+    expect(bridge.removed.length).toBe(2);
+  });
+
+  it("passes frozen admitted geometry and fresh readiness paths to the worker", async () => {
+    const admitted = summary([track("track-v", "Video", [COLOR_LAYER])]);
+    const freshMedia = [{ id: "source-1", label: "source.mp4", kind: "Video", path: "/source.mp4", decode_route: { route: "bypass" } } as MediaSummary];
+    const afterReadiness = summaryFixture({ root: { duration_us: 99_000_000, tracks: [] }, media: freshMedia });
+    let summaries = 0;
+    bridge.answers.set("project_summary", () => ++summaries === 1 ? admitted : afterReadiness);
+    const worker = vi.fn(async (_options: Parameters<PreviewSurfaceHandle["runPixiExport"]>[0]) => rendered);
+    expect((await render(worker)).state).toBe("completed");
+    const exported = worker.mock.calls[0]![0].summary!;
+    expect(exported.compositions).toBe(admitted.compositions);
+    expect(exported.media).toBe(freshMedia);
+    expect(exported.compositions[ROOT_ID]!.duration_us).toBe(2_000_000);
+  });
+
+  it.each(["failed", "cancelled"] as const)("drains an in-flight append before removing scratch files when the worker is %s", async (terminal) => {
+    const abort = new AbortController();
+    let releaseWrite!: () => void;
+    const writing = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    let appended = false;
+    bridge.answers.set("fs_write_file", async () => {
+      bridge.log.push("append started");
+      await writing;
+      appended = true;
+    });
+    const pipeline = render(async (options) => {
+      // The real worker can reject on abort before the asynchronous IPC append
+      // it already dispatched settles. Reproduce that ordering exactly.
+      void options.writeChunk(new ArrayBuffer(4)).catch(() => {});
+      if (terminal === "cancelled") abort.abort();
+      throw new Error("Worker failed during append.");
+    }, abort.signal, { encoderEngine: "webcodecs" });
+    let finished = false;
+    void pipeline.then(() => { finished = true; });
+    await waitFor(() => expect(bridge.log).toContain("append started"));
+    expect(finished).toBe(false);
+    expect(bridge.removed).toEqual([]);
+    releaseWrite();
+    expect(await pipeline).toEqual(terminal === "cancelled"
+      ? { state: "cancelled" }
+      : { state: "failed", error: "Worker failed during append." });
+    expect(appended).toBe(true);
+    expect(bridge.removed.length).toBe(2);
   });
 });

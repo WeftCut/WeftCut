@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { MCP_TOOL_DEFS, ANN_READ, type ToolAnnotations } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
+import { EXPORT_TOOL_DEFS } from '../../mcp/exportTools'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
 import { buildMcpServer } from '../../mcp/server'
 import { AgentActivityService } from '../../agent/activity'
@@ -26,7 +27,7 @@ const rust = JSON.parse(RUST_CATALOG) as {
 }
 const merged = mergeMcpCatalog(
   rust.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: (t.inputSchema ?? t.input_schema) as Record<string, unknown>, annotations: t.annotations as ToolAnnotations | undefined })),
-  [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS],
+  [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS],
 )
 type Ann = { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
 const ann = (name: string): Ann => {
@@ -145,6 +146,10 @@ describe('the wire and the activity service read the same fact', () => {
     expect(byName.get('delete_layers')?.destructiveHint).toBe(true)
     expect(byName.get('ping')?.readOnlyHint).toBe(true)
     expect(byName.get('list_motifs')?.readOnlyHint).toBe(true)
+    expect(byName.get('get_export_options')?.readOnlyHint).toBe(true)
+    expect(byName.get('get_export_status')?.readOnlyHint).toBe(true)
+    expect(byName.get('start_export')?.destructiveHint).toBe(false)
+    expect(byName.get('cancel_export')?.idempotentHint).toBe(true)
     expect(tools.every((t) => t.annotations !== undefined)).toBe(true)
   })
 
