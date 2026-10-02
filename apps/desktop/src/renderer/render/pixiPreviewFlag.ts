@@ -4,6 +4,8 @@
 //
 // Devtools hooks read the `window.__weftcut*` globals directly.
 
+import type { ProjectSummary } from "../ipc";
+
 /// Result of a successful Pixi export. The output bytes are streamed to disk
 /// via the caller's `writeChunk` during the run (not returned here) so the
 /// whole MP4 is never held in one ArrayBuffer.
@@ -40,6 +42,8 @@ export interface PixiPreviewHandle {
   /// final mux/transcode so the ExportPanel progress UI can drive the full
   /// pipeline.
   runExport(opts: {
+    /// Frozen admitted timeline with fresh export-ready media paths.
+    summary?: ProjectSummary;
     onProgress?: (encoded: number, total: number) => void;
     /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
     /// omitted, the worker falls back to its 1080p H.264 default.

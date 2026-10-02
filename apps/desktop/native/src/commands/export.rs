@@ -19,6 +19,7 @@ use crate::napi_backend::Backend;
 /// gates the export until every bake has landed, so an absent entry here
 /// means "no effects", never "not ready yet".
 pub async fn export_project_audio_only(
+    backend: &Backend,
     project: crate::state::Project,
     output_path: String,
     audio: AudioEncodeSpec,
@@ -36,9 +37,16 @@ pub async fn export_project_audio_only(
             .map(|(layer, source)| (layer, PathBuf::from(source)))
             .collect::<std::collections::HashMap<_, _>>()
     });
-    export::export_audio_only(&project, &path, &audio, window, overrides.as_ref())
-        .await
-        .map_err(|e| format!("{e:#}"))
+    export::export_audio_only_cancellable(
+        &project,
+        &path,
+        &audio,
+        window,
+        overrides.as_ref(),
+        &backend.export_cancellation,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Mux `video_path` (+ `audio_path` if it exists on disk) into `output_path`.
@@ -48,6 +56,7 @@ pub async fn export_project_audio_only(
 /// already writes `video_path` in its final target codec. Container = the
 /// output extension.
 pub async fn mux_export(
+    backend: &Backend,
     video_path: String,
     audio_path: String,
     output_path: String,
@@ -61,7 +70,7 @@ pub async fn mux_export(
                 .map_err(|e| format!("create output dir {}: {e}", parent.display()))?;
         }
     }
-    export::mux_to_file(&video, &audio, &out)
+    export::mux_to_file_cancellable(&video, &audio, &out, &backend.export_cancellation)
         .await
         .map_err(|e| format!("{e:#}"))
 }

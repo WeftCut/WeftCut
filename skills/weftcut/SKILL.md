@@ -1,6 +1,6 @@
 ---
 name: weftcut
-description: Drive the WeftCut video editor over its MCP tools. Use BEFORE calling any weftcut MCP tool — when the user wants to edit video in WeftCut (cut, trim, arrange a timeline, add captions or voiceover) or author/update a Motif (animated overlay).
+description: Drive the WeftCut video editor over its MCP tools. Use BEFORE calling any weftcut MCP tool — when the user wants to edit video in WeftCut (cut, trim, arrange a timeline, add captions or voiceover, export a rendered file) or author/update a Motif (animated overlay).
 ---
 
 # Driving WeftCut
@@ -16,14 +16,14 @@ what no single tool can: how a session should go.
 The server sends these as its `initialize` instructions, so a client without
 this skill reads the same etiquette; the long form follows.
 
-WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history.
+WeftCut edits video; the user watches the same project live, and every edit you commit lands in their undo history.
 1. Read `project://tracks` (or `read_project` with view "tracks") before your first edit. Ids come from reads, never from memory.
 2. Every mutator answers with the committed record: the ids it minted, the span as it landed, `adjusted` for any grid snap. Verify from that answer before reporting.
 3. A refusal is an isError result whose text names the cause and the fix. Act on it; never retry a rejected call verbatim.
 4. Times are microseconds on the composition's frame grid: an off-grid time is snapped and echoed, a time outside its layer is refused.
 5. Call `create_checkpoint` before your first edit. For a batch (a rough cut, a pause pass, a caption track): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.
 6. The user or another agent may edit concurrently; when a commit fails for that reason, re-read and reapply.
-7. Export is not a tool: point the user to the app's Export UI.
+7. Export: `get_export_options`, `start_export`, `get_export_status` until completed; `cancel_export`.
 8. Project tools refuse while no project is open: `open_project` or `create_project` the one the user asked for, else ask which.
 The weftcut skill (Settings > Agent) carries the longer etiquette, the common flows and the Motif authoring contract.
 
@@ -55,8 +55,7 @@ The weftcut skill (Settings > Agent) carries the longer etiquette, the common fl
    options. Pick one; never retry a rejected call verbatim.
 6. A commit can also fail because the user (or another agent) edited
    concurrently — re-read the resource and reapply.
-7. Export is deliberately not a tool. When the user wants a rendered file,
-   point them to the app's Export UI.
+7. For a rendered file, use the export job flow below. Export writes a file without adding an undo entry; project edits pause while the job runs.
 
 ## Working rhythm
 
@@ -120,6 +119,43 @@ descriptions:
 - Going back further than one undo: read `project://history` and `jump_to` a row
   by its absolute index — the way back to a state that is neither one undo away
   nor a checkpoint.
+
+## Exporting a rendered file
+
+1. Call `get_export_options {}` to inspect saved/default settings, composition
+   output dimensions and frame rate, and supported values before choosing overrides.
+   If it includes `validation_issue`, choose compatible overrides before starting.
+2. Call `start_export` with a new absolute `output_path`, optional `settings`,
+   and optional `range: { startUs, endUs }` in timeline microseconds. The range
+   is half-open and snaps to the composition frame grid; check the returned range. Omit it for the entire root composition. `settings` uses the
+   existing camelCase ExportSettings fields, including its nested `audio` object.
+   It supports video with audio, video-only and audio-only. Use `.m4a` for
+   AAC audio-only, `.mka` for Opus audio-only, or the selected video container's
+   extension. Existing files are refused; choose another name. The parent directory
+   must exist on a filesystem supporting hard links, such as NTFS. FAT/exFAT
+   and some network shares cannot publish agent exports; choose a supported
+   local destination. Publication has no partial-file copy fallback.
+3. Save the returned job ID and poll `get_export_status { job_id }` through
+   preparation, rendering and finalization. Report the file ready only when
+   `state` is `completed`, using the returned output path. A started job or 100%
+   frame rendering is not a completed export.
+4. Use `cancel_export { job_id }` when the user asks to stop. Cancellation is
+   harmless when repeated. Read its terminal status before reporting it cancelled.
+
+Omitted fields follow saved project settings with default backfills. Invalid
+explicit settings, incompatible codecs/containers and empty/out-of-bounds ranges
+are refused. Experimental 10-bit delivery export requires
+`allow_experimental_10bit: true`; do not opt in without the user's intent.
+The agent flow shows no save/fallback dialogs: read and act on its errors.
+
+Only one export runs at a time, shared with the app's Export UI. Project edits,
+undo/redo and project switching are paused until the job ends; reads, status
+and cancellation remain available. MCP disconnect does not cancel the job:
+reconnect and poll the same ID. Job records last for the app process session,
+so a restarted app cannot recover an old job ID. Failed/cancelled jobs do not
+publish a completed output, and exporting does not create a timeline undo entry.
+If native cleanup fails, status reports `phase: "cleanup_failed"` and `error`;
+editing stays paused until cleanup succeeds. Retry cancellation.
 
 ## Motifs (animated overlays)
 

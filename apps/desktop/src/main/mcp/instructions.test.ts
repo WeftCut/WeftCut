@@ -31,6 +31,13 @@ describe('initialize instructions', () => {
     for (const l of MCP_INSTRUCTION_LINES) expect(l.trim()).toBe(l)
   })
 
+  it('teaches export jobs instead of referring agents to a manual export', () => {
+    for (const name of ['get_export_options', 'start_export', 'get_export_status', 'cancel_export']) {
+      expect(MCP_INSTRUCTIONS).toContain(name)
+    }
+    expect(MCP_INSTRUCTIONS).toContain('until completed')
+    expect(MCP_INSTRUCTIONS).not.toContain('Export is not a tool')
+  })
   it('reach the client on initialize, with the server name and version', async () => {
     const backend = { mcpCatalog: async () => RUST_CATALOG, mcpCallTool: async () => { throw new Error('unused') }, mcpReadResource: async () => '{"ok":true,"result":{"contents":[]}}' } as any
     const server = buildMcpServer(backend, { version: '1.2.3' })

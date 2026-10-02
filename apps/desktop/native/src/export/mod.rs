@@ -7,6 +7,7 @@
 //! encode is the renderer's Pixi/WebCodecs worker or the native-encode video
 //! sink (`videosink`); ffmpeg here never composites or re-encodes frames.
 
+pub mod cancellation;
 mod encoder_registry;
 pub(crate) use encoder_registry::EncoderRegistry;
 pub mod videosink;
@@ -72,14 +73,23 @@ fn target_channels(spec: &AudioEncodeSpec, composition_channels: u8) -> u8 {
 /// reduced to the encode tail — `alimiter` ceiling + AAC/Opus encode. The
 /// PixiJS export Worker streams the temp video file; `mux_to_file` combines
 /// them. ADR 0019.
-pub async fn export_audio_only(
+pub async fn export_audio_only_cancellable(
     project: &Project,
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
     layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
+    cancellation: &cancellation::ExportCancellation,
 ) -> Result<bool> {
-    mix_and_encode(project, output, audio, window_us, layer_audio_sources).await
+    mix_and_encode(
+        project,
+        output,
+        audio,
+        window_us,
+        layer_audio_sources,
+        cancellation,
+    )
+    .await
 }
 
 /// The EventSink-free core of `export_audio_only`, separated for direct
@@ -90,6 +100,7 @@ async fn mix_and_encode(
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
     layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
+    cancellation: &cancellation::ExportCancellation,
 ) -> Result<bool> {
     use crate::audio::mix::{mix_block, plan_for_project, MIX_BLOCK_FRAMES};
 
@@ -100,6 +111,7 @@ async fn mix_and_encode(
         );
     }
 
+    cancellation.check()?;
     let plan = plan_for_project(project, window_us, layer_audio_sources)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let total_frames = (plan.window_end_frame - plan.window_start_frame).max(0);
@@ -163,6 +175,7 @@ async fn mix_and_encode(
     // The mixer is synchronous file I/O — run it on a blocking thread and
     // feed blocks through a channel to the async stdin writer.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<f32>>(4);
+    let mix_cancel = cancellation.clone();
     let mix_task = tokio::task::spawn_blocking(move || -> Result<()> {
         let mut readers = plan
             .layers
@@ -171,6 +184,7 @@ async fn mix_and_encode(
             .collect::<Result<Vec<_>>>()?;
         let mut done: i64 = 0;
         while done < total_frames {
+            mix_cancel.check()?;
             let frames = MIX_BLOCK_FRAMES.min((total_frames - done) as usize);
             let mut out = vec![0f32; frames * 2];
             mix_block(
@@ -189,21 +203,43 @@ async fn mix_and_encode(
     });
 
     use tokio::io::AsyncWriteExt;
-    while let Some(block) = rx.recv().await {
+    loop {
+        let block = tokio::select! {
+            _ = cancellation.cancelled() => break,
+            block = rx.recv() => match block { Some(block) => block, None => break },
+        };
         let mut bytes = Vec::with_capacity(block.len() * 4);
-        for s in &block {
-            bytes.extend_from_slice(&s.to_le_bytes());
+        for sample in &block {
+            bytes.extend_from_slice(&sample.to_le_bytes());
         }
-        if let Err(e) = stdin.write_all(&bytes).await {
+        let result = tokio::select! {
+            _ = cancellation.cancelled() => break,
+            result = stdin.write_all(&bytes) => result,
+        };
+        if let Err(e) = result {
             warn!("ffmpeg stdin write failed: {e}");
             break;
         }
     }
-    drop(stdin); // EOF → ffmpeg finalizes the file
-    mix_task.await.context("join mixer")??;
-
-    let status = child.wait().await.context("await ffmpeg")?;
+    // Closing the receiver releases a mixer blocked in blocking_send. Always
+    // join it and reap ffmpeg before returning either failure or cancellation.
+    drop(rx);
+    drop(stdin);
+    if cancellation.is_cancelled() {
+        let _ = child.start_kill();
+    }
+    let mixer_result = mix_task.await.context("join mixer");
+    let status = tokio::select! {
+        _ = cancellation.cancelled() => {
+            let _ = child.start_kill();
+            child.wait().await
+        },
+        status = child.wait() => status,
+    }
+    .context("await ffmpeg")?;
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    cancellation.check()?;
+    mixer_result??;
     if !status.success() {
         warn!(
             "ffmpeg exited with {}\nstderr tail:\n{}",
@@ -251,7 +287,23 @@ fn mux_args(video_path: &Path, audio_path: &Path, output: &Path) -> Vec<std::ffi
 /// `audio_path` doesn't exist the audio input is omitted — taken on
 /// projects with no audio layers, where `export_audio_only` returns
 /// without producing anything.
+#[cfg(test)]
 pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) -> Result<()> {
+    mux_to_file_cancellable(
+        video_path,
+        audio_path,
+        output,
+        &cancellation::ExportCancellation::default(),
+    )
+    .await
+}
+pub async fn mux_to_file_cancellable(
+    video_path: &Path,
+    audio_path: &Path,
+    output: &Path,
+    cancellation: &cancellation::ExportCancellation,
+) -> Result<()> {
+    cancellation.check()?;
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg is not installed");
     }
@@ -290,8 +342,16 @@ pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) ->
         }
         tail.join("\n")
     });
-    let status = child.wait().await.context("await ffmpeg mux")?;
+    let status = tokio::select! {
+        _ = cancellation.cancelled() => {
+            let _ = child.start_kill();
+            child.wait().await
+        },
+        status = child.wait() => status,
+    }
+    .context("await ffmpeg mux")?;
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    cancellation.check()?;
     if !status.success() {
         anyhow::bail!(
             "ffmpeg mux exited {}. Tail:\n{}",
@@ -472,9 +532,16 @@ mod tests {
             sample_rate: Some(48_000),
             channels: Some(2),
         };
-        let produced = super::mix_and_encode(&p, &out, &spec, None, None)
-            .await
-            .expect("mix_and_encode");
+        let produced = super::mix_and_encode(
+            &p,
+            &out,
+            &spec,
+            None,
+            None,
+            &super::cancellation::ExportCancellation::default(),
+        )
+        .await
+        .expect("mix_and_encode");
         assert!(
             produced,
             "two audio layers in range -> should produce a file"

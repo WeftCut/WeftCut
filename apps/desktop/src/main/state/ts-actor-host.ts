@@ -4,7 +4,8 @@ import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
 import { blankProject, eachLayer, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
-import { routeChannel } from './router'
+import { routeChannel, exportBlocksChannel } from './router'
+import { MCP_TOOL_DEFS } from './mcp-commands'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
@@ -30,6 +31,7 @@ import type { RecentsStore } from '../recents'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
+  assertProjectWritable?: () => void
   /** mainWindow.webContents.send('evt:'+event, payload) */
   send: (event: string, payload: unknown) => void
   /** mcpHost.notifyChange(payload) — the mcp:change relay. */
@@ -132,6 +134,7 @@ export interface TsActorHost {
   /** The project the user has open, or null on the start screen. What the MCP
    *  surface gates project work on (`server.ts`). */
   openedProject: () => OpenedProject | null
+  projectOperationPending?: () => boolean
   projectStatus: () => ProjectStatus
   /** MCP's `open_project` / `create_project`: the start screen's Open and New,
    *  plus the event that brings the editor along. A `WorkspaceFailure` throws
@@ -208,6 +211,23 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
   })
+  // Also guard delayed hybrid/writeback commits, whose computation may have
+  // started before export admission. Read-only MCP calls retain access.
+  const dispatch = actor.dispatch.bind(actor)
+  actor.dispatch = (...args) => {
+    // These two internal native-job writebacks publish derived media readiness;
+    // export preparation must continue receiving them. They are not renderer
+    // production commands and cannot change timeline content.
+    if (!['set_media_derivatives','set_media_workspace_paths'].includes(args[0])) deps.assertProjectWritable?.()
+    return dispatch(...args)
+  }
+  const command = actor.command.bind(actor)
+  actor.command = (...args) => { deps.assertProjectWritable?.(); return command(...args) }
+  const actorMcpCall = actor.mcpCall.bind(actor)
+  actor.mcpCall = (...args) => {
+    if (MCP_TOOL_DEFS.find(d => d.name === args[0])?.annotations.readOnlyHint !== true) deps.assertProjectWritable?.()
+    return actorMcpCall(...args)
+  }
   let unsub: (() => void) | null = null
   const agent = new AgentActivityService(actor, deps.send)
 
@@ -302,6 +322,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     await autosave.forceFlush()
     return replace()
   }
+  let projectOperations = 0
+  const projectOperation = async <T>(run: () => Promise<T>): Promise<T> => {
+    deps.assertProjectWritable?.()
+    projectOperations++
+    try { return await run() } finally { projectOperations-- }
+  }
 
   let opened: OpenedProject | null = null
   /** Set once the app starts quitting; never cleared. Nothing opens after it. */
@@ -311,9 +337,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // quit began does not reopen the gate the quit closed.
   const opens = (dir: string): void => { if (!quitting) opened = { dir } }
   const persistence: PersistenceHandlers = {
-    open: async (dir) => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opens(dir) },
-    saveAs: async (dir) => { await saveProjectAs(orchestratorDeps, dir); opens(dir) },
-    newWorkspace: async (a) => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opens(dir); return dir },
+    open: (dir) => projectOperation(async () => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opens(dir) }),
+    saveAs: (dir) => projectOperation(async () => { await saveProjectAs(orchestratorDeps, dir); opens(dir) }),
+    newWorkspace: (a) => projectOperation(async () => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opens(dir); return dir }),
     save: () => autosave.forceFlush(),
     // The record clears BEFORE the flush: the flush is async, and a write the
     // gate still let through during it would reach the closed project's
@@ -321,18 +347,20 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // and then dropped with the pending timer). The actor keeps the closed
     // project until the next Open / New replaces it, and the workspace slot
     // keeps its folder; what stops an agent writing into it is the MCP gate.
-    close: async () => { opened = null; await autosave.forceFlush() },
+    close: () => projectOperation(async () => { opened = null; await autosave.forceFlush() }),
   }
 
   const agentProjects: TsActorHost['projects'] = {
     shuttingDown: () => quitting,
     open: async (dir) => {
+      deps.assertProjectWritable?.()
       const replaced = opened?.dir ?? null
       await persistence.open(dir)
       deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
       return { name: actor.snapshot().metadata.name, dir, replaced }
     },
     create: async (a) => {
+      deps.assertProjectWritable?.()
       const replaced = opened?.dir ?? null
       const dir = await persistence.newWorkspace(a)
       deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
@@ -455,6 +483,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   async function handleInvoke(channel: string, args: Record<string, unknown>): Promise<unknown> {
+    if (exportBlocksChannel(channel)) deps.assertProjectWritable?.()
     if (channel === 'agent_activity_snapshot') return agent.snapshot()
     if (channel === 'agent_session_get') return agent.snapshot().session
     if (channel === 'agent_unlock_history') { agent.unlock(); return null }
@@ -611,8 +640,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     actor,
     agent,
     openedProject: () => opened,
+    projectOperationPending: () => projectOperations !== 0,
     projects: agentProjects,
-    shutdown: () => { quitting = true; return persistence.close() },
+    // Explicit app quit has already terminated the renderer. Flush even if an
+    // export's native cleanup failed and its admission gate remains reserved.
+    shutdown: () => { quitting = true; opened = null; return autosave.forceFlush() },
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

@@ -24,6 +24,7 @@ export type Route =
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write
   | { kind: 'clipCompute' }   // native clip read/compute over an actor-resolved slice
   | { kind: 'audioFx' }       // audio-fx baker read/gate, served in main by the baker
+  | { kind: 'exportJob' }     // main-owned export admission and lifecycle
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
@@ -145,7 +146,7 @@ export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
  *  are classified anyway because this manifest's value is completeness, and a
  *  channel nobody listed is a channel nobody checked. */
 export const PURE_NATIVE: ReadonlySet<string> = new Set([
-  'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish', 'export_video_sink_cancel',
+  'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish', 'export_video_sink_cancel', 'export_begin', 'export_cancel',
   'import_cancel', 'import_queue_list', 'report_audio_meter', 'settings_get_api_key_status', 'settings_test_provider',
   'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
 ])
@@ -156,6 +157,7 @@ export const PERSISTENCE: ReadonlySet<string> = new Set([
 ])
 
 export function routeChannel(channel: string): Route {
+  if (EXPORT_JOB_CHANNELS.has(channel)) return {kind:'exportJob'}
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
   if (CLIP_COMPUTE_CHANNELS.has(channel)) return { kind: 'clipCompute' }
@@ -204,4 +206,13 @@ export function routeChannel(channel: string): Route {
   if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || SLICE_INJECTED_READS.has(channel) || DIRECT_NAPI_READS.has(channel))
     return { kind: 'rust' }
   return { kind: 'reject', reason: 'unclassified channel — classify in router.ts' }
+}
+export const EXPORT_JOB_CHANNELS: ReadonlySet<string> = new Set(['export_job_ready','export_job_start','export_job_update','export_job_cancel','export_job_status'])
+
+/** Project writes blocked for the lifetime of an export, including workspace swaps. */
+export function exportBlocksChannel(channel: string): boolean {
+  const kind = routeChannel(channel).kind
+  return ['command','hybrid','open','saveAs','newWorkspace','close'].includes(kind)
+    || channel === 'export_settings_set'
+    || (kind === 'motif' && !['list_motifs','get_motif_source','motif_staleness_report','export_motif'].includes(channel))
 }

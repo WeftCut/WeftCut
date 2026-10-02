@@ -47,6 +47,8 @@ pub struct SinkShared {
     pub write_ns: AtomicU64,
     /// Rolling tail of ffmpeg stderr (bounded to 8192 chars), appended to errors.
     pub stderr_tail: Mutex<String>,
+    pub cancelled: std::sync::atomic::AtomicBool,
+    pub stderr_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 pub struct ActiveSink {
@@ -121,6 +123,12 @@ fn tail_suffix(shared: &SinkShared) -> String {
     }
 }
 
+fn join_stderr(shared: &SinkShared) {
+    if let Some(thread) = shared.stderr_thread.lock().unwrap().take() {
+        let _ = thread.join();
+    }
+}
+
 /// Kill and reap `shared.child`, ignoring all errors.
 fn abort_child(shared: &SinkShared) {
     if let Some(mut c) = shared.child.lock().unwrap().take() {
@@ -139,6 +147,7 @@ fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
         warn!("video sink already active at start — reclaiming orphaned sink (prior export's teardown never ran, e.g. a renderer reload mid-export)");
         abort_child(&sink.shared);
         drop(sink.shared.stdin.lock().unwrap().take());
+        join_stderr(&sink.shared);
     }
 }
 
@@ -310,11 +319,13 @@ pub async fn export_video_sink_start(
         copy_ns: AtomicU64::new(0),
         write_ns: AtomicU64::new(0),
         stderr_tail: Mutex::new(String::new()),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+        stderr_thread: Mutex::new(None),
     });
 
     if let Some(stderr) = stderr_temp {
         let shared_for_thread = shared.clone();
-        std::thread::spawn(move || {
+        let stderr_thread = std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 let mut buf = shared_for_thread.stderr_tail.lock().unwrap();
                 buf.push_str(&line);
@@ -329,6 +340,7 @@ pub async fn export_video_sink_start(
                 }
             }
         });
+        *shared.stderr_thread.lock().unwrap() = Some(stderr_thread);
     }
 
     let mut guard = state.0.lock().unwrap();
@@ -387,28 +399,54 @@ pub async fn video_sink_write(
 /// Finalize: drop stdin (EOF → ffmpeg finalizes), reap the child directly, and
 /// return the IPC counters.
 pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStats, String> {
+    // Retain the shared child in state during finalization so cancel can kill
+    // it. Poll without holding its mutex across wait: cancellation must never
+    // wait behind a blocked encoder finalization.
     let shared = {
-        let mut guard = state.0.lock().unwrap();
-        guard.take().ok_or("no active video sink")?.shared
+        let guard = state.0.lock().unwrap();
+        guard.as_ref().ok_or("no active video sink")?.shared.clone()
     };
     drop(shared.stdin.lock().unwrap().take());
-    let shared_for_wait = shared.clone();
-    let status = tokio::task::spawn_blocking(
-        move || -> Result<Option<std::process::ExitStatus>, String> {
-            let child = shared_for_wait.child.lock().unwrap().take();
-            match child {
-                Some(mut c) => c.wait().map(Some).map_err(|e| format!("ffmpeg wait: {e}")),
+    let result = loop {
+        if shared.cancelled.load(Ordering::SeqCst) {
+            break Err("export cancelled".into());
+        }
+        let status = {
+            let mut child = shared.child.lock().unwrap();
+            match child.as_mut() {
+                Some(child) => child.try_wait().map_err(|e| format!("ffmpeg wait: {e}")),
                 None => Ok(None),
             }
-        },
-    )
-    .await
-    .map_err(|e| format!("finish join: {e}"))??;
-    if let Some(st) = status {
-        if !st.success() {
-            return Err(format!("ffmpeg exited {st}{}", tail_suffix(&shared)));
+        };
+        match status {
+            Err(e) => break Err(e),
+            Ok(Some(status)) => {
+                shared.child.lock().unwrap().take();
+                if status.success() {
+                    break Ok(());
+                }
+                break Err(format!("ffmpeg exited {status}{}", tail_suffix(&shared)));
+            }
+            Ok(None) if shared.child.lock().unwrap().is_none() => break Ok(()),
+            Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
         }
+    };
+    let mut guard = state.0.lock().unwrap();
+    if guard
+        .as_ref()
+        .is_some_and(|sink| Arc::ptr_eq(&sink.shared, &shared))
+    {
+        guard.take();
     }
+    drop(guard);
+    if result.is_err() {
+        abort_child(&shared);
+    }
+    join_stderr(&shared);
+    if shared.cancelled.load(Ordering::SeqCst) {
+        return Err("export cancelled".into());
+    }
+    result?;
     let bytes = shared.ipc_bytes.load(Ordering::Relaxed);
     let frames = shared.ipc_frames.load(Ordering::Relaxed);
     // See the `copy_ns` / `write_ns` fields on `SinkShared`.
@@ -429,9 +467,11 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
 pub async fn export_video_sink_cancel(state: &VideoSinkState) -> Result<(), String> {
     let sink = state.0.lock().unwrap().take();
     if let Some(sink) = sink {
+        sink.shared.cancelled.store(true, Ordering::SeqCst);
         // Kill first (breaks the pipe so any blocked write unblocks), then drop stdin.
         abort_child(&sink.shared);
         drop(sink.shared.stdin.lock().unwrap().take());
+        join_stderr(&sink.shared);
         warn!("video sink cancelled");
     }
     Ok(())
@@ -451,7 +491,96 @@ mod tests {
             copy_ns: AtomicU64::new(0),
             write_ns: AtomicU64::new(0),
             stderr_tail: Mutex::new(String::new()),
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+            stderr_thread: Mutex::new(None),
         })
+    }
+
+    /// Run only as a child process for deterministic cancellation tests.
+    #[test]
+    #[ignore]
+    fn cancellation_child_fixture() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn cancellation_reaps_child_during_finish() {
+        let shared = dummy_shared();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.no_console_window();
+        let child = command
+            .args([
+                "--exact",
+                "export::videosink::tests::cancellation_child_fixture",
+                "--ignored",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        *shared.child.lock().unwrap() = Some(child);
+        let state = Arc::new(VideoSinkState(Mutex::new(Some(ActiveSink {
+            shared: shared.clone(),
+        }))));
+        let finish_state = state.clone();
+        let finish = tokio::spawn(async move { export_video_sink_finish(&finish_state).await });
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            export_video_sink_cancel(&state),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), finish)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert!(shared.child.lock().unwrap().is_none());
+        assert!(state.0.lock().unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancellation_unblocks_and_reaps_a_pipe_writer() {
+        let shared = dummy_shared();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.no_console_window();
+        let mut child = command
+            .args([
+                "--exact",
+                "export::videosink::tests::cancellation_child_fixture",
+                "--ignored",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        *shared.stdin.lock().unwrap() = child.stdin.take();
+        *shared.child.lock().unwrap() = Some(child);
+        let state = Arc::new(VideoSinkState(Mutex::new(Some(ActiveSink {
+            shared: shared.clone(),
+        }))));
+        let write_state = state.clone();
+        let writer = tokio::spawn(async move {
+            video_sink_write(&write_state, vec![0; 8 * 1024 * 1024], 0).await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        export_video_sink_cancel(&state).await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), writer)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert!(shared.child.lock().unwrap().is_none());
+        assert!(shared.stdin.lock().unwrap().is_none());
     }
 
     // A leaked/orphaned sink (renderer reloaded mid-export) must be reclaimed

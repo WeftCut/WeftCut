@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from '../../mcp/motifToolDefs'
 import { HOST_RESOURCE_DEFS } from '../../mcp/hostResources'
+import { EXPORT_TOOL_DEFS } from '../../mcp/exportTools'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../..')
 const SKILL_SOURCES = [
@@ -38,6 +39,7 @@ const toolNames = new Set([
   ...rust.tools.map((t) => t.name),
   ...MCP_TOOL_DEFS.map((d) => d.name),
   ...MOTIF_TOOL_DEFS.map((d) => d.name),
+  ...EXPORT_TOOL_DEFS.map((d) => d.name),
 ])
 const resourceUris = new Set([
   ...rust.resources.map((r) => r.uri),
@@ -55,6 +57,10 @@ const KNOWN_NON_TOOLS = new Set([
   'from', 'pad_us', 't_start_us', 'segments', 'word_timing', 'source_us',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
   'adjusted', 'siblings',
+  // SKILL.md — export request/settings and options/status result fields
+  'output_path', 'settings', 'audio', 'validation_issue', 'state', 'error',
+  // SKILL.md — export terminal state value
+  'completed',
   // SKILL.md — the MCP protocol method whose `instructions` the head mirrors
   'initialize',
   // motif-authoring.md — manifest fields

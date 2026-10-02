@@ -107,7 +107,7 @@ The app's **Connect agent** panel (Settings → Agent):
   closed and goes stale when the port or token changes.
 - **`initialize` carries `instructions`** — ten lines of session etiquette
   (read first, verify from the returned record, a refusal names the fix, µs on
-  the frame grid, checkpoint then work session for a batch, export is the UI,
+  the frame grid, checkpoint then work session for a batch, export jobs,
   project tools refuse until the project the user asked for is opened or
   created),
   identical to the "In ten lines" head of the shipped skill and pinned equal by
@@ -757,10 +757,53 @@ process heartbeat. Connection settings reuse Settings → Agent.
 
 ### Render
 
-Export is UI-driven through backend commands + the `export:*` event stream
-— there are intentionally no `render_export` / `cancel_render` MCP
-tools. Agents that need a render either ask the user, or read
-`project://compiled` to inspect what the audio export would produce.
+The TypeScript MCP host exposes export jobs alongside the Rust editing tools.
+They use the same renderer pipeline as the app's Export UI, including media
+readiness, Motif capture, effects, audio mixing and final mux. No alternate
+headless renderer is involved. See [export.md](export.md#agent-export-jobs)
+and [ADR 0089](adr/0089-agent-export-jobs-share-the-renderer-pipeline.md).
+
+| Tool | Arguments | Purpose |
+| --- | --- | --- |
+| `get_export_options` | `{}` | Inspect settings, defaults, supported values and root composition output metadata. |
+| `start_export` | `{ output_path, settings?, range?: { startUs, endUs }, allow_experimental_10bit? }` | Start an asynchronous export; return its job ID and resolved settings. |
+| `get_export_status` | `{ job_id }` | Read job state, phase, progress and terminal result. |
+| `cancel_export` | `{ job_id }` | Request cancellation; repeated requests are harmless. |
+
+`settings` is a partial existing `ExportSettings` value, including partial
+nested `audio` settings. It retains camelCase field names; `range` retains
+`startUs`/`endUs`. This is a deliberate exception to ADR 0074's snake_case
+wire policy so the persisted settings object, dialog and agent share one
+schema. Envelope fields such as `output_path` and `job_id` remain snake_case.
+
+`get_export_options` can include `validation_issue` for incompatible saved
+settings, so an agent can inspect and choose valid overrides. An empty
+composition remains inspectable but cannot be exported.
+
+The output path must be absolute, have the appropriate extension and not exist.
+Its parent directory must exist on a filesystem supporting hard links. Final
+agent publication uses an atomic hard link; unsupported filesystems such as
+FAT/exFAT or some network shares fail without a copy fallback. Choose a
+supported local destination (for example, NTFS).
+Omitted settings use the saved project value with default backfills; explicit
+invalid overrides fail. Omitted range exports the entire root composition;
+explicit ranges are half-open timeline microseconds within its duration and snap
+to the composition frame grid. Read the resolved range back from the job.
+Experimental 10-bit delivery requires `allow_experimental_10bit: true`.
+Agent exports open no modal save or encoder-fallback dialogs.
+
+One export may run across all clients and the Export UI. While it is active,
+project mutations and switching are refused, including undo/redo; reads,
+status and cancellation remain available. MCP disconnect does not cancel an
+export. Reconnected clients can poll its ID for the lifetime of the app process.
+App restart does not retain jobs. Export itself creates no timeline undo entry.
+Status results contain `job_id`, `state`, `output_path`, resolved `settings` and
+`range`, with optional `phase`, fractional `progress` (0–1), `duration_us` and
+`error`. Only `state: "completed"` means the file is ready: frame rendering can finish before
+encoding and muxing. Failed/cancelled jobs clean staged files and do not publish
+a completed destination; success publishes without replacing an existing file.
+If native cleanup fails, `phase: "cleanup_failed"` and `error` describe it;
+editing remains paused until cleanup succeeds. Retry cancellation.
 
 ### Prompts (MCP "prompts")
 
