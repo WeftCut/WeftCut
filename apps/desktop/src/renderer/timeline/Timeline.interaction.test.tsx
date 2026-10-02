@@ -109,6 +109,7 @@ const ipcMocks = vi.hoisted(() => ({
   moveLayer: vi.fn().mockResolvedValue(undefined),
   moveLayers: vi.fn().mockResolvedValue(undefined),
   moveLayersToNewTrack: vi.fn().mockResolvedValue("raised-track"),
+  moveTrack: vi.fn().mockResolvedValue(undefined),
   // Answers with one clone per id it was handed, so the pending-ghost swap
   // has a real id per subject.
   pasteLayers: vi.fn((layerIds: string[]) =>
@@ -155,6 +156,7 @@ vi.mock("../ipc", async (importOriginal) => {
     moveLayer: ipcMocks.moveLayer,
     moveLayers: ipcMocks.moveLayers,
     moveLayersToNewTrack: ipcMocks.moveLayersToNewTrack,
+    moveTrack: ipcMocks.moveTrack,
     pasteLayers: ipcMocks.pasteLayers,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
@@ -343,6 +345,7 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.addTrack.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.moveLayersToNewTrack.mockClear();
+    ipcMocks.moveTrack.mockClear();
     ipcMocks.pasteLayers.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
@@ -364,6 +367,60 @@ describe("Timeline seek/selection coupling", () => {
     cleanup();
     setLinkOverride(false);
     vi.useRealTimers();
+  });
+
+  describe("whole-track ordering", () => {
+    const extra = { ...track, id: "extra", role: null, label: "Titles", layers: [layer, linkedLayer] };
+    const lower = { ...track, id: "lower", role: null, label: "Background", layers: [] };
+    function setup() {
+      const view = renderTimeline({ tracks: [track, lower, extra], selectedLayerId: layer.id });
+      const rows = [...view.container.querySelectorAll<HTMLElement>('[data-testid="timeline-track-row"]')];
+      rows.forEach((row, i) => vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+        top: i * 80, bottom: (i + 1) * 80, height: 80, left: 0, right: 1000, width: 1000,
+        x: 0, y: i * 80, toJSON: () => ({}),
+      }));
+      const grip = rows[0]!.querySelector('[data-testid="track-reorder-grip"]')!;
+      return { ...view, rows, grip };
+    }
+    it("moves the whole track across the A/B reference with one command, preserving selection", async () => {
+      const { container, grip } = setup();
+      fireEvent.pointerDown(grip, { button: 0, clientY: 20 });
+      fireEvent.pointerMove(window, { clientY: 239 });
+      expect(container.querySelector('[data-reordering="true"]')?.getAttribute("data-track-id")).toBe("extra");
+      expect(container.querySelector('[data-testid="track-reorder-indicator"]')).not.toBeNull();
+      expect(ipcMocks.moveTrack).not.toHaveBeenCalled();
+      fireEvent.pointerUp(window, { clientY: 239 });
+      await waitFor(() => expect(ipcMocks.moveTrack).toHaveBeenCalledExactlyOnceWith("extra", 0));
+      expect(layerIdsOf(currentSelection())).toContain(layer.id);
+      expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    });
+    it.each(["escape", "pointercancel", "noop", "mode"])("cancels without editing: %s", (reason) => {
+      const { grip } = setup();
+      fireEvent.pointerDown(grip, { button: 0, clientY: 20 });
+      if (reason !== "noop") fireEvent.pointerMove(window, { clientY: 239 });
+      if (reason === "escape") fireEvent.keyDown(window, { key: "Escape" });
+      if (reason === "pointercancel") fireEvent.pointerCancel(window);
+      if (reason === "mode") act(() => useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, display_mode: "AbRoll" } })));
+      fireEvent.pointerUp(window, { clientY: 239 });
+      expect(ipcMocks.moveTrack).not.toHaveBeenCalled();
+    });
+    it("exposes four menu actions only in All Tracks and disables the top boundary", async () => {
+      const { rows, container } = setup();
+      fireEvent.contextMenu(rows[0]!.querySelector('[data-testid="track-header"]')!);
+      expect((await screen.findByRole("menuitem", { name: "Move track up" })).getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move track down" }));
+      await waitFor(() => expect(ipcMocks.moveTrack).toHaveBeenCalledExactlyOnceWith("extra", 1));
+      act(() => useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, display_mode: "AbRoll" } })));
+      expect(container.querySelector('[data-testid="track-reorder-grip"]')).toBeNull();
+      fireEvent.contextMenu(container.querySelector('[data-testid="track-header"]')!);
+      expect(screen.queryByRole("menuitem", { name: "Move track down" })).toBeNull();
+    });
+    it("keeps A/B, locked tracks and tracks with locked clips immovable", () => {
+      const { container } = renderTimeline({ tracks: [track, { ...lower, locked: true }, { ...extra, layers: [{ ...layer, locked: true }] }] });
+      const grips = container.querySelectorAll<HTMLButtonElement>('[data-testid="track-reorder-grip"]');
+      expect(grips).toHaveLength(3);
+      for (const grip of grips) expect(grip.disabled).toBe(true);
+    });
   });
 
   it("clicking the ruler seeks AND keeps the selected clip selected", () => {

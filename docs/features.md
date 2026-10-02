@@ -931,17 +931,30 @@ curated refusals).
 
 ## Track placement
 
-**There is no add, remove or reorder surface for a track**, and that is the whole
-design rather than a gap: the editor places media and tracks appear and disappear
-around it (ADR 0042). A user who goes looking for a "+ Track" button is looking
-for a second mental model — declare a container, then put something in it — that
-placement already decides for them.
+**Tracks are created by placing content.** The top drop strip and Move to a new
+track remain the creation paths (ADR 0042). All Tracks adds whole-track ordering:
+drag a header grip to an insertion line, or use the header menu's up, down, top
+and bottom actions. A/B Roll exposes neither ordering control; its Playhead Panel
+continues to arrange clips. A/B tracks stay as reference rows, while other tracks
+can move above, between and below them. A locked track or one with a locked clip
+cannot move. Audio rows can be arranged without changing mixing.
+
+Dragging highlights the whole row and its clip count, keeps row geometry stable,
+and scrolls vertically at the viewport edges. Escape, pointer cancellation,
+mode/visibility changes and changes to the track-id order cancel the gesture.
+One drop changes real z order in one undo entry, preserving track identity,
+attributes and every clip's timing, including offscreen clips. Newly created
+tracks and menu-moved tracks scroll into view vertically without changing the
+horizontal time window or clip selection. To insert one clip between tracks,
+move it to a new track and reorder that track; there are no extra clip drop
+targets between rows. The header also offers Delete track and clips except on
+A/B tracks, independently of the automatic empty-track cleanup preference.
 
 A **drop strip** sits above the topmost lane: a 12–16 px row that turns a drag
 into a new track at the top of the z-stack. Two of its properties look like
 oversights and are neither. Its space is reserved **permanently**, because a row
 that appeared on drag would reflow the timeline under the pointer mid-gesture. And
-idle it is a **dashed rule** along the bottom of that row, with a plus in the
+idle it is a **dashed rule** along the bottom of that row, with an insertion arrow in the
 header half — a seam, not a lane — lighting up only while a drag is live,
 because anything that looks like an empty lane when nothing is happening
 reads as a lane the editor is supposed to manage. It accepts
@@ -975,13 +988,12 @@ The one thing it does not carry is a time: a raise **may** name where the set
 lands, and the drag does because its ghost showed the editor that landing, while
 the command leaves every clip where it was.
 
-**Cleanup is one sentence: a track disappears when its last layer leaves it.** A
-track that was *born* empty was never emptied, so one an agent creates on purpose
-survives until the agent removes it — and no edit in one part of the timeline can
-make a track vanish in another. A locked track survives regardless: locking is the
-editor pinning a row, and cleanup does not out-rank that. There is no preference
-governing any of this, deliberately — one that turned cleanup off would let tracks
-accumulate with no surface able to remove them.
+**Automatically delete empty tracks**, enabled by default in Settings → Timeline,
+removes an ordinary unlocked track when its last clip leaves. Reserved or locked
+tracks survive. A track that was *born* empty was never emptied, so unrelated edits
+never sweep it away. Turning the preference off preserves emptied tracks; turning
+it on does not sweep existing empty tracks. Explicit deletion remains available
+from the header independently of this setting.
 
 Every track is **named automatically unless the editor names it**: the reserved
 A/B-roll tracks from their role, the rest from a position that renumbers as tracks

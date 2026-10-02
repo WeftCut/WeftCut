@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { tryMutate } from "../errors/tryMutate";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, GripVertical, Lock, LockOpen, Music } from "lucide-react";
 import { deleteTrack, renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
 import { AppInput } from "../components/AppInput";
 import { trackDisplayName } from "../lib/trackName";
@@ -10,6 +10,15 @@ import { useComposition } from "../state/projectStore";
 import { trackHeaderControls } from "./geometry";
 import { beginTrackRename, endRename, useEditingTrackId } from "./renameStore";
 import { TrackContextMenu } from "./TrackContextMenu";
+import type { TrackMove } from "./trackReorder";
+
+export interface TrackOrdering {
+  disabled: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onDragStart: (event: React.PointerEvent) => void;
+  onMove: (move: TrackMove) => Promise<void>;
+}
 
 function FlagButton({ active, activeClass, label, onToggle, children }: {
   active: boolean;
@@ -40,7 +49,8 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// `rename_track`, so one undo can revert a name without touching a control the
 /// editor set (ADR 0042); `onMutated` re-fetches the summary.
 /// pointerdown must not bubble into the timeline root's seek path.
-export function TrackHeader({ compositionId, track, height, isRevealed, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
+export function TrackHeader({ compositionId, track, height, isRevealed, isExpanded, hasKeyframes, onToggleExpand, onMutated, ordering }: {
+  ordering?: TrackOrdering | undefined;
   /// The composition this header's timeline shows, from the Panel that renders
   /// it — a lane's number counts within its own timeline, and two timelines can
   /// stand open at once.
@@ -126,6 +136,16 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isExpand
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
+      {ordering && (
+        <button type="button" data-testid="track-reorder-grip"
+          className="inline-flex h-6 w-3 shrink-0 touch-none items-center justify-center text-muted-foreground/60 hover:text-foreground cursor-grab disabled:cursor-default disabled:opacity-25"
+          disabled={ordering.disabled}
+          aria-label={t("timeline.reorder_track", { name })}
+          title={ordering.disabled ? t(track.role === "a-roll" || track.role === "b-roll" ? "timeline.reorder_track_reserved" : "timeline.reorder_track_locked") : t("timeline.reorder_track", { name })}
+          onPointerDown={(e) => { e.stopPropagation(); ordering.onDragStart(e); }}>
+          <GripVertical size={12} aria-hidden />
+        </button>
+      )}
       <button
         type="button"
         data-testid="kf-lane-twirl"
@@ -194,6 +214,7 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isExpand
       </FlagButton>
       {menu && (
         <TrackContextMenu
+          ordering={ordering}
           x={menu.x}
           y={menu.y}
           canDelete={track.role !== "a-roll" && track.role !== "b-roll"}

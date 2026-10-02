@@ -18,6 +18,10 @@ export interface ReorderDrag {
 }
 
 export interface PointerReorderOptions {
+  enabled?: boolean;
+  /// Consumers with a live list can cancel when its structure changes. Frozen
+  /// lists (Playhead Panel) deliberately omit this while playback advances.
+  cancelKey?: string;
   /// Ids of the reorderable rows, in on-screen order. Read per render, so the
   /// pointerdown always resolves against the list currently displayed.
   rowIds: readonly string[];
@@ -101,6 +105,9 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
   // Grab-point clientY, the onDragFrame baseline. Written at startDrag, read
   // by the per-gesture listeners below.
   const startYRef = useRef(0);
+  useEffect(() => {
+    setDragState(null);
+  }, [opts.enabled, opts.cancelKey]);
 
   useEffect(() => {
     if (!drag) return;
@@ -195,7 +202,7 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
   };
 
   const startDrag = (index: number, e: ReactPointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || opts.enabled === false) return;
     const id = opts.rowIds[index];
     if (id === undefined) return; // stale index from a consumer bug — refuse to arm
     e.preventDefault(); // no text selection or native drag out of the grip

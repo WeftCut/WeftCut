@@ -1595,6 +1595,28 @@ describe('dispatch: caption tracks', () => {
 })
 
 describe('dispatch: delete_track + move_track', () => {
+  it('renderer whole-track reorder preserves content, links and flags with one undo/redo', () => {
+    const { actor, aRoll } = fresh()
+    const id = (actor.dispatch('add_track', { label: 'Overlays' }) as { ok: true; value: string }).value
+    const add = (track: string, start: number) => (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: start, t_end_us: start + 1_000_000 }) as { ok: true; value: string }).value
+    const first = add(id, 0)
+    add(id, 10_000_000) // offscreen content travels too
+    const sibling = add(aRoll, 0)
+    actor.dispatch('links_create', { layers: [first, sibling] })
+    actor.command('update_track_flags', { trackId: id, patch: { enabled: false } })
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    expect(actor.command('move_track', { trackId: id, newPosition: 0 }).ok).toBe(true)
+    const after = actor.snapshot()
+    expect(root(after).tracks[0]).toEqual(root(before).tracks.at(-1))
+    expect(root(after).links).toEqual(root(before).links)
+    expect(root(after).duration_us).toBe(root(before).duration_us)
+    expect(actor.historyStatus().len).toBe(len + 1)
+    expect(actor.command('project_undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(before)
+    expect(actor.command('project_redo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(after)
+  })
   it('deletes a populated linked track in one renderer command and one undo entry', () => {
     const { actor, aRoll } = fresh()
     const t = (actor.dispatch('add_track', { label: 'Titles' }) as { ok: true; value: string }).value

@@ -234,8 +234,9 @@ headings); item, element, object
 **Track**:
 The kind-agnostic container a layer sits in — the data object (`Project.tracks`,
 ordered bottom-of-z-stack first). Not something the user provisions: tracks
-appear and disappear around where media is placed (ADR 0042), so there is no
-add, remove or reorder surface for one.
+appear and disappear around where media is placed (ADR 0042). All Tracks also
+lets the user reorder a whole track from its header; A/B Roll keeps ordering
+clip-centered. The header can delete tracks other than A roll and B roll.
 _Avoid_: channel, layer container, timeline row (that is the lane)
 
 **Lane**:

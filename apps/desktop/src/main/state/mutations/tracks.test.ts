@@ -66,6 +66,28 @@ describe('applyDeleteTrack', () => {
 })
 
 describe('applyMoveTrack', () => {
+  it('rejects locked tracks and locked members without changing order', () => {
+    const { p, gen } = base()
+    const id = applyAddTrack(p, gen, 'locked')
+    applyAddLayer(p, gen, id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
+    const track = root(p).tracks.at(-1)!
+    track.locked = true
+    let before = structuredClone(p)
+    expectCmd(() => applyMoveTrack(p, id, 0), 'TrackLocked')
+    expect(p).toEqual(before)
+    track.locked = false
+    track.layers[0].locked = true
+    before = structuredClone(p)
+    expectCmd(() => applyMoveTrack(p, id, 0), 'InvalidArgument')
+    expect(p).toEqual(before)
+  })
+  it.each([-1, 0.5, NaN, Infinity])('rejects invalid position %s', (position) => {
+    const { p, gen } = base()
+    const id = applyAddTrack(p, gen, 'extra')
+    const before = structuredClone(p)
+    expectCmd(() => applyMoveTrack(p, id, position), 'TrackPositionOutOfRange')
+    expect(p).toEqual(before)
+  })
   it('reorders a track to a new position', () => {
     const { p, gen } = base(); const t = applyAddTrack(p, gen, 'extra') // appended at idx 2
     applyMoveTrack(p, t, 0)

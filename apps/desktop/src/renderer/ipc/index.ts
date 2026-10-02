@@ -1222,6 +1222,11 @@ export async function deleteTrack(trackId: string): Promise<void> {
   return invoke<void>("delete_track", { trackId, force: true });
 }
 
+/** Move the entire track; one command, one history entry. */
+export async function moveTrack(trackId: string, newPosition: number): Promise<void> {
+  return invoke<void>("move_track", { trackId, newPosition });
+}
+
 /// Drop a point marker at `tUs` (frame-snapped actor-side); returns the new
 /// marker id. RECORDED. The label is deliberately empty — a human marker stays
 /// unnamed until renamed, so the ruler tooltip falls back to the translated

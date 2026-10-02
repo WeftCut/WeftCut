@@ -33,10 +33,13 @@ export function applyRenameTrack(p: Project, id: Uuid, label: string | null): vo
  *  TrackPositionOutOfRange → remove+reinsert. The cur===new no-op (skip commit)
  *  is handled by the actor. */
 export function applyMoveTrack(p: Project, id: Uuid, newPosition: number): void {
-  const { comp: c, trackIndex: cur } = requireTrack(p, id)
+  const { comp: c, track, trackIndex: cur } = requireTrack(p, id)
   // `splice` counts a negative index from the end, which would place the
   // track and report success; the range is 0..len-1 and nothing else.
-  if (newPosition < 0 || newPosition >= c.tracks.length) throw new CommandFailure({ error: 'TrackPositionOutOfRange', position: newPosition, len: c.tracks.length })
+  if (!Number.isInteger(newPosition) || newPosition < 0 || newPosition >= c.tracks.length) throw new CommandFailure({ error: 'TrackPositionOutOfRange', position: newPosition, len: c.tracks.length })
+  if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: id })
+  const locked = track.layers.find((layer) => layer.locked)
+  if (locked) throw new CommandFailure({ error: 'InvalidArgument', field: 'track', detail: `layer ${locked.id} is locked` })
   const [t] = c.tracks.splice(cur, 1)
   c.tracks.splice(newPosition, 0, t)
 }

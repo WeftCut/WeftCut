@@ -99,6 +99,9 @@ import { TimelineFixedRow } from "./TimelineFixedRow";
 import { TimelinePlayhead } from "./TimelinePlayhead";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
+import { useTrackReorder } from "./hooks/useTrackReorder";
+import { canReorderTrack } from "./trackReorder";
+import { trackDisplayName } from "../lib/trackName";
 import { TrackLane } from "./TrackLane";
 import type { MediaDragPayload, MediaDropPlan } from "./mediaDrag";
 import {
@@ -286,6 +289,7 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
+  const { t } = useTranslation();
   // Right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
   // `cut` is non-null when the click landed within the tolerance band of a
@@ -852,6 +856,14 @@ export function Timeline({
   // one (see `useLayerDrag`'s `dropStripEl`).
   const dropStripElRef = useRef<HTMLDivElement | null>(null);
 
+  const trackReorder = useTrackReorder({
+    tracks: visibleSnapTracks,
+    enabled: displayMode === "AllTracks" && visible,
+    viewportRef: rootRef,
+    revealedTrackId,
+    onMutated,
+  });
+
   const { heightDrag, beginHeightDrag } = useHeightDrag({
     trackHeightsRef,
     setTrackHeights,
@@ -881,8 +893,9 @@ export function Timeline({
   const revealSpawnedTrack = useCallback(
     (trackId: string) => {
       if (displayMode !== "AllTracks") setSpawnRevealTrackId(trackId);
+      else trackReorder.reveal(trackId);
     },
-    [displayMode],
+    [displayMode, trackReorder.reveal],
   );
 
   // The gesture itself lives in `layerDragStore`, not here: one `useState` on
@@ -1787,7 +1800,7 @@ export function Timeline({
               pendingPlacements={pendingPlacements} pendingLayerById={pendingLayerById} onMediaDrop={onMediaDrop} />
           </TimelineFixedRow>
           <div ref={rootRef} data-testid="timeline-track-viewport"
-            className={`scrollbar-hidden relative isolate min-h-0 overflow-auto ${isLayerDragging ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
+            className={`scrollbar-hidden relative isolate min-h-0 overflow-auto ${isLayerDragging || trackReorder.drag ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
             style={armedRegion !== null ? { cursor: "not-allowed" } : undefined}
             // Capture phase, because the clip blocks stop every press they take: the
             // one press that must NOT spend the arm is a press on the armed clip, and
@@ -1809,24 +1822,47 @@ export function Timeline({
                 }
             }
           >
-            <div className="relative flex min-h-full flex-col" style={{ width: HEADER_COL_PX + widthPx }}>
+            <div ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: HEADER_COL_PX + widthPx }}>
               <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
               {/* Reserve the first lane's upward link badge inside the viewport. */}
               {firstTrackHasLinkBadge && <div className="h-3 shrink-0" />}
               {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
               is the top (see `docs/data-model.md`). `visualOrderedTracks`
-              reverses that, so the tail of the array is the TOP row here — it
-              splits role-stamped lanes from role-less ones, it does NOT bucket
-              by kind. The role-less section is the one at the top, which is
-              where the strip above spawns into.
+              reverses that exactly, including ordinary tracks reordered between
+              or below the A/B references. There is no role or kind bucketing.
             */}
-              {orderedTracks.map(({ track }) => (
-                <div key={track.id} className="grid" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
+              {orderedTracks.map(({ track }, index) => (
+                <div key={track.id} data-testid="timeline-track-row" data-track-id={track.id}
+                  data-reordering={trackReorder.drag?.id === track.id || undefined}
+                  ref={(el) => trackReorder.setRow(track.id, index, el)}
+                  className="relative grid shrink-0" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
+                  {trackReorder.drag?.id === track.id && (
+                    <div className="pointer-events-none absolute inset-0 z-20 border border-primary bg-primary/10">
+                      <span className="sticky left-1 rounded bg-primary px-2 text-[10px] text-primary-foreground" role="status">
+                        {t("timeline.track_move_dragging", { name: trackDisplayName(track, tracks, t), count: track.layers.length })}
+                      </span>
+                    </div>
+                  )}
+                  {(trackReorder.indicatorGap === index || (index === orderedTracks.length - 1 && trackReorder.indicatorGap === orderedTracks.length)) && (
+                    <div data-testid="track-reorder-indicator"
+                      className={`pointer-events-none absolute inset-x-0 z-30 border-t-2 border-primary ${trackReorder.indicatorGap === index ? "top-0" : "bottom-0"}`}>
+                      <span className="sticky left-1 rounded bg-primary px-2 text-[10px] text-primary-foreground">
+                        {t(trackReorder.indicatorGap === index ? "timeline.track_move_above" : "timeline.track_move_below", { name: trackDisplayName(track, tracks, t) })}
+                      </span>
+                    </div>
+                  )}
                   <div className="sticky left-0 z-10 border-r border-border bg-card">
                     <TrackHeader compositionId={compositionId} track={track}
+                      ordering={displayMode === "AllTracks" ? {
+                        disabled: !canReorderTrack(track),
+                        canMoveUp: index > 0,
+                        canMoveDown: index < orderedTracks.length - 1,
+                        onDragStart: (e) => { if (canReorderTrack(track)) trackReorder.startDrag(index, e); },
+                        onMove: (move) => trackReorder.move(track.id, move),
+                      } : undefined}
                       height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
-                      isRevealed={track.id === (revealedTrackId ?? null)}
+                      isRevealed={displayMode === "AbRoll" && track.id === (revealedTrackId ?? null)}
                       isExpanded={expandedTracks.has(track.id)}
                       hasKeyframes={trackKeyframeProperties(track).length > 0}
                       onToggleExpand={() => toggleExpanded(track.id)} onMutated={onMutated} />
@@ -1864,7 +1900,7 @@ export function Timeline({
                     onCommitLabel={onCommitLabel}
                     onCommitGroupLabel={onCommitGroupLabel}
                     onMediaDrop={onMediaDrop}
-                    isRevealed={track.id === (revealedTrackId ?? null)}
+                    isRevealed={displayMode === "AbRoll" && track.id === (revealedTrackId ?? null)}
                     isResizing={heightDrag?.trackId === track.id}
                     onHeightDragStart={beginHeightDrag(track.id)}
                     fpsNum={fpsNum}

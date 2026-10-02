@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { contextMenuFinalFocus, MenuItem, MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
+import type { TrackOrdering } from "./TrackHeader";
 
 /// Right-click menu on a lane header. Its own component rather than an arm of
 /// `LayerContextMenu` because the object being acted on is the TRACK, and its
@@ -17,7 +18,9 @@ export function TrackContextMenu({
   onRename,
   canDelete,
   onDelete,
+  ordering,
 }: {
+  ordering?: TrackOrdering | undefined;
   x: number;
   y: number;
   onClose: () => void;
@@ -53,6 +56,17 @@ export function TrackContextMenu({
               label={t("timeline.rename", { defaultValue: "Rename" })}
               onSelect={onRename}
             />
+            {ordering && (
+              <>
+                <MenuSeparator />
+                {(["up", "down", "top", "bottom"] as const).map((move) => (
+                  <MenuItem key={move}
+                    label={t(`timeline.track_move_${move}`)}
+                    disabled={ordering.disabled || (move === "up" || move === "top" ? !ordering.canMoveUp : !ordering.canMoveDown)}
+                    onSelect={() => { onClose(); return ordering.onMove(move); }} />
+                ))}
+              </>
+            )}
             {canDelete && (
               <>
                 <MenuSeparator />

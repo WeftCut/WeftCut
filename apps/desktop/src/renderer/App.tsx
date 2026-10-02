@@ -110,7 +110,6 @@ import { buildAppCommands } from "./commands/appCommands";
 import { splitAtPlayhead } from "./commands/splitAtPlayhead";
 import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
-  displayMode,
   markersVisible,
   setAppSettings,
   toggleDisplayMode,
@@ -1050,12 +1049,13 @@ export function App({ onCloseProject }: AppProps) {
   // just raised — routed through the existing inline reveal rather than a second
   // visibility rule. `revealTrack(id, null)` disturbs no selection, and naming a
   // lane the summary has not delivered yet simply matches nothing until it does.
+  // All Tracks consumes the same id to scroll the new row vertically into view.
   const handleMoveToNewTrack = useCallback(async () => {
     const layerIds = [...layerIdsOf(currentSelection())];
     if (layerIds.length === 0) return;
     try {
       const trackId = await moveLayersToNewTrack(layerIds);
-      if (displayMode() !== "AllTracks") revealTrack(trackId, null);
+      revealTrack(trackId, null);
     } catch (err) {
       logMutationFailure(err, "move_layers_to_new_track");
     }

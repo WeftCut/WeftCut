@@ -1238,7 +1238,7 @@ the UI uses the same actor via backend commands.
 | `remove_media(id, force?)` | rejects with `MediaInUse { referenced_by }` if any layer references it unless `force=true` |
 | `add_track(label?, composition_id?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track; lands in the named composition, the root by default |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
-| `move_track(id, new_position)` | |
+| `move_track(id, new_position)` | Whole-track reorder within its composition, 0 = bottom of z stack. Integer position in `[0, track_count)`. Rejects locked tracks and tracks containing locked clips. Preserves track identity, attributes, clip timing, links and transitions; one undo entry, no-op records nothing. Renderer All Tracks offers drag and menu ordering with A/B as immovable references; MCP retains its explicit track addressing. |
 | `rename_track(id, label?)` | **recorded** (undoable); any track, reserved ones included. A blank or absent `label` stores `None`, which restores the derived name |
 | `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these. `muted`/`solo` round-trip but no longer gate audio (mixing is per-role) |
 | `set_role_gain(role, gain_db)` | **recorded** (undoable); sets a mixing role's bus gain, folded into that role's layers at mix time |

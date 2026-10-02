@@ -103,8 +103,16 @@ export function useFollowPlayhead(opts: {
     // cursor on a wheel tick, the playhead on a key press) — including the
     // deliberate decision NOT to chase an off-screen playhead; widening it to
     // the width would re-anchor on every panel resize.
+    // Project edits rebuild the AnchorFrame object even when its clock is
+    // unchanged. Re-subscribing in that case immediately applies the parked
+    // playhead and steals the user's horizontal window during track edits.
+    // Subscribe to the clock's values, not the summary's object identity.
     return subscribeLocalPlayhead(compositionId, anchorFrame, apply);
-  }, [anchorFrame, apply, compositionId, enabled, measured]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    anchorFrame?.offsetUs, anchorFrame?.windowStartUs, anchorFrame?.windowEndUs,
+    anchorFrame?.fpsNum, anchorFrame?.fpsDen, apply, compositionId, enabled, measured,
+  ]);
 
   const setScrubbing = useCallback((active: boolean) => {
     scrubbingRef.current = active;

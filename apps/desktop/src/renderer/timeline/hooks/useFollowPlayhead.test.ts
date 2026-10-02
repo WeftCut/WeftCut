@@ -146,4 +146,29 @@ describe("useFollowPlayhead", () => {
     act(() => setPlayheadTimeUs(50_000_000));
     expect(rootRef.el.scrollLeft).toBe(0);
   });
+
+  it("preserves manual scrolling when a track edit refreshes an unchanged clock, and still follows playback", () => {
+    const rootRef = root();
+    const { rerender } = renderHook(
+      ({ anchorFrame }) => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW, anchorFrame }),
+      { initialProps: { anchorFrame: ROOT_FRAME } },
+    );
+    rootRef.el.scrollLeft = 2000;
+    setTimelineScrollLeftPx(null, 2000);
+    rerender({ anchorFrame: { ...ROOT_FRAME } });
+    expect(rootRef.el.scrollLeft).toBe(2000);
+    act(() => setPlayheadTimeUs(40_000_000));
+    expect(rootRef.el.scrollLeft).toBe(3920);
+  });
+
+  it("reprojects when the composition's actual clock changes", () => {
+    const rootRef = root();
+    const { rerender } = renderHook(
+      ({ anchorFrame }) => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW, anchorFrame }),
+      { initialProps: { anchorFrame: ROOT_FRAME } },
+    );
+    act(() => setPlayheadTimeUs(5_000_000));
+    rerender({ anchorFrame: { ...ROOT_FRAME, offsetUs: -20_000_000 } });
+    expect(rootRef.el.scrollLeft).toBe(2420);
+  });
 });

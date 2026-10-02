@@ -16,7 +16,7 @@ import { root } from './fixtures/project'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 63 in-scope renderer channels', () => {
+  it('contains exactly the in-scope renderer channels', () => {
     const expected = [
       'correct_caption_text', 'set_correction_script', 'apply_transcripts',
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
@@ -30,7 +30,7 @@ describe('PRODUCTION_OPS', () => {
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       // Groups (ADR 0052): pre-compose / ungroup / rename, and the orphan delete.
       'compositions_delete',
-      'delete_layers', 'delete_track',
+      'delete_layers', 'delete_track', 'move_track',
       // The selection's delete that also closes the span it vacated (ADR 0062).
       'ripple_delete_layers',
       // A selected gap closing: the same sweep with nothing deleted (ADR 0069).

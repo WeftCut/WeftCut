@@ -40,6 +40,34 @@ An audit of what a user actually cannot do found the gap somewhere else. Track
 
 ## Decision
 
+### Amendment: whole-track ordering in All Tracks (2026-10-02)
+
+All Tracks exposes a grip on each track header and four menu actions: move up,
+down, to top and to bottom. Dragging inserts the whole track between existing
+rows, including above, between and below A/B. A roll and B roll are reference
+rows, not movable sources. Locked tracks and tracks containing a locked clip
+cannot be moved. Audio tracks can be arranged too; order does not change mixing.
+
+The operation is the existing `move_track`, now also wired as a renderer
+command. Track identity, name, flags, view height, every clip's timing and
+content, links and transitions survive; there is one history entry. The actor
+rejects a locked track or locked member before changing anything. The drag
+highlights the entire row, including expanded keyframe lanes, identifies its
+clip count, and draws a destination line without reflow. Edge scrolling runs
+while the pointer rests at the viewport edge. Escape, pointer cancellation,
+leaving All Tracks, hiding the timeline or a changed row-id list cancels it.
+
+These ordering controls are absent in A/B Roll; the existing Playhead Panel
+continues to restack clips. Both views show the same persisted z order.
+
+Creation still happens through placement at the top strip or Move to a new
+track. To place a single clip between tracks, move it to a new track, then
+reorder that track. No clip drop targets are added between existing lanes and
+no empty-track creation step is required. All Tracks reveals the created row
+vertically, preserving the horizontal time window and selection. Menu sorting
+also reveals the moved row. This supersedes the original no-reorder surface
+and repeated-raise-only statements below.
+
 ### Amendment: explicit deletion and clearer drop affordance (2026-10-02)
 
 User feedback revises the original restriction on human track removal: the
