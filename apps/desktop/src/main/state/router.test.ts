@@ -27,7 +27,7 @@ const ALL_CHANNELS: readonly string[] = [
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   'restyle_captions', 'add_motif',
   // router special-cases (summary / history read / settings / persistence seam / agent-session)
-  'project_summary', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
+  'project_summary', 'project_history_view', 'get_project_settings', 'project_open_state', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
   // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',

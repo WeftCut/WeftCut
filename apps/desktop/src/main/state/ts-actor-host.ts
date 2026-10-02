@@ -526,6 +526,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.historyView(actor.historyCapacity())
       case 'projectSettings':
         return actor.snapshot().settings
+      case 'projectOpenState': return opened
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)

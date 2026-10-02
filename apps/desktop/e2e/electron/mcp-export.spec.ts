@@ -4,7 +4,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { launchApp, newProject, tmpDir, importAndPlaceMedia, invokeCmd } from './helpers/driver'
+import { launchApp, tmpDir, importAndPlaceMedia, invokeCmd } from './helpers/driver'
 
 async function connect(page: import('@playwright/test').Page) {
   const info = await page.evaluate(() => (window as any).api.mcp.getInfo())
@@ -46,7 +46,8 @@ test('MCP exports AV, video-only and audio-only ranges, preserves status after r
     for (const name of ['get_export_options', 'start_export', 'get_export_status', 'cancel_export']) expect(names).toContain(name)
     const refused = await client.callTool({ name: 'start_export', arguments: { output_path: path.join(dir, 'closed.mp4') } })
     expect(refused.isError).toBe(true)
-    await newProject(page, { parentFolder: dir, name: 'Synthetic export', canvas: { width: 320, height: 180, fpsNum: 30, fpsDen: 1 } })
+    await call(client, 'create_project', { parent_folder: dir, name: 'Synthetic export', width: 320, height: 180, fps: {num:30,den:1} })
+    await page.locator('.weft-dock-panel').first().waitFor({state:'visible'})
     await importAndPlaceMedia(page, { mediaAbsPath: source })
     const track = await call(client, 'add_track')
     const text = await call(client, 'add_text_layer', { track_id: track.track_id, content: 'SYNTHETIC', t_start_us: 0, t_end_us: 2_000_000 })

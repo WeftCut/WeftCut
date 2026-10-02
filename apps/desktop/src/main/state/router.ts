@@ -12,6 +12,7 @@ export type Route =
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
   | { kind: 'projectSettings' } // actor.snapshot().settings
+  | { kind: 'projectOpenState' } // authoritative renderer routing hydration
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
@@ -171,6 +172,7 @@ export function routeChannel(channel: string): Route {
     // every edit whether the panel is open or not (spec decision 5).
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
+    case 'project_open_state': return { kind: 'projectOpenState' }
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }
