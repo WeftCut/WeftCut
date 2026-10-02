@@ -19,6 +19,40 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('bounds allocation waits while retired imports remain held, then recovers on release', async () => {
+    vi.useFakeTimers()
+    const released: (() => void)[] = []
+    for (let i = 0; i < 8; i++) {
+      vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(options => {
+        released.push(options.allReferencesReleased!)
+        return { release: vi.fn() } as unknown as ReturnType<typeof sharedTexture.importSharedTexture>
+      })
+    }
+    const { owner, pools, transport } = fixture()
+    try {
+      for (let i = 0; i < 8; i++) {
+        const frame = await transport.read(owner, 'frame', 128 + i, 128)
+        transport.release(owner, frame.token)
+      }
+      const settled = vi.fn()
+      void transport.read(owner, 'blocked', 256, 128).then(settled, error => settled(error.message))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(settled).toHaveBeenCalledWith(expect.stringContaining('budget'))
+      // Later frames must take the caller's CPU fallback immediately, rather
+      // than each waiting through the same unavailable allocation.
+      await expect(transport.read(owner, 'next', 256, 128)).rejects.toThrow('budget')
+      expect(pools).toHaveLength(8)
+      for (const pool of pools) expect(pool.close).not.toHaveBeenCalled()
+      released.shift()!()
+      const recovered = await transport.read(owner, 'recovered', 256, 128)
+      expect(pools).toHaveLength(9)
+      transport.release(owner, recovered.token)
+    } finally {
+      transport.close(owner)
+      released.forEach(release => release())
+    }
+  })
+
   it('keeps retired allocations in the budget until Electron releases all references', async () => {
     let releaseReferences!: () => void
     vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce((options) => {

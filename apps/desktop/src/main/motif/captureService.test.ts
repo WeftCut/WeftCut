@@ -22,6 +22,24 @@ function fixture(enabled = true) {
 }
 
 describe('Motif capture and persistence', () => {
+  it('does not deliver an old document capture to its replacement or disable GPU capture', async () => {
+    const h = fixture(); const { bake: _bake, ...preview } = args;
+    let current = true;
+    let finish!: () => void;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    const result = h.service.capture(owner, preview, () => current);
+    current = false;
+    finish();
+    await expect(result).rejects.toThrow('superseded');
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.deps.png).not.toHaveBeenCalled();
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(await h.service.capture(owner, preview)).toMatchObject({ kind: 'texture' });
+  });
+
   it('a baker joining while preview renders persists the same texture in its bound workspace', async () => {
     const h = fixture(); const { bake, ...preview } = args;
     let finish!: () => void;

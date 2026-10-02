@@ -28,6 +28,18 @@ single-request limit. The 128 MiB/eight-pool allocation limit includes imports
 in progress and retired textures until Electron releases their references.
 Failed leases retire only their own lane; renderer close cancels queued work.
 
+The consumer lifetime is a **document**, not its longer-lived WebContents.
+Navigation retires the old transport generation, and preload releases all of
+its imports on `pagehide`, including late arrivals. Disk reads and captures
+bind that document at IPC admission, so work finishing after navigation cannot
+lease slots to the replacement preload. Reloading with cached bitmaps and
+in-flight reads is covered by the real-GPU transport regression.
+
+Allocation waits for outstanding references are capped at 250 ms. Exhaustion
+uses the existing CPU/PNG path; subsequent allocations fail promptly until a
+reference release frees budget. The native pools stay alive until Electron's
+release callback, so recovery never recycles a texture still being read.
+
 The Motif read-completion barrier transfers the ImageBitmap to a dedicated
 worker, completes the read there, and returns ownership before acknowledging
 the source slot. This keeps synchronous GPU readback off the UI thread without

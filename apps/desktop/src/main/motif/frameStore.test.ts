@@ -19,6 +19,17 @@ async function fixture() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 
 describe('MotifFrameStore', () => {
+  it('reads the same cached pixels on CPU when GPU allocation is unavailable', async () => {
+    const { store, rgba } = await fixture()
+    const header = Buffer.alloc(16)
+    header.write('WCMFRM01')
+    header.writeUInt32LE(1, 8); header.writeUInt32LE(1, 12)
+    await (await store.prepareWrite(hash, 0))!.encoded(header)
+    const gpu = vi.fn(async () => { throw new Error('Motif GPU budget exhausted') })
+    expect(await store.read(hash, 0, gpu)).toEqual({ kind: 'rgba', width: 1, height: 1, rgba })
+    expect(gpu).toHaveBeenCalledOnce()
+  })
+
   it('binds a native write to the workspace at admission and uses the same reader', async () => {
     const { root, codec } = await fixture()
     let workspace: string | null = root

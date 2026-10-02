@@ -321,6 +321,18 @@ const api: WeftcutApi = {
 // Populated once per slot at open by pairing the receiver callbacks (which carry
 // no slot id) to `previewGpu:slot` announces in FIFO order.
 const importedByKey = new Map<string, SharedTextureImported>()
+let importsClosed = false
+// A document reload destroys this preload without closing its WebContents.
+// Electron's imported textures need an explicit release before that context
+// disappears; otherwise retired Motif pools keep consuming main's budget.
+window.addEventListener('pagehide', () => {
+  importsClosed = true
+  for (const imported of importedByKey.values()) {
+    try { imported.release() } catch { /* GPU process already gone */ }
+  }
+  importedByKey.clear()
+  announceQueue.length = 0
+})
 ipcRenderer.on('evt:motifGpu:close', (_e, { key }: { key: string }) => {
   importedByKey.get(`${key}:0`)?.release()
   importedByKey.delete(`${key}:0`)
@@ -448,7 +460,7 @@ ipcRenderer.on('evt:previewGpu:barrier', (_e, { streamId, mode }: { streamId: st
 // per dispose-races-open occurrence, for the process lifetime.
 sharedTexture.setSharedTextureReceiver(async (data) => {
   const a = announceQueue.shift()
-  if (a) {
+  if (a && !importsClosed) {
     importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
   } else {
     try { data.importedSharedTexture.release() } catch { /* already torn down */ }

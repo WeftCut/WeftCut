@@ -32,7 +32,8 @@ export class MotifCaptureService {
     deps.setTextureEnabled(this.useTexture)
   }
 
-  async capture(owner: WebContents, request: CaptureRequest): Promise<StoredMotifFrame> {
+  async capture(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean = () => true): Promise<StoredMotifFrame> {
+    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     const { coalesceKey, high, bake, ...args } = request
     const key = coalesceKey === undefined ? undefined : `${owner.id}:${coalesceKey}`
     // Begin resolving the workspace now, without postponing capture admission:
@@ -79,6 +80,9 @@ export class MotifCaptureService {
               }
               if (bytes) persisted = await write(writer, bytes, false)
             }
+            // Capture/encoding can finish after a document reload. Such work
+            // cannot lease a texture to the new preload on the same WebContents.
+            if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
             return { ...await this.deps.copy!(owner, texture), persisted }
           }, key, high)
         } catch (error) {

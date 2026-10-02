@@ -1095,19 +1095,40 @@ app.whenReady().then(async () => {
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'png')
   app.once('before-quit', () => motifCapture.dispose())
-  const motifConsumers = new Set<number>()
-  const trackMotifConsumer = (owner: Electron.WebContents): void => {
-    if (!motifConsumers.has(owner.id)) {
-      motifConsumers.add(owner.id)
-      owner.on('render-process-gone', () => motifGpu?.close(owner))
-      owner.once('destroyed', () => { motifConsumers.delete(owner.id); motifGpu?.close(owner) })
+  const motifConsumers = new WeakMap<Electron.WebContents, { document: object | null }>()
+  const trackMotifConsumer = (owner: Electron.WebContents, frame: Electron.WebFrameMain | null): (() => boolean) => {
+    let consumer = motifConsumers.get(owner)
+    if (!consumer) {
+      consumer = { document: {} }
+      motifConsumers.set(owner, consumer)
+      const state = consumer
+      // Imports belong to a document, not its long-lived WebContents. A reload
+      // must cancel old work and re-import pools for the replacement preload.
+      owner.on('did-start-navigation', details => {
+        if (details.isMainFrame && !details.isSameDocument) {
+          state.document = null
+          motifGpu?.close(owner)
+        }
+      })
+      owner.on('dom-ready', () => { state.document = {} })
+      // A cancelled/failed navigation can leave the original document usable.
+      owner.on('did-stop-loading', () => { state.document ??= {} })
+      owner.on('render-process-gone', () => { state.document = null; motifGpu?.close(owner) })
+      owner.once('destroyed', () => { state.document = null; motifGpu?.close(owner) })
     }
+    const document = consumer.document
+    // Bind at IPC admission, BEFORE async disk reads/capture. Work from the
+    // outgoing document must not acquire leases in the replacement document.
+    return () => document !== null && consumer.document === document && !owner.isDestroyed() && frame !== null && !frame.detached
   }
   ipcMain.handle('motif:read', (event, args: { hash: string; frame: number }) => {
     const owner = event.sender
-    trackMotifConsumer(owner)
+    const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     return motifFrames.read(args.hash, args.frame,
-      motifGpu ? (file, w, h) => motifGpu.read(owner, file, w, h) : undefined)
+      motifGpu ? (file, w, h) => {
+        if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
+        return motifGpu.read(owner, file, w, h)
+      } : undefined)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
   ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
@@ -1117,8 +1138,8 @@ app.whenReady().then(async () => {
     else if (action === 'promote' || action === 'cancel') controlMotifCapture(`${event.sender.id}:${key}`, action)
   })
   ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
-    trackMotifConsumer(event.sender)
-    return motifCapture.capture(event.sender, args)
+    const isCurrent = trackMotifConsumer(event.sender, event.senderFrame)
+    return motifCapture.capture(event.sender, args, isCurrent)
   })
 
   let coverRuntimeVersion = ''
