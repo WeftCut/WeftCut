@@ -56,11 +56,20 @@ interface Wire {
 const wire = (page: Page) => invokeCmd<Wire>(page, "project_summary", {});
 
 /// One pixel of the LIVE composite, in composition pixels.
-const sample = (page: Page, x: number, y: number): Promise<Sample> =>
-  page.evaluate(
+const sample = async (page: Page, x: number, y: number): Promise<Sample> => {
+  // The session transport can seek before Pixi finishes initializing (ADR
+  // 0087). Hook existence and a settled playhead do not imply a live canvas.
+  // Check presentation readiness on every read, including composition switches.
+  await page.waitForFunction(
+    () => (window as any).__weftcutTest?.previewResourceProbe?.() != null,
+    undefined,
+    { timeout: 20_000 },
+  );
+  return page.evaluate(
     (p) => (window as any).__weftcutTest.weftcutSampleComposite(p.x, p.y),
     { x, y },
   );
+};
 
 /// The global transport, which is what the UI's own seeks go through
 /// (`state/playbackStore.ts`) — and it emits the time, so the playhead store
@@ -83,11 +92,10 @@ const openComposition = (page: Page): Promise<{ id: string } | null> =>
 /// Group.
 ///
 /// The seek is re-issued every round rather than sent once and waited on. The
-/// hook exists from bootstrap, but it routes through the playback store's
-/// transport, which `PixiPreview` registers only after its async Application
-/// init — and unlike `weftcutSeekUs`, which throws until its bridge is up,
-/// `transportSeek` on a null transport is a SILENT no-op. Retrying is therefore
-/// the readiness wait, and it also covers the gap around a re-registration.
+/// hook exists from bootstrap, but `transportSeek` on a null session transport
+/// is a silent no-op. Retrying covers session registration; it does not wait
+/// for the independently initialized Pixi presentation. `sample` waits for
+/// that bridge before reading pixels.
 async function seekAndSettle(
   page: Page,
   us: number,
