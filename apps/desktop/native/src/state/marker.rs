@@ -27,6 +27,8 @@ use super::time::TimeUs;
 pub struct MarkerAnchor {
     pub layer: LayerId,
     pub src_us: TimeUs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_fraction: Option<super::timing::Fraction>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

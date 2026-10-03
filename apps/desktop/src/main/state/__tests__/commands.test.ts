@@ -18,6 +18,7 @@ import { root } from './fixtures/project'
 describe('PRODUCTION_OPS', () => {
   it('contains exactly the in-scope renderer channels', () => {
     const expected = [
+      'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
       'correct_caption_text', 'set_correction_script', 'apply_transcripts',
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // The media pool's Group drop: an existing composition placed as one layer.

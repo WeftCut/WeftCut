@@ -1,3 +1,4 @@
+import { layerRate, sourceIn } from '../layerTiming';
 // Whether the selection is a clip with analyzable audio, and why not when it is
 // not — plus transcription's own verdict over the WHOLE selection on top of it.
 //
@@ -57,8 +58,7 @@ const NO_TRACKS: readonly TrackSummary[] = [];
 export type AudioClipState =
   | "ok"
   | "needs_selection"
-  | "needs_audio_kind"
-  | "speed_not_one";
+  | "needs_audio_kind";
 
 /// `auto_caption` is the live direction; the rest are the disabled reasons, one
 /// per tooltip string. The middle three are `AudioClipState`'s, carried through
@@ -101,16 +101,7 @@ export function audioClipState(
   const params = layer.params;
   if (params.kind !== "VideoClip" && params.kind !== "Audio")
     return "needs_audio_kind";
-  // The gesture-side half of the tool's own refusal
-  // (`resolve_clip_audio_source`): a re-timed clip's audio does not line up
-  // with the timeline its result lands on. `speed` is on the wire for VideoClip
-  // and an Audio layer has no speed field at all, so this is the whole check
-  // rather than a partial one that leaves Rust to catch the rest.
-  //
-  // It is the SAME wall for pauses: `detect_pauses` maps source time onto the
-  // timeline by one addition, with no speed factor, so a re-timed clip's pauses
-  // would be marked at times its audio never reaches.
-  if (params.kind === "VideoClip" && params.speed !== 1) return "speed_not_one";
+  // Source intervals are projected through the clip time map by native analysis.
   return "ok";
 }
 
@@ -216,7 +207,7 @@ export function transcribeSubjects(
   // (and the gate then refuses it by name rather than quietly reading its twin).
   const bySpan = new Map<string, AudioBearingLayer>();
   for (const layer of spoken) {
-    const speed = layer.params.kind === "VideoClip" ? layer.params.speed : 1;
+    const speed = JSON.stringify([layerRate(layer.params), sourceIn(layer.params)]);
     const key = `${layer.params.media_id} ${layer.params.src_in_us} ${layer.t_start_us} ${speed}`;
     const held = bySpan.get(key);
     if (!held || layer.t_end_us > held.t_end_us) bySpan.set(key, layer);
@@ -246,8 +237,6 @@ export function autoCaptionState(
   if (selectedLayers(selection, composition).length === 0) return "needs_selection";
   const subjects = transcribeSubjects(selection, composition);
   if (subjects.length === 0) return "needs_audio_kind";
-  if (subjects.some((s) => s.params.kind === "VideoClip" && s.params.speed !== 1))
-    return "speed_not_one";
   return "auto_caption";
 }
 

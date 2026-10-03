@@ -1,3 +1,5 @@
+import { sourceIn, sourceOut, writeSourceWindow, layerRate, layerRateNumber } from '../../../renderer/layerTiming'
+import { addTime, multiplyTime, exactTime, approximateTime } from '../../../renderer/timeMapping'
 import type { Composition, Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
@@ -29,16 +31,20 @@ import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
  *  two canonical frame boundaries, so adding it keeps a canonical `t_end_us`
  *  canonical. A rate-derived "n frames in µs" would not. */
 export function extendLayerTEnd(layer: Layer, deltaUs: number): void {
+  if (hasSourceWindow(layer.params) || layer.params.kind === 'Motif' || layer.params.kind === 'ImageOverlay')
+    writeSourceWindow(layer.params, sourceIn(layer.params), addTime(sourceOut(layer), multiplyTime(exactTime(deltaUs), layerRate(layer.params))));
   layer.t_end_us += deltaUs
-  if (hasSourceWindow(layer.params)) layer.params.src_out_us += deltaUs
 }
 
 /** Inverse of extendLayerTEnd; saturates at 0. Used by the transition mutations
  *  to return borrowed handle material (never more than `extended_us`, so a
  *  pre-positioned overlap's real content is never trimmed). */
 export function shrinkLayerTEnd(layer: Layer, deltaUs: number): void {
-  layer.t_end_us = Math.max(layer.t_end_us - deltaUs, 0)
-  if (hasSourceWindow(layer.params)) layer.params.src_out_us = Math.max(layer.params.src_out_us - deltaUs, 0)
+  const pa = layer.params;
+  const out = addTime(sourceOut(layer), multiplyTime(exactTime(-deltaUs), layerRate(pa)));
+  if (hasSourceWindow(pa) || pa.kind === 'Motif' || pa.kind === 'ImageOverlay')
+    writeSourceWindow(pa, sourceIn(pa), out.num < 0 ? exactTime(0) : out);
+  layer.t_end_us = Math.max(0, layer.t_end_us - deltaUs)
 }
 
 /** Tail handle: source content remaining past src_out_us, in µs — media past
@@ -51,7 +57,7 @@ function tailHandleUs(p: Project, layer: Layer): number {
   if (!hasSourceWindow(pa)) return Infinity
   const dur = sourceDurationUs(p, pa)
   if (dur === null) return Infinity
-  return Math.max(dur - pa.src_out_us, 0)
+  return Math.max((dur - approximateTime(sourceOut(layer))) / layerRateNumber(pa), 0)
 }
 
 /** A requested span as a whole number of composition frames. FAILS a request

@@ -39,12 +39,12 @@ describe('applyUpdateLayerParams (field merge)', () => {
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([c.color, c.width, c.height]).toEqual([{ mode: 'Static', value: { r: 1, g: 2, b: 3, a: 255 } }, 640, 100])
   })
-  it('VideoClip patch sets src range + scale + speed + flip', () => {
+  it('VideoClip patch sets src range + scale + flip', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'VideoClip', src_in_us: 500_000, src_out_us: 3_000_000, scale_x: 2, speed: 1.5, flip_h: true }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', src_in_us: 500_000, src_out_us: 3_000_000, scale_x: 2, flip_h: true }, new MotifCatalog())
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
-    expect([v.src_in_us, v.src_out_us, v.transform.scale_x, v.speed, v.flip_h]).toEqual([500_000, 3_000_000, { mode: 'Static', value: 2 }, 1.5, true])
+    expect([v.src_in_us, v.src_out_us, v.transform.scale_x, v.flip_h]).toEqual([500_000, 3_000_000, { mode: 'Static', value: 2 }, true])
   })
   it('Audio patch sets gain/mute/role', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
@@ -588,8 +588,8 @@ describe('authored precision at the write seam', () => {
 
   it('refuses a non-positive speed', () => {
     const { p, id } = visualLayer()
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: 0 }, new MotifCatalog()), 'InvalidArgument')
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: -1 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: 0 } as never, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: -1 } as never, new MotifCatalog()), 'InvalidArgument')
   })
 
   it('rounds the text box to whole pixels and refuses one that rounds away', () => {

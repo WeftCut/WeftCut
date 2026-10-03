@@ -1,3 +1,4 @@
+import { keyTimeUs } from './keyframe';
 // The write-time tangent solver — the ONE place `Auto` sides and `Smooth` pairs
 // are turned into numbers. main calls it from `applyUpdateLayerParamTrack`
 // after frame-snap / sort / dedupe and before the track is stored, so every
@@ -95,7 +96,7 @@ export function solveAutoTangents<T>(
 ): Keyframe<T>[] {
   const n = keys.length;
   const s = scalar === null ? null : keys.map((k) => scalar(k.value));
-  const t = keys.map((k) => k.t_us);
+  const t = keys.map(keyTimeUs);
   const out: Keyframe<T>[] = keys.slice();
   for (let i = 0; i < n; i++) {
     const k = keys[i]!;

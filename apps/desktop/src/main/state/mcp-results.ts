@@ -268,6 +268,10 @@ function changedKeys(before: object, after: object): string[] {
  *  `content: []`, which `mcp.tool-table` refuses for a table-exec mutator — a
  *  new tool cannot land without saying what it committed. */
 export const MCP_RESULT_READERS: Record<string, ResultReader> = {
+  get_frame_interpolation_capabilities: c => obj(c.value),
+  retime_layers: c => obj(c.value),
+  set_frame_interpolation: c => obj(c.value),
+  set_preserve_pitch: c => ({ layer_ids: c.args.layer_ids, preserve_pitch: c.args.preserve_pitch }),
   // ── layers ──
   set_position: (c) => {
     const params = located(c.after, str(c.args.layer_id))?.layer.params

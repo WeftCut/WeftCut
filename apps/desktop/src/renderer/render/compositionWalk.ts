@@ -1,3 +1,5 @@
+import { enterClock, rootAt, localAt, ROOT_CLOCK, type CompositionClock } from './compositionClock';
+import { approximateTime, exactTime, UNIT_RATE } from '../timeMapping';
 // The one recursive walk over a project's layers. Every flat
 // `tracks[].layers[]` loop that has to see INSIDE a Group — the export decode
 // set, the emptiness gate, the motif pre-bake, font collection, the preview
@@ -27,6 +29,7 @@ export interface PlacedLayer {
   compositionId: string;
   /// Root-time origin of that composition: local `t` ↔ root `t + offsetUs`.
   offsetUs: number;
+  clock?: CompositionClock;
   /// Root-time placement, half-open, clipped to every enclosing window.
   tStartUs: number;
   tEndUs: number;
@@ -62,12 +65,13 @@ export function placeLayer(
   offsetUs: number,
   windowStartUs: number,
   windowEndUs: number,
+  clock?: CompositionClock,
 ): { tStartUs: number; tEndUs: number; headUs: number; tailUs: number } {
-  const placedStart = offsetUs + layer.t_start_us;
-  const placedEnd = offsetUs + layer.t_end_us;
+  const placedStart = clock ? rootAt(clock, layer.t_start_us) : offsetUs + layer.t_start_us;
+  const placedEnd = clock ? rootAt(clock, layer.t_end_us) : offsetUs + layer.t_end_us;
   const tStartUs = Math.max(placedStart, windowStartUs);
   const tEndUs = Math.min(placedEnd, windowEndUs);
-  return { tStartUs, tEndUs, headUs: tStartUs - placedStart, tailUs: placedEnd - tEndUs };
+  return { tStartUs, tEndUs, headUs: clock ? localAt(clock, tStartUs) - layer.t_start_us : tStartUs - placedStart, tailUs: clock ? layer.t_end_us - localAt(clock, tEndUs) : placedEnd - tEndUs };
 }
 
 /// The frame a Group layer opens onto its composition: the child's origin in
@@ -85,10 +89,12 @@ export function childFrame(
   parentOffsetUs: number,
   windowStartUs: number,
   windowEndUs: number,
-): { offsetUs: number; windowStartUs: number; windowEndUs: number } {
-  const placed = placeLayer(ref, parentOffsetUs, windowStartUs, windowEndUs);
+  parentClock: CompositionClock = { origin: exactTime(parentOffsetUs), rate: UNIT_RATE },
+): { offsetUs: number; windowStartUs: number; windowEndUs: number; clock: CompositionClock } {
+  const placed = placeLayer(ref, parentOffsetUs, windowStartUs, windowEndUs, parentClock);
+  const clock = enterClock(parentClock, { ...ref, params: { ...ref.params, src_in_us: srcInUs } });
   return {
-    offsetUs: parentOffsetUs + ref.t_start_us - srcInUs,
+    offsetUs: approximateTime(clock.origin), clock,
     windowStartUs: placed.tStartUs,
     windowEndUs: placed.tEndUs,
   };
@@ -140,7 +146,7 @@ export function forEachLayerInTime(
   t1Us: number,
   offsetUs: number,
   f: (placed: PlacedLayer) => void,
-  frame: { windowStartUs: number; windowEndUs: number; path: string; depth: number } = {
+  frame: { windowStartUs: number; windowEndUs: number; path: string; depth: number; clock?: CompositionClock } = {
     windowStartUs: Number.NEGATIVE_INFINITY,
     windowEndUs: Number.POSITIVE_INFINITY,
     path: "",
@@ -155,7 +161,7 @@ export function forEachLayerInTime(
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled) continue;
-      const placed = placeLayer(layer, offsetUs, frame.windowStartUs, frame.windowEndUs);
+      const placed = placeLayer(layer, offsetUs, frame.windowStartUs, frame.windowEndUs, frame.clock);
       if (placed.tStartUs >= placed.tEndUs) continue;
       // Half-open overlap with the query range.
       if (placed.tEndUs <= t0Us || placed.tStartUs >= t1Us) continue;
@@ -166,10 +172,12 @@ export function forEachLayerInTime(
           offsetUs,
           frame.windowStartUs,
           frame.windowEndUs,
+          frame.clock,
         );
         forEachLayerInTime(summary, layer.params.composition_id, t0Us, t1Us, child.offsetUs, f, {
           windowStartUs: child.windowStartUs,
           windowEndUs: child.windowEndUs,
+          clock: child.clock,
           path: refPath(frame.path, layer.id),
           depth: frame.depth + 1,
         });
@@ -180,6 +188,7 @@ export function forEachLayerInTime(
         track,
         compositionId: compId,
         offsetUs,
+        clock: frame.clock ?? ROOT_CLOCK,
         ...placed,
         path: frame.path,
         depth: frame.depth,

@@ -1077,3 +1077,16 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 ### Rectangular video crop
 
 `update_layer_params { layer_id, patch: { kind: "VideoClip", crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } } }` retains the central 80% of the source on each axis. Coordinates are normalized source coordinates, before transform; width and height must be positive and the rectangle must fit within 0..1. `crop: null` resets. Omission preserves the current crop. Writes are static, recorded/undoable, and refuse locked clips/tracks. Crop is returned in the layer params summary, survives save/reopen and split, and changes no transform or source time. VideoClip only.
+
+## Time remapping
+
+- `retime_layers { layer_ids, target }`: set an absolute positive rate (`{kind:"Rate",value:{num:2,den:1}}`) or target duration (`{kind:"Duration",duration_us:1000000}`). Keeps starts and selected source windows; changes ends on each clip's grid. Returns actual rational rates and duration adjustments. Explicit selection only; Links do not expand it. Collisions, nested targets, locks and illegal transitions reject the entire transaction.
+- `set_preserve_pitch { layer_ids, preserve_pitch }`: Audio/Group pitch policy, default true. Each nested scope applies its own policy once.
+- `get_frame_interpolation_capabilities { layer_ids, purpose }`: Preview/Export support and refusal reasons for each clip.
+- `set_frame_interpolation { layer_ids, interpolation }`: only `{kind:"FrameSampling"}` is available. FrameBlending and OpticalFlow are reserved and refused.
+
+Video, Audio, animated ImageOverlay, Motif and CompositionRef support retiming. Static images, Text and Color do not. Inspector entry: Timing. The ordinary Duration field trims; Retimed duration changes rate. Old schema-v2 VideoClip.speed was inert: migration deletes it and writes rate 1 without compatibility UI.
+
+For retimed clips, `extract_clip_audio` returns source-time WAV data and a
+`playback_rate`; project a WAV offset with `t_start_us + offset / playback_rate`.
+`transcribe_clip` performs this projection for segment and word timestamps.

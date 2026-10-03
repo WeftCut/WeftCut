@@ -1,3 +1,4 @@
+import { localAt } from '../compositionClock';
 // The single owner of the PREVIEW realm's motif raster lifecycle: the L0 warm
 // prewarmer, the L2 disk baker, the baked-index hydrate/GC, and the per-layer
 // bake-status feed. What triggers it: a project snapshot change
@@ -268,14 +269,14 @@ export class MotifFrameService {
     if (!summary) return;
     const fpsNum = this.deps.fpsNum();
     const fpsDen = this.deps.fpsDen();
-    forEachLayer(summary, this.deps.openCompositionId(), ({ layer, offsetUs }) => {
+    forEachLayer(summary, this.deps.openCompositionId(), ({ layer, offsetUs, clock }) => {
       if (layer.params.kind !== "Motif") return;
       // `compositionLocalUs`, not a bare subtraction: the descriptor's
       // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
       // asking for is derived through the same re-snap on its way down the
       // nodes. A µs of lattice residual between the two would warm a key
       // nothing ever reads.
-      const tLocalUs = compositionLocalUs(tUs - offsetUs, fpsNum, fpsDen);
+      const tLocalUs = clock ? localAt(clock, tUs) : compositionLocalUs(tUs - offsetUs, fpsNum, fpsDen);
       f(layer as LayerSummary & { params: { kind: "Motif" } }, tLocalUs - layer.t_start_us);
     });
   }

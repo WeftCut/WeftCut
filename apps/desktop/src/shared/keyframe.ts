@@ -66,6 +66,8 @@ export interface Keyframe<T> {
   id: string;
   /// Relative to the owning layer's `t_start_us`.
   t_us: number;
+  /** Proper fractional microsecond remainder, preserved through retime. */
+  time_fraction?: import('./timeMapping').ExactTime;
   value: T;
   /// Shape of the segment ARRIVING at this key.
   in: Tangent;
@@ -74,6 +76,11 @@ export interface Keyframe<T> {
   continuity: Continuity;
   /// Class of the segment LEAVING this key.
   segment: Segment;
+}
+
+/** Evaluation/display only; authoring uses the exact integer + fraction pair. */
+export function keyTimeUs(key: Pick<Keyframe<unknown>, 't_us' | 'time_fraction'>): number {
+  return key.t_us + (key.time_fraction ? key.time_fraction.num / key.time_fraction.den : 0);
 }
 
 /// Wire mirror of the Rust `Animated<T>` (`{"mode":"Static","value":v}` /
@@ -156,6 +163,7 @@ export function cloneExtrapolation(e: Extrapolation): Extrapolation {
 export function cloneKeyframeShape<T>(k: Keyframe<T>): Omit<Keyframe<T>, "id"> {
   return {
     t_us: k.t_us,
+    ...(k.time_fraction ? { time_fraction: { ...k.time_fraction } } : {}),
     value: k.value,
     in: cloneTangent(k.in),
     out: cloneTangent(k.out),

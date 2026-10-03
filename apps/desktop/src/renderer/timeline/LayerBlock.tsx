@@ -1,3 +1,5 @@
+import { sourceIn, sourceOut, layerRateNumber } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 import { readLayerParamTrack } from "../keyframe/channels";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -524,7 +526,7 @@ export function LayerBlock({
   const label = layerDisplayName(layer, t, groupOrdinals);
 
   /// The clip's head in SOURCE time — 0 for the kinds that window no source.
-  const srcInUs = "src_in_us" in layer.params ? layer.params.src_in_us : 0;
+  const srcInUs = approximateTime(sourceIn(layer.params));
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
@@ -611,6 +613,7 @@ export function LayerBlock({
         tStartUs: layer.t_start_us,
         tEndUs: layer.t_end_us,
         srcInUs,
+        rate: layerRateNumber(layer.params),
         pxPerSec,
         blockLeftPx: blockRect.left,
       })
@@ -683,7 +686,7 @@ export function LayerBlock({
   // whose file was replaced by a shorter one is the same picture.
   const sourceTail = sourceWindowTail({
     srcInUs,
-    srcOutUs: "src_out_us" in layer.params ? layer.params.src_out_us : 0,
+    srcOutUs: "src_out_us" in layer.params ? approximateTime(sourceOut(layer)) : 0,
     sourceDurationUs: groupSourceDurationUs,
   });
 
@@ -832,7 +835,7 @@ export function LayerBlock({
     const inTrack = effect?.params[card.inKey];
     const outTrack = effect?.params[card.outKey];
     if (inTrack?.mode !== "Static" || outTrack?.mode !== "Static") return null;
-    const map = { tStartUs: layer.t_start_us, srcInUs };
+    const map = { tStartUs: layer.t_start_us, srcInUs, rate: layerRateNumber(layer.params) };
     return {
       inUs: compUsFromSourceUs(inTrack.value, map),
       outUs: compUsFromSourceUs(outTrack.value, map),
@@ -1019,7 +1022,7 @@ export function LayerBlock({
           // length of that gesture, and is 0 the rest of the time.
           blockLeftPx={((layer.t_start_us - liveStart) / 1_000_000) * pxPerSec}
           visibleLoUs={srcInUs}
-          visibleHiUs={srcInUs + (layer.t_end_us - layer.t_start_us)}
+          visibleHiUs={approximateTime(sourceOut(layer))}
           preview={regionDrag.preview}
           onHandlePointerDown={(e, bound) => {
             const bounds = regionBoundsCompUs(regionBandCard);
@@ -1031,6 +1034,7 @@ export function LayerBlock({
                 tStartUs: layer.t_start_us,
                 tEndUs: layer.t_end_us,
                 srcInUs,
+                rate: layerRateNumber(layer.params),
                 pxPerSec,
                 // Measured at the press, in the coordinates the press reports.
                 blockLeftPx: blockElRef.current?.getBoundingClientRect().left ?? 0,

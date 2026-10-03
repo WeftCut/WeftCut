@@ -1,3 +1,6 @@
+import { localAtContent, contentAt, splitExact } from '../../renderer/layerTiming'
+import { approximateTime, exactTime } from '../../renderer/timeMapping'
+import type { TimingFields } from '../../shared/timeMapping'
 // apps/desktop/src/main/state/hybrids.ts
 //
 // Native-compute → TS-write hybrid orchestrator. A write-bearing native
@@ -303,13 +306,13 @@ function resolvePauseTarget(
 export function cutsToTimeline(
   srcCutsUs: readonly number[],
   layer: Pick<Layer, 't_start_us' | 't_end_us'>,
-  params: Pick<VideoClipParams, 'src_in_us'>,
+  params: Pick<VideoClipParams, 'src_in_us'> & TimingFields,
   fps: { num: number; den: number },
 ): ShotCut[] {
   const seen = new Set<number>()
   const cuts: ShotCut[] = []
   for (const srcUs of srcCutsUs) {
-    const t = snapFrameRound(layer.t_start_us + (srcUs - params.src_in_us), fps.num, fps.den)
+    const t = snapFrameRound(layer.t_start_us + approximateTime(localAtContent(params, exactTime(srcUs))), fps.num, fps.den)
     if (t <= layer.t_start_us || t >= layer.t_end_us || seen.has(t)) continue
     seen.add(t)
     cuts.push({ tUs: t, srcUs })
@@ -527,7 +530,10 @@ export async function markPauses(
     end_t_us: r.t_end_us,
     label: 'Pause',
     color: PAUSE_MARKER_COLOR,
-    anchor: { layer: subject.id, src_us: params.src_in_us + (r.t_start_us - subject.t_start_us) },
+    anchor: (() => {
+      const time = splitExact(contentAt(params, exactTime(r.t_start_us - subject.t_start_us)));
+      return { layer: subject.id, src_us: time.whole, ...(time.fraction.num ? { src_fraction: time.fraction } : {}) };
+    })(),
   }))
   const res = deps.actor.dispatch('add_markers', { markers, composition_id: composition.id })
   if (!res.ok) throw new Error(JSON.stringify(res.error))

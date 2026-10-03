@@ -1,3 +1,5 @@
+import type { TimingFields } from '../../../shared/timeMapping';
+import { contentAtUs } from '../../layerTiming';
 import type { MotifView } from "../../ipc";
 import { canonicalizePropsLenient, resolveMotifContentDurationUs, type Motif } from "./catalog";
 import { overlayMotifProps } from "./previewOverlay";
@@ -46,7 +48,7 @@ export function motifFrameDescriptor(
   // Only the non-animated identity fields — the cache key must not (and
   // cannot) vary with per-frame transform/opacity resolution, so both the
   // raw IPC view and the per-frame resolved view satisfy this.
-  view: Pick<MotifView, "props" | "src_in_us">,
+  view: Pick<MotifView, "props" | "src_in_us"> & TimingFields,
   tInLayerUs: number,
   durationUs: number,
   fpsNum: number,
@@ -67,15 +69,15 @@ export function motifFrameDescriptor(
   // in-place update) still renders rather than blanking.
   const canonicalProps = canonicalizePropsLenient(props, motif.manifest);
   const cap = resolveMotifContentDurationUs(motif.manifest, props);
-  const contentDurationUs = cap ?? durationUs;
+  const contentDurationUs = cap ?? view.content_window?.out_us ?? durationUs;
   // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`).
   // A `content_duration_s` holdable always plays from content frame 0 (its
   // in-animation, then a clamped/held tail); a wholly-uncapped Motif animates
   // over the layer width from 0. Neither windows.
   const windowed = motif.manifest.content_duration_s == null && cap != null;
-  const srcInUs = windowed ? view.src_in_us : 0;
+  const srcInUs = view.content_window ? contentAtUs({ ...view, kind: "Motif" }, 0) : windowed ? view.src_in_us : 0;
   const { frame, contentDurationFrames } = motifContentFrame(
-    tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
+    view.time_map ? tInLayerUs * view.time_map.rate.num / view.time_map.rate.den : tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
   );
   const [renderW, renderH] = motif.manifest.size;
   const cacheKey = motifFrameCacheKey({

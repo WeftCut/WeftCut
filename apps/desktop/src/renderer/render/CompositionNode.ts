@@ -1,3 +1,6 @@
+import { ROOT_CLOCK, localAt, type CompositionClock } from './compositionClock';
+import { approximateTime } from '../timeMapping';
+import { layerRateNumber, contentAtUs } from '../layerTiming';
 // One composition INSTANCE's sprites and Pixi Container, drawn at a time
 // on that composition's own clock. The Compositor holds one node for the open
 // composition and stages its container; a `CompositionRefSprite` holds one for
@@ -291,6 +294,7 @@ export interface CompositionNodeInit {
   depth: number;
   /// Root-time frame for the export handle keys.
   offsetUs: number;
+  clock?: CompositionClock;
   windowStartUs: number;
   windowEndUs: number;
   /// Stage into this container instead of a fresh one. The Compositor lends
@@ -387,6 +391,7 @@ interface ActiveRef {
 }
 
 export interface EffectOpts {
+  rootTimeUs?: number;
   previewEffectsEnabled: boolean;
   effectInput?: import('./effects/EffectInputCapture').EffectInputRequest;
 }
@@ -406,6 +411,7 @@ export class CompositionNode {
   /// Root-time frame: local `t` ↔ root `t + offsetUs`; the window is the
   /// intersection of every enclosing Group's placement (±∞ at the root).
   private offsetUs: number;
+  private clock: CompositionClock;
   private windowStartUs: number;
   private windowEndUs: number;
   private clips = new Map<string, ActiveClip>();
@@ -453,6 +459,7 @@ export class CompositionNode {
     this.path = init.path;
     this.depth = init.depth;
     this.offsetUs = init.offsetUs;
+    this.clock = init.clock ?? ROOT_CLOCK;
     this.windowStartUs = init.windowStartUs;
     this.windowEndUs = init.windowEndUs;
     this.ownsContainer = init.container === undefined;
@@ -545,15 +552,17 @@ export class CompositionNode {
         this.offsetUs,
         this.windowStartUs,
         this.windowEndUs,
+        this.clock,
       );
-      r.sprite.node.setPlacement(frame.offsetUs, frame.windowStartUs, frame.windowEndUs);
+      r.sprite.node.setPlacement(frame.offsetUs, frame.windowStartUs, frame.windowEndUs, frame.clock);
       r.sprite.setComposition(target, summary);
     }
   }
 
   /// Re-anchor this instance in root time (its Group layer moved or was
   /// re-trimmed). Children are re-framed by the `setComposition` that follows.
-  setPlacement(offsetUs: number, windowStartUs: number, windowEndUs: number): void {
+  setPlacement(offsetUs: number, windowStartUs: number, windowEndUs: number, clock: CompositionClock = ROOT_CLOCK): void {
+    this.clock = clock;
     this.offsetUs = offsetUs;
     this.windowStartUs = windowStartUs;
     this.windowEndUs = windowEndUs;
@@ -594,6 +603,8 @@ export class CompositionNode {
   /// so a nested texture is current when the parent's container renders.
   compositeVisual(tUs: number, effectOpts: EffectOpts): void {
     if (this.disposed) return;
+    effectOpts = { ...effectOpts, rootTimeUs: effectOpts.rootTimeUs ?? tUs };
+    tUs = localAt(this.clock, effectOpts.rootTimeUs!);
     this.lastTUs = tUs;
     // A retained clip sprite can still hold its TAIL from a previous pass even
     // after the pool reclaimed its decoder. Do not restage those pixels at an
@@ -685,12 +696,12 @@ export class CompositionNode {
       if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
       if (layer.params.kind === "CompositionRef") {
         const child = this.ensureCompositionRef(layer)?.sprite.node;
-        const localUs = tUs - layer.t_start_us + layer.params.src_in_us;
+        const localUs = contentAtUs(layer.params, tUs - layer.t_start_us);
         if (child && localUs >= 0 && localUs < child.durationUs() && !child.canPresentClipsAt(localUs)) ready = false;
         continue;
       }
       if (layer.params.kind !== "VideoClip") continue;
-      const srcTUs = layer.params.src_in_us + tUs - layer.t_start_us;
+      const srcTUs = contentAtUs(layer.params, tUs - layer.t_start_us);
       // A first visit has no held texture at all. It needs the same atomic
       // scene handoff as replay; clearing the outgoing scene here paints black.
       // Forward underruns may reuse this clip's already presented pixels.
@@ -786,14 +797,14 @@ export class CompositionNode {
       // will see the revived handle here.
       if (c.source.disposed) continue;
       const layerLocalUs = tUs - layer.t_start_us;
-      const srcTUs = layer.params.src_in_us + layerLocalUs;
+      const srcTUs = contentAtUs(layer.params, layerLocalUs);
       void c.source.requestFrameAt(srcTUs);
     }
     for (const ref of this.refs.values()) {
       const layer = this.layerById.get(ref.layerId);
       if (!layer || layer.params.kind !== "CompositionRef") continue;
       if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-      ref.sprite.node.anchor(tUs - layer.t_start_us + layer.params.src_in_us);
+      ref.sprite.node.anchor(contentAtUs(layer.params, tUs - layer.t_start_us));
     }
   }
 
@@ -1109,7 +1120,7 @@ export class CompositionNode {
     // off the walk's ROOT-time placement (compositionWalk.ts), so a clip
     // inside a Group is placed the same way here. Preview keys by the
     // instance key and ignores handleKey.
-    const placed = placeLayer(layer, this.offsetUs, this.windowStartUs, this.windowEndUs);
+    const placed = placeLayer(layer, this.offsetUs, this.windowStartUs, this.windowEndUs, this.clock);
     const source = host.pool.acquire({
       layerId: key,
       mediaId,
@@ -1117,8 +1128,9 @@ export class CompositionNode {
         ? {
             handleKey: exportHandleKey(
               mediaId,
-              layer.params.src_in_us + placed.headUs,
+              contentAtUs(layer.params, placed.headUs),
               placed.tStartUs,
+              layerRateNumber(layer.params) * approximateTime(this.clock.rate),
             ),
           }
         : {}),
@@ -1275,7 +1287,7 @@ export class CompositionNode {
     // Playhead off this clip → can't prove the proxy has the visible frame
     // yet; keep the original and retry on a later tick.
     if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) return;
-    const srcTUs = layer.params.src_in_us + (tUsSnapped - layer.t_start_us);
+    const srcTUs = contentAtUs(layer.params, tUsSnapped - layer.t_start_us);
     void state.handle.requestFrameAt(srcTUs);
     if (state.handle.ring.frameAt(srcTUs) != null) {
       this.completeSwap(layerId, srcTUs);
@@ -1347,7 +1359,7 @@ export class CompositionNode {
       layer.id,
       resolveVideoClipView(layer.params, layerLocalUs),
     );
-    const srcTUs = params.src_in_us + layerLocalUs;
+    const srcTUs = contentAtUs(params, layerLocalUs);
 
     const media = this.host.mediaById(params.media_id);
 
@@ -1712,6 +1724,7 @@ export class CompositionNode {
       path: refPath(this.path, layer.id),
       depth: this.depth + 1,
       offsetUs: frame.offsetUs,
+      clock: frame.clock,
       windowStartUs: frame.windowStartUs,
       windowEndUs: frame.windowEndUs,
     });

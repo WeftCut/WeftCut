@@ -1,3 +1,8 @@
+import { enterClock, ROOT_CLOCK, type CompositionClock } from '../../renderer/render/compositionClock'
+import { layerRate, sourceIn, sourceOut, localAtContent, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
+import { addTime, approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
+import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
+import { TimeMappingError } from '../../shared/timeMapping'
 import { cropProblem } from '../../shared/crop'
 import { CommandFailure } from './errors'
 // apps/desktop/src/main/state/validate.ts
@@ -371,7 +376,7 @@ export function reconcileMarkers(p: Project): DroppedMarker[] {
       // in the moment between the mutation and the validate that refuses it.
       if (!hasSourceWindow(layer.params)) continue
       if (markerHibernating(c, m)) continue
-      const t = snapFrameRound(layer.t_start_us + (anchor.src_us - layer.params.src_in_us), c.fps.num, c.fps.den)
+      const t = snapFrameRound(layer.t_start_us + approximateTime(localAtContent(layer.params, addTime(exactTime(anchor.src_us), anchor.src_fraction ?? ZERO_TIME))), c.fps.num, c.fps.den)
       if (t === m.t_us) continue
       // A region carries its END by the same frame delta rather than a second
       // anchor: one tie means one mapping, and holding `end_t_us` still while
@@ -407,11 +412,39 @@ function validateLayerParams(p: Project, layer: Layer): void {
   // two keys that landed on one frame — authored data lost. The visible cost of
   // leaving it is a ≤ half-frame offset on an interpolated value.
   const pa = layer.params
+  try {
+    if (pa.kind !== 'Color' && pa.kind !== 'Text') {
+      layerRate(pa);
+      if (pa.source_phase) { validateTimeFraction(pa.source_phase.in); validateTimeFraction(pa.source_phase.out); }
+      if (pa.fade_phase) { validateTimeFraction(pa.fade_phase.in); validateTimeFraction(pa.fade_phase.out); }
+      if (pa.preserve_pitch !== undefined && typeof pa.preserve_pitch !== 'boolean') throw new TimeMappingError('InvalidNumber');
+      if (pa.frame_interpolation && pa.frame_interpolation.kind !== 'FrameSampling')
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'frame_interpolation', detail: 'This build supports FrameSampling only' });
+      const start = sourceIn(pa), end = sourceOut(layer);
+      if (compareTime(start, ZERO_TIME) < 0 || compareTime(start, end) >= 0) fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end) });
+      if (pa.kind === 'VideoClip' || pa.kind === 'Audio') {
+        const duration = p.media_pool[pa.media]?.metadata.duration_us;
+        if (duration != null && compareTime(end, exactTime(duration)) > 0)
+          fail({ rule: 'SrcRangeExceedsMedia', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end), media_duration: duration });
+      }
+    }
+    const check = (track: import('./model').Animated<unknown>) => {
+      if (track.mode === 'Keyframed') for (const key of track.value) {
+        if (key.time_fraction) validateTimeFraction(key.time_fraction);
+        keyTimeExact(key);
+      }
+    };
+    forEachAnimatedF64(pa, check); forEachAnimatedRgba(pa, check);
+    for (const effect of layer.effects) for (const track of Object.values(effect.params)) check(track);
+  } catch (error) {
+    if (error instanceof TimeMappingError) throw new CommandFailure({ error: 'InvalidArgument', field: 'timing', detail: error.code });
+    throw error;
+  }
   if (pa.kind === 'VideoClip' && pa.crop != null) {
     const problem = cropProblem(pa.crop)
     if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: problem })
   }
-  if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, pa.src_in_us, pa.src_out_us)
+  if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, approximateTime(sourceIn(pa)), approximateTime(sourceOut(layer)))
   else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }
   else if (pa.kind === 'CompositionRef') {
     // Beside `checkSrcRange`, not inside it: that helper is media-specific, and a
@@ -420,7 +453,7 @@ function validateLayerParams(p: Project, layer: Layer): void {
     // gesture (ADR 0052 §6), or deleting a layer INSIDE a Group would be refused
     // because a parent's window overhangs. Target existence is
     // validateCompositionRefs' (it needs the whole graph for the cycle check).
-    if (pa.src_in_us < 0 || pa.src_in_us >= pa.src_out_us)
+    if (compareTime(sourceIn(pa), ZERO_TIME) < 0 || compareTime(sourceIn(pa), sourceOut(layer)) >= 0)
       fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: pa.src_in_us, src_out: pa.src_out_us })
   }
 }
@@ -511,4 +544,11 @@ function validateCompositionRefs(p: Project): void {
     state.set(id, 'black')
   }
   for (const id of Object.keys(p.compositions)) visit(id)
+  const checkClock = (id: string, clock: CompositionClock): void => {
+    for (const track of p.compositions[id].tracks) for (const layer of track.layers) {
+      if (layer.params.kind === 'CompositionRef') checkClock(layer.params.composition, enterClock(clock, layer));
+    }
+  };
+  try { for (const id of Object.keys(p.compositions)) checkClock(id, ROOT_CLOCK); }
+  catch (e) { if (e instanceof TimeMappingError) throw new CommandFailure({ error: 'RetimeRejected', reason: { kind: 'Numeric', reason: e.code } }); throw e; }
 }

@@ -817,7 +817,6 @@ export function shotDescribeBlocker(
   batch: { done: number; total: number } | null,
   applying: ShotApplyVerb | null,
 ): string | null {
-  if (describe === "speed_not_one") return "shots_panel.describe_speed_not_one";
   // The shared gate's own in-flight verdict, mapped before the generic refusal
   // below — which would otherwise call a running description "not a video clip".
   // WHICH run it is comes from this panel's own two params; the gate cannot know.

@@ -157,3 +157,10 @@ a Group into a refusal about its parent.
 - `Ctrl+G` / `Ctrl+Shift+G` are unbound until Pre-compose ships.
 - The decision in (7) is the one part of this record with an expiry, and it is
   named above so the first release can find it.
+
+
+## Time-remapping extension
+
+[ADR 0092](0092-constant-time-remapping-preserves-content-windows.md) replaces
+the offset-only clock with a composed rational mapping. Group instances may
+retime child content; ungrouping and membership changes require rate 1.

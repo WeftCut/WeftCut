@@ -83,6 +83,8 @@ pub struct Keyframe<T: Clone> {
     pub id: KeyframeId,
     /// Time relative to the owning layer's `t_start_us`.
     pub t_us: TimeUs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_fraction: Option<super::timing::Fraction>,
     pub value: T,
     /// Shape of the segment ARRIVING at this key. Meaningless on the first key.
     #[serde(rename = "in")]
@@ -364,7 +366,7 @@ impl<T: Clone + PartialEq> Animated<T> {
 /// (modes and continuity are authoring state the engine never reads).
 fn eval_kf<T: Clone, U>(k: &Keyframe<T>, value: U) -> weftcut_eval::Kf<U> {
     weftcut_eval::Kf {
-        t_us: k.t_us,
+        t_us: k.t_us as f64 + k.time_fraction.map_or(0.0, |f| f.value()),
         value,
         out: (k.out.x, k.out.y),
         in_: (k.in_.x, k.in_.y),
@@ -448,6 +450,7 @@ mod tests {
     /// holds; `segment` is the class of the segment LEAVING it.
     fn kf(t_us: TimeUs, value: f64, segment: Segment) -> Keyframe<f64> {
         Keyframe {
+            time_fraction: None,
             id: new_id(),
             t_us,
             value,
@@ -556,6 +559,7 @@ mod tests {
 
     fn color_kf(t_us: TimeUs, value: Rgba, segment: Segment) -> Keyframe<Rgba> {
         Keyframe {
+            time_fraction: None,
             id: new_id(),
             t_us,
             value,
@@ -748,6 +752,7 @@ mod tests {
         );
         let k = Animated::Keyframed(
             vec![Keyframe {
+                time_fraction: None,
                 id: uuid::Uuid::from_u128(1),
                 t_us: 0,
                 value: 0.0,

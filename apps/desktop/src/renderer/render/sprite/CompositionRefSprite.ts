@@ -1,3 +1,4 @@
+import { contentAtUs } from '../../layerTiming';
 // A Group layer's picture: its composition, composited by a child
 // `CompositionNode` into a `RenderTexture` of the composition's own
 // `width × height`, shown by one `Sprite`. Render-to-texture rather than
@@ -19,7 +20,6 @@ import type { Container, Renderer } from "pixi.js";
 
 import type { CompositionSummary, ProjectSummary } from "../../ipc";
 import { anchorPivot } from "../anchorPivot";
-import { compositionLocalUs } from "../compositionWalk";
 import type { CompositionNode, EffectOpts } from "../CompositionNode";
 import type { ResolvedCompositionRefView } from "../resolveView";
 import type { StageableSprite } from "./StageableSprite";
@@ -105,16 +105,12 @@ export class CompositionRefSprite implements StageableSprite {
     this.sprite.alpha = view.opacity;
 
     const comp = this.node.composition;
-    const tChildUs = compositionLocalUs(
-      view.src_in_us + tInLayerUs,
-      comp.fps_num,
-      comp.fps_den,
-    );
+    const tChildUs = contentAtUs(view, tInLayerUs);
     if (tChildUs < 0 || tChildUs >= comp.duration_us) {
       this.node.compositeNothing();
     } else {
       // A pick names a layer of the open composition, not a reused child instance.
-      this.node.compositeVisual(tChildUs, { previewEffectsEnabled: effectOpts.previewEffectsEnabled });
+      this.node.compositeVisual(tChildUs, effectOpts);
     }
     this.renderer?.render({
       container: this.node.container,

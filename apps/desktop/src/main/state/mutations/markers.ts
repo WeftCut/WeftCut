@@ -1,3 +1,5 @@
+import { contentAt, splitExact } from '../../../renderer/layerTiming'
+import { exactTime } from '../../../renderer/timeMapping'
 import type { Composition, Marker, MarkerAnchor, Project, Rgba, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
@@ -105,7 +107,9 @@ function retimeAnchor(p: Project, m: Marker, anchor: MarkerAnchor, tUs: number, 
   if (tUs < layer.t_start_us || tUs >= layer.t_end_us)
     throw new CommandFailure({ error: 'InvalidArgument', field: 't_us',
       detail: `marker ${m.id} at t_us ${tUs} is outside its anchoring layer ${anchor.layer}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
-  anchor.src_us = tUs - layer.t_start_us + layer.params.src_in_us
+  const time = splitExact(contentAt(layer.params, exactTime(tUs - layer.t_start_us)))
+  anchor.src_us = time.whole
+  if (time.fraction.num) anchor.src_fraction = time.fraction; else delete anchor.src_fraction
 }
 
 /** Patch a marker; only provided fields apply. Re-sorts by t_us (stable) when a
@@ -180,7 +184,8 @@ export function applyAttachMarker(p: Project, markerId: Uuid, layerId: Uuid): vo
   if (m.t_us < layer.t_start_us || m.t_us >= layer.t_end_us)
     throw new CommandFailure({ error: 'InvalidArgument', field: 'layer',
       detail: `marker ${markerId} at t_us ${m.t_us} is outside layer ${layerId}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
-  m.anchor = { layer: layerId, src_us: m.t_us - layer.t_start_us + layer.params.src_in_us }
+  const time = splitExact(contentAt(layer.params, exactTime(m.t_us - layer.t_start_us)))
+  m.anchor = { layer: layerId, src_us: time.whole, ...(time.fraction.num ? { src_fraction: time.fraction } : {}) }
 }
 
 /** Cut a marker loose from its layer. `t_us` stays exactly where the last

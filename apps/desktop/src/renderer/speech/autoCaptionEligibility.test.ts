@@ -54,7 +54,7 @@ function videoLayer(id: string, speed: number, at: Placement = {}): LayerSummary
       opacity: num(1),
       anchor_x: num(0.5),
       anchor_y: num(0.5),
-      speed,
+      speed, time_map: { kind: "Affine", rate: { num: speed, den: 1 } },
       flip_h: false,
       flip_v: false,
       fade_in_us: 0,
@@ -156,7 +156,7 @@ describe("autoCaptionState", () => {
   });
 
   it("refuses a re-timed clip at the gesture, not at the tool", () => {
-    expect(autoCaptionState(sel("l-fast"), COMPOSITION, false)).toBe("speed_not_one");
+    expect(autoCaptionState(sel("l-fast"), COMPOSITION, false)).toBe("auto_caption");
   });
 
   // Audio carries no speed field at all, so a speed gate must not be applied
@@ -188,9 +188,9 @@ describe("autoCaptionState", () => {
   // Refused, not skipped: the user selected the re-timed clip meaning to
   // caption it, and a run that quietly left it out would read as a transcription
   // that missed some speech.
-  it("refuses the whole press when any subject is re-timed", () => {
-    expect(autoCaptionState(sel("l-video", "l-fast"), COMPOSITION, false)).toBe("speed_not_one");
-    expect(autoCaptionState(sel("l-audio", "l-fast"), COMPOSITION, false)).toBe("speed_not_one");
+  it("admits mixed rates while preserving each transcription subject", () => {
+    expect(autoCaptionState(sel("l-video", "l-fast"), COMPOSITION, false)).toBe("auto_caption");
+    expect(autoCaptionState(sel("l-audio", "l-fast"), COMPOSITION, false)).toBe("auto_caption");
   });
 });
 

@@ -1485,6 +1485,32 @@ app.whenReady().then(async () => {
     // Audio-effect bake state (ADR 0063): three reads served by the baker, the
     // sole holder of that state — it is a derivation, never project state, so
     // there is nowhere else it could be answered from.
+    if (channel === 'prepare_retimed_audio') {
+      if (!tsHost || !audioFxBaker) throw new Error('Audio preparation is unavailable');
+      let project = tsHost.actor.snapshot();
+      const requestedLayer = (args as { layerId?: string })?.layerId;
+      if (requestedLayer) {
+        const comp = Object.values(project.compositions).find(c => c.tracks.some(t => t.layers.some(l => l.id === requestedLayer)));
+        const layer = comp?.tracks.flatMap(t => t.layers).find(l => l.id === requestedLayer);
+        if (!comp || !layer || layer.params.kind !== 'Audio') throw new Error('Audio layer not found');
+        const duration = layer.t_end_us - layer.t_start_us;
+        project = { ...project, root_id: comp.id, audio_roles: {}, compositions: { ...project.compositions,
+          [comp.id]: { ...comp, duration_us: duration, tracks: comp.tracks.map(t => ({ ...t, enabled: true,
+            layers: t.layers.filter(l => l.id === requestedLayer).map(l => ({ ...l, enabled: true, locked: false, t_start_us: 0, t_end_us: duration })) })) } } };
+      }
+      const ready = await audioFxBaker.ensureExportAudioFx(null);
+      if (ready.failed.length) throw new Error(ready.failed.map(f => f.error).join('; '));
+      if (ready.waiting.length) return { waiting: true, stems: [] };
+      const nativeArgs = injectProjectArgs({}, project);
+      const gateProject = { ...(nativeArgs.project as Record<string, unknown>), root_id: (args as { compositionId?: string })?.compositionId ?? project.root_id, audio_roles: {} };
+      const conformWaiting = JSON.parse(await backend!.invoke('ensure_export_audio_conform', JSON.stringify({ project: gateProject })));
+      if (conformWaiting.length) return { waiting: true, stems: [] };
+      const json = await backend!.invoke(channel, JSON.stringify({ ...nativeArgs,
+        composition_id: (args as { compositionId?: string })?.compositionId ?? project.root_id,
+        layer_audio_sources: audioFxBaker.layerAudioSources(project),
+      }));
+      return { waiting: false, stems: JSON.parse(json) };
+    }
     if (AUDIO_FX_CHANNELS.has(channel)) {
       if (!audioFxBaker) throw new Error(`${channel}: the audio-fx baker is not started yet`)
       const a = (args ?? {}) as Record<string, unknown>

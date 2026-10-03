@@ -12,12 +12,13 @@ vi.mock("../ipc", async (importActual) => {
     updateLayer: vi.fn().mockResolvedValue(undefined),
     updateLayerParams: vi.fn().mockResolvedValue(undefined),
     moveLayer: vi.fn().mockResolvedValue(undefined),
+    retimeLayers: vi.fn().mockResolvedValue({ layers: [] }),
     trimLayer: vi.fn().mockResolvedValue(undefined),
     setLayersEnabled: vi.fn().mockResolvedValue(undefined),
   };
 });
 
-import { updateLayer, updateLayerParams, moveLayer, trimLayer, setLayersEnabled } from "../ipc";
+import { retimeLayers, updateLayer, updateLayerParams, moveLayer, trimLayer, setLayersEnabled } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setAudioUnits } from "../state/audioUnitsStore";
@@ -603,7 +604,7 @@ describe("AttributePanel local disclosures", () => {
   it("shows fade durations directly under Effects", () => {
     renderPanel(videoTrack(), "layer-v1");
     expect(screen.getByLabelText("Duration")).toBeTruthy();
-    expect(screen.getByLabelText("Speed")).toBeTruthy();
+    expect(screen.getByLabelText("Playback rate")).toBeTruthy();
     expect(screen.getByLabelText("Label")).toHaveProperty("placeholder", "clip.mp4");
     expect(screen.getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
     const effects = screen.getByRole("region", { name: "Effects" });
@@ -769,4 +770,18 @@ describe("AttributePanel row primitive", () => {
     expect(within(scaleRow()).getByRole("button", { name: /^Scale Y —/ })).toBeTruthy();
     expect(within(scaleRow()).getByRole("button", { name: "Link X/Y scale (uniform) — Scale Y becomes a copy of Scale X" })).toBeTruthy();
   });
+});
+
+
+it('retimes the inspected clip unless the user explicitly enables selection-wide editing', async () => {
+  const video = videoTrack(), audio = audioTrack();
+  useProjectStore.getState().apply(summaryFixture({ root: { tracks: [video, audio], links: [{ id: 'link', layer_ids: ['layer-v1', 'layer-a1'] }] } }));
+  setLayerSelection('layer-v1', ['layer-v1', 'layer-a1']);
+  renderPanel(video, 'layer-v1');
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  expect(retimeLayers).toHaveBeenLastCalledWith(['layer-v1'], { kind: 'Rate', value: { num: 1, den: 1 } });
+  await user.click(screen.getByRole('checkbox', { name: 'Apply to all 2 selected clips' }));
+  await user.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  expect(retimeLayers).toHaveBeenLastCalledWith(['layer-v1', 'layer-a1'], { kind: 'Rate', value: { num: 1, den: 1 } });
 });

@@ -185,6 +185,7 @@ const UNGROUP_HINT: Record<UngroupState, string> = {
   not_plain_transform: "quick_actions.ungroup_not_plain_transform",
   not_plain_opacity: "quick_actions.ungroup_not_plain_opacity",
   not_plain_effects: "quick_actions.ungroup_not_plain_effects",
+  not_plain_time_map: "quick_actions.ungroup_not_plain_time_map",
 };
 
 export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [

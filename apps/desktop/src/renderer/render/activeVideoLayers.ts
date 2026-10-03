@@ -1,3 +1,5 @@
+import { contentAtUs, layerRateNumber } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 // The single source of truth for "which VideoClip layers does export decode?"
 // Both the export Worker's decode loop (exportWorker.ts `activeVideoClips`)
 // and the export-readiness gate (app/useExportFlow.ts and worker/runExport.ts,
@@ -26,6 +28,7 @@ export interface ActiveVideoLayer {
   /// Source-in for THAT placement: the authored `src_in_us` advanced by
   /// whatever the clipping cut off the head.
   srcInUs: number;
+  rate?: number;
 }
 
 /// Every enabled VideoClip layer on an enabled track whose interval overlaps
@@ -49,7 +52,8 @@ export function selectActiveVideoLayers(
       mediaId: layer.params.media_id,
       tStartUs: placed.tStartUs,
       tEndUs: placed.tEndUs,
-      srcInUs: layer.params.src_in_us + placed.headUs,
+      srcInUs: contentAtUs(layer.params, placed.headUs),
+      ...((layerRateNumber(layer.params) * (placed.clock ? approximateTime(placed.clock.rate) : 1)) === 1 ? {} : { rate: layerRateNumber(layer.params) * (placed.clock ? approximateTime(placed.clock.rate) : 1) }),
     });
   });
   return out;

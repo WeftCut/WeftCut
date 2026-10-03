@@ -1,3 +1,6 @@
+import { shiftKeyframes } from './animated'
+import { contentAt, sourceIn, sourceOut, writeSourceWindow, layerRateNumber, layerRate } from '../../../renderer/layerTiming'
+import { exactTime, approximateTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
 import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
@@ -36,18 +39,19 @@ export function trimDeltaBounds(
 ): { min: number; max: number } {
   const dur = layer.t_end_us - layer.t_start_us
   const pa = layer.params
+  const rate = layerRateNumber(pa)
   if (edge === 'In') {
     const timelineMin = -layer.t_start_us
     const timelineMax = dur - 1
     let srcMin = -INF, srcMax = INF
-    if (hasSourceWindow(pa)) { srcMin = -pa.src_in_us; srcMax = pa.src_out_us - pa.src_in_us - 1 }
+    if (hasSourceWindow(pa)) { srcMin = -approximateTime(sourceIn(pa)) / rate; srcMax = (approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1 }
     return { min: Math.max(timelineMin, srcMin), max: Math.min(timelineMax, srcMax) }
   } else {
     const timelineMin = -(dur - 1)
     let srcMin = -INF; let srcMax = INF
     if (hasSourceWindow(pa)) {
-      srcMin = -(pa.src_out_us - pa.src_in_us - 1)
-      if (sourceDurationUs != null) srcMax = Math.max(0, sourceDurationUs - pa.src_out_us)
+      srcMin = -((approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1)
+      if (sourceDurationUs != null) srcMax = Math.max(0, (sourceDurationUs - approximateTime(sourceOut(layer))) / rate)
     }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
   }
@@ -147,13 +151,16 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
     // trim being rejected by the grid backstop. `src_*` shifts by the SAME per-member
     // delta, so content stays glued to the edge.
     const delta = snapOnGrid(curEdgeT + clamped, gridForLayerKind(params.kind, fps)) - curEdgeT
+    if (hasSourceWindow(params) || params.kind === 'Motif' || params.kind === 'ImageOverlay') {
+      writeSourceWindow(params, edge === 'In' ? contentAt(params, exactTime(delta)) : sourceIn(params),
+        edge === 'Out' ? addTime(sourceOut(m), multiplyTime(exactTime(delta), layerRate(params))) : sourceOut(m));
+    }
     if (edge === 'In') {
       m.t_start_us += delta
-      if (hasSourceWindow(params)) params.src_in_us += delta
       shiftLayerKeyframes(params, -delta) // keyframes glued to content
+      for (const effect of m.effects) for (const track of Object.values(effect.params)) shiftKeyframes(track, -delta)
     } else {
       m.t_end_us += delta
-      if (hasSourceWindow(params)) params.src_out_us += delta
     }
   }
 

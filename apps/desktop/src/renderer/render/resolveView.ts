@@ -102,7 +102,7 @@ function resolveTransform(
 }
 
 export function resolveVideoClipView(v: VideoClipView, tInLayerUs: number): ResolvedVideoClipView {
-  return { ...v, ...resolveTransform(v, tInLayerUs) };
+  return { ...v, ...resolveTransform(v, tInLayerUs), ...resolveFades(v) };
 }
 
 export function resolveImageOverlayView(
@@ -133,4 +133,9 @@ export function resolveCompositionRefView(
   tInLayerUs: number,
 ): ResolvedCompositionRefView {
   return { ...v, ...resolveTransform(v, tInLayerUs) };
+}
+
+function resolveFades(v: import('../../shared/timeMapping').TimingFields & { fade_in_us?: number; fade_out_us?: number }) {
+  return v.fade_phase ? { fade_in_us: (v.fade_in_us ?? 0) + v.fade_phase.in.num / v.fade_phase.in.den,
+    fade_out_us: (v.fade_out_us ?? 0) + v.fade_phase.out.num / v.fade_phase.out.den } : {};
 }

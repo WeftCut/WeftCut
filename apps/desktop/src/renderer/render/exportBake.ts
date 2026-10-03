@@ -1,3 +1,4 @@
+import { localAt } from './compositionClock';
 // Pure Motif export-range planning. Pixel acquisition is bounded and demand-driven
 // in exportMotifSource.ts; this module allocates no bitmaps.
 
@@ -22,6 +23,7 @@ export interface MotifBakeSpec {
   view: MotifView;
   /// Layer duration in microseconds (`t_end_us - t_start_us`).
   durationUs: number;
+  sampleLocalUs?: number;
   /// Total animated frames on the comp grid (`motifDurationFrames`).
   durationFrames: number;
   /// First/last comp-frame index (inclusive) overlapping the export range.
@@ -94,7 +96,7 @@ export function motifLayersToBake(
     const localFrame = (tRootUs: number): number =>
       frameIndexInLayer(
         compositionLocalUs(
-          snapFrameFloor(tRootUs, fpsNum, fpsDen) - placed.offsetUs,
+          placed.clock ? localAt(placed.clock, snapFrameFloor(tRootUs, fpsNum, fpsDen)) : snapFrameFloor(tRootUs, fpsNum, fpsDen) - placed.offsetUs,
           fpsNum,
           fpsDen,
         ) - layer.t_start_us,
@@ -109,6 +111,7 @@ export function motifLayersToBake(
       motif,
       view,
       durationUs,
+      ...(placed.clock && (placed.clock.rate.num !== placed.clock.rate.den || layer.params.kind === "Motif" && layer.params.time_map) ? { sampleLocalUs: localAt(placed.clock, snapFrameFloor(overlapStartUs, fpsNum, fpsDen)) - layer.t_start_us } : {}),
       durationFrames,
       firstFrame,
       lastFrame,

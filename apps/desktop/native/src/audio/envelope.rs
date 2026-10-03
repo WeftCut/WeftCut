@@ -248,6 +248,7 @@ mod tests {
 
     fn kf(t_us: i64, value: f64) -> Keyframe<f64> {
         Keyframe {
+            time_fraction: None,
             id: new_id(),
             t_us,
             value,

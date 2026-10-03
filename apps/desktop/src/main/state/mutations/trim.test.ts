@@ -26,7 +26,7 @@ function video(id: string, media: string, t0: number, t1: number, srcIn: number,
       rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true,
     },
     opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,
-    blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0,
+    blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0,
   }
   return { id, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }
 }

@@ -227,3 +227,18 @@ describe("hasVisibleContent", () => {
     expect(hasVisibleContent(s, 0, 1_000_000)).toBe(false);
   });
 });
+
+
+it('composes nested rates, clips the source window and keys decoders by effective rate', () => {
+  const map = (num: number, den = 1) => ({ kind: 'Affine', rate: { num, den } });
+  const s = summaryOf([{ enabled: true, layers: [ref({ id: 'outer', t_start_us: 1_000_000, t_end_us: 3_000_000,
+    params: { composition_id: 'g', src_in_us: 1_000_000, time_map: map(2) } })] }], {
+    g: [{ enabled: true, layers: [ref({ id: 'inner', t_start_us: 0, t_end_us: 6_000_000,
+      params: { composition_id: 'h', src_in_us: 100_000, time_map: map(1, 2) } })] }],
+    h: [{ enabled: true, layers: [layer({ id: 'video', t_start_us: 0, t_end_us: 4_000_000,
+      params: { kind: 'VideoClip', media_id: 'm', src_in_us: 200_000, time_map: map(3) } })] }],
+  });
+  const placed = selectActiveVideoLayers(s, 1_000_000, 2_999_999)[0]!;
+  expect(placed).toEqual({ layerId: 'outer/inner/video', mediaId: 'm', tStartUs: 1_000_000, tEndUs: 3_000_000, srcInUs: 2_000_000, rate: 3 });
+  expect(exportHandleKey('m', placed.srcInUs, placed.tStartUs, placed.rate)).not.toBe(exportHandleKey('m', placed.srcInUs, placed.tStartUs, 1));
+});

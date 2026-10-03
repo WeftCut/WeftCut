@@ -47,7 +47,7 @@ function addMedia(p: Project, id: string, kind: 'Video' | 'Audio', durationUs: n
 function videoParams(media: string, srcIn: number, srcOut: number): LayerParams {
   return { kind: 'VideoClip', media, src_in_us: srcIn, src_out_us: srcOut, transform: defaultTransform(),
     opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,
-    blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0 }
+    blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 }
 }
 function audioParams(media: string, srcIn: number, srcOut: number): LayerParams {
   return { kind: 'Audio', media, src_in_us: srcIn, src_out_us: srcOut,
@@ -95,7 +95,7 @@ describe('extendLayerTEnd / shrinkLayerTEnd', () => {
           scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 },
           rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true },
         opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,
-        blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0 },
+        blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 },
     }
     extendLayerTEnd(l, 500_000)
     expect([l.t_end_us, (l.params as { src_out_us: number }).src_out_us]).toEqual([2_500_000, 2_500_000])

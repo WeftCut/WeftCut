@@ -33,7 +33,7 @@ function videoClipLayer(id: string, t0: number, t1: number, srcIn = 0, srcOut = 
   const params: LayerParams = {
     kind: 'VideoClip', media: 'media-1', src_in_us: srcIn, src_out_us: srcOut,
     transform: { position: { mode: 'XY' as const, x: s(0), y: s(0) },  scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true },
-    opacity: s(1), crop: null, flip_h: false, flip_v: false, blend_mode: 'Normal', speed: 1,
+    opacity: s(1), crop: null, flip_h: false, flip_v: false, blend_mode: 'Normal',
     fade_in_us: 0, fade_out_us: 0,
   }
   return { id, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }

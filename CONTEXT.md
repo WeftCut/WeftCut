@@ -5,6 +5,20 @@ project's glossary — the canonical word for each domain concept. It holds no
 implementation detail; the shape of the data lives in [`docs/data-model.md`](docs/data-model.md)
 and the decisions in [`docs/adr/`](docs/adr/).
 
+## Time remapping
+
+**Time remapping**:
+The relationship between a clip's local time and its content's own time. A
+constant rate applies to the whole selected content range; a Group remaps its
+internal composition. Animation on the placed clip has its own local time.
+_Avoid_: speed effect, transform animation
+
+**Retime**:
+An edit that changes the timeline duration used to play a selected content range,
+preserving that range and proportionally adjusting the clip's own animation.
+Rate and target duration are two ways to request the edit.
+_Avoid_: trim (which changes the selected range), move (which changes placement)
+
 ## Decode routing
 
 **Decode Route**:

@@ -1,3 +1,5 @@
+import { localAtContent } from '../layerTiming';
+import { exactTime, approximateTime } from '../timeMapping';
 // The Shots Panel's row view model: one row per shot of the REDUCE's output,
 // with the reviewer's own two decisions and any on-demand measurements folded
 // in.
@@ -171,9 +173,7 @@ function reviewedSpans(
 ///
 /// `layer` supplies the projection into composition time and nothing else; the
 /// report is source-scoped, and only the layer knows where its own source
-/// window sits on a timeline. Speed is not applied: the apply path's
-/// `cutsToTimeline` maps at 1:1 too, and a row that disagreed with the cut it
-/// produces would be worse than one that ignores a re-time.
+/// window sits on a timeline. Inverse time mapping matches cutsToTimeline.
 ///
 /// `spanStats` is the on-demand pass's answers for this source, consulted only
 /// where a span has none of its own and only on an EXACT span match — the same
@@ -193,11 +193,11 @@ export function shotRows(
   // The kind gate is what narrows `src_in_us` into scope; the Panel's subject
   // is a VideoClip by construction, so no row is ever lost to it.
   if (layer.params.kind !== "VideoClip") return [];
-  const srcInUs = layer.params.src_in_us;
+  const params = layer.params;
   const frameDurUs = approxFrameDurUs(compositionFps.num, compositionFps.den);
   const scoreAt = new Map(reduced.cut_scores.map((c) => [c.t_us, c.score]));
   const toTimeline = (srcUs: number): number =>
-    layer.t_start_us + (srcUs - srcInUs);
+    layer.t_start_us + approximateTime(localAtContent(params, exactTime(srcUs)));
   const candidateAt = (srcUs: number): ShotCandidate | null => {
     const score = scoreAt.get(srcUs);
     return score === undefined

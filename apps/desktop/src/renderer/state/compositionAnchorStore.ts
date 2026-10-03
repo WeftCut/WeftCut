@@ -1,3 +1,4 @@
+import { ROOT_CLOCK, enterClock, rootAt, type CompositionClock } from '../render/compositionClock';
 // Which composition each surface of the editor shows, and how it got there.
 //
 // A timeline Panel is one composition (ADR 0053), so "where the editor is
@@ -563,7 +564,7 @@ export function compositionPlacements(
   const walk = (
     hostId: string,
     crumbs: readonly CompositionCrumb[],
-    offsetUs: number,
+    clock: CompositionClock,
     seen: ReadonlySet<string>,
   ): void => {
     const host = summary.compositions[hostId];
@@ -573,18 +574,18 @@ export function compositionPlacements(
         if (layer.params.kind !== "CompositionRef") continue;
         const child = layer.params.composition_id;
         const next = [...crumbs, { layerId: layer.id, compositionId: child }];
-        const rootStartUs = offsetUs + layer.t_start_us;
+        const rootStartUs = rootAt(clock, layer.t_start_us);
         if (child === compositionId) {
           out.push({ layerId: layer.id, crumbs: next, rootStartUs });
         }
         if (seen.has(child)) continue;
         // A composition's own `t = 0` in root time — `childFrame`'s offset,
         // which is where a nested placement's start has to be measured from.
-        walk(child, next, rootStartUs - layer.params.src_in_us, new Set(seen).add(child));
+        walk(child, next, enterClock(clock, layer), new Set(seen).add(child));
       }
     }
   };
-  walk(summary.root_id, NO_CRUMBS, 0, new Set([summary.root_id]));
+  walk(summary.root_id, NO_CRUMBS, ROOT_CLOCK, new Set([summary.root_id]));
   return out;
 }
 

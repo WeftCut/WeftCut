@@ -152,7 +152,7 @@ pub async fn bake(conform_path: &Path, filter_complex: &str, dest: &Path) -> Res
         }
         Begin::Owner(guard) => guard,
     };
-    let result = render(conform_path, filter_complex, dest).await;
+    let result = render(conform_path, filter_complex, dest, None).await;
     guard.publish(
         &result
             .as_ref()
@@ -199,7 +199,12 @@ impl Drop for TempGuard {
 /// whole design rests on (`ConformReader` reads the sibling at the raw
 /// conform's frame offsets), so a length change fails the bake instead of
 /// landing a misaligned artifact.
-async fn render(conform_path: &Path, filter_complex: &str, dest: &Path) -> Result<PathBuf> {
+pub(super) async fn render(
+    conform_path: &Path,
+    filter_complex: &str,
+    dest: &Path,
+    expected_frames: Option<u64>,
+) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot bake audio effects");
     }
@@ -273,7 +278,7 @@ async fn render(conform_path: &Path, filter_complex: &str, dest: &Path) -> Resul
 
     let bytes_per_frame = src.channels as u64 * 4;
     let frame_count = total_bytes / bytes_per_frame;
-    if frame_count != src.frame_count {
+    if frame_count != expected_frames.unwrap_or(src.frame_count) {
         anyhow::bail!(
             "audio fx graph changed length: {} produced {frame_count} frames from {} — \
              a bake must stay sample-aligned with the conform it derives from",

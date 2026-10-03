@@ -974,8 +974,9 @@ export function exportHandleKey(
   mediaId: string,
   srcInUs: number,
   tStartUs: number,
+  rate = 1,
 ): string {
-  return `${mediaId}#${srcInUs - tStartUs}`;
+  return rate === 1 ? `${mediaId}#${srcInUs - tStartUs}` : `${mediaId}#${srcInUs - tStartUs * rate}@${rate}`;
 }
 
 export class ExportDecoderPool implements DecoderPool {

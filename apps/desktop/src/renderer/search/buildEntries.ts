@@ -1,3 +1,6 @@
+import { localAtContent } from '../layerTiming';
+import { exactTime, approximateTime } from '../timeMapping';
+import type { TimingFields } from '../../shared/timeMapping';
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { segmentsForSpan } from "../describe/segmentsForSpan";
 import { formatTimecode } from "../frames";
@@ -69,7 +72,7 @@ function withPinyin(haystacks: string[]): string[] {
 /// segment yields one row per clip that shows it, each with its own time.
 function descriptionEntries(
   layer: LayerSummary,
-  params: { media_id: string; src_in_us: number; src_out_us: number },
+  params: { media_id: string; src_in_us: number; src_out_us: number } & TimingFields,
   clipLabel: string,
   compositionId: string,
   descriptions: DescriptionsInput,
@@ -87,16 +90,12 @@ function descriptionEntries(
     // nothing to find — the view a caption takes of a blank Text layer.
     if (!text) continue;
     const label = textSnippet(text, DESCRIPTION_SNIPPET_MAX);
-    // Source into timeline 1:1 with no speed factor: the mapping `shotRows`
-    // and marker anchoring already use, and description is refused outright on
-    // a re-timed clip (`describe/describeEligibility.ts`), so a second mapping
-    // rule here would exist only for footage that has no prose to place.
-    //
+    // Project source descriptions through the clip time map.
     // Floored at the clip's own start because a segment may STRADDLE the
     // window — `segmentsForSpan` keeps a straddler deliberately — and the
     // source before the window is on no timeline to seek to.
     const tStartUs =
-      layer.t_start_us + Math.max(0, seg.t_start_us - params.src_in_us);
+      layer.t_start_us + Math.max(0, approximateTime(localAtContent(params, exactTime(seg.t_start_us))));
     const tags = seg.tags.map((tag) => tag.trim()).filter((tag) => tag !== "");
     const haystacks = withPinyin([label]);
     const detailFrom = haystacks.length;

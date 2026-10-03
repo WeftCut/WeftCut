@@ -76,6 +76,7 @@ describe('the read set', () => {
     if (!added.ok) throw new Error(added.error.message)
     const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
     const argsFor: Record<string, Record<string, unknown>> = {
+      get_frame_interpolation_capabilities: { layer_ids: [layerId], purpose: 'Preview' },
       read_project: { view: 'current' },
       list_checkpoints: {},
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour

@@ -23,6 +23,8 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // lookup that moves a layer along it. Native and wasm32 share one compiler.
 pub mod path;
 
+pub mod time_mapping;
+
 // Resident-ABI scalar exports for the renderer. wasm32 only (the native crate
 // links the leaf as an rlib and calls the functions below directly).
 #[cfg(target_arch = "wasm32")]
@@ -471,7 +473,7 @@ impl Interpolate for Rgba8 {
 /// break the exact-equality preset lookup and the byte-identical goldens).
 #[derive(Clone, Copy, Debug)]
 pub struct Kf<T = f64> {
-    pub t_us: i64,
+    pub t_us: f64,
     pub value: T,
     pub out: (f64, f64),
     pub in_: (f64, f64),
@@ -639,6 +641,10 @@ fn bounce_in_out(t: f64) -> f64 {
 /// `T::offset`; segment search, easing and extrapolation are shared across
 /// value types.
 pub fn eval<T: Interpolate>(kfs: &[Kf<T>], ex: Extrapolation, t_us: i64, default: T) -> T {
+    eval_precise(kfs, ex, t_us as f64, default)
+}
+
+pub fn eval_precise<T: Interpolate>(kfs: &[Kf<T>], ex: Extrapolation, t_us: f64, default: T) -> T {
     if kfs.is_empty() {
         return default;
     }
@@ -659,7 +665,7 @@ pub fn eval<T: Interpolate>(kfs: &[Kf<T>], ex: Extrapolation, t_us: i64, default
 /// The in-range evaluator: the end keys clamp (so a procedural segment's
 /// endpoint residue never surfaces AT a key), then the segment search and the
 /// left key's easing. Callers guarantee `kfs.len() >= 2`.
-fn eval_inside<T: Interpolate>(kfs: &[Kf<T>], t_us: i64) -> T {
+fn eval_inside<T: Interpolate>(kfs: &[Kf<T>], t_us: f64) -> T {
     let first = &kfs[0];
     let last = &kfs[kfs.len() - 1];
     if t_us <= first.t_us {
@@ -674,11 +680,11 @@ fn eval_inside<T: Interpolate>(kfs: &[Kf<T>], t_us: i64) -> T {
     }
     let a = &kfs[i];
     let b = &kfs[i + 1];
-    let span = (b.t_us - a.t_us) as f64;
+    let span = b.t_us - a.t_us;
     if span <= 0.0 {
         return b.value;
     }
-    let mut u = (t_us - a.t_us) as f64 / span;
+    let mut u = (t_us - a.t_us) / span;
     match a.segment {
         Segment::Hold => return a.value,
         Segment::Linear => {}
@@ -710,62 +716,49 @@ fn eval_inside<T: Interpolate>(kfs: &[Kf<T>], t_us: i64) -> T {
 /// `rem_euclid` (core, no_std-safe; euclid so a negative overhang counts
 /// periods the same way a positive one does), then re-enter `eval_inside`.
 /// A zero period (all keys on one time) clamps like `Hold`.
-fn extrapolate<T: Interpolate>(kfs: &[Kf<T>], mode: Extrapolate, t_us: i64, before: bool) -> T {
+fn extrapolate<T: Interpolate>(kfs: &[Kf<T>], mode: Extrapolate, t_us: f64, before: bool) -> T {
     let first = &kfs[0];
     let last = &kfs[kfs.len() - 1];
     let end = if before { first.value } else { last.value };
     let period = last.t_us - first.t_us;
-    if period <= 0 {
+    if period <= 0.0 {
         return end;
     }
     let rel = t_us - first.t_us;
-    let n = rel.div_euclid(period);
-    let u = rel.rem_euclid(period);
+    let n = libm::floor(rel / period);
+    let u = rel - n * period;
     match mode {
         Extrapolate::Hold => end,
         Extrapolate::Loop => eval_inside(kfs, first.t_us + u),
         Extrapolate::PingPong => {
-            if n.rem_euclid(2) == 1 {
+            if n - 2.0 * libm::floor(n / 2.0) == 1.0 {
                 eval_inside(kfs, last.t_us - u)
             } else {
                 eval_inside(kfs, first.t_us + u)
             }
         }
-        Extrapolate::Offset => T::offset(
-            eval_inside(kfs, first.t_us + u),
-            first.value,
-            last.value,
-            n as f64,
-        ),
+        Extrapolate::Offset => {
+            T::offset(eval_inside(kfs, first.t_us + u), first.value, last.value, n)
+        }
         Extrapolate::Continue => {
             if before {
                 let a = first;
                 let b = &kfs[1];
                 let dt = b.t_us - a.t_us;
-                if dt <= 0 {
+                if dt <= 0.0 {
                     return a.value;
                 }
                 let s = start_unit_slope(a, b);
-                T::offset(
-                    a.value,
-                    a.value,
-                    b.value,
-                    s * (t_us - a.t_us) as f64 / dt as f64,
-                )
+                T::offset(a.value, a.value, b.value, s * (t_us - a.t_us) / dt)
             } else {
                 let a = &kfs[kfs.len() - 2];
                 let b = last;
                 let dt = b.t_us - a.t_us;
-                if dt <= 0 {
+                if dt <= 0.0 {
                     return b.value;
                 }
                 let s = end_unit_slope(a, b);
-                T::offset(
-                    b.value,
-                    a.value,
-                    b.value,
-                    s * (t_us - b.t_us) as f64 / dt as f64,
-                )
+                T::offset(b.value, a.value, b.value, s * (t_us - b.t_us) / dt)
             }
         }
     }
@@ -1069,7 +1062,7 @@ mod tests {
     /// A key whose sides are the identity — what every non-Spline segment holds.
     fn kf(t_us: i64, value: f64, segment: Segment) -> Kf {
         Kf {
-            t_us,
+            t_us: t_us as f64,
             value,
             out: OUT_IDENTITY,
             in_: IN_IDENTITY,
@@ -1309,14 +1302,14 @@ mod tests {
         };
         let kfs = [
             Kf {
-                t_us: 0,
+                t_us: 0.0,
                 value: black,
                 out: OUT_IDENTITY,
                 in_: IN_IDENTITY,
                 segment: Segment::Linear,
             },
             Kf {
-                t_us: 1_000_000,
+                t_us: 1_000_000.0,
                 value: white,
                 out: OUT_IDENTITY,
                 in_: IN_IDENTITY,

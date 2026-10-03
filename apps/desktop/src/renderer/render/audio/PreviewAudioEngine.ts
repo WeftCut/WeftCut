@@ -1,3 +1,5 @@
+import { layerRateNumber } from '../../layerTiming';
+import type { AudioRole } from '../../ipc';
 // Session-owned transport and preview audio. No Pixi, React, DOM, or visual
 // readiness dependency. The independent timer replenishes Web Audio's sample-
 // accurate schedule; presentation only reads the clock and observes commands.
@@ -35,6 +37,7 @@ interface Entry {
   url: string | null;
   mixer: AudioMixer | null;
 }
+export interface PreparedAudioStem { role: AudioRole; url: string; duration_us: number }
 const PREPARE_US = 100_000;
 const START_LEAD_S = 0.01;
 const PREPARATION_TIMEOUT_MS = 10_000;
@@ -48,6 +51,11 @@ export class PreviewAudioEngine {
   private playableEndUs = 0;
   private entries = new Map<string, Entry>();
   private generation = 0;
+  private stemSignature = '';
+  private stems: PreparedAudioStem[] | null = null;
+  private stemAbort = new AbortController();
+  private stemPending: Promise<void> | null = null;
+  private stemError: unknown = null;
   private requestAbort = new AbortController();
   private disposed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -62,7 +70,8 @@ export class PreviewAudioEngine {
   private stopCommandMs: number | null = null;
 
   constructor(readonly graph: AudioGraph,
-    private readonly resolveSource: (layerId: string, mediaId: string) => string | null) {
+    private readonly resolveSource: (layerId: string, mediaId: string) => string | null,
+    private readonly prepareStems?: (compositionId: string, signal: AbortSignal) => Promise<PreparedAudioStem[]>) {
     this.clock.bindAudio(graph.ctx);
   }
 
@@ -119,7 +128,43 @@ export class PreviewAudioEngine {
     let changed = false;
     const roles = this.summary?.audio_roles ?? [];
     const solo = anyRoleSolo(roles);
-    if (this.summary && this.targetId) forEachLayer(this.summary, this.targetId, (placed) => {
+    const retimed = !!this.prepareStems && !!this.summary && Object.values(this.summary.compositions).some(c =>
+      c.tracks.some(t => t.layers.some(l => (l.params.kind === 'Audio' || l.params.kind === 'CompositionRef') &&
+        (layerRateNumber(l.params) !== 1 || l.params.source_phase !== undefined))));
+    if (retimed && this.summary && this.targetId) {
+      const audioSources: unknown[] = [];
+      forEachLayer(this.summary, this.targetId, ({ layer }) => { if (layer.params.kind === 'Audio') audioSources.push(this.resolveSource(layer.id, layer.params.media_id)); });
+      const sig = JSON.stringify([this.summary.compositions, this.summary.audio_roles, audioSources, this.targetId]);
+      if (sig !== this.stemSignature) {
+        this.stemSignature = sig; this.stemAbort.abort(); this.stemAbort = new AbortController();
+        this.stems = null; this.stemError = null;
+        const signal = this.stemAbort.signal;
+        this.stemPending = this.prepareStems!(this.targetId, signal).then(stems => {
+          if (signal.aborted || this.disposed) return;
+          this.stems = stems; this.refresh();
+        }).catch(error => {
+          if (signal.aborted || this.disposed) return;
+          this.stemError = error;
+          if (this.state.requestedPlaying) this.fail(this.generation, error);
+        });
+        if (this.state.requestedPlaying) { this.invalidate(); this.setState('preparing'); }
+      }
+      for (const stem of this.stems ?? []) {
+        if (!roleAudible(stem.role, roles, solo)) continue;
+        const key = 'retime:' + stem.role;
+        const gain = auditionedRoleGainLinear(stem.role, roles);
+        const view: AudioView = { media_id: key, media_label: key, src_in_us: 0, src_out_us: stem.duration_us,
+          gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: stem.role };
+        const signature = JSON.stringify([stem, gain]);
+        const previous = this.entries.get(key);
+        if (previous?.signature === signature) { next.set(key, previous); continue; }
+        previous?.mixer?.dispose(); changed = true;
+        next.set(key, { key, layerId: key, view, startUs: 0, endUs: stem.duration_us, gain, signature, url: stem.url, mixer: null });
+      }
+    } else {
+      if (this.stemSignature) { this.stemAbort.abort(); this.stemSignature = ''; this.stems = null; this.stemPending = null; this.stemError = null; }
+    }
+    if (!retimed && this.summary && this.targetId) forEachLayer(this.summary, this.targetId, (placed) => {
       const { layer } = placed;
       if (layer.params.kind !== "Audio" || layer.params.mute || !roleAudible(layer.params.role, roles, solo)) return;
       const key = instanceKey(placed.path, layer.id);
@@ -207,7 +252,7 @@ export class PreviewAudioEngine {
     this.setState("preparing");
     if (!this.current(generation)) return;
     const started = performance.now();
-    this.deadline = setTimeout(() => this.fail(generation, new Error("Audio preparation timed out")), PREPARATION_TIMEOUT_MS);
+    this.deadline = setTimeout(() => this.fail(generation, new Error("Audio preparation timed out")), this.stemSignature ? 300_000 : PREPARATION_TIMEOUT_MS);
     void this.prepareStart(generation).then(() => {
       if (!this.current(generation)) return;
       this.clearDeadline();
@@ -231,6 +276,10 @@ export class PreviewAudioEngine {
   }
 
   private async preparePcm(signal: AbortSignal): Promise<void> {
+    if (this.stemError) throw this.stemError;
+    if (this.stemPending && !this.stems) await this.stemPending;
+    signal.throwIfAborted();
+    if (this.stemError) throw this.stemError;
     const tUs = this.clock.rawPositionUs();
     // Conform generation may still be in progress. Stay explicitly preparing
     // until the store supplies its URL, the deadline expires, or the request

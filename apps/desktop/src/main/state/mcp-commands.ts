@@ -1,3 +1,5 @@
+import { validateTimeFraction } from '../../renderer/layerTiming'
+import { readExactTime } from '../../renderer/timeMapping'
 import { cropProblem } from '../../shared/crop'
 // apps/desktop/src/main/state/mcp-commands.ts
 // Pure MCP-tool adapter helpers: arg parsing (snake_case MCP vocab → internal
@@ -225,11 +227,12 @@ function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: s
       const k = raw as Record<string, unknown>
       if ('interp' in k)
         throw new McpArgError(`invalid track: keyframe carries the retired per-segment "interp" field — a key is ${KEY_SHAPE}; the easing of a segment is this key's segment + out and the next key's in`)
-      authoringFields(k, ['t_us', 'value', 'in', 'out', 'continuity', 'segment'], `keyframe[${i}]`)
+      authoringFields(k, ['t_us', 'time_fraction', 'value', 'in', 'out', 'continuity', 'segment'], `keyframe[${i}]`)
       if (!Number.isSafeInteger(k.t_us)) throw new McpArgError(`invalid track: keyframe t_us must be an integer number of microseconds`)
       const value = parseValue(k.value, `invalid track: keyframe[${i}].value`)
       return {
         id: idGen(), t_us: k.t_us as number, value,
+        ...(k.time_fraction === undefined ? {} : { time_fraction: parseTimeFraction(k.time_fraction) }),
         in: k.in === undefined ? { ...IN_IDENTITY, mode: 'Free' } : parseTangent(k.in, 'in'),
         out: k.out === undefined ? { ...OUT_IDENTITY, mode: 'Free' } : parseTangent(k.out, 'out'),
         continuity: k.continuity === undefined ? 'Broken' : parseContinuity(k.continuity, 'invalid track: keyframe continuity'),
@@ -318,7 +321,7 @@ type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<Lay
 const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true }),
-  VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, speed: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
+  VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
   ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true }),
   Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
@@ -723,6 +726,7 @@ export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unk
       const presetId = next === undefined ? undefined : presetIdForSegment(k, next)
       return {
         id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value,
+        ...(k.time_fraction === undefined ? {} : { time_fraction: k.time_fraction }),
         in: k.in, out: k.out, continuity: k.continuity, segment: k.segment,
         ...(presetId === undefined ? {} : { preset_id: presetId }),
       }
@@ -1018,6 +1022,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
   switch (e.error) {
     case 'ShiftLinkStraddles':
       return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Name the whole set with shift_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
+    case 'RetimeRejected': return { code: 'invalid_params', message: 'Time remapping was refused: ' + JSON.stringify(e.reason), data: { error: e.error, ...e.reason } }
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
     case 'LayerNotFound':
@@ -1268,6 +1273,7 @@ function animTrackSchema(value: Record<string, unknown>, staticTypes: string[], 
           type: 'object',
           properties: {
             t_us: US_SCHEMA('Key time; timeline-absolute for set_param_track, layer-local for set_position'), value,
+            time_fraction: { type: 'object', description: 'Optional exact sub-microsecond remainder; keeps retimed keys unsnapped.', properties: { num: { type: 'integer', description: '0 <= num < den.' }, den: { type: 'integer', description: 'Positive denominator; reduced fraction.' } }, required: ['num', 'den'], additionalProperties: false },
             in: { ...TANGENT_SCHEMA, description: 'Optional arriving tangent; defaults to identity, Free.' }, out: { ...TANGENT_SCHEMA, description: 'Optional leaving tangent; defaults to identity, Free.' },
             continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Defaults to Broken. Smooth keeps both Free sides at equal slopes on write.' },
             segment: { ...SEGMENT_SCHEMA, description: SEGMENT_SCHEMA.description + ' Defaults to Linear.' },
@@ -1387,7 +1393,6 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   rotation_deg: { type: 'number', description: 'Rotation, degrees clockwise.' },
   anchor_x: { type: 'number', description: 'Pivot x, fraction of the width (0.5 = centre).' },
   anchor_y: { type: 'number', description: 'Pivot y, fraction of the height (0.5 = centre).' },
-  speed: { type: 'number', description: 'Playback rate; 1 = normal.' },
   crop: { type: ['object', 'null'], description: 'Static retained source rectangle in normalized 0..1 coordinates, before transform. x/y are top-left; w/h positive, contained in source. Null resets. Does not change scale or position.', properties: { x: { type: 'number', minimum: 0, maximum: 1, description: 'Left.' }, y: { type: 'number', minimum: 0, maximum: 1, description: 'Top.' }, w: { type: 'number', exclusiveMinimum: 0, maximum: 1, description: 'Width.' }, h: { type: 'number', exclusiveMinimum: 0, maximum: 1, description: 'Height.' } }, required: ['x', 'y', 'w', 'h'], additionalProperties: false },
   flip_h: { type: 'boolean', description: 'Mirror horizontally.' },
   flip_v: { type: 'boolean', description: 'Mirror vertically.' },
@@ -1508,7 +1513,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`; its face is `font_family`, `font_weight` (100..900), `italic`, and `shadow` is a whole record or null. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. `rotation_deg` and the `anchor_x`/`anchor_y` pivot write STATIC values on every visual kind, like `x`/`y`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
+    description: "Patch static fields of one clip. Path mode rejects independent x/y writes. Text has no scale fields; resize its box. Animated fields become Static; use set_param_track for animation. Source edits trim content; retime_layers changes playback rate. Fields are kind-specific (schema variants). Returns the updated clip; locked clips and invalid values are refused.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
   { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,
@@ -1560,8 +1565,27 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         ...(hasTrack ? { anchor_track: parseUuid(a.anchor_track_id, 'anchor_track_id') } : { anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id') }),
         position: parseRestackPosition(a.position) } }
     } },
+  { name: 'get_frame_interpolation_capabilities', exec: 'table', annotations: ANN_READ,
+    description: 'Query Preview or Export interpolation support per clip, including refusal reasons for unavailable modes.',
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Explicit target clips'), purpose: { type: 'string', enum: ['Preview', 'Export'], description: 'Render purpose.' } }, required: ['layer_ids', 'purpose'] },
+    parseArgs: (a) => ({ op: 'get_frame_interpolation_capabilities', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), purpose: parseOneOf(a.purpose, ['Preview', 'Export'], 'purpose') } }) },
+  { name: 'retime_layers', exec: 'table', annotations: ANN_SET,
+    description: 'Retime exactly the selected clips, keeping their starts and source windows. Atomic; rejects collisions, illegal transitions and nested targets. Rate is absolute, positive and rational. Duration is in microseconds. Returns actual rates after grid snapping. Links do not expand the selection.',
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Explicit target clips'), target: { type: 'object', description: 'Absolute rate or duration.', oneOf: [
+      { type: 'object', properties: { kind: { type: 'string', const: 'Rate', description: 'Rate target.' }, value: { type: 'object', description: 'Reduced positive rational.', properties: { num: { type: 'integer', minimum: 1, description: 'Numerator.' }, den: { type: 'integer', minimum: 1, description: 'Denominator.' } }, required: ['num', 'den'], additionalProperties: false } }, required: ['kind', 'value'], additionalProperties: false },
+      { type: 'object', properties: { kind: { type: 'string', const: 'Duration', description: 'Duration target.' }, duration_us: { type: 'integer', minimum: 1, description: 'Target microseconds.' } }, required: ['kind', 'duration_us'], additionalProperties: false }
+    ] } }, required: ['layer_ids', 'target'] },
+    parseArgs: (a) => ({ op: 'retime_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), target: parseRetimeTarget(a.target) } }) },
+  { name: 'set_preserve_pitch', exec: 'table', annotations: ANN_SET,
+    description: 'Set the pitch policy for explicitly selected Audio or Group clips. Defaults to true.',
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Audio or Group clips'), preserve_pitch: { type: 'boolean', description: 'Keep pitch when changing duration.' } }, required: ['layer_ids', 'preserve_pitch'] },
+    parseArgs: (a) => ({ op: 'set_preserve_pitch', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), preserve_pitch: parseBool(a.preserve_pitch, 'preserve_pitch') } }) },
+  { name: 'set_frame_interpolation', exec: 'table', annotations: ANN_SET,
+    description: 'Choose temporal frame interpolation. Only FrameSampling is available; other modes are refused.',
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Visual clips'), interpolation: { type: 'object', description: 'Sampling configuration.', properties: { kind: { type: 'string', enum: ['FrameSampling', 'FrameBlending', 'OpticalFlow'], description: 'Temporal interpolation mode.' } }, required: ['kind'] } }, required: ['layer_ids', 'interpolation'] },
+    parseArgs: (a) => ({ op: 'set_frame_interpolation', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), interpolation: parseInterpolation(a.interpolation) } }) },
   { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
-    description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it unless `escape_link=true`. A target past the other edge or past the source (of any member) is refused naming the legal window, never clamped. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
+    description: "Trim an edge to new_t_us. Source time follows the clip rate; keyframes remain glued to content. Aligned linked edges follow unless escape_link. Refuses targets outside the legal source/timeline window. Returns committed spans, trimmed siblings and grid adjustments.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseOneOf(a.edge, ['in', 'out'], 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   // One delete tool over two actor ops: `ripple` is the whole difference between
@@ -1615,14 +1639,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } },
   // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────
   { name: 'create_group', exec: 'table', annotations: ANN_WRITE,
-    description: "Pre-compose: move one or more layers (all in one composition) into a NEW composition and place it back as a single Group layer at the set's earliest start, on the top-most lane the set occupied (or the nearest free lane above). The new composition copies the parent's settings; members' tracks map onto A roll, B roll, then fresh tracks so z-order survives, and time is rebased so the earliest member starts at 0. Never partial: a member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`), or a set spanning two compositions (`CrossCompositionSet`), refuses everything. Links fully inside move; a straddling link loses its inside members. Transitions between two members move; a straddling one is dropped. Markers stay. Returns `{ composition_id, layer_id, layer }`; one undo restores all.",
+    description: "Pre-compose selected clips into a new Group, preserving their placement and links. Refuses partial links, locked members and incompatible selections. Returns the Group clip and composition. Group members retain their own timing and effects.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to pre-compose; at least one, all in one composition.' },
       label: { type: 'string', description: 'Optional name for the new composition. Omit and the UI derives one.' },
     }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }) },
   { name: 'add_group_members', exec: 'table', annotations: ANN_WRITE,
-    description: "Move layers INTO the composition a Group layer already shows, keeping the screen position they had. `layer_ids` (one or more, all in one composition) and `group_layer_id` must be siblings; the Group's `params.composition` is the destination, and each member lands at `t_start_us − group.t_start_us + group.src_in_us`. Lane mapping, links, transitions, markers and the shared refusals are `move_layers_to_composition`'s, which this delegates to — call that directly when you know the destination composition and the time. Own refusals: the Group in another composition (`CrossCompositionSet`), not a Group (`WrongLayerKind`), a Group pointing at the root (`RootComposition`).",
+    description: "Move selected clips into an existing Group while preserving external placement. Requires Group rate 1 and compatible selection. Refuses partial links, locked members and cycles. Returns the resulting Group.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move in; at least one, all in one composition.' },
       group_layer_id: { type: 'string', description: 'The Group clip they move into — a `CompositionRef` layer in the SAME composition as the members.' },
@@ -1632,7 +1656,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       group_layer: parseUuid(a.group_layer_id, 'group_layer_id'),
     } }) },
   { name: 'move_layers_to_composition', exec: 'table', annotations: ANN_WRITE,
-    description: "Move layers out of their composition into another, landing at a time you name — the general cross-composition move (`add_group_members` is the keep-screen-position shortcut). `layer_ids`: one or more, all in one composition. `to_composition_id`: the destination (ids: `project://compositions`); the root is an ordinary destination. `anchor_layer_id` is the member that lands at `anchor_t_start_us`, absolute on the destination's clock; the others keep their offset from it. Lanes are assigned per SOURCE TRACK: `to_track_id` omitted bounces each block to the nearest free lane, `\"spawn\"` takes one fresh lane, a lane id lands every block there and REFUSES a locked or occupied one. Links and transitions fully inside move, straddling ones are cut; emptied source lanes are pruned, markers stay behind, both compositions autofit, no Group layer is retrimmed. Refuses whole, before any write: an empty set, an anchor outside the set, the current composition as destination, `CrossCompositionSet`, `TrackLocked` / `GroupLockedMember`, `CompositionCycle`, a member landing before time 0.",
+    description: "Move selected layers into another composition. The anchor lands at anchor_t_start_us; other members retain offsets. Lane assignment is per source track: omit to_track_id to find space, use spawn for fresh lanes, or name a free unlocked lane. Refuses mixed source compositions, locks, cycles, negative starts and membership changes involving retimed Groups. Internal links/transitions move; straddling ones are cut. Markers stay; compositions autofit; Group windows stay fixed.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move; at least one, all in one composition.' },
       to_composition_id: { type: 'string', description: 'The destination composition (`project://compositions`). The root is allowed — that is the move back out of a Group.' },
@@ -1962,7 +1986,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Cut at one or more times in ONE atomic edit/notification/undo. Returns {layer_ids,at_t_us} in time order (actual snapped cuts). Linked members split into separate links per segment; escape_link leaves new halves unlinked. Media speed=1.",
+    description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members form a separate link per segment unless escape_link. Returns layer_ids and actual at_t_us.",
     inputSchema: { type: 'object', properties: {
       at_t_us: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Interior timeline cuts, µs; snapped, sorted, deduplicated. Any invalid cut rejects all.' },
       escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA,
@@ -2157,11 +2181,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { media: parseUuid(a.media_id, 'media_id'), t_start_us: t, composition_id: parseCompositionIdOpt(a.composition_id) }
     } },
   { name: 'auto_split_by_shot', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Detect a VideoClip's shot cuts and split it at every in-window cut as ONE undoable step; returns `{ layer_ids }` in timeline order (the single unchanged id when there is no interior cut). `min_shot_us` (default 500000) is the minimum shot length; `drop_short=true` also deletes segments shorter than that, taking every overlapping member of the layer's link with them so no orphaned audio sliver is left. Reads the same cached shot report as `analyze_clip`, so boundaries agree; a convenience over `analyze_clip` + `split_layer`.",
+    description: "Split a VideoClip at cached analyze_clip shot cuts as one edit. min_shot_us defaults to 500000. drop_short deletes shorter shots and overlapping link members. Returns layer_ids in timeline order, or the original ID when no interior cut exists.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
   { name: 'remove_pauses', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Cut the pauses out of a clip's audio and CLOSE the gaps, as ONE recorded edit. A pause is a run whose peak stays under `threshold_amp` for at least `min_pause_us` (defaults as `detect_pauses`); `pad_us` (default 100000) of it stays on EACH side so speech keeps its breath, so the cut core is `[start + pad_us, end − pad_us)`; a pause touching the clip's edge is trimmed off whole. Pass an Audio layer, or a VideoClip, which delegates to the Audio layer of its link (refused when it plays no sound). Every other link member overlapping a removed core is cut in lockstep, and everything downstream shifts left on every track. Returns `{ surviving_layer_ids, removed, removed_us }`. Refuses whole, before any write, with `delete_layers { ripple: true }`'s refusals (`RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`), and with `InvalidArgument` when the cores cover the clip end to end (that is a delete). To review first, `detect_pauses` + one anchored region `add_marker` per pause (the `/cut-pauses` prompt).",
+    description: "Remove detected pauses and ripple downstream clips as one edit. Audio or VideoClip with linked audio. Defaults match detect_pauses; pad_us keeps 100000 µs on each side, while edge pauses trim entirely. Link members are cut together. Returns surviving_layer_ids, removed and removed_us. Refuses locks, ripple collisions, straddling links and an entirely silent clip. Review with detect_pauses and anchored markers first.",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'Target Audio layer id, or a VideoClip id that delegates to its linked Audio layer.' },
       threshold_amp: { type: 'number', description: "Peak amplitude threshold in [0.0, 1.0], the same parameter `detect_pauses` takes. Omit to use that tool's own default." },
@@ -2261,3 +2285,24 @@ export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>, idGen?
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Projection of MCP_TOOL_DEFS. */
 export const MCP_TOOLS: ReadonlySet<string> = new Set(MCP_TOOL_DEFS.map((d) => d.name))
+
+function parseRetimeTarget(value: unknown): import('../../shared/timeMapping').RetimeTarget {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new McpArgError('target must be Rate or Duration', 'target');
+  const t = value as Record<string, unknown>;
+  if (t.kind === 'Duration' && Number.isSafeInteger(t.duration_us) && (t.duration_us as number) > 0 && Object.keys(t).every(k => ['kind', 'duration_us'].includes(k))) return { kind: 'Duration', duration_us: t.duration_us as number };
+  if (t.kind === 'Rate' && t.value && typeof t.value === 'object' && Object.keys(t).every(k => ['kind', 'value'].includes(k))) {
+    const r = t.value as Record<string, unknown>;
+    if (Number.isSafeInteger(r.num) && Number.isSafeInteger(r.den) && (r.num as number) > 0 && (r.den as number) > 0 && Object.keys(r).every(k => ['num', 'den'].includes(k)))
+      return { kind: 'Rate', value: { num: r.num as number, den: r.den as number } };
+  }
+  throw new McpArgError('target requires a positive rational Rate or integer Duration', 'target');
+}
+function parseInterpolation(value: unknown): import('../../shared/timeMapping').FrameInterpolation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new McpArgError('interpolation requires kind', 'interpolation');
+  return { kind: parseOneOf((value as Record<string, unknown>).kind, ['FrameSampling', 'FrameBlending', 'OpticalFlow'] as const, 'kind') as import('../../shared/timeMapping').FrameInterpolation['kind'] };
+}
+
+function parseTimeFraction(v: unknown) {
+  try { const fraction = readExactTime(v); validateTimeFraction(fraction); return fraction; }
+  catch { throw new McpArgError('time_fraction must be a reduced fraction with 0 <= num < den', 'time_fraction'); }
+}

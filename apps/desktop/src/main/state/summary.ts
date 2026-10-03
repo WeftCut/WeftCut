@@ -1,3 +1,7 @@
+import { sourceIn, sourceOut } from '../../renderer/layerTiming'
+import { addTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
+import { layerRateNumber } from '../../renderer/layerTiming'
+import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop'
 import { positionView, type PositionAnimation } from '../../shared/position'
 // apps/desktop/src/main/state/summary.ts
@@ -8,13 +12,13 @@ import type { DecodeRoute } from '../../shared/decode-route'
 
 // ── per-kind view structs — the layer-params projection the renderer reads
 //    (renderer/ipc/index.ts declares the same shapes; keep the two in step) ──
-export interface VideoClipView {
+export interface VideoClipView extends TimingFields {
   kind: 'VideoClip'; media_id: string; media_label: string; src_in_us: number; src_out_us: number
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   crop: CropRect | null; speed: number; flip_h: boolean; flip_v: boolean; fade_in_us: number; fade_out_us: number
 }
-export interface ImageOverlayView {
+export interface ImageOverlayView extends TimingFields {
   kind: 'ImageOverlay'; media_id: string; media_label: string
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
@@ -32,11 +36,11 @@ export interface TextView {
   valign: VAlign; line_height: number; letter_spacing: number
 }
 export interface ColorView { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
-export interface AudioView {
+export interface AudioView extends TimingFields {
   kind: 'Audio'; media_id: string; media_label: string; src_in_us: number; src_out_us: number
   gain_db: Animated<number>; pan: Animated<number>; fade_in_us: number; fade_out_us: number; mute: boolean; role: string
 }
-export interface MotifView {
+export interface MotifView extends TimingFields {
   kind: 'Motif'; motif_id: string
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
@@ -44,7 +48,7 @@ export interface MotifView {
 }
 /** A Group layer's projection. `composition_label` is the referenced
  *  composition's own label (null → the renderer derives "Group N"). */
-export interface CompositionRefView {
+export interface CompositionRefView extends TimingFields {
   kind: 'CompositionRef'; composition_id: string; composition_label: string | null
   src_in_us: number; src_out_us: number
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
@@ -140,7 +144,8 @@ export function markerHibernating(c: Composition, m: Marker): boolean {
   if (m.anchor === null) return false
   const layer = anchorLayer(c, m.anchor)
   if (layer === undefined || !hasSourceWindow(layer.params)) return true
-  return m.anchor.src_us < layer.params.src_in_us || m.anchor.src_us >= layer.params.src_out_us
+  const time = addTime(exactTime(m.anchor.src_us), m.anchor.src_fraction ?? ZERO_TIME)
+  return compareTime(time, sourceIn(layer.params)) < 0 || compareTime(time, sourceOut(layer)) >= 0
 }
 
 /** The layer of `c` an anchor names, or `undefined` when it lives elsewhere or
@@ -202,15 +207,15 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
   switch (params.kind) {
     case 'VideoClip': {
       const t = params.transform
-      return { kind: 'VideoClip', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
+      return { ...timingView(params), kind: 'VideoClip', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         src_in_us: params.src_in_us, src_out_us: params.src_out_us, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
-        crop: params.crop ?? null, opacity: params.opacity, speed: params.speed, flip_h: params.flip_h, flip_v: params.flip_v,
+        crop: params.crop ?? null, opacity: params.opacity, speed: layerRateNumber(params), flip_h: params.flip_h, flip_v: params.flip_v,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
     }
     case 'ImageOverlay': {
       const t = params.transform
-      return { kind: 'ImageOverlay', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
+      return { ...timingView(params), kind: 'ImageOverlay', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
@@ -228,18 +233,18 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
     case 'Color':
       return { kind: 'Color', color: params.color, width: params.width, height: params.height }
     case 'Audio':
-      return { kind: 'Audio', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
+      return { ...timingView(params), kind: 'Audio', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         src_in_us: params.src_in_us, src_out_us: params.src_out_us, gain_db: params.gain_db, pan: params.pan,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us, mute: params.mute, role: params.role }
     case 'Motif': {
       const t = params.transform
-      return { kind: 'Motif', motif_id: params.motif_id, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
+      return { ...timingView(params), kind: 'Motif', motif_id: params.motif_id, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
     }
     case 'CompositionRef': {
       const t = params.transform
-      return { kind: 'CompositionRef', composition_id: params.composition, composition_label: compositions[params.composition]?.label ?? null,
+      return { ...timingView(params), kind: 'CompositionRef', composition_id: params.composition, composition_label: compositions[params.composition]?.label ?? null,
         src_in_us: params.src_in_us, src_out_us: params.src_out_us,
         ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y }
@@ -446,4 +451,8 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   }
   if (history.lock_reason !== undefined) view.history.lock_reason = history.lock_reason
   return view
+}
+
+function timingView(p: TimingFields): TimingFields {
+  return { ...(p.time_map ? { time_map: p.time_map } : {}), ...(p.source_phase ? { source_phase: p.source_phase } : {}), ...(p.content_window ? { content_window: p.content_window } : {}), ...(p.fade_phase ? { fade_phase: p.fade_phase } : {}), ...(p.preserve_pitch !== undefined ? { preserve_pitch: p.preserve_pitch } : {}), ...(p.frame_interpolation ? { frame_interpolation: p.frame_interpolation } : {}) };
 }

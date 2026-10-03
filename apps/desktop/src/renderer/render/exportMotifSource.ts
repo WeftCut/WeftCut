@@ -20,7 +20,7 @@ export function planExportMotifFrame(
   const t = snapFrameFloor(tUs, comp.fps_num, comp.fps_den);
   return motifLayersToBake(summary, t, t + 1, comp.fps_num, comp.fps_den).map(spec => {
     const desc = motifFrameDescriptor(spec.view,
-      tInLayerUsForLayerLocalFrame(spec.firstFrame, spec.tStartUs, comp.fps_num, comp.fps_den),
+      spec.sampleLocalUs ?? tInLayerUsForLayerLocalFrame(spec.firstFrame, spec.tStartUs, comp.fps_num, comp.fps_den),
       spec.durationUs, comp.fps_num, comp.fps_den, spec.motif)!;
     return {
       layerId: spec.layerId, frame: spec.firstFrame,

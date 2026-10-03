@@ -1,3 +1,5 @@
+import { sourceOut, layerRateNumber } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeftRight } from "lucide-react";
@@ -125,9 +127,9 @@ export function TransitionChip({
       const bEndUs = chip.toLayer.t_end_us;
       const tailUs = transitionTailHandleUs(
         fromParams.kind,
-        isMediaBearing ? fromParams.src_out_us : 0,
+        isMediaBearing ? approximateTime(sourceOut(chip.fromLayer)) : 0,
         fromMedia?.duration_us,
-      );
+      ) / layerRateNumber(fromParams);
       const initialUs = edge === "left" ? bStartUs : aEndUs;
       let lastUs = initialUs;
       const onMove = (me: PointerEvent) => {

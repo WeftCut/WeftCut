@@ -1,3 +1,4 @@
+import { layerRateNumber } from '../../../renderer/layerTiming'
 // apps/desktop/src/main/state/mutations/groups.ts
 // Pre-compose, add-to-Group and ungroup — three of the four mutations that move
 // layers BETWEEN compositions (every other op is scoped to one; ADR 0052, spec
@@ -156,6 +157,7 @@ export function applyGroupsAddMembers(p: Project, idGen: IdGen, layerIds: readon
     throw new CommandFailure({ error: 'CrossCompositionSet', layer: groupLayerId, composition: ref.comp.id, expected: parent.id })
   const gp = ref.layer.params
   if (gp.kind !== 'CompositionRef') throw new CommandFailure({ error: 'WrongLayerKind', layer: groupLayerId, expected: 'CompositionRef' })
+  if (layerRateNumber(gp) !== 1) throw new CommandFailure({ error: 'InvalidArgument', field: 'group_layer', detail: 'Reset the Group rate to 1 before adding members' })
   // Nothing may contain the timeline export renders. A `CompositionRef` at the
   // root is already `RootReferenced`, so this is that wall said at the gesture —
   // and it is about the CLIP, not about the crossing: the root is an ordinary
@@ -215,6 +217,7 @@ export function applyGroupsUngroup(p: Project, idGen: IdGen, layerId: Uuid): voi
   if (ref.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: ref.track.id })
   const pa = ref.layer.params
   if (pa.kind !== 'CompositionRef') throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'CompositionRef' })
+  if (layerRateNumber(pa) !== 1) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer', detail: 'Reset the Group rate to 1 before ungrouping' })
   const reason = groupNotPlainReason(ref.layer)
   if (reason !== null) throw new CommandFailure({ error: 'GroupNotPlain', layer: layerId, reason })
   const parent = ref.comp

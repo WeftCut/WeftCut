@@ -145,6 +145,7 @@ type Spec<E> =
     };
 
 const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
+  RetimeRejected: { tier: "curated", key: "retime.refused", args: (e, ctx) => ({ reason: ctx.t(`retime.conflicts.${String(e.reason.kind)}`) }) },
   TrackNotFound: { tier: "generic" },
   LayerNotFound: { tier: "generic" },
   CompositionNotFound: { tier: "generic" },

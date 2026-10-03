@@ -134,6 +134,10 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId,
     ...(a.anchorLayerId === undefined ? {} : { anchor: a.anchorLayerId }),
     ...(a.anchorTrackId === undefined ? {} : { anchor_track: a.anchorTrackId }), position: a.position } }),
+  retime_layers: (a) => ({ op: 'retime_layers', args: { layers: a.layerIds, target: a.target } }),
+  set_preserve_pitch: (a) => ({ op: 'set_preserve_pitch', args: { layers: a.layerIds, preserve_pitch: a.preservePitch } }),
+  set_frame_interpolation: (a) => ({ op: 'set_frame_interpolation', args: { layers: a.layerIds, interpolation: a.interpolation } }),
+  get_frame_interpolation_capabilities: (a) => ({ op: 'get_frame_interpolation_capabilities', args: { layers: a.layerIds, purpose: a.purpose } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_link: a.escapeLink ?? false } }),
   // The selection's delete — a set in, one undo entry out. Same rename as
   // move_layers_to_new_track's, which takes the selection the same way.
@@ -242,6 +246,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
 
 /** All production channels this adapter handles (mechanical + rich + meta). */
 export const PRODUCTION_OPS = new Set<string>([
+  'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
   'add_track', 'update_layer',
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',

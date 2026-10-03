@@ -71,6 +71,32 @@ export const STEPS: readonly MigrationStep[] = [{
       }
     }
   },
+}, {
+  from: 2,
+  apply(wire) {
+    const compositions = wire.compositions as Record<string, { tracks?: unknown }> | undefined
+    if (!compositions || typeof compositions !== 'object') return
+    for (const composition of Object.values(compositions)) {
+      if (!Array.isArray(composition?.tracks)) continue
+      for (const track of composition.tracks) {
+        if (!Array.isArray(track?.layers)) continue
+        for (const layer of track.layers) {
+          const params = layer?.params
+          if (!params || !['VideoClip', 'Audio', 'ImageOverlay', 'Motif', 'CompositionRef'].includes(params.kind)) continue
+          // Old VideoClip.speed was inert. Do NOT recurse into Motif props or
+          // preserve the old number as a second, accidentally live rate.
+          if (params.kind === 'VideoClip') delete params.speed
+          params.time_map = { kind: 'Affine', rate: { num: 1, den: 1 } }
+          params.frame_interpolation = { kind: 'FrameSampling' }
+          if (params.kind === 'Audio' || params.kind === 'CompositionRef') params.preserve_pitch = true
+          if (params.kind === 'ImageOverlay' || params.kind === 'Motif') {
+            const start = params.kind === 'Motif' ? (params.src_in_us ?? 0) : 0
+            params.content_window = { in_us: start, out_us: start + layer.t_end_us - layer.t_start_us }
+          }
+        }
+      }
+    }
+  },
 }]
 
 export interface UpgradeOutcome {

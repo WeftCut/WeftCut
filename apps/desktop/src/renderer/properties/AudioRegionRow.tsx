@@ -1,3 +1,5 @@
+import { sourceIn, sourceOut } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 // The noise-profile sample region on a denoise card: the two bounds as source
 // seconds, the arm button for the drag that paints them, and the one line that
 // says why nothing is baking.
@@ -55,8 +57,8 @@ function storedBound(track: AnimTrack<number> | undefined): number | null {
 /// can introduce after the fact (the bake itself stays valid — bounds are source
 /// time precisely so trim never invalidates it, spec Decision 3).
 function sourceSpan(layer: LayerSummary): { startUs: number; endUs: number } {
-  const startUs = "src_in_us" in layer.params ? layer.params.src_in_us : 0;
-  return { startUs, endUs: startUs + (layer.t_end_us - layer.t_start_us) };
+  const startUs = approximateTime(sourceIn(layer.params));
+  return { startUs, endUs: approximateTime(sourceOut(layer)) };
 }
 
 export function AudioRegionRow({

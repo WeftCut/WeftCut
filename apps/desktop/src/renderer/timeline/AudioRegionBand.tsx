@@ -1,3 +1,5 @@
+import { sourceIn, layerRateNumber } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 // The noise-profile sample region drawn on its clip: a translucent band between
 // the effect's two stored bounds, with an edge handle at each end. Visible only
 // while the card that owns the region is on screen and expanded (spec
@@ -92,7 +94,7 @@ export function AudioRegionBand({
     // Drawn edges clipped to the clip's window: the part outside it is audio
     // this clip does not play. Each handle stays on its clipped edge, which is
     // how a bound a trim pushed out gets dragged back in.
-    const map = { tStartUs: layer.t_start_us, srcInUs: sourceHeadUs(layer) };
+    const map = { tStartUs: layer.t_start_us, srcInUs: sourceHeadUs(layer), rate: layerRateNumber(layer.params) };
     return {
       inUs: compUsFromSourceUs(Math.max(inUs, visibleLoUs), map),
       outUs: compUsFromSourceUs(Math.min(outUs, visibleHiUs), map),
@@ -131,5 +133,5 @@ export function AudioRegionBand({
 /// The clip's head in source time, asked kind-agnostically: every kind that can
 /// carry an audio effect windows its media the same way.
 function sourceHeadUs(layer: LayerSummary): number {
-  return "src_in_us" in layer.params ? layer.params.src_in_us : 0;
+  return approximateTime(sourceIn(layer.params));
 }

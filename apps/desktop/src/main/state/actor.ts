@@ -1,3 +1,5 @@
+import { applyRetimeLayers, applyPreservePitch, applyFrameInterpolation, interpolationCapabilities } from './mutations/retime'
+import type { RetimeTarget, FrameInterpolation } from '../../shared/timeMapping'
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
 import { assertLockedLayersUnchanged } from './layerLocks'
@@ -994,6 +996,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
               : applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
           return { ok: true, value: null }
         }
+        case 'retime_layers': {
+          const value = commit(HISTORY_SUMMARY.layerUpdateParams, (a.layers as Uuid[]).flatMap(layerRef), { kind: 'Coarse' },
+            (d) => applyRetimeLayers(d, a.layers as Uuid[], a.target as RetimeTarget));
+          return { ok: true, value }
+        }
+        case 'set_preserve_pitch':
+          commit(HISTORY_SUMMARY.layerUpdateParams, (a.layers as Uuid[]).flatMap(layerRef), { kind: 'Coarse' },
+            (d) => applyPreservePitch(d, a.layers as Uuid[], a.preserve_pitch as boolean));
+          return { ok: true, value: null }
+        case 'set_frame_interpolation': {
+          const value = commit(HISTORY_SUMMARY.layerUpdateParams, (a.layers as Uuid[]).flatMap(layerRef), { kind: 'Coarse' },
+            (d) => applyFrameInterpolation(d, a.layers as Uuid[], a.interpolation as FrameInterpolation));
+          return { ok: true, value }
+        }
+        case 'get_frame_interpolation_capabilities':
+          return { ok: true, value: interpolationCapabilities(current(), a.layers as Uuid[], a.purpose as 'Preview' | 'Export') }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // The SELECTION's delete, and the marquee's headline gesture: N swept
         // clips must cost ONE undo entry, which is why there is no singular

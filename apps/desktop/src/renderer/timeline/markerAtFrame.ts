@@ -1,3 +1,5 @@
+import { contentAt, splitExact } from '../layerTiming';
+import { exactTime } from '../timeMapping';
 import { displayedFrameStartUs, frameIndexCeil, snapFrameCeil, timeUsAtFrame } from "../frames";
 import type {
   CompositionSummary,
@@ -60,7 +62,8 @@ export function markerAnchorFor(
       ) {
         return null;
       }
-      return { layer: layerId, src_us: tUs - layer.t_start_us + p.src_in_us };
+      const time = splitExact(contentAt(p, exactTime(tUs - layer.t_start_us)));
+      return { layer: layerId, src_us: time.whole, ...(time.fraction.num ? { src_fraction: time.fraction } : {}) };
     }
   }
   return null;

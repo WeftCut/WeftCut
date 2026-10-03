@@ -1,3 +1,4 @@
+import { RetimeFields } from './RetimeFields';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Lock, LockOpen, Power, Tag } from "lucide-react";
@@ -289,7 +290,7 @@ function CompositionPanel({
             {`${composition.width} × ${composition.height}`}
           </span>
         </Field>
-        <Field label={t("property_panel.duration")}>
+        <Field label={t("property_panel.duration")} hint={t("retime.trim_hint")}>
           <span className="font-mono text-xs text-muted-foreground">
             {formatTimecode(composition.duration_us, fpsNum, fpsDen)}
           </span>
@@ -435,9 +436,7 @@ function LayerPanel({
             />
           )}
         </Field>
-        {layer.params.kind === "VideoClip" ? (
-          <VideoSpeedField layer={layer} v={layer.params} commit={commitLayerParams(layer.id, onMutated)} />
-        ) : null}
+        <RetimeFields layer={layer} disabled={env.timingDisabled} onMutated={onMutated} />
         <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
           {env.isAudio && env.units !== "frames" ? (
             <AppInput
@@ -1158,42 +1157,6 @@ function TextFields({
         )}
       </PropSection>
     </PropSection>
-  );
-}
-
-function VideoSpeedField({
-  layer,
-  v,
-  commit,
-}: {
-  layer: LayerSummary;
-  v: Extract<LayerSummary["params"], { kind: "VideoClip" }>;
-  commit: Commit;
-}) {
-  const { t } = useTranslation();
-  const [speed, setSpeed] = useState(v.speed);
-  // While the speed field is being edited, suppress the prop→local resync so a
-  // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
-  const editingSpeed = useRef(false);
-  useEffect(() => {
-    if (editingSpeed.current) return;
-    setSpeed(v.speed);
-  }, [layer.id, v]);
-
-  return (
-    <Field label={t("property_panel.speed")}>
-      <AppNumberField
-        step={0.05}
-        min={0.1}
-        max={4}
-        value={speed}
-        ariaLabel={t("property_panel.speed")}
-        onValueChange={setSpeed}
-        onCommit={(v) => commit({ kind: "VideoClip", speed: v })}
-        onFocus={() => { editingSpeed.current = true; }}
-        onBlur={() => { editingSpeed.current = false; }}
-      />
-    </Field>
   );
 }
 

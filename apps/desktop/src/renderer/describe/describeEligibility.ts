@@ -46,7 +46,6 @@ export type DescribeState =
   | "describe"
   | "needs_selection"
   | "needs_video_kind"
-  | "speed_not_one"
   | "already_running";
 
 /// The order of the checks is the order the instructions get harder: select
@@ -66,10 +65,6 @@ export function describeState(
   // `describe_clip` takes a VideoClip and nothing else — an Image or a Motif
   // has no frame stream to sample, and Rust refuses each by kind.
   if (params.kind !== "VideoClip") return "needs_video_kind";
-  // The gesture-side half of the tool's own refusal: sampling maps window time
-  // onto source time by one addition with no speed factor, so a re-timed clip's
-  // segments would be timestamped at source times its frames never show.
-  if (params.speed !== 1) return "speed_not_one";
   if (inFlight) return "already_running";
   return "describe";
 }

@@ -757,6 +757,7 @@ interface StagedClip {
   /// to compute srcAUs/srcBUs; we keep the raw inputs so the
   /// encode loop can compute the per-frame srcPts itself.
   srcInUs: number;
+  rate?: number;
 }
 
 /// One decode pipeline's per-chunk work: the clips that share an
@@ -797,7 +798,7 @@ function groupStagedClips(clips: StagedClip[]): Map<string, StagedGroup> {
 /// active at tUs (tStartUs <= tUs < tEndUs) — outside that range
 /// the value is meaningless.
 function clipSrcPtsAt(c: StagedClip, tUs: number): number {
-  return c.srcInUs + (tUs - c.tStartUs);
+  return c.srcInUs + (tUs - c.tStartUs) * (c.rate ?? 1);
 }
 
 /// Collect every VideoClip live in [chunkStartUs, chunkEndUs] and translate
@@ -815,12 +816,13 @@ function activeVideoClips(
     return {
       layerId: l.layerId,
       mediaId: l.mediaId,
-      key: exportHandleKey(l.mediaId, l.srcInUs, l.tStartUs),
-      srcAUs: l.srcInUs + (overlapStartUs - l.tStartUs),
-      srcBUs: l.srcInUs + (overlapEndUs - l.tStartUs),
+      key: exportHandleKey(l.mediaId, l.srcInUs, l.tStartUs, l.rate),
+      srcAUs: l.srcInUs + (overlapStartUs - l.tStartUs) * (l.rate ?? 1),
+      srcBUs: l.srcInUs + (overlapEndUs - l.tStartUs) * (l.rate ?? 1),
       tStartUs: l.tStartUs,
       tEndUs: l.tEndUs,
       srcInUs: l.srcInUs,
+      rate: l.rate ?? 1,
     };
   });
 }

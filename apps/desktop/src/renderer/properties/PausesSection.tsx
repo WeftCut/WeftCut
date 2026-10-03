@@ -1,3 +1,4 @@
+import { layerRateNumber } from '../layerTiming';
 // The Pauses section of the Attribute Panel: measure one clip's pauses against
 // a live threshold, hear what a removal would sound like, then mark them or cut
 // them.
@@ -202,7 +203,7 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
     const live = s.layerById.get(subjectId);
     if (!live) return "";
     const p = live.params;
-    const src = p.kind === "Audio" ? `${p.src_in_us}:${p.src_out_us}` : "";
+    const src = p.kind === "Audio" ? `${p.src_in_us}:${p.src_out_us}:${JSON.stringify(p.time_map)}:${JSON.stringify(p.source_phase)}` : "";
     return `${live.t_start_us}:${live.t_end_us}:${src}`;
   });
 
@@ -398,13 +399,14 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
     }
     const url = subjectConformUrl(subject);
     if (url === null) return;
+    const retimed = layerRateNumber(subject.params) !== 1 || ('source_phase' in subject.params && subject.params.source_phase !== undefined);
     const plan = planAudition(
       pauses,
       padUs,
       {
         tStartUs: subject.t_start_us,
         tEndUs: subject.t_end_us,
-        srcInUs: subject.params.kind === "Audio" ? subject.params.src_in_us : 0,
+        srcInUs: !retimed && subject.params.kind === "Audio" ? subject.params.src_in_us : 0,
       },
       playheadTimeUs(),
     );
@@ -412,6 +414,7 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
     setAuditionJoins(plan.joins);
     audition.current = startAudition({
       url,
+      ...(retimed ? { retimedLayerId: subject.id } : {}),
       segments: plan.segments,
       onEnded: stopAudition,
       onFailed: (err) => setError(refusalText(err)),

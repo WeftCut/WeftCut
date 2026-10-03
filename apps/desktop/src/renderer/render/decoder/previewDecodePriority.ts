@@ -1,3 +1,5 @@
+import { contentAtUs } from '../../layerTiming';
+import { approximateTime } from '../../timeMapping';
 import type { CompositionSummary, LayerSummary, ProjectSummary } from "../../ipc";
 import { forEachLayerInTime, instanceKey } from "../compositionWalk";
 import { swapKeys } from "../swapKeys";
@@ -40,10 +42,10 @@ export function planPreviewDecodePriority(
   const future: PreviewDecodeTarget[] = [];
   const horizonEndUs = tUs + windowUs;
 
-  const add = (layer: LayerSummary, path: string, start: number, end: number, headUs: number): void => {
+  const add = (layer: LayerSummary, path: string, start: number, end: number, headUs: number, rate = 1): void => {
     if (layer.params.kind !== "VideoClip" || start >= end) return;
     const target = { layer, path, key: instanceKey(path, layer.id), tStartUs: start, tEndUs: end,
-      sourceUs: layer.params.src_in_us + headUs + Math.max(0, tUs - start) };
+      sourceUs: contentAtUs(layer.params, headUs + Math.max(0, tUs - start) * rate) };
     if (start <= tUs && tUs < end) active.push(target);
     else if (start > tUs && start <= horizonEndUs) {
       future.push(target);
@@ -57,7 +59,7 @@ export function planPreviewDecodePriority(
     // The same placement walk as export/motifs: trim through every enclosing
     // Group, protect instance keys, and warm the source time actually visible.
     forEachLayerInTime(summary, composition.id, tUs, horizonEndUs + 1, 0,
-      p => add(p.layer, p.path, p.tStartUs, p.tEndUs, p.headUs));
+      p => add(p.layer, p.path, p.tStartUs, p.tEndUs, p.headUs, p.clock ? approximateTime(p.clock.rate) : 1));
   } else {
     for (const track of composition.tracks) {
       if (!track.enabled) continue;

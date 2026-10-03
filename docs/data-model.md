@@ -1563,3 +1563,11 @@ that every fixture still upgrades and passes `parseProject` + `validate`.
 7. **Motif raster invalidation.** Patch `MotifParams.props`
    field-wise rather than replacing whole `params` — otherwise the
    raster cache thrashes on every prop tweak.
+
+## Time remapping (schema 3)
+
+Temporal clips carry an optional `time_map: {kind:"Affine",rate:{num,den}}`; absence means identity for new in-memory constructors. Wire rationals are reduced safe integers with positive denominators. `src_in_us/src_out_us` plus optional proper `source_phase.in/out` remainders form one exact source window. Animated images and Motifs use an unwrapped `content_window`; image looping occurs only at frame sampling.
+
+Own keyframes use integer `t_us` plus optional `time_fraction`. Exact keys are never resnapped or merged during normalization. Retiming scales own keyframe times and fades (`fade_phase` retains fractions), including effect animation. Group child state is untouched. Composition clocks compose rational origins and rates; only the final sample/display boundary is quantized. Non-unit Group membership changes and ungrouping are refused.
+
+Schema 2→3 resets inert VideoClip.speed to identity by removing speed and writing time_map, sets FrameSampling, and enables preserve_pitch for Audio and Group. Motif props.speed remains application content.

@@ -98,6 +98,7 @@ export type ValidationError =
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──
 export type CommandError =
+  | { error: 'RetimeRejected'; reason: Record<string, unknown> }
   | { error: 'TrackNotFound'; track: Uuid }
   | { error: 'LayerNotFound'; layer: Uuid }
   | { error: 'LayerLocked'; layer: Uuid }

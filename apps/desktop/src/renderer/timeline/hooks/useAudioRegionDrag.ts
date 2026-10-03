@@ -38,6 +38,7 @@ export interface RegionDragContext {
   /// The clip's head in SOURCE time — the offset that turns a dragged
   /// composition time into the bound that gets stored (spec Decision 3).
   srcInUs: number;
+  rate?: number;
   pxPerSec: number;
   /// The block's left edge in the same coordinates the press reports, which for
   /// a pointer event is the client rect's.
@@ -82,6 +83,7 @@ interface RegionGestureBase {
   tStartUs: number;
   tEndUs: number;
   srcInUs: number;
+  rate?: number;
   px: RegionPxContext;
   effectId: string;
   inKey: string;
@@ -217,6 +219,7 @@ export function useAudioRegionDrag(): {
           tStartUs: ctx.tStartUs,
           tEndUs: ctx.tEndUs,
           srcInUs: ctx.srcInUs,
+          rate: ctx.rate ?? 1,
           px,
           effectId: armed.effectId,
           inKey: armed.inKey,
@@ -254,6 +257,7 @@ export function useAudioRegionDrag(): {
           tStartUs: ctx.tStartUs,
           tEndUs: ctx.tEndUs,
           srcInUs: ctx.srcInUs,
+          rate: ctx.rate ?? 1,
           px,
           effectId: ctx.effectId,
           inKey: ctx.inKey,
@@ -357,7 +361,7 @@ function releaseCommit(
   clientX: number,
 ): { span: RegionSpan; entries: [string, AnimTrack<number>][] } | null {
   const { base } = gesture;
-  const map = { tStartUs: base.tStartUs, srcInUs: base.srcInUs };
+  const map = { tStartUs: base.tStartUs, srcInUs: base.srcInUs, rate: base.rate ?? 1 };
   if (gesture.kind === "region") {
     const span = resolveRegionDrag({
       pressUs: gesture.pressUs,

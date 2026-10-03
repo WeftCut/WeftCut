@@ -1,3 +1,5 @@
+import { sourceIn, sourceOut, layerRate, layerRateNumber, writeSourceWindow } from '../../../renderer/layerTiming'
+import { approximateTime, exactTime, subtractTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
 import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
@@ -24,7 +26,7 @@ import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../.
  *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
   | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
-  | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
+  | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
@@ -267,9 +269,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       // Another shape predicate: speed scales a duration, so zero is a division
       // by zero downstream and negative is not "backwards", it is a negative
       // span. No upper bound — a 50× ramp is a legitimate effect.
-      if (patch.speed !== undefined && !(Number.isFinite(patch.speed) && patch.speed > 0)) {
+      if ('speed' in patch) {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'speed',
-          detail: `speed must be a positive multiplier (1 = unchanged) — got ${patch.speed}` })
+          detail: 'Use retime_layers to change playback rate' })
       }
       if (patch.src_in_us !== undefined) v.src_in_us = patch.src_in_us
       if (patch.src_out_us !== undefined) v.src_out_us = patch.src_out_us
@@ -282,7 +284,6 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.anchor_x !== undefined) v.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) v.transform.anchor_y = stat(a.anchor_y)
       if (patch.crop !== undefined) v.crop = canonicalCrop(patch.crop)
-      if (patch.speed !== undefined) v.speed = patch.speed
       if (patch.flip_h !== undefined) v.flip_h = patch.flip_h
       if (patch.flip_v !== undefined) v.flip_v = patch.flip_v
       if (patch.fade_in_us !== undefined) v.fade_in_us = patch.fade_in_us
@@ -315,7 +316,10 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.rotation_deg !== undefined) m.transform.rotation_deg = stat(a.rotation_deg)
       if (a.anchor_x !== undefined) m.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) m.transform.anchor_y = stat(a.anchor_y)
-      if (patch.src_in_us !== undefined) m.src_in_us = patch.src_in_us
+      if (patch.src_in_us !== undefined) {
+        const span = subtractTime(sourceOut(layer), sourceIn(m));
+        writeSourceWindow(m, exactTime(patch.src_in_us), addTime(exactTime(patch.src_in_us), span));
+      }
       // A rebind starts the props over (the caller's, canonicalised upstream
       // when the manifest is known): the old motif's props are not the new one's.
       if (patch.motif_id !== undefined && patch.motif_id !== m.motif_id) { m.motif_id = patch.motif_id; m.props = {} }
@@ -391,6 +395,13 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
   const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked
+  if (layer.params.kind !== 'Color' && layer.params.kind !== 'Text') {
+    const pa = layer.params;
+    if (pa.source_phase && 'src_in_us' in patch && patch.src_in_us !== undefined) pa.source_phase.in = { num: 0, den: 1 };
+    if (pa.source_phase && 'src_out_us' in patch && patch.src_out_us !== undefined) pa.source_phase.out = { num: 0, den: 1 };
+    if (pa.fade_phase && 'fade_in_us' in patch && patch.fade_in_us !== undefined) pa.fade_phase.in = { num: 0, den: 1 };
+    if (pa.fade_phase && 'fade_out_us' in patch && patch.fade_out_us !== undefined) pa.fade_phase.out = { num: 0, den: 1 };
+  }
   // A Motif's props are checked against its manifest BEFORE the merge, the
   // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
@@ -432,8 +443,9 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
 
     const tStart = layer.t_start_us
     const tEnd = layer.t_end_us
-    const srcIn = params.src_in_us
-    const width = tEnd - tStart
+    const srcIn = approximateTime(sourceIn(params))
+    const rate = layerRateNumber(params)
+    const width = (tEnd - tStart) * rate
 
     if (srcIn + width <= contentDur) return // grow / within content → no geometry change
 
@@ -443,14 +455,14 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
     const fps = c.fps
     const newSrcIn = snapFrameFloor(Math.min(srcIn, maxSrcIn), fps.num, fps.den)
     // Largest grid t_end whose derived src_out stays <= contentDur.
-    const cappedEnd = snapFrameFloor(tStart + (contentDur - newSrcIn), fps.num, fps.den)
+    const cappedEnd = snapFrameFloor(tStart + (contentDur - newSrcIn) / rate, fps.num, fps.den)
     // Never collapse to zero-width (guards degenerate contentDur <= 0). The floor
     // is ONE FRAME, not one µs: `tStart + 1` is off-grid, and validate's grid
     // backstop would reject the whole commit — turning a silent 1 µs sliver into
     // a failed edit whenever a motif's remaining content is under one frame.
     const newTEnd = Math.max(cappedEnd, snapFrameCeil(tStart + 1, fps.num, fps.den))
 
-    params.src_in_us = newSrcIn
+    writeSourceWindow(params, exactTime(newSrcIn), addTime(exactTime(newSrcIn), multiplyTime(exactTime(newTEnd - tStart), layerRate(params))))
     layer.t_end_us = newTEnd
     applyDurationAutofit(c)
   }

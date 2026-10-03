@@ -110,8 +110,8 @@ describe("describeState", () => {
     expect(describeState("l-audio", TRACKS, false)).toBe("needs_video_kind");
   });
 
-  it("refuses a re-timed clip at the gesture, not at the tool", () => {
-    expect(describeState("l-fast", TRACKS, false)).toBe("speed_not_one");
+  it("admits retimed clips using source-window projection", () => {
+    expect(describeState("l-fast", TRACKS, false)).toBe("describe");
   });
 
   // The state the command surface lives or dies by: `runDescribe` refuses a
@@ -154,7 +154,7 @@ describe("describeForSelection", () => {
   // answers whatever the verdict is.
   it("names the primary layer even when the gesture is not live", () => {
     setLayerSelection("l-fast", ["l-fast"]);
-    expect(describeForSelection()).toBe("speed_not_one");
+    expect(describeForSelection()).toBe("describe");
     expect(describeTarget()?.id).toBe("l-fast");
   });
 });

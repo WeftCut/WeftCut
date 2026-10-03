@@ -879,11 +879,11 @@ describe("ShotsPanel — describing one shot", () => {
     );
   });
 
-  it("greys every describe control on a re-timed clip", async () => {
+  it("keeps description controls available on a retimed clip", async () => {
     // A speed != 1 clip is refused by the tool itself, so the gate says so
     // before the press rather than after the run.
     const retimed = clip({ id: "l1", mediaId: "m1", tStartUs: 1_000_000 });
-    (retimed.params as { speed: number }).speed = 2;
+    Object.assign(retimed.params, { time_map: { kind: "Affine", rate: { num: 2, den: 1 } } });
     act(() => {
       useProjectStore.getState().apply(
         summaryFixture({
@@ -895,9 +895,8 @@ describe("ShotsPanel — describing one shot", () => {
     setLayerSelection("l1", ["l1"]);
     render(<ShotsPanel />);
     const button = await waitFor(() => screen.getByTestId("shots-describe-0"));
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-    expect(button.getAttribute("title")).toContain("speed-1");
-    expect((screen.getByTestId("shots-describe-all") as HTMLButtonElement).disabled).toBe(true);
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("shots-describe-all") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("sweeps only the rows that have nothing, one run at a time", async () => {
@@ -1002,11 +1001,6 @@ describe("ShotsPanel — describing one shot", () => {
     const batch = { done: 0, total: 2 };
     it("is null when the gate is live and nothing is running", () => {
       expect(shotDescribeBlocker("describe", null, null, null)).toBeNull();
-    });
-    it("names a re-timed clip's remedy before the press", () => {
-      expect(shotDescribeBlocker("speed_not_one", null, null, null)).toBe(
-        "shots_panel.describe_speed_not_one",
-      );
     });
     it("falls back to the kind sentence for the unreachable gate states", () => {
       expect(shotDescribeBlocker("needs_selection", null, null, null)).toBe(

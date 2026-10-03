@@ -1,3 +1,4 @@
+import { ROOT_CLOCK, rootAt, localAt, type CompositionClock } from './compositionClock';
 // One moment, read in many coordinate systems. The playhead is a single time
 // in ROOT time (ADR 0053 decision 2), so a timeline Panel showing a Group has
 // to project that time down through the anchor path it was entered by, and a
@@ -24,6 +25,7 @@ import { childFrame, compositionLocalUs } from "./compositionWalk";
 export interface AnchorFrame {
   /// Root time of the composition's own `t = 0`: local `t` ↔ root `t + offsetUs`.
   offsetUs: number;
+  clock?: CompositionClock;
   /// The half-open root-time window the entered placements leave the composition
   /// visible in — `childFrame`'s narrowing, intersected down the path. Infinite
   /// at both ends for the root, which is on screen at every moment.
@@ -65,6 +67,7 @@ export function anchorFrame(
   const root = summary.compositions[summary.root_id];
   if (!root) return null;
   let offsetUs = 0;
+  let clock = ROOT_CLOCK;
   let windowStartUs = Number.NEGATIVE_INFINITY;
   let windowEndUs = Number.POSITIVE_INFINITY;
   let hostId = summary.root_id;
@@ -79,14 +82,17 @@ export function anchorFrame(
       offsetUs,
       windowStartUs,
       windowEndUs,
+      clock,
     );
     offsetUs = child.offsetUs;
+    clock = child.clock;
     windowStartUs = child.windowStartUs;
     windowEndUs = child.windowEndUs;
     hostId = crumb.compositionId;
   }
   return {
     offsetUs,
+    clock,
     windowStartUs,
     windowEndUs,
     fpsNum: root.fps_num,
@@ -104,7 +110,7 @@ export function anchorFrame(
 /// takes, because a mark on screen may not claim a position the Panel is not
 /// showing.
 export function localClockUs(frame: AnchorFrame, rootUs: number): number {
-  return compositionLocalUs(rootUs - frame.offsetUs, frame.fpsNum, frame.fpsDen);
+  return compositionLocalUs(frame.clock ? localAt(frame.clock, rootUs) : rootUs - frame.offsetUs, frame.fpsNum, frame.fpsDen);
 }
 
 /// The composition's read-out of root time `rootUs`, or null when the anchor's
@@ -120,7 +126,7 @@ export function rootToLocalIn(frame: AnchorFrame, rootUs: number): number | null
 /// has to answer for every position that Panel can put its playhead at — the
 /// window governs what is drawn, not what can be pointed at.
 export function localToRootIn(frame: AnchorFrame, localUs: number): number {
-  return compositionLocalUs(localUs + frame.offsetUs, frame.fpsNum, frame.fpsDen);
+  return compositionLocalUs(frame.clock ? rootAt(frame.clock, localUs) : localUs + frame.offsetUs, frame.fpsNum, frame.fpsDen);
 }
 
 /// Root time `rootUs` read on the composition `anchorPath` ends at. Null when

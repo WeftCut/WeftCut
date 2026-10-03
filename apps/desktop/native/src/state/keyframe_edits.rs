@@ -125,6 +125,7 @@ pub fn apply_segment_easing<T: Clone>(
 /// starts from before it inherits or is given an easing.
 fn new_key(t_us: i64, value: f64) -> Keyframe<f64> {
     Keyframe {
+        time_fraction: None,
         id: new_id(),
         t_us,
         value,
@@ -601,6 +602,7 @@ mod tests {
 
     fn kf(id: u128, t_us: i64, value: f64, segment: Segment) -> Keyframe<f64> {
         Keyframe {
+            time_fraction: None,
             id: uuid::Uuid::from_u128(id),
             t_us,
             value,

@@ -1,3 +1,5 @@
+import { layerRateNumber } from '../../../renderer/layerTiming'
+import { eachLayer } from '../model'
 // apps/desktop/src/main/state/mutations/moveToComposition.ts
 // The crossing primitive: one set of layers, one destination composition, one
 // landing time. Callers name that time and own the refusals that are about
@@ -90,6 +92,11 @@ export function applyMoveLayersToComposition(
   if (!ids.includes(anchorLayerId))
     throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor_layer_id',
       detail: `layer ${anchorLayerId} is not in the moving set, so there is nothing for ${anchorTStartUs} µs to position` })
+  for (const { layer } of eachLayer(p)) {
+    if (layer.params.kind === 'CompositionRef' && layerRateNumber(layer.params) !== 1 &&
+        (layer.params.composition === destCompositionId || layer.params.composition === parent.id))
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'to_composition_id', detail: 'Reset the Group rate to 1 before moving clips across its boundary' });
+  }
   const dest = compositionOf(p, destCompositionId)
   // This op crosses; a landing inside the composition the set is already in is
   // `applyMoveLayer`'s, which re-lanes one layer without touching links.

@@ -3,6 +3,7 @@
 // UI word for a placed item is `clip` — never `layer`, which stays the model word in
 // code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
+  retime: {"apply_selection":"Apply to all {{count}} selected clips","trim_hint":"Trims the clip end. Use Retimed duration to keep the content range and change playback rate.","mixed":"Selected clips have different rates or durations. Entering a value applies it to every selected clip.","refused":"{{reason}}","conflicts":{"EmptyTargets":"Select at least one clip.","LayerMissing":"A selected clip no longer exists.","Locked":"Unlock the selected clip and its track.","UnsupportedContent":"Select video, audio, animated images, Motifs or Groups.","NestedTargets":"Select either the Group or its children.","InvalidSnapshot":"The clip timing is invalid.","InvalidTarget":"Enter a positive rate or duration.","Numeric":"The requested timing exceeds the supported precision.","DurationTooShort":"The duration must span at least one frame or audio sample.","Transition":"This change would invalidate an existing transition.","Collision":"The new duration overlaps another clip. Shorten it or increase the rate."},"sampling":"Frame sampling","sampling_hint":"Preview and export use frame sampling. Frame blending and optical flow are not available.","preview":"Actual: {{rate}}× · {{duration}} s","rate":"Playback rate","duration":"Retimed duration (seconds)","reset":"Reset to 1×","pitch":"Preserve pitch","hint":"Keep the start and content range for {{count}} selected clips. Linked clips are not added."},
   crop: { title: "Crop", edit: "Crop in preview", done: "Finish cropping (Enter / Esc)", reset: "Reset crop", unavailable: "Select an unlocked, visible video clip in the preview composition to crop" },
   fonts: {
     app_default: "App default (Liberation Sans / Noto Sans SC)",
@@ -383,6 +384,7 @@ const enUS = {
       "Reset the group's transform first — ungrouping cannot carry it onto the clips inside",
     ungroup_not_plain_opacity:
       "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the clips inside",
+    ungroup_not_plain_time_map: 'Reset the Group playback rate to 1× before ungrouping.',
     ungroup_not_plain_effects:
       "Remove the group's effects first — ungrouping cannot carry them onto the clips inside",
     // Ripple delete. Only TWO reasons live here: the rest of them are refusals
@@ -407,6 +409,7 @@ const enUS = {
     add_to_group_needs_member:
       "Select the clips to add as well as the group clip",
     add_to_group_locked: "Unlock the clips you are adding to the group",
+    add_to_group_retimed: "Reset the destination Group to 1× before changing its members.",
     add_to_group_starts_before_group:
       "This clip starts before the group does — move it later first",
     // Move to…. The first three explain the greyed submenu TRIGGER — what to
@@ -1294,6 +1297,10 @@ const enUS = {
     "update_layer": "Update clip",
     "update_layer_params": "Update clip params",
     "move_layer": "Move clip",
+    "retime_layers": "Retime clips",
+    "set_preserve_pitch": "Set pitch policy",
+    "set_frame_interpolation": "Set frame interpolation",
+    "get_frame_interpolation_capabilities": "Read interpolation capabilities",
     "trim_layer": "Trim clip",
     "split_layer": "Split clip",
     "ripple_delete_gap": "Close gap",

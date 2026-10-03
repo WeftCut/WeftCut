@@ -76,6 +76,8 @@ pub enum LayerParams {
 /// apply verbatim. Not in v1: speed, crop, flip, gain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompositionRefParams {
+    #[serde(flatten)]
+    pub timing: super::timing::TimingFields,
     /// Key into `Project.compositions`; never the root (TS validates).
     pub composition: CompositionId,
     pub src_in_us: TimeUs,
@@ -88,6 +90,8 @@ pub struct CompositionRefParams {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VideoClipParams {
+    #[serde(flatten)]
+    pub timing: super::timing::TimingFields,
     pub media: MediaId,
     pub src_in_us: TimeUs,
     pub src_out_us: TimeUs,
@@ -100,9 +104,6 @@ pub struct VideoClipParams {
     pub flip_v: bool,
     #[serde(default)]
     pub blend_mode: BlendMode,
-    /// 1.0 default. `transcribe_clip` / `describe_clip` reject a layer whose
-    /// speed differs from 1.0 rather than resampling the timings.
-    pub speed: f64,
     /// Fade-from-black at the start of the clip. 0 = no fade.
     #[serde(default)]
     pub fade_in_us: u64,
@@ -113,6 +114,8 @@ pub struct VideoClipParams {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImageOverlayParams {
+    #[serde(flatten)]
+    pub timing: super::timing::TimingFields,
     pub media: MediaId,
     pub transform: Transform,
     pub opacity: Animated<f64>,
@@ -212,6 +215,8 @@ pub enum TextAnimPreset {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MotifParams {
+    #[serde(flatten)]
+    pub timing: super::timing::TimingFields,
     pub motif_id: String,
     pub motif_version: u32,
     /// Validated against the motif manifest's `props_schema` at apply time.
@@ -229,6 +234,8 @@ pub struct MotifParams {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioParams {
+    #[serde(flatten)]
+    pub timing: super::timing::TimingFields,
     pub media: MediaId,
     pub src_in_us: TimeUs,
     pub src_out_us: TimeUs,
@@ -454,6 +461,7 @@ mod kf_fields_tests {
 
     fn videoclip() -> LayerParams {
         LayerParams::VideoClip(VideoClipParams {
+            timing: Default::default(),
             media: crate::state::ids::new_id(),
             src_in_us: 0,
             src_out_us: 1_000_000,
@@ -463,7 +471,7 @@ mod kf_fields_tests {
             flip_h: false,
             flip_v: false,
             blend_mode: BlendMode::default(),
-            speed: 1.0,
+
             fade_in_us: 0,
             fade_out_us: 0,
         })
@@ -515,6 +523,7 @@ mod kf_fields_tests {
 
     fn audioclip() -> LayerParams {
         LayerParams::Audio(AudioParams {
+            timing: Default::default(),
             media: crate::state::ids::new_id(),
             src_in_us: 0,
             src_out_us: 1_000_000,

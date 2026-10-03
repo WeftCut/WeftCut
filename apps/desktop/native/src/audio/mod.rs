@@ -6,3 +6,5 @@ pub mod conform_reader;
 pub mod envelope;
 pub mod fx;
 pub mod mix;
+
+pub mod retime;

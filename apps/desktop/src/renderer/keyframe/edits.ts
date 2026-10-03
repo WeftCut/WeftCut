@@ -1,3 +1,4 @@
+import { keyTimeUs } from '../../shared/keyframe';
 // Pure AnimTrack transforms for the authoring UI, generic over the value type a
 // track can carry (`TrackValue`). Each returns a NEW track to hand to
 // `updateLayerParamTrack`; the actor re-normalizes (sort/snap/dedupe) and
@@ -108,12 +109,12 @@ export function upsertKeyframe<T extends TrackValue>(
 ): AnimTrack<T> {
   if (track.mode === "Static") return liftToKeyframed(value, tUs, easing, mkId);
   const keys = track.value.slice();
-  let at = keys.findIndex((k) => k.t_us === tUs);
+  let at = keys.findIndex((k) => keyTimeUs(k) === tUs);
   if (at >= 0) {
     keys[at] = { ...keys[at]!, value };
   } else {
-    const a = keys.filter((k) => k.t_us < tUs).pop();
-    const b = keys.find((k) => k.t_us > tUs);
+    const a = keys.filter((k) => keyTimeUs(k) < tUs).pop();
+    const b = keys.find((k) => keyTimeUs(k) > tUs);
     const k = newKey(mkId(), tUs, value);
     if (a) {
       k.segment = cloneSegment(a.segment);
@@ -121,8 +122,8 @@ export function upsertKeyframe<T extends TrackValue>(
       k.in = b ? cloneTangent(b.in) : inIdentity();
     }
     keys.push(k);
-    keys.sort((x, y) => x.t_us - y.t_us);
-    at = keys.findIndex((k) => k.t_us === tUs);
+    keys.sort((x, y) => keyTimeUs(x) - keyTimeUs(y));
+    at = keys.findIndex((k) => keyTimeUs(k) === tUs);
   }
   if (easing !== undefined) {
     const [l, r] = applySegmentEasing(keys[at]!, keys[at + 1], easing);
@@ -154,8 +155,12 @@ export function retimeKeyframe<T extends TrackValue>(
   newTUs: number,
 ): AnimTrack<T> {
   if (track.mode === "Static") return track;
-  const keys = track.value.map((k) => (k.id === id ? { ...k, t_us: newTUs } : k));
-  keys.sort((a, b) => a.t_us - b.t_us);
+  if (track.value.some(k => k.id !== id && keyTimeUs(k) === newTUs && track.value.some(k => k.time_fraction))) throw new Error("Another key already occupies that exact time");
+  const keys = track.value.map((k) => {
+    if (k.id !== id) return k;
+    const moved = { ...k, t_us: newTUs }; delete moved.time_fraction; return moved;
+  });
+  keys.sort((a, b) => keyTimeUs(a) - keyTimeUs(b));
   return { ...track, value: keys };
 }
 
@@ -250,9 +255,9 @@ export function setTangent<T extends TrackValue>(
   if (k.continuity === "Smooth" && sk !== null) {
     const sPrev = prev ? scalarOf(prev.value) : null;
     const sNext = next ? scalarOf(next.value) : null;
-    const dtPrev = prev ? k.t_us - prev.t_us : 0;
+    const dtPrev = prev ? keyTimeUs(k) - keyTimeUs(prev) : 0;
     const dvPrev = sPrev !== null ? sk - sPrev : 0;
-    const dtNext = next ? next.t_us - k.t_us : 0;
+    const dtNext = next ? keyTimeUs(next) - keyTimeUs(k) : 0;
     const dvNext = sNext !== null ? sNext - sk : 0;
     if (side === "out" && prev && prev.segment.kind === "Spline") {
       const m = outSlope(written, dtNext, dvNext);

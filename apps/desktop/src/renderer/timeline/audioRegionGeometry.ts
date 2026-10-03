@@ -44,19 +44,20 @@ export function pxFromCompUs(us: number, ctx: RegionPxContext): number {
 export interface RegionSourceMap {
   tStartUs: number;
   srcInUs: number;
+  rate?: number;
 }
 
 /// Composition time → SOURCE time, the axis region bounds are stored on (spec
 /// Decision 3: bounds in source time survive move, trim, slip and split). A
 /// pure offset — an audio layer has no speed factor to bend the mapping.
 export function sourceUsFromCompUs(compUs: number, layer: RegionSourceMap): number {
-  return layer.srcInUs + (compUs - layer.tStartUs);
+  return layer.srcInUs + (compUs - layer.tStartUs) * (layer.rate ?? 1);
 }
 
 /// Inverse of `sourceUsFromCompUs` — where a stored bound falls on the
 /// timeline.
 export function compUsFromSourceUs(sourceUs: number, layer: RegionSourceMap): number {
-  return layer.tStartUs + (sourceUs - layer.srcInUs);
+  return layer.tStartUs + (sourceUs - layer.srcInUs) / (layer.rate ?? 1);
 }
 
 /// A sample region, on whichever axis the caller handed in.

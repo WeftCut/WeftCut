@@ -28,7 +28,7 @@ function addMedia(p: Project, durationUs: number): void {
 function videoParams(srcIn: number, srcOut: number): VideoClipParams {
   return { kind: 'VideoClip', media: MEDIA, src_in_us: srcIn, src_out_us: srcOut, transform: defaultTransform(),
     opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,
-    blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0 }
+    blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 }
 }
 function layerOf(c: Composition, id: Uuid): Layer {
   for (const t of c.tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }

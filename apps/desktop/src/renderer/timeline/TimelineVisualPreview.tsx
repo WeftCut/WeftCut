@@ -1,3 +1,5 @@
+import { sourceIn, sourceOut, layerRateNumber } from '../layerTiming';
+import { approximateTime } from '../timeMapping';
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@/bridge/ipc";
 import { LAYER_PREVIEW_MIN_PX } from "./geometry";
@@ -148,11 +150,11 @@ export function TimelineVisualPreview({
         return (
           <TimelineFilmstrip
             mediaId={layer.params.media_id}
-            srcInUs={layer.params.src_in_us}
-            srcOutUs={layer.params.src_out_us}
+            srcInUs={approximateTime(sourceIn(layer.params))}
+            srcOutUs={approximateTime(sourceOut(layer))}
             layerWidthPx={layerWidthPx}
             layerHeightPx={layerHeightPx}
-            pxPerSec={pxPerSec}
+            pxPerSec={pxPerSec / layerRateNumber(layer.params)}
             colorHint={layerTheme.surface}
             enabled={resourceEnabled}
             mediaWidth={videoMedia?.width ?? undefined}
@@ -170,14 +172,14 @@ export function TimelineVisualPreview({
             // re-renders the strip on its own.
             waveformKey={readyPeaksKey ?? layer.params.media_id}
             layerId={layer.id}
-            srcInUs={layer.params.src_in_us}
-            srcOutUs={layer.params.src_out_us}
+            srcInUs={approximateTime(sourceIn(layer.params))}
+            srcOutUs={approximateTime(sourceOut(layer))}
             layerWidthPx={layerWidthPx}
             layerHeightPx={layerHeightPx}
             colorHint={layerTheme.surface}
             waveformColor={layerTheme.accent}
             enabled={resourceEnabled}
-            pxPerSec={pxPerSec}
+            pxPerSec={pxPerSec / layerRateNumber(layer.params)}
             mediaChannels={audioMedia?.audio_channels ?? undefined}
           />
         );

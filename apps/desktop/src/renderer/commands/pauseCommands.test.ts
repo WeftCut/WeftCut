@@ -218,11 +218,11 @@ describe("pauseSubjectForSelection", () => {
   // The re-timed case outranks the subject rule: a speed-1 segment is what
   // unblocks it, and naming the missing partner instead would send the user
   // the wrong way.
-  it("refuses a re-timed clip before it looks for a subject", () => {
+  it("resolves a retimed clip to its linked audio", () => {
     const video = videoLayer("v-1", "m-1", { speed: 2 });
     const audio = audioLayer("a-1", "m-1");
     seed([video, audio], "v-1", true);
-    expect(pauseSubjectForSelection()).toBe("speed_not_one");
+    expect(pauseSubjectForSelection()).toBe("ok");
   });
 
   it("says a VideoClip with no linked audio plays no sound", () => {

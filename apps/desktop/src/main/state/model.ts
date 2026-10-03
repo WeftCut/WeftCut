@@ -3,6 +3,7 @@ import type { IdGen } from './ids'
 import type { DecodeRoute } from '../../shared/decode-route'
 import type { Animated } from '../../shared/keyframe'
 import type { PositionAnimation } from '../../shared/position'
+import type { TimingFields } from '../../shared/timeMapping'
 
 /** The on-disk `project.json` schema version this build reads and writes.
  *
@@ -12,7 +13,7 @@ import type { PositionAnimation } from '../../shared/position'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export type Uuid = string
 export type TimeUs = number
@@ -56,14 +57,14 @@ export interface Shadow { color: Rgba; offset_x: number; offset_y: number; blur:
 export interface Outline { color: Rgba; width: number }
 export type TextAnimPreset = 'FadeIn' | 'FadeOut' | 'SlideUp' | 'SlideDown' | 'Typewriter'
 
-export interface VideoClipParams {
+export interface VideoClipParams extends TimingFields {
   kind: 'VideoClip'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
   /** Static retained source rectangle, normalized 0..1; null = full source (ADR 0090). */
   transform: Transform; opacity: Animated<number>; crop: Rect | null
-  flip_h: boolean; flip_v: boolean; blend_mode: BlendMode; speed: number
+  flip_h: boolean; flip_v: boolean; blend_mode: BlendMode
   fade_in_us: number; fade_out_us: number
 }
-export interface ImageOverlayParams {
+export interface ImageOverlayParams extends TimingFields {
   kind: 'ImageOverlay'; media: Uuid; transform: Transform; opacity: Animated<number>
   blend_mode: BlendMode; fade_in_us: number; fade_out_us: number
 }
@@ -86,14 +87,14 @@ export interface TextParams {
   line_height: number
   letter_spacing: number
 }
-export interface MotifParams {
+export interface MotifParams extends TimingFields {
   kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>
   src_in_us: TimeUs; transform: Transform; opacity: Animated<number>
 }
 export interface MotifRebindEntry {
   layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown>
 }
-export interface AudioParams {
+export interface AudioParams extends TimingFields {
   kind: 'Audio'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
   gain_db: Animated<number>; pan: Animated<number>
   fade_in_us: number; fade_out_us: number; mute: boolean; role: AudioRole
@@ -106,7 +107,7 @@ export interface ColorParams { kind: 'Color'; color: Animated<Rgba>; width: numb
  *  `src_out_us` — overhang is tolerated in state and clamped at the gesture
  *  (ADR 0052 §6): rejecting it would refuse a delete INSIDE the Group whenever
  *  autofit shrank the duration under a parent's window. */
-export interface CompositionRefParams {
+export interface CompositionRefParams extends TimingFields {
   kind: 'CompositionRef'; composition: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
   transform: Transform; opacity: Animated<number>; blend_mode: BlendMode
 }
@@ -129,7 +130,7 @@ export interface Track {
  *  time, not timeline time, is what makes the tie survive a trim or a move —
  *  the frame the user marked keeps its identity however the clip is later cut.
  *  Named so the ops that set and clear it can type against the shape. */
-export interface MarkerAnchor { layer: Uuid; src_us: TimeUs }
+export interface MarkerAnchor { layer: Uuid; src_us: TimeUs; src_fraction?: import('../../shared/timeMapping').ExactTime }
 /** A point (`end_t_us === null`) or region annotation on ONE composition's
  *  timeline.
  *

@@ -887,6 +887,24 @@ impl Backend {
                 ser(crate::commands::media::measure_conform_rms(a).await)
             }
             #[cfg(feature = "jobs")]
+            "prepare_retimed_audio" => {
+                #[derive(serde::Deserialize)]
+                struct A {
+                    project: crate::state::Project,
+                    composition_id: uuid::Uuid,
+                    #[serde(default)]
+                    layer_audio_sources: std::collections::HashMap<uuid::Uuid, std::path::PathBuf>,
+                }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::audio::retime::prepare(
+                    &a.project,
+                    a.composition_id,
+                    &a.layer_audio_sources,
+                )
+                .await
+                .map_err(|e| format!("{e:#}")))
+            }
+            #[cfg(feature = "jobs")]
             "bake_audio_fx" => {
                 let a: crate::commands::media::BakeAudioFxArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;

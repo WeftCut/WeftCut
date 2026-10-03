@@ -32,6 +32,39 @@ use crate::{
 /// would make preview diverge from export. TS `loadTrack` (MAX_KEYFRAMES) warns.
 const MAXKF: usize = 4096;
 
+// Exact-time results use two f64 SAFE INTEGERS. No rational is converted into
+// a floating-point timestamp here. The result is copied synchronously by the
+// wrapper before any other call can overwrite it, like the resident path ABI.
+static mut EXACT_RESULT: crate::time_mapping::Exact = crate::time_mapping::Exact::ZERO;
+
+#[no_mangle]
+pub extern "C" fn exact_calculate(op: u32, an: f64, ad: f64, bn: f64, bd: f64) -> u32 {
+    use crate::time_mapping::{calculate, Exact};
+    let result = if op == 8 {
+        Exact::from_unreduced_scalars(an, ad)
+    } else {
+        Exact::from_scalars(an, ad)
+            .and_then(|a| Exact::from_scalars(bn, bd).and_then(|b| calculate(op, a, b)))
+    };
+    match result {
+        Ok(value) => {
+            unsafe { EXACT_RESULT = value };
+            0
+        }
+        Err(error) => error as u32,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn exact_result_num() -> f64 {
+    unsafe { EXACT_RESULT.num() as f64 }
+}
+
+#[no_mangle]
+pub extern "C" fn exact_result_den() -> f64 {
+    unsafe { EXACT_RESULT.den() as f64 }
+}
+
 static mut PATH_NODES: [crate::path::Node; crate::path::MAX_NODES] =
     [crate::path::Node::ZERO; crate::path::MAX_NODES];
 static mut PATH_SAMPLES: [[f64; 4]; crate::path::MAX_SAMPLES] =
@@ -122,7 +155,7 @@ pub extern "C" fn path_eval(progress: f64, axis: usize) -> f64 {
 // Store the leaf's records at upload time. Increasing the baking capacity must
 // not initialize/copy MAXKF records on every scalar evaluation of a tiny track.
 static mut KEYFRAMES: [Kf; MAXKF] = [Kf {
-    t_us: 0,
+    t_us: 0.0,
     value: 0.0,
     out: (0.0, 0.0),
     in_: (0.0, 0.0),
@@ -136,7 +169,7 @@ static mut EX: Extrapolation = Extrapolation::HOLD;
 // packed RGBA8 (`(r<<24)|(g<<16)|(b<<8)|a`, r in the HIGH byte) so a color
 // crosses the scalars-only ABI as one i32 — see the module header.
 static mut COLOR_KEYFRAMES: [Kf<Rgba8>; MAXKF] = [Kf {
-    t_us: 0,
+    t_us: 0.0,
     value: Rgba8 {
         r: 0,
         g: 0,
@@ -316,7 +349,7 @@ pub extern "C" fn set_kf(
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
         KEYFRAMES[i] = Kf {
-            t_us: t_us as i64,
+            t_us,
             value,
             out: (out_x, out_y),
             in_: (in_x, in_y),
@@ -332,7 +365,7 @@ pub extern "C" fn eval(t_us: f64, default: f64) -> f64 {
         // N is clamped at upload; no callback or mutation can overlap this
         // synchronous read in a single-threaded Wasm instance.
         let keys = core::slice::from_raw_parts(core::ptr::addr_of!(KEYFRAMES).cast(), N);
-        crate::eval::<f64>(keys, EX, t_us as i64, default)
+        crate::eval_precise::<f64>(keys, EX, t_us, default)
     }
 }
 
@@ -373,7 +406,7 @@ pub extern "C" fn set_kf_rgba(
     unsafe {
         let u = packed as u32;
         COLOR_KEYFRAMES[i] = Kf {
-            t_us: t_us as i64,
+            t_us,
             value: Rgba8 {
                 r: (u >> 24) as u8,
                 g: (u >> 16) as u8,
@@ -402,7 +435,7 @@ pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
         };
         let def = unpack(default_packed as u32);
         let keys = core::slice::from_raw_parts(core::ptr::addr_of!(COLOR_KEYFRAMES).cast(), NC);
-        let out = crate::eval::<Rgba8>(keys, EXC, t_us as i64, def);
+        let out = crate::eval_precise::<Rgba8>(keys, EXC, t_us, def);
         (((out.r as u32) << 24) | ((out.g as u32) << 16) | ((out.b as u32) << 8) | (out.a as u32))
             as i32
     }

@@ -1,3 +1,7 @@
+import { compareTime } from '../../../renderer/timeMapping'
+import { keyTimeExact } from '../../../renderer/layerTiming'
+import { CommandFailure } from '../errors'
+import { keyTimeUs } from '../../../shared/keyframe'
 import type { Animated, Keyframe, LayerParams, Rgba } from '../model'
 import type { Transform } from '../model'
 import { visitPositionTracks } from '../../../shared/position'
@@ -38,7 +42,7 @@ export function shiftKeyframes<T>(a: Animated<T>, deltaUs: number): void {
   if (a.mode === 'Keyframed') for (const k of a.value as Keyframe<T>[]) k.t_us += deltaUs
 }
 export function retainKeyframes<T>(a: Animated<T>, pred: (tUs: number) => boolean): void {
-  if (a.mode === 'Keyframed') a.value = (a.value as Keyframe<T>[]).filter((k) => pred(k.t_us))
+  if (a.mode === 'Keyframed') a.value = (a.value as Keyframe<T>[]).filter((k) => pred(keyTimeUs(k)))
 }
 export function firstKeyframeValue<T>(a: Animated<T>): T | null {
   if (a.mode === 'Static') return a.value
@@ -73,12 +77,15 @@ export function normalizeKeyframes<T>(a: Animated<T>, snap: (t: number) => numbe
   if (a.mode !== 'Keyframed') return true
   const kfs = a.value as Keyframe<T>[]
   if (kfs.length === 0) return false
-  const snapped = kfs.map((k) => ({ ...k, t_us: snap(k.t_us) }))
-  snapped.sort((x, y) => x.t_us - y.t_us)
+  const snapped = kfs.map((k) => ({ ...k, t_us: k.time_fraction ? k.t_us : snap(k.t_us) }))
+  snapped.sort((x, y) => compareTime(keyTimeExact(x), keyTimeExact(y)))
   const out: Keyframe<T>[] = []
   for (const k of snapped) {
     const last = out[out.length - 1]
-    if (last && last.t_us === k.t_us) out[out.length - 1] = k
+    if (last && compareTime(keyTimeExact(last), keyTimeExact(k)) === 0) {
+      if (last.time_fraction || k.time_fraction) throw new CommandFailure({ error: 'InvalidArgument', field: 'keyframes', detail: 'Two keys cannot occupy the same exact time' });
+      out[out.length - 1] = k
+    }
     else out.push(k)
   }
   a.value = out

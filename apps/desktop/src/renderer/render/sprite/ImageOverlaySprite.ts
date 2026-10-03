@@ -1,3 +1,4 @@
+import { contentAtUs } from '../../layerTiming';
 // ImageOverlay layer. Raster image types (gif/png/jpeg/webp/avif) are offered to
 // the shared ImageDecoder cache first: a multi-frame source becomes an
 // *animated image* whose frame is chosen per-tick from composition time and
@@ -145,7 +146,7 @@ export class ImageOverlaySprite implements StageableSprite {
     this.sprite.alpha = alpha;
 
     if (this.anim) {
-      const idx = gifFrameIndexAt(tInLayerUs, this.anim.durationsUs);
+      const idx = gifFrameIndexAt(contentAtUs(view, tInLayerUs), this.anim.durationsUs);
       if (idx !== this.boundIndex) {
         const bmp = this.anim.frames[idx];
         if (bmp) {

@@ -6,9 +6,11 @@
 // scalar-only calls. `initEval()` must be awaited before any wrapper is called
 // (the renderer bootstrap does so).
 import { EVAL_WASM_BASE64 } from './evalWasm.generated'
+import { TimeMappingError, type ExactTime, type TimeMappingErrorCode } from '../../shared/timeMapping'
 import type { MotionPath, Point } from '../../shared/position'
 import {
   HOLD_EXTRAPOLATION,
+  keyTimeUs,
   MAX_RESIDENT_KEYFRAMES,
   type Extrapolate,
   type Extrapolation,
@@ -17,6 +19,9 @@ import {
 
 interface Exports {
   memory: WebAssembly.Memory
+  exact_calculate(op: number, an: number, ad: number, bn: number, bd: number): number
+  exact_result_num(): number
+  exact_result_den(): number
   path_node(i:number,x:number,y:number,ix:number,iy:number,ox:number,oy:number,cubic:number): void
   path_compile(n:number): number
   path_samples_ptr(): number
@@ -189,6 +194,21 @@ function E(): Exports {
   return ex
 }
 
+const EXACT_ERRORS: readonly TimeMappingErrorCode[] = [
+  'InvalidNumber', 'InvalidNumber', 'ZeroDenominator', 'Overflow',
+  'NonCanonical', 'NonPositiveRate', 'InvalidRange',
+]
+
+/** Internal scalar adapter. Components stay integers over the ABI, and Rust
+ * owns reduction, range checking, arithmetic and signed rounding (ADR 0025).
+ * 0..7 = add/subtract/multiply/divide/compare/round/floor/ceil; 8 = construct. */
+export function calculateExact(op: number, a: ExactTime, b: ExactTime = { num: 0, den: 1 }): ExactTime {
+  const e = E()
+  const status = e.exact_calculate(op, a.num, a.den, b.num, b.den)
+  if (status !== 0) throw new TimeMappingError(EXACT_ERRORS[status] ?? 'InvalidNumber')
+  return { num: e.exact_result_num(), den: e.exact_result_den() }
+}
+
 // ---------------------------------------------------------------------------
 // Frame grid. One wrapper per leaf primitive; `renderer/frames.ts` is the
 // surface the app imports (it adds the composition-level helpers). Degenerate
@@ -319,7 +339,7 @@ export function loadTrack(
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
     const [c, s0, s1, s2] = encodeSegment(k.segment)
-    e.set_kf(i, k.t_us, k.value, k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
+    e.set_kf(i, keyTimeUs(k), k.value, k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
   }
   e.set_n(n, before, after)
   loadedHandle = handle
@@ -401,7 +421,7 @@ export function loadColorTrack(
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
     const [c, s0, s1, s2] = encodeSegment(k.segment)
-    e.set_kf_rgba(i, k.t_us, packRgba(k.value), k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
+    e.set_kf_rgba(i, keyTimeUs(k), packRgba(k.value), k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
   }
   e.set_n_rgba(n, before, after)
   loadedColorHandle = handle

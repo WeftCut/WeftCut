@@ -100,8 +100,19 @@ async fn mix_and_encode(
         );
     }
 
-    let plan = plan_for_project(project, window_us, layer_audio_sources)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let plan = if crate::audio::retime::needed(project) {
+        let empty = HashMap::new();
+        let stems = crate::audio::retime::prepare(
+            project,
+            project.root_id,
+            layer_audio_sources.unwrap_or(&empty),
+        )
+        .await?;
+        crate::audio::retime::stem_plan(project, stems, window_us)
+    } else {
+        plan_for_project(project, window_us, layer_audio_sources)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    };
     let total_frames = (plan.window_end_frame - plan.window_start_frame).max(0);
     if plan.layers.is_empty() || total_frames == 0 {
         // No audio layers (or an empty window) — produce nothing. The Pixi
@@ -421,6 +432,7 @@ mod tests {
             locked: false,
             metadata: imbl::HashMap::new(),
             params: LayerParams::Audio(AudioParams {
+                timing: Default::default(),
                 media,
                 src_in_us: 0,
                 src_out_us: 1_000_000,

@@ -120,8 +120,8 @@ pub(super) async fn detect_pauses(
     // hears, and reading it would cut picture by sound nobody hears. The host
     // resolves a VideoClip to the Audio member of its link before calling, so
     // one arriving here is a host bug and the refusal says so.
-    let (media_id, src_in_us, src_out_us) = match &layer.params {
-        LayerParams::Audio(p) => (p.media, p.src_in_us, p.src_out_us),
+    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
+        LayerParams::Audio(p) => (p.media, p.src_in_us, p.src_out_us, &p.timing),
         LayerParams::VideoClip(_) => {
             return Err(McpToolError::invalid_params(
                 format!(
@@ -202,17 +202,28 @@ pub(super) async fn detect_pauses(
     // Map source-relative pauses to timeline-absolute coords:
     //   timeline_t = layer.t_start_us + (source_t - layer.src_in_us)
     //   clipped to [layer.t_start_us, layer.t_end_us]
-    let pauses = detect_pauses_in_peaks(
+    let mut pauses = detect_pauses_in_peaks(
         &peaks_file.peaks,
         threshold_amp,
-        min_pause_us,
-        bridge_us,
+        ((min_pause_us as f64) * timing.rate()).round().max(1.0) as i64,
+        ((bridge_us as f64) * timing.rate()).round().max(0.0) as i64,
         src_in_us,
         src_out_us,
         layer.t_start_us,
         peaks_file.sample_rate,
         peaks_file.frames_per_peak,
     );
+    for pause in &mut pauses {
+        let origin = timing.content_time(src_in_us, 0.0);
+        let map = |t: i64| {
+            layer.t_start_us
+                + (((t - layer.t_start_us + src_in_us) as f64 - origin) / timing.rate()).round()
+                    as i64
+        };
+        pause.t_start_us = map(pause.t_start_us).max(layer.t_start_us);
+        pause.t_end_us = map(pause.t_end_us).min(layer.t_end_us);
+    }
+    pauses.retain(|p| p.t_start_us < p.t_end_us);
     let noise_floor_amp = noise_floor_p10(
         &peaks_file.peaks,
         src_in_us,
@@ -264,8 +275,8 @@ pub(super) async fn analyze_clip(
 
     // Video-only: shots are a pixel concept. Reject anything else with an
     // actionable message (mirrors detect_pauses).
-    let (media_id, src_in_us, src_out_us) = match &layer.params {
-        LayerParams::VideoClip(p) => (p.media, p.src_in_us, p.src_out_us),
+    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
+        LayerParams::VideoClip(p) => (p.media, p.src_in_us, p.src_out_us, &p.timing),
         _ => {
             return Err(McpToolError::invalid_params(
                 format!(
@@ -334,7 +345,11 @@ pub(super) async fn analyze_clip(
     let source_report = jobs::shot::cached_source_report(&b.cache, media, &opts)
         .await
         .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
-    let report = jobs::shot::clip_report(&source_report, src_in_us, src_out_us);
+    let report = jobs::shot::clip_report(
+        &source_report,
+        timing.content_time(src_in_us, 0.0).floor() as i64,
+        timing.source_end(src_out_us).ceil() as i64,
+    );
 
     ToolResult::json(&report)
 }
@@ -864,6 +879,7 @@ mod tests {
             locked: false,
             metadata: Default::default(),
             params: LayerParams::Audio(AudioParams {
+                timing: Default::default(),
                 media: new_id(),
                 src_in_us,
                 src_out_us,
@@ -941,6 +957,7 @@ mod tests {
             locked: false,
             metadata: Default::default(),
             params: LayerParams::VideoClip(VideoClipParams {
+                timing: Default::default(),
                 media: new_id(),
                 src_in_us: 0,
                 src_out_us: 1_000_000,
@@ -950,7 +967,7 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 blend_mode: Default::default(),
-                speed: 1.0,
+
                 fade_in_us: 0,
                 fade_out_us: 0,
             }),
@@ -1183,6 +1200,7 @@ pub(super) struct ResolvedClipAudio {
     /// defaulted `t_end_us`, so the caller reports the window it actually got
     /// rather than the one it asked for.
     pub timeline_end_us: i64,
+    pub playback_rate: f64,
 }
 
 /// Find a layer with audio attached (VideoClip or Audio), validate the
@@ -1201,31 +1219,21 @@ pub(super) fn resolve_clip_audio_source(
     let layer = layer
         .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
 
-    let (media_id, src_in_us, src_out_us) = match &layer.params {
+    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
         LayerParams::VideoClip(VideoClipParams {
+            timing,
             media,
             src_in_us,
             src_out_us,
-            speed,
             ..
-        }) => {
-            if (*speed - 1.0).abs() > f64::EPSILON {
-                return Err(McpToolError::invalid_params(
-                    format!(
-                        "clip audio does not yet support speed != 1.0 (layer speed={speed}); \
-                         split off a speed-1 segment first",
-                    ),
-                    None,
-                ));
-            }
-            (*media, *src_in_us, *src_out_us)
-        }
+        }) => (*media, *src_in_us, *src_out_us, timing),
         LayerParams::Audio(AudioParams {
+            timing,
             media,
             src_in_us,
             src_out_us,
             ..
-        }) => (*media, *src_in_us, *src_out_us),
+        }) => (*media, *src_in_us, *src_out_us, timing),
         _ => {
             return Err(McpToolError::invalid_params(
                 format!("layer {layer_id} has no source audio — pass a VideoClip or Audio layer",),
@@ -1271,7 +1279,7 @@ pub(super) fn resolve_clip_audio_source(
 
     let to_source = |t: i64| {
         t.checked_sub(layer.t_start_us)
-            .and_then(|offset| src_in_us.checked_add(offset))
+            .map(|offset| timing.content_time(src_in_us, offset as f64).round() as i64)
             .filter(|t| *t >= 0)
             .ok_or_else(|| {
                 McpToolError::invalid_params(
@@ -1282,7 +1290,7 @@ pub(super) fn resolve_clip_audio_source(
     };
     let source_in = to_source(t_start)?;
     let source_out = to_source(t_end)?;
-    if source_out > src_out_us {
+    if source_out > timing.source_end(src_out_us).ceil() as i64 {
         return Err(McpToolError::invalid_params(
             format!(
                 "audio window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
@@ -1299,6 +1307,7 @@ pub(super) fn resolve_clip_audio_source(
         source_out_us: source_out,
         timeline_start_us: t_start,
         timeline_end_us: t_end,
+        playback_rate: timing.rate(),
     })
 }
 
@@ -1454,6 +1463,14 @@ pub(super) async fn transcribe_clip(
     // Normalize the backend's raw style → one Transcript, then place the
     // audio-slice-relative times on the timeline.
     let mut transcript = speech::parse_raw(raw).map_err(map_speech_error)?;
+    for segment in &mut transcript.segments {
+        segment.t_start_us = (segment.t_start_us as f64 / resolved.playback_rate).round() as i64;
+        segment.t_end_us = (segment.t_end_us as f64 / resolved.playback_rate).round() as i64;
+        for word in &mut segment.words {
+            word.t_start_us = (word.t_start_us as f64 / resolved.playback_rate).round() as i64;
+            word.t_end_us = (word.t_end_us as f64 / resolved.playback_rate).round() as i64;
+        }
+    }
     transcript.shift(resolved.timeline_start_us);
 
     let result = TranscribeClipResult {
@@ -1550,25 +1567,14 @@ fn resolve_clip_video_source(
     let layer = layer
         .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
 
-    let (media_id, src_in_us, src_out_us) = match &layer.params {
+    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
         LayerParams::VideoClip(VideoClipParams {
+            timing,
             media,
             src_in_us,
             src_out_us,
-            speed,
             ..
-        }) => {
-            if (*speed - 1.0).abs() > f64::EPSILON {
-                return Err(McpToolError::invalid_params(
-                    format!(
-                        "describe_clip does not yet support speed != 1.0 (layer speed={speed}); \
-                         split off a speed-1 segment first",
-                    ),
-                    None,
-                ));
-            }
-            (*media, *src_in_us, *src_out_us)
-        }
+        }) => (*media, *src_in_us, *src_out_us, timing),
         _ => {
             return Err(McpToolError::invalid_params(
                 format!("layer {layer_id} kind is not describable — pass a VideoClip layer"),
@@ -1612,8 +1618,12 @@ fn resolve_clip_video_source(
         ));
     }
 
-    let source_in = src_in_us + (t_start - layer.t_start_us);
-    let source_out = src_in_us + (t_end - layer.t_start_us);
+    let source_in = timing
+        .content_time(src_in_us, (t_start - layer.t_start_us) as f64)
+        .round() as i64;
+    let source_out = timing
+        .content_time(src_in_us, (t_end - layer.t_start_us) as f64)
+        .round() as i64;
     if source_out > src_out_us {
         return Err(McpToolError::invalid_params(
             format!(

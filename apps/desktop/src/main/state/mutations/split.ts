@@ -1,3 +1,5 @@
+import { contentAt, sourceIn, sourceOut, writeSourceWindow } from '../../../renderer/layerTiming'
+import { exactTime } from '../../../renderer/timeMapping'
 // apps/desktop/src/main/state/mutations/split.ts
 import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
@@ -38,20 +40,21 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   right.t_end_us = original.t_end_us
   // Split does not re-derive the Motif content cap (no MotifCatalog reaches here;
   // `resolveMotifMaxDurUs` owns it), so a Motif's src_in_us is not rebased.
-  const rightCapped = false
-  if (hasSourceWindow(right.params)) right.params.src_in_us += splitOffset
-  else if (right.params.kind === 'Motif' && rightCapped) right.params.src_in_us += splitOffset
+  if (hasSourceWindow(right.params) || right.params.kind === 'Motif' || right.params.kind === 'ImageOverlay')
+    writeSourceWindow(right.params, contentAt(original.params, exactTime(splitOffset)), sourceOut(original));
   const rightProgress='transform' in right.params && right.params.transform.position.mode==='Path'?right.params.transform.position.progress:null
-  forEachAnimatedF64(right.params, (a) => { if(a===rightProgress) shiftKeyframes(a,-splitOffset); else splitTrackHalf(a, splitOffset, true) })
-  forEachAnimatedRgba(right.params, (a) => splitTrackHalf(a, splitOffset, true))
+  forEachAnimatedF64(right.params, (a) => { if(a===rightProgress || 'time_map' in original.params) shiftKeyframes(a,-splitOffset); else splitTrackHalf(a, splitOffset, true) })
+  forEachAnimatedRgba(right.params, (a) => 'time_map' in original.params ? shiftKeyframes(a, -splitOffset) : splitTrackHalf(a, splitOffset, true))
+  for (const effect of right.effects) for (const track of Object.values(effect.params)) shiftKeyframes(track, -splitOffset)
 
   // LEFT half — reuses original id, [original.t_start, atTUs].
   const left = cloneLayer(original)
   left.t_end_us = atTUs
-  if (hasSourceWindow(left.params)) left.params.src_out_us = left.params.src_in_us + splitOffset
+  if (hasSourceWindow(left.params) || left.params.kind === 'Motif' || left.params.kind === 'ImageOverlay')
+    writeSourceWindow(left.params, sourceIn(original.params), contentAt(original.params, exactTime(splitOffset)));
   const leftProgress='transform' in left.params && left.params.transform.position.mode==='Path'?left.params.transform.position.progress:null
-  forEachAnimatedF64(left.params, (a) => { if(a!==leftProgress) splitTrackHalf(a, splitOffset, false) })
-  forEachAnimatedRgba(left.params, (a) => splitTrackHalf(a, splitOffset, false))
+  forEachAnimatedF64(left.params, (a) => { if(a!==leftProgress && !('time_map' in original.params)) splitTrackHalf(a, splitOffset, false) })
+  forEachAnimatedRgba(left.params, (a) => { if (!('time_map' in original.params)) splitTrackHalf(a, splitOffset, false) })
 
   track.layers[li] = left
   track.layers.splice(li + 1, 0, right)

@@ -7,6 +7,7 @@ import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
 const EXPECTED_TOOL_NAMES = new Set<string>([
+  'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
   // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
@@ -72,7 +73,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(49)
+    expect(table.length).toBe(53)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

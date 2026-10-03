@@ -10,7 +10,7 @@ import type { TextCorrectionExpectation } from '../../../shared/textCorrectionRe
 
 export function sourceSignature(layer: Layer): string {
   return JSON.stringify([layer.t_start_us, layer.t_end_us, layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio'
-    ? [layer.params.media, layer.params.src_in_us, layer.params.src_out_us, layer.params.kind === 'VideoClip' ? layer.params.speed : 1] : layer.params.kind])
+    ? [layer.params.media, layer.params.src_in_us, layer.params.src_out_us, [layer.params.time_map, layer.params.source_phase]] : layer.params.kind])
 }
 
 /** Transcript ingestion writes timing metadata in the SAME undo transaction as

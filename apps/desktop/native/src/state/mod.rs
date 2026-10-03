@@ -24,6 +24,7 @@ pub mod marker;
 pub mod media;
 pub mod project;
 pub mod time;
+pub mod timing;
 pub mod track;
 pub mod transform;
 pub mod transition;
@@ -128,6 +129,7 @@ mod tests {
             locked: false,
             metadata: imbl::HashMap::new(),
             params: LayerParams::VideoClip(VideoClipParams {
+                timing: Default::default(),
                 media: media_id,
                 src_in_us: 0,
                 src_out_us: 5_000_000,
@@ -137,7 +139,7 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 blend_mode: BlendMode::Normal,
-                speed: 1.0,
+
                 fade_in_us: 0,
                 fade_out_us: 0,
             }),
@@ -155,6 +157,7 @@ mod tests {
             locked: false,
             metadata: imbl::HashMap::new(),
             params: LayerParams::CompositionRef(CompositionRefParams {
+                timing: Default::default(),
                 composition: group_id,
                 src_in_us: 0,
                 src_out_us: 2_000_000,
@@ -315,8 +318,8 @@ mod tests {
     /// two sides already differ by design (Rust emits `Option` media-metadata
     /// fields TS omits, and its timestamps drop the `.000` TS writes).
     #[test]
-    fn ts_fixture_v1_deserialises_and_round_trips() {
-        let text = include_str!("../../../fixtures/projects/v1.json");
+    fn ts_fixture_v3_deserialises_and_round_trips() {
+        let text = include_str!("../../../fixtures/projects/v3.json");
         let p: Project = serde_json::from_str(text).expect("fixture deserialises");
         assert_eq!(p.compositions.len(), 2, "root + one pre-composed Group");
         assert!(p.compositions.contains_key(&p.root_id));

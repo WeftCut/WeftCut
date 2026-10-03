@@ -51,7 +51,8 @@ export type UngroupState =
   | "locked"
   | "not_plain_transform"
   | "not_plain_opacity"
-  | "not_plain_effects";
+  | "not_plain_effects"
+  | "not_plain_time_map";
 
 /// `add_to_group` is the live direction. Unlike Ungroup's `needs_one_group`,
 /// the shape failures do NOT collapse: "select a group clip to add to" and
@@ -63,7 +64,8 @@ export type AddToGroupState =
   | "needs_one_group"
   | "needs_member"
   | "locked"
-  | "starts_before_group";
+  | "starts_before_group"
+  | "retimed";
 
 /// The reasons a Group layer is not plain that the WIRE can answer.
 ///
@@ -77,7 +79,7 @@ export type AddToGroupState =
 /// LANDMINE: the identity values are duplicated from main's `defaultTransform`
 /// and nothing enforces the agreement. A drift here does not throw — it greys
 /// Ungroup out on a plain Group, or offers it on one the actor will refuse.
-export type GroupNotPlainReason = "transform" | "opacity" | "effects";
+export type GroupNotPlainReason = "transform" | "opacity" | "effects" | "time_map";
 
 /// Null for a layer that is not a Group at all: there is nothing to expand, so
 /// there is no reason to name. Every caller gates on the kind first.
@@ -86,6 +88,7 @@ export function groupNotPlainReason(
 ): GroupNotPlainReason | null {
   const p = layer.params;
   if (p.kind !== "CompositionRef") return null;
+  if (p.time_map && p.time_map.rate.num !== p.time_map.rate.den) return "time_map";
   const identity: Array<[AnimTrack<number>, number]> = [
     [p.x, 0],
     [p.y, 0],
@@ -198,6 +201,7 @@ export function addToGroupState(
   for (const { layer } of found) {
     const p = layer.params;
     if (p.kind !== "CompositionRef") continue;
+    if (p.time_map && p.time_map.rate.num !== p.time_map.rate.den) return "retimed";
     groupCount += 1;
     destination = { id: layer.id, originUs: layer.t_start_us - p.src_in_us };
   }

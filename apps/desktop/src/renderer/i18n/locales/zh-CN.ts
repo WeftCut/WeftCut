@@ -5,6 +5,7 @@ import type { Resources } from "./en-US";
 // 术语：英文里的 layer 与 clip 在界面上一律写作「片段」，不写「图层」——图层在 NLE 里
 // 名不副实，还会被读成「轨道」的同义词。见 CONTEXT.md 的 Layer 词条。
 const zhCN: Resources = {
+  retime: {"apply_selection":"应用到全部 {{count}} 个选中片段","trim_hint":"裁剪片段末尾；如需保留内容区间并改变播放速率，请使用“变速后时长”。","mixed":"选中片段的速率或时长不同，输入值会应用到全部选中片段。","refused":"{{reason}}","conflicts":{"EmptyTargets":"请至少选择一个片段。","LayerMissing":"选中的片段已不存在。","Locked":"请先解锁选中的片段及其轨道。","UnsupportedContent":"请选择视频、音频、动画图片、Motif 或组。","NestedTargets":"不能同时对组及其内部片段变速。","InvalidSnapshot":"片段的时间数据无效。","InvalidTarget":"请输入大于零的速率或时长。","Numeric":"请求的时间超出了支持的精度范围。","DurationTooShort":"时长必须至少包含一帧或一个音频采样。","Transition":"此变更会使现有转场失效。","Collision":"新的时长会与其他片段重叠，请缩短时长或提高速率。"},"sampling":"帧采样","sampling_hint":"预览与导出均使用帧采样，帧混合和光流暂不可用。","preview":"实际：{{rate}}× · {{duration}} 秒",rate:"播放倍率",duration:"变速后时长（秒）",reset:"恢复 1 倍",pitch:"保留音调",hint:"保持起点和内容范围，对明确选中的 {{count}} 个片段应用；不会联动其他片段。"},
   crop: { title: "画面裁切", edit: "在画面中裁切", done: "结束裁切（Enter / Esc）", reset: "重置裁切", unavailable: "请选择预览合成中可见且未锁定的视频片段进行裁切" },
   fonts: {
     app_default: "应用默认（Liberation Sans / Noto Sans SC）",
@@ -353,6 +354,7 @@ const zhCN: Resources = {
       "先重置组的变换——解组无法将它传给组内片段",
     ungroup_not_plain_opacity:
       "先将组的不透明度恢复为 1——解组无法将它传给组内片段",
+    ungroup_not_plain_time_map: '请先将组的播放速率重置为 1×，再取消分组。',
     ungroup_not_plain_effects:
       "先移除组上的效果——解组无法将它们传给组内片段",
     // 波纹删除。这里只有两条：其余的理由都是规划器返回的拒绝，句子来自
@@ -368,6 +370,7 @@ const zhCN: Resources = {
     add_to_group_needs_one_group: "只选中一个组片段才能加入",
     add_to_group_needs_member: "除了组片段，还要选中要加入的片段",
     add_to_group_locked: "先解锁要加入的那些片段",
+    add_to_group_retimed: "请先将目标组重置为 1×，再调整组内成员。",
     add_to_group_starts_before_group: "该片段比组开始得更早——先把它往后移",
     // 移动到…。前三条解释变灰的子菜单入口——要去修的是选区；
     // 后面几条解释某一个变灰的目标行——要换一个目标去选。目标行自己会报名字，
@@ -1104,6 +1107,10 @@ const zhCN: Resources = {
     "update_layer": "修改片段",
     "update_layer_params": "修改片段参数",
     "move_layer": "移动片段",
+    "retime_layers": "时间重映射",
+    "set_preserve_pitch": "设置音调保留",
+    "set_frame_interpolation": "设置帧插值",
+    "get_frame_interpolation_capabilities": "查询帧插值能力",
     "trim_layer": "修剪片段",
     "split_layer": "分割片段",
     "ripple_delete_gap": "闭合间隙",

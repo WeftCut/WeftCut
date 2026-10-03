@@ -12,7 +12,7 @@
 // (48 kHz f32le, no decode), so this excerpt is sample-exact.
 
 import { convertFileSrc } from "@/bridge/ipc";
-import type { LayerSummary } from "../ipc";
+import { prepareRetimedAudio, type LayerSummary } from "../ipc";
 import { ConformSource } from "../render/audio/conformSource";
 import { MICRO_FADE_S, SAMPLE_RATE } from "../render/audio/chunkSchedule";
 import { layerFxState, readyAudioPath } from "../state/audioFxStore";
@@ -134,6 +134,7 @@ async function stitch(
 /// knows.
 export function startAudition(args: {
   url: string;
+  retimedLayerId?: string;
   segments: readonly AuditionSegment[];
   onEnded: () => void;
   onFailed?: (error: unknown) => void;
@@ -142,7 +143,25 @@ export function startAudition(args: {
   let node: AudioBufferSourceNode | null = null;
   void (async () => {
     try {
-      const source = await ConformSource.open(args.url);
+      let url = args.url;
+      if (args.retimedLayerId) {
+        const store = useProjectStore.getState();
+        const composition = store.compositionIdByLayerId.get(args.retimedLayerId);
+        if (!composition) throw new Error('Audio composition not found');
+        const deadline = Date.now() + 300_000;
+        while (!stopped) {
+          const result = await prepareRetimedAudio(composition, args.retimedLayerId);
+          if (!result.waiting) {
+            const stem = result.stems[0];
+            if (!stem) throw new Error('The clip has no audible audio');
+            url = convertFileSrc(stem.path); break;
+          }
+          if (Date.now() > deadline) throw new Error('Audio preparation timed out');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      if (stopped) return;
+      const source = await ConformSource.open(url);
       if (stopped) return;
       const buffer = await stitch(source, args.segments);
       if (stopped || buffer === null) {

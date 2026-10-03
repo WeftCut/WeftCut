@@ -10,7 +10,7 @@ import { playheadTimeUs } from "../../state/playheadStore";
 import { layerFxState, readyAudioPath, useAudioFxStore } from "../../state/audioFxStore";
 import { registerTransport, releaseTransport, setTransportSnapshot } from "../../state/playbackStore";
 import { subscribeRoleGainOverrides } from "./roleGainOverrides";
-import { reportAudioMeter } from "../../ipc";
+import { prepareRetimedAudio, reportAudioMeter } from "../../ipc";
 import { clearMasterMeter, publishMasterMeter, publishMasterMeterSilent,
   publishRoleMeters, publishRoleMetersSilent, roleMeterDemandWanted,
   subscribeRoleMeterDemand } from "../../state/masterMeterStore";
@@ -23,6 +23,14 @@ export function previewAudioEngine(): PreviewAudioEngine {
   current ??= new PreviewAudioEngine(new AudioGraph(), (layerId, mediaId) => {
     const path = readyAudioPath(layerFxState(layerId)) ?? useProjectStore.getState().mediaById.get(mediaId)?.conform_path;
     return path ? convertFileSrc(path) : null;
+  }, async (compositionId, signal) => {
+    while (true) {
+      signal.throwIfAborted();
+      const result = await prepareRetimedAudio(compositionId);
+      signal.throwIfAborted();
+      if (!result.waiting) return result.stems.map(s => ({ ...s, url: convertFileSrc(s.path) }));
+      await new Promise<void>(resolve => setTimeout(resolve, 100));
+    }
   });
   return current;
 }

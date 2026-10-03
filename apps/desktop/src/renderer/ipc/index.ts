@@ -1,3 +1,4 @@
+import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
 // renderer reads back. It owns no state and no persistence.
@@ -289,7 +290,7 @@ export type LayerParamsView =
 /// A Group layer: its source is another composition (ADR 0052 §4) — the entry
 /// `ProjectSummary.compositions[composition_id]`. Drawn by one `CompositionNode`
 /// per placement, into a texture (`render/sprite/CompositionRefSprite.ts`).
-export interface CompositionRefView {
+export interface CompositionRefView extends TimingFields {
   composition_id: string;
   /// The referenced composition's own label; null → derive "Group N".
   composition_label: string | null;
@@ -310,7 +311,7 @@ export interface CompositionRefView {
   anchor_y: AnimTrack<number>;
 }
 
-export interface MotifView {
+export interface MotifView extends TimingFields {
   motif_id: string;
   position?: PositionAnimation;
   path_progress?: AnimTrack<number>;
@@ -336,7 +337,7 @@ export interface MotifView {
   props: Record<string, unknown>;
 }
 
-export interface VideoClipView {
+export interface VideoClipView extends TimingFields {
   crop?: CropRect | null;
   media_id: string;
   media_label: string;
@@ -369,7 +370,7 @@ export interface VideoClipView {
   fade_out_us: number;
 }
 
-export interface ImageOverlayView {
+export interface ImageOverlayView extends TimingFields {
   media_id: string;
   media_label: string;
   position?: PositionAnimation;
@@ -431,7 +432,7 @@ export interface ColorView {
   height: number;
 }
 
-export interface AudioView {
+export interface AudioView extends TimingFields {
   media_id: string;
   media_label: string;
   src_in_us: number;
@@ -574,6 +575,7 @@ export interface MarkerSummary {
 export interface MarkerAnchorArg {
   layer: string;
   src_us: number;
+  src_fraction?: import("../../shared/timeMapping").ExactTime;
 }
 
 /// Motion direction, not reveal side — glossary semantics live with the
@@ -650,7 +652,6 @@ export interface VideoClipPatch {
   scale_x?: number;
   scale_y?: number;
   opacity?: number;
-  speed?: number;
   flip_h?: boolean;
   flip_v?: boolean;
   fade_in_us?: number;
@@ -3328,4 +3329,15 @@ export async function dataRootDeleteOld(): Promise<void> {
 /// clear the marker so the prompt is one-time (no re-prompt on next launch).
 export async function dataRootDismissCleanup(): Promise<void> {
   return window.api.dataRoot.dismissCleanup();
+}
+
+export function retimeLayers(layerIds: string[], target: import('../../shared/timeMapping').RetimeTarget): Promise<unknown> {
+  return invoke('retime_layers', { layerIds, target });
+}
+export function setPreservePitch(layerIds: string[], preservePitch: boolean): Promise<void> {
+  return invoke('set_preserve_pitch', { layerIds, preservePitch });
+}
+
+export function prepareRetimedAudio(compositionId: string, layerId?: string): Promise<{ waiting: boolean; stems: Array<{ role: AudioRole; path: string; duration_us: number }> }> {
+  return invoke('prepare_retimed_audio', { compositionId, ...(layerId ? { layerId } : {}) });
 }

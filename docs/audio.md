@@ -800,3 +800,9 @@ waiting.
   `nr` / `nf` would reach through `asendcmd`; and a clip badge for bake state.
 - **True-peak (oversampled) limiting**, loudness-normalize export
   option, >stereo output, scrub audio.
+
+## Constant-rate time remapping
+
+Preview and export share `audio/retime.rs`. The renderer prepares immutable 48 kHz conform artifacts before transport starts. At each scope, it renders the selected source window at the authored rate, applies the clip's own gain/pan/fades, mixes by role, then passes child role stems through the parent Group's rate/pitch policy. Role gain/mute/solo remain outside these stems. Each stage has a fixed sample count, padding algorithmic tails with silence; failed preparation is surfaced, never played at the old rate. Cache identity includes the project and effect-conform inputs.
+
+Pitch-preserving stages use FFmpeg atempo in factors within [0.5,2]; pitch-following stages use asetrate/aresample with duration compensation. Preview seeks and export windows read the same prepared PCM, including nested mixed policies.

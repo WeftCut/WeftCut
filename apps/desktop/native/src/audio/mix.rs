@@ -219,6 +219,49 @@ fn audible_audio_layers<'a>(
 ) -> Vec<PlacedAudio<'a>> {
     let any_solo = any_role_solo(project.audio_roles.values());
     let mut out = Vec::new();
+    if super::retime::needed(project) {
+        // The retime renderer prepares complete child stems before windowing
+        // them at the parent. Gate that same content, including borrowed tails.
+        fn visit<'a>(
+            p: &'a Project,
+            id: &Uuid,
+            depth: usize,
+            solo: bool,
+            out: &mut Vec<PlacedAudio<'a>>,
+        ) {
+            if depth > MAX_COMPOSITION_DEPTH {
+                return;
+            }
+            let Some(c) = p.compositions.get(id) else {
+                return;
+            };
+            for track in c.tracks.iter().filter(|t| t.enabled) {
+                for layer in track.layers.iter().filter(|l| l.enabled) {
+                    match &layer.params {
+                        LayerParams::Audio(a)
+                            if !layer.locked
+                                && !a.mute
+                                && role_audible(&p.role_mix(a.role), solo) =>
+                        {
+                            out.push(PlacedAudio {
+                                layer,
+                                params: a,
+                                start_us: layer.t_start_us,
+                                head_us: 0,
+                                tail_us: 0,
+                            })
+                        }
+                        LayerParams::CompositionRef(r) => {
+                            visit(p, &r.composition, depth + 1, solo, out)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        visit(project, &project.root_id, 0, any_solo, &mut out);
+        return out;
+    }
     for_each_audio_layer(
         project,
         &project.root_id,
@@ -536,6 +579,7 @@ mod tests {
             t_start_us,
             t_end_us,
             LayerParams::Audio(AudioParams {
+                timing: Default::default(),
                 media,
                 src_in_us,
                 src_out_us,
@@ -561,6 +605,7 @@ mod tests {
             t_start_us,
             t_end_us,
             LayerParams::CompositionRef(CompositionRefParams {
+                timing: Default::default(),
                 composition,
                 src_in_us,
                 src_out_us,

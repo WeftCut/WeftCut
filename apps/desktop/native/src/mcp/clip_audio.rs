@@ -5,8 +5,8 @@
 //! The point of the tool is an agent that brings its OWN speech model: it asks
 //! for a window of a clip's source audio, transcribes it wherever it likes, and
 //! shifts the offsets it gets back onto the timeline with the `t_start_us` this
-//! tool reports. That shift is the whole alignment contract — the returned WAV
-//! starts at zero, so a cue at `w` in the WAV belongs at `t_start_us + w`.
+//! tool reports. A source-WAV cue at `w` belongs at
+//! `t_start_us + w / playback_rate` on the composition timeline.
 
 use base64::Engine;
 use schemars::JsonSchema;
@@ -72,6 +72,7 @@ struct ExtractClipAudioResult {
     source_in_us: i64,
     source_out_us: i64,
     duration_us: i64,
+    playback_rate: f64,
     sample_rate_hz: u32,
     channels: u8,
     bits_per_sample: u8,
@@ -145,6 +146,7 @@ pub(super) async fn extract_clip_audio(
         source_in_us: resolved.source_in_us,
         source_out_us: resolved.source_out_us,
         duration_us,
+        playback_rate: resolved.playback_rate,
         sample_rate_hz: SAMPLE_RATE_HZ,
         channels: 1,
         bits_per_sample: 16,
@@ -178,6 +180,7 @@ mod tests {
             locked: false,
             metadata: Default::default(),
             params: LayerParams::Audio(AudioParams {
+                timing: Default::default(),
                 media: media_id,
                 src_in_us: 0,
                 src_out_us: duration_us,
@@ -327,6 +330,31 @@ mod tests {
             .await
             .expect("spawn ffmpeg fixture");
         assert!(status.success(), "test fixture ffmpeg failed: {status}");
+    }
+
+    #[test]
+    fn retimed_extract_reports_source_window_and_playback_rate() {
+        let media = audio_media(std::path::PathBuf::from("source.wav"), 6_000_000);
+        let mut layer = audio_layer(media.id, 5_000_000, 6_000_000);
+        layer.t_end_us = 8_000_000;
+        if let crate::state::LayerParams::Audio(ref mut p) = layer.params {
+            p.timing.time_map = Some(crate::state::timing::TimeMap::Affine {
+                rate: crate::state::timing::Fraction { num: 2, den: 1 },
+            });
+        }
+        let resolved = resolve_clip_audio_source(
+            Some(&layer),
+            Some(&media),
+            layer.id,
+            Some(6_000_000),
+            Some(7_000_000),
+        )
+        .unwrap();
+        assert_eq!(
+            (resolved.source_in_us, resolved.source_out_us),
+            (2_000_000, 4_000_000)
+        );
+        assert_eq!(resolved.playback_rate, 2.0);
     }
 
     /// End-to-end against real ffmpeg: the two content blocks, the alignment

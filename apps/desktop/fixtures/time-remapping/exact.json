@@ -1,0 +1,21 @@
+{
+  "arithmetic": [
+    { "name": "fractional source cut", "op": 0, "a": [1, 3], "b": [1, 6], "expect": [1, 2] },
+    { "name": "negative source extension", "op": 1, "a": [1, 3], "b": [5, 6], "expect": [-1, 2] },
+    { "name": "rate cancels before range check", "op": 2, "a": [9007199254740991, 9007199254740990], "b": [9007199254740990, 9007199254740991], "expect": [1, 1] },
+    { "name": "opposite large origins", "op": 0, "a": [9007199254740991, 9007199254740990], "b": [-9007199254740991, 9007199254740990], "expect": [0, 1] },
+    { "name": "exact duration from fractional content", "op": 3, "a": [100100, 3], "b": [7, 3], "expect": [14300, 1] },
+    { "name": "distinct times beyond float quotient precision", "op": 4, "a": [9007199254740991, 9007199254740990], "b": [9007199254740990, 9007199254740989], "expect": [-1, 1] },
+    { "name": "positive half rounds forward", "op": 5, "a": [3, 2], "b": [0, 1], "expect": [2, 1] },
+    { "name": "negative half rounds forward", "op": 5, "a": [-1, 2], "b": [0, 1], "expect": [0, 1] },
+    { "name": "negative source floor", "op": 6, "a": [-1, 2], "b": [0, 1], "expect": [-1, 1] },
+    { "name": "negative source ceil", "op": 7, "a": [-3, 2], "b": [0, 1], "expect": [-1, 1] },
+    { "name": "48k sample time stays fractional", "op": 2, "a": [125, 6], "b": [3, 2], "expect": [125, 4] }
+  ],
+  "mapping": [
+    { "name": "NTSC cut with fractional origin", "origin": [7, 3], "rate": [1001, 1000], "local": [33367, 1], "content": [100208101, 3000] },
+    { "name": "borrowed handle is not clamped", "origin": [7, 3], "rate": [3, 2], "local": [-1, 3], "content": [11, 6] },
+    { "name": "animated image keeps unwrapped cycles", "origin": [0, 1], "rate": [2, 1], "local": [2500000, 1], "content": [5000000, 1] },
+    { "name": "audio sub-sample phase", "origin": [1, 7], "rate": [7, 3], "local": [125, 6], "content": [6143, 126] }
+  ]
+}

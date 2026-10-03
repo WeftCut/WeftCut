@@ -178,6 +178,7 @@ const UNGROUP_REASON: Record<Exclude<UngroupState, "ungroup">, string> = {
   not_plain_transform: "quick_actions.ungroup_not_plain_transform",
   not_plain_opacity: "quick_actions.ungroup_not_plain_opacity",
   not_plain_effects: "quick_actions.ungroup_not_plain_effects",
+  not_plain_time_map: "quick_actions.ungroup_not_plain_time_map",
 };
 
 /// Why a greyed *Add to Group* row is greyed, one sentence per state, in the
@@ -197,6 +198,7 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
     needs_member: "quick_actions.add_to_group_needs_member",
     locked: "quick_actions.add_to_group_locked",
     starts_before_group: "quick_actions.add_to_group_starts_before_group",
+    retimed: "quick_actions.add_to_group_retimed",
   };
 
 /// Why a greyed *Transcribe* row is greyed. Same block and same
@@ -211,7 +213,6 @@ const AUTO_CAPTION_REASON: Record<
 > = {
   needs_selection: "quick_actions.auto_caption_needs_selection",
   needs_audio_kind: "quick_actions.auto_caption_needs_audio_kind",
-  speed_not_one: "quick_actions.auto_caption_speed_not_one",
   transcribing: "quick_actions.auto_caption_transcribing",
 };
 
@@ -228,7 +229,6 @@ const AUTO_CAPTION_REASON: Record<
 const DETECT_PAUSES_REASON: Record<Exclude<PauseSubjectState, "ok">, string> = {
   needs_selection: "quick_actions.detect_pauses_needs_selection",
   needs_audio_kind: "quick_actions.detect_pauses_needs_audio_kind",
-  speed_not_one: "quick_actions.detect_pauses_speed_not_one",
   plays_no_sound: "quick_actions.detect_pauses_plays_no_sound",
 };
 
@@ -242,7 +242,6 @@ const DETECT_PAUSES_REASON: Record<Exclude<PauseSubjectState, "ok">, string> = {
 const DESCRIBE_REASON: Record<Exclude<DescribeState, "describe">, string> = {
   needs_selection: "quick_actions.describe_needs_selection",
   needs_video_kind: "quick_actions.describe_needs_video_kind",
-  speed_not_one: "quick_actions.describe_speed_not_one",
   already_running: "quick_actions.describe_already_running",
 };
 
