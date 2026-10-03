@@ -393,7 +393,7 @@ describe("ForeignDragGhost", () => {
   });
 
   it("reads a locked MEMBER of the dragged link as locked", () => {
-    // The seed can never be locked — a locked block refuses `pointerdown` — so
+    // The seed can never be locked — a locked block refuses drag arming — so
     // the only way a lock reaches this Panel is on a link member dragged along
     // with it, and this Panel holds no summary to discover it in. The
     // in-composition projection refuses the same set, so a green ghost here

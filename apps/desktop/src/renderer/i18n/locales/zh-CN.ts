@@ -846,6 +846,8 @@ const zhCN: Resources = {
     track_lock_hint: "锁定此轨道禁止编辑",
     drop_collision: "与现有素材重叠",
     drop_locked: "轨道已锁定",
+    clip_lock_hint: "已锁定，可选中查看；在属性面板解锁后可编辑。",
+    clip_track_lock_hint: "所在轨道已锁定，可选中查看；解锁轨道后可编辑。",
     // 选中间隙的悬停提示——沿用片段自己标题的形状（“视频：起 → 止”），
     // 种类的位置换成“间隙”。
     gap_title: "间隙：{{start}} → {{end}}",

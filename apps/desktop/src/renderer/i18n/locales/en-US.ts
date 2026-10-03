@@ -997,6 +997,8 @@ const enUS = {
     track_lock_hint: "Lock this track against edits",
     drop_collision: "Overlaps existing media",
     drop_locked: "Track is locked",
+    clip_lock_hint: "Locked. Select to inspect; unlock in Properties to edit.",
+    clip_track_lock_hint: "Track is locked. Select to inspect; unlock the track to edit.",
     // The selected gap's tooltip — the shape a clip's own title has (`Video:
     // start → end`), with the gap named where the kind would be.
     gap_title: "Gap: {{start}} → {{end}}",

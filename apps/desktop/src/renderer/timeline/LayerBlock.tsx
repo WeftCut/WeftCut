@@ -8,6 +8,7 @@ import {
   Group as GroupIcon,
   Image as ImageIcon,
   Link2,
+  Lock,
   Palette,
   Sparkles,
   Type,
@@ -34,6 +35,7 @@ import { PauseBands } from "./PauseBands";
 import { compUsFromSourceUs } from "./audioRegionGeometry";
 import { useArmedRegionSelect } from "./audioRegionArmStore";
 import { useAudioRegionDrag } from "./hooks/useAudioRegionDrag";
+import { useLockedClipFeedback } from "./hooks/useLockedClipFeedback";
 import { useRegionFocus } from "../state/audioRegionFocusStore";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
@@ -97,7 +99,7 @@ const LAYER_ICON_PROPS = {
 
 /// Small status dot on a Motif layer block. Hidden when idle (selector
 /// returns null).
-function MotifBakeDot({ layerId }: { layerId: string }) {
+function MotifBakeDot({ layerId, locked }: { layerId: string; locked: boolean }) {
   const { t } = useTranslation();
   const phase = useLayerBakePhase(layerId);
   if (!phase) return null;
@@ -109,7 +111,7 @@ function MotifBakeDot({ layerId }: { layerId: string }) {
         : phase === "ready"
           ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
           : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
-  return <span className={`motif-bake-dot is-${phase}`} title={label} aria-label={label} />;
+  return <span className={`motif-bake-dot is-${phase}`} style={{ right: locked ? 20 : undefined }} title={label} aria-label={label} />;
 }
 
 /// The derived A/V sync-offset badge on a slipped audio clip (ADR 0038 / R2-D7).
@@ -117,7 +119,7 @@ function MotifBakeDot({ layerId }: { layerId: string }) {
 /// which is the normal case, so the badge's presence IS the signal that something was
 /// deliberately slipped. Discoverability is the whole job here: the offset lives
 /// implicitly in each member's own `t_start_us`, with no field to inspect.
-function AudioSyncBadge({ layerId }: { layerId: string }) {
+function AudioSyncBadge({ layerId, locked }: { layerId: string; locked: boolean }) {
   const { t } = useTranslation();
   const offset = useAudioSyncOffset(layerId);
   const text = formatSyncOffset(offset);
@@ -126,6 +128,7 @@ function AudioSyncBadge({ layerId }: { layerId: string }) {
   return (
     <span
       data-testid="audio-sync-offset-badge"
+      style={{ right: locked ? 20 : undefined }}
       className="pointer-events-none absolute bottom-1 right-1 z-[4] rounded bg-sky-600/90 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
       title={label}
       aria-label={label}
@@ -149,9 +152,11 @@ function AudioSyncBadge({ layerId }: { layerId: string }) {
 function GroupMarkerBadge({
   compositionId,
   layerId,
+  locked,
 }: {
   compositionId: string;
   layerId: string;
+  locked: boolean;
 }) {
   const { t } = useTranslation();
   const count = useGroupMarkerCount(compositionId);
@@ -161,6 +166,7 @@ function GroupMarkerBadge({
     <button
       type="button"
       data-testid="group-marker-count-badge"
+      style={{ right: locked ? 20 : undefined }}
       className="absolute bottom-1 right-1 z-[4] flex cursor-pointer items-center gap-0.5 rounded bg-black/45 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm hover:bg-black/65"
       title={label}
       aria-label={label}
@@ -368,6 +374,9 @@ export function LayerBlock({
   // Null for every block the gesture does not carry, so a pointermove renders
   // the clips that move and nothing else (`layerDragStore.ts`).
   const liveDrag = useLayerDragFor(layer.id);
+  const locked = layer.locked || trackLocked;
+  const lockFeedback = useLockedClipFeedback(locked);
+  const lockHint = t(trackLocked ? "timeline.clip_track_lock_hint" : "timeline.clip_lock_hint");
   // A duplicate leaves its sources where they are, so a source block draws as
   // if nothing were happening; the in-flight clone — one `previewOnly` block
   // per subject — is the only one that follows the pointer.
@@ -579,7 +588,7 @@ export function LayerBlock({
   };
 
   const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || layer.locked || trackLocked) return;
+    if (e.button !== 0) return;
     e.stopPropagation();
     // Clicking the clip body (diamond pointerdown stops propagation, so this
     // only fires off-diamond) deselects any selected keyframe → Delete then
@@ -588,7 +597,7 @@ export function LayerBlock({
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
     if (bladeMode) {
-      onBladeSplit(layer, e.clientX);
+      if (!locked) onBladeSplit(layer, e.clientX);
       return;
     }
     const blockRect = e.currentTarget.getBoundingClientRect();
@@ -597,7 +606,7 @@ export function LayerBlock({
     // nothing else (spec Decision 12). The gesture claims the event itself, so
     // a press it took reaches none of the paths below.
     if (
-      regionDrag.startRegionDrag(e, {
+      !locked && regionDrag.startRegionDrag(e, {
         layerId: layer.id,
         tStartUs: layer.t_start_us,
         tEndUs: layer.t_end_us,
@@ -608,7 +617,7 @@ export function LayerBlock({
     ) {
       return;
     }
-    const zone = edgeZoneFor(e.clientX, blockRect);
+    const zone = locked ? null : edgeZoneFor(e.clientX, blockRect);
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
     // Snapshotted BEFORE the click's selection applies — see
@@ -632,7 +641,13 @@ export function LayerBlock({
     // true a moment ago, which buys a ZERO arm delay in `useLayerDrag`, so
     // without this the smallest pointer wobble would move the clip the user just
     // dropped from the selection.
+    // A lock protects edits, not inspection: keep the normal click/focus and
+    // Shift-toggle behavior so the property panel remains an unlock route.
     if (!stillSelected) return;
+    if (locked) {
+      lockFeedback.start(e);
+      return;
+    }
     onDragStart({
       kind,
       layerId: layer.id,
@@ -850,11 +865,7 @@ export function LayerBlock({
           : "",
         // Selection paints above the preview in its own overlay below. An
         // inset outline here is covered by the positioned preview's fill.
-        (layer.locked || trackLocked)
-          ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50"
-          : dragIsInvalid
-            ? "cursor-not-allowed"
-            : "",
+        dragIsInvalid ? "cursor-not-allowed" : "",
         movedAcrossTracks || previewOnly ? "pointer-events-none" : "",
       ].join(" ")}
       style={{
@@ -882,7 +893,10 @@ export function LayerBlock({
             : "0 4px 12px rgb(251 191 36 / 0.38)"
           : undefined,
         opacity: movedAcrossTracks ? 0.3 : layer.enabled ? 1 : 0.45,
-        cursor: armedHere
+        // The body is inspectable; only an attempted drag gets a refusal.
+        cursor: locked
+          ? lockFeedback.blocked ? "not-allowed" : "default"
+          : armedHere
           ? "crosshair"
           : dragIsInvalid
             ? "not-allowed"
@@ -920,12 +934,14 @@ export function LayerBlock({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        // Locked layers are unselectable; suppress the context menu too.
+        // Locked layers remain inspectable by left-click; editing actions in
+        // the context menu stay suppressed until the lock is released.
         if (layer.locked || trackLocked) return;
         onContextMenu(e, layer.id, layer.kind, layer.enabled);
       }}
       // The kind by its UI name (`kinds.*`: Video, Image, Group), never the discriminant.
       title={[
+        locked ? lockHint : "",
         `${t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind })}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`,
         // The chip is where a Text layer's words live now, and the chip
         // truncates: to 12 characters on a narrow block, to 240px of ellipsis on
@@ -945,7 +961,22 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
-      {isSelected && !layer.locked && !trackLocked && !dragIsInvalid && !previewOnly && (
+      {locked && !previewOnly && (
+        <span
+          data-testid="layer-lock-badge"
+          data-emphasized={lockFeedback.emphasized || (isDragging && dragValidity === "locked")}
+          role="img"
+          aria-label={lockHint}
+          title={lockHint}
+          // Reserve the rightmost column for the lock. Stay inside the clip
+          // and below its selection border, including short A/V half-slices.
+          className="pointer-events-none absolute right-[3px] top-[3px] z-[2] flex items-center justify-center overflow-hidden rounded-sm bg-black/65 text-amber-200/70 transition-colors data-[emphasized=true]:bg-amber-400 data-[emphasized=true]:text-black"
+          style={{ width: Math.max(0, Math.min(14, layerWidthPx - 8)), height: Math.max(0, Math.min(14, sliceHeight - 8)) }}
+        >
+          <Lock size={10} className="max-h-full max-w-full shrink-0" aria-hidden="true" />
+        </span>
+      )}
+      {isSelected && !dragIsInvalid && !previewOnly && (
         <span
           data-testid="layer-selection-outline"
           data-primary={isPrimary}
@@ -1088,7 +1119,7 @@ export function LayerBlock({
           hiddenCount={linkHiddenCount}
         />
       )}
-      {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} />}
+      {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} locked={locked} />}
       {/* No width gate, unlike the label and the chain glyph. Those two sit in
           the block's flow and a narrow clip has no room to spend on them; this
           one is absolutely positioned in the corner `AudioSyncBadge` already
@@ -1096,7 +1127,7 @@ export function LayerBlock({
           it exactly where it earns its keep: at the zoom that makes every Group
           clip a sliver, "is there anything in there" is the live question. */}
       {groupCompositionId !== null && !previewOnly && (
-        <GroupMarkerBadge compositionId={groupCompositionId} layerId={layer.id} />
+        <GroupMarkerBadge compositionId={groupCompositionId} layerId={layer.id} locked={locked} />
       )}
       {isEditing && showLabel ? (
         <AppInput
@@ -1137,7 +1168,9 @@ export function LayerBlock({
           className="sticky z-[2] flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-gradient-to-r from-black/65 via-black/40 to-transparent py-1 pl-1.5 pr-3 text-[10px] leading-none text-white"
           style={{
             left: HEADER_COL_PX + 4,
-            maxWidth: showFullAffordances
+            maxWidth: locked
+              ? `min(calc(100% - ${layer.kind === "Motif" ? 36 : 24}px), ${showFullAffordances ? 240 : 120}px)`
+              : showFullAffordances
               ? "min(calc(100% - 8px), 240px)"
               : "min(calc(100% - 8px), 120px)",
           }}
@@ -1159,7 +1192,7 @@ export function LayerBlock({
         </span>
       ) : null}
       {layer.kind === "Motif" && showFullAffordances && (
-        <MotifBakeDot layerId={layer.id} />
+        <MotifBakeDot layerId={layer.id} locked={locked} />
       )}
       {diamonds.length > 0 && focusedParam && (
         <div

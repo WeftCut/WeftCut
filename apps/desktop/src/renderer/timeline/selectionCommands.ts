@@ -1,10 +1,10 @@
 // Select All / Deselect All, and the one rule they both rest on: which Layers a
-// selection can legitimately contain.
+// bulk selection should include.
 //
 // Lifted out of Timeline for the reason `linkEligibility.ts` gives — a
 // command's `enabled` gate is evaluated inside `listCommands()` by whichever
 // surface draws the row, where there is no React and no reach into Timeline's
-// locals — and because "which Layers can a click reach" is a rule worth stating
+// locals — and because "which Layers should Select All include" is worth stating
 // once, in one place, with a test on it.
 
 import type { TrackSummary } from "../ipc";
@@ -20,14 +20,12 @@ import {
   setLayerSelection,
 } from "../state/selectionStore";
 
-/// Every Layer in `tracks` a click could select, in the order the tracks arrive
+/// Every unlocked Layer on an unlocked track, in the order the tracks arrive
 /// and the Layers sit inside them.
 ///
-/// Locks are the whole filter, and excluding them is not a courtesy:
-/// `LayerBlock`'s pointerdown returns early on `layer.locked || trackLocked`, so
-/// a locked clip CANNOT be reached by pointer at all. Including them here would
-/// let Select All build a selection the mouse can't, and the next Delete would
-/// fan out into N `TrackLocked` refusals for clips the user never chose.
+/// Locked clips can be explicitly clicked for inspection and unlocking, but
+/// Select All must not include protected clips the user never chose: their
+/// presence would prevent the next batch move or delete.
 export function selectableLayerIds(tracks: readonly TrackSummary[]): string[] {
   const ids: string[] = [];
   for (const track of tracks) {

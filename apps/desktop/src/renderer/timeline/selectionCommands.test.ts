@@ -99,9 +99,8 @@ describe("selectableLayerIds", () => {
     ).toEqual(["a", "b", "c"]);
   });
 
-  // A locked clip cannot be reached by pointer at all (`LayerBlock`'s
-  // pointerdown returns early), so a selection containing one is a selection
-  // the mouse could not have produced.
+  // Explicit clicks can inspect locks; bulk selection still skips them so
+  // protected clips do not unexpectedly block the next batch edit.
   it("skips a locked layer", () => {
     expect(
       selectableLayerIds([

@@ -542,6 +542,116 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
+  it.each(["clip", "track"])("refocuses a %s-locked clip without arming an edit", (lock) => {
+    const { getByText } = renderTimeline({
+      tracks: [{ ...track, locked: lock === "track", layers: [{ ...layer, locked: lock === "clip" }] }],
+    });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(useLayerDragStore.getState().drag).toBeNull();
+    expect(block.querySelector('[data-testid="layer-selection-outline"]')?.getAttribute("data-primary")).toBe("true");
+    fireEvent.pointerMove(window, { clientX: 180, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 180, clientY: 30 });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+  });
+
+  it("toggles a locked clip in a mixed selection and preserves the batch when refocusing", () => {
+    const { getByText } = renderTimeline({
+      tracks: [{ ...track, layers: [layer, { ...linkedLayer, locked: true }] }],
+      selectedLayerId: layer.id,
+    });
+    const block = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, shiftKey: true, clientX: 80 });
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, linkedLayer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(linkedLayer.id);
+    expect(useLayerDragStore.getState().drag).toBeNull();
+    fireEvent.pointerDown(block, { button: 0, clientX: 80 });
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, linkedLayer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(linkedLayer.id);
+    fireEvent.pointerDown(block, { button: 0, shiftKey: true, clientX: 80 });
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(useLayerDragStore.getState().drag).toBeNull();
+  });
+
+  it.each(["clip", "track"])("shows %s lock status and only refuses the cursor after a drag attempt", (lock) => {
+    vi.useFakeTimers();
+    const { getByText } = renderTimeline({
+      tracks: [{ ...track, locked: lock === "track", layers: [{ ...layer, locked: lock === "clip" }] }],
+    });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const badge = block.querySelector('[data-testid="layer-lock-badge"]')!;
+    expect(badge.getAttribute("aria-label")).toBeTruthy();
+    expect(block.style.cursor).toBe("default");
+    fireEvent.pointerMove(block, { buttons: 0, clientX: 0, clientY: 30 });
+    expect(block.style.cursor).toBe("default");
+    fireEvent.pointerDown(block, { button: 0, pointerId: 1, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientX: 82, clientY: 30 });
+    expect(block.style.cursor).toBe("default");
+    expect(badge.getAttribute("data-emphasized")).toBe("false");
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientX: 100, clientY: 30 });
+    expect(block.style.cursor).toBe("not-allowed");
+    expect(badge.getAttribute("data-emphasized")).toBe("true");
+    expect(useLayerDragStore.getState().drag).toBeNull();
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 30 });
+    expect(block.style.cursor).toBe("default");
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(block.querySelector('[data-testid="layer-selection-outline"]')).not.toBeNull();
+    act(() => vi.advanceTimersByTime(600));
+    expect(badge.getAttribute("data-emphasized")).toBe("false");
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+  });
+
+  it.each(["pointercancel", "blur", "escape"])("clears locked drag feedback on %s", (ending) => {
+    const { getByText } = renderTimeline({ tracks: [{ ...track, layers: [{ ...layer, locked: true }] }] });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 100, clientY: 30 });
+    expect(block.style.cursor).toBe("not-allowed");
+    if (ending === "pointercancel") fireEvent.pointerCancel(window);
+    else if (ending === "blur") fireEvent.blur(window);
+    else fireEvent.keyDown(window, { key: "Escape" });
+    expect(block.style.cursor).toBe("default");
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 120, clientY: 30 });
+    expect(block.style.cursor).toBe("default");
+    expect(useLayerDragStore.getState().drag).toBeNull();
+  });
+
+  it("refuses moving a mixed selection from its unlocked member", () => {
+    ipcMocks.moveLayers.mockClear();
+    const { getByText } = renderTimeline({
+      tracks: [{ ...track, layers: [layer, { ...linkedLayer, locked: true }] }],
+      selectedLayerId: layer.id,
+    });
+    const locked = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(locked, { button: 0, shiftKey: true, clientX: 80 });
+    const unlocked = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(unlocked, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 180, clientY: 30 });
+    expect(useLayerDragStore.getState().drag?.validity).toBe("locked");
+    fireEvent.pointerUp(window, { clientX: 180, clientY: 30 });
+    expect(ipcMocks.moveLayers).not.toHaveBeenCalled();
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, linkedLayer.id]);
+  });
+
+  it("keeps link selection and Alt isolation available on a locked clip", () => {
+    const { getByText } = renderTimeline({
+      tracks: [{ ...linkedTrack, layers: [{ ...layer, locked: true }, linkedLayer] }],
+      links: [link],
+    });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80 });
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id, linkedLayer.id]);
+    fireEvent.pointerDown(block, { button: 0, altKey: true, clientX: 80 });
+    expect([...layerIdsOf(currentSelection())]).toEqual([layer.id]);
+    expect(useLayerDragStore.getState().drag).toBeNull();
+    expect(ipcMocks.pasteLayers).not.toHaveBeenCalled();
+  });
+
   it("does not let snapping move a selected clip during a stationary click", () => {
     setPlayheadTimeUs(100_000);
     const { getByText } = renderTimeline({ selectedLayerId: layer.id });
@@ -1204,9 +1314,8 @@ describe("Timeline seek/selection coupling", () => {
       ]);
     });
 
-    // A locked clip cannot be clicked (`LayerBlock`'s pointerdown returns
-    // early), so Select All must not put one in the selection either — the next
-    // Delete would refuse `TrackLocked` for a clip the user never chose.
+    // Select All skips locks; inspection by an explicit click must not make
+    // a bulk gesture include protected clips the user never chose.
     it("skips a locked track's clips", () => {
       const locked: TrackSummary = {
         ...track,

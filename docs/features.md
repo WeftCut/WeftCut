@@ -133,6 +133,19 @@ multi-selection it keeps every member and makes the clicked clip primary, so
 single-clip actions (content description, shot review and pause detection)
 target the clip under the cursor while batch actions retain the whole set.
 
+**Locks protect edits without blocking inspection.** A locked clip, including
+one on a locked track, can be clicked to focus the Attribute panel and reach its
+lock toggle. It uses the same selection highlight, Shift-toggle and link
+selection rules as an unlocked clip, and clicking a selected locked member keeps
+the batch while changing primary. It never arms move, trim, duplicate, blade or
+sample-region gestures. Moving a mixed selection from an unlocked member refuses
+the whole drop if any member is locked; it never silently moves only part of it.
+An amber lock badge identifies protected clips independently of the blue selection
+border. Its tooltip distinguishes a clip lock from a track lock. The body uses a
+normal arrow; an attempted drag shows a forbidden cursor and briefly emphasizes
+the badge, without creating an edit gesture. The badge is informational, while
+the Attribute panel's existing lock toggle releases a clip lock.
+
 **A deselecting click never becomes a drag.** Selection and drag arming share one
 pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
 removes a clip returns early instead of seeding the gesture. Otherwise the
@@ -151,9 +164,9 @@ closes. The search palette carries discoverability instead.
 Select All follows the same two rules the playhead split does, for the same
 reasons: it **respects the A/B Roll filter**, so it cannot arm a Delete for clips
 that are off screen, and it **excludes locks rather than refusing them** — a
-locked clip cannot be clicked at all, so including one would build a selection
-the pointer could not and turn the next Delete into N `TrackLocked` refusals for
-clips the user never chose. A surviving primary is kept, so Select All does not
+locked clip requires an explicit inspection click rather than being included by
+a bulk gesture that would block the next move or Delete for clips the user never
+chose. A surviving primary is kept, so Select All does not
 move the Attribute panel off the clip being inspected. Deselect All clears all
 three selections that arm Delete: clips, the transition chip, and the keyframe
 selection.

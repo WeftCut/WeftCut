@@ -370,7 +370,7 @@ export function useLayerDrag(opts: {
           name: i18n.t(`kinds.${fallbackKind.toLowerCase()}`, {
             defaultValue: fallbackKind,
           }),
-          // A locked block refuses `pointerdown`, so a seed that armed a drag
+          // A locked block refuses drag arming, so a seed that armed a drag
           // was not locked whatever the summary has since lost.
           locked: false,
         });
