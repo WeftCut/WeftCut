@@ -677,7 +677,14 @@ function KindFields({
     case "Color":
       return <ColorFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Audio":
-      return <AudioFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      return (
+        <>
+          <AudioFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <PropSection layerKind={layer.kind} sectionId="effects" title={t("property_panel.effects")}>
+            <FadeFields key={layer.id} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
+          </PropSection>
+        </>
+      );
     case "Motif":
       return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} />;
     case "CompositionRef":
@@ -1730,8 +1737,6 @@ function AudioFields({
   layer,
   v,
   commit,
-  fpsNum,
-  fpsDen,
   tInLayerUs,
   playheadInSpan,
   onMutated,
@@ -1739,8 +1744,6 @@ function AudioFields({
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Audio" }>;
   commit: Commit;
-  fpsNum: number;
-  fpsDen: number;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
@@ -1748,9 +1751,6 @@ function AudioFields({
   const { t } = useTranslation();
   return (
     <PropSection layerKind={layer.kind} sectionId="audio" title={t("property_panel.audio")}>
-      <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <FadeFields key={layer.id} v={v} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
-      <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.role")}>
         <AppSelect
           value={v.role}
@@ -1759,6 +1759,8 @@ function AudioFields({
           options={AUDIO_ROLES.map((r) => ({ value: r, label: t(`audio_roles.${r}`) }))}
         />
       </Field>
+      <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
     </PropSection>
   );
 }
