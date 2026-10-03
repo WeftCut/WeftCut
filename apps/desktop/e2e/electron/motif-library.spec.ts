@@ -71,6 +71,8 @@ test('Motif picker offers per-card export and protected contextual deletion', as
     await builtin.click({ button: 'right' })
     await expect(page.getByRole('menuitem', { name: 'Export Motif ZIP' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Delete Motif' })).toHaveCount(0)
+    // Popup focus can emit a scroll even when the card has not moved.
+    await picker.locator('.motif-picker-list').dispatchEvent('scroll')
     await page.keyboard.press('Escape')
     await expect(picker).toBeVisible()
     await picker.getByLabel('Search motifs…').fill('Cover Badge')

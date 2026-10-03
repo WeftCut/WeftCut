@@ -120,6 +120,35 @@ describe('Motif package actions', () => {
     expect(screen.queryByRole('menuitem', { name: 'Delete Motif' })).toBeNull();
   });
 
+  it('keeps the card menu open on a stationary scroll so Escape dismisses only the menu', async () => {
+    const user = userEvent.setup();
+    await renderPicker([{ ...MOTIF, status: 'builtin' }]);
+    fireEvent.contextMenu(screen.getByTitle('badge'), { clientX: 30, clientY: 30 });
+    await screen.findByRole('menuitem', { name: 'Export Motif ZIP' });
+    // Chromium can emit a scroll when popup focus scrolls into view without
+    // moving the card. Reproduce it before the user's Escape.
+    fireEvent.scroll(document.querySelector('.motif-picker-list')!);
+    expect(screen.getByRole('menuitem', { name: 'Export Motif ZIP' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Export Motif ZIP' })).toBeNull());
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the card menu when scrolling actually moves its card', async () => {
+    await renderPicker();
+    const card = screen.getByTitle('badge').closest('.motif-card')!;
+    let top = 40;
+    vi.spyOn(card, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, top, 240, 80));
+    fireEvent.contextMenu(card, { clientX: 30, clientY: 50 });
+    await screen.findByRole('menuitem', { name: 'Export Motif ZIP' });
+    top -= 24;
+    fireEvent.scroll(document.querySelector('.motif-picker-list')!);
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Export Motif ZIP' })).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('confirms deletion, reports failures, then refreshes the list and selects a remaining item', async () => {
     const remaining = { ...MOTIF, id: 'other', name: 'Other', status: 'builtin' as const };
     await renderPicker([MOTIF, remaining]);

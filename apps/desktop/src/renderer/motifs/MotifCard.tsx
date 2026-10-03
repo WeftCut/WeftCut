@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOutputIcon } from 'lucide-react';
 import { Menu as MenuPrimitive } from '@base-ui/react/menu';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { getMotifCover, type MotifSummary } from '../ipc';
 import { formatTimecode } from '../frames';
 import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
-import { useCursorAnchor } from '../timeline/contextMenuAnchor';
+import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 
 export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport, onDelete }: {
   motif: MotifSummary; selected: boolean; fpsNum: number; fpsDen: number;
@@ -14,8 +14,11 @@ export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport,
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  useCloseOnAnchorMove(menu ? card.current : null, closeMenu);
   return (
-    <div className={`motif-card${selected ? ' motif-card-selected' : ''}`}
+    <div ref={card} className={`motif-card${selected ? ' motif-card-selected' : ''}`}
       onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
       onKeyDown={e => {
         if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
@@ -39,7 +42,7 @@ export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport,
           <FolderOutputIcon size={14} aria-hidden />
         </Button>
       </div>
-      {menu && <MotifCardMenu motif={motif} {...menu} onClose={() => setMenu(null)} onExport={onExport} onDelete={onDelete} />}
+      {menu && <MotifCardMenu motif={motif} {...menu} onClose={closeMenu} onExport={onExport} onDelete={onDelete} />}
     </div>
   );
 }
@@ -50,11 +53,6 @@ function MotifCardMenu({ motif, x, y, onClose, onExport, onDelete }: {
 }) {
   const { t } = useTranslation();
   const anchor = useCursorAnchor(x, y);
-  useEffect(() => {
-    const close = () => onClose();
-    window.addEventListener('scroll', close, true);
-    return () => window.removeEventListener('scroll', close, true);
-  }, [onClose]);
   return <MenuPrimitive.Root open modal={false} onOpenChange={open => { if (!open) onClose(); }}>
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
