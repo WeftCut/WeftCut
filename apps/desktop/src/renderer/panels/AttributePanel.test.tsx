@@ -190,13 +190,22 @@ function panel(): HTMLElement {
   return screen.getByRole("complementary", { name: "Properties" });
 }
 
-function timingDetails(): HTMLElement {
-  return screen.getByRole("region", { name: "Time placement" });
+function timingSection(): HTMLElement {
+  return screen.getByRole("region", { name: "Timing" });
 }
 
-// Time placement defaults collapsed; expanding it mounts its rows.
-function expandTimingDetails(): void {
-  fireEvent.click(within(timingDetails()).getByRole("button", { name: "Time placement" }));
+function expectTimecode(control: HTMLElement, value: string): void {
+  const parts = ["hours", "minutes", "seconds", "frames"].map(
+    (segment) => (within(control).getByLabelText(segment) as HTMLInputElement).value,
+  );
+  expect(parts.join(":")).toBe(value);
+}
+
+function changeTimecode(control: HTMLElement, value: string): void {
+  const values = value.split(":");
+  ["hours", "minutes", "seconds", "frames"].forEach((segment, i) => {
+    fireEvent.change(within(control).getByLabelText(segment), { target: { value: values[i] } });
+  });
 }
 
 describe("AttributePanel Layer envelope", () => {
@@ -209,14 +218,13 @@ describe("AttributePanel Layer envelope", () => {
     expect(within(env).getByLabelText("Label")).toHaveProperty("value", "Card");
     expect(within(env).getByRole("button", { name: "Enabled" }).getAttribute("aria-pressed")).toBe("true");
     // 30 fps: 2 s → 00:00:02:00; duration = End − Start.
-    expect(within(env).getByLabelText("Duration")).toHaveProperty("value", "00:00:02:00");
-    // Flags are always visible; only Start requires opening Time placement.
+    expectTimecode(within(env).getByLabelText("Duration"), "00:00:02:00");
+    // Identity, flags and timing fields are always visible.
     expect(screen.queryByLabelText("End")).toBeNull();
-    expect(screen.queryByLabelText("Start")).toBeNull();
+    expect(screen.getByLabelText("Start")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Locked", pressed: false })).toBeTruthy();
-    expandTimingDetails();
     expect(screen.getByRole("button", { name: "Locked" }).getAttribute("aria-pressed")).toBe("false");
-    expect(within(timingDetails()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
+    expectTimecode(within(timingSection()).getByLabelText("Start"), "00:00:00:00");
   });
 
   it("falls back to a localized none when the Layer belongs to no link", () => {
@@ -310,7 +318,7 @@ describe("AttributePanel envelope command routing", () => {
     renderPanel(track);
     expect(screen.getByRole("button", { name: "Locked", pressed: false })).toBeTruthy();
     expect(screen.getByText("The track is locked. Unlock it to edit clip timing.")).toBeTruthy();
-    expect(screen.getByLabelText("Duration")).toHaveProperty("disabled", true);
+    expect(within(screen.getByLabelText("Duration")).getByLabelText("frames")).toHaveProperty("disabled", true);
   });
 
   it("routes label, enabled, and locked edits through update_layer", async () => {
@@ -324,7 +332,6 @@ describe("AttributePanel envelope command routing", () => {
     fireEvent.click(within(env).getByRole("button", { name: "Enabled" }));
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledWith("layer-1", { enabled: false }));
 
-    expandTimingDetails();
     fireEvent.click(screen.getByRole("button", { name: "Locked" }));
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledWith("layer-1", { locked: true }));
 
@@ -335,9 +342,8 @@ describe("AttributePanel envelope command routing", () => {
 
   it("routes Start through the link-aware move command with the Layer's current Track", async () => {
     const onMutated = renderPanel(colorTrack());
-    expandTimingDetails();
-    const start = within(timingDetails()).getByLabelText("Start");
-    fireEvent.change(start, { target: { value: "00:00:01:00" } });
+    const start = within(timingSection()).getByLabelText("Start");
+    changeTimecode(start, "00:00:01:00");
     fireEvent.blur(start);
     await vi.waitFor(() =>
       // escapeLink=false: a VISUAL start edit moves the whole link, as it always
@@ -354,22 +360,19 @@ describe("AttributePanel envelope command routing", () => {
   it("offers the audio-units selector on an audio layer only", () => {
     summaryWithLinks([]);
     renderPanel(audioTrack(), "layer-a1");
-    expandTimingDetails();
-    expect(within(timingDetails()).getByLabelText("Audio units")).toBeTruthy();
+    expect(within(timingSection()).getByLabelText("Audio units")).toBeTruthy();
     cleanup();
     clearPropSectionMemory();
     summaryWithLinks([]);
     renderPanel(colorTrack());
-    expandTimingDetails();
-    expect(within(timingDetails()).queryByLabelText("Audio units")).toBeNull();
+    expect(within(timingSection()).queryByLabelText("Audio units")).toBeNull();
   });
 
   it("round-trips a sample-grid position through the Start field in samples", async () => {
     summaryWithLinks([]);
     setAudioUnits("samples");
     const onMutated = renderPanel(audioTrack(), "layer-a1");
-    expandTimingDetails();
-    const start = within(timingDetails()).getByLabelText("Start");
+    const start = within(timingSection()).getByLabelText("Start");
     // The field READS the mixer's sample index for the stored µs…
     expect(start).toHaveProperty("value", "0");
     // …and a typed index commits the exact µs of THAT sample. 1608 → 33_500 µs, which
@@ -389,8 +392,7 @@ describe("AttributePanel envelope command routing", () => {
     summaryWithLinks([]);
     setAudioUnits("ms");
     renderPanel(audioTrack(), "layer-a1");
-    expandTimingDetails();
-    expect(within(timingDetails()).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
+    expect(within(timingSection()).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
     setAudioUnits("frames");
     // …and the visual layer's readouts are untouched by the mode.
     cleanup();
@@ -398,8 +400,7 @@ describe("AttributePanel envelope command routing", () => {
     setAudioUnits("ms");
     summaryWithLinks([]);
     renderPanel(colorTrack());
-    expandTimingDetails();
-    expect(within(timingDetails()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
+    expectTimecode(within(timingSection()).getByLabelText("Start"), "00:00:00:00");
     setAudioUnits("frames");
   });
 
@@ -409,7 +410,7 @@ describe("AttributePanel envelope command routing", () => {
 
     // Duration 1 s from t_start 0 → trim the out-edge to 1 s.
     const dur = within(env).getByLabelText("Duration");
-    fireEvent.change(dur, { target: { value: "00:00:01:00" } });
+    changeTimecode(dur, "00:00:01:00");
     fireEvent.blur(dur);
     // Link-aware (`escapeLink` false) — the override off is the default.
     await vi.waitFor(() =>
@@ -423,14 +424,13 @@ describe("AttributePanel envelope command routing", () => {
   it("issues no command when an edit re-enters the current value (no no-op undo)", async () => {
     renderPanel(colorTrack());
     const env = panel();
-    expandTimingDetails();
 
-    const start = within(timingDetails()).getByLabelText("Start");
-    fireEvent.change(start, { target: { value: "00:00:00:00" } });
+    const start = within(timingSection()).getByLabelText("Start");
+    changeTimecode(start, "00:00:00:00");
     fireEvent.blur(start);
 
     const dur = within(env).getByLabelText("Duration");
-    fireEvent.change(dur, { target: { value: "00:00:02:00" } });
+    changeTimecode(dur, "00:00:02:00");
     fireEvent.blur(dur);
 
     const label = within(env).getByLabelText("Label");
@@ -443,15 +443,14 @@ describe("AttributePanel envelope command routing", () => {
     expect(updateLayer).not.toHaveBeenCalled();
   });
 
-  it("rejects an invalid timecode by reverting the field without a command", async () => {
+  it("ignores nonnumeric frame input without a command", async () => {
     renderPanel(colorTrack());
-    expandTimingDetails();
-    const start = within(timingDetails()).getByLabelText("Start");
-    fireEvent.change(start, { target: { value: "not-a-timecode" } });
+    const start = within(timingSection()).getByLabelText("Start");
+    fireEvent.change(within(start).getByLabelText("frames"), { target: { value: "not-a-timecode" } });
     fireEvent.blur(start);
     await new Promise((r) => setTimeout(r, 50));
     expect(moveLayer).not.toHaveBeenCalled();
-    expect(start).toHaveProperty("value", "00:00:00:00");
+    expectTimecode(start, "00:00:00:00");
   });
 
   it("disables timing edits on a locked Layer, keeping label and flags editable", () => {
@@ -459,9 +458,8 @@ describe("AttributePanel envelope command routing", () => {
     locked.layers[0] = { ...locked.layers[0], locked: true } as LayerSummary;
     renderPanel(locked);
     const env = panel();
-    expandTimingDetails();
-    expect(within(timingDetails()).getByLabelText("Start")).toHaveProperty("disabled", true);
-    expect(within(env).getByLabelText("Duration")).toHaveProperty("disabled", true);
+    expect(within(within(timingSection()).getByLabelText("Start")).getByLabelText("frames")).toHaveProperty("disabled", true);
+    expect(within(within(env).getByLabelText("Duration")).getByLabelText("frames")).toHaveProperty("disabled", true);
     expect(within(env).getByLabelText("Label")).toHaveProperty("disabled", false);
     expect(screen.getByRole("button", { name: "Locked" })).toHaveProperty("disabled", false);
   });
@@ -596,18 +594,16 @@ function motifTrack(): TrackSummary {
 }
 
 describe("AttributePanel local disclosures", () => {
-  it("keeps flip controls visible while fades disclose under Appearance", () => {
+  it("shows fade durations directly under Effects", () => {
     renderPanel(videoTrack(), "layer-v1");
     expect(screen.getByLabelText("Duration")).toBeTruthy();
     expect(screen.getByLabelText("Speed")).toBeTruthy();
     expect(screen.getByLabelText("Label")).toHaveProperty("placeholder", "clip.mp4");
-    expect(screen.queryByLabelText("Fade in")).toBeNull();
     expect(screen.getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Fade in & out" }));
-    const appearance = screen.getByRole("region", { name: "Appearance" });
-    expect(within(appearance).getByLabelText("Fade in")).toBeTruthy();
-    expect(within(appearance).getByLabelText("Fade out")).toBeTruthy();
-    expect(screen.queryByLabelText("Start")).toBeNull();
+    const effects = screen.getByRole("region", { name: "Effects" });
+    expect(within(effects).getByLabelText("Fade-in duration")).toBeTruthy();
+    expect(within(effects).getByLabelText("Fade-out duration")).toBeTruthy();
+    expect(screen.getByLabelText("Start")).toBeTruthy();
     const transform = screen.getByRole("region", { name: "Transform" });
     expect(within(transform).getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
     expect(within(transform).getByRole("button", { name: "Flip vertical" })).toBeTruthy();
@@ -615,9 +611,8 @@ describe("AttributePanel local disclosures", () => {
 
   it("offers time placement even for a Color layer", () => {
     renderPanel(colorTrack());
-    expandTimingDetails();
     expect(screen.getByRole("button", { name: "Locked" })).toBeTruthy();
-    expect(within(timingDetails()).getByLabelText("Start")).toBeTruthy();
+    expect(within(timingSection()).getByLabelText("Start")).toBeTruthy();
   });
 
   it("hides a Motif layer's bake status unless a bake is active or failed", () => {
@@ -668,16 +663,16 @@ describe("AttributePanel Audio fields", () => {
     expect(within(screen.getByRole("region", { name: "Audio" })).getByLabelText("Role")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Audio" })).getByRole("switch", { name: "Mute" }).getAttribute("aria-checked")).toBe("false");
 
-    const fadeIn = screen.getByLabelText("Fade in");
-    expect(fadeIn).toHaveProperty("value", "00:00:00:00");
-    fireEvent.change(fadeIn, { target: { value: "00:00:01:00" } });
+    const fadeIn = screen.getByLabelText("Fade-in duration");
+    expect(within(fadeIn).getByLabelText("frames")).toHaveProperty("value", "00");
+    fireEvent.change(within(fadeIn).getByLabelText("frames"), { target: { value: "1" } });
     fireEvent.blur(fadeIn);
     await vi.waitFor(() =>
-      expect(updateLayerParams).toHaveBeenCalledWith("layer-a1", { kind: "Audio", fade_in_us: 1_000_000 }),
+      expect(updateLayerParams).toHaveBeenCalledWith("layer-a1", { kind: "Audio", fade_in_us: 33_333 }),
     );
 
-    const fadeOut = screen.getByLabelText("Fade out");
-    fireEvent.change(fadeOut, { target: { value: "00:00:02:00" } });
+    const fadeOut = screen.getByLabelText("Fade-out duration");
+    fireEvent.change(within(fadeOut).getByLabelText("seconds"), { target: { value: "2" } });
     fireEvent.blur(fadeOut);
     await vi.waitFor(() =>
       expect(updateLayerParams).toHaveBeenCalledWith("layer-a1", { kind: "Audio", fade_out_us: 2_000_000 }),
@@ -690,8 +685,8 @@ describe("AttributePanel Audio fields", () => {
 describe("AttributePanel Audio fade guards", () => {
   it("skips the fade command when the field still holds the current value", async () => {
     renderPanel(audioTrack(), "layer-a1");
-    const fadeIn = screen.getByLabelText("Fade in");
-    fireEvent.change(fadeIn, { target: { value: "00:00:00:00" } });
+    const fadeIn = screen.getByLabelText("Fade-in duration");
+    fireEvent.change(within(fadeIn).getByLabelText("frames"), { target: { value: "0" } });
     fireEvent.blur(fadeIn);
     await new Promise((r) => setTimeout(r, 50));
     expect(updateLayerParams).not.toHaveBeenCalled();

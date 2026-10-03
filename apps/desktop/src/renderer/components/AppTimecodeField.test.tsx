@@ -46,12 +46,14 @@ describe("AppTimecodeField", () => {
     expect((screen.getByLabelText("seconds") as HTMLInputElement).value).toBe("59");
   });
 
-  it("↑ increments the focused segment, clamped", async () => {
-    render(<AppTimecodeField valueUs={0} {...fps} onCommit={() => {}} />);
+  it("↑ increments the focused segment and reports live values for validation", async () => {
+    const onValueChange = vi.fn();
+    render(<AppTimecodeField valueUs={0} {...fps} onCommit={() => {}} onValueChange={onValueChange} />);
     const ss = screen.getByLabelText("seconds") as HTMLInputElement;
     await userEvent.click(ss);
     await userEvent.keyboard("{ArrowUp}{ArrowUp}");
     expect(ss.value).toBe("02");
+    expect(onValueChange).toHaveBeenLastCalledWith(2 * US);
   });
 
   it("Enter commits the assembled, frame-aligned value", async () => {
@@ -59,7 +61,7 @@ describe("AppTimecodeField", () => {
     render(<AppTimecodeField valueUs={0} {...fps} onCommit={onCommit} />);
     await userEvent.click(screen.getByLabelText("seconds"));
     await userEvent.keyboard("10{Enter}"); // 10s = 300 frames = 10_000_000 us
-    expect(onCommit).toHaveBeenCalledWith(10 * US);
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith(10 * US);
   });
 
   it("Esc reverts the segments and calls onCancel", async () => {

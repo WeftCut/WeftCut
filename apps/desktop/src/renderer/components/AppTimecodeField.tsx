@@ -10,12 +10,16 @@ export interface AppTimecodeFieldProps {
   fpsDen: number;
   /// Fires on blur / Enter with a frame-aligned microsecond value.
   onCommit: (us: number) => void;
+  /// Optional live validation of the assembled, clamped timecode.
+  onValueChange?: (us: number) => void;
   /// Fires on Esc (revert). Optional — used by the transport to exit edit mode.
   onCancel?: () => void;
   disabled?: boolean;
   /// Focus the HH segment on mount (transport edit-mode).
   autoFocus?: boolean;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
+  invalid?: boolean;
   className?: string;
 }
 
@@ -36,10 +40,13 @@ export function AppTimecodeField({
   fpsNum,
   fpsDen,
   onCommit,
+  onValueChange,
   onCancel,
   disabled,
   autoFocus,
   ariaLabel,
+  ariaDescribedBy,
+  invalid,
   className,
 }: AppTimecodeFieldProps) {
   const framesPerSec = Math.max(1, Math.round(fpsNum / fpsDen));
@@ -84,16 +91,27 @@ export function AppTimecodeField({
     const next = [...segs];
     next[i] = digits;
     setSegs(next);
+    notifyValueChange(next);
     if (digits.length === 2 && i < LAST) focusSeg(i + 1);
+  };
+
+  const notifyValueChange = (current: string[]) => {
+    if (!onValueChange) return;
+    const us = parseTimecode(current.map((v, i) => clamp(i, v)).join(":"), fpsNum, fpsDen);
+    if (us !== null) onValueChange(us);
   };
 
   const handleKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      commit(segs);
-      inputs.current[i]?.blur();
+      // Leaving the control commits through onBlur. Calling commit here too
+      // would send the same edit twice before its async snapshot arrives.
+      if (document.activeElement === inputs.current[i]) inputs.current[i]?.blur();
+      else commit(segs);
     } else if (e.key === "Escape") {
       e.preventDefault();
+      // Reverting an edit consumes Escape even inside a dialog.
+      e.stopPropagation();
       cancelling.current = true;
       setSegs(split(valueUs));
       onCancel?.();
@@ -105,6 +123,7 @@ export function AppTimecodeField({
       const next = [...segs];
       next[i] = pad2(n);
       setSegs(next);
+      notifyValueChange(next);
     } else if (e.key === ":" ) {
       e.preventDefault();
       if (i < LAST) focusSeg(i + 1);
@@ -119,7 +138,7 @@ export function AppTimecodeField({
 
   return (
     <div
-      className={cn("app-input", "app-timecode", disabled && "app-timecode--disabled", className)}
+      className={cn("app-input", "app-timecode", disabled && "app-timecode--disabled", invalid && "app-input--invalid", className)}
       role="group"
       // A focus group (ADR 0041): the segments are siblings of one control, so
       // clicking from hours into minutes must not read as leaving the field.
@@ -129,6 +148,8 @@ export function AppTimecodeField({
       // whole timecode once per click, one undo entry each.
       {...{ [FOCUS_GROUP_ATTR]: "" }}
       aria-label={ariaLabel}
+      aria-invalid={invalid || undefined}
+      aria-describedby={ariaDescribedBy}
       onFocusCapture={() => {
         focused.current = true;
       }}
@@ -156,6 +177,8 @@ export function AppTimecodeField({
             disabled={disabled ?? false}
             autoFocus={autoFocus && i === 0}
             aria-label={SEG_LABELS[i]}
+            aria-invalid={invalid || undefined}
+            aria-describedby={ariaDescribedBy}
             onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => handleChange(i, e.target.value)}
             onKeyDown={(e) => handleKeyDown(i, e)}

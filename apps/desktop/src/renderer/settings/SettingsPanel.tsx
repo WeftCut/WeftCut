@@ -18,10 +18,10 @@ import {
 } from "../ipc";
 import { fitCompositionToLayersOf, setCompositionOf } from "../ipc/compositionScoped";
 import { listen, type UnlistenFn } from "@/bridge/events";
-import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
+import { formatTimecode, wallClockAside } from "../frames";
 import { refusalText } from "../errors/tryMutate";
 import { AppDialog } from "../components/AppDialog";
-import { AppInput } from "../components/AppInput";
+import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
@@ -1173,19 +1173,12 @@ function CompositionSection({
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
-  /// Local edit buffer for the timecode input while the user is typing.
-  /// `null` means "not editing — display the canonical formatted value".
-  const [draft, setDraft] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Reset draft + local error whenever the upstream composition snapshot
-  // changes (e.g., the user committed, or a layer edit elsewhere refit
-  // the duration). Compare on the `durationUs` + pin flag to avoid
-  // resetting while the user is mid-keystroke against the same value.
+  // Clear feedback when the project or its authoritative timing changes.
   useEffect(() => {
-    setDraft(null);
     setLocalError(null);
-  }, [composition?.durationUs, composition?.durationPinned]);
+  }, [composition?.id, composition?.durationUs, composition?.durationPinned, composition?.fpsNum, composition?.fpsDen]);
 
   const pinned = composition?.durationPinned ?? false;
   const disabled = composition === null || busy;
@@ -1209,17 +1202,10 @@ function CompositionSection({
       ? null
       : wallClockAside(composition.layersMaxEndUs, composition.fpsNum, composition.fpsDen);
 
-  /// Pure validator — runs on every keystroke so the user sees feedback
-  /// while typing rather than only on commit. Returns the localized
-  /// error string or null when the draft is valid.
-  const validateDraft = (value: string): string | null => {
+  const validateDuration = (us: number): string | null => {
     if (!composition) return null;
-    const parsed = parseTimecode(value, composition.fpsNum, composition.fpsDen);
-    if (parsed === null) return t("settings.composition_duration_invalid");
-    if (parsed < composition.layersMaxEndUs) {
-      return t("settings.composition_duration_below_floor", {
-        floor: floorDisplay,
-      });
+    if (us < composition.layersMaxEndUs) {
+      return t("settings.composition_duration_below_floor", { floor: floorDisplay });
     }
     return null;
   };
@@ -1245,26 +1231,16 @@ function CompositionSection({
     }
   };
 
-  const commit = async () => {
-    if (!composition || busy || draft === null) return;
-    // Live validation already populated localError on every keystroke;
-    // if it's set, refuse to commit. The IPC layer would reject below-
-    // floor values anyway (overflow guard), but bailing early keeps the
-    // history clean.
-    if (localError !== null) return;
-    const parsed = parseTimecode(draft, composition.fpsNum, composition.fpsDen);
-    if (parsed === null) return;
-    if (parsed === composition.durationUs) {
-      // No-op commit — just clear the draft state.
-      setDraft(null);
-      return;
-    }
+  const commit = async (us: number) => {
+    if (!composition || busy || !pinned) return;
+    const error = validateDuration(us);
+    setLocalError(error);
+    if (error !== null || us === composition.durationUs) return;
     setBusy(true);
     onError("");
     try {
-      await setCompositionOf(composition.id, { duration_us: parsed });
+      await setCompositionOf(composition.id, { duration_us: us });
       await onChanged();
-      setDraft(null);
     } catch (e) {
       onError(refusalText(e));
     } finally {
@@ -1287,28 +1263,20 @@ function CompositionSection({
             {t("settings.pin_composition_duration")}
           </span>
         </label>
-        <AppInput id="composition-duration" value={draft ?? displayValue} disabled={disabled || !pinned}
-          spellCheck={false} mono align="center" invalid={!!localError} className="settings-input"
+        <AppTimecodeField
+          key={`${composition?.id ?? "none"}:${pinned}`}
+          valueUs={composition?.durationUs ?? 0}
+          fpsNum={composition?.fpsNum ?? 30}
+          fpsDen={composition?.fpsDen ?? 1}
+          disabled={disabled || !pinned}
+          invalid={localError !== null}
+          className="settings-input"
           ariaLabel={t("settings.composition_duration_label")}
-          onValueChange={(v) => { setDraft(v); setLocalError(validateDraft(v)); }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              // Consume: this Escape reverts the draft only; without
-              // stopPropagation the Settings dialog would close too.
-              e.stopPropagation();
-              setDraft(null);
-              setLocalError(null);
-            }
-          }}
-          onBlur={() => { if (draft !== null) void commit(); }}
-          aria-invalid={localError !== null}
-          aria-describedby={
-            localError ? "composition-duration-error" : "composition-duration-hint"
-          } />
+          ariaDescribedBy={localError ? "composition-duration-error" : "composition-duration-hint"}
+          onValueChange={(us) => setLocalError(validateDuration(us))}
+          onCommit={(us) => void commit(us)}
+          onCancel={() => setLocalError(null)}
+        />
       </div>
       {localError ? (
         <p
