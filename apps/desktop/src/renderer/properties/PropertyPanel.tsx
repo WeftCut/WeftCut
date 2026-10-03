@@ -267,7 +267,7 @@ function CompositionPanel({
         <p className="prop-identity-title">{derivedName}</p>
         <p className="prop-identity-meta">{t("property_panel.group")}</p>
       </div>
-      <PropSection layerKind="CompositionRef" collapsible={false} sectionId="group" title={t("property_panel.group")}>
+      <PropSection layerKind="CompositionRef" sectionId="group" title={t("property_panel.group")}>
         <Field label={t("property_panel.group_name")}>
           <AppInput
             value={name}
@@ -404,7 +404,7 @@ function LayerPanel({
       {layer.params.kind !== "Audio" && layer.params.kind !== "Color" ? (
         <TransformFields layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       ) : null}
-      <PropSection layerKind={layer.kind} sectionId="timing" title={t("property_panel.timing")} collapsible={false}>
+      <PropSection layerKind={layer.kind} sectionId="timing" title={t("property_panel.timing")}>
         <Field label={t("property_panel.duration")}>
           {env.isAudio && env.units !== "frames" ? (
             <AppInput
@@ -662,7 +662,7 @@ function KindFields({
     case "VideoClip":
     case "ImageOverlay":
       return (
-        <PropSection layerKind={layer.kind} sectionId="effects" title={t("property_panel.effects")} collapsible={false}>
+        <PropSection layerKind={layer.kind} sectionId="effects" title={t("property_panel.effects")}>
           <FadeFields key={layer.id} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
         </PropSection>
       );
@@ -783,7 +783,7 @@ function TransformFields({
   const commit = commitLayerParams(layer.id, onMutated);
   const video = layer.params.kind === "VideoClip" ? layer.params : null;
   return (
-    <PropSection layerKind={layer.kind} collapsible={false} sectionId="transform" title={t("property_panel.transform")}>
+    <PropSection layerKind={layer.kind} sectionId="transform" title={t("property_panel.transform")}>
       <InspectorRow label={t("property_panel.anchor")}>
         <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
         <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
@@ -998,7 +998,7 @@ function TextFields({
       : null;
 
   return (
-    <PropSection layerKind={layer.kind} collapsible={false} sectionId="text" title={t("property_panel.text")}>
+    <PropSection layerKind={layer.kind} sectionId="text" title={t("property_panel.text")}>
       <Field label={t("property_panel.content")} stacked>
         <textarea
           className="app-input"
@@ -1243,7 +1243,7 @@ function MotifFields({
         // The Motif ships its own page — it owns the whole props surface,
         // including labels, grouping and order. The fallback form below stays
         // the default for every Motif that doesn't.
-        <PropSection layerKind={layer.kind} collapsible={false} sectionId="props" title={t("property_panel.props")}>
+        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
           <MotifParamsFrame
             layerId={layer.id}
             motifId={v.motif_id}
@@ -1253,7 +1253,7 @@ function MotifFields({
           />
         </PropSection>
       ) : propEntries.length > 0 ? (
-        <PropSection layerKind={layer.kind} collapsible={false} sectionId="props" title={t("property_panel.props")}>
+        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
           {propEntries.map(([key, spec]) => (
             <MotifPropField
               key={key}
@@ -1616,7 +1616,7 @@ function GroupFields({
       : t(`quick_actions.ungroup_not_plain_${notPlain}`);
 
   return (
-    <PropSection layerKind={layer.kind} collapsible={false} sectionId="group" title={t("property_panel.group")}>
+    <PropSection layerKind={layer.kind} sectionId="group" title={t("property_panel.group")}>
       <Field label={t("property_panel.group_name")}>
         <AppInput
           value={name}
@@ -1681,7 +1681,7 @@ function ColorFields({
 }) {
   const { t } = useTranslation();
   return (
-    <PropSection layerKind={layer.kind} collapsible={false} sectionId="color" title={t("property_panel.color")}>
+    <PropSection layerKind={layer.kind} sectionId="color" title={t("property_panel.color")}>
       <InspectorColorField
         layerId={layer.id}
         track={v.color}
@@ -1739,7 +1739,7 @@ function AudioFields({
 }) {
   const { t } = useTranslation();
   return (
-    <PropSection layerKind={layer.kind} collapsible={false} sectionId="audio" title={t("property_panel.audio")}>
+    <PropSection layerKind={layer.kind} sectionId="audio" title={t("property_panel.audio")}>
       <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <FadeFields key={layer.id} v={v} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
       <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />

@@ -4,6 +4,7 @@ import { formatTimecode, parseTimecode } from "../frames";
 import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
+import { PropSection } from "./PropSection";
 import {
   removeTransition,
   updateTransition,
@@ -122,11 +123,11 @@ export function TransitionFields({
   };
 
   return (
-    <section
-      className="prop-section"
-      aria-label={t("property_panel.transition", { defaultValue: "Transition" })}
+    <PropSection
+      layerKind="Transition"
+      sectionId="transition"
+      title={t("property_panel.transition", { defaultValue: "Transition" })}
     >
-      <h3>{t("property_panel.transition", { defaultValue: "Transition" })}</h3>
       <TransitionField label={t("property_panel.kind", { defaultValue: "Kind" })}>
         <AppSelect
           value={kind}
@@ -175,7 +176,7 @@ export function TransitionFields({
           defaultValue: "Delete transition",
         })}
       </Button>
-    </section>
+    </PropSection>
   );
 }
 

@@ -44,15 +44,12 @@ export function PropSection({
   sectionId,
   title,
   defaultCollapsed = false,
-  collapsible = true,
   children,
 }: {
   layerKind: string;
   sectionId: string;
   title: string;
   defaultCollapsed?: boolean;
-  /// Primary groups use a quiet heading; only secondary settings disclose.
-  collapsible?: boolean;
   children: React.ReactNode;
 }) {
   const key = `${layerKind}:${sectionId}`;
@@ -89,20 +86,16 @@ export function PropSection({
 
   return (
     <section className="prop-section" aria-label={title}>
-      {collapsible ? (
-        <button
-          type="button"
-          className="prop-section-header"
-          aria-expanded={!collapsed}
-          onClick={toggle}
-        >
-          {collapsed ? <ChevronRight size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
-          <span className="prop-section-title">{title}</span>
-        </button>
-      ) : (
-        <h3 className="prop-section-heading">{title}</h3>
-      )}
-      {collapsible && collapsed ? null : children}
+      <button
+        type="button"
+        className="prop-section-header"
+        aria-expanded={!collapsed}
+        onClick={toggle}
+      >
+        {collapsed ? <ChevronRight size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
+        <span className="prop-section-title">{title}</span>
+      </button>
+      {collapsed ? null : <div className="prop-section-body">{children}</div>}
     </section>
   );
 }
