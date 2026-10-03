@@ -69,11 +69,18 @@ test('Motif picker offers per-card export and protected contextual deletion', as
     const picker = page.getByRole('dialog', { name: 'Motifs', exact: true })
     const builtin = picker.locator('.motif-card').first()
     await builtin.click({ button: 'right' })
-    await expect(page.getByRole('menuitem', { name: 'Export Motif ZIP' })).toBeVisible()
+    const exportMenuItem = page.getByRole('menuitem', { name: 'Export Motif ZIP' })
+    await expect(exportMenuItem).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Delete Motif' })).toHaveCount(0)
+    // Visibility precedes Base UI's deferred focus handoff on macOS. Escape
+    // belongs to the menu only once it has taken keyboard focus.
+    const cardMenu = page.getByRole('menu', { name: await builtin.locator('.motif-card-name').innerText(), exact: true })
+    await expect(cardMenu).toBeFocused()
     // Popup focus can emit a scroll even when the card has not moved.
     await picker.locator('.motif-picker-list').dispatchEvent('scroll')
+    await expect(cardMenu).toBeFocused()
     await page.keyboard.press('Escape')
+    await expect(exportMenuItem).toHaveCount(0)
     await expect(picker).toBeVisible()
     await picker.getByLabel('Search motifs…').fill('Cover Badge')
     const card = picker.locator('.motif-card')

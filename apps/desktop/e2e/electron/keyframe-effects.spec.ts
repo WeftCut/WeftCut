@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { writeFileSync } from 'node:fs'
 import type { AnimTrack, EffectView, LayerSummary, TrackSummary } from '../../src/renderer/ipc'
+import type { PositionAnimation } from '../../src/shared/position'
 import { dockPanel, invokeCmd, launchApp, newProject, rootSummary, tmpDir, waitForHook } from './helpers/driver'
 
 async function layerState(page: Page, id: string): Promise<LayerSummary> {
@@ -162,8 +163,10 @@ test('path progress is discovered and editable as a timeline channel', async () 
     await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), id)
     await page.getByTestId('position-fields').getByRole('button', { name: /^Path$/ }).click()
     const progress = page.getByTestId('position-fields').locator('.anim-field').filter({ hasText: /progress/i })
-    // Creating a path already keys progress at its two endpoints.
-    await progress.getByRole('textbox').click()
+    // A mode switch preserves the static position. Explicitly animate progress
+    // before asking the timeline to discover its channel.
+    await seek(page, 0)
+    await progress.locator('.anim-stopwatch').click()
     await page.locator('[data-testid="kf-lane-twirl"]:not([disabled])').click()
     await expect(page.getByTestId('kf-sublane')).toHaveCount(1)
     await seek(page, 1_000_000)
@@ -172,9 +175,9 @@ test('path progress is discovered and editable as a timeline channel', async () 
     await value.fill('50')
     await value.press('Tab')
     await expect.poll(async () => {
-      const params = (await layerState(page, id)).params as unknown as { path_progress: AnimTrack<number> }
-      return keys(params.path_progress).map(k => [k.t_us, k.value])
-    }).toEqual([[0, 0], [1_000_000, 0.5], [3_000_000, 1]])
+      const params = (await layerState(page, id)).params as unknown as { position: PositionAnimation }
+      return keys(params.position.mode === 'Path' ? params.position.progress : undefined).map(k => [k.t_us, k.value])
+    }).toEqual([[0, 0], [1_000_000, 0.5]])
     await capture(page, 'path-progress-lane.png')
   } catch (error) {
     await capture(page, 'failure.png').catch(() => {})

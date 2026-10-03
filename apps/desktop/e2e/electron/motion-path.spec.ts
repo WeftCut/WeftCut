@@ -18,6 +18,8 @@ const toXY = (fields: Locator) => fields.getByRole('button', { name: /^XY$/ })
 test('motion path creation, point dragging, conversion preview/cancel/apply and undo', async () => {
   const { app, page } = await launchApp()
   try {
+    // Exercise insertion with the compact preview used by hosted desktops.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setBounds({ width: 1024, height: 768 }))
     await newProject(page, { parentFolder: tmpDir('weftcut-e2e-path-'), name: `path-${Date.now()}`, canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 } })
     const id = await invokeCmd<string>(page, 'add_text_layer', { tStartUs: 0, durationUs: 2_000_000, content: 'Motion path' })
     await waitForHook(page, 'revealLayer')
@@ -84,6 +86,8 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await page.keyboard.press('Escape')
     await page.mouse.up()
     expect(await position(page, id), 'Escape cancels the uncommitted handle edit').toEqual(curved)
+    const pathHit = page.getByTestId('path-insert-hit')
+    const curvedRoute = await pathHit.getAttribute('d')
     await fields.getByRole('group', { name: /Spatial node|空间节点/ })
       .getByRole('button', { name: /Auto smooth|自动平滑/ }).click()
     await expect.poll(async () => {
@@ -91,13 +95,23 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
       return p.mode === 'Path' ? p.path.nodes[0]!.tangent_mode : ''
     }).toBe('Auto')
     const auto = await position(page, id)
-    const location = await page.getByTestId('path-insert-hit').evaluate(el => {
+    // The actor summary can arrive before React paints the solved Auto curve.
+    // Wait for that geometry, then choose a point clear of the node/handle
+    // hit targets (which occupy a larger fraction of a compact CI preview).
+    await expect(pathHit).not.toHaveAttribute('d', curvedRoute!)
+    await expect(pathHit).toBeVisible()
+    const location = await pathHit.evaluate(el => {
       const path = el as SVGPathElement
-      const p = path.getPointAtLength(path.getTotalLength() * 0.5)
-      const client = new DOMPoint(p.x,p.y).matrixTransform(path.getScreenCTM()!)
-      return { x: client.x, y: client.y }
+      for (const fraction of [0.5, 0.25, 0.75, 0.4, 0.6, 0.2, 0.8]) {
+        const p = path.getPointAtLength(path.getTotalLength() * fraction)
+        const client = new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM()!)
+        if (document.elementFromPoint(client.x, client.y) === path) {
+          return { x: client.x, y: client.y }
+        }
+      }
+      throw new Error('Motion path has no exposed insertion target')
     })
-    await page.mouse.dblclick(location.x,location.y)
+    await page.mouse.dblclick(location.x, location.y)
     await expect.poll(async () => {
       const p = await position(page, id)
       return p.mode === 'Path' ? p.path.nodes.length : 0
