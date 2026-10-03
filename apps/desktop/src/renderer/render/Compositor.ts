@@ -178,6 +178,9 @@ export class Compositor {
   /// only ADDS. A clip the playhead scrolled off of (or a disabled layer) is
   /// never visited by the sweep, so it drops out instead of lingering.
   private unsupportedMedia = new Set<string>();
+  /// Anchor prewarm also calls ensureClip outside a visual sweep. Compare
+  /// against the last published snapshot, never that mutable discovery set.
+  private publishedUnsupportedMedia = new Set<string>();
   /// Export-only borrowed pixels, keyed by Group instance path. See
   /// `setMotifFrames`; empty in preview mode.
   private motifFrames = new Map<string, InjectedMotifFrames>();
@@ -606,7 +609,7 @@ export class Compositor {
     // Fresh per-composite unsupported-media set — the reset half of the
     // ownership split documented on `unsupportedMedia`; the nodes only ADD
     // during the sweep below.
-    const prevUnsupported = this.unsupportedMedia;
+    const prevUnsupported = this.publishedUnsupportedMedia;
     this.unsupportedMedia = new Set<string>();
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
@@ -627,6 +630,7 @@ export class Compositor {
       }
     }
     if (unsupportedChanged) {
+      this.publishedUnsupportedMedia = new Set(this.unsupportedMedia);
       this.onUnsupported?.(new Set(this.unsupportedMedia));
     }
     // Underrun verdict for this sweep. Judged only while the master
@@ -772,6 +776,7 @@ export class Compositor {
     // No final `onUnsupported` fire: the host's listener dies with this
     // Compositor and `compositeFrame` is now a no-op.
     this.unsupportedMedia.clear();
+    this.publishedUnsupportedMedia.clear();
     this.root.dispose();
     this.motifService.dispose();
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by

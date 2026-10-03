@@ -55,7 +55,7 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
   test.setTimeout(180_000)
   const userData = tmpDir('weftcut-e2e-raster-gc-userdata-')
   const motifsRoot = path.join(userData, 'data', 'motifs')
-  const { app, page } = await launchApp({ userDataDir: userData })
+  let { app, page } = await launchApp({ userDataDir: userData })
   try {
     // The user Motif exists on disk BEFORE the project references it.
     mkdirSync(path.join(motifsRoot, MOTIF_ID), { recursive: true })
@@ -101,8 +101,15 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
     // The motif becomes UNRESOLVABLE (draft deleted from the data root —
     // models any transient catalog gap at open). Reopen: GC must skip, and
     // even a dir it would otherwise collect must survive.
+    // Stop the previous session before seeding: its still-valid GC may run
+    // again after the control's first deletion and reclaim our new sentinel
+    // while its catalog still resolves the motif. That is not the reopen
+    // behavior this test measures.
+    await app.close()
     rmSync(path.join(motifsRoot, MOTIF_ID), { recursive: true, force: true })
     seedOrphan()
+    ;({ app, page } = await launchApp({ userDataDir: userData }))
+    await waitForHook(page, 'motifReopenProject')
     await reopen(page, projectPath)
     // Give the fire-and-forget hydrate ample time to (not) run its GC, on a
     // loaded runner included. Existence after a window that covers it is the

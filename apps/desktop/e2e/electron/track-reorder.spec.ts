@@ -122,7 +122,7 @@ test('Move to a new track reveals the new row without losing selection or the ho
     await expect(row(page, newTrack.id).getByTestId('track-header')).toBeInViewport()
     expect(await viewport.evaluate(el => el.scrollLeft)).toBe(left)
     expect((await summary(page)).tracks.find((track) => track.id === id)!.layers).toHaveLength(1)
-    await expect(row(page, newTrack.id).locator(`[data-layer-id="${clip}"]`).first()).toHaveClass(/outline-ring/)
+    await expect(row(page, newTrack.id).locator(`[data-layer-id="${clip}"]`).first().getByTestId('layer-selection-outline')).toBeVisible()
 
     // Complete the create-then-reorder workflow through a long scrolling list.
     // Holding the pointer still at the bottom must keep revealing more rows.

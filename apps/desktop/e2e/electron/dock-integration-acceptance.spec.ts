@@ -535,14 +535,11 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     await expect(page.getByTestId("effect-drag-1")).toBeVisible();
     await page.locator(".weft-dock-tab-label", { hasText: "Attribute" }).click();
     await expect(dockPanel(page, "attribute").locator(".placeholder")).toHaveCount(0);
-    // Attribute is bound to the primary Layer: the Duration timing field (whose
-    // edits route through the same `trim_layer` command Timeline gestures use) is
-    // present for the selection. Duration, not Start — both are timing fields on
-    // the same envelope, but Start sits in the always-collapsed Advanced section,
-    // and expanding a Section is not what this dock test is about.
+    // Duration is a segmented timecode group. Assert its selected Layer value
+    // so the check covers the binding as well as the Panel's visibility.
     await expect(
-      dockPanel(page, "attribute").getByRole("textbox", { name: /^(Duration|时长)$/ }),
-    ).toBeVisible();
+      dockPanel(page, "attribute").getByRole("group", { name: /^(Duration|时长)$/ }).getByRole("textbox", { name: /^(seconds|秒)$/ }),
+    ).toHaveValue("03");
 
     // Move the Effect Panel into Preview's group. Selection and the chain survive
     // the dock move, and the keyboard move-down command still reorders (one undo).
@@ -583,8 +580,8 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     await expect(dockPanel(page, "attribute").locator(".placeholder")).toHaveCount(0);
     // Same Attribute binding check as above.
     await expect(
-      dockPanel(page, "attribute").getByRole("textbox", { name: /^(Duration|时长)$/ }),
-    ).toBeVisible();
+      dockPanel(page, "attribute").getByRole("group", { name: /^(Duration|时长)$/ }).getByRole("textbox", { name: /^(seconds|秒)$/ }),
+    ).toHaveValue("03");
   } finally {
     await app.close();
   }

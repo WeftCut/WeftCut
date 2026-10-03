@@ -94,6 +94,36 @@ function emptyRing(): FrameStore {
 }
 
 describe("Compositor preview decode priority wiring", () => {
+  it("reports unsupported on-screen clips even when anchor prewarm discovers them first", () => {
+    const onUnsupported = vi.fn();
+    const compositor = new Compositor({
+      app: { stage: new Container() } as unknown as Application,
+      width: 1920,
+      height: 1080,
+      mode: "preview",
+      resolveSource: () => ({ engine: "webcodecs", source: "original", status: "unsupported", target: null, key: null }),
+      originalAssetUrl: () => null,
+      sourceColor: () => undefined,
+      mediaById: () => undefined,
+      pool: { dispose: vi.fn(), release: vi.fn() } as unknown as DecoderPool,
+      onUnsupported,
+    });
+    try {
+      compositor.setProject(summary([video("unsupported", 0, 2_000_000)]));
+      compositor.setAnchorTime(1_000_000);
+      expect(onUnsupported).not.toHaveBeenCalled();
+      compositor.compositeFrame(1_000_000);
+      expect(onUnsupported).toHaveBeenCalledExactlyOnceWith(new Set(["media-unsupported"]));
+      compositor.compositeFrame(1_100_000);
+      expect(onUnsupported).toHaveBeenCalledTimes(1);
+      compositor.compositeFrame(3_000_000);
+      expect(onUnsupported).toHaveBeenLastCalledWith(new Set());
+      expect(onUnsupported).toHaveBeenCalledTimes(2);
+    } finally {
+      compositor.dispose();
+    }
+  });
+
   it.each(["cold", "cold-group", "empty", "future", "revived"])("keeps the presented scene while an incoming cut refills (%s ring)", (state) => {
     // Keep real rings, clip lifecycle and Pixi scene graph. Only pixel upload
     // needs a GPU, so stand it in with a real non-empty texture.

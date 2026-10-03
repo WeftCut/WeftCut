@@ -427,6 +427,30 @@ describe("ExportSourceHandle mid-dispatch rebuild", () => {
 // preferSoftware: 10-bit decode has no HW path; pre-configure SW to skip the
 // HW-error→fallback round-trip. Also verify the default stays prefer-hardware.
 describe("ExportSourceHandle preferSoftware", () => {
+  it.each([true, false])("uses the supported decode lane when hardware support is %s", async (hardwareSupported) => {
+    sink = makeSink([pkt(0, "key")]);
+    const probe = vi.fn(async (config: VideoDecoderConfig) => ({
+      supported: config.hardwareAcceleration === "prefer-software" || hardwareSupported,
+      config,
+    }));
+    class ProbedDecoder extends FakeVideoDecoder {
+      static isConfigSupported = probe;
+    }
+    vi.stubGlobal("VideoDecoder", ProbedDecoder);
+    const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");
+    const handle = makeHandle();
+    try {
+      await handle.ensureReady();
+      expect(configure).toHaveBeenCalledWith(expect.objectContaining({
+        hardwareAcceleration: hardwareSupported ? "prefer-hardware" : "prefer-software",
+      }));
+      expect(FakeVideoDecoder.instances).toHaveLength(1);
+    } finally {
+      configure.mockRestore();
+      handle.dispose();
+    }
+  });
+
   it("captures the hardwareAcceleration config via spy before ensureReady", async () => {
     const packets = [pkt(0, "key")];
     sink = makeSink(packets);

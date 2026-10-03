@@ -531,12 +531,14 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // Diagnostic: log whether HW decode is actually available in Worker scope
     // (Chrome sometimes silently lands on software; software 1080p ≈ 2 fps).
     if (typeof VideoDecoder.isConfigSupported === "function") {
+      const support = new Map<HardwareAcceleration, boolean>();
       for (const hw of ["prefer-hardware", "prefer-software"] as const) {
         try {
           const supported = await VideoDecoder.isConfigSupported({
-            ...config,
+            ...this.config,
             hardwareAcceleration: hw,
           });
+          support.set(hw, supported.supported === true);
           // eslint-disable-next-line no-console
           console.log(
             `[weftcut/export] ${this.mediaId} isConfigSupported(${hw})=${supported.supported}`,
@@ -545,6 +547,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
           // eslint-disable-next-line no-console
           console.warn(`[weftcut/export] isConfigSupported(${hw}) threw:`, e);
         }
+      }
+      // Hosted runners may have no hardware decoder. Honor a definitive
+      // probe before configure rather than deliberately failing the first
+      // decoder and recovering through its asynchronous error callback.
+      if (support.get("prefer-hardware") === false && support.get("prefer-software") === true) {
+        this.downgraded = true;
       }
     }
     this.decoder = this.buildDecoder();
