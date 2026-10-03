@@ -16,7 +16,7 @@ test('All Tracks reorders a whole populated track between A/B, with menu, cancel
     await app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]!
       if (win.isMaximized()) win.unmaximize()
-      win.setBounds({ x: 0, y: 0, width: 1440, height: 1000 })
+      win.setBounds({ x: 0, y: 0, width: 1440, height: 800 })
     })
     await newProject(page, { parentFolder: tmpDir('weftcut-track-reorder-'), name: 'track-order', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
     await expect(page.locator('.splash-screen')).toHaveCount(0)
@@ -27,12 +27,17 @@ test('All Tracks reorders a whole populated track between A/B, with menu, cancel
     await invokeCmd(page, 'add_color_layer', { trackId: id, tStartUs: 10_000_000, durationUs: 2_000_000 })
     await expect(page.getByTestId('track-reorder-grip')).toHaveCount(0)
     await toggle(page).click()
+    // Keep this fixed-gap gesture outside the edge-scroll bands, even on a
+    // small CI display. The next test exercises scrolling through a long list.
+    const timelineTab = page.locator('.weft-dock-tab[data-panel-kind="timeline"]')
+    await timelineTab.dblclick()
     const before = await summary(page)
     const a = before.tracks.find((track) => track.role === 'a-roll')!
     const b = before.tracks.find((track) => track.role === 'b-roll')!
     await expect(row(page, a.id).getByTestId('track-reorder-grip')).toBeDisabled()
     const grip = row(page, id).getByTestId('track-reorder-grip')
     await expect(grip).toBeEnabled()
+    for (const track of before.tracks) await expect(row(page, track.id).getByTestId('track-header')).toBeInViewport({ ratio: 1 })
     const source = (await grip.boundingBox())!
     const target = (await row(page, a.id).boundingBox())!
     const x = source.x + source.width / 2
@@ -73,12 +78,13 @@ test('All Tracks reorders a whole populated track between A/B, with menu, cancel
     expect((await summary(page)).tracks).toEqual(bottom.tracks)
     expect((await summary(page)).history.len).toBe(bottom.history.len)
 
-    await toggle(page).click()
+    // Quick Actions is hidden while the timeline is maximized.
+    await page.keyboard.press('Shift+T')
     await expect(page.getByTestId('track-reorder-grip')).toHaveCount(0)
     await row(page, a.id).getByTestId('track-header').click({ button: 'right' })
     await expect(page.getByRole('menuitem', { name: 'Move track up', exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape')
-    await toggle(page).click()
+    await page.keyboard.press('Shift+T')
     await expect(page.getByTestId('timeline-track-row').last()).toHaveAttribute('data-track-id', id)
     await page.getByTestId('timeline-layout').screenshot({ path: testInfo.outputPath('track-reordered.png') })
   } finally { await app.close() }
