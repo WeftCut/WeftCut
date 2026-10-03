@@ -54,7 +54,7 @@ import {
   useCompositionDurationUs,
   useGroupOrdinals,
 } from "../state/projectStore";
-import { currentSelection, layerIdsOf } from "../state/selectionStore";
+import { currentSelection, layerIdsOf, setLayerSelection } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import {
   EXTRAP_GLYPH_GAP_PX,
@@ -619,6 +619,9 @@ export function LayerBlock({
     const narrowLinkedSelection = linksOff && linkId !== null && !e.altKey && !e.shiftKey;
     const preserveSelection = kind === "move" && !e.altKey && !e.shiftKey &&
       !narrowLinkedSelection && selectedAtPointerDown.size > 1 && selectedAtPointerDown.has(layer.id);
+    // Keep the batch for a possible move, but let the inspector and gizmo
+    // follow the clip under the pointer even when it was already selected.
+    if (preserveSelection) setLayerSelection(layer.id, selectedAtPointerDown);
     const stillSelected = preserveSelection || onSelectFromClick(layer.id, {
       altKey: e.altKey,
       shiftKey: e.shiftKey,
@@ -845,15 +848,12 @@ export function LayerBlock({
         isDragging
           ? "z-[3] cursor-grabbing border-white/25 shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
           : "",
-        // Outline conditionals are mutually exclusive so Tailwind's emit
-        // order never decides the conflict: the locked chrome trumps the
-        // selected chrome.
+        // Selection paints above the preview in its own overlay below. An
+        // inset outline here is covered by the positioned preview's fill.
         (layer.locked || trackLocked)
           ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50"
           : dragIsInvalid
             ? "cursor-not-allowed"
-            : isSelected
-            ? "outline outline-2 -outline-offset-2 outline-ring"
             : "",
         movedAcrossTracks || previewOnly ? "pointer-events-none" : "",
       ].join(" ")}
@@ -945,6 +945,21 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {isSelected && !layer.locked && !trackLocked && !dragIsInvalid && !previewOnly && (
+        <span
+          data-testid="layer-selection-outline"
+          data-primary={isPrimary}
+          aria-hidden="true"
+          className={`pointer-events-none absolute -inset-px z-[3] rounded-[inherit] border-solid border-ring ${
+            isPrimary ? "border-2" : "border"
+          }`}
+          style={{
+            borderColor: isPrimary
+              ? "color-mix(in srgb, var(--ring) 55%, var(--foreground))"
+              : undefined,
+          }}
+        />
+      )}
       {/* Candidate pauses, on the subject Audio clip only: the component asks
           the store by id and draws nothing on any other block. A duplicate
           ghost carries the source layer's id, so it is kept out the same way

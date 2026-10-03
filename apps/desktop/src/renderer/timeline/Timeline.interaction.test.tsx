@@ -28,6 +28,7 @@ import type {
 } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
+import { AttributePanel } from "../panels/AttributePanel";
 import { TransitionChip } from "./TransitionChip";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -43,6 +44,7 @@ import {
   currentSelection,
   layerIdsOf,
   primaryLayerIdOf,
+  usePrimaryLayerId,
   setLayerSelection,
   setTransitionSelection,
   transitionIdOf,
@@ -1045,6 +1047,56 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
+  it.each(["linked", "unlinked", "mixed"] as const)(
+    "switches the inspected clip within a %s selection without dropping any highlights",
+    (mode) => {
+      const extra = { ...layer, id: "layer-3", label: "Clip C", t_start_us: 4_000_000, t_end_us: 6_000_000 };
+      const tracks = [{ ...linkedTrack, layers: mode === "mixed" ? [layer, linkedLayer, extra] : linkedTrack.layers }];
+      const { container } = renderTimeline({ tracks, links: mode === "unlinked" ? [] : [link] });
+      // Mirror App's subscription so the assertion reaches the real inspector,
+      // not just the selection store.
+      function Inspector() {
+        const primary = usePrimaryLayerId();
+        return <AttributePanel tracks={tracks} selectedLayerId={primary} onMutated={async () => {}}
+          fpsNum={30} fpsDen={1} currentTimeUs={0} />;
+      }
+      const inspector = render(<Inspector />);
+      const blocks = tracks[0]!.layers.map((clip, i) => {
+        const block = container.querySelector<HTMLElement>(`[data-layer-id="${clip.id}"]`)!;
+        vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+          left: i * 160, right: (i + 1) * 160, top: 0, bottom: 48,
+          width: 160, height: 48, x: i * 160, y: 0, toJSON: () => ({}),
+        });
+        return block;
+      });
+      const click = (index: number, shiftKey = false) => {
+        const event = { button: 0, clientX: index * 160 + 80, clientY: 24, shiftKey };
+        fireEvent.pointerDown(blocks[index]!, event);
+        fireEvent.pointerUp(window, event);
+        fireEvent.click(blocks[index]!, event);
+      };
+      click(0);
+      if (mode === "unlinked") click(1, true);
+      if (mode === "mixed") click(2, true);
+      const expectedIds = new Set(tracks[0]!.layers.map((clip) => clip.id));
+      // Switch both ways, including an already-primary click. Neither the
+      // linked siblings nor an unrelated selected clip may be dropped.
+      for (const index of mode === "linked" ? [1, 0, 0, 1] : [0, 1, 1, 0]) {
+        click(index);
+        expect(layerIdsOf(currentSelection())).toEqual(expectedIds);
+        expect(primaryLayerIdOf(currentSelection())).toBe(tracks[0]!.layers[index]!.id);
+        expect(inspector.getByLabelText("Label")).toHaveProperty("value", tracks[0]!.layers[index]!.label);
+        blocks.forEach((block, i) => {
+          const outline = block.querySelector('[data-testid="layer-selection-outline"]');
+          expect(outline).not.toBeNull();
+          expect(outline!.getAttribute("data-primary")).toBe(String(i === index));
+        });
+      }
+      expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+      expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+    },
+  );
+
   it("writes plain, Alt escape, and Shift toggle link selection globally", () => {
     const { getByText } = renderTimeline({
       tracks: [linkedTrack],
@@ -1699,15 +1751,20 @@ describe("Timeline seek/selection coupling", () => {
     expect(zTier(chip)).toBeGreaterThan(Math.max(...blocks.map(zTier)));
   });
 
-  it.each([false, true])("moves an unlinked multi-selection together without collapsing it (links off: %s)", async (linksOff) => {
+  it.each([
+    { linked: false, linksOff: false },
+    { linked: false, linksOff: true },
+    { linked: true, linksOff: false },
+  ])("promotes the grabbed clip and moves the complete selection (%j)", async ({ linked, linksOff }) => {
     ipcMocks.moveLayers.mockClear();
     setLinkOverride(linksOff);
-    const { getByText } = renderTimeline({ tracks: [linkedTrack], links: [] });
-    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    const { getByText } = renderTimeline({ tracks: [linkedTrack], links: linked ? [link] : [] });
+    act(() => setLayerSelection(linkedLayer.id, [layer.id, linkedLayer.id]));
     const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
     const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
     fireEvent.pointerDown(first, { button: 0, clientX: 0, clientY: 30 });
     expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id, linkedLayer.id]));
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
     fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
     expect(first.style.left).toBe("80px");
     expect(second.style.left).toBe("240px");
@@ -1716,6 +1773,8 @@ describe("Timeline seek/selection coupling", () => {
       [{ layerId: layer.id, trackId: track.id }, { layerId: linkedLayer.id, trackId: track.id }],
       layer.id, 1_000_000,
     ));
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(layerIdsOf(currentSelection())).toEqual(new Set([layer.id, linkedLayer.id]));
   });
 
   it.each(["click", "drag"])("link override narrows an already-selected pair on %s", async (gesture) => {

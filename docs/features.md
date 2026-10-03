@@ -112,7 +112,15 @@ exclusive: choosing either drops the other, which is what lets Delete and the
 Attribute panel always have exactly one kind of target.
 
 **Click semantics.** Plain click on an unselected clip replaces the selection;
-pressing an already selected clip's body keeps the selection for a group move.
+pressing an already selected clip's body keeps the complete selection for a
+group move and makes the pressed clip primary. This applies to linked clips,
+ordinary multi-selections, and mixtures of both: the Attribute panel and gizmo
+follow the pressed clip without dropping the other highlights. Every selected
+clip has a 1 px accent border; the primary has a 2 px pale-blue border (the
+accent mixed with foreground), without an extra inner line or shadow.
+Selection borders paint above clip previews so thumbnails and
+waveforms cannot cover the focus indicator. Link override
+still narrows a linked selection to the pressed member, as described below.
 A click on the blank
 lane space *between two clips* selects that **gap**, and a click on any other
 blank space clears, per *Background clicks* below. `Shift+click` **toggles** — the

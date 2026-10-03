@@ -16,7 +16,6 @@ import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { FontSelect } from "../components/FontSelect";
-import { AppSwitch } from "../components/AppSwitch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
