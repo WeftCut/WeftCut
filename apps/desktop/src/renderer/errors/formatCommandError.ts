@@ -199,6 +199,11 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.track_locked",
     args: (e, ctx) => ({ track: ctx.track(e.track) }),
   },
+  LayerLocked: {
+    tier: "curated",
+    key: "errors.layer_locked",
+    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+  },
   // Ripple delete's four (ADR 0062). Curated because every one of them is
   // reachable from a key, and because these lines have a second job no other
   // curated entry has: `timeline/rippleEligibility.ts` composes them from the

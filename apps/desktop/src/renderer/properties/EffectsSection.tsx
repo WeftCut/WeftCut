@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { EditControls, useLayerReadOnly } from "./LayerEditing";
 import { Menu } from "@base-ui/react/menu";
 import {
   ChevronDown,
@@ -71,6 +72,7 @@ export const audioCatalogForUi: UiEffectDescriptor[] = Object.values(AUDIO_EFFEC
 /// of either lifecycle is zero UI change.
 export function EffectsSection({ layer, catalog, tInLayerUs, playheadInSpan, onMutated }: Props) {
   const { t } = useTranslation();
+  const readOnly = useLayerReadOnly();
   const [err, setErr] = useState<string | null>(null);
 
   // A pick session (EffectRow.pickColorGroup) is modal and long-lived. If its
@@ -90,6 +92,7 @@ export function EffectsSection({ layer, catalog, tInLayerUs, playheadInSpan, onM
   const count = layer.effects.length;
   const { drag, indicatorGap, containerRef, setRowEl, startDrag } =
     usePointerReorder({
+      enabled: !readOnly,
       rowIds: layer.effects.map((eff) => eff.id),
       onDrop: ({ id, fromIndex, gap }) => {
         const newIndex = gap > fromIndex ? gap - 1 : gap;
@@ -145,7 +148,7 @@ export function EffectsSection({ layer, catalog, tInLayerUs, playheadInSpan, onM
         </>
       )}
       <div className="prop-effect-add">
-        <EffectPicker catalog={catalog} onPick={add} disabled={catalog.length === 0} />
+        <EffectPicker catalog={catalog} onPick={add} disabled={readOnly || catalog.length === 0} />
       </div>
       {err && <p className="settings-error">{err}</p>}
     </section>
@@ -191,6 +194,7 @@ function EffectRow({
   // effect id), so it follows the card across reorders and never enters the
   // persisted Workspace document.
   const [collapsed, setCollapsed] = useState(false);
+  const readOnly = useLayerReadOnly();
   const name = descriptor
     ? t(descriptor.nameI18nKey, { defaultValue: effect.kind })
     : effect.kind;
@@ -308,6 +312,7 @@ function EffectRow({
           <span className="prop-effect-name">{name}</span>
         </button>
         <AppSwitch
+          disabled={readOnly}
           data-testid={`effect-enable-${index}`}
           checked={effect.enabled}
           ariaLabel={t("effects.enable", { name })}
@@ -317,6 +322,7 @@ function EffectRow({
             stays legible in a docked (narrow) panel. */}
         <Menu.Root>
           <Menu.Trigger
+            disabled={readOnly}
             className="prop-effect-more"
             data-testid={`effect-menu-${index}`}
             aria-label={t("effects.more", { name })}
@@ -364,7 +370,7 @@ function EffectRow({
         </Menu.Root>
       </div>
       {!collapsed && (
-        <div className="prop-effect-body">
+        <EditControls className="prop-effect-body">
           {/* The eyedropper sits with the params it writes, not in the header:
               it edits three color scalars, so it belongs to the body. */}
           {colorGroups.map((group, gi) => (
@@ -399,7 +405,7 @@ function EffectRow({
               onMutated={onMutated}
             />
           )}
-        </div>
+        </EditControls>
       )}
       {err && <p className="settings-error">{err}</p>}
     </div>

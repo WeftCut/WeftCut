@@ -132,6 +132,7 @@ import { usePointerGesture } from "../hooks/usePointerGesture";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
 import { useIsLayerDragging } from "./layerDragStore";
+import { layerIsReadOnly } from "../state/layerEditability";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import {
   localClockUsOf,
@@ -1248,7 +1249,11 @@ export function Timeline({
   // (layerId, paramKey) (`keyframeBatch.ts`); the menus preview an armed row
   // through this fold alone, and commit through the commit below.
   const foldKeyframeBatch = useCallback<KeyframeBatchFold>(
-    (edit) => batchParamTrackEntries({ selected: getSelectedKeyframes(), tracks, edit }),
+    (edit) => {
+      const selected = getSelectedKeyframes();
+      if (selected.some(key => layerIsReadOnly(tracks, key.layerId))) return [];
+      return batchParamTrackEntries({ selected, tracks, edit });
+    },
     [tracks],
   );
 
@@ -1262,7 +1267,7 @@ export function Timeline({
   const commitKeyframeEntries = useCallback<KeyframeEntriesCommit>(
     (entries) => {
       const expanded = expandScaleFanOut(entries, (id) => findPanelLayer(tracks, id));
-      if (expanded.length === 0) return;
+      if (expanded.length === 0 || expanded.some(([id]) => layerIsReadOnly(tracks, id))) return;
       void (async () => {
         try {
           await updateParamTracksMulti(expanded);

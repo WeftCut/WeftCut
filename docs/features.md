@@ -146,6 +146,15 @@ normal arrow; an attempted drag shows a forbidden cursor and briefly emphasizes
 the badge, without creating an edit gesture. The badge is informational, while
 the Attribute panel's existing lock toggle releases a clip lock.
 
+The same lock protects all clip content, including its name, visibility, timing,
+parameters, effects, keyframes, deletion and link/transition changes. UI controls
+are read-only while sections can still be expanded for inspection. Both the
+renderer and MCP use the same state actor; its commit and dry-run boundaries
+reject indirect changes to locked clips too. A failed batch records nothing and
+changes no members. Lock-only patches remain available even on a locked track;
+unlocking and editing require separate operations. Undo/redo and opening a
+project restore historical state, rather than being content edit gestures.
+
 **A deselecting click never becomes a drag.** Selection and drag arming share one
 pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
 removes a clip returns early instead of seeding the gesture. Otherwise the
@@ -399,9 +408,7 @@ ADR 0052), never a link.
   whole batch; nothing is created.
 - **`enabled`** changes only the inspected clip in the inspector, or the
   selected clips in the timeline (`set_layers_enabled`). It never adds
-  unselected link members. A
-  member's own `locked` does not block it — the eye is visibility, not content
-  — but a locked track rejects the whole set.
+  unselected link members. A locked member or owning track rejects the whole set.
 - Both batch ops take the **set they are handed** and expand nothing: the UI
   supplies the duplicate's subjects or the enabled command's selection, and
   an agent names the layers it means.
@@ -446,8 +453,8 @@ in one `set_layers_enabled`. The row names the selected count (`Disable 2 clips`
 A mixed or disabled set offers Enable; an entirely enabled set offers Disable.
 Linked selection can select a whole link, while `Alt` selection or Link override
 can select one member; the command never adds siblings back. A locked affected
-track disables the row with a reason; an unselected sibling's track does not.
-A clip's own lock does not block visibility changes. The inspector's Enabled
+clip or track disables the row with a reason; an unselected sibling's track does not.
+The inspector's Enabled
 switch operates only on the displayed clip, including during multi-selection.
 Linked layers show a 2 px left accent in a hue derived
 deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in

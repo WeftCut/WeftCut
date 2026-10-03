@@ -100,6 +100,7 @@ export type ValidationError =
 export type CommandError =
   | { error: 'TrackNotFound'; track: Uuid }
   | { error: 'LayerNotFound'; layer: Uuid }
+  | { error: 'LayerLocked'; layer: Uuid }
   | { error: 'CompositionNotFound'; composition: Uuid }
   // ── Composition scope (ADR 0052; spec § Invariants). A layer-addressed op
   // derives its composition from the layer id, so the only way to name another

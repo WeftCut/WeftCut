@@ -24,7 +24,7 @@ vi.mock("../ipc", async (importActual) => {
   };
 });
 
-import { updateLayerParams, updateLayerParamTrack } from "../ipc";
+import { updateLayer, updateLayerParams, updateLayerParamTrack } from "../ipc";
 import { AttributePanel } from "./PropertyPanel";
 import { clearPropSectionMemory } from "./PropSection";
 
@@ -110,6 +110,31 @@ function stopwatchOf(section: HTMLElement): HTMLButtonElement {
 const COMMIT_DEBOUNCE_MS = 250;
 
 describe("the Color section's fill row", () => {
+  it.each(["clip", "track"])("keeps %s-locked properties readable and expandable but disables edits", async (lock) => {
+    const track = trackWith(colorParams(stat(RED)));
+    track.locked = lock === "track";
+    track.layers[0]!.locked = lock === "clip";
+    const view = render(<AttributePanel tracks={[track]} selectedLayerId="layer-1" onMutated={async () => {}} fpsNum={30} fpsDen={1} currentTimeUs={0} />);
+    const section = screen.getByRole("region", { name: "Color" });
+    const swatch = within(section).getByLabelText("Color") as HTMLInputElement;
+    expect(swatch.matches(":disabled")).toBe(true);
+    expect((screen.getByLabelText("Label") as HTMLInputElement).disabled).toBe(true);
+    const header = within(section).getByRole("button", { name: "Color" });
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(stopwatchOf(section));
+    expect(updateLayerParamTrack).not.toHaveBeenCalled();
+    const lockButton = screen.getByRole("button", { name: "Locked" });
+    expect(lockButton.matches(":disabled")).toBe(false);
+    await userEvent.click(lockButton);
+    expect(updateLayer).toHaveBeenCalledWith("layer-1", { locked: lock !== "clip" });
+    track.locked = false;
+    track.layers[0]!.locked = false;
+    view.rerender(<AttributePanel tracks={[{ ...track }]} selectedLayerId="layer-1" onMutated={async () => {}} fpsNum={30} fpsDen={1} currentTimeUs={0} />);
+    expect(within(section).getByLabelText("Color").matches(":disabled")).toBe(false);
+  });
   it("wears a stopwatch, unlit for a static fill", () => {
     const { stopwatch } = renderPanel(colorParams(stat(RED)));
     expect(stopwatch.getAttribute("aria-pressed")).toBe("false");

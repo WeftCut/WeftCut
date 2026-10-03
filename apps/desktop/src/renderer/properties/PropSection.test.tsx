@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { LayerReadOnly } from "./LayerEditing";
 import {
   PropSection,
   clearPropSectionMemory,
@@ -10,6 +11,22 @@ import {
 afterEach(() => {
   cleanup();
   clearPropSectionMemory();
+});
+
+it("keeps nested disclosures usable while their content is read-only", () => {
+  render(<LayerReadOnly value={true}>
+    <PropSection layerKind="Text" sectionId="text" title="Text">
+      <input aria-label="Text content" />
+      <PropSection layerKind="Text" sectionId="layout" title="Layout" defaultCollapsed>
+        <input aria-label="Width" />
+      </PropSection>
+    </PropSection>
+  </LayerReadOnly>);
+  expect(screen.getByLabelText("Text content").matches(":disabled")).toBe(true);
+  const layout = screen.getByRole("button", { name: "Layout" });
+  expect(layout.matches(":disabled")).toBe(false);
+  fireEvent.click(layout);
+  expect(screen.getByLabelText("Width").matches(":disabled")).toBe(true);
 });
 
 function renderSection(

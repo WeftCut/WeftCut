@@ -42,12 +42,15 @@ vi.mock("./EffectPicker", () => ({
   EffectPicker: ({
     catalog,
     onPick,
+    disabled,
   }: {
     catalog: Array<{ kind: string }>;
     onPick: (kind: string) => void;
+    disabled?: boolean;
   }) => (
     <button
       data-testid="effect-add"
+      disabled={disabled}
       data-kinds={catalog.map((d) => d.kind).join(",")}
       onClick={() => onPick(catalog[0]!.kind)}
     >
@@ -68,13 +71,15 @@ vi.mock("../render/effects/effectOverrides", () => ({ setTransientOverrides, cle
 // constructor (which jsdom doesn't implement). EffectsSection tests cover the
 // wiring, not the switch widget itself.
 vi.mock("../components/AppSwitch", () => ({
-  AppSwitch: ({ checked, onCheckedChange, "data-testid": testId }: {
+  AppSwitch: ({ checked, onCheckedChange, disabled, "data-testid": testId }: {
     checked: boolean;
+    disabled?: boolean;
     onCheckedChange: (v: boolean) => void;
     "data-testid"?: string;
   }) => (
     <button
       role="switch"
+      disabled={disabled}
       aria-checked={checked}
       data-testid={testId}
       onClick={() => onCheckedChange(!checked)}
@@ -83,6 +88,7 @@ vi.mock("../components/AppSwitch", () => ({
 }));
 
 import { audioCatalogForUi, EffectsSection } from "./EffectsSection";
+import { LayerReadOnly } from "./LayerEditing";
 import type { EffectView, LayerSummary } from "../ipc";
 import type { UiEffectDescriptor } from "../render/effects/effectRegistry";
 import {
@@ -130,6 +136,24 @@ async function openCardMenu(index: number) {
 }
 
 describe("EffectsSection", () => {
+  it("allows inspecting locked effect cards while disabling all edit controls", async () => {
+    render(<LayerReadOnly value={true}><EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} /></LayerReadOnly>);
+    for (const id of ["effect-add", "effect-enable-0", "effect-menu-0"]) {
+      const control = screen.getByTestId(id);
+      expect(control.matches(":disabled")).toBe(true);
+      await userEvent.click(control);
+    }
+    const params = screen.getByTestId("effect-params-E1");
+    expect(params.closest("fieldset")?.disabled).toBe(true);
+    await userEvent.click(screen.getByTestId("effect-collapse-0"));
+    expect(screen.queryByTestId("effect-params-E1")).toBeNull();
+    await userEvent.click(screen.getByTestId("effect-collapse-0"));
+    expect(screen.getByTestId("effect-params-E1")).toBeTruthy();
+    expect(addEffect).not.toHaveBeenCalled();
+    expect(updateEffect).not.toHaveBeenCalled();
+    expect(moveEffect).not.toHaveBeenCalled();
+    expect(removeEffect).not.toHaveBeenCalled();
+  });
   it("renders one row per effect, named from the catalog", () => {
     render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     // effects.blur.name has no translation in the mock → falls back to defaultValue "blur".

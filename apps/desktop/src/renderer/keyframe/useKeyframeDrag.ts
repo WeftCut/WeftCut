@@ -14,6 +14,7 @@
 // and the arithmetic itself is `batchRetime.ts`; this measures, and
 // `KeyframeBatch.commitEntries` writes.
 import { useCallback } from "react";
+import { layerIsReadOnly } from "../state/layerEditability";
 import { setKeyframeFocus } from "./focusStore";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 
@@ -74,6 +75,7 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
         selected: getSelectedKeyframes(),
         tracks: ops.tracks,
       });
+      if (groups.some(group => layerIsReadOnly(ops.tracks, group.layerId))) return;
       const hitGroup = groups.find(
         (g) => g.layerId === start.layerId && g.paramKey === start.paramKey,
       );

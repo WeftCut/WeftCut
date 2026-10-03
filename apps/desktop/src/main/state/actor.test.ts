@@ -2393,18 +2393,19 @@ describe('dispatch: set_layers_enabled', () => {
     expect(actor.historyStatus().len - lenBefore).toBe(1) // already enabled: the no-op guard records nothing
   })
 
-  it('refuses the whole set on a locked track and records nothing; a layer`s own lock does not', () => {
+  it('refuses the whole set on a layer or track lock and records nothing', () => {
     const { actor, aRoll, bRoll } = setup()
     const v = addClip(actor, aRoll); const a = addClip(actor, bRoll)
     expect(actor.dispatch('update_layer', { layer: v, patch: { locked: true } }).ok).toBe(true)
-    expect(actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: false }).ok).toBe(true) // layer lock: no bar
-    expect(enabledOf(actor)).toEqual([false, false])
+    expect(actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: false }).ok).toBe(false)
+    expect(enabledOf(actor)).toEqual([true, true])
+    expect(actor.dispatch('update_layer', { layer: v, patch: { locked: false } }).ok).toBe(true)
     expect(actor.dispatch('update_track_flags', { track: bRoll, patch: { locked: true } }).ok).toBe(true)
     const lenBefore = actor.historyStatus().len
     const r = actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: true })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.error).toBe('TrackLocked')
-    expect(enabledOf(actor)).toEqual([false, false])
+    expect(enabledOf(actor)).toEqual([true, true])
     expect(actor.historyStatus().len).toBe(lenBefore)
   })
 

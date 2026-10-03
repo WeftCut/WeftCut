@@ -894,7 +894,7 @@ const zhCN: Resources = {
     enable_layers_other: "启用 {{count}} 个片段",
     disable_layers_one: "禁用 {{count}} 个片段",
     disable_layers_other: "禁用 {{count}} 个片段",
-    enabled_tracks_locked: "先解锁受影响的轨道，才能启用或禁用这些片段",
+    enabled_tracks_locked: "先解锁受影响的片段及轨道，才能启用或禁用这些片段",
     enable_linked_layers_other: "启用 {{count}} 个链接片段",
     disable_linked_layers_one: "禁用 {{count}} 个链接片段",
     disable_linked_layers_other: "禁用 {{count}} 个链接片段",
@@ -1182,6 +1182,7 @@ const zhCN: Resources = {
     layer_overlap:
       "无法把“{{incoming}}”放到该位置——会与{{track}}上的“{{blocking}}”重叠。",
     track_locked: "{{track}}已锁定。",
+    layer_locked: "{{layer}}已锁定，请先解锁再编辑。",
     track_not_empty: "{{track}}上仍有片段。",
     track_not_removable: "{{track}}是保留轨道，不能删除。",
     link_locked_member: "“{{layer}}”与已锁定的片段“{{locked}}”已链接。",

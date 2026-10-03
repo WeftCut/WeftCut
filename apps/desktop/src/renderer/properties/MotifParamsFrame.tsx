@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useLayerReadOnly } from "./LayerEditing";
 
 import { PARAMS_PAGE_FILE } from "../../shared/motifs/catalog";
 import {
@@ -51,6 +52,7 @@ export function MotifParamsFrame({
   commit: (patch: Record<string, unknown>) => Promise<void>;
 }) {
   const { i18n, t } = useTranslation();
+  const readOnly = useLayerReadOnly();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<MotifParamsHost | null>(null);
   const [height, setHeight] = useState(PARAMS_DEFAULT_HEIGHT_PX);
@@ -85,14 +87,16 @@ export function MotifParamsFrame({
       themeTokens: () => readThemeTokens(),
     });
     hostRef.current = host;
-    const onMessage = (event: MessageEvent) => host.handleMessage(event);
+    const onMessage = (event: MessageEvent) => {
+      if (!readOnly || event.data?.type === "motif:resize") host.handleMessage(event);
+    };
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
       hostRef.current = null;
       host.dispose();
     };
-  }, [layerId, motifId, src]);
+  }, [layerId, motifId, src, readOnly]);
 
   // External prop changes (undo, an agent edit) reach the page. The host drops
   // the redundant echo of the page's own commit.
@@ -102,6 +106,7 @@ export function MotifParamsFrame({
 
   return (
     <iframe
+      inert={readOnly}
       ref={frameRef}
       className="motif-params-frame"
       // Scripts only: no same-origin (the page must not reach the app's DOM),

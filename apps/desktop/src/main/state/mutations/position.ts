@@ -1,6 +1,6 @@
 import type { Project, Uuid } from '../model';
 import { CommandFailure } from '../errors';
-import { checkTrackLock } from './helpers';
+import { checkLayerEditable } from './helpers';
 import { positionProblem, translatePath, visitPositionTracks, type PositionAnimation } from '../../../shared/position';
 import { normalizeKeyframes } from './animated';
 import { snapFrameRound } from '../snap';
@@ -9,7 +9,7 @@ import { refuseRetiredKeyframeShape } from '../serialize';
 import { solvePathGeometry } from '../../../shared/pathGeometry';
 /** One atomic authoring command, shared by UI and MCP. */
 export function applySetPosition(project: Project, id: Uuid, input: PositionAnimation, geometryOnly = false): void {
-    const { layer, comp } = checkTrackLock(project, id);
+    const { layer, comp } = checkLayerEditable(project, id);
     if (!('transform' in layer.params))
         throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'This layer has no position' });
     const position = structuredClone(input);
@@ -43,7 +43,7 @@ export function applySetPosition(project: Project, id: Uuid, input: PositionAnim
 /** Relative translation resolves on the authoritative state so successive
  * gestures cannot overwrite one another using an older UI snapshot. */
 export function applyTranslatePath(project: Project, id: Uuid, dx: number, dy: number): void {
-    const { layer } = checkTrackLock(project, id);
+    const { layer } = checkLayerEditable(project, id);
     if (!Number.isFinite(dx) || !Number.isFinite(dy))
         throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'Translation must be finite' });
     if (!('transform' in layer.params) || layer.params.transform.position.mode !== 'Path')

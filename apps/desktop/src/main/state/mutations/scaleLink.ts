@@ -2,7 +2,7 @@ import type { Animated, Extrapolation, Keyframe, Layer, Project, Transform, Uuid
 import type { IdGen } from '../ids'
 import { cloneExtrapolation, cloneKeyframeShape, extrapolationEq, keyframeShapeEqExact } from '../../../shared/keyframe'
 import { CommandFailure } from '../errors'
-import { checkTrackLock, locateLayer } from './helpers'
+import { checkLayerEditable, locateLayer } from './helpers'
 
 /** The transform of a layer whose kind carries one, else null (Color/Audio). */
 export function transformOf(layer: Layer): Transform | null {
@@ -73,7 +73,7 @@ export function enforceScaleLinkInvariant(p: Project, id: Uuid): void {
  *  (single rule, no special cases; undo is the safety net). Unlinking touches
  *  only the flag, so the tracks stay twins until the first divergent edit. */
 export function applySetScaleLinked(p: Project, idGen: IdGen, id: Uuid, linked: boolean): void {
-  const { layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked
+  const { layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked
   const t = transformOf(layer)
   if (!t) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: 'scale_linked' })
   if (linked) t.scale_y = copyTrackFreshIds(t.scale_x, idGen)

@@ -34,6 +34,7 @@ import {
   setAutoKeys,
   setExtrapolationKeys,
   useKeyframeBatchFold,
+  useKeyframeOps,
   type KeyframeGroupEdit,
   type ParamTrackEntry,
 } from "./keyframeBatch";
@@ -49,6 +50,7 @@ import {
   contextMenuFinalFocus,
 } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
+import { layerIsReadOnly } from "../state/layerEditability";
 
 /// Tier-1 command set — the presets a stock NLE puts on the keyframe itself.
 /// Everything else is reachable only through the gallery.
@@ -402,6 +404,8 @@ export function EasingMenu({
   const { t } = useTranslation();
   const [view, setView] = useState<"commands" | "gallery">("commands");
   const selected = useKeyframeSelectionStore((s) => s.selected);
+  const ops = useKeyframeOps();
+  const readOnly = ops.tracks.length > 0 && [...selected.values()].some(key => layerIsReadOnly(ops.tracks, key.layerId));
   // A selection of more than one key has no single current interpolation, so the
   // menu reports none: no checkmark and no Elastic sliders (those tune ONE key's
   // params). Showing the right-clicked key's would claim the rest match it, and
@@ -452,10 +456,12 @@ export function EasingMenu({
   // the commit just dropped. Nothing arms after a commit.
   const closingRef = useRef(false);
   const arm: PreviewEdit = (edit) => {
+    if (readOnly && edit !== null) return;
     if (edit !== null && closingRef.current) return;
     preview(edit);
   };
   const commit = (edit: KeyframeGroupEdit) => {
+    if (readOnly) return;
     // A commit replaces any armed preview outright — drop it so the committed
     // track is what the curve shows while the actor round-trip is in flight.
     closingRef.current = true;
@@ -466,6 +472,7 @@ export function EasingMenu({
   const applyToSelection = (interp: Interpolation) => commit(applySegmentEasingKeys(interp));
   const armRow = (edit: KeyframeGroupEdit) => (armed: boolean) => arm(armed ? edit : null);
 
+  if (readOnly) return null;
   if (view === "commands") {
     return (
       <MenuPrimitive.Root

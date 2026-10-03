@@ -83,14 +83,12 @@ describe('delete_layers', () => {
     expect(layerCount(a)).toBe(4)
   })
 
-  it("does not consult a layer's own lock — that gates the pointer, not the model", () => {
+  it("refuses the whole delete when a layer itself is locked", () => {
     const a = actorWithPool()
     const [first, second] = threeClips(a)
     expect(call(a, 'update_layer', { layer_id: second, patch: { locked: true } }).ok).toBe(true)
-    // The lift's long-standing contract, pinned here
-    // so the plural tool's description stays honest about which lock stops it.
-    expect(call(a, 'delete_layers', { layer_ids: [first, second] }).ok).toBe(true)
-    expect(layerCount(a)).toBe(1)
+    expect(call(a, 'delete_layers', { layer_ids: [first, second] }).ok).toBe(false)
+    expect(layerCount(a)).toBe(3)
   })
 
   it('records nothing for an empty set', () => {

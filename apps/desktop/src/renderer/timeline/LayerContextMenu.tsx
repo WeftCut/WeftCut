@@ -350,9 +350,8 @@ export function LayerContextMenu({
   // Mixed state has one predictable result regardless of which member was
   // right-clicked: enable all. A fully enabled set instead offers disable all.
   const enableTargets = targetLayers.some(({ layer }) => !layer.enabled);
-  // The actor allows visibility changes on locked clips, but refuses the
-  // entire batch if any owning track is locked.
-  const enabledLocked = targetLayers.some(({ track }) => track.locked);
+  // Both layer and track locks reject the whole edit, never a subset.
+  const enabledLocked = targetLayers.some(({ track, layer }) => track.locked || layer.locked);
   const enabledLabel =
     enabledTargets.length > 1
       ? t(enableTargets ? "timeline.enable_layers" : "timeline.disable_layers", {

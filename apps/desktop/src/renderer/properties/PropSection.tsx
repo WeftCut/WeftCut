@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { Children, Fragment, isValidElement, useEffect, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { EditControls } from "./LayerEditing";
 
 // Session-scoped collapse memory, keyed `${layerKind}:${sectionId}`. An
 // override survives selection changes within the run — expanding Advanced on
@@ -34,6 +35,18 @@ export function requestPropSectionExpand(
   const key = `${layerKind}:${sectionId}`;
   collapseMemory.set(key, false);
   for (const notify of expandListeners) notify(key);
+}
+
+// A nested disclosure owns its own edit boundary. Disabling an outer fieldset
+// would also disable the inner disclosure's header, preventing inspection.
+function readOnlyChildren(children: ReactNode): ReactNode {
+  return Children.map(children, child => {
+    if (isValidElement<{ children?: ReactNode }>(child)) {
+      if (child.type === PropSection) return child;
+      if (child.type === Fragment) return readOnlyChildren(child.props.children);
+    }
+    return <EditControls>{child}</EditControls>;
+  });
 }
 
 /// Collapsible property-panel section. Collapsing UNMOUNTS the children (a
@@ -95,7 +108,7 @@ export function PropSection({
         {collapsed ? <ChevronRight size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
         <span className="prop-section-title">{title}</span>
       </button>
-      {collapsed ? null : <div className="prop-section-body">{children}</div>}
+      {collapsed ? null : <div className="prop-section-body">{readOnlyChildren(children)}</div>}
     </section>
   );
 }

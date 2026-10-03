@@ -15,6 +15,8 @@ import {
 } from "../properties/EffectsSection";
 import { listEffects } from "../render/effects/effectRegistry";
 import { findPanelLayer } from "./panelLayer";
+import { LayerReadOnly } from "../properties/LayerEditing";
+import { layerIsReadOnly } from "../state/layerEditability";
 
 export interface EffectPanelProps {
   tracks: TrackSummary[];
@@ -59,6 +61,7 @@ export function EffectPanel({
       className="property-panel effect-panel"
       aria-label={t("effects.heading")}
     >
+      <LayerReadOnly value={layerIsReadOnly(tracks, layer.id)}>
       <EffectsSection
         layer={layer}
         catalog={layer.params.kind === "Audio" ? audioCatalogForUi : listEffects()}
@@ -66,6 +69,7 @@ export function EffectPanel({
         playheadInSpan={playheadInSpan}
         onMutated={onMutated}
       />
+      </LayerReadOnly>
     </aside>
   );
 }

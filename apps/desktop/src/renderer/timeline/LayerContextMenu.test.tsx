@@ -332,19 +332,19 @@ describe("LayerContextMenu — selection eligibility", () => {
     renderMenu("VideoClip");
     const item = screen.getByRole("menuitem", { name: "Disable 2 clips" });
     expect(item.getAttribute("aria-disabled")).toBe("true");
-    expect(item.title).toBe("Unlock the affected tracks to enable or disable these clips");
+    expect(item.title).toBe("Unlock the affected clips and tracks to enable or disable them");
     await userEvent.click(item);
     expect(handlers.onToggleEnabled).not.toHaveBeenCalled();
   });
 
-  it("allows visibility changes on a locked clip when its track is unlocked", async () => {
+  it("disables visibility changes on a locked clip even when its track is unlocked", async () => {
     useProjectStore.getState().apply(summaryFixture({ root: {
       tracks: [lane("t", [clip({ id: "layer-1", locked: true, enabled: false })])],
     } }));
     setLayerSelection("layer-1", ["layer-1"]);
     renderMenu("VideoClip");
     await userEvent.click(screen.getByRole("menuitem", { name: "Enable clip" }));
-    expect(handlers.onToggleEnabled).toHaveBeenCalledExactlyOnceWith(["layer-1"], true);
+    expect(handlers.onToggleEnabled).not.toHaveBeenCalled();
   });
 
   it("offers grouping and linking the whole multi-selection", () => {

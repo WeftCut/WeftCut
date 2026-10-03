@@ -1,6 +1,6 @@
 // src/main/state/mutations/update.ts
 import type { Project, Uuid } from '../model'
-import { checkTrackLock, requireSameComposition } from './helpers'
+import { checkLayerEditable, requireLayer, requireSameComposition } from './helpers'
 
 /** LayerPatch. null/absent = "don't touch". */
 export interface LayerPatch {
@@ -11,11 +11,11 @@ export interface LayerPatch {
   locked?: boolean | null
 }
 
-/** Envelope-only patch. check_track_lock FIRST (rejects
- *  edits on a locked track / missing layer), then apply only the provided fields.
+/** Envelope-only patch. Only a lock-only patch bypasses content protection.
  *  Does NOT autofit: a t_end edit here never moves composition.duration_us. */
 export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void {
-  const { layer } = checkTrackLock(p, id) // throws LayerNotFound (missing) or TrackLocked (locked track)
+  const lockOnly = Object.entries(patch).every(([key, value]) => key === 'locked' || value == null)
+  const { layer } = lockOnly ? requireLayer(p, id) : checkLayerEditable(p, id)
   if (typeof patch.label === 'string') layer.label = patch.label
   if (typeof patch.t_start_us === 'number') layer.t_start_us = patch.t_start_us
   if (typeof patch.t_end_us === 'number') layer.t_end_us = patch.t_end_us
@@ -25,15 +25,13 @@ export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void 
 
 /** Set `enabled` on exactly the layers named — the caller supplies a link's
  *  member set when the toggle should fan out; nothing is expanded here. A
- *  layer's own `locked` does not block it: the eye is visibility, not content,
- *  the same reasoning the track-flag path applies. A locked track does, and it
- *  refuses the WHOLE set before any layer is written (`checkTrackLock` also
+ *  layer or track lock refuses the WHOLE set before any layer is written (the guard also
  *  throws LayerNotFound for an unknown id). The set is one composition's
  *  (CrossCompositionSet otherwise) — a selection never spans two. */
 export function applySetLayersEnabled(p: Project, layerIds: readonly Uuid[], enabled: boolean): void {
   const ids = [...new Set(layerIds)]
   if (ids.length === 0) return
   requireSameComposition(p, ids)
-  const located = ids.map((id) => checkTrackLock(p, id))
+  const located = ids.map((id) => checkLayerEditable(p, id))
   for (const { layer } of located) layer.enabled = enabled
 }

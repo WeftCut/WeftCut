@@ -458,14 +458,15 @@ describe("AttributePanel envelope command routing", () => {
     expectTimecode(start, "00:00:00:00");
   });
 
-  it("disables timing edits on a locked Layer, keeping label and flags editable", () => {
+  it("disables content edits on a locked Layer, keeping its lock control available", () => {
     const locked = colorTrack();
     locked.layers[0] = { ...locked.layers[0], locked: true } as LayerSummary;
     renderPanel(locked);
     const env = panel();
     expect(within(within(timingSection()).getByLabelText("Start")).getByLabelText("frames")).toHaveProperty("disabled", true);
     expect(within(within(env).getByLabelText("Duration")).getByLabelText("frames")).toHaveProperty("disabled", true);
-    expect(within(env).getByLabelText("Label")).toHaveProperty("disabled", false);
+    expect(within(env).getByLabelText("Label")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Enabled" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Locked" })).toHaveProperty("disabled", false);
   });
 });

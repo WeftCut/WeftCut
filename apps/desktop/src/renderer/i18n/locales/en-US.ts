@@ -1075,7 +1075,7 @@ const enUS = {
     enable_layers_other: "Enable {{count}} clips",
     disable_layers_one: "Disable {{count}} clip",
     disable_layers_other: "Disable {{count}} clips",
-    enabled_tracks_locked: "Unlock the affected tracks to enable or disable these clips",
+    enabled_tracks_locked: "Unlock the affected clips and tracks to enable or disable them",
     enable_linked_layers_other: "Enable {{count}} linked clips",
     disable_linked_layers_one: "Disable {{count}} linked clip",
     disable_linked_layers_other: "Disable {{count}} linked clips",
@@ -1375,6 +1375,7 @@ const enUS = {
     layer_overlap:
       "Can't place “{{incoming}}” there — it would overlap “{{blocking}}” on {{track}}.",
     track_locked: "{{track}} is locked.",
+    layer_locked: "{{layer}} is locked. Unlock it before editing.",
     track_not_empty: "{{track}} still has clips on it.",
     track_not_removable: "{{track}} is reserved and can't be removed.",
     link_locked_member:

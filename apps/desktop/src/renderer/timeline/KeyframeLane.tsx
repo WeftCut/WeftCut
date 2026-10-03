@@ -297,7 +297,7 @@ function KeyframeSubLaneRow({
             clipDurationUs={layer.t_end_us - layer.t_start_us}
             pxPerSec={pxPerSec}
             height={height}
-            editable={expanded && focusedLayerId === layer.id}
+            editable={expanded && focusedLayerId === layer.id && !layer.locked && !track.locked}
             onCommitParamTrack={onCommitParamTrack}
             onOpenInterpMenu={onOpenInterpMenu}
           />

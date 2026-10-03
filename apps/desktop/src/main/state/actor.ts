@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
+import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
@@ -268,6 +269,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // (A no-op recipe can't dirty a transition or an anchored marker, so
     // neither reconcile blocks this.)
     if (next === current()) return value
+    assertLockedLayersUnchanged(current(), next)
     // Every recorded edit is a modification, so `metadata.modified_at` takes
     // the commit's timestamp — the one cheap dirty signal a client has. After
     // the no-op guard, so an unchanged draft stays the very same object; before
@@ -873,6 +875,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Drop info is discarded: DryRunOutput has no vocabulary for it.
           reconcileTransitions(d)
         }))
+        assertLockedLayersUnchanged(scratch, next)
         runValidate(next)
         scratch = next
         results.push({ ok: true, value })

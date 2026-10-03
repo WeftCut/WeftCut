@@ -3,7 +3,7 @@ import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, Composit
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
-import { checkTrackLock, applyDurationAutofit, requireLayer } from './helpers'
+import { checkLayerEditable, applyDurationAutofit, requireLayer } from './helpers'
 import { checkAudioEffectParamStatic } from './effects'
 import { normalizeKeyframes } from './animated'
 import { solveAutoTangents } from '../../../shared/tangents'
@@ -390,9 +390,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  resolveMotifTEndUs twin note in catalog.ts — diverges from Rust saturating
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
-  const { comp: c, layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked
-  if (patch.kind === 'VideoClip' && patch.crop !== undefined && layer.locked)
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: 'Unlock the clip before cropping it.' })
+  const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked
   // A Motif's props are checked against its manifest BEFORE the merge, the
   // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
@@ -611,7 +609,7 @@ function checkTrackValueType(paramKey: string, track: Animated<TrackValue>): voi
  *  no scalar projection for colour, which sends its Auto sides to the identity
  *  coordinates. */
 export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<TrackValue>): void {
-  const { comp: c, layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
+  const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
   // Located BEFORE normalize because the write-time grid depends on the layer's
   // kind: an audio envelope — gain_db, pan, and the audio-role automation —
   // quantizes on the 48 kHz lattice, so audio automation is never coarser than the

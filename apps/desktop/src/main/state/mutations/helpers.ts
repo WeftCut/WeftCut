@@ -1,6 +1,7 @@
 import { current, isDraft } from 'immer'
 import type { Composition, Layer, LayerParams, Marker, Project, Track, Uuid } from '../model'
 import { CommandFailure } from '../errors'
+import { layerEditLock } from '../../../shared/layerLocks'
 import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
 import { trackCleanupEnabled } from './trackCleanup'
@@ -250,6 +251,15 @@ export function moveLinksTransitionsAndMarkers(from: Composition, to: Compositio
 export function checkTrackLock(p: Project, id: Uuid): LocatedLayer {
   const found = requireLayer(p, id)
   if (found.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: found.track.id })
+  return found
+}
+
+/** Shared content-write guard. Lock controls alone use requireLayer instead. */
+export function checkLayerEditable(p: Project, id: Uuid): LocatedLayer {
+  const found = requireLayer(p, id)
+  const lock = layerEditLock(found.layer, found.track)
+  if (lock === 'track') throw new CommandFailure({ error: 'TrackLocked', track: found.track.id })
+  if (lock === 'layer') throw new CommandFailure({ error: 'LayerLocked', layer: id })
   return found
 }
 

@@ -1,5 +1,5 @@
 import type { Animated, Effect, Project, Uuid } from '../model'
-import { requireLayer } from './helpers'
+import { checkLayerEditable } from './helpers'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { quantizeEffectTrack } from '../quantize'
@@ -23,7 +23,7 @@ export interface EffectPatch {
 
 /** Locate the layer's effect chain or throw LayerNotFound. */
 function effectsOrThrow(p: Project, layerId: Uuid): Effect[] {
-  return requireLayer(p, layerId).layer.effects
+  return checkLayerEditable(p, layerId).layer.effects
 }
 
 /** Refuse a `Keyframed` track on an `audio.*` effect param: an audio effect is
@@ -53,7 +53,7 @@ export function checkAudioEffectParamStatic(effect: Effect | undefined, paramKey
  *  it. Refused AFTER the layer lookup, so LayerNotFound still wins. */
 export function applyAddEffect(p: Project, idGen: IdGen, layerId: Uuid, kind: string): Uuid {
   const id = idGen() // unconditional — burned even on LayerNotFound
-  const { layer } = requireLayer(p, layerId)
+  const { layer } = checkLayerEditable(p, layerId)
   const layerKind = layer.params.kind
   if (isAudioKind(kind) !== (layerKind === 'Audio')) {
     throw new CommandFailure({ error: 'EffectKindNotApplicable', kind, layer_kind: layerKind })

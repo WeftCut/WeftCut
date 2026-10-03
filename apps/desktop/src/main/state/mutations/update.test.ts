@@ -60,12 +60,10 @@ describe('applySetLayersEnabled', () => {
     applySetLayersEnabled(p, ['a', 'b'], true)
     expect(enabledOf(p)).toEqual([['a', true], ['c', true], ['b', true]])
   })
-  // The eye is visibility, not content: the layer lock guards edits to what the
-  // layer IS, and a hidden locked clip is still that clip.
-  it('is not blocked by a layer`s own locked flag', () => {
+  it('refuses visibility edits for the whole set when a layer is locked', () => {
     const p = two(); root(p).tracks[0].layers[0].locked = true
-    applySetLayersEnabled(p, ['a', 'b'], false)
-    expect(enabledOf(p)).toEqual([['a', false], ['b', false]])
+    expectCmd(() => applySetLayersEnabled(p, ['a', 'b'], false), 'LayerLocked')
+    expect(enabledOf(p)).toEqual([['a', true], ['b', true]])
   })
   // `b` is checked before anything is written, so `a` — first in the set and on
   // a free lane — must come out untouched too.

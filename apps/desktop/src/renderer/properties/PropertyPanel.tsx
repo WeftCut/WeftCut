@@ -91,6 +91,9 @@ import { PropSection } from "./PropSection";
 import { InspectorRow } from "./InspectorRow";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
+import { LayerReadOnly } from "./LayerEditing";
+import { layerEditLock } from "../../shared/layerLocks";
+import { layerIsReadOnly } from "../state/layerEditability";
 
 export interface AttributePanelProps {
   tracks: TrackSummary[];
@@ -148,12 +151,14 @@ export function AttributePanel({
         className="property-panel attribute-panel"
         aria-label={t("property_panel.heading")}
       >
+        <LayerReadOnly value={[transition.from_layer, transition.to_layer].some(id => layerIsReadOnly(compForTransition?.tracks ?? [], id))}>
         <TransitionFields
           transition={transition}
           fpsNum={fpsNum}
           fpsDen={fpsDen}
           onMutated={onMutated}
         />
+        </LayerReadOnly>
       </aside>
     );
   }
@@ -207,7 +212,9 @@ export function AttributePanel({
       className="property-panel attribute-panel"
       aria-label={t("property_panel.heading")}
     >
-      <LayerPanel layer={layer} track={track} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
+      <LayerReadOnly value={layerEditLock(layer, track) !== null}>
+        <LayerPanel layer={layer} track={track} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
+      </LayerReadOnly>
     </aside>
   );
 }
@@ -351,6 +358,7 @@ function LayerPanel({
           <AppInput
             ref={nameInput}
             className="prop-name-input"
+            disabled={env.timingDisabled}
             value={env.label}
             placeholder={fallbackName}
             ariaLabel={t("property_panel.label")}
@@ -382,7 +390,7 @@ function LayerPanel({
           }`}
         </p>
         <div className="prop-flags">
-          <Button size="sm" variant="ghost" className="prop-flag" aria-label={t("property_panel.enabled")} aria-pressed={layer.enabled} onClick={() => void env.commitFlag({ enabled: !layer.enabled })}>
+          <Button size="sm" variant="ghost" className="prop-flag" disabled={env.timingDisabled} aria-label={t("property_panel.enabled")} aria-pressed={layer.enabled} onClick={() => void env.commitFlag({ enabled: !layer.enabled })}>
             <Power size={13} aria-hidden />
             {t(layer.enabled ? "property_panel.flag_enabled" : "property_panel.flag_disabled")}
           </Button>
@@ -536,7 +544,7 @@ function useEnvelope({
   // Timeline gesture suppression parity: a locked Layer (or a Layer on a
   // locked Track) can't be moved/trimmed from the Timeline, so the
   // inspector's timing fields read but don't edit.
-  const timingDisabled = layer.locked || (track?.locked ?? false);
+  const timingDisabled = layerEditLock(layer, track) !== null;
 
   // Every edit below records exactly one undo entry per committed gesture.
   // Guards skip the command entirely when the field still holds the current
