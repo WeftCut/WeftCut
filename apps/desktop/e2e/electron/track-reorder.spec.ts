@@ -42,6 +42,10 @@ test('All Tracks reorders a whole populated track between A/B, with menu, cancel
     await expect(row(page, id)).toHaveAttribute('data-reordering', 'true')
     await expect(page.getByTestId('track-reorder-indicator')).toBeVisible()
     await page.getByTestId('timeline-layout').screenshot({ path: testInfo.outputPath('track-insertion.png') })
+    // Capturing an element can emit pointer moves in Electron. Restore the
+    // intended drop after capturing the insertion line.
+    await page.mouse.move(x, target.y + 3)
+    await expect(row(page, a.id).getByTestId('track-reorder-indicator')).toBeVisible()
     expect((await summary(page)).history.len).toBe(before.history.len)
     await page.mouse.up()
     await expect.poll(async () => (await summary(page)).tracks.map((track) => track.id)).toEqual([a.id, id, b.id])
