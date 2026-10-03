@@ -6,6 +6,7 @@ import { Tooltip } from "@base-ui/react/tooltip";
 export function Field({
   label,
   hint,
+  stacked = false,
   children,
 }: {
   label: string;
@@ -15,10 +16,11 @@ export function Field({
   /// interval boundaries — where the label alone doesn't tell the
   /// whole story.
   hint?: string;
+  stacked?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <label className="prop-field">
+    <label className={stacked ? "prop-field prop-field--stacked" : "prop-field"}>
       <span className="prop-field-label">
         {label}
         {hint ? (

@@ -1097,13 +1097,88 @@
   gap: 6px;
 }
 
-/* Identity block at the top of the layer panel: one tight unit, not two
-   floating lines. The media name (when the layer has one) is the title;
-   kind·track·group is the quiet breadcrumb under it. */
+/* Only primary groups divide the flat surface; disclosures stay flush with
+   their owning rows, without nested boxes or another label-column indent. */
+.attribute-panel > .prop-section {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.property-panel .prop-section-heading {
+  margin: 0 0 2px;
+  color: var(--foreground);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  letter-spacing: normal;
+}
+
+.prop-section > .prop-section {
+  margin-top: 4px;
+}
+
+.prop-name-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.prop-name-icon {
+  display: flex;
+  align-items: center;
+  color: var(--muted-foreground);
+}
+
+.prop-name-row .prop-name-input {
+  min-width: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.prop-name-input::placeholder {
+  color: var(--muted-foreground);
+  font-weight: 400;
+  opacity: 1;
+}
+
+.prop-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prop-identity > .prop-flags {
+  margin-top: 8px;
+}
+
+.prop-flags .prop-flag {
+  border-color: var(--border-soft);
+}
+
+.prop-flags .prop-flag[aria-pressed="true"] {
+  background: var(--surface-raised);
+  color: var(--foreground);
+  border-color: var(--selection-border);
+}
+
+.property-panel .prop-field--stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.property-panel .prop-field--stacked > .prop-field-control::before {
+  display: none;
+}
+
+/* The title uses the whole row. Show its source separately only while a
+   custom label replaces that source name in the input. */
 .prop-identity {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
 }
 

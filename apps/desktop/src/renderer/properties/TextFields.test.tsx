@@ -139,6 +139,10 @@ function renderTextPanel(box: Partial<TextParamsFixture> = {}) {
       currentTimeUs={1_000_000}
     />,
   );
+  for (const name of ["Text box & spacing", "Outline"]) {
+    const disclosure = screen.getByRole("button", { name });
+    if (disclosure.getAttribute("aria-expanded") === "false") fireEvent.click(disclosure);
+  }
   const rerenderWith = (next: Partial<TextParamsFixture>) =>
     view.rerender(
       <AttributePanel
@@ -353,6 +357,7 @@ describe("Text block placement, leading and tracking", () => {
     // box-against-x/y over there, and never the same section.
     expect(within(section).queryByLabelText("Anchor X")).toBeNull();
     expect(within(section).queryByLabelText("Anchor Y")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Anchor" }));
     const transform = screen.getByRole("region", { name: "Transform" });
     expect(within(transform).queryByRole("combobox", { name: "Horizontal align" })).toBeNull();
     expect(within(transform).queryByRole("combobox", { name: "Vertical align" })).toBeNull();

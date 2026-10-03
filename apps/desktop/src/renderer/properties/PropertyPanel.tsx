@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { Lock, LockOpen, Power, Tag } from "lucide-react";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   AUDIO_UNITS_ORDER,
@@ -267,7 +268,7 @@ function CompositionPanel({
         <p className="prop-identity-title">{derivedName}</p>
         <p className="prop-identity-meta">{t("property_panel.group")}</p>
       </div>
-      <PropSection layerKind="CompositionRef" sectionId="group" title={t("property_panel.group")}>
+      <PropSection layerKind="CompositionRef" collapsible={false} sectionId="group" title={t("property_panel.group")}>
         <Field label={t("property_panel.group_name")}>
           <AppInput
             value={name}
@@ -302,12 +303,8 @@ function CompositionPanel({
   );
 }
 
-/// The layer branch of the panel: two quiet meta lines (identity, then media
-/// label for media kinds), the core envelope Section, the kind's core
-/// Section(s), and ONE advanced bucket — always last, default collapsed —
-/// holding Locked, Start, audio units (audio only), then the kind-specific
-/// advanced rows. Collapse state is session-scoped per (kind, section); see
-/// PropSection.
+/// Identity and flags stay visible. Primary property groups are flat; secondary
+/// settings disclose where they belong, with session memory per kind/section.
 function LayerPanel({
   layer,
   track,
@@ -329,6 +326,7 @@ function LayerPanel({
   const selectionCount = useSelectedLayerIds().size;
   const link = comp?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
   const env = useEnvelope({ layer, track, link, onMutated, fpsNum, fpsDen });
+  const nameInput = useRef<HTMLInputElement>(null);
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
   const trackLabel = track
@@ -341,12 +339,42 @@ function LayerPanel({
       ? layer.params.media_label
       : null;
   const tInLayerUs = currentTimeUs - layer.t_start_us;
+  const fallbackName = layerDisplayName({ ...layer, label: null }, t, groupOrdinals);
   const playheadInSpan = currentTimeUs >= layer.t_start_us && currentTimeUs < layer.t_end_us;
 
   return (
     <>
       <div className="prop-identity">
-        {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
+        <label className="prop-name-row">
+          <span className="prop-name-icon" title={t("property_panel.label")}>
+            <Tag size={15} aria-hidden />
+          </span>
+          <AppInput
+            ref={nameInput}
+            className="prop-name-input"
+            value={env.label}
+            placeholder={fallbackName}
+            ariaLabel={t("property_panel.label")}
+            onValueChange={env.setLabel}
+            onFocus={env.beginLabelEdit}
+            onBlur={env.commitLabel}
+            onCancel={() => {
+              env.cancelLabelEdit();
+              nameInput.current?.blur();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+            }}
+          />
+        </label>
+        {mediaLabel && env.label.trim() ? (
+          <p className="prop-identity-meta" title={mediaLabel}>
+            {t("property_panel.source_media", { name: mediaLabel })}
+          </p>
+        ) : null}
         <p className="prop-identity-meta">
           {`${kindLabel} · ${trackLabel} · ${
             link
@@ -354,6 +382,17 @@ function LayerPanel({
               : t("property_panel.link_none")
           }`}
         </p>
+        <div className="prop-flags">
+          <Button size="sm" variant="ghost" className="prop-flag" aria-label={t("property_panel.enabled")} aria-pressed={layer.enabled} onClick={() => void env.commitFlag({ enabled: !layer.enabled })}>
+            <Power size={13} aria-hidden />
+            {t(layer.enabled ? "property_panel.flag_enabled" : "property_panel.flag_disabled")}
+          </Button>
+          <Button size="sm" variant="ghost" className="prop-flag" aria-label={t("property_panel.locked")} aria-pressed={layer.locked} onClick={() => void env.commitFlag({ locked: !layer.locked })}>
+            {layer.locked ? <Lock size={13} aria-hidden /> : <LockOpen size={13} aria-hidden />}
+            {t(layer.locked ? "property_panel.flag_locked" : "property_panel.flag_unlocked")}
+          </Button>
+        </div>
+        {track?.locked ? <p className="prop-hint">{t("property_panel.track_locked_hint")}</p> : null}
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">
@@ -363,22 +402,7 @@ function LayerPanel({
           })}
         </p>
       ) : null}
-      <PropSection layerKind={layer.kind} sectionId="envelope" title={t("property_panel.envelope")}>
-        <Field label={t("property_panel.label")}>
-          <AppInput
-            value={env.label}
-            ariaLabel={t("property_panel.label")}
-            onValueChange={env.setLabel}
-            onBlur={env.commitLabel}
-          />
-        </Field>
-        <Field label={t("property_panel.enabled")}>
-          <AppSwitch
-            checked={layer.enabled}
-            ariaLabel={t("property_panel.enabled")}
-            onCheckedChange={(next) => env.commitFlag({ enabled: next })}
-          />
-        </Field>
+      <section className="prop-section prop-timing" aria-label={t("property_panel.timing")}>
         <Field label={t("property_panel.duration")}>
           <AppInput
             value={env.durTc}
@@ -389,58 +413,45 @@ function LayerPanel({
             onBlur={env.commitDuration}
           />
         </Field>
-      </PropSection>
-      <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />
-      {/* After the kind's own sections and before the Advanced bucket: pauses
-          are a question about the material, not a property of the clip, so
-          they belong under what the clip IS and above the rows nobody opens.
-          Renders nothing for a layer with no audio subject. */}
-      <PausesSection layer={layer} />
-      <PropSection layerKind={layer.kind} sectionId="advanced" title={t("property_panel.advanced")} defaultCollapsed>
-        <Field label={t("property_panel.locked")}>
-          <AppSwitch
-            checked={layer.locked}
-            ariaLabel={t("property_panel.locked")}
-            onCheckedChange={(next) => env.commitFlag({ locked: next })}
-          />
-        </Field>
-        <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
-          <AppInput
-            value={env.startTc}
-            mono
-            disabled={env.timingDisabled}
-            ariaLabel={t("property_panel.t_start")}
-            onValueChange={env.setStartTc}
-            onBlur={env.commitStart}
-          />
-        </Field>
-        {env.isAudio ? (
-          // Premiere's "audio units" equivalent, placed with the readouts it governs.
-          // Scoped to audio times only: the ruler stays frame-based, because there is no
-          // zoom at which a sample ruler is legible and it would put a second grid on
-          // screen (ADR 0038).
-          <Field label={t("timeline.audio_units")} hint={t("property_panel.audio_units_hint")}>
-            <AppSelect
-              value={env.units}
-              ariaLabel={t("timeline.audio_units")}
-              onValueChange={(v) => setAudioUnits(v as AudioUnits)}
-              options={AUDIO_UNITS_ORDER.map((u) => ({
-                value: u,
-                label: t(`timeline.audio_units_${u}`),
-              }))}
+        <PropSection layerKind={layer.kind} sectionId="timing_details" title={t("property_panel.timing_details")} defaultCollapsed>
+          <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
+            <AppInput
+              value={env.startTc}
+              mono
+              disabled={env.timingDisabled}
+              ariaLabel={t("property_panel.t_start")}
+              onValueChange={env.setStartTc}
+              onBlur={env.commitStart}
             />
           </Field>
-        ) : null}
-        <KindAdvancedFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />
-      </PropSection>
+          {env.isAudio ? (
+            // Premiere's "audio units" equivalent, placed with the readouts it governs.
+            // Scoped to audio times only: the ruler stays frame-based, because there is no
+            // zoom at which a sample ruler is legible and it would put a second grid on
+            // screen (ADR 0038).
+            <Field label={t("timeline.audio_units")} hint={t("property_panel.audio_units_hint")}>
+              <AppSelect
+                value={env.units}
+                ariaLabel={t("timeline.audio_units")}
+                onValueChange={(v) => setAudioUnits(v as AudioUnits)}
+                options={AUDIO_UNITS_ORDER.map((u) => ({
+                  value: u,
+                  label: t(`timeline.audio_units_${u}`),
+                }))}
+              />
+            </Field>
+          ) : null}
+        </PropSection>
+      </section>
+      <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />
+      <PausesSection layer={layer} />
     </>
   );
 }
 
 /// State + commit routing for the Layer envelope: identity (label), flags
-/// (enabled/locked), and timing (Start/duration). Shared between the core
-/// envelope Section and the advanced bucket, which split the rows between
-/// them. Timing edits route through the SAME link-aware commands as Timeline
+/// (enabled/locked), and timing (Start/duration). Timing edits route through
+/// the SAME link-aware commands as Timeline
 /// gestures — Start through `move_layer`, duration through `trim_layer` — so
 /// snapping, link fan-out, lock checks, and composition autofit behave
 /// identically no matter where the edit comes from (spec: the inspector
@@ -476,6 +487,7 @@ function useEnvelope({
     isAudio ? parseAudioTime(s, units, fpsNum, fpsDen) : parseTimecode(s, fpsNum, fpsDen);
 
   const [label, setLabel] = useState(layer.label ?? "");
+  const labelCancelled = useRef(false);
   const [startTc, setStartTc] = useState(() => fmtTime(layer.t_start_us));
   const [durTc, setDurTc] = useState(() => fmtTime(layer.t_end_us - layer.t_start_us));
   // Resync from the authoritative snapshot whenever the committed envelope
@@ -485,11 +497,14 @@ function useEnvelope({
   // field mid-typing.
   useEffect(() => {
     setLabel(layer.label ?? "");
+    labelCancelled.current = false;
+  }, [layer.id, layer.label]);
+  useEffect(() => {
     setStartTc(fmtTime(layer.t_start_us));
     setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fmtTime is derived from
     // exactly the primitives listed here; including it would re-run every render.
-  }, [layer.id, layer.label, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen, isAudio, units]);
+  }, [layer.id, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen, isAudio, units]);
 
   // Timeline gesture suppression parity: a locked Layer (or a Layer on a
   // locked Track) can't be moved/trimmed from the Timeline, so the
@@ -501,14 +516,14 @@ function useEnvelope({
   // (grid-aligned) value, so re-committing an unchanged value can't record
   // a no-op undo.
   const commitLabel = async (): Promise<void> => {
-    const next = label.trim();
-    if (next === (layer.label ?? "")) return;
-    if (next === "") {
-      // `LayerPatch.label` can't express null — an empty field reverts
-      // rather than clearing the label.
-      setLabel(layer.label ?? "");
+    if (labelCancelled.current) {
+      labelCancelled.current = false;
       return;
     }
+    const next = label.trim();
+    setLabel(next);
+    if (next === (layer.label ?? "")) return;
+    // Empty labels are absent to layerDisplayName, as in timeline rename.
     if (await tryMutate(() => updateLayer(layer.id, { label: next }), "Rename layer")) {
       await onMutated();
     } else {
@@ -576,6 +591,11 @@ function useEnvelope({
   return {
     label,
     setLabel,
+    beginLabelEdit: () => { labelCancelled.current = false; },
+    cancelLabelEdit: () => {
+      labelCancelled.current = true;
+      setLabel(layer.label ?? "");
+    },
     startTc,
     setStartTc,
     durTc,
@@ -612,73 +632,38 @@ function KindFields({
       return (
         <>
           <TextFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <VisualFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
     case "VideoClip":
       return (
         <>
           <VideoClipFields layer={layer} v={layer.params} commit={commit} />
-          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <VisualFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
     case "ImageOverlay":
-      // Core is just the transform section; fades wait in the advanced bucket.
-      return <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      // Transform and appearance share the same layout across visual kinds.
+      return <VisualFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Color":
       return <ColorFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Audio":
       return <AudioFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Motif":
-      return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
+      return <MotifFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
     case "CompositionRef":
       return (
         <>
           <GroupFields layer={layer} v={layer.params} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
-          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <VisualFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
   }
 }
 
-/// The kind-specific tail of the advanced bucket: video fades/flips, image
-/// fades, audio pan/role/mute, and the Motif lifecycle row, in that order.
-/// Text and Color contribute nothing beyond Locked + Start.
-function KindAdvancedFields({
-  layer,
-  onMutated,
-  fpsNum,
-  fpsDen,
-  tInLayerUs,
-  playheadInSpan,
-}: {
-  layer: LayerSummary;
-  onMutated: () => Promise<void>;
-  fpsNum: number;
-  fpsDen: number;
-  tInLayerUs: number;
-  playheadInSpan: boolean;
-}) {
-  const commit = commitLayerParams(layer.id, onMutated);
-
-  switch (layer.params.kind) {
-    case "VideoClip":
-      return <VideoClipAdvancedFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />;
-    case "ImageOverlay":
-      return <ImageOverlayAdvancedFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />;
-    case "Audio":
-      return <AudioAdvancedFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
-    case "Motif":
-      return <MotifLifecycleRow motifId={layer.params.motif_id} layerId={layer.id} onMutated={onMutated} />;
-    default:
-      return null;
-  }
-}
-
 type Commit = (patch: LayerParamsPatch) => Promise<void>;
 
-/// The field-wise params commit shared by the core and advanced kind
-/// dispatchers: one backend command + one refresh per gesture; a refusal
+/// The field-wise params commit shared by the kind-specific fields: one backend command + one refresh per gesture; a refusal
 /// becomes a status-bar line (errors/tryMutate.ts).
 function commitLayerParams(layerId: string, onMutated: () => Promise<void>): Commit {
   return async (patch) => {
@@ -764,23 +749,18 @@ function InspectorColorField({
   );
 }
 
-/// Unified transform Section for the visual kinds (Text, VideoClip,
-/// ImageOverlay, Motif): opacity, position, scale, rotation, anchor. Position,
-/// scale and anchor put their two axes in ONE row's value column
-/// (`InspectorRow` + two `layout="cell"` fields); opacity and rotation hold a
-/// single control. Every row is the same grid, so the section has one label
-/// edge and one value edge.
-///
-/// Anchor sits AFTER rotation because it is read as "what that rotation turns
-/// around" — and it stays in the core section rather than the advanced bucket
-/// because the on-canvas target makes it a routine gesture, not a rare setting.
-function TransformSection({
+/// Flat transform and appearance groups; secondary settings disclose locally.
+function VisualFields({
+  fpsNum,
+  fpsDen,
   layer,
   scaleLinked,
   tInLayerUs,
   playheadInSpan,
   onMutated,
 }: {
+  fpsNum: number;
+  fpsDen: number;
   layer: LayerSummary;
   scaleLinked: boolean;
   tInLayerUs: number;
@@ -788,19 +768,38 @@ function TransformSection({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const commit = commitLayerParams(layer.id, onMutated);
+  const video = layer.params.kind === "VideoClip" ? layer.params : null;
   return (
-    <PropSection layerKind={layer.kind} sectionId="transform" title={t("property_panel.transform")}>
-      <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <PositionFields layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated}/>
-      {/* `ScaleFields` owns its own row: one field + closed chain while
-          linked, both axes + open chain while not. */}
-      <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorRow label={t("property_panel.anchor")}>
-        <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
-        <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
-      </InspectorRow>
-    </PropSection>
+    <>
+      <PropSection layerKind={layer.kind} collapsible={false} sectionId="transform" title={t("property_panel.transform")}>
+        <PositionFields layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated}/>
+        {/* `ScaleFields` owns its own row: one field + closed chain while
+            linked, both axes + open chain while not. */}
+        <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        <PropSection layerKind={layer.kind} sectionId="transform_details" title={t(video ? "property_panel.anchor_flip" : "property_panel.anchor")} defaultCollapsed>
+          <InspectorRow label={t("property_panel.anchor")}>
+            <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+            <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+          </InspectorRow>
+          {video ? <InspectorRow label={t("property_panel.flip")} reserveStopwatch>
+            <div className="prop-flags">
+              <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_h")} aria-pressed={video.flip_h} onClick={() => void commit({ kind: "VideoClip", flip_h: !video.flip_h })}>{t("property_panel.horizontal")}</Button>
+              <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_v")} aria-pressed={video.flip_v} onClick={() => void commit({ kind: "VideoClip", flip_v: !video.flip_v })}>{t("property_panel.vertical")}</Button>
+            </div>
+          </InspectorRow> : null}
+        </PropSection>
+      </PropSection>
+      <PropSection layerKind={layer.kind} sectionId="appearance" title={t("property_panel.appearance")} collapsible={false}>
+        <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        {layer.params.kind === "VideoClip" || layer.params.kind === "ImageOverlay" ? (
+          <PropSection layerKind={layer.kind} sectionId="fades" title={t("property_panel.fades")} defaultCollapsed>
+            <VisualFadeFields layerId={layer.id} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
+          </PropSection>
+        ) : null}
+      </PropSection>
+    </>
   );
 }
 
@@ -998,8 +997,8 @@ function TextFields({
       : null;
 
   return (
-    <PropSection layerKind={layer.kind} sectionId="text" title={t("property_panel.text")}>
-      <Field label={t("property_panel.content")}>
+    <PropSection layerKind={layer.kind} collapsible={false} sectionId="text" title={t("property_panel.text")}>
+      <Field label={t("property_panel.content")} stacked>
         <textarea
           className="app-input"
           value={content}
@@ -1045,102 +1044,103 @@ function TextFields({
         commitStatic={(color) => commit({ kind: "Text", color })}
         onMutated={onMutated}
       />
-      {/* The outline: the one style a caption import adds beyond the file's own,
-          and until this row the one nothing in the inspector could change. Width
-          0 is "none" — the mutation stores `null` — so the colour row has nothing
-          to colour and leaves rather than sitting disabled. */}
-      <Field label={t("property_panel.outline_width")} hint={t("property_panel.outline_width_hint")}>
-        <AppNumberField
-          value={outlineW}
-          step={0.5}
-          min={0}
-          max={64}
-          ariaLabel={t("property_panel.outline_width")}
-          onValueChange={setOutlineW}
-          onCommit={(px) => commit({ kind: "Text", outline_width: px })}
-          onFocus={() => { editingNumber.current = true; }}
-          onBlur={() => { editingNumber.current = false; }}
+      <PropSection layerKind={layer.kind} sectionId="text_layout" title={t("property_panel.text_layout")} defaultCollapsed>
+        <TextBoxFields
+          layerId={layer.id}
+          boxW={v.box_w}
+          boxH={v.box_h}
+          localW={boxW}
+          localH={boxH}
+          setLocalW={setBoxW}
+          setLocalH={setBoxH}
+          onEditingChange={(editing) => { editingNumber.current = editing; }}
+          commit={commit}
         />
-      </Field>
-      {v.outline !== null && (
-        <Field label={t("property_panel.outline_color")}>
-          <AppColorField
-            value={rgbaToHex(outlineColor)}
-            ariaLabel={t("property_panel.outline_color")}
-            onValueChange={(hex) => {
-              // The picker edits the RGB triplet; the stored alpha rides along.
-              const next = hexToRgba(hex, outlineColor.a);
-              setOutlineColor(next);
-              if (outlineColorDebounce.current) clearTimeout(outlineColorDebounce.current);
-              outlineColorDebounce.current = setTimeout(() => {
-                void commit({ kind: "Text", outline_color: next });
-              }, 250);
-            }}
+        {/* Where the text block sits INSIDE the box, on both axes — the pair ADR
+            0049 promoted `align` into when it stopped being line-to-line only.
+            They belong side by side; what they must NOT sit next to is Transform's
+            `anchor_x`/`anchor_y`, which place the box against x/y. Same axes, one
+            level up: the section split plus the explicit "align" wording is the
+            whole disambiguation, so don't merge the two pairs. */}
+        <Field label={t("property_panel.align")}>
+          <AppSelect
+            value={v.align}
+            ariaLabel={t("property_panel.align")}
+            onValueChange={(next) => commit({ kind: "Text", align: next as TextAlign })}
+            options={ALIGNS.map((o) => ({
+              value: o,
+              label: t(`property_panel.align_${o.toLowerCase()}`),
+            }))}
           />
         </Field>
-      )}
-      <TextBoxFields
-        layerId={layer.id}
-        boxW={v.box_w}
-        boxH={v.box_h}
-        localW={boxW}
-        localH={boxH}
-        setLocalW={setBoxW}
-        setLocalH={setBoxH}
-        onEditingChange={(editing) => { editingNumber.current = editing; }}
-        commit={commit}
-      />
-      {/* Where the text block sits INSIDE the box, on both axes — the pair ADR
-          0049 promoted `align` into when it stopped being line-to-line only.
-          They belong side by side; what they must NOT sit next to is Transform's
-          `anchor_x`/`anchor_y`, which place the box against x/y. Same axes, one
-          level up: the section split plus the explicit "align" wording is the
-          whole disambiguation, so don't merge the two pairs. */}
-      <Field label={t("property_panel.align")}>
-        <AppSelect
-          value={v.align}
-          ariaLabel={t("property_panel.align")}
-          onValueChange={(next) => commit({ kind: "Text", align: next as TextAlign })}
-          options={ALIGNS.map((o) => ({
-            value: o,
-            label: t(`property_panel.align_${o.toLowerCase()}`),
-          }))}
-        />
-      </Field>
-      <Field label={t("property_panel.valign")}>
-        <AppSelect
-          value={v.valign}
-          ariaLabel={t("property_panel.valign")}
-          onValueChange={(next) => commit({ kind: "Text", valign: next as VAlign })}
-          options={VALIGNS.map((o) => ({
-            value: o,
-            label: t(`property_panel.valign_${o.toLowerCase()}`),
-          }))}
-        />
-      </Field>
-      <Field label={t("property_panel.line_height")} hint={t("property_panel.line_height_hint")}>
-        <AppNumberField
-          value={leading}
-          step={1}
-          min={0}
-          ariaLabel={t("property_panel.line_height")}
-          onValueChange={setLeading}
-          onCommit={(px) => commit({ kind: "Text", line_height: px })}
-          onFocus={() => { editingNumber.current = true; }}
-          onBlur={() => { editingNumber.current = false; }}
-        />
-      </Field>
-      <Field label={t("property_panel.letter_spacing")}>
-        <AppNumberField
-          value={tracking}
-          step={0.5}
-          ariaLabel={t("property_panel.letter_spacing")}
-          onValueChange={setTracking}
-          onCommit={(px) => commit({ kind: "Text", letter_spacing: px })}
-          onFocus={() => { editingNumber.current = true; }}
-          onBlur={() => { editingNumber.current = false; }}
-        />
-      </Field>
+        <Field label={t("property_panel.valign")}>
+          <AppSelect
+            value={v.valign}
+            ariaLabel={t("property_panel.valign")}
+            onValueChange={(next) => commit({ kind: "Text", valign: next as VAlign })}
+            options={VALIGNS.map((o) => ({
+              value: o,
+              label: t(`property_panel.valign_${o.toLowerCase()}`),
+            }))}
+          />
+        </Field>
+        <Field label={t("property_panel.line_height")} hint={t("property_panel.line_height_hint")}>
+          <AppNumberField
+            value={leading}
+            step={1}
+            min={0}
+            ariaLabel={t("property_panel.line_height")}
+            onValueChange={setLeading}
+            onCommit={(px) => commit({ kind: "Text", line_height: px })}
+            onFocus={() => { editingNumber.current = true; }}
+            onBlur={() => { editingNumber.current = false; }}
+          />
+        </Field>
+        <Field label={t("property_panel.letter_spacing")}>
+          <AppNumberField
+            value={tracking}
+            step={0.5}
+            ariaLabel={t("property_panel.letter_spacing")}
+            onValueChange={setTracking}
+            onCommit={(px) => commit({ kind: "Text", letter_spacing: px })}
+            onFocus={() => { editingNumber.current = true; }}
+            onBlur={() => { editingNumber.current = false; }}
+          />
+        </Field>
+      </PropSection>
+      <PropSection layerKind={layer.kind} sectionId="text_outline" title={t("property_panel.text_outline")} defaultCollapsed={v.outline === null}>
+        {/* Width 0 removes the outline; its colour field leaves with it. */}
+        <Field label={t("property_panel.outline_width")} hint={t("property_panel.outline_width_hint")}>
+          <AppNumberField
+            value={outlineW}
+            step={0.5}
+            min={0}
+            max={64}
+            ariaLabel={t("property_panel.outline_width")}
+            onValueChange={setOutlineW}
+            onCommit={(px) => commit({ kind: "Text", outline_width: px })}
+            onFocus={() => { editingNumber.current = true; }}
+            onBlur={() => { editingNumber.current = false; }}
+          />
+        </Field>
+        {v.outline !== null && (
+          <Field label={t("property_panel.outline_color")}>
+            <AppColorField
+              value={rgbaToHex(outlineColor)}
+              ariaLabel={t("property_panel.outline_color")}
+              onValueChange={(hex) => {
+                // The picker edits the RGB triplet; the stored alpha rides along.
+                const next = hexToRgba(hex, outlineColor.a);
+                setOutlineColor(next);
+                if (outlineColorDebounce.current) clearTimeout(outlineColorDebounce.current);
+                outlineColorDebounce.current = setTimeout(() => {
+                  void commit({ kind: "Text", outline_color: next });
+                }, 250);
+              }}
+            />
+          </Field>
+        )}
+      </PropSection>
     </PropSection>
   );
 }
@@ -1165,7 +1165,7 @@ function VideoClipFields({
   }, [layer.id, v]);
 
   return (
-    <PropSection layerKind={layer.kind} sectionId="media" title={t("property_panel.media")}>
+    <PropSection layerKind={layer.kind} collapsible={false} sectionId="media" title={t("property_panel.media")}>
       <Field label={t("property_panel.speed")}>
         <AppNumberField
           step={0.05}
@@ -1183,15 +1183,15 @@ function VideoClipFields({
   );
 }
 
-function VideoClipAdvancedFields({
-  layer,
+function VisualFadeFields({
+  layerId,
   v,
   commit,
   fpsNum,
   fpsDen,
 }: {
-  layer: LayerSummary;
-  v: Extract<LayerSummary["params"], { kind: "VideoClip" }>;
+  layerId: string;
+  v: Extract<LayerSummary["params"], { kind: "ImageOverlay" | "VideoClip" }>;
   commit: Commit;
   fpsNum: number;
   fpsDen: number;
@@ -1202,7 +1202,7 @@ function VideoClipAdvancedFields({
   useEffect(() => {
     setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
-  }, [layer.id, v, fpsNum, fpsDen]);
+  }, [layerId, v.fade_in_us, v.fade_out_us, fpsNum, fpsDen]);
 
   return (
     <>
@@ -1213,9 +1213,9 @@ function VideoClipAdvancedFields({
           onValueChange={setFadeInTc}
           onBlur={() => {
             const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ kind: "VideoClip", fade_in_us: us });
-            } else {
+            if (us !== null && us !== v.fade_in_us) {
+              commit({ kind: v.kind, fade_in_us: us });
+            } else if (us === null) {
               setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
             }
           }}
@@ -1228,80 +1228,9 @@ function VideoClipAdvancedFields({
           onValueChange={setFadeOutTc}
           onBlur={() => {
             const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ kind: "VideoClip", fade_out_us: us });
-            } else {
-              setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
-            }
-          }}
-        />
-      </Field>
-      <Field label={t("property_panel.flip_h")}>
-        <AppSwitch
-          checked={v.flip_h}
-          ariaLabel={t("property_panel.flip_h")}
-          onCheckedChange={(next) => commit({ kind: "VideoClip", flip_h: next })}
-        />
-      </Field>
-      <Field label={t("property_panel.flip_v")}>
-        <AppSwitch
-          checked={v.flip_v}
-          ariaLabel={t("property_panel.flip_v")}
-          onCheckedChange={(next) => commit({ kind: "VideoClip", flip_v: next })}
-        />
-      </Field>
-    </>
-  );
-}
-
-function ImageOverlayAdvancedFields({
-  layer,
-  v,
-  commit,
-  fpsNum,
-  fpsDen,
-}: {
-  layer: LayerSummary;
-  v: Extract<LayerSummary["params"], { kind: "ImageOverlay" }>;
-  commit: Commit;
-  fpsNum: number;
-  fpsDen: number;
-}) {
-  const { t } = useTranslation();
-  const [fadeInTc, setFadeInTc] = useState(() => formatTimecode(v.fade_in_us, fpsNum, fpsDen));
-  const [fadeOutTc, setFadeOutTc] = useState(() => formatTimecode(v.fade_out_us, fpsNum, fpsDen));
-  useEffect(() => {
-    setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
-    setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
-  }, [layer.id, v, fpsNum, fpsDen]);
-
-  return (
-    <>
-      <Field label={t("property_panel.fade_in")}>
-        <AppInput
-          value={fadeInTc}
-          ariaLabel={t("property_panel.fade_in")}
-          onValueChange={setFadeInTc}
-          onBlur={() => {
-            const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ kind: "ImageOverlay", fade_in_us: us });
-            } else {
-              setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
-            }
-          }}
-        />
-      </Field>
-      <Field label={t("property_panel.fade_out")}>
-        <AppInput
-          value={fadeOutTc}
-          ariaLabel={t("property_panel.fade_out")}
-          onValueChange={setFadeOutTc}
-          onBlur={() => {
-            const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ kind: "ImageOverlay", fade_out_us: us });
-            } else {
+            if (us !== null && us !== v.fade_out_us) {
+              commit({ kind: v.kind, fade_out_us: us });
+            } else if (us === null) {
               setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
             }
           }}
@@ -1328,6 +1257,8 @@ function BakeStatusLine({ layerId }: { layerId: string }) {
 }
 
 function MotifFields({
+  fpsNum,
+  fpsDen,
   layer,
   v,
   commit,
@@ -1335,6 +1266,8 @@ function MotifFields({
   tInLayerUs,
   playheadInSpan,
 }: {
+  fpsNum: number;
+  fpsDen: number;
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Motif" }>;
   commit: Commit;
@@ -1347,7 +1280,7 @@ function MotifFields({
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
 
   // Re-resolve the motif when the runtime catalog changes (e.g. deleting this
-  // motif from the lifecycle row in the advanced bucket) so the props schema /
+  // motif from its management section) so the props schema /
   // unknown-note stay in sync with `merged`, not a stale snapshot from mount.
   // Same notifier the lifecycle row rides.
   useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
@@ -1370,14 +1303,14 @@ function MotifFields({
   return (
     <>
       <BakeStatusLine layerId={layer.id} />
-      <TransformSection layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <VisualFields fpsNum={fpsNum} fpsDen={fpsDen} layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       {motif === null ? (
         <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
       ) : motif.hasParamsUi ? (
         // The Motif ships its own page — it owns the whole props surface,
         // including labels, grouping and order. The fallback form below stays
         // the default for every Motif that doesn't.
-        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
+        <PropSection layerKind={layer.kind} collapsible={false} sectionId="props" title={t("property_panel.props")}>
           <MotifParamsFrame
             layerId={layer.id}
             motifId={v.motif_id}
@@ -1387,7 +1320,7 @@ function MotifFields({
           />
         </PropSection>
       ) : propEntries.length > 0 ? (
-        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
+        <PropSection layerKind={layer.kind} collapsible={false} sectionId="props" title={t("property_panel.props")}>
           {propEntries.map(([key, spec]) => (
             <MotifPropField
               key={key}
@@ -1404,9 +1337,12 @@ function MotifFields({
           ))}
         </PropSection>
       ) : null}
+      <PropSection layerKind={layer.kind} sectionId="motif_management" title={t("property_panel.motif_management")} defaultCollapsed>
+        <MotifLifecycleRow motifId={v.motif_id} layerId={layer.id} onMutated={onMutated} />
+      </PropSection>
       {motif?.manifest.status === "draft" ? (
         // Entering a draft is intent to edit, so the source Section defaults
-        // expanded (unlike the advanced bucket).
+        // expanded.
         <PropSection layerKind={layer.kind} sectionId="motif_source" title={t("property_panel.motif_source")}>
           <MotifSourcePanel motifId={v.motif_id} />
         </PropSection>
@@ -1687,7 +1623,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
 /// long it is, and the two things you can do to it from here.
 ///
 /// The name field writes the COMPOSITION (`groups_rename`), not the layer — the
-/// layer's own label is the envelope section's `Label` row above, and a Group has
+/// layer's own label is the editable title above, and a Group has
 /// both because it is one composition placed possibly several times. Size and
 /// duration are read-only: a composition's frame size is copied at pre-compose
 /// and not editable in v1 (ADR 0052), and its duration is autofit from what is
@@ -1747,7 +1683,7 @@ function GroupFields({
       : t(`quick_actions.ungroup_not_plain_${notPlain}`);
 
   return (
-    <PropSection layerKind={layer.kind} sectionId="group" title={t("property_panel.group")}>
+    <PropSection layerKind={layer.kind} collapsible={false} sectionId="group" title={t("property_panel.group")}>
       <Field label={t("property_panel.group_name")}>
         <AppInput
           value={name}
@@ -1762,7 +1698,7 @@ function GroupFields({
           {composition ? `${composition.width} × ${composition.height}` : "—"}
         </span>
       </Field>
-      {/* The COMPOSITION's length, not the clip's — the envelope section above
+      {/* The COMPOSITION's length, not the clip's — the timing section above
           owns the clip's duration. The two differ exactly when the window
           overhangs or falls short, which is what the clip's hatched tail and
           right-edge tick say on the timeline. */}
@@ -1812,7 +1748,7 @@ function ColorFields({
 }) {
   const { t } = useTranslation();
   return (
-    <PropSection layerKind={layer.kind} sectionId="color" title={t("property_panel.color")}>
+    <PropSection layerKind={layer.kind} collapsible={false} sectionId="color" title={t("property_panel.color")}>
       <InspectorColorField
         layerId={layer.id}
         track={v.color}
@@ -1879,7 +1815,7 @@ function AudioFields({
   }, [layer.id, v.fade_in_us, v.fade_out_us, fpsNum, fpsDen]);
 
   return (
-    <PropSection layerKind={layer.kind} sectionId="audio" title={t("property_panel.audio")}>
+    <PropSection layerKind={layer.kind} collapsible={false} sectionId="audio" title={t("property_panel.audio")}>
       <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.fade_in")}>
         <AppInput
@@ -1911,6 +1847,9 @@ function AudioFields({
           }}
         />
       </Field>
+      <PropSection layerKind={layer.kind} sectionId="audio_details" title={t("property_panel.audio_details")} defaultCollapsed>
+        <AudioAdvancedFields layer={layer} v={v} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      </PropSection>
     </PropSection>
   );
 }

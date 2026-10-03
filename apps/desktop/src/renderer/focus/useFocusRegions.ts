@@ -26,6 +26,7 @@ import { setActiveRegion } from "./focusRegionStore";
 
 export function useFocusRegions(): void {
   useEffect(() => {
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
     /// LANDMINE: this MUST stay a window CAPTURE-phase `pointerdown` listener.
     /// Gesture handlers cancel `pointerdown` to suppress native drag and text
     /// selection — the gizmo's four handles, the keyframe curve graph, the
@@ -57,11 +58,10 @@ export function useFocusRegions(): void {
     ///
     /// Capture phase, because a field may `stopPropagation()` on keydown (the
     /// timeline rename input does) and a bubble listener would never see it.
-    /// Deferred one microtask, because focusing the region fires the field's
-    /// `blur` — and a blur landing BEFORE the field's own Escape handler would
-    /// commit the value Escape was supposed to discard. React dispatches the
-    /// component handlers synchronously inside this native event, so by the
-    /// time the microtask runs the field has already set its cancel flag.
+    /// Defer to the next task: real browser key events may checkpoint microtasks
+    /// between the window capture listener and React's root listener. A
+    /// microtask can therefore blur/commit BEFORE the field sets its cancel
+    /// flag, even though jsdom's synchronous dispatch passes that ordering.
     const onKeyDownCapture = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") return;
       const target = e.target;
@@ -71,14 +71,15 @@ export function useFocusRegions(): void {
       if (isInTransientWidget(target)) return;
       const region = regionRootOf(target);
       if (!region) return;
-      queueMicrotask(() => {
+      clearTimeout(releaseTimer);
+      releaseTimer = setTimeout(() => {
         // A field whose Escape handler unmounted it (the rename input calls
         // `endRename()`) leaves focus on `<body>`; recover that to the region.
         // Anything else already holding focus made a deliberate choice.
         const active = document.activeElement;
         if (active && active !== target && active !== document.body) return;
         if (region.isConnected) region.focus({ preventScroll: true });
-      });
+      }, 0);
     };
 
     const onFocusIn = (e: FocusEvent): void => {
@@ -101,6 +102,7 @@ export function useFocusRegions(): void {
     window.addEventListener("keydown", onKeyDownCapture, true);
     window.addEventListener("focusin", onFocusIn);
     return () => {
+      clearTimeout(releaseTimer);
       window.removeEventListener("pointerdown", onPointerDownCapture, true);
       window.removeEventListener("keydown", onKeyDownCapture, true);
       window.removeEventListener("focusin", onFocusIn);

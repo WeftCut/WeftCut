@@ -101,12 +101,13 @@ halves are deliberately different concerns: `useFocusRegions` always releases;
 the *revert* belongs to the widget, so a field with no cancel semantics still
 gives the keyboard back.
 
-The release is deferred one microtask, and that ordering is the correctness
-argument: focusing the region fires the field's blur, and a blur landing before
-the field's own Escape handler would commit the value Escape was supposed to
-discard. React dispatches component handlers synchronously inside the native
-event, so by the time the microtask runs the field has already set its cancel
-flag. It is still a *capture*-phase listener, because a field may
+The release is deferred to the next task (`setTimeout(0)`): focusing the region
+fires the field's blur, and a blur landing before the field's own Escape handler
+would commit the value Escape was supposed to discard. A microtask is too early:
+Chromium can checkpoint microtasks between the window capture listener and
+React's root listener during real keyboard dispatch. The property-panel E2E
+regression covers this ordering; jsdom's synchronous dispatch cannot reproduce
+it. It is still a *capture*-phase listener, because a field may
 `stopPropagation()` on keydown — the timeline rename input does — and a bubble
 listener would never see the key.
 

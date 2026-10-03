@@ -127,16 +127,14 @@ describe("useFocusRegions", () => {
 
     input.focus();
     fireEvent.change(input, { target: { value: "typed" } });
-    // The release is deferred one microtask precisely so the field's own Escape
-    // handler sets its cancel flag first. Reverse that order and Escape commits
-    // the value it was supposed to discard.
+    // Wait for the deferred release after the field's Escape handler cancels.
     await act(async () => {
       fireEvent.keyDown(input, { key: "Escape" });
     });
 
+    await vi.waitFor(() => expect(document.activeElement).toBe(getByTestId("attribute")));
     expect(onCommit).not.toHaveBeenCalled();
     expect(input.value).toBe("start");
-    expect(document.activeElement).toBe(getByTestId("attribute"));
   });
 
   it("reports no region when focus moves into app chrome", () => {
