@@ -1248,7 +1248,7 @@ the UI uses the same actor via backend commands.
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, in `composition_id` (root by default) |
 | `apply_subtitles(media_id, t_start_us?, composition_id?)` | Reads a `Subtitle` pool item's file (format sniffed from the body) and lands the WHOLE document as editable `Text` layers on the composition's caption-role tracks, its time 0 at `t_start_us` (default 0, never negative) — packing into the unlocked caption tracks already there where they have room, opening a new caption track only for a cue that collides with all of them (ADR 0070, ADR 0077). The cues are copies with no tie back to the item. Advanced ASS tags (karaoke, drawings) are stripped; the answer says `simplified: true` when they were. Returns `{ caption_track_id, cues, simplified }`, the track being where the first cue landed. |
 | `paste_layers(layer_ids, t_start_us? \| t_offset_us?, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate, and the only copy command: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, or by `t_offset_us` directly (exactly one of the two), then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
-| `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the UI hands it a link's members when the toggle fans out; a locked track refuses the whole set, a layer's own lock does not |
+| `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the timeline UI passes its selection without adding linked members; a locked track refuses the whole set, a layer's own lock does not |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
 | `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins / Auto-tangent solve), recorded, rejects empty-keyframed / unknown-param / locked-track |
@@ -1522,13 +1522,15 @@ blind pass because the cut-over gate left no alternative, and the on-disk
 shape drifted across three generations while the version sat still. ADR 0047
 has the history.
 
-The current schema is **v1, unreleased**, with an empty migration chain. There
-are no released projects to support. Shape changes, including the explicit
-`position: { mode: "XY", x, y }` / Path record, cut over in place and refresh
-the current v1 fixture. Legacy direct transform axes are refused, not migrated.
-ADR 0060 removes the initially added v1 → v2 compatibility step. The versioned
-chain and its synthetic tests remain ready for the first post-release change;
-the rules above apply once a released format needs preservation.
+The current schema is **v2**. Its v1 → v2 step preserves existing projects when
+the inspector's clip-mute control is removed: in every composition, an Audio
+layer with `params.mute: true` becomes `enabled: false, params.mute: false`.
+Other enabled states, linked members, track flags and role mixing are untouched.
+The engine/API still carries the mute parameter; the inspector uses Enabled.
+This is an explicitly requested compatibility conversion for existing project
+JSON, superseding the empty-chain policy for this change. Earlier pre-release
+shape cutovers, including ADR 0060's position record, remain in v1; legacy direct
+transform axes are still refused rather than migrated.
 
 A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
 parameter), not a model type, not `defaultSettings()`. It takes the wire

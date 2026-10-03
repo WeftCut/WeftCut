@@ -362,7 +362,11 @@ a real bus with its own DSP.
 
 Three control levels stack, each owning a different scope:
 
-- **Clip mute** (`AudioParams.mute`, per layer) — silence one layer.
+- **Clip enable/disable** (`Layer.enabled`, per layer) — the inspector's
+  control for silencing one audio clip. The v1 → v2 JSON migration turns each
+  muted audio clip into a disabled clip and clears `AudioParams.mute`, preserving
+  silence without a second toggle or a recovery action in the inspector.
+  The parameter remains in the engine/API wire shape.
 - **Role mute / solo / gain** (`audio_roles`, the mix) — silence,
   isolate, or trim a whole category of sound at once ("all dialogue",
   "just the music").

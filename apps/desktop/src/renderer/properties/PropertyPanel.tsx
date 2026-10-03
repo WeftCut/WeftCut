@@ -25,7 +25,6 @@ import {
   updateLayer,
   updateLayerParams,
   moveLayer,
-  setLayersEnabled,
   trimLayer,
   installMotif,
   deleteMotif,
@@ -38,7 +37,6 @@ import {
   type LayerParamsPatch,
   type AnimTrack,
   type LayerSummary,
-  type LinkSummary,
   type Rgba,
   type TrackSummary,
 } from "../ipc";
@@ -327,7 +325,7 @@ function LayerPanel({
   const groupOrdinals = useGroupOrdinals();
   const selectionCount = useSelectedLayerIds().size;
   const link = comp?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
-  const env = useEnvelope({ layer, track, link, onMutated, fpsNum, fpsDen });
+  const env = useEnvelope({ layer, track, onMutated, fpsNum, fpsDen });
   const nameInput = useRef<HTMLInputElement>(null);
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
@@ -491,15 +489,12 @@ function LayerPanel({
 function useEnvelope({
   layer,
   track,
-  link,
   onMutated,
   fpsNum,
   fpsDen,
 }: {
   layer: LayerSummary;
   track: TrackSummary | undefined;
-  /// The layer's link, or null — the Enabled switch's fan-out set.
-  link: LinkSummary | null;
   onMutated: () => Promise<void>;
   fpsNum: number;
   fpsDen: number;
@@ -565,15 +560,8 @@ function useEnvelope({
   };
 
   const commitFlag = async (patch: { enabled: boolean } | { locked: boolean }): Promise<void> => {
-    // `enabled` follows the link (`docs/features.md#links`): the members go in
-    // ONE `set_layers_enabled`, one undo step, unless the link override is on.
-    // `locked` stays local — a lock is not a fan-out property.
-    const members = link?.layer_ids ?? [];
-    const op =
-      "enabled" in patch && members.length > 1 && linkFanoutActive()
-        ? () => setLayersEnabled(members, patch.enabled)
-        : () => updateLayer(layer.id, patch);
-    if (await tryMutate(op, "Update layer flag")) {
+    // Inspector flags belong to the displayed clip, even in a linked selection.
+    if (await tryMutate(() => updateLayer(layer.id, patch), "Update layer flag")) {
       await onMutated();
     }
   };
@@ -1755,31 +1743,6 @@ function AudioFields({
     <PropSection layerKind={layer.kind} collapsible={false} sectionId="audio" title={t("property_panel.audio")}>
       <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <FadeFields key={layer.id} v={v} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
-      <PropSection layerKind={layer.kind} sectionId="audio_details" title={t("property_panel.audio_details")} defaultCollapsed>
-        <AudioAdvancedFields layer={layer} v={v} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      </PropSection>
-    </PropSection>
-  );
-}
-
-function AudioAdvancedFields({
-  layer,
-  v,
-  commit,
-  tInLayerUs,
-  playheadInSpan,
-  onMutated,
-}: {
-  layer: LayerSummary;
-  v: Extract<LayerSummary["params"], { kind: "Audio" }>;
-  commit: Commit;
-  tInLayerUs: number;
-  playheadInSpan: boolean;
-  onMutated: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  return (
-    <>
       <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.role")}>
         <AppSelect
@@ -1789,14 +1752,7 @@ function AudioAdvancedFields({
           options={AUDIO_ROLES.map((r) => ({ value: r, label: t(`audio_roles.${r}`) }))}
         />
       </Field>
-      <Field label={t("property_panel.mute")}>
-        <AppSwitch
-          checked={v.mute}
-          ariaLabel={t("property_panel.mute")}
-          onCheckedChange={(next) => commit({ kind: "Audio", mute: next })}
-        />
-      </Field>
-    </>
+    </PropSection>
   );
 }
 

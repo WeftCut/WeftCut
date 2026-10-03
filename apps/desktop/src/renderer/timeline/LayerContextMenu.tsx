@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { CROP_MENU_COMMAND_IDS } from '../commands/cropCommands';
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import type { LinkSummary, TrackSummary, TransitionDirection } from "../ipc";
+import type { TrackSummary, TransitionDirection } from "../ipc";
 import { moveSelectionToComposition } from "../commands/groupCommands";
 import {
   commandRegistryVersion,
@@ -30,7 +30,6 @@ import {
   useAutoCaptionState,
   type AutoCaptionState,
 } from "../speech/autoCaptionEligibility";
-import { useLinkOverride } from "../state/linkOverrideStore";
 import { useGroupOrdinals } from "../state/projectStore";
 import { useSelectedLayerIds } from "../state/selectionStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
@@ -45,7 +44,6 @@ import {
   type UngroupState,
 } from "./groupEligibility";
 import {
-  linkFanoutActive,
   useLinkToggleState,
   type LinkToggleState,
 } from "./linkEligibility";
@@ -299,8 +297,6 @@ export function LayerContextMenu({
   layerId,
   layerKind,
   tracks,
-  links,
-  escapeLink,
   transitionCut,
   onClose,
   onRename,
@@ -317,10 +313,6 @@ export function LayerContextMenu({
   layerKind: string;
   /// Live data from the owning timeline, including hidden lanes and siblings.
   tracks: readonly TrackSummary[];
-  links: readonly LinkSummary[];
-  /// `Alt` was held on the right-click: the same escape a left click makes,
-  /// applied to the row below.
-  escapeLink: boolean;
   transitionCut: TransitionCut | null;
   onClose: () => void;
   onRename: (id: string) => void;
@@ -349,22 +341,10 @@ export function LayerContextMenu({
   // subscription is here so the rows survive a provider remounting under an
   // already-open menu, and costs one line.
   useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
-  // Subscribed, not read: `linkFanoutActive` reads the store itself, but a
-  // menu left open across `Alt+Shift+G` has to re-label, and only a
-  // subscription re-renders it.
-  useLinkOverride();
-  // Explicit selections always participate, even under Alt/link override.
-  // Only implicit siblings are suppressed by those escapes. Use every link
-  // touched by the selection, not just the clicked member's link.
+  // Linked selection is resolved by the timeline gesture. Honor that set
+  // without adding unselected siblings again when executing this command.
   const selected = useSelectedLayerIds();
   const targets = new Set(selected.has(layerId) ? selected : [layerId]);
-  if (linkFanoutActive({ altKey: escapeLink })) {
-    for (const link of links) {
-      if (link.layer_ids.some((id) => targets.has(id))) {
-        for (const id of link.layer_ids) targets.add(id);
-      }
-    }
-  }
   const targetLayers = selectedWithTracks(targets, tracks);
   const enabledTargets = targetLayers.map(({ layer }) => layer.id);
   // Mixed state has one predictable result regardless of which member was

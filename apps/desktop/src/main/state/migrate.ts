@@ -49,10 +49,29 @@ export interface MigrationStep {
 
 /** The chain, in ascending `from` order.
  *
- *  Empty while unreleased: current schema changes cut over in place.
+ *  v1 → v2 preserves existing clip silence when removing the inspector mute toggle.
  *  `migrate.completeness.test.ts` fails the build if a `SCHEMA_VERSION` bump
  *  arrives without one (and without its committed fixture). */
-export const STEPS: readonly MigrationStep[] = []
+export const STEPS: readonly MigrationStep[] = [{
+  from: 1,
+  apply(wire) {
+    // Visit every composition, including Groups. Only a clip's mute is folded
+    // into enabled; track flags, role mixing and linked members remain independent.
+    const compositions = wire.compositions as Record<string, { tracks?: unknown }> | undefined
+    if (!compositions || typeof compositions !== 'object') return
+    for (const composition of Object.values(compositions)) {
+      if (!Array.isArray(composition?.tracks)) continue
+      for (const track of composition.tracks) {
+        if (!Array.isArray(track?.layers)) continue
+        for (const layer of track.layers) {
+          if (layer?.params?.kind !== 'Audio' || layer.params.mute !== true) continue
+          layer.enabled = false
+          layer.params.mute = false
+        }
+      }
+    }
+  },
+}]
 
 export interface UpgradeOutcome {
   /** The wire object at the target version. Identical reference to the input
@@ -64,11 +83,9 @@ export interface UpgradeOutcome {
 
 /** Walk `wire` from its own version up to `to`.
  *
- *  `steps` is injectable so the machinery can be tested against synthetic steps:
- *  with a real chain of length zero, nothing else could exercise the walk, the
- *  stamping, or the hole report until the first real bump — and "the migration
- *  runner was first exercised in production" is not a sentence anyone wants to
- *  write. Production always passes the default.
+ *  `steps` is injectable so synthetic chains can exercise multi-step walks,
+ *  stamping, clone isolation and missing-step errors independently of the
+ *  currently registered conversions. Production always passes the default.
  *
  *  Clones once up front rather than mutating in place: a step that throws
  *  half-way leaves the caller's object untouched, so the error path can report

@@ -300,9 +300,6 @@ export function Timeline({
     y: number;
     layerId: string;
     layerKind: string;
-    /// `Alt` held on the right-click — the menu's Enable/Disable row escapes
-    /// the link fan-out, as the click's selection did.
-    escapeLink: boolean;
     cut: TransitionCut | null;
   } | null>(null);
   // Transition-chip context-menu state — the chip counterpart of
@@ -1080,7 +1077,6 @@ export function Timeline({
         y: e.clientY,
         layerId,
         layerKind,
-        escapeLink: e.altKey,
         cut,
       });
     },
@@ -1971,8 +1967,6 @@ export function Timeline({
             layerId={contextMenu.layerId}
             layerKind={contextMenu.layerKind}
             tracks={tracks}
-            links={links}
-            escapeLink={contextMenu.escapeLink}
             transitionCut={contextMenu.cut}
             onClose={() => setContextMenu(null)}
             onRename={onRename}

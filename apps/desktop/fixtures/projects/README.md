@@ -5,13 +5,15 @@ reads. `migrate.completeness.test.ts` walks each one through the chain
 (`state/migrate.ts`), then through `parseProject` + `validate`, and fails if a
 registered step has no fixture at its `from` version.
 
-## Pre-release state
+## Current state
 
-The app has not shipped. The chain is empty and `v1.json` describes the current
-unreleased schema, including `transform.position`. Its shape may be refreshed
-in place while preserving ids, timestamps and authored values. ADR 0060 removed
-the premature v1 → v2 migration and its v2 fixture. Rust and TypeScript both
-round-trip the current v1 fixture; old development projects are not supported.
+`v1.json` is now frozen as the input to the clip-mute migration. `v2.json`
+describes the current schema: loading v1 converts muted Audio layers into
+disabled layers with their mute flag cleared. Earlier pre-release cutovers,
+including ADR 0060's position record, are already part of v1 and are not migrated.
+The v2 fixture retains v1's ids, timestamps and authored values; its audio was
+already unmuted, so only the version and descriptive metadata differ. Muted
+inputs and nested compositions are exercised by `migrate.clipMute.test.ts`.
 
 ## Released fixtures are frozen. Do not regenerate them.
 

@@ -36,14 +36,14 @@ import {
  *
  * ONE predicate for every site that consults link membership — click
  * selection, the drag hook's subject set and every IPC it commits, the blade
- * and `splitAtPlayhead`, the marquee, the `enabled` toggle — so "when does a
+ * and `splitAtPlayhead`, the marquee — so "when does a
  * link apply" has exactly one answer. False under the session-wide link
  * override (`linkOverrideStore.ts`) or when the gesture's own `Alt` is held;
  * the two are the same escape at two time scales, which is why neither site
  * re-derives the rule.
  *
  * `e` is optional because the override alone decides for the sites with no
- * gesture (a command run from the palette, the inspector's checkbox).
+ * gesture (a command run from the palette, the inspector's timing fields).
  */
 export function linkFanoutActive(e?: { altKey: boolean }): boolean {
   return !linkOverrideOn() && !(e?.altKey ?? false);

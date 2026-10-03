@@ -303,13 +303,18 @@ describe("AttributePanel envelope command routing", () => {
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledExactlyOnceWith("layer-1", { label: "New name" }));
   });
 
-  it("keeps enabled link-aware while locking only the primary clip", async () => {
+  it.each([
+    { ids: ["layer-1"] },
+    { ids: ["layer-1", "layer-2"] },
+  ])("edits only the inspected clip's flags with selection $ids", async ({ ids }) => {
     summaryWithLinks([{ id: "link-1", layer_ids: ["layer-1", "layer-2"] }]);
+    setLayerSelection("layer-1", ids);
     renderPanel(colorTrack());
     fireEvent.click(screen.getByRole("button", { name: "Enabled" }));
-    await vi.waitFor(() => expect(setLayersEnabled).toHaveBeenCalledExactlyOnceWith(["layer-1", "layer-2"], false));
+    await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledExactlyOnceWith("layer-1", { enabled: false }));
+    expect(setLayersEnabled).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Locked" }));
-    await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledExactlyOnceWith("layer-1", { locked: true }));
+    await vi.waitFor(() => expect(updateLayer).toHaveBeenNthCalledWith(2, "layer-1", { locked: true }));
   });
 
   it("explains a track lock without making the clip's own lock look enabled", () => {
@@ -652,16 +657,15 @@ describe("AttributePanel multi-selection", () => {
 });
 
 describe("AttributePanel Audio fields", () => {
-  it("keeps secondary audio settings in a local disclosure", async () => {
+  it("shows pan and role alongside gain and fades without a separate mute control", async () => {
     const onMutated = renderPanel(audioTrack(), "layer-a1");
 
     // gain is a keyframable core row (labels come from the param descriptors).
     expect(screen.getByText("Gain (dB)")).toBeTruthy();
-    expect(screen.queryByText("Pan")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Pan, role & mute" }));
     expect(within(screen.getByRole("region", { name: "Audio" })).getByText("Pan")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Audio" })).getByLabelText("Role")).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "Audio" })).getByRole("switch", { name: "Mute" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByRole("switch", { name: "Mute" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unmute clip" })).toBeNull();
 
     const fadeIn = screen.getByLabelText("Fade-in duration");
     expect(within(fadeIn).getByLabelText("frames")).toHaveProperty("value", "00");

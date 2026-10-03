@@ -1342,6 +1342,19 @@ describe("Timeline seek/selection coupling", () => {
       }
     });
 
+    it.each([false, true])("disables the gesture's selected clips without expanding links again (Alt: %s)", async (altKey) => {
+      ipcMocks.setLayersEnabled.mockClear();
+      const { getByText } = renderTimeline({ tracks: [linkedTrack], links: [link] });
+      const first = getByText("Clip A").closest(".timeline-layer")!;
+      fireEvent.pointerDown(first, { button: 0, clientX: 40, altKey });
+      fireEvent.pointerUp(window, { clientX: 40, altKey });
+      fireEvent.contextMenu(first, { clientX: 40, clientY: 30 });
+      const ids = altKey ? [layer.id] : [layer.id, linkedLayer.id];
+      const name = altKey ? "Disable clip" : "Disable 2 clips";
+      fireEvent.click(await screen.findByRole("menuitem", { name }));
+      await waitFor(() => expect(ipcMocks.setLayersEnabled).toHaveBeenCalledExactlyOnceWith(ids, false));
+    });
+
     it.each([true, false])("sets the entire selection in one call (all enabled: %s)", async (allEnabled) => {
       const tracks = [{ ...linkedTrack, layers: [layer, { ...linkedLayer, enabled: allEnabled }] }];
       ipcMocks.setLayersEnabled.mockClear();

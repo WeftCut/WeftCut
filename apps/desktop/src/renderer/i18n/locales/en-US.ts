@@ -2122,7 +2122,6 @@ const enUS = {
     horizontal: "Horizontal",
     vertical: "Vertical",
     fades: "Fade in & out",
-    audio_details: "Pan, role & mute",
     motif_management: "Manage Motif",
     text_layout: "Text box & spacing",
     text_outline: "Outline",
@@ -2228,7 +2227,6 @@ const enUS = {
     gain_db: "Gain (dB)",
     pan: "Pan",
     role: "Role",
-    mute: "Mute",
     transform: "Transform",
     // The Pauses section, between the kind's own sections and Advanced.
     pauses: "Pauses",

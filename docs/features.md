@@ -338,7 +338,7 @@ scope, and the strip is what it buys.
 
 A `Link` is a project-level entity owning a flat set of member `LayerId`s —
 a layer is in at most one link, no nesting. Moving, trimming, splitting,
-duplicating, or toggling `enabled` on a member fans the edit out to the other
+or duplicating a member fans the edit out to the other
 members under the rules below; everything else (keyframes, opacity, gain,
 delete) stays local — delete and [ripple delete](#ripple-delete) both take
 exactly the set they are handed, because the selection already carries the
@@ -376,12 +376,14 @@ ADR 0052), never a link.
   delta and snaps on its own lattice, and only the seed's clone changes track
   (the Move rule). A locked or occupied destination for any member rejects the
   whole batch; nothing is created.
-- **`enabled`** (`set_layers_enabled`) toggles every member unless escaped. A
+- **`enabled`** changes only the inspected clip in the inspector, or the
+  selected clips in the timeline (`set_layers_enabled`). It never adds
+  unselected link members. A
   member's own `locked` does not block it — the eye is visibility, not content
   — but a locked track rejects the whole set.
 - Both batch ops take the **set they are handed** and expand nothing: the UI
-  supplies the link's members (or the clicked layer alone when escaped), and an
-  agent names the layers it means.
+  supplies the duplicate's subjects or the enabled command's selection, and
+  an agent names the layers it means.
 - **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
   exactly the layers it is handed, onto one fresh lane. Its two entry points
   differ in which layers they name *and* in whether they name a time. The
@@ -418,14 +420,15 @@ each other and never to their sources, one undo. The escape is the
 selection — `Alt+click` a member first and the copy is that member alone,
 unlinked — because `Alt` on the body already means duplicate. A collision on
 any member's destination shows the drag invalid and creates nothing.
-**Enable / Disable** in a clip's context menu sends the whole selection plus
-active link siblings in one `set_layers_enabled`. The row names the total
-deduplicated count (`Disable 2 clips`). A mixed or disabled set offers Enable;
-an entirely enabled set offers Disable. `Alt`+right-click or Link override
-suppresses implicit siblings but keeps explicitly selected members. A locked
-affected track disables the row with a reason; a clip's own lock does not
-block visibility changes. The inspector's Enabled switch still operates on
-its clip and active link siblings. Linked layers show a 2 px left accent in a hue derived
+**Enable / Disable** in a clip's context menu sends exactly the current selection
+in one `set_layers_enabled`. The row names the selected count (`Disable 2 clips`).
+A mixed or disabled set offers Enable; an entirely enabled set offers Disable.
+Linked selection can select a whole link, while `Alt` selection or Link override
+can select one member; the command never adds siblings back. A locked affected
+track disables the row with a reason; an unselected sibling's track does not.
+A clip's own lock does not block visibility changes. The inspector's Enabled
+switch operates only on the displayed clip, including during multi-selection.
+Linked layers show a 2 px left accent in a hue derived
 deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
 Premiere: a selection inside one link unlinks it, two or more unlinked layers
 link, and anything else greys out with the reason in the tooltip. It is one
@@ -437,8 +440,9 @@ toggle in the Quick Actions strip and a row in the search palette) flips a
 session switch that stands in for a held `Alt`. While it is on, every site
 that consults link membership treats the link as absent: a plain click
 selects one member, a drag moves or duplicates one, the blade and `Mod+B`
-split one, the marquee takes exactly what it touched, and Enable / Disable
-toggles one. The status bar shows a `Links off` chip and the timeline's link
+split one, and the marquee takes exactly what it touched. Enable / Disable
+always honors the resulting selection, even if several members were selected
+before the override was turned on. The status bar shows a `Links off` chip and the timeline's link
 accents dim to 40 % for as long as it is on, so the mode is stated on screen
 rather than remembered. Nothing is written: links keep every membership, the
 toggle records no history entry, and it is not persisted. MCP is unaffected

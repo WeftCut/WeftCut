@@ -1,9 +1,7 @@
 // apps/desktop/src/main/state/migrate.test.ts
 //
-// The migration RUNNER, exercised against synthetic steps. The real chain is
-// empty at v1, so without injected steps none of this — the walk, the stamp, the
-// clone isolation, the hole report — would be covered until the first real bump
-// shipped. Which is the wrong time to find out.
+// The migration runner, exercised against synthetic steps independently of
+// the registered conversions: multi-step walks, stamps, isolation and holes.
 import { describe, it, expect } from 'vitest'
 import { upgradeWire, MIN_SCHEMA_VERSION, STEPS, type MigrationStep } from './migrate'
 
@@ -85,7 +83,7 @@ describe('upgradeWire', () => {
 })
 
 describe('the shipped chain', () => {
-  it('has no migration steps before the first release', () => { expect(STEPS).toEqual([]) })
+  it('includes the clip mute conversion from v1', () => { expect(STEPS.map((s) => s.from)).toContain(1) })
   it('starts at v1 — the initial unreleased format', () => {
     expect(MIN_SCHEMA_VERSION).toBe(1)
   })

@@ -1870,7 +1870,6 @@ const zhCN: Resources = {
     horizontal: "水平",
     vertical: "垂直",
     fades: "淡入与淡出",
-    audio_details: "声像、角色与静音",
     motif_management: "管理 Motif",
     text_layout: "文本框与间距",
     text_outline: "描边",
@@ -1967,7 +1966,6 @@ const zhCN: Resources = {
     gain_db: "增益（dB）",
     pan: "声像",
     role: "角色",
-    mute: "静音",
     transform: "变换",
     // 属性面板里的“停顿”一节，排在片段自己的分节之后、“高级”之前。
     pauses: "停顿",
