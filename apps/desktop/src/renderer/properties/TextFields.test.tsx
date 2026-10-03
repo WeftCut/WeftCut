@@ -357,7 +357,6 @@ describe("Text block placement, leading and tracking", () => {
     // box-against-x/y over there, and never the same section.
     expect(within(section).queryByLabelText("Anchor X")).toBeNull();
     expect(within(section).queryByLabelText("Anchor Y")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Anchor" }));
     const transform = screen.getByRole("region", { name: "Transform" });
     expect(within(transform).queryByRole("combobox", { name: "Horizontal align" })).toBeNull();
     expect(within(transform).queryByRole("combobox", { name: "Vertical align" })).toBeNull();

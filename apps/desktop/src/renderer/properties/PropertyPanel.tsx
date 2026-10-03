@@ -773,32 +773,30 @@ function VisualFields({
   return (
     <>
       <PropSection layerKind={layer.kind} collapsible={false} sectionId="transform" title={t("property_panel.transform")}>
+        <InspectorRow label={t("property_panel.anchor")}>
+          <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+          <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+        </InspectorRow>
         <PositionFields layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated}/>
         {/* `ScaleFields` owns its own row: one field + closed chain while
             linked, both axes + open chain while not. */}
         <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        <PropSection layerKind={layer.kind} sectionId="transform_details" title={t(video ? "property_panel.anchor_flip" : "property_panel.anchor")} defaultCollapsed>
-          <InspectorRow label={t("property_panel.anchor")}>
-            <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
-            <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
-          </InspectorRow>
-          {video ? <InspectorRow label={t("property_panel.flip")} reserveStopwatch>
-            <div className="prop-flags">
-              <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_h")} aria-pressed={video.flip_h} onClick={() => void commit({ kind: "VideoClip", flip_h: !video.flip_h })}>{t("property_panel.horizontal")}</Button>
-              <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_v")} aria-pressed={video.flip_v} onClick={() => void commit({ kind: "VideoClip", flip_v: !video.flip_v })}>{t("property_panel.vertical")}</Button>
-            </div>
-          </InspectorRow> : null}
-        </PropSection>
-      </PropSection>
-      <PropSection layerKind={layer.kind} sectionId="appearance" title={t("property_panel.appearance")} collapsible={false}>
         <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        {layer.params.kind === "VideoClip" || layer.params.kind === "ImageOverlay" ? (
+        {video ? <InspectorRow label={t("property_panel.flip")} reserveStopwatch>
+          <div className="prop-flags">
+            <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_h")} aria-pressed={video.flip_h} onClick={() => void commit({ kind: "VideoClip", flip_h: !video.flip_h })}>{t("property_panel.horizontal")}</Button>
+            <Button size="xs" variant="ghost" className="prop-flag" aria-label={t("property_panel.flip_v")} aria-pressed={video.flip_v} onClick={() => void commit({ kind: "VideoClip", flip_v: !video.flip_v })}>{t("property_panel.vertical")}</Button>
+          </div>
+        </InspectorRow> : null}
+      </PropSection>
+      {layer.params.kind === "VideoClip" || layer.params.kind === "ImageOverlay" ? (
+        <PropSection layerKind={layer.kind} sectionId="appearance" title={t("property_panel.appearance")} collapsible={false}>
           <PropSection layerKind={layer.kind} sectionId="fades" title={t("property_panel.fades")} defaultCollapsed>
             <VisualFadeFields layerId={layer.id} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
           </PropSection>
-        ) : null}
-      </PropSection>
+        </PropSection>
+      ) : null}
     </>
   );
 }

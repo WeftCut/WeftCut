@@ -293,6 +293,12 @@
 .app-number-field {
   width: 100%;
 }
+/* A numeric value beside a slider leaves the remaining width for dragging. */
+.app-number-field.kf-slider-number {
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 0;
+}
 .app-number-group {
   position: relative;
   display: flex;

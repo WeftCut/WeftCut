@@ -596,20 +596,18 @@ function motifTrack(): TrackSummary {
 }
 
 describe("AttributePanel local disclosures", () => {
-  it("opens fades under Appearance and flip controls under Transform independently", () => {
+  it("keeps flip controls visible while fades disclose under Appearance", () => {
     renderPanel(videoTrack(), "layer-v1");
     expect(screen.getByLabelText("Duration")).toBeTruthy();
     expect(screen.getByLabelText("Speed")).toBeTruthy();
     expect(screen.getByLabelText("Label")).toHaveProperty("placeholder", "clip.mp4");
     expect(screen.queryByLabelText("Fade in")).toBeNull();
-    expect(screen.queryByLabelText("Flip horizontal")).toBeNull();
+    expect(screen.getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Fade in & out" }));
     const appearance = screen.getByRole("region", { name: "Appearance" });
     expect(within(appearance).getByLabelText("Fade in")).toBeTruthy();
     expect(within(appearance).getByLabelText("Fade out")).toBeTruthy();
     expect(screen.queryByLabelText("Start")).toBeNull();
-    expect(screen.queryByLabelText("Flip horizontal")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Anchor & flip" }));
     const transform = screen.getByRole("region", { name: "Transform" });
     expect(within(transform).getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
     expect(within(transform).getByRole("button", { name: "Flip vertical" })).toBeTruthy();
@@ -731,7 +729,6 @@ describe("AttributePanel row primitive", () => {
 
   it("gives an axis pair one captioned row holding both axes", () => {
     renderPanel(videoTrack(), "layer-v1");
-    fireEvent.click(screen.getByRole("button", { name: "Anchor & flip" }));
     const transform = screen.getByLabelText("Transform");
     // "Position" captions the mode switcher; the values below it are captioned
     // by which representation they are.

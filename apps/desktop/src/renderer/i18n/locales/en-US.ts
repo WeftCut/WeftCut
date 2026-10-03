@@ -2118,7 +2118,6 @@ const enUS = {
     flag_unlocked: "Unlocked",
     track_locked_hint: "The track is locked. Unlock it to edit clip timing.",
     appearance: "Appearance",
-    anchor_flip: "Anchor & flip",
     flip: "Flip",
     horizontal: "Horizontal",
     vertical: "Vertical",

@@ -1866,7 +1866,6 @@ const zhCN: Resources = {
     flag_unlocked: "未锁定",
     track_locked_hint: "所在轨道已锁定，解锁轨道后可编辑片段时间。",
     appearance: "外观",
-    anchor_flip: "锚点与翻转",
     flip: "翻转",
     horizontal: "水平",
     vertical: "垂直",

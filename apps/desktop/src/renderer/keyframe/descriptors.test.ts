@@ -107,12 +107,12 @@ const byKey = (kind: string, key: string) => {
 };
 
 describe("ParamDescriptor metadata", () => {
-  it("opacity is a slider+readout, 0..1 step 0.01", () => {
+  it("opacity is a slider+number field, 0..1 step 0.01", () => {
     const d = byKey("VideoClip", "opacity");
     expect(d.step).toBe(0.01);
     expect(d.min).toBe(0);
     expect(d.max).toBe(1);
-    expect(d.widgets).toEqual(["slider", "readout"]);
+    expect(d.widgets).toEqual(["slider", "number"]);
   });
 
   it("x/y are plain number fields, step 1", () => {

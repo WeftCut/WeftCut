@@ -131,6 +131,7 @@ export function KeyframeField({
         return (
           <AppNumberField
             key={`number-${i}`}
+            className={widgets.includes("slider") ? "kf-slider-number" : ""}
             value={value*(paramKey==='path_progress'?100:1)}
             {...numBounds}
             format={paramNumberFormat(paramKey)}

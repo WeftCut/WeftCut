@@ -80,7 +80,7 @@ export const ROTATION: NumberParamDescriptor = { valueKind: "number", paramKey: 
 /// picture stays put, the number field does not.
 export const ANCHOR_X: NumberParamDescriptor = { valueKind: "number", paramKey: "anchor_x", labelKey: "property_panel.anchor_x", fallback: 0.5, step: 0.01, widgets: ["number"] };
 export const ANCHOR_Y: NumberParamDescriptor = { valueKind: "number", paramKey: "anchor_y", labelKey: "property_panel.anchor_y", fallback: 0.5, step: 0.01, widgets: ["number"] };
-export const OPACITY: NumberParamDescriptor = { valueKind: "number", paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
+export const OPACITY: NumberParamDescriptor = { valueKind: "number", paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "number"] };
 export const GAIN_DB: NumberParamDescriptor = { valueKind: "number", paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
 export const PAN: NumberParamDescriptor = { valueKind: "number", paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
 /// The two kinds that carry an animatable colour differ only in the value an
