@@ -774,9 +774,8 @@ const logKeys = async (page: Page): Promise<string[]> => {
 ///
 /// The click first is not ceremony — an unselected clip body serves a short arm
 /// delay, and a drag that outran it would arrive as a plain selection click.
-/// One event per protocol round trip, as `timeline-raise-to-strip.spec.ts`
-/// does: fired inside one page task, React would still be uncommitted from the
-/// pointerdown when the move arrived.
+/// Wait for the selected outline and the pointerdown render before moving:
+/// separate protocol round trips alone need not flush React's drag listeners.
 async function grabClipTo(
   page: Page,
   clip: Locator,
@@ -784,17 +783,23 @@ async function grabClipTo(
   opts: { alt?: boolean } = {},
 ): Promise<void> {
   await expect(clip).toBeVisible();
-  const box = await clip.boundingBox();
-  if (!box) throw new Error("the dragged clip has no layout box");
-  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   // Alt goes down AFTER the selecting click: held through it, the click would
   // be the link-escape select instead, and the drag's own Alt is what makes it
   // a duplicate.
-  await page.mouse.click(from.x, from.y);
+  await clip.click();
+  await expect(clip.getByTestId("layer-selection-outline")).toBeVisible();
+  const box = await clip.boundingBox();
+  if (!box) throw new Error("the dragged clip has no layout box");
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   if (opts.alt) await page.keyboard.down("Alt");
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  await page.mouse.move(to.x, to.y);
+  // Pointerdown activates the gesture, then a React effect installs its window
+  // listeners. A protocol round trip alone does not guarantee that commit.
+  await page.evaluate(() => new Promise<void>(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  ));
+  await page.mouse.move(to.x, to.y, { steps: 8 });
 }
 
 async function releaseDrag(

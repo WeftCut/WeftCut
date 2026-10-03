@@ -103,7 +103,12 @@ test('visual effect keyframes: inspector, timeline editing, navigation, easing, 
       // expanded curve's low-value key can be below the timeline viewport.
       await diamond(firstKeyId).scrollIntoViewIfNeeded()
       const box = (await diamond(firstKeyId).boundingBox())!
-      await page.mouse.click(box.x + box.width * 0.8, box.y + box.height / 2, { button })
+      // Keep Playwright's stability/hit-target checks: switching inspectors can
+      // still move this low-value key after scrollIntoViewIfNeeded returns.
+      await diamond(firstKeyId).click({
+        position: { x: box.width * 0.8, y: box.height / 2 }, button,
+      })
+      await expect(diamond(firstKeyId)).toHaveClass(/is-selected/)
     }
     await clickFirst('right')
     await page.getByTestId('easing-cmd-hold').click()
