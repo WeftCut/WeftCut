@@ -7,8 +7,7 @@ import { InspectorAnimField } from './InspectorAnimField';
 import { InspectorRow } from './InspectorRow';
 import { PropSegmented } from './PropSegmented';
 import { usePathEditingStore } from '../state/pathEditingStore';
-import { IN_IDENTITY, OUT_IDENTITY, HOLD_EXTRAPOLATION } from '../../shared/keyframe';
-import { type PathPosition, type PathNode, type PositionAnimation } from '../../shared/position';
+import { staticPosition, type PathPosition, type PathNode, type PositionAnimation } from '../../shared/position';
 import { evaluatePosition } from '../render/position';
 import { PositionConversionFields, type ConversionKind } from './PositionConversionFields';
 import { Button } from '@/components/ui/button';
@@ -36,9 +35,10 @@ function NodeAction({ label, disabled, onClick, children }: {
 /// active, and — in Path mode — the path's own node controls.
 ///
 /// The mode switcher is the ONLY entry to changing representation, and it
-/// branches on what the data allows: static X/Y become a two-point path
-/// immediately (one undo), keyframed X/Y have to be fitted, and leaving Path
-/// always bakes. So no control is ever silently unavailable while a second one
+/// branches on what the data allows: static X/Y become a stationary single-node path
+/// immediately (one undo), keyframed X/Y have to be fitted, and leaving a
+/// multi-node path bakes. A single node returns directly to static XY.
+/// So no control is ever silently unavailable while a second one
 /// elsewhere is the real route.
 export function PositionFields(props: {
     layer: LayerSummary;
@@ -88,23 +88,28 @@ export function PositionFields(props: {
             setBusy(false);
         }
     };
-    /// The instant XY → Path: a two-point line through where the layer already
-    /// is, with progress running end to end over the layer's own duration.
+    /// Changing representation preserves the static position. The user authors
+    /// the route and progress animation separately after entering Path mode.
     const create = async () => {
         const p = evaluatePosition(position, tInLayerUs);
-        const nodes: PathNode[] = [0, 1].map(i => ({ tangent_mode: 'Corner' as const, id: crypto.randomUUID(), point: { x: p.x + i * 200, y: p.y }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }));
-        const duration = layer.t_end_us - layer.t_start_us;
-        const next: PathPosition = { mode: 'Path', path: { nodes }, progress: { mode: 'Keyframed', extrapolate: HOLD_EXTRAPOLATION, value: [0, 1].map(value => ({ id: crypto.randomUUID(), t_us: value * duration, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
+        const nodes: PathNode[] = [{ tangent_mode: 'Corner', id: crypto.randomUUID(), point: p, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }];
+        const next: PathPosition = { mode: 'Path', path: { nodes }, progress: { mode: 'Static', value: 0 } };
         if (await change(next))
             edit.setLayer(layer.id);
     };
-    const chooseMode = (next: PositionAnimation['mode']) => {
+    const chooseMode = async (next: PositionAnimation['mode']) => {
         if (next === position.mode)
             return;
         // Static X/Y carry no timing to preserve, so a path can be built
         // outright; anything animated has to be fitted and measured first.
         if (next === 'Path' && position.mode === 'XY' && position.x.mode === 'Static' && position.y.mode === 'Static')
             void create();
+        else if (next === 'XY' && position.mode === 'Path' && position.path.nodes.length === 1) {
+            // Progress cannot move a single node, even when it has keyframes.
+            const { x, y } = position.path.nodes[0]!.point;
+            if (await change(staticPosition(x, y)))
+                edit.setLayer(null);
+        }
         else
             setConversion(next === 'Path' ? 'to_path' : 'to_xy');
     };

@@ -1,6 +1,6 @@
 import { beforeAll, expect, it } from 'vitest';
 import { initEval } from '../eval';
-import { staticPosition, type XYPosition } from '../../shared/position';
+import { staticPosition, type PathPosition, type XYPosition } from '../../shared/position';
 import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY } from '../../shared/keyframe';
 import { convertPosition, type ConversionOptions } from './positionConversion';
 import { evaluatePosition } from './position';
@@ -31,6 +31,23 @@ it('handles a stationary path without dividing by zero', () => {
     const result = convertPosition(staticPosition(3, 8), options);
     expect(result.maxErrorPx).toBe(0);
     expect(evaluatePosition(result.position, 1e6)).toEqual({ x: 3, y: 8 });
+});
+it('converts a single-node path to static XY even with animated progress', () => {
+    const source: PathPosition = {
+        mode: 'Path',
+        path: { nodes: [{ id: 'only', point: { x: 3, y: 8 }, tangent_mode: 'Corner', segment: 'Line', in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 } }] },
+        progress: animated().x,
+    };
+    const original = structuredClone(source);
+    for (const progress of [source.progress, { mode: 'Static' as const, value: 0 }]) {
+        const result = convertPosition({ ...source, progress }, options);
+        expect(result.position).toEqual(staticPosition(3, 8));
+        expect(result.maxErrorPx).toBe(0);
+        expect(result.withinTolerance).toBe(true);
+        for (const at of [0, 1e6, 2e6])
+            expect(evaluatePosition(result.position, at)).toEqual(evaluatePosition(source, at));
+    }
+    expect(source).toEqual(original);
 });
 it('refuses a Hold jump instead of connecting an instantaneous teleport', () => {
     const source = animated();

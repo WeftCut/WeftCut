@@ -1,5 +1,5 @@
 import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY, type Animated } from '../../shared/keyframe';
-import { positionProblem, type MotionPath, type PositionAnimation } from '../../shared/position';
+import { positionProblem, staticPosition, type MotionPath, type PositionAnimation } from '../../shared/position';
 import { fitMotionPath } from '../../shared/pathFitting';
 import { pathPointAt } from '../../shared/pathGeometry';
 import { compileMotionPath, evaluateMotionPath, MAX_KEYFRAMES } from '../eval';
@@ -101,6 +101,13 @@ export function convertPosition(source: PositionAnimation, options: ConversionOp
         throw new PositionConversionError('conversion_options_error');
     const problem = positionProblem(source);
     if (problem) throw new Error(problem);
+    // A single node has no spatial span: progress cannot change its position.
+    // Convert exactly without generating redundant temporal samples or keys.
+    if (source.mode === 'Path' && source.path.nodes.length === 1) {
+        const { x, y } = source.path.nodes[0]!.point;
+        return { position: staticPosition(x, y), sampleCount: 0, nodeCount: 0,
+            maxErrorPx: 0, checkCount: 0, withinTolerance: true, limit: null };
+    }
     const tracks = source.mode === 'XY' ? [source.x, source.y] : [source.progress];
     if (tracks.some(t => t.mode === 'Keyframed' && t.value.length > MAX_KEYFRAMES))
         throw new PositionConversionError('conversion_capacity_error');

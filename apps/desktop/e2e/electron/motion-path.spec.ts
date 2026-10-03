@@ -27,12 +27,31 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     const original = await position(page, id)
     // The mode switcher is the only entry to changing representation. Static
     // X/Y carry no timing to preserve, so it takes the instant branch here:
-    // a two-point path in one undo, no conversion to fill in.
+    // one stationary node in one undo, no conversion to fill in.
     await toPath(fields).click()
     await expect(page.getByTestId('position-conversion')).toHaveCount(0)
     await expect.poll(async () => (await position(page, id)).mode).toBe('Path')
+    const created = await position(page, id)
+    if (created.mode !== 'Path') throw new Error('Path not created')
+    expect(created.path.nodes).toHaveLength(1)
+    expect(created.progress).toEqual({ mode: 'Static', value: 0 })
+    await expect(page.getByTestId('path-0-point')).toBeVisible()
+    // Returning the single node to XY is exact, immediate and one undo.
+    await toXY(fields).click()
+    await expect.poll(() => position(page, id)).toEqual(original)
+    await expect(page.getByTestId('position-conversion')).toHaveCount(0)
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(() => position(page, id)).toEqual(created)
+    await fields.getByRole('button', { name: /Edit path|编辑路径/ }).click()
+    // Extending the route is an explicit action and does not animate it.
+    await fields.getByRole('button', { name: /Add point|添加节点/ }).click()
+    await expect.poll(async () => {
+      const p = await position(page, id)
+      return p.mode === 'Path' ? p.path.nodes.length : 0
+    }).toBe(2)
     const before = await position(page, id)
     if (before.mode !== 'Path') throw new Error('Path not created')
+    expect(before.progress).toEqual(created.progress)
     const node = page.getByTestId('path-0-point')
     await expect(node).toBeVisible()
     const box = (await node.boundingBox())!
@@ -94,7 +113,7 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await page.screenshot({ path: test.info().outputPath('path-editor.png') })
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(moved)
-    // Leaving Path always bakes: the switcher opens the conversion rather than
+    // Leaving a multi-node path bakes: the switcher opens the conversion rather than
     // dropping the geometry.
     await toXY(fields).click()
     await expect(page.getByTestId('position-conversion')).toBeVisible()
@@ -111,6 +130,8 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await expect.poll(() => position(page, id)).toEqual(moved)
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(before)
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(() => position(page, id)).toEqual(created)
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(original)
     // An XY position draws no trajectory until asked, so this toggle is the

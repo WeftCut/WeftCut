@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 describe("the position mode switcher", () => {
-  it("builds a path outright when X and Y are static", async () => {
+  it("preserves a static position without inventing a route or animation", async () => {
     renderFields({ mode: "XY", x: staticTrack(640), y: staticTrack(360) });
     await userEvent.click(segment(/^Path$/));
 
@@ -96,10 +96,12 @@ describe("the position mode switcher", () => {
     const [layerId, next] = setPosition.mock.calls[0]! as unknown as [string, PositionAnimation];
     expect(layerId).toBe("L1");
     expect(next.mode).toBe("Path");
-    // Through where the layer already is, and progress spans the layer.
+    // Switching representation preserves the position and leaves motion unauthored.
     if (next.mode !== "Path") throw new Error("not a path");
+    expect(next.path.nodes).toHaveLength(1);
     expect(next.path.nodes[0]!.point).toEqual({ x: 640, y: 360 });
-    expect(next.progress.mode).toBe("Keyframed");
+    expect(next.progress).toEqual({ mode: "Static", value: 0 });
+    expect(usePathEditingStore.getState().layerId).toBe("L1");
     // Nothing to fit, so nothing to fill in.
     expect(conversion()).toBeNull();
   });
@@ -115,7 +117,20 @@ describe("the position mode switcher", () => {
     expect(screen.getByRole("button", { name: "Apply conversion" })).toHaveProperty("disabled", true);
   });
 
-  it("always bakes on the way out of path mode", async () => {
+  it.each([staticTrack(0), keyedTrack(0, 1)])("returns a single-node path to static XY without baking (%j)", async progress => {
+    selectNode("a");
+    renderFields({ mode: "Path", path: { nodes: [node("a", 640)] }, progress });
+    await userEvent.click(segment(/^XY$/));
+
+    expect(setPosition).toHaveBeenCalledTimes(1);
+    expect(setPosition).toHaveBeenCalledWith("L1", {
+      mode: "XY", x: staticTrack(640), y: staticTrack(100),
+    }, false);
+    expect(conversion()).toBeNull();
+    expect(usePathEditingStore.getState().layerId).toBeNull();
+  });
+
+  it("offers baking when leaving a multi-node path", async () => {
     renderFields(pathOf(node("a", 0), node("b", 200)));
     await userEvent.click(segment(/^XY$/));
 
@@ -157,6 +172,22 @@ describe("the position mode switcher", () => {
 });
 
 describe("the path node well", () => {
+  it("lets the user extend a single-node path without adding animation", async () => {
+    selectNode("a");
+    const position = pathOf(node("a", 640));
+    renderFields(position);
+    expect(screen.getByRole("button", { name: "Remove point" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Insert after point" })).toHaveProperty("disabled", true);
+
+    await userEvent.click(screen.getByRole("button", { name: "Add point" }));
+    const [, next, geometryOnly] = setPosition.mock.calls[0]! as unknown as [string, PositionAnimation, boolean];
+    if (next.mode !== "Path" || position.mode !== "Path") throw new Error("not a path");
+    expect(next.path.nodes).toHaveLength(2);
+    expect(next.path.nodes[0]).toEqual(position.path.nodes[0]);
+    expect(next.progress).toEqual(position.progress);
+    expect(geometryOnly).toBe(true);
+  });
+
   it("offers no node actions until the path is being edited", async () => {
     renderFields(pathOf(node("a", 0), node("b", 200)));
     // The well says what it holds and how much of it, so the count is legible

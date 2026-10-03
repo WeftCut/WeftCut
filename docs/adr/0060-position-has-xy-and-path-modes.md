@@ -6,6 +6,8 @@ This replaces ADR 0058's proposed `Animated<Vec2>` direction. Follow-up decision
 
 ## Consequences
 
+- Switching static XY to Path preserves the stationary position: initialize one node at the existing position and static progress at 0. Adding a route and animating progress are explicit user edits; changing representation does not invent a destination or motion.
+- A single-node path returns directly to static XY in one undoable edit, without a baking dialog or generated keyframes. This remains exact even with animated progress, since progress cannot move a path with only one node. The conversion engine applies the same rule.
 - Space and time have separate handles: spatial handles are relative pixel vectors on path nodes; progress uses the existing scalar temporal tangents and easing. Progress 0/1 denotes the ends, not a node index. Geometry editing preserves the progress record verbatim.
 - Spatial nodes explicitly store Corner, Smooth or Auto. Corner handles are independent; Smooth aligns the handles while preserving their individual lengths; Auto derives a bisector from neighboring chords and uses one third of each adjacent chord length. The shared authoring solver runs in previews and authoritative writes; playback consumes resolved handles. Moving an Auto handle switches it to Smooth.
 - Inserting a node uses exact de Casteljau subdivision (or line subdivision), preserving the existing curve and progress. Adjacent Auto nodes switch to Smooth to freeze their resolved handles: retaining neighbor-driven Auto would reshape the subdivided span. The panel inserts at the selected span's midpoint; canvas double-click inserts at the nearest curve parameter. One operation is one undo entry.
