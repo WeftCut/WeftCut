@@ -50,6 +50,8 @@ function commandIds(): Set<string> {
 /// a field to `QuickActionState` doesn't rewrite every literal in this file.
 function state(over: Partial<QuickActionState> = {}): QuickActionState {
   return {
+    cropActive: false,
+    cropAvailable: true,
     tool: "select",
     hasLayers: true,
     displayMode: "AbRoll",
@@ -116,6 +118,7 @@ describe("quickActions catalogue", () => {
     // would leave the whole radiogroup unarmed for that value — the failure
     // this case exists for.
     const states: QuickActionState[] = [
+      state({ tool: 'select', cropActive: true }),
       state({ tool: "select", displayMode: "AbRoll" }),
       state({ tool: "select", displayMode: "AllTracks" }),
       state({ tool: "blade", displayMode: "AbRoll" }),
@@ -201,6 +204,7 @@ describe("quickActions catalogue", () => {
         "selectHandTool",
         "toggleBladeMode",
         "selectTextTool",
+        "editCrop",
       ]);
     });
 

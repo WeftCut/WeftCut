@@ -9,6 +9,7 @@
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
 import { anchorOr, anchorPivot } from "../render/anchorPivot";
+import { FULL_CROP, type CropRect } from '../../shared/crop';
 
 export interface Pt {
   x: number;
@@ -35,6 +36,11 @@ export interface LayerQuadInput {
   scaleY: number;
   rotationDeg: number;
   origin: TransformOrigin;
+  /// Visible source rectangle; the full source still defines the transform pivot.
+  visibleRect?: CropRect | null;
+  /// Media flip flags are independent of the editable scale parameters.
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 /// The transform frame a box and its handles share: where the content's local
@@ -74,8 +80,8 @@ function quadFrame(i: LayerQuadInput): {
     pivotX: p.pivotX,
     pivotY: p.pivotY,
     map: (lx: number, ly: number): Pt => {
-      const dx = (lx - p.pivotX) * i.scaleX;
-      const dy = (ly - p.pivotY) * i.scaleY;
+      const dx = (lx - p.pivotX) * i.scaleX * (i.flipX ? -1 : 1);
+      const dy = (ly - p.pivotY) * i.scaleY * (i.flipY ? -1 : 1);
       return { x: p.posX + dx * cos - dy * sin, y: p.posY + dx * sin + dy * cos };
     },
   };
@@ -86,8 +92,10 @@ function quadFrame(i: LayerQuadInput): {
 /// own top-left, which is what a handle would have to grab).
 export function layerQuad(i: LayerQuadInput): [Pt, Pt, Pt, Pt] {
   const { naturalW: w, naturalH: h } = i;
-  const { left: l, top: t, map } = quadFrame(i);
-  return [map(l, t), map(l + w, t), map(l + w, t + h), map(l, t + h)];
+  const { left, top, map } = quadFrame(i);
+  const r = i.visibleRect ?? FULL_CROP;
+  const l = left + r.x * w, t = top + r.y * h;
+  return [map(l, t), map(l + r.w * w, t), map(l + r.w * w, t + r.h * h), map(l, t + r.h * h)];
 }
 
 /// The point the engine rotates and scales the layer about, in composition
@@ -118,8 +126,8 @@ export function compDeltaToLocal(d: Pt, i: LayerQuadInput): Pt | null {
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   return {
-    x: (d.x * cos - d.y * sin) / i.scaleX,
-    y: (d.x * sin + d.y * cos) / i.scaleY,
+    x: (d.x * cos - d.y * sin) / (i.scaleX * (i.flipX ? -1 : 1)),
+    y: (d.x * sin + d.y * cos) / (i.scaleY * (i.flipY ? -1 : 1)),
   };
 }
 
@@ -144,8 +152,8 @@ export function anchorCompensation(i: LayerQuadInput, dAnchorX: number, dAnchorY
   const rad = (i.rotationDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  const sx = qx * i.scaleX;
-  const sy = qy * i.scaleY;
+  const sx = qx * i.scaleX * (i.flipX ? -1 : 1);
+  const sy = qy * i.scaleY * (i.flipY ? -1 : 1);
   // R·S·q — the term both origins share.
   const rx = sx * cos - sy * sin;
   const ry = sx * sin + sy * cos;
@@ -361,17 +369,17 @@ export function scaleHandlePoints(quad: readonly Pt[]): Array<{ id: ScaleHandleI
   });
 }
 
-/// The handle's offset from the PIVOT in the layer's own LOCAL pixels — the `u`
-/// a scale solve divides the cursor by. Independent of the origin convention by
-/// construction: for both, it works out to `(frac − anchor)·size`, because the
-/// top-left origin puts the pivot at the anchor while the anchor origin moves
-/// the rect instead.
+/// The visible handle's offset from the original PIVOT, with media flips already
+/// applied — the `u` a solve divides by to obtain the editable scale parameter.
+/// The retained rectangle determines the handle; full source dimensions still
+/// determine the pivot. Both origin conventions therefore share this solve.
 export function scaleHandleOffset(i: LayerQuadInput, id: ScaleHandleId): Pt {
   const f = quadFrame(i);
   const d = HANDLE_DIR[id];
+  const r = i.visibleRect ?? FULL_CROP;
   return {
-    x: f.left + unitFrac(d.hx) * i.naturalW - f.pivotX,
-    y: f.top + unitFrac(d.hy) * i.naturalH - f.pivotY,
+    x: (f.left + (r.x + unitFrac(d.hx) * r.w) * i.naturalW - f.pivotX) * (i.flipX ? -1 : 1),
+    y: (f.top + (r.y + unitFrac(d.hy) * r.h) * i.naturalH - f.pivotY) * (i.flipY ? -1 : 1),
   };
 }
 

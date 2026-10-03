@@ -1072,3 +1072,8 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 - Shim configs carry no token — the shim reads it from `mcp_auth.json` at connect time, so the bearer never spreads into client config files.
 - Token surfaced in the connect panel's advanced section; the HTTP connect snippet (which embeds the token) is printed to stdout only in unpackaged dev / e2e runs, never in a packaged build.
 - Cloud-API keys live in the OS keyring, not in project files.
+
+
+### Rectangular video crop
+
+`update_layer_params { layer_id, patch: { kind: "VideoClip", crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } } }` retains the central 80% of the source on each axis. Coordinates are normalized source coordinates, before transform; width and height must be positive and the rectangle must fit within 0..1. `crop: null` resets. Omission preserves the current crop. Writes are static, recorded/undoable, and refuse locked clips/tracks. Crop is returned in the layer params summary, survives save/reopen and split, and changes no transform or source time. VideoClip only.

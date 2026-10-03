@@ -15,6 +15,7 @@
 
 import {
   Bookmark,
+  Crop,
   BookmarkPlus,
   FoldHorizontal,
   FoldVertical,
@@ -67,6 +68,8 @@ export interface QuickActionHintText {
 /// once at the top of the panel component so the per-item predicates stay pure
 /// functions — hooks can't be called per row.
 export interface QuickActionState {
+  cropActive: boolean;
+  cropAvailable: boolean;
   tool: Tool;
   /// Whether the project has any layer (`AppCommandFlags.hasLayers`, read here
   /// off the project store as one boolean). The Text tool's hint reads it to
@@ -192,7 +195,7 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
       {
         id: "selectTool",
         icon: MousePointer2,
-        active: (s) => s.tool === "select",
+        active: (s) => s.tool === "select" && !s.cropActive,
       },
       {
         id: "selectHandTool",
@@ -221,6 +224,12 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.hasLayers
             ? "quick_actions.text_tool_hint"
             : "quick_actions.text_tool_needs_layer",
+      },
+      {
+        id: 'editCrop',
+        icon: Crop,
+        active: s => s.cropActive,
+        hint: s => !s.cropAvailable ? 'crop.unavailable' : s.cropActive ? 'crop.done' : 'crop.edit',
       },
     ],
   },

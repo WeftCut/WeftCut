@@ -1,4 +1,6 @@
 import { snapFrameRound } from "../frames";
+import { canEditCrop, canResetCrop, editCrop, resetCrop } from './cropCommands';
+import { useCropEditingStore } from '../state/cropEditingStore';
 import {
   logEmit,
   updateLayerParamTracks,
@@ -165,6 +167,8 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
 /// entry with no keys would add two rebindable rows to Settings → Keyboard whose
 /// bindings nothing dispatches.
 const SELF_CONTAINED_COMMAND_IDS = [
+  'editCrop',
+  'resetCrop',
   "toggleSafeAreaGuides",
   "centerHorizontally",
   "centerVertically",
@@ -199,6 +203,8 @@ const SELF_CONTAINED_COMMAND_IDS = [
 type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
 
 const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
+  editCrop: 'crop.edit',
+  resetCrop: 'crop.reset',
   toggleSafeAreaGuides: "actions.toggle_safe_area_guides",
   centerHorizontally: "actions.center_horizontally",
   centerVertically: "actions.center_vertically",
@@ -510,6 +516,8 @@ export function buildAppCommands(
     SelfContainedCommandId,
     { run: () => void | Promise<void>; enabled?: () => boolean; checked?: () => boolean }
   > = {
+    editCrop: { run: editCrop, enabled: canEditCrop, checked: () => useCropEditingStore.getState().layerId !== null },
+    resetCrop: { run: resetCrop, enabled: canResetCrop },
     previewZoomIn: {
       run: () => stepPreviewZoom(1),
       enabled: () => projectHasLayers() && canStepPreviewZoom(1),

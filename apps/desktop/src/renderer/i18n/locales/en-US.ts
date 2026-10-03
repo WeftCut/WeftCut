@@ -3,6 +3,7 @@
 // UI word for a placed item is `clip` — never `layer`, which stays the model word in
 // code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
+  crop: { title: "Crop", edit: "Crop in preview", done: "Finish cropping (Enter / Esc)", reset: "Reset crop", unavailable: "Select an unlocked, visible video clip in the preview composition to crop" },
   fonts: {
     app_default: "App default (Liberation Sans / Noto Sans SC)",
     loading: "Loading installed fonts…",

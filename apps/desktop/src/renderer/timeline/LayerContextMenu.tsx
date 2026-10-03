@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { CROP_MENU_COMMAND_IDS } from '../commands/cropCommands';
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { LinkSummary, TrackSummary, TransitionDirection } from "../ipc";
@@ -657,6 +658,8 @@ export function LayerContextMenu({
             )}
             {layerKind === "VideoClip" && (
               <>
+                <MenuSeparator />
+                {CROP_MENU_COMMAND_IDS.map(id => <CommandContextItem key={id} id={id} onRun={onClose} />)}
                 <MenuSeparator />
                 {VIDEO_MENU_COMMAND_IDS.map((id) => (
                   <CommandContextItem

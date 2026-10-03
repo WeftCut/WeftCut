@@ -121,6 +121,15 @@ _Avoid_: placement enum, extend flag, handle-consumption mode
 
 ## Transform
 
+**Crop**:
+The retained rectangular area of a VideoClip, in normalized source coordinates
+before its transform. It changes visibility without changing position, scale,
+pivot, source timing or composition dimensions. Null retains the entire source.
+The visible rectangle defines the edit box, centering and snapping; the full
+source still defines the transform pivot. Quick Panel and context menus enter
+on-canvas cropping; reset is available in context menus (ADR 0090).
+_Avoid_: trim (that changes time), resize (that changes dimensions)
+
 **Linked scale**:
 A layer state (`Transform.scale_linked`, default on) in which the two scale
 tracks are structural twins and every editing surface shows and writes them as

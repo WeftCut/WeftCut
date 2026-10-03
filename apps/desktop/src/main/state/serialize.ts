@@ -1,3 +1,4 @@
+import { cropProblem } from '../../shared/crop'
 import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project } from './model'
 import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
@@ -521,6 +522,12 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // retired per-segment `interp`, or a Keyframed track without `extrapolate`, is
   // refused here with a structured error — see the function. Before the twin
   // repair below, which dereferences the record.
+  forEachWireLayerParams(o, params => {
+    if (params.kind !== 'VideoClip') return
+    if (params.crop === undefined) params.crop = null
+    const problem = cropProblem(params.crop)
+    if (problem) throw new Error('parseProject: ' + problem)
+  })
   refuseRetiredKeyframeShape(o)
   // Additive settings fields (prefer_proxies/proxy_overrides/shot_review, added
   // later WITHOUT a schema bump) deserialize as absent on projects saved before

@@ -1,3 +1,4 @@
+import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
 import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
@@ -23,7 +24,7 @@ import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../.
  *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
   | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
-  | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
+  | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
@@ -258,6 +259,10 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     }
     case 'VideoClip': {
       const v = p as VideoClipParams
+      if (patch.crop !== undefined) {
+        const problem = cropProblem(patch.crop)
+        if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: problem })
+      }
       const a = authoredTransform(patch)
       // Another shape predicate: speed scales a duration, so zero is a division
       // by zero downstream and negative is not "backwards", it is a negative
@@ -276,6 +281,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.rotation_deg !== undefined) v.transform.rotation_deg = stat(a.rotation_deg)
       if (a.anchor_x !== undefined) v.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) v.transform.anchor_y = stat(a.anchor_y)
+      if (patch.crop !== undefined) v.crop = canonicalCrop(patch.crop)
       if (patch.speed !== undefined) v.speed = patch.speed
       if (patch.flip_h !== undefined) v.flip_h = patch.flip_h
       if (patch.flip_v !== undefined) v.flip_v = patch.flip_v
@@ -385,6 +391,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
   const { comp: c, layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked
+  if (patch.kind === 'VideoClip' && patch.crop !== undefined && layer.locked)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: 'Unlock the clip before cropping it.' })
   // A Motif's props are checked against its manifest BEFORE the merge, the
   // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a

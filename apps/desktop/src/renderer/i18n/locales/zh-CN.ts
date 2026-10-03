@@ -5,6 +5,7 @@ import type { Resources } from "./en-US";
 // 术语：英文里的 layer 与 clip 在界面上一律写作「片段」，不写「图层」——图层在 NLE 里
 // 名不副实，还会被读成「轨道」的同义词。见 CONTEXT.md 的 Layer 词条。
 const zhCN: Resources = {
+  crop: { title: "画面裁切", edit: "在画面中裁切", done: "结束裁切（Enter / Esc）", reset: "重置裁切", unavailable: "请选择预览合成中可见且未锁定的视频片段进行裁切" },
   fonts: {
     app_default: "应用默认（Liberation Sans / Noto Sans SC）",
     loading: "正在读取已安装字体…",

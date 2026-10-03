@@ -1,3 +1,5 @@
+import { cropProblem } from '../../shared/crop'
+import { CommandFailure } from './errors'
 // apps/desktop/src/main/state/validate.ts
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
@@ -405,6 +407,10 @@ function validateLayerParams(p: Project, layer: Layer): void {
   // two keys that landed on one frame — authored data lost. The visible cost of
   // leaving it is a ≤ half-frame offset on an interpolated value.
   const pa = layer.params
+  if (pa.kind === 'VideoClip' && pa.crop != null) {
+    const problem = cropProblem(pa.crop)
+    if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: problem })
+  }
   if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, pa.src_in_us, pa.src_out_us)
   else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }
   else if (pa.kind === 'CompositionRef') {

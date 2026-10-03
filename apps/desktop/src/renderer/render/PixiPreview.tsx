@@ -5,6 +5,7 @@
 //
 // Plan: docs/render.md
 
+import { useCropEditingStore } from '../state/cropEditingStore';
 import {
   type CSSProperties,
   forwardRef,
@@ -219,6 +220,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const unsubTransformOverridesRef = useRef<(() => void) | null>(null);
+  const unsubCropRef = useRef<(() => void) | null>(null);
   const [initializing, setInitializing] = useState(true);
   // On-screen media the Compositor can't decode with any engine — fed ONLY
   // by `Compositor.onUnsupported` (membership-change snapshots, never
@@ -591,6 +593,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         compositor.compositeFrame(engine.positionUs());
       });
 
+      unsubCropRef.current?.();
+      unsubCropRef.current = useCropEditingStore.subscribe((state, previous) => {
+        if (state.draft !== previous.draft || state.layerId !== previous.layerId)
+          compositor.compositeFrame(engine.positionUs());
+      });
+
       // E2E-only: register a live bridge so the WebDriver hooks
       // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
       // a real seek and read pixels straight off the composited canvas. Dynamic
@@ -897,6 +905,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       unsubOverridesRef.current = null;
       unsubTransformOverridesRef.current?.();
       unsubTransformOverridesRef.current = null;
+      unsubCropRef.current?.();
+      unsubCropRef.current = null;
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;

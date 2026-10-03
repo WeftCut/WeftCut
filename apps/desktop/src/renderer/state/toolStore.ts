@@ -17,6 +17,7 @@
 // `feedback_zustand_composite_selector` — never select a composite object).
 
 import { create } from "zustand";
+import { endCrop } from './cropEditingStore';
 
 /// The modal tools. `select` is the default: layer clicks select and drag.
 /// `blade` arms the razor — timeline clicks split the layer at the click point.
@@ -44,6 +45,7 @@ export const useToolStore = create<State>(() => ({ tool: "select" }));
  * binds one key per tool instead.
  */
 export function setTool(tool: Tool): void {
+  endCrop();
   if (useToolStore.getState().tool !== tool) useToolStore.setState({ tool });
 }
 

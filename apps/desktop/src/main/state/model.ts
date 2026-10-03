@@ -58,6 +58,7 @@ export type TextAnimPreset = 'FadeIn' | 'FadeOut' | 'SlideUp' | 'SlideDown' | 'T
 
 export interface VideoClipParams {
   kind: 'VideoClip'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
+  /** Static retained source rectangle, normalized 0..1; null = full source (ADR 0090). */
   transform: Transform; opacity: Animated<number>; crop: Rect | null
   flip_h: boolean; flip_v: boolean; blend_mode: BlendMode; speed: number
   fade_in_us: number; fade_out_us: number

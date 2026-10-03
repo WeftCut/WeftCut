@@ -1,3 +1,4 @@
+import { cropProblem } from '../../shared/crop'
 // apps/desktop/src/main/state/mcp-commands.ts
 // Pure MCP-tool adapter helpers: arg parsing (snake_case MCP vocab → internal
 // dispatch vocab), ToolResult shaping, and CommandError → MCP error mapping.
@@ -317,7 +318,7 @@ type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<Lay
 const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true }),
-  VideoClip: keysOf('VideoClip', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, speed: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
+  VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, speed: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
   ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true }),
   Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
@@ -343,10 +344,15 @@ function parseOneOf(v: unknown, options: readonly string[], field: string): stri
 function parseLayerParamValue(k: string, v: unknown): unknown {
   const field = `patch.${k}`
   if (v === null) {
-    if (k === 'box_w' || k === 'box_h' || k === 'shadow') return null
+    if (k === 'box_w' || k === 'box_h' || k === 'shadow' || k === 'crop') return null
     throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
   }
   switch (k) {
+    case 'crop': {
+      const problem = cropProblem(v)
+      if (problem) throw new McpArgError(problem, field)
+      return v
+    }
     case 'content': case 'font_family': case 'motif_id': return parseStr(v, field)
     case 'font_weight': return parseIntNum(v, field)
     case 'italic': return parseBool(v, field)
@@ -1381,6 +1387,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   anchor_x: { type: 'number', description: 'Pivot x, fraction of the width (0.5 = centre).' },
   anchor_y: { type: 'number', description: 'Pivot y, fraction of the height (0.5 = centre).' },
   speed: { type: 'number', description: 'Playback rate; 1 = normal.' },
+  crop: { type: ['object', 'null'], description: 'Static retained source rectangle in normalized 0..1 coordinates, before transform. x/y are top-left; w/h positive, contained in source. Null resets. Does not change scale or position.', properties: { x: { type: 'number', minimum: 0, maximum: 1, description: 'Left.' }, y: { type: 'number', minimum: 0, maximum: 1, description: 'Top.' }, w: { type: 'number', exclusiveMinimum: 0, maximum: 1, description: 'Width.' }, h: { type: 'number', exclusiveMinimum: 0, maximum: 1, description: 'Height.' } }, required: ['x', 'y', 'w', 'h'], additionalProperties: false },
   flip_h: { type: 'boolean', description: 'Mirror horizontally.' },
   flip_v: { type: 'boolean', description: 'Mirror vertically.' },
   fade_in_us: US_SCHEMA('Fade-in length'),

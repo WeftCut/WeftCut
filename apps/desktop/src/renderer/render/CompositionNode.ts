@@ -17,6 +17,9 @@
 //
 // Plan: docs/render.md
 
+import { CropFilter } from './CropFilter';
+import { cropPreview } from '../state/cropEditingStore';
+import type { Sprite } from 'pixi.js';
 import { Container, Texture } from "pixi.js";
 import type { InjectedMotifFrames } from "./worker/motifStream";
 import type { Renderer } from "pixi.js";
@@ -439,6 +442,7 @@ export class CompositionNode {
   /// poll reads it to find the visible frame.
   private lastTUs = 0;
   private disposed = false;
+  private readonly cropFilters = new Map<string, CropFilter>();
 
   constructor(init: CompositionNodeInit) {
     this.host = init.host;
@@ -474,6 +478,8 @@ export class CompositionNode {
   /// its node and re-reads it; one whose target changed or vanished is torn
   /// down here and rebuilt lazily by the sweep.
   setComposition(composition: CompositionSummary, summary: ProjectSummary | null): void {
+    const ids = new Set(composition.tracks.flatMap(t => t.layers.map(l => l.id)));
+    for (const [id, filter] of this.cropFilters) if (!ids.has(id)) { filter.destroy(); this.cropFilters.delete(id); }
     this.composition = composition;
     this.summary = summary;
     this.layerById.clear();
@@ -725,6 +731,18 @@ export class CompositionNode {
       sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
       stageAdd(STAGE.Effects, tEffects);
     }
+    if (layer.params.kind === 'VideoClip') {
+      const draft = this.host.mode === 'preview' ? cropPreview(layer.id) : undefined;
+      const crop = draft === undefined ? layer.params.crop : draft;
+      if (crop && sprite.stageReady) {
+        let filter = this.cropFilters.get(layer.id);
+        if (!filter) { filter = new CropFilter(sprite.displayObject as Sprite); this.cropFilters.set(layer.id, filter); }
+        sprite.displayObject.filters = [...(sprite.displayObject.filters ?? []), filter.sync(sprite.displayObject as Sprite, crop)];
+      } else {
+        this.cropFilters.get(layer.id)?.destroy();
+        this.cropFilters.delete(layer.id);
+      }
+    }
     // Transition divert: a participant's finished node — transform, opacity,
     // and filters exactly as the normal path would stage them — goes into its
     // side's offscreen container (baked to an RT in `finishFrame`) instead of
@@ -961,6 +979,8 @@ export class CompositionNode {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const f of this.cropFilters.values()) f.destroy();
+    this.cropFilters.clear();
     for (const [layerId, c] of this.clips) this.evictClip(layerId, c);
     this.clips.clear();
     for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }

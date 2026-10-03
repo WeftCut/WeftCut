@@ -1,3 +1,4 @@
+import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
 // renderer reads back. It owns no state and no persistence.
 //
@@ -336,6 +337,7 @@ export interface MotifView {
 }
 
 export interface VideoClipView {
+  crop?: CropRect | null;
   media_id: string;
   media_label: string;
   src_in_us: number;
@@ -640,6 +642,7 @@ export interface TextPatch {
 }
 
 export interface VideoClipPatch {
+  crop?: CropRect | null;
   src_in_us?: number;
   src_out_us?: number;
   x?: number;

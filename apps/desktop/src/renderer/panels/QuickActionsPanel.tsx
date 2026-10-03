@@ -6,6 +6,8 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useCanEditCrop } from '../commands/cropCommands';
+import { useCropEditingStore } from '../state/cropEditingStore';
 
 import {
   commandRegistryVersion,
@@ -305,6 +307,8 @@ export function QuickActionsPanel({
   // string needs both `t` and the project mirror, and only this component has
   // the first (`panels/quickActions.ts` says why the field is a sentence).
   const rippleDelete = rippleDeleteReason(useRippleDeleteState(), t);
+  const cropActive = useCropEditingStore(s => s.layerId !== null);
+  const cropAvailable = useCanEditCrop();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -325,6 +329,8 @@ export function QuickActionsPanel({
   );
 
   const state: QuickActionState = {
+    cropActive,
+    cropAvailable,
     tool,
     hasLayers,
     displayMode,

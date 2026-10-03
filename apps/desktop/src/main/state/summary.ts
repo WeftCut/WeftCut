@@ -1,3 +1,4 @@
+import type { CropRect } from '../../shared/crop'
 import { positionView, type PositionAnimation } from '../../shared/position'
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
@@ -11,7 +12,7 @@ export interface VideoClipView {
   kind: 'VideoClip'; media_id: string; media_label: string; src_in_us: number; src_out_us: number
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
-  speed: number; flip_h: boolean; flip_v: boolean; fade_in_us: number; fade_out_us: number
+  crop: CropRect | null; speed: number; flip_h: boolean; flip_v: boolean; fade_in_us: number; fade_out_us: number
 }
 export interface ImageOverlayView {
   kind: 'ImageOverlay'; media_id: string; media_label: string
@@ -204,7 +205,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       return { kind: 'VideoClip', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         src_in_us: params.src_in_us, src_out_us: params.src_out_us, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
-        opacity: params.opacity, speed: params.speed, flip_h: params.flip_h, flip_v: params.flip_v,
+        crop: params.crop ?? null, opacity: params.opacity, speed: params.speed, flip_h: params.flip_h, flip_v: params.flip_v,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
     }
     case 'ImageOverlay': {

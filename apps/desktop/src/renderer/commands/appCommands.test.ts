@@ -19,6 +19,8 @@ import { useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setTool } from "../state/toolStore";
+import { endCrop, useCropEditingStore } from '../state/cropEditingStore';
+import { useCompositionAnchorStore } from '../state/compositionAnchorStore';
 import en from "../i18n/locales/en-US";
 import { summaryFixture } from "../testing/summaryFixture";
 
@@ -307,6 +309,41 @@ describe("buildAppCommands", () => {
     });
     useProjectStore.getState().apply(summary);
   }
+
+  describe('crop commands', () => {
+    const by = (id: string) => buildAppCommands(handlers, menu, flags).find(d => d.id === id)!;
+    const video = () => ({ ...layer('video', 0, 1_000_000), kind: 'VideoClip', params: { kind: 'VideoClip', crop: null } } as LayerSummary);
+    afterEach(() => {
+      endCrop(); clearLayerSelection(); useProjectStore.getState().apply(null);
+      useCompositionAnchorStore.setState({ previewTargetId: null });
+    });
+    it('enters and exits from the same command, and selection tool also exits', () => {
+      seed([track('t', [video()])]); setLayerSelection('video', ['video']);
+      const command = by('editCrop');
+      expect(command.enabled!()).toBe(true);
+      command.run(); expect(command.checked!()).toBe(true);
+      expect(useCropEditingStore.getState().layerId).toBe('video');
+      command.run(); expect(command.checked!()).toBe(false);
+      command.run(); setTool('select'); expect(command.checked!()).toBe(false);
+    });
+    it('gates both entry and reset on the selected video and its locks/visibility', () => {
+      expect(by('editCrop').enabled!()).toBe(false);
+      for (const over of [{ locked: true }, { enabled: false }]) {
+        seed([track('t', [{ ...video(), ...over }])]); setLayerSelection('video', ['video']);
+        expect(by('editCrop').enabled!()).toBe(false);
+        seed([{ ...track('t', [video()]), ...over }]); setLayerSelection('video', ['video']);
+        expect(by('editCrop').enabled!()).toBe(false);
+      }
+      seed([track('t', [layer('audio', 0, 1_000_000, 'audio')])]); setLayerSelection('audio', ['audio']);
+      expect(by('editCrop').enabled!()).toBe(false);
+      seed([track('t', [video()])]); setLayerSelection('video', ['video']);
+      expect(by('resetCrop').enabled!()).toBe(false);
+      const cropped = video();
+      if (cropped.params.kind === 'VideoClip') cropped.params.crop = { x: 0.2, y: 0, w: 0.8, h: 1 };
+      seed([track('t', [cropped])]); setLayerSelection('video', ['video']);
+      expect(by('resetCrop').enabled!()).toBe(true);
+    });
+  });
 
   // "Move to a new track" offers itself only when ONE fresh lane could hold the
   // whole selection, so the impossible request never has to be refused after the

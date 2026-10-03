@@ -2003,7 +2003,7 @@ horizontally" centres cannot be derived differently. `autoKeyTrack` — the shar
 commit rule: a Static track takes a value, a Keyframed one gets a key at the
 frame-snapped playhead, exactly like the inspector.
 
-**Limits:** move, resize, rotate and anchor — no crop, no corner-pin. Single
+**Limits:** move, resize, rotate and anchor; crop uses its own overlay. No corner-pin. Single
 selection only. The box follows animated values during playback via rAF; it is
 hidden while the preview dock tab is not visible. The rotation knob sits a fixed
 26 CSS px outside the box (screen space, so the affordance is
@@ -2111,3 +2111,8 @@ it had no buttons at all. `color-scheme: dark` cannot reach them; it governs
 only what Chromium paints. `themeSource = 'dark'` is set before the first
 window, which also carries the dark appearance into native menus, sheets, and
 the file picker.
+
+
+## Rectangular video crop
+
+Quick Panel and the VideoClip/preview right-click menus enter on-canvas cropping; the context menus also offer reset. The Quick Panel icon is highlighted while cropping. Click it again, select another tool, or press Enter/Escape to finish; Escape during a drag cancels that drag. The inspector has no crop section, and the preview gains no temporary toolbar. Numeric fields and aspect presets are intentionally omitted. Eight handles and the full edges resize the retained rectangle using direction-aware resize cursors; dragging inside moves it. One drag is one undo entry. After cropping, the normal transform box, centering and move/scale snapping follow the visible rectangle, including when other clips snap to it. The original source still defines the pivot and scale. Crop follows flips and transforms without changing them, remains active with preview effects bypassed, and is applied identically in preview, Group composition, transitions and export. The stored rectangle is static and normalized to source dimensions; no path masks or animation are introduced. See ADR 0090.

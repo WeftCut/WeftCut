@@ -1,3 +1,5 @@
+import { CropFilter } from '../../CropFilter';
+import type { Sprite, Matrix } from 'pixi.js';
 // @vitest-environment jsdom
 // The UBO-residency hazard, pinned over EVERY custom filter that owns a
 // UniformGroup rather than in one filter's own file: Pixi's idle-resource GC
@@ -12,6 +14,7 @@ import { SharpenFilter } from "./SharpenFilter";
 
 const FILTERS: Array<{ name: string; make: () => Filter; resource: string }> = [
   { name: "ChromaKeyFilter", make: () => new ChromaKeyFilter(), resource: "chromaUniforms" },
+  { name: "CropFilter", make: () => new CropFilter({} as Sprite), resource: "cropUniforms" },
   { name: "SharpenFilter", make: () => new SharpenFilter(), resource: "sharpenUniforms" },
 ];
 
@@ -24,6 +27,7 @@ function group(f: Filter, resource: string): UniformGroup {
 function applyWithMaterializedUniformBuffer(f: Filter, resource: string): Buffer {
   let buffer: Buffer | null = null;
   const filterManager = {
+    calculateSpriteMatrix: (m: Matrix) => m,
     applyFilter: () => {
       buffer = new Buffer({
         data: new Float32Array(12),

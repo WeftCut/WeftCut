@@ -19,6 +19,7 @@
 // All pointer- and frame-rate updates here are imperative through refs.
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
+import { useCropEditingStore } from '../state/cropEditingStore';
 import { useEffect, useRef } from "react";
 import { RotateCcwIcon } from "lucide-react";
 
@@ -281,6 +282,7 @@ function otherLayerBoxes(
 
 export function TransformGizmoHost() {
   const editingLayerId=usePathEditingStore(s=>s.layerId);
+  const croppingId = useCropEditingStore(s => s.layerId);
   const primaryLayerId = usePrimaryLayerId();
   // The FOCUSED composition: the selection is one of its layers, and the
   // inspector stays with the keyboard even when the preview is pointed
@@ -316,7 +318,7 @@ export function TransformGizmoHost() {
       if (layer.id === primaryLayerId) found = layer;
     }
   }
-  if (!found || !TRANSFORMABLE_KINDS.has(found.params.kind)) return null;
+  if (!found || !TRANSFORMABLE_KINDS.has(found.params.kind) || croppingId === found.id) return null;
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
   const path='position' in found.params&&found.params.position?.mode==='Path';
@@ -1027,9 +1029,8 @@ function TransformGizmo({
       // footprint it outlines cannot disagree mid-drag, whichever handle is
       // being moved. Absent (no gesture) ⇒ all zeroes.
       const d = transformOverrideFor(l.id);
-      // The box is the layer's footprint, so it reads the UNSIGNED scale: a
-      // flip mirrors the content within the same box (anchorPivot.ts), so
-      // folding `flip_h` in here would only reverse the vertex order.
+      // Keep editable scale and media flips separate: crop bounds and handles
+      // follow the visible source rectangle, while the pivot uses the full source.
       const base = layerFrameAt(l, tUs, size);
       const geom: LayerQuadInput = {
         ...base,
@@ -1079,8 +1080,9 @@ function TransformGizmo({
       // read; everything below writes to the DOM. Same inputs ⇒ every write
       // would be a no-op that still dirties layout for the next reader.
       const signature = `${geom.x},${geom.y},${geom.anchorX},${geom.anchorY},${geom.naturalW},${geom.naturalH},${geom.scaleX},${geom.scaleY},${geom.rotationDeg},${geom.origin};${fit.scale},${fit.offX},${fit.offY};${own.left},${own.top};${comp.width}x${comp.height};${edges ? 1 : 0};${stroke};${live.x},${live.y}`;
-      if (signature === drawn) return;
-      drawn = signature;
+      const visibleSignature = `${signature};${JSON.stringify(geom.visibleRect)};${geom.flipX},${geom.flipY}`;
+      if (visibleSignature === drawn) return;
+      drawn = visibleSignature;
       box.setAttribute("points", corners.map((c) => `${c.x},${c.y}`).join(" "));
       // The reticle's parts are drawn once around (0,0) and the whole group is
       // translated — one attribute write per frame instead of six.

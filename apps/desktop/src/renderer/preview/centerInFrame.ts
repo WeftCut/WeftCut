@@ -87,6 +87,11 @@ export function layerFrameAt(
     scaleY: resolveAnimated(p.scale_y, tLocalUs, 1),
     rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0),
     origin: transformOriginFor(p.kind),
+    ...(layer.params.kind === 'VideoClip' ? {
+      visibleRect: layer.params.crop,
+      flipX: layer.params.flip_h,
+      flipY: layer.params.flip_v,
+    } : {}),
   };
 }
 

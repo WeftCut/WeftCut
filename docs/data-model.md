@@ -665,7 +665,7 @@ struct VideoClipParams {
     src_out_us: i64,
     transform: Transform,
     opacity: Animated<f64>,
-    crop: Option<Rect>,
+    crop: Option<Rect>,              // static retained source rect, normalized 0..1; null = full source
     flip_h: bool,
     flip_v: bool,
     blend_mode: BlendMode,
