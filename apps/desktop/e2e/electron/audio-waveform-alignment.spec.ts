@@ -93,7 +93,10 @@ function conformRmsAt(file: string, timeS: number, windowMs = 80): number {
 test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  test.beforeAll(async () => {
+  // Each case owns a project and its background conform/waveform jobs. Do not
+  // carry the previous case's renderer subscriptions and decode sessions into
+  // a new project; alignment assertions do not exercise workspace switching.
+  test.beforeEach(async () => {
     test.skip(
       !CASES.every((c) => existsSync(fixture(c.file))) || !existsSync(fixture(LONG_FIXTURE)),
       'audio timing fixtures not present (run `npm run fixtures`)',
@@ -101,8 +104,9 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
     ;({ app, page } = await launchApp())
   })
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await app?.close()
+    app = undefined
   })
 
   for (const c of CASES) {
