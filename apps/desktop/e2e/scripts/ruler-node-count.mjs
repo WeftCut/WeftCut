@@ -117,8 +117,10 @@ try {
   const probe = () =>
     page.evaluate(() => {
       const ruler = document.querySelector('[data-testid="timeline-ruler"]');
-      const root = ruler?.closest('.overflow-auto');
-      const corner = document.querySelector('[data-testid="timeline-ruler-corner"]');
+      // ADR 0084: fixed chrome and the scroll viewport are sibling rows.
+      const layout = ruler?.closest('[data-testid="timeline-layout"]');
+      const root = layout?.querySelector('[data-testid="timeline-track-viewport"]');
+      const corner = layout?.querySelector('[data-testid="timeline-ruler-corner"]');
       const kids = Array.from(ruler?.children ?? []);
       const lefts = kids.map((k) => Number.parseFloat(k.style.left)).sort((a, b) => a - b);
       let pitch = 0;
@@ -155,7 +157,7 @@ try {
   // ── Zoom to maximum, i.e. into frame mode ────────────────────────────────
   // Ctrl+wheel is the app's only zoom control: there is no zoom command, action
   // or test hook, so the `wheel` listener `useTimelineView` installs on the
-  // scroll root IS the seam, and the gate dispatches at it directly.
+  // timeline shell IS the seam, and events from its viewport bubble to it.
   //
   // Not via `page.mouse.wheel`: in this Electron + Playwright pair EVERY
   // `Input.dispatchMouseEvent` (move and wheel alike, modifiers or not) is
@@ -165,7 +167,8 @@ try {
   await page.evaluate(() => {
     const root = document
       .querySelector('[data-testid="timeline-ruler"]')
-      ?.closest('.overflow-auto');
+      ?.closest('[data-testid="timeline-layout"]')
+      ?.querySelector('[data-testid="timeline-track-viewport"]');
     if (!root) throw new Error('no timeline scroll root');
     const rect = root.getBoundingClientRect();
     // Zoom is exponential in wheel px (factor = exp(-deltaY * 0.001)), so one
@@ -211,7 +214,7 @@ try {
     // renderer has painted a row wide enough to hold it. The tick count itself
     // must NOT change, so it can never be the settle signal.
     const applied = await page.evaluate(
-      () => window.api.backend.invoke('project_summary', {}).then((s) => s.duration_us),
+      () => window.api.backend.invoke('project_summary', {}).then((s) => s.compositions[s.root_id].duration_us),
     );
     if (applied !== durationUs)
       throw new InvalidRun(`set_composition did not take: asked ${durationUs} µs, got ${applied} µs`);
@@ -241,7 +244,9 @@ try {
   // ── Scrolling moves the window, not just the head ─────────────────────────
   const headLeft = (await probe()).firstLeft;
   await page.evaluate(() => {
-    const root = document.querySelector('[data-testid="timeline-ruler"]')?.closest('.overflow-auto');
+    const root = document.querySelector('[data-testid="timeline-ruler"]')
+      ?.closest('[data-testid="timeline-layout"]')
+      ?.querySelector('[data-testid="timeline-track-viewport"]');
     if (root) root.scrollLeft = 250_000;
   });
   try {

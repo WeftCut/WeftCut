@@ -847,7 +847,7 @@ jobs:
           # test-noop, compiling every #[cfg(feature)] module PLUS the standalone-
           # binary symbol-resolution shim. No hand-kept feature list here — it
           # tracks Cargo.toml's default automatically. test-noop is test-only.
-          cargo test --manifest-path native/Cargo.toml --lib --features test-noop
+          cargo test --manifest-path native/Cargo.toml --lib --bins --features test-noop
           # Component crate (native-decode): the repo's only ffmpeg-next consumer.
           # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
           # on the loader path at run (Windows: DLLs already on PATH above; Linux:

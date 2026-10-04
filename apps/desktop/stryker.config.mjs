@@ -8,6 +8,26 @@ export default {
   concurrency: 4,
   timeoutMS: 60000,
 
+  // Stryker does not read .gitignore. Keep generated build/media trees out of
+  // the sandbox: copying them makes startup depend on local cache size and
+  // races app rebuilds that replace hashed out/ chunks. Unit fixtures, native
+  // addons, shipped ffmpeg resources and the generated Wasm module remain
+  // available to the real tests.
+  ignorePatterns: [
+    '/native/target*',
+    '.napi-rs-filesystem-transaction.swp',
+    '/dist',
+    '/out',
+    '/release',
+    '/e2e/fixtures/media',
+    '/e2e/fixtures/decode-bench',
+    '/e2e/bench-results',
+    '/test-results',
+    '/playwright-report',
+    '/e2e-report',
+    '/determinism-artifacts',
+  ],
+
   // Names a tsconfig that deliberately does not exist, which switches OFF
   // Stryker's sandbox tsconfig rewriting. That rewriting is a no-op for us
   // anyway — ./tsconfig.json is a `files: []` orchestrator whose four

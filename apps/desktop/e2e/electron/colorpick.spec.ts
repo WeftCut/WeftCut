@@ -277,16 +277,28 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
       }
       ;(globalThis as any).__screenPickFixtures = fixtures
     })
-    // Wait for the OS compositor to finish presenting the fixture, including
-    // native window fade-in. A DOM-ready window can still capture mid-animation.
-    await expect.poll(() => app.evaluate(async ({ desktopCapturer, screen }) => {
+    // Wait for a stable OS capture of the fixture, including native fade-in.
+    // Desktop capture may round-trip through the display's color space: its
+    // pixel bytes, rather than the CSS input, are the desktop picker's oracle.
+    const capturePixel = () => app.evaluate(async ({ desktopCapturer, screen }) => {
       const d=screen.getPrimaryDisplay()
       const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{
         width:Math.round(d.bounds.width*d.scaleFactor),height:Math.round(d.bounds.height*d.scaleFactor)}})
       const image=sources.find(s=>s.display_id===String(d.id))!.thumbnail
       const i=(100*image.getSize().width+120)*4,b=image.toBitmap()
       return [b[i+2],b[i+1],b[i]]
-    }), {timeout:10_000}).toEqual([18,52,160])
+    })
+    let captured: number[] = []
+    await expect.poll(async () => {
+      const pixel = await capturePixel()
+      const stable = pixel.every((value, i) => value === captured[i])
+      captured = pixel
+      // This bound is only the presentation readiness check. Every picker
+      // assertion below still compares against the exact captured pixel.
+      return stable && pixel.every((value, i) => Math.abs(value - [18,52,160][i]!) <= 3)
+    }, {timeout:10_000}).toBe(true)
+    const capturedHex = '#' + captured.map(value => value.toString(16).padStart(2, '0')).join('')
+    info.annotations.push({ type: 'desktop-capture', description: `CSS #1234a0 → captured ${capturedHex}` })
     await button.click()
     await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
     await page.keyboard.press('s')
@@ -296,17 +308,17 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await waitForDesktop()
     const desktop = app.windows().find(w => w.url().includes('/screen-pick.html'))!
     await desktop.mouse.move(120, 100)
-    await expect(desktop.locator('#hex')).toHaveText('#1234a0')
+    await expect(desktop.locator('#hex')).toHaveText(capturedHex)
     expect(await desktop.evaluate(() => typeof (window as any).api)).toBe('undefined')
     expect(chromaParams(await summary(page), layerId).keyB?.value).toBeUndefined()
     await desktop.screenshot({ path: info.outputPath('desktop-picker.png') })
     await desktop.mouse.click(120, 100)
     await expect.poll(visibleOverlays).toBe(0)
     // Authored effect parameters are quantized to three decimal places.
-    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBeCloseTo(160 / 255, 3)
+    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBeCloseTo(captured[2]! / 255, 3)
     const picked = chromaParams(await summary(page), layerId)
-    expect(picked.keyR?.value).toBeCloseTo(18 / 255, 3)
-    expect(picked.keyG?.value).toBeCloseTo(52 / 255, 3)
+    expect(picked.keyR?.value).toBeCloseTo(captured[0]! / 255, 3)
+    expect(picked.keyG?.value).toBeCloseTo(captured[1]! / 255, 3)
     await invokeCmd(page, 'project_undo', {})
     expect(chromaParams(await summary(page), layerId)).toEqual({})
 
@@ -316,7 +328,7 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await waitForDesktop()
     const second = app.windows().find(w => !w.isClosed() && w.url().includes('/screen-pick.html'))!
     await second.mouse.move(200, 180)
-    await expect(second.locator('#hex')).toHaveText('#1234a0')
+    await expect(second.locator('#hex')).toHaveText(capturedHex)
     // Escape destroys the overlay in main's before-input-event handler. Send
     // through Electron: CDP keyboard.press otherwise waits for keyup on a page
     // that has already been destroyed as the intended result of keydown.

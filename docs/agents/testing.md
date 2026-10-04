@@ -18,6 +18,12 @@ not scattered by neglect.
 The `apps/desktop` unit script excludes `**/*.browser.test.ts`; there are none
 today — it's a standing guard for a pattern that would need a browser runner.
 
+Stryker does not use `.gitignore` when preparing its sandbox. Its
+`ignorePatterns` exclude generated Rust build directories, app bundles, E2E
+media and reports, so mutation runs do not copy machine-local caches or race
+bundle replacement. Keep unit fixtures, native addons, shipped FFmpeg resources
+and `evalWasm.generated.ts` available: the Vitest tests consume them.
+
 **Build-script tests are a separate command on purpose.** `vitest.config.ts`
 pins `include` to the three `src/` roots, so `scripts/*.test.mjs` is invisible to
 `npm test` — and they are `node:test`, not Vitest, so widening the glob would
@@ -46,7 +52,7 @@ standalone `cargo test` can't link:
 ```bash
 cargo test -p weftcut-eval --manifest-path native/Cargo.toml           # eval crate (pure)
 cargo test -p weftcut-conversion --manifest-path native/Cargo.toml     # offline fitting (pure)
-cargo test --manifest-path native/Cargo.toml --lib --features test-noop # root napi crate
+cargo test --manifest-path native/Cargo.toml --lib --bins --features test-noop # root napi crate + conformance analyzer
 # decode crate — the repo's only ffmpeg-next consumer: needs FFMPEG_DIR to build
 # AND the bundled libav*.so on the loader path at run (its cargo-test binary has
 # no RPATH, unlike the .node addon, so LD_LIBRARY_PATH is required — omit it and

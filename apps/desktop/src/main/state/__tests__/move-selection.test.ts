@@ -2,16 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
-import { root } from './fixtures/project'
+import { groupedProject, root } from './fixtures/project'
 
 const S = 1_000_000
 const idOf = (r: ReturnType<ActorHandle['dispatch']>): string => {
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   return r.value as string
 }
-function setup() {
+function setup(withGroup = false) {
   const gen = seededGen()
-  const a = createActor({ initial: blankProject(gen, 'selection move'), idGen: gen, clock: () => '<TS>' })
+  const initial = withGroup ? groupedProject(gen).p : blankProject(gen, 'selection move')
+  const a = createActor({ initial, idGen: gen, clock: () => '<TS>' })
   const [tA, tB] = root(a.snapshot()).tracks.map((t) => t.id) as [string, string]
   const first = idOf(a.dispatch('add_layer', { track: tA, kind: 'color', t_start_us: S, t_end_us: 2 * S }))
   const second = idOf(a.dispatch('add_layer', { track: tA, kind: 'color', t_start_us: 2 * S, t_end_us: 3 * S }))
@@ -87,5 +88,54 @@ describe('selection move', () => {
     expect(move(3 * S, tB).ok).toBe(false)
     expect(positions()).toEqual(before)
     expect(a.historyStatus().len).toBe(count)
+  })
+
+  it.each(['duplicate', 'missing anchor', 'missing track', 'other composition', 'locked destination', 'locked clip'] as const)(
+    'reports the specific refusal for %s without changing the project or history', (reason) => {
+      const { a, first, second, tA, tB } = setup(true)
+      let placements = [first, second].map((layerId) => ({ layerId, trackId: tB }))
+      let anchorLayerId = first
+      let error: Record<string, unknown>
+      if (reason === 'duplicate' || reason === 'missing anchor') {
+        if (reason === 'duplicate') placements = [{ layerId: first, trackId: tA }, { layerId: first, trackId: tB }]
+        else anchorLayerId = 'absent-anchor'
+        error = { error: 'InvalidArgument', field: 'placements', detail: 'unique layers including the anchor are required' }
+      } else if (reason === 'missing track') {
+        placements[1].trackId = 'absent-track'
+        error = { error: 'TrackNotFound', track: 'absent-track' }
+      } else if (reason === 'other composition') {
+        const other = Object.values(a.snapshot().compositions).find((c) => c.id !== a.snapshot().root_id)!
+        placements[1].trackId = other.tracks[0].id
+        error = { error: 'CrossCompositionMove', layer: second, from: a.snapshot().root_id, to: other.id }
+      } else if (reason === 'locked destination') {
+        expect(a.dispatch('update_track_flags', { track: tB, patch: { locked: true } }).ok).toBe(true)
+        error = { error: 'TrackLocked', track: tB }
+      } else {
+        expect(a.dispatch('update_layer', { layer: second, patch: { locked: true } }).ok).toBe(true)
+        error = { error: 'InvalidArgument', field: 'placements', detail: `layer ${second} is locked` }
+      }
+      const before = a.snapshot()
+      const history = a.historyStatus()
+      expect(a.command('move_layers', { placements, anchorLayerId, anchorTStartUs: 3 * S })).toEqual({ ok: false, error })
+      expect(a.snapshot()).toEqual(before)
+      expect(a.historyStatus()).toEqual(history)
+    },
+  )
+
+  it('moves a later clip past a stationary predecessor and prunes only the emptied source track', () => {
+    const { a, tA, tB, first, second } = setup()
+    const source = idOf(a.dispatch('add_track', {}))
+    const third = idOf(a.dispatch('add_layer', { track: source, kind: 'color', t_start_us: 4 * S, t_end_us: 5 * S }))
+    const before = a.snapshot()
+    expect(a.command('move_layers', {
+      placements: [{ layerId: second, trackId: tB }, { layerId: third, trackId: tB }],
+      anchorLayerId: second, anchorTStartUs: 3 * S,
+    }).ok).toBe(true)
+    const c = root(a.snapshot())
+    expect(c.tracks.find((t) => t.id === tA)?.layers.map((l) => [l.id, l.t_start_us, l.t_end_us])).toEqual([[first, S, 2 * S]])
+    expect(c.tracks.find((t) => t.id === tB)?.layers.map((l) => [l.id, l.t_start_us, l.t_end_us])).toEqual([[second, 3 * S, 4 * S], [third, 5 * S, 6 * S]])
+    expect(c.tracks.some((t) => t.id === source)).toBe(false)
+    expect(a.dispatch('undo', {}).ok).toBe(true)
+    expect(a.snapshot()).toEqual(before)
   })
 })
