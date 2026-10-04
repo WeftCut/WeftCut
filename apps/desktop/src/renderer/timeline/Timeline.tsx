@@ -1825,8 +1825,14 @@ export function Timeline({
           >
             <div ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: HEADER_COL_PX + widthPx }}>
               <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
-              {/* Reserve the first lane's upward link badge inside the viewport. */}
-              {firstTrackHasLinkBadge && <div className="h-3 shrink-0" />}
+              {/* Reserve the first lane's upward link badge inside the viewport.
+                  Carry the sticky header through this gap so scrolled badges
+                  cannot paint or receive clicks behind the header column. */}
+              {firstTrackHasLinkBadge && (
+                <div className="grid h-3 shrink-0" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
+                  <div className="sticky left-0 z-10 border-r border-border bg-card" />
+                </div>
+              )}
               {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
               is the top (see `docs/data-model.md`). `visualOrderedTracks`

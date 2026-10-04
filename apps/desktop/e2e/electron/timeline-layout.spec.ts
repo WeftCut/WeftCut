@@ -1,5 +1,53 @@
 import { expect, test } from '@playwright/test'
-import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, rootSummary, tmpDir } from './helpers/driver'
+
+test('link badges stay outside the sticky header column when horizontally scrolled', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-link-header-'), name: 'link-header',
+      canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+    })
+    await expect(page.locator('.splash-screen')).toHaveCount(0)
+    const { tracks } = await rootSummary<{ tracks: Array<{ id: string; role: string | null }> }>(page)
+    const topTrack = tracks.find(track => track.role === 'b-roll')!
+    const anchor = await invokeCmd<string>(page, 'add_color_layer', {
+      trackId: topTrack.id, tStartUs: 0, durationUs: 10_000_000,
+    })
+    const hidden = await invokeCmd<string>(page, 'add_color_layer', {
+      tStartUs: 0, durationUs: 10_000_000,
+    })
+    await invokeCmd(page, 'links_create', { layerIds: [anchor, hidden] })
+    const badge = page.getByTestId('link-hidden-badge')
+    await expect(badge).toHaveText('+1')
+    const viewport = page.getByTestId('timeline-track-viewport')
+    await viewport.evaluate(el => { el.scrollLeft = 80 })
+    await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBe(80)
+    // The badge's box moves behind the header, but its paint and pointer
+    // target must be covered even in the reserved space above the first row.
+    const covered = await badge.evaluate(el => {
+      const box = el.getBoundingClientRect()
+      const header = document.querySelector('[data-testid="track-header"]')!.getBoundingClientRect()
+      const x = box.left + box.width / 2
+      const y = box.top + box.height / 2
+      return {
+        insideHeaderColumn: x > header.left && x < header.right,
+        badgeHit: !!document.elementFromPoint(x, y)?.closest('[data-testid="link-tab-anchor"]'),
+      }
+    })
+    await page.getByTestId('timeline-layout').screenshot({ path: test.info().outputPath('link-header.png') })
+    expect(covered).toEqual({ insideHeaderColumn: true, badgeHit: false })
+
+    // Preserve the upward tab and its reveal action in the time area.
+    await viewport.evaluate(el => { el.scrollLeft = 0 })
+    const box = (await badge.boundingBox())!
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await expect(page.locator(`.timeline-layer[data-layer-id="${hidden}"]`)).toBeVisible()
+    await expect(badge).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
 
 test('playhead stays continuous from the ruler through fixed rows to the tracks', async () => {
   const { app, page } = await launchApp()

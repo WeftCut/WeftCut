@@ -87,14 +87,15 @@ export function DropStripSeam({ intoLanePx }: { intoLanePx: number }) {
 /// header beneath it loses its lane. The insertion arrow is a drag landmark,
 /// with a tooltip explaining how to spawn a lane (ADR 0042). It sits at the
 /// bottom of the hit row (`items-end`) so leftover pixels fall above the icon, not as a
-/// gutter between the strip and the first track. The dashed rule itself is the
-/// overlay `DropStripSeam` Timeline mounts after this cell.
+/// gutter between the strip and the first track. Its bottom border separates
+/// the fixed insertion control from the scrolling track headers; the time area
+/// keeps the dashed `DropStripSeam` Timeline mounts after this cell.
 export function DropStripHeader() {
   const { t } = useTranslation();
   return (
     <div
       data-testid="timeline-drop-strip-header"
-      className="relative flex items-end justify-center bg-card pb-px"
+      className="relative flex items-end justify-center border-b border-border bg-card pb-px"
       style={{ height: DROP_STRIP_HEIGHT_PX }}
       title={t("timeline.drop_spawn_drag_hint")}
     >
