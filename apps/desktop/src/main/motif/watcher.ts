@@ -39,7 +39,7 @@ export interface MotifWatcher { close(): void }
  *  Recursive watch is supported on the ship targets (Windows/macOS); on Linux
  *  dev it throws, so fall back to a shallow watch on the root (top-level
  *  <id>/ dirs still fire). The e2e gate is local-only on a ship target. */
-export function spawnMotifWatcher(root: string, onChange: () => void): MotifWatcher {
+export function spawnMotifWatcher(root: string, onChange: () => void, linkedRoots:()=>string[]=()=>[]): MotifWatcher {
   mkdirSync(root, { recursive: true })
   // Watch the canonical long-name path, not the spelling the caller holds.
   // Windows reports events under the long name, and libuv (1.52+, so Node
@@ -58,7 +58,20 @@ export function spawnMotifWatcher(root: string, onChange: () => void): MotifWatc
   } catch {
     watcher = watch(canonical)
   }
-  watcher.on('change', () => deb.signal())
+  watcher.on('change', (_event, filename) => {
+    if(String(filename??'').replaceAll('\\','/').startsWith('.transfers/'))return
+    deb.signal()
+  })
   watcher.on('error', () => deb.signal())
-  return { close() { deb.cancel(); watcher.close() } }
+  const linked=new Map<string,FSWatcher>()
+  const refresh=()=>{
+    const roots=new Set(linkedRoots())
+    for(const [dir,watcher] of linked)if(!roots.has(dir)){watcher.close();linked.delete(dir)}
+    for(const dir of roots)if(!linked.has(dir)){
+      try{const watcher=watch(dir,{recursive:true},()=>deb.signal());watcher.on('error',()=>{watcher.close();linked.delete(dir);deb.signal()});linked.set(dir,watcher);deb.signal()}
+      catch{deb.signal()}
+    }
+  }
+  const timer=setInterval(refresh,1000);timer.unref();refresh()
+  return { close() { clearInterval(timer);deb.cancel();watcher.close();for(const w of linked.values())w.close() } }
 }

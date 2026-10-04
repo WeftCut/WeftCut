@@ -88,7 +88,7 @@ const SLOW_OP_MS = 250
 /** Strings this long are elided out of `details` before the payload crosses to
  *  Rust. `redact_and_cap` (`native/src/logs/redact.rs`) discards the WHOLE
  *  object over 4 KB and substitutes a preview stub, so one oversized arg —
- *  `write_motif_draft`'s `html` body, say — would
+ *  `update_motif_files`' file text, say — would
  *  otherwise take `tool` and every other key down with it. */
 const ELIDE_MAX_BYTES = 512
 

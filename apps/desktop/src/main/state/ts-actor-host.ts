@@ -344,8 +344,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   /** Best-effort refresh the actor's user motif layer from list_motifs.
    *  Called on start() and after motif-store-mutating hybrid channels
-   *  (install_motif, delete_motif, write_motif_draft, amend_motif_draft,
-   *  create_edit_draft, import_motif). A refresh failure must never abort. */
+   *  (install_motif, delete_motif, open_motif_draft, update_motif_files).
+   *  A refresh failure must never abort. */
   function refreshMotifCatalog(): void {
     deps.listMotifs?.().then((j) => {
       actor.setUserMotifManifests(manifestsFromList(JSON.parse(j) as unknown[]))

@@ -11,7 +11,7 @@ vi.mock('./auth.js', () => ({
   saveAuth: () => {},
   rotateToken: (a: { token: string; port: number }) => ({ ...a, token: 'next-token' }),
 }))
-// preview_motif_draft's route ends in a real CDP frame capture. Nothing here
+// preview_motif's route ends in a real CDP frame capture. Nothing here
 // reaches it; the stub is what keeps importing the host cheap.
 vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => '' }))
 

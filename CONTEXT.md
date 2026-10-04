@@ -763,6 +763,18 @@ agent-authored Motifs are the same kind of document on the same render path;
 placed, one is a `Motif` layer whose props are its entire instance state.
 _Avoid_: template (that was the SVG predecessor), overlay, animation preset
 
+**Motif authoring**:
+
+- **Motif draft**: a retained, editable package, optionally linked to an external
+  working directory. Reopening the same directory reuses its draft identity.
+- **Motif revision**: the content hash of a complete validated package. File
+  updates and publication use it to reject stale writes.
+- **Installed Motif**: a published copy with its own identity and version.
+  Publication preserves the draft; subsequent directory edits affect the draft
+  until explicitly published. Copy provenance does not imply an update target.
+
+See [ADR 0094](docs/adr/0094-motif-directory-workspaces-and-file-operations.md).
+
 **Motif cover**:
 A saved image of a Motif's default appearance used by the library. Derived
 from the package and regenerated when its content or capture runtime changes;

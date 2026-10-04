@@ -69,14 +69,14 @@ test('Motif compressed models: Draco, ETC1S and UASTC render, seek and rebuild t
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), {
       requestInit: {headers:{Authorization:`Bearer ${info.bearer_token}`}},
     }))
-    expect((await client.listTools()).tools.map(t => t.name)).toContain('import_motif')
+    expect((await client.listTools()).tools.map(t => t.name)).toContain('open_motif_draft')
     const invoke = (command: string, args: Record<string, unknown> = {}) => page.evaluate(
       ({ command, args }) => (window as any).api.backend.invoke(command, args), { command, args })
     for (const texture of [undefined, 'etc1s.ktx2', 'uastc.ktx2']) {
       const files = packageFiles(texture)
       const zip = path.join(tmpDir('motif-codec-zip-'), 'model.zip')
       writeFileSync(zip, zipSync(files))
-      const imported = await client.callTool({name:'import_motif',arguments:{path:zip}})
+      const imported = await client.callTool({name:'open_motif_draft',arguments:{source:{kind:'zip',path:zip}}})
       expect(imported.isError).toBeFalsy()
       const id = JSON.parse((imported.content as Array<{text:string}>)[0].text).draft_id as string
       const catalog = await invoke('list_motifs')
@@ -118,7 +118,7 @@ test('Motif decoder failures report setup errors and a healthy package can rende
       if (failure === 'corrupt-basis') files['assets/etc1s.ktx2'] = Buffer.from('not a KTX2 texture')
       const zip = path.join(tmpDir('motif-codec-failure-'), 'model.zip')
       writeFileSync(zip, zipSync(files))
-      const id = await page.evaluate(path => (window as any).api.backend.invoke('import_motif', {path}), zip)
+      const id = await page.evaluate(async path => (await (window as any).api.backend.invoke('open_motif_draft', {source:{kind:'zip',path}})).draft_id, zip)
       const result = await page.evaluate(async id => {
         try {
           const png = await (window as any).api.backend.invoke('motif_capture_frame', {
@@ -171,7 +171,7 @@ test('Motif local and Blob workers retain offline CSP and deny JS eval', async (
   writeFileSync(zip, zipSync(files))
   const { app, page } = await launchApp()
   try {
-    const id = await page.evaluate(path => (window as any).api.backend.invoke('import_motif', {path}), zip)
+    const id = await page.evaluate(async path => (await (window as any).api.backend.invoke('open_motif_draft', {source:{kind:'zip',path}})).draft_id, zip)
     await page.evaluate(id => (window as any).api.backend.invoke('motif_capture_frame', {
       motifId:id,tSec:0,propsJson:'{}',width:64,height:64,settleRafs:2,contentHash:'confinement',
     }), id)
@@ -194,7 +194,7 @@ test('Motif Draco + Basis package animates through the export frame stream', asy
   const { app, page } = await launchApp()
   try {
     await newProject(page, { parentFolder: tmpDir('motif-codec-project-'), name: 'compressed-model', canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 } })
-    const motifId = await page.evaluate(path => (window as any).api.backend.invoke('import_motif', { path }), zip)
+    const motifId = await page.evaluate(async path => (await (window as any).api.backend.invoke('open_motif_draft', {source:{kind:'zip',path}})).draft_id, zip)
     const output = path.join(tmpDir('motif-codec-video-'), 'model.mp4')
     const result = await driveExport(page, { motifId, outputAbsPath: output, durationUs: 1_000_000 }, { hook: 'exportMotifClip', timeout: 150_000 })
     expect(result.done.ok, result.done.error).toBe(true)

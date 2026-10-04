@@ -403,7 +403,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
     if (pa.fade_phase && 'fade_out_us' in patch && patch.fade_out_us !== undefined) pa.fade_phase.out = { num: 0, den: 1 };
   }
   // A Motif's props are checked against its manifest BEFORE the merge, the
-  // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
+  // way `add_motif_layer` and `preview_motif` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
   // render that ignores it. The manifest is the motif the layer will NAME once
   // the patch lands: a rebind (a new `motif_id`) starts from the patch's props

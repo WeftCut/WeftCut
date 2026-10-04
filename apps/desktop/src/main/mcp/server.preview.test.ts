@@ -1,5 +1,5 @@
 // apps/desktop/src/main/mcp/server.preview.test.ts
-// `preview_motif_draft` renders what `add_motif_layer` would place: the props
+// `preview_motif` renders what `add_motif_layer` would place: the props
 // go through the same canonicaliser the placement uses, so an omitted prop
 // takes its manifest default (a lower third previews WITH its text), and an
 // unknown id or prop is refused before any capture.
@@ -35,10 +35,10 @@ function host() {
 const backend = { mcpCallTool: async () => { throw new Error('rust must not be called') }, mcpReadResource: async () => '{}', mcpCatalog: async () => RUST_CATALOG } as any
 type Res = { isError?: boolean; content: Array<{ type: string; text?: string; data?: string }> }
 
-describe('preview_motif_draft renders what add_motif_layer would place', () => {
+describe('preview_motif renders what add_motif_layer would place', () => {
   it('omitted props take the manifest defaults, and the size is the motif\'s own', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif_draft', { id: 'lower-third', t_sec: 1 }) as Res
+    const out = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 1 }) as Res
     expect(out.isError).toBeFalsy()
     expect(out.content[0]).toMatchObject({ type: 'image', data: 'iVBOR' })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({
@@ -49,13 +49,13 @@ describe('preview_motif_draft renders what add_motif_layer would place', () => {
 
   it('a partial props object is filled from the defaults', async () => {
     capture.mockClear()
-    await handleCallTool(backend, host, 'preview_motif_draft', { id: 'lower-third', t_sec: 0, props: { title: 'Ada' } })
+    await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 0, props: { title: 'Ada' } })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ propsJson: JSON.stringify({ subtitle: 'Role', title: 'Ada' }) }))
   })
 
   it('an unknown prop is refused naming it, before any capture', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif_draft', { id: 'lower-third', t_sec: 0, props: { titel: 'x' } }) as Res
+    const out = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 0, props: { titel: 'x' } }) as Res
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain('titel')
     expect(out.content[0].text).toContain('props_schema')
@@ -64,7 +64,7 @@ describe('preview_motif_draft renders what add_motif_layer would place', () => {
 
   it('an unknown motif id is refused naming list_motifs, before any capture', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif_draft', { id: 'title-card', t_sec: 0 }) as Res
+    const out = await handleCallTool(backend, host, 'preview_motif', { id: 'title-card', t_sec: 0 }) as Res
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain("'title-card'")
     expect(out.content[0].text).toContain('list_motifs')

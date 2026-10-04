@@ -1,3 +1,4 @@
+import {createMotifDraft,publishMotifDraft} from './helpers/motif'
 // e2e gate: determinism capture harness.
 //
 // Captures fixed frames from built-in motifs (positive cases) and a synthetic
@@ -127,7 +128,6 @@ motif.define({
 });
 <\/script></body></html>`
 
-    // write_motif_draft — napi expects { args: { manifest, html } }
     const manifest = {
       id: 'det-jitter',
       name: 'Det Jitter',
@@ -136,17 +136,10 @@ motif.define({
       default_duration_s: 2,
       props_schema: {},
     }
-    const draftId = (await page.evaluate(
-      ([ch, a]) => (window as any).api.backend.invoke(ch, a),
-      ['write_motif_draft', { args: { manifest, html: jitterHtml } }] as const,
-    )) as string
+    const draftId = await createMotifDraft(page, manifest, jitterHtml)
     console.log('[det] jitter draft id:', draftId)
 
-    // install_motif — napi expects { args: { draft_id, mode: { kind: "new" } } }
-    const publishedId = (await page.evaluate(
-      ([ch, a]) => (window as any).api.backend.invoke(ch, a),
-      ['install_motif', { args: { draft_id: draftId, mode: { kind: 'new' } } }] as const,
-    )) as string
+    const publishedId = await publishMotifDraft(page, draftId)
     console.log('[det] jitter published id:', publishedId)
 
     const jb64 = await cap(publishedId, 0.5, 480, 480)

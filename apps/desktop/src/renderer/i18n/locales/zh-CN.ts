@@ -1212,9 +1212,15 @@ const zhCN: Resources = {
     "dry_run": "试运行",
     // Motif 创作工具（`main/mcp/motifToolDefs.ts`）。
     "list_motifs": "列出 Motif",
-    "get_motif_source": "读取 Motif 源码",
-    "write_motif_draft": "写入 Motif 草稿",
-    "preview_motif_draft": "预览 Motif 草稿",
+    "read_motif": "读取 Motif 源码",
+    "open_motif_draft": "打开 Motif 草稿",
+    "update_motif_files": "编辑 Motif 文件",
+    "export_motif": "导出 Motif",
+    "begin_file_upload": "开始文件上传",
+    "write_file_chunk": "上传文件分块",
+    "read_file_transfer": "读取文件分块",
+    "delete_file_transfer": "删除临时文件",
+    "preview_motif": "预览 Motif 草稿",
     "install_motif": "安装 Motif",
     "delete_motif": "删除 Motif"
   }

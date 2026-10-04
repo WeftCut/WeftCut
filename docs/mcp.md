@@ -246,8 +246,9 @@ is not the signal; it survives Close.
 
 **No project open ⇒ every project tool refuses.** With WeftCut on its start
 screen, or after Close Project, a call answers only if it is app-scoped —
-`ping`, the Motif library tools (`list_motifs`, `get_motif_source`,
-`write_motif_draft`, `preview_motif_draft`, `install_motif`, `delete_motif`),
+`ping`, the Motif library and temporary file-transfer tools (including
+`list_motifs`, `open_motif_draft`, `read_motif`, `update_motif_files`,
+`preview_motif`, `install_motif`, `export_motif`, `delete_motif`),
 `open_project`, `create_project`, and `read_project` for `view: "session"` or
 `view: "effects"` — and a resource read answers only for `project://session`,
 `effects://catalog` and `motifs://current`. Everything else is refused with
@@ -712,14 +713,20 @@ agent-created marker is free.
   `project://settings`.
 
 Catalog:
-- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, has_params_ui, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update); `has_params_ui` reports whether the Motif ships its own parameter page (see [motifs.md](motifs.md) "Parameter UI") — a draft without one gets the generated fallback form, which is the normal agent path. Inspect `props_schema` before calling `add_motif_layer`. Drafts are placeable immediately for preview.
+- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, has_params_ui, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (their last publication), `source_id` (copy provenance), `directory` and `diagnostic`; provenance alone does not select a publication target; `has_params_ui` reports whether the Motif ships its own parameter page (see [motifs.md](motifs.md) "Parameter UI") — a draft without one gets the generated fallback form, which is the normal agent path. Inspect `props_schema` before calling `add_motif_layer`. Drafts are placeable immediately for preview.
 
-Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
-- `get_motif_source { id }` → `{ manifest, html }` — any built-in, installed, or draft.
-- `write_motif_draft { manifest, html, from? }` → draft id. `from` records an existing Motif as the update target.
-- `preview_motif_draft { id, t_sec, width?, height?, props? }` → base64 PNG of one frame. `props` are canonicalised against the manifest exactly as `add_motif_layer`'s are: omitted keys take the schema defaults, an unknown key is refused naming it, an unknown `id` is refused naming `list_motifs`.
-- `install_motif { draft_id, mode: new | update, target_id? }` — publish; `update` republishes over `target_id`, or over the target the draft recorded at `write_motif_draft { from }` when `target_id` is omitted, and is refused when it has neither (naming both ways to supply one); it bumps the version and rebinds placed layers.
-- `delete_motif { id }` — remove a user Motif. Built-ins are refused, and so is an id that names neither an installed Motif nor a draft — a typo must not read as a removal.
+Motif authoring (see [motif-workspaces.md](motif-workspaces.md)):
+- `open_motif_draft { source }` — directory association, Motif/ZIP copy or empty package; returns draft id and revision.
+- `read_motif { id, path?, encoding? }` — overview/file inventory, UTF-8 text, or downloadable file reference.
+- `update_motif_files { draft_id, expected_revision, files }` — one validated batch of file writes/deletions.
+- `preview_motif { id, t_sec, props?, width?, height?, expected_revision? }` — PNG and exact revision; rejects invalid linked sources.
+- `install_motif { draft_id, expected_revision, target_id?, expected_version? }` — publish a snapshot and retain the draft; an explicit replacement target requires its current version.
+- `export_motif { id, expected_revision?, path? }` — complete ZIP as a temporary file reference or a local saved file.
+- `delete_motif { id }` — remove managed content or unlink a directory without deleting its source.
+- `begin_file_upload { size, sha256 }` — reserve a temporary upload, up to 256 MiB.
+- `write_file_chunk { file_id, offset, base64 }` — retryable chunks, at most 256 KiB decoded; final bytes verify SHA-256.
+- `read_file_transfer { file_id, offset?, length? }` — bounded download and upload status.
+- `delete_file_transfer { file_id }` — release a transfer without changing attached draft files.
 
 ### Workflow / safety
 

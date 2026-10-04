@@ -65,7 +65,7 @@ describe('the read set', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
     expect(byAnnotation).toEqual(byRegex)
-    for (const n of ['read_project', 'dry_run', 'get_param_track', 'list_checkpoints', 'preview_motif_draft', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
+    for (const n of ['read_project', 'dry_run', 'get_param_track', 'list_checkpoints', 'preview_motif', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
   })
 
   it('every TS read tool commits nothing — the snapshot and the history are what they were', () => {

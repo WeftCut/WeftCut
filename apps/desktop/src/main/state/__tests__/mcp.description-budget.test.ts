@@ -55,7 +55,9 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  the schema, not trimming meaning. */
 // +2 KB for analyze_audio: a bounded source window, waveform summary and
 // measured onset/energy candidates with explicit source-time semantics.
-const CATALOG_BYTE_BUDGET = 128_000
+// +6 KB: Motif source unions, revision-safe file transactions and bounded generic
+// upload/download contracts replace HTML-only drafting (ADR 0094).
+const CATALOG_BYTE_BUDGET = 134_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 

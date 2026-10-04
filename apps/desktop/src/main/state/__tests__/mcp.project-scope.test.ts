@@ -32,8 +32,7 @@ const backend = { mcpCallTool: async () => { throw new Error('a refused call mus
 
 const PINNED_APP_SCOPE = [
   'ping',
-  'list_motifs', 'get_motif_source', 'write_motif_draft', 'preview_motif_draft', 'install_motif', 'delete_motif',
-  'import_motif',
+  'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'preview_motif',
   'open_project', 'create_project',
 ]
 

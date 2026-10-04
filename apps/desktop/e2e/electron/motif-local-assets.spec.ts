@@ -102,10 +102,10 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     const invoke = <T>(command: string, args: Record<string, unknown> = {}) => page.evaluate(
       async ({ command, args }) => (window as any).api.backend.invoke(command, args), { command, args },
     ) as Promise<T>
-    const sourceId = await invoke<string>('import_motif', { path: sourceZip })
+    const sourceId = (await invoke<{draft_id:string}>('open_motif_draft', { source:{kind:'zip',path:sourceZip} })).draft_id
     const archive = path.join(tmpDir('motif-zip-'), 'scene.zip')
     await invoke('export_motif', { id: sourceId, path: archive })
-    const id = await invoke<string>('import_motif', { path: archive })
+    const id = (await invoke<{draft_id:string}>('open_motif_draft', { source:{kind:'zip',path:archive} })).draft_id
     expect(id).not.toBe(sourceId)
     const catalog = () => invoke<Array<{ id: string; content_hash: string }>>('list_motifs')
     const hash = async () => (await catalog()).find(m => m.id === id)!.content_hash

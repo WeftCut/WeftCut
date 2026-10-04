@@ -74,6 +74,10 @@ offscreen capture window, and its security rests on **two orthogonal axes**:
   symbolic links/junctions; private draft metadata (`target`) is not served.
   Responses use `Cache-Control: no-store` so companion URLs cannot outlive an
   asset edit. Render hashes cover companion paths and bytes (ADR 0079).
+  Linked author directories are copied into validated app-owned snapshots;
+  they never become protocol roots. Capture navigation pins relative asset
+  URLs under a revision path. Temporary uploads have bounded size/chunks,
+  SHA-256 validation and quota/expiry; their ids do not accept filesystem paths.
 
   Decoder Workers are retired after setup, which has a 30-second budget;
   frame/CDP operations retain 5-second deadlines. The runtime's managed

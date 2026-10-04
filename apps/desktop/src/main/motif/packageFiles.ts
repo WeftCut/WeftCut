@@ -30,6 +30,7 @@ export function readMotifFile(root: string, rel: string): Buffer | null {
  * `target` is the store's private Update metadata, never a package asset. */
 export function readMotifDirectory(root: string): MotifFile[] {
   const files: MotifFile[] = []
+  let total = 0
   if (lstatSync(root).isSymbolicLink()) throw new Error('Motif directory cannot be a symbolic link')
   function visit(dir: string, prefix: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -39,6 +40,8 @@ export function readMotifDirectory(root: string): MotifFile[] {
       if (entry.isSymbolicLink()) throw new Error(`Motif assets cannot be symbolic links: ${rel}`)
       if (entry.isDirectory()) visit(path.join(dir, entry.name), rel + '/')
       else if (entry.isFile()) {
+        total += lstatSync(path.join(dir, entry.name)).size
+        if (total > 256 * 1024 * 1024 || files.length >= 10_000) throw new Error('Motif package exceeds 256 MiB / 10000 files')
         const bytes = readMotifFile(root, rel)
         if (!bytes) throw new Error(`Cannot read Motif asset: ${rel}`)
         files.push({ path: rel, bytes })

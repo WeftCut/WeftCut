@@ -1,171 +1,41 @@
-// apps/desktop/src/main/mcp/motifToolDefs.ts
-// TS-owned MCP tool defs + resource defs for the motif surface.
-// inputSchemas are TS-owned: all motif tool DEFS live here, and
-// rust-catalog-snapshot.json carries no motif arms (do not expect a regenerated
-// one to contain them). preview_motif_draft's def is TS-sourced like the others,
-// but its EXECUTION routes 'rust' (the CDP capture special-case in server.ts).
-//
-// Schemas carry no meta-schema / title envelope and no format hints: an agent
-// reads none of them, and every ListTools pays for them (mcp.description-budget).
-
-import { ANN_DESTRUCTIVE, ANN_READ, ANN_SET, ANN_WRITE, type ToolAnnotations } from '../state/mcp-commands.js'
-
+import { ANN_DESTRUCTIVE, ANN_READ, ANN_WRITE, type ToolAnnotations } from '../state/mcp-commands.js';
 export interface MotifToolDef {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-  annotations: ToolAnnotations
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: ToolAnnotations;
 }
-
 export interface MotifResourceDef {
-  uri: string
-  name?: string
-  description?: string
-  mimeType?: string
+    uri: string;
+    name?: string;
+    description?: string;
+    mimeType?: string;
 }
-
+const str = { type: 'string' }, integer = { type: 'integer', minimum: 0 };
+const descriptions: Record<string, string> = { id: 'Motif id.', status: 'Filter by lifecycle status.', source: 'Exactly one source variant.', kind: 'Source type.', path: 'Path relative to the Motif root.', name: 'Initial display name.', file_id: 'Temporary file transfer id.', encoding: 'text for UTF-8; file for a download id.', draft_id: 'Editable draft id.', expected_revision: 'Revision returned by open, read or preview.', files: 'Atomic batch of file changes.', text: 'Complete UTF-8 file contents.', delete: 'Remove this file.', t_sec: 'Absolute content time in seconds.', props: 'Instance values; missing keys use defaults.', width: 'Capture width in pixels.', height: 'Capture height in pixels.', target_id: 'Installed Motif to replace.', expected_version: 'Current version of the publication target.', size: 'Total file size in bytes.', sha256: 'Lowercase SHA-256 of the complete file.', offset: 'Zero-based byte offset.', base64: 'Canonical base64 chunk.', length: 'Maximum decoded bytes to read.' };
+const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', additionalProperties: false, properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, { description: descriptions[key], ...(value as object) }])), required });
+const localPath = { ...str, description: 'Absolute path on the app machine.' };
+const def = (name: string, annotations: ToolAnnotations, description: string, inputSchema: Record<string, unknown>): MotifToolDef => ({ name, annotations, description, inputSchema });
 export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
-  {
-    name: 'import_motif',
-    annotations: ANN_WRITE,
-    description: 'Import a local Motif ZIP (HTML and binary resources, max 256 MiB). Returns { draft_id }; previewable, not published.',
-    inputSchema: {
-      type: 'object', additionalProperties: false,
-      properties: { path: { type: 'string', description: 'Absolute ZIP path on the app machine.' } },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'list_motifs',
-    annotations: ANN_READ,
-    description:
-      'List every motif `add_motif_layer` can place — built-ins plus installed and draft user motifs. ' +
-      'Returns `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, ' +
-      'content_hash, has_params_ui, target_id? }]`; `status` is `builtin` | `installed` | `draft`. ' +
-      'Read `props_schema` before `add_motif_layer` — unknown prop keys reject. Drafts are placeable ' +
-      'immediately for preview.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'get_motif_source',
-    annotations: ANN_READ,
-    description:
-      'Read a Motif\'s source { manifest, html } — any built-in, installed, or draft. ' +
-      'Read this before editing so you can base your changes on the current source. ' +
-      '`id` comes from `list_motifs`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { description: 'The Motif id (from `list_motifs`).', type: 'string' },
-      },
-      required: ['id'],
-    },
-  },
-  {
-    name: 'write_motif_draft',
-    annotations: ANN_SET,
-    description:
-      'Write a Motif draft from { manifest, html }. Returns `{ draft_id }`. The draft is ' +
-      'placeable immediately (via `add_motif_layer`) for preview, and re-writable. `from` ' +
-      '(optional) records an existing Motif id as the draft\'s UPDATE target so a later ' +
-      '`install_motif {mode:\'update\'}` republishes over it; omit `from` for a brand-new ' +
-      'Motif (installs as new). The manifest\'s `id`/`version` are ignored — app-assigned. ' +
-      'Companion files are copied from `from` when present. Expose tweakable controls via `props_schema`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        from: {
-          description:
-            'Optional id of an existing Motif this draft will UPDATE on install (records it as the draft\'s target). Omit for a brand-new Motif (installs as new).',
-          type: 'string',
-        },
-        html: {
-          description:
-            'The HTML body. The manifest island is injected by the app; a `<script>motif.define({...})</script>` drives the render.',
-          type: 'string',
-        },
-        manifest: {
-          // `type` is load-bearing: an untyped field gets string-coerced by MCP
-          // clients, forcing agents to send the manifest as a JSON-encoded
-          // string (mcp.catalog-bijection.test.ts assertion 7 gates this).
-          type: 'object',
-          description:
-            'The manifest object (`id`/`version` are app-assigned and ignored): `{ name, size: [w, h], default_duration_s, props_schema, ... }` — copy a built-in\'s from `get_motif_source`.',
-        },
-      },
-      required: ['html', 'manifest'],
-    },
-  },
-  {
-    name: 'preview_motif_draft',
-    annotations: ANN_READ,
-    description:
-      'Render one frame of a Motif (draft / installed / built-in) as a base64 PNG, so you can SEE ' +
-      'your output and self-correct. `id`, `t_sec` (content time); optional `props` (default: the ' +
-      'manifest defaults) and `width`/`height` (default: the motif\'s own size). Needs the app\'s ' +
-      'preview runtime; errors rather than hangs when it is not ready.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { description: 'Motif id (draft / installed / built-in).', type: 'string' },
-        t_sec: { description: 'Content time in seconds to render (0 = first frame).', type: 'number' },
-        props: { type: 'object', description: 'Props; omitted or `{}` uses the manifest defaults.' },
-        width: { description: 'Render width; default the motif\'s manifest width.', minimum: 1, type: 'integer' },
-        height: { description: 'Render height; default the motif\'s manifest height.', minimum: 1, type: 'integer' },
-      },
-      required: ['id', 't_sec'],
-    },
-  },
-  {
-    name: 'install_motif',
-    annotations: ANN_DESTRUCTIVE,
-    description:
-      'Install a draft. mode \'new\' publishes under the draft\'s own id; \'update\' ' +
-      'republishes over `target_id`, or over the target the draft recorded at `write_motif_draft { from }` ' +
-      'when `target_id` is omitted (refused when it has neither) — bumping the version so every placement ' +
-      're-renders, and rebinding + migrating current-project layers. Returns `{ motif_id }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        draft_id: {
-          description: 'The draft id (from `write_motif_draft`).',
-          type: 'string',
-        },
-        mode: {
-          description:
-            '"new" (publish under the draft\'s own id) or "update" (republish over `target_id`, else the draft\'s recorded target).',
-          type: 'string',
-          enum: ['new', 'update'],
-        },
-        target_id: {
-          description: 'For mode "update": the installed Motif to republish over. Omit to use the target the draft recorded (`write_motif_draft { from }`).',
-          type: 'string',
-        },
-      },
-      required: ['draft_id', 'mode'],
-    },
-  },
-  {
-    name: 'delete_motif',
-    annotations: ANN_DESTRUCTIVE,
-    description:
-      'Delete an installed or draft user Motif by id. Built-ins and unknown ids are refused ' +
-      '(`list_motifs` reports what exists). Placed layers referencing it degrade to an error placeholder.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { description: 'The Motif id (from `list_motifs`).', type: 'string' },
-      },
-      required: ['id'],
-    },
-  },
-]
-
-export const MOTIF_RESOURCE_DEFS: ReadonlyArray<MotifResourceDef> = [
-  {
-    uri: 'motifs://current',
-    name: 'Motif catalog',
-    description: 'Built-in, installed, and draft Motifs (html stripped). Re-fetch after motifs:changed events.',
-    mimeType: 'application/json',
-  },
-]
+    def('list_motifs', ANN_READ, 'List built-in, installed and draft Motifs with props schemas, revisions and diagnostics.', object({ status: { type: 'string', enum: ['builtin', 'installed', 'draft'] } })),
+    def('open_motif_draft', ANN_WRITE, 'Open a directory as a live draft, copy a Motif/ZIP, or start empty. Returns {draft_id,revision}. Directory opens reuse the draft; copies do not select a publication target.', object({ source: { type: 'object', oneOf: [
+                object({ kind: { const: 'directory' }, path: { ...str, description: 'Absolute package directory on the app machine.' } }, ['kind', 'path']),
+                object({ kind: { const: 'zip' }, path: localPath }, ['kind', 'path']),
+                object({ kind: { const: 'zip' }, file_id: str }, ['kind', 'file_id']),
+                object({ kind: { const: 'motif' }, id: str }, ['kind', 'id']),
+                object({ kind: { const: 'empty' }, name: str }, ['kind']),
+            ] } }, ['source'])),
+    def('read_motif', ANN_READ, 'Read manifest, revision and file inventory. With path: encoding=text returns UTF-8 (max 256 KiB); otherwise returns a downloadable file_id. Includes working-directory diagnostics.', object({ id: str, path: str, encoding: { type: 'string', enum: ['text', 'file'] } }, ['id'])),
+    def('update_motif_files', ANN_DESTRUCTIVE, 'Batch edit draft files; requires current expected_revision. Each entry adds/replaces text or an uploaded file_id, or deletes a path. The whole package must remain valid. Linked drafts write through to their directory.', object({ draft_id: str, expected_revision: str, files: { type: 'array', minItems: 1, maxItems: 10000, items: { type: 'object', oneOf: [
+                    object({ path: str, text: str }, ['path', 'text']), object({ path: str, file_id: str }, ['path', 'file_id']), object({ path: str, delete: { const: true } }, ['path', 'delete']),
+                ] } } }, ['draft_id', 'expected_revision', 'files'])),
+    def('preview_motif', ANN_READ, 'Render a Motif frame. Returns PNG plus the exact revision. Refreshes linked files first; refuses invalid directories or a mismatched expected_revision.', object({ id: str, t_sec: { type: 'number' }, props: { type: 'object' }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, expected_revision: str }, ['id', 't_sec'])),
+    def('install_motif', ANN_DESTRUCTIVE, 'Publish expected_revision and retain the draft. First publish creates a Motif; later publishes update its recorded target. To replace another installed Motif supply target_id and expected_version. Repeating the same publication does not bump its version.', object({ draft_id: str, expected_revision: str, target_id: str, expected_version: { type: 'integer', minimum: 1 } }, ['draft_id', 'expected_revision'])),
+    def('export_motif', ANN_WRITE, 'Export a complete ZIP snapshot. Returns file_id for download, or writes an absolute app-machine path when supplied. Refuses invalid linked content.', object({ id: str, expected_revision: str, path: localPath }, ['id'])),
+    def('delete_motif', ANN_DESTRUCTIVE, 'Delete a user Motif or draft; linked source directories are never deleted. Built-ins are refused. Referencing layers become missing-content placeholders.', object({ id: str }, ['id'])),
+    def('begin_file_upload', ANN_WRITE, 'Reserve a temporary file (max 256 MiB), declaring byte size and SHA-256. Returns file_id and chunk_bytes. Transfers expire after 24 hours; total quota is 512 MiB.', object({ size: { ...integer, maximum: 268435456 }, sha256: { ...str, pattern: '^[0-9a-f]{64}$' } }, ['size', 'sha256'])),
+    def('write_file_chunk', ANN_WRITE, 'Append a base64 chunk at byte offset (max 256 KiB decoded). Exact retries are safe. Final chunk verifies SHA-256; only complete files can be attached or imported.', object({ file_id: str, offset: integer, base64: str }, ['file_id', 'offset', 'base64'])),
+    def('read_file_transfer', ANN_READ, 'Read a bounded base64 range and transfer status. Returns next_offset, eof, received_bytes and complete; also supports resuming uploads.', object({ file_id: str, offset: integer, length: { type: 'integer', minimum: 1, maximum: 262144 } }, ['file_id'])),
+    def('delete_file_transfer', ANN_DESTRUCTIVE, 'Release a temporary transfer. Files already copied into drafts are unaffected.', object({ file_id: str }, ['file_id'])),
+];
+export const MOTIF_RESOURCE_DEFS: ReadonlyArray<MotifResourceDef> = [{ uri: 'motifs://current', name: 'Motif catalog', description: 'Built-in, installed and draft Motifs, without HTML.', mimeType: 'application/json' }];

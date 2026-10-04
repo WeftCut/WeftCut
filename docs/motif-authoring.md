@@ -147,7 +147,9 @@ The document renders in an offline, isolated capture host. Hard limits:
   HTTP(S), WebSocket and remote scripts remain blocked. Dedicated local/Blob
   Workers and WASM compilation support decoder initialization during `setup`.
   JavaScript eval remains blocked; use the official CSP-compatible Basis build.
-- **Import a snapshot.** **Import Motif** accepts only `.zip` packages, including
+- **Open a folder or import a snapshot.** Agents can associate an existing
+  package directory through `open_motif_draft`; changes are watched and mirrored
+  into validated render snapshots. **Import Motif** accepts `.zip` packages, including
   for single-file Motifs: put the HTML in the ZIP as `index.html`.
   ZIPs contain one Motif folder (or its contents
   directly at the ZIP root). The folder's index carries a manifest island, or
@@ -221,22 +223,17 @@ only switch. That page is a separate, sandboxed document with its own protocol,
 
 ## Authoring over MCP
 
-The MCP tools (`list_motifs`, `get_motif_source`, `write_motif_draft`, `import_motif`,
-`preview_motif_draft`, `install_motif`, `delete_motif`) carry their own
-per-tool contracts; the document-level facts that matter when writing:
+Use the directory/file workflow in [motif-workspaces.md](motif-workspaces.md).
+`open_motif_draft` accepts a linked directory, ZIP, existing Motif or an empty
+starting package. Directory edits are picked up automatically. For clients
+without filesystem access, use `read_motif` and `update_motif_files`, with
+bounded generic file transfers for binary content. All code and assets use the
+same interface; there is no model-specific import operation.
 
-- `write_motif_draft` takes `{ manifest, html }` with the html **not**
-  containing a manifest island — the app strips any present and injects the
-  canonical one (`<script type="application/json" id="motif-manifest">`).
-- The manifest is validated at write time (sane `size`, finite positive
-  durations, well-formed `props_schema`) — a bad manifest rejects the write
-  rather than failing at render.
-- A draft renders through the exact same capture path as an installed Motif,
-  and every source rewrite re-captures automatically.
-- Base a new Motif on the closest existing one: read its source with
-  `get_motif_source` and keep what already satisfies this contract.
-- `write_motif_draft { from }` copies that Motif's companion files into the new
-  draft as well as recording its Update target. The tool still accepts HTML,
-  not a binary resource upload; import new resource ZIPs through **Import Motif**
-  or `import_motif { path: <absolute ZIP path> }`. The latter returns `draft_id`
-  without publishing and is available without an open project.
+The external manifest.json is authoritative when present; otherwise index.html
+must contain a manifest island. The app assigns identity in its snapshots and
+does not rewrite a linked source directory merely to assign ids. File updates
+must leave a valid package. A source read supplies a revision; pass that revision
+to file updates and to `install_motif` after reviewing `preview_motif`.
+Publishing preserves the draft. Copying an existing Motif does not authorize or
+select an overwrite target. Set that explicitly when publishing an update.

@@ -37,6 +37,8 @@ export interface Manifest {
   content_hash?: string;
   status?: "builtin" | "installed" | "draft";
   target_id?: string;
+  source_id?: string;
+  diagnostic?: string;
   fonts?: Array<{ family: string; file: string; weight?: number; style?: string }>;
   /// Whether a `params.html` sits next to this motif's `index.html`. Payload
   /// decoration stamped by the catalog (main side is the only one that can stat

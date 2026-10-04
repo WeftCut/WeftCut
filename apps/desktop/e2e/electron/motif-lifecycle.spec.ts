@@ -1,3 +1,4 @@
+import {createMotifDraft,publishMotifDraft} from './helpers/motif'
 // e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload —
 // sections A, B and C below, in that order.
 //
@@ -111,11 +112,11 @@ async function waitForMotifInCatalog(
 
 // ── Section A: authoring lifecycle ─────────────────────────────────────────────
 
-test('motif authoring: write_motif_draft → install → list → delete', async () => {
+test('motif authoring: open_motif_draft → install → list → delete', async () => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
-    // write_motif_draft — the motif tool expects { args: { manifest, html } }
+    // open_motif_draft — the motif tool expects { args: { manifest, html } }
     const manifest = {
       id: 'e2e-lifecycle-draft', // overwritten by app; just needs a name field
       name: 'E2E Lifecycle Draft',
@@ -131,15 +132,13 @@ test('motif authoring: write_motif_draft → install → list → delete', async
       `</head><body><div id="box"></div>` +
       `<script>motif.define({ setup() {} });</script></body></html>`
 
-    const draftId = await invoke(page, 'write_motif_draft', { args: { manifest, html } })
+    const draftId = await createMotifDraft(page,manifest,html)
     expect(typeof draftId).toBe('string')
     expect((draftId as string).length).toBeGreaterThan(0)
     console.log('[lifecycle] draft id:', draftId)
 
     // install_motif (New mode) — the motif tool expects { args: { draft_id, mode: { kind: "new" } } }
-    const publishedId = await invoke(page, 'install_motif', {
-      args: { draft_id: draftId, mode: { kind: 'new' } },
-    })
+    const publishedId = await publishMotifDraft(page,draftId)
     expect(typeof publishedId).toBe('string')
     expect((publishedId as string).length).toBeGreaterThan(0)
     console.log('[lifecycle] published id:', publishedId)

@@ -5,6 +5,7 @@ import {
 import path from "node:path";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
 import { motifFileSegments, readMotifFile, readMotifDirectory, type MotifFile } from './packageFiles';
+import { motifContentHash } from './contentHash';
 
 export const DRAFTS_DIR = "drafts";
 
@@ -20,9 +21,18 @@ type MotifSource = { manifest: Manifest; html: string };
 
 /** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
 export class UserMotifStore {
+  private pinned = new Map<string, Map<string, Buffer>>();
   constructor(private readonly _root: string) {}
 
   root(): string { return this._root; }
+  assertRenderable(id:string):void {
+    if(motifFileSegments(id)?.length!==1)return;
+    const file=path.join(this._root,'.workspaces',id+'.json');
+    if(existsSync(file)){
+      const diagnostic=JSON.parse(readFileSync(file,'utf8')).diagnostic;
+      if(diagnostic)throw new Error('Motif working directory is invalid: '+diagnostic);
+    }
+  }
   private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }
 
   /** Choose one complete package; never fill missing published assets from a draft. */
@@ -35,9 +45,25 @@ export class UserMotifStore {
   }
 
   readFile(id: string, rel: string): Buffer | null {
+    const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
+    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.get(revision[2]!) ?? null;
     if (!motifFileSegments(rel) || rel.toLowerCase() === 'target') return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
+  }
+
+  /** Two navigation snapshots bound retained memory; companion URLs use the
+   * revision directory so a source save cannot mix old HTML with new assets. */
+  pinPackage(id:string, revision:string): boolean {
+    const key=`${id}/${revision}`;
+    if(this.pinned.has(key))return true;
+    const source=this.getMotif(id);
+    if(!source)return false;
+    const files=this.packageFiles(id);
+    if(motifContentHash(source.manifest,source.html,files)!==revision)throw new Error('Motif revision changed before capture; refresh the catalog');
+    this.pinned.set(key,new Map(files.map(f=>[f.path,f.bytes])));
+    while(this.pinned.size>2)this.pinned.delete(this.pinned.keys().next().value!);
+    return true;
   }
 
   packageFiles(id: string): MotifFile[] {

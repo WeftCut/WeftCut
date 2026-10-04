@@ -1402,9 +1402,15 @@ const enUS = {
     "dry_run": "Dry run",
     // Motif authoring tools (`main/mcp/motifToolDefs.ts`).
     "list_motifs": "List motifs",
-    "get_motif_source": "Read motif source",
-    "write_motif_draft": "Write motif draft",
-    "preview_motif_draft": "Preview motif draft",
+    "read_motif": "Read motif source",
+    "open_motif_draft": "Open Motif draft",
+    "update_motif_files": "Edit Motif files",
+    "export_motif": "Export Motif",
+    "begin_file_upload": "Begin file upload",
+    "write_file_chunk": "Upload file chunk",
+    "read_file_transfer": "Read file transfer",
+    "delete_file_transfer": "Delete file transfer",
+    "preview_motif": "Preview motif draft",
     "install_motif": "Install motif",
     "delete_motif": "Delete motif"
   }

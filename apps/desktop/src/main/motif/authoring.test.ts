@@ -6,7 +6,7 @@ import { UserMotifStore } from './store'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
 import { builtinMotifs, getMotifSource, motifToPayload, listMotifsInner, type BuiltinMotif } from './authoring'
 import { motifContentHash } from './contentHash'
-import { readMotifDirectory } from './packageFiles'
+
 
 /** Minimal manifest factory. */
 function m(name: string, id = 'ignored'): Manifest {
@@ -151,154 +151,7 @@ describe('builtinMotifs', () => {
   })
 })
 
-import {
-  writeMotifDraftCore, amendDraftHtml, createEditDraftCore, importMotifPackage, deleteMotifCore,
-} from './authoring'
-import { BUILTIN_IDS } from '../../shared/motifs/catalog'
-
-describe('writeMotifDraftCore', () => {
-  it('mints a unique final-ready id, forces version 1, ignores claimed id', () => {
-    const man = { ...m('Foo', 'claimed'), version: 9 }
-    const id = writeMotifDraftCore(store, man, '<head></head><body>B<script>motif.define({setup(){}})</script></body>', null)
-    expect(id).not.toBe('claimed')
-    const d = store.getDraft(id)!
-    expect(d.manifest.id).toBe(id); expect(d.manifest.version).toBe(1); expect(d.html).toContain('B')
-  })
-  it('records the Update target when `from` is provided', () => {
-    const id = writeMotifDraftCore(store, m('Foo'), '<head></head><body>x</body>', 'countdown')
-    expect(store.readDraftTarget(id)).toBe('countdown')
-  })
-  it('rejects an invalid manifest (zero size)', () => {
-    expect(() => writeMotifDraftCore(store, { ...m('Bad'), size: [0, 0] }, '<body>x</body>', null)).toThrow()
-  })
-  it('draft id is unique vs published AND drafts', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
-    const id = writeMotifDraftCore(store, m('Foo'), '<head></head><body>x</body>', null)
-    expect(id).not.toBe('foo'); expect(id).toBe('foo-2')
-  })
-})
-
-describe('amendDraftHtml', () => {
-  it('overwrites the SAME draft id and forces id back to the draft id', () => {
-    store.writeDraft('d1', doc(m('Draft One', 'd1'), 'one'))
-    const edited = doc({ ...m('Renamed', 'hacker') }, 'TWO')
-    amendDraftHtml(store, 'd1', edited)
-    expect(store.listDraftIds()).toEqual(['d1'])      // no new draft minted
-    const got = store.getDraft('d1')!
-    expect(got.manifest.id).toBe('d1')                // id forced back
-    expect(got.html).toContain('TWO')                 // body persisted
-  })
-  it('rejects an unknown draft and an invalid manifest island', () => {
-    expect(() => amendDraftHtml(store, 'nope', doc(m('X')))).toThrow(/unknown draft/)
-    store.writeDraft('d1', doc(m('D', 'd1')))
-    expect(() => amendDraftHtml(store, 'd1', doc({ ...m('D'), size: [0, 0] }))).toThrow()
-  })
-})
-
-describe('createEditDraftCore', () => {
-  it('seeds a unique id and records target for an INSTALLED source', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'), 'FOO')); store.installDraft('foo', 'foo')
-    const id = createEditDraftCore(store, BUILTINS, 'foo')
-    expect(id).not.toBe('foo')
-    const d = store.getDraft(id)!
-    expect(d.html).toContain('FOO'); expect(d.manifest.id).toBe(id)
-    expect(store.readDraftTarget(id)).toBe('foo')
-  })
-  it('records NO target for a built-in source; rejects unknown source', () => {
-    const id = createEditDraftCore(store, BUILTINS, 'countdown')
-    expect(store.getDraft(id)).not.toBeNull()
-    expect(store.readDraftTarget(id)).toBeNull()
-    expect(() => createEditDraftCore(store, BUILTINS, 'nope')).toThrow()
-  })
-})
-
-describe('importMotifPackage with only index.html', () => {
-  it('mints a fresh id, ignores the claimed id, records NO target', () => {
-    const source = doc(m('Imported', 'countdown'), 'IMPORTED') // island claims a built-in id
-    const id = importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from(source) }])
-    expect(id).not.toBe('countdown')
-    const d = store.getDraft(id)!
-    expect(d.manifest.id).toBe(id); expect(d.html).toContain('IMPORTED')
-    expect(store.readDraftTarget(id)).toBeNull()
-  })
-  it('rejects a missing island and an invalid manifest', () => {
-    expect(() => importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from('<html><body>no island</body></html>') }])).toThrow()
-    expect(() => importMotifPackage(store, [{ path: 'index.html', bytes: Buffer.from(doc({ ...m('Bad'), size: [0, 0] })) }])).toThrow()
-  })
-})
-
-describe('Motif package lifecycle', () => {
-  function sourceFolder(): string {
-    const dir = path.join(root, 'external')
-    mkdirSync(path.join(dir, 'assets'), { recursive: true })
-    writeFileSync(path.join(dir, 'index.html'), '<head></head><script type="module" src="./scene.js"></script>')
-    writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m('Local Scene')))
-    writeFileSync(path.join(dir, 'scene.js'), 'export const color = "red"')
-    writeFileSync(path.join(dir, 'assets', 'mesh.glb'), Buffer.from([0, 255, 1]))
-    return dir
-  }
-
-  it('copies independent resources through import, edit, amend and Update', () => {
-    const dir = sourceFolder()
-    const id = importMotifPackage(store, readMotifDirectory(dir))
-    rmSync(dir, { recursive: true }) // importing creates a snapshot, not a reference
-    expect(store.getDraft(id)!.html).toContain('src="./scene.js"')
-    expect(store.readFile(id, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
-    installMotifCompute(store, [], { draft_id: id, mode: { kind: 'new' } })
-    const edit = createEditDraftCore(store, [], id)
-    amendDraftHtml(store, edit, store.getDraft(edit)!.html.replace('./scene.js', './scene.js?v=2'))
-    expect(store.readFile(edit, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
-    writeFileSync(path.join(root, 'drafts', edit, 'scene.js'), 'export const color = "blue"')
-    expect(store.readFile(id, 'scene.js')?.toString()).toContain('red')
-    installMotifCompute(store, [], { draft_id: edit, mode: { kind: 'update', target_id: id } })
-    expect(store.readFile(id, 'scene.js')?.toString()).toContain('blue')
-    expect(store.readFile(id, 'assets/mesh.glb')).toEqual(Buffer.from([0, 255, 1]))
-  })
-
-  it('invalidates the catalog on asset edits, additions, renames and removals', () => {
-    const id = importMotifPackage(store, readMotifDirectory(sourceFolder()))
-    const hash = () => listMotifsInner(store, []).find(e => e.id === id)!.content_hash
-    const before = hash()
-    const asset = path.join(root, 'drafts', id, 'assets', 'mesh.glb')
-    writeFileSync(asset, Buffer.from([0, 254, 1]))
-    const edited = hash()
-    expect(edited).not.toBe(before)
-    writeFileSync(asset + '.new', Buffer.from([0, 254, 1]))
-    const added = hash()
-    expect(added).not.toBe(edited)
-    rmSync(asset)
-    expect(hash()).not.toBe(added)
-  })
-
-  it('copies built-in companion assets when forking', () => {
-    const builtin = { ...BUILTINS[0]!, files: [{ path: 'assets/font.woff2', bytes: Buffer.from([1, 2]) }] }
-    const id = createEditDraftCore(store, [builtin], builtin.id)
-    expect(store.readFile(id, 'assets/font.woff2')).toEqual(Buffer.from([1, 2]))
-  })
-
-  it('refuses invalid packages before writing any draft', () => {
-    const dir = sourceFolder()
-    writeFileSync(path.join(dir, 'manifest.json'), '{}')
-    expect(() => importMotifPackage(store, readMotifDirectory(dir))).toThrow()
-    expect(store.listDraftIds()).toEqual([])
-    rmSync(path.join(dir, 'index.html'))
-    expect(() => importMotifPackage(store, readMotifDirectory(dir))).toThrow(/index.html/)
-    expect(store.listDraftIds()).toEqual([])
-  })
-})
-
-describe('deleteMotifCore', () => {
-  it('deletes a published user motif', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
-    deleteMotifCore(store, 'foo')
-    expect(store.getMotif('foo')).toBeNull()
-  })
-  it('rejects deleting a built-in', () => {
-    expect(() => deleteMotifCore(store, BUILTIN_IDS[0])).toThrow(/cannot delete the built-in/)
-  })
-})
-
-import { buildRebindUpdates, installMotifCompute, type MotifLayerRef } from './authoring'
+import {buildRebindUpdates,type MotifLayerRef} from './authoring'
 
 describe('buildRebindUpdates', () => {
   it('retargets draft + target layers and lenient-migrates props', () => {
@@ -318,39 +171,5 @@ describe('buildRebindUpdates', () => {
       expect(u.props.old).toBeUndefined()      // dropped (lenient)
       expect(u.props.title).toBe('Hi')         // filled default
     }
-  })
-})
-
-describe('installMotifCompute', () => {
-  it('New mode: keeps the draft id, version 1, no updates', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo')))
-    const r = installMotifCompute(store, [], { draft_id: 'foo', mode: { kind: 'new' } })
-    expect(r.publishedId).toBe('foo'); expect(r.updates).toEqual([])
-    expect(store.getMotif('foo')!.manifest.version).toBe(1)
-  })
-  it('New mode: rejects if a published Motif already took the id', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
-    store.writeDraft('foo', doc(m('Foo', 'foo'))) // a second draft re-using the id
-    expect(() => installMotifCompute(store, [], { draft_id: 'foo', mode: { kind: 'new' } })).toThrow(/already installed/)
-  })
-  it('Update mode: bumps version, retargets layers from the working draft', () => {
-    // publish target "foo" v1
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
-    // a working draft "wip" targeting foo
-    store.writeDraft('wip', doc(m('Foo', 'wip')))
-    const layers: MotifLayerRef[] = [{ layerId: 'la', motifId: 'wip', version: 1, props: {} }]
-    const r = installMotifCompute(store, layers, { draft_id: 'wip', mode: { kind: 'update', target_id: 'foo' } })
-    expect(r.publishedId).toBe('foo')
-    expect(store.getMotif('foo')!.manifest.version).toBe(2)
-    expect(r.updates.length).toBe(1)
-    expect(r.updates[0]).toMatchObject({ layer_id: 'la', motif_id: 'foo', motif_version: 2 })
-  })
-  it('Update mode: rejects a built-in target', () => {
-    store.writeDraft('wip', doc(m('Foo', 'wip')))
-    expect(() => installMotifCompute(store, [], { draft_id: 'wip', mode: { kind: 'update', target_id: 'countdown' } }))
-      .toThrow(/cannot overwrite the built-in/)
-  })
-  it('rejects an unknown draft', () => {
-    expect(() => installMotifCompute(store, [], { draft_id: 'ghost', mode: { kind: 'new' } })).toThrow(/unknown draft/)
   })
 })

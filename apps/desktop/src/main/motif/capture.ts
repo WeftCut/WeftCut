@@ -252,7 +252,8 @@ async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
   if (!host) host = await buildHost()
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
   if (host.loadedId === motifId && host.loadedV === contentHash) return host
-  const url = `motif://${motifId}/index.html?v=${encodeURIComponent(contentHash)}`
+  const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
+  const url = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}index.html?v=${encodeURIComponent(contentHash)}`
   await withTimeout(host.win.loadURL(url), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif')
   host.loadedId = motifId
   host.loadedV = contentHash
@@ -288,6 +289,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
 async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fenceFirstSurface = false): Promise<T> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
+  motifStore?.assertRenderable?.(a.motifId)
   const lane = laneKeyOf(a.motifId, a.contentHash)
   let h: Host
   try {

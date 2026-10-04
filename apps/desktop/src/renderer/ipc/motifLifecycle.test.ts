@@ -1,60 +1,40 @@
-import { describe, it, expect, vi } from "vitest";
-
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { composeMotifHtml } from '../../shared/motifs/catalog';
 const invoke = vi.fn();
-vi.mock("@/bridge/ipc", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
-vi.mock("@/bridge/events", () => ({ listen: vi.fn() }));
-
-import { installMotif, deleteMotif, writeMotifDraft, getMotifSource, amendMotifDraft, createEditDraft, importMotif } from "./index";
-
-describe("motif lifecycle IPC wrappers", () => {
-  it("installMotif sends the snake_case nested args the backend's serde expects", async () => {
-    invoke.mockResolvedValue("foo");
-    await installMotif("d1", { kind: "update", target_id: "foo" });
-    expect(invoke).toHaveBeenCalledWith("install_motif", {
-      args: { draft_id: "d1", mode: { kind: "update", target_id: "foo" } },
+vi.mock('@/bridge/ipc', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+vi.mock('@/bridge/events', () => ({ listen: vi.fn() }));
+import { getMotifSource, amendMotifDraft, createEditDraft, importMotif, installMotif } from './index';
+beforeEach(() => invoke.mockReset());
+describe('Motif editor uses the public file contracts', () => {
+    it('retains the target version observed before update confirmation', async () => {
+        invoke.mockResolvedValueOnce({ manifest: { version: 1 }, text: '', revision: 'reviewed' })
+            .mockResolvedValueOnce({ manifest: { version: 5 }, text: '', revision: 'target' })
+            .mockResolvedValueOnce({ motif_id: 'published' });
+        await installMotif('draft', { kind: 'update', target_id: 'published' }, 'reviewed', 4);
+        expect(invoke).toHaveBeenLastCalledWith('install_motif', { draft_id: 'draft', expected_revision: 'reviewed', target_id: 'published', expected_version: 4 });
     });
-  });
-  it("writeMotifDraft wraps {manifest, html} under args", async () => {
-    invoke.mockResolvedValue("d1");
-    const manifest = { id: "x", name: "X", version: 1, size: [1, 1], default_duration_s: 1, props_schema: {} };
-    await writeMotifDraft(manifest as never, "<html></html>");
-    expect(invoke).toHaveBeenCalledWith("write_motif_draft", { args: { manifest, html: "<html></html>" } });
-  });
-  it("deleteMotif passes a bare id", async () => {
-    invoke.mockResolvedValue(undefined);
-    await deleteMotif("foo");
-    expect(invoke).toHaveBeenCalledWith("delete_motif", { id: "foo" });
-  });
-  it("installMotif new-mode sends the right shape", async () => {
-    invoke.mockResolvedValue("d2");
-    await installMotif("d2", { kind: "new" });
-    expect(invoke).toHaveBeenCalledWith("install_motif", {
-      args: { draft_id: "d2", mode: { kind: "new" } },
+    it('opens both a copied Motif and ZIP through one entry point', async () => {
+        invoke.mockResolvedValue({ draft_id: 'draft', revision: 'r' });
+        expect(await createEditDraft('source')).toBe('draft');
+        expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'motif', id: 'source' } });
+        await importMotif('C:/scene.zip');
+        expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'zip', path: 'C:/scene.zip' } });
     });
-  });
-  it("getMotifSource passes a bare id", async () => {
-    invoke.mockResolvedValue({ manifest: { id: "x" }, html: "" });
-    await getMotifSource("x");
-    expect(invoke).toHaveBeenCalledWith("get_motif_source", { id: "x" });
-  });
-  it("amendMotifDraft passes draft_id + source (camelCased top-level args)", async () => {
-    invoke.mockResolvedValue(undefined);
-    await amendMotifDraft("d1", "<html>edited</html>");
-    expect(invoke).toHaveBeenCalledWith("amend_motif_draft", {
-      draftId: "d1",
-      source: "<html>edited</html>",
+    it('retains the read revision and submits one manifest/HTML transaction', async () => {
+        const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [
+                number,
+                number
+            ], default_duration_s: 1, props_schema: {} };
+        const html = composeMotifHtml(manifest, '<body>hello</body>');
+        invoke.mockResolvedValueOnce({ manifest, text: html, revision: 'old' }).mockResolvedValueOnce({ revision: 'new' });
+        const source = await getMotifSource('a');
+        expect(await amendMotifDraft('a', source.html, source.revision)).toBe('new');
+        expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ draft_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
     });
-  });
-  it("createEditDraft passes sourceId (camelCased top-level arg)", async () => {
-    invoke.mockResolvedValue("foo-2");
-    const id = await createEditDraft("foo");
-    expect(invoke).toHaveBeenCalledWith("create_edit_draft", { sourceId: "foo" });
-    expect(id).toBe("foo-2");
-  });
-  it("importMotif passes the path (camelCased top-level arg)", async () => {
-    invoke.mockResolvedValue("imported-2");
-    const id = await importMotif("C:/x/foo.html");
-    expect(invoke).toHaveBeenCalledWith("import_motif", { path: "C:/x/foo.html" });
-    expect(id).toBe("imported-2");
-  });
+    it('publishes the revision shown by the UI, not an unreviewed later revision', async () => {
+        invoke.mockResolvedValueOnce({ manifest: { version: 1 }, text: '', revision: 'newer' }).mockResolvedValueOnce({ motif_id: 'published' });
+        await installMotif('draft', { kind: 'new' }, 'reviewed');
+        expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { id: 'draft' });
+        expect(invoke).toHaveBeenLastCalledWith('install_motif', { draft_id: 'draft', expected_revision: 'reviewed' });
+    });
 });

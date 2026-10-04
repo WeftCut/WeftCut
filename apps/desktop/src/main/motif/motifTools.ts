@@ -4,137 +4,138 @@
 // path (ts-actor-host.handleInvoke `case 'motif'`) and the MCP path (server.ts
 // `route === 'motif'`). Returns a RAW value (array | object | id string | null);
 // the MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
-import type { Manifest } from '../../shared/motifs/catalog'
-import { writeFileSync } from 'node:fs'
-import path from 'node:path'
-import { encodeMotifZip, readMotifZip } from './archive'
-import type { MotifRebindEntry } from '../state/model'
-import type { UserMotifStore } from './store'
-import {
-  type BuiltinMotif, type MotifLayerRef, type InstallArgs,
-  getMotifSource, listMotifsInner, writeMotifDraftCore, amendDraftHtml,
-  createEditDraftCore, importMotifPackage, motifSourceFiles, deleteMotifCore, installMotifCompute,
-} from './authoring'
-import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness'
-
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { encodeMotifZip, decodeMotifZip } from './archive';
+import type { MotifRebindEntry } from '../state/model';
+import type { UserMotifStore } from './store';
+import { type BuiltinMotif, type MotifLayerRef, motifSourceFiles } from './authoring';
+import { MotifWorkspace, type DraftSource, type FileChange } from './workspace';
+import { FileTransfers } from './transfers';
+import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness';
 export interface MotifToolDeps {
-  store: UserMotifStore
-  builtins: BuiltinMotif[]
-  /** Motif layers from the live actor snapshot (install Update rebind input). */
-  motifLayers: () => MotifLayerRef[]
-  /** Apply rebind_motif through the actor; throws on a rejected write. */
-  dispatchRebind: (updates: MotifRebindEntry[]) => void
-  /** Emit `motifs:changed` to the renderer (picker re-pull + host buster). */
-  emitChanged: () => void
-  /** Re-pull list_motifs → actor.setUserMotifManifests (content-window clamp). */
-  refreshCatalog: () => void
-  /** Emit a record-panel LogBus warn row (the on-open staleness summary).
-   *  Best-effort; the host wraps the underlying emit in try/catch. */
-  emitLog: (entry: { level: 'warn'; category: { kind: 'Project' }; source: { kind: 'System' }; message: string }) => void
+    store: UserMotifStore;
+    builtins: BuiltinMotif[];
+    /** Motif layers from the live actor snapshot (install Update rebind input). */
+    motifLayers: () => MotifLayerRef[];
+    /** Apply rebind_motif through the actor; throws on a rejected write. */
+    dispatchRebind: (updates: MotifRebindEntry[]) => void;
+    /** Emit `motifs:changed` to the renderer (picker re-pull + host buster). */
+    emitChanged: () => void;
+    /** Re-pull list_motifs → actor.setUserMotifManifests (content-window clamp). */
+    refreshCatalog: () => void;
+    /** Emit a record-panel LogBus warn row (the on-open staleness summary).
+     *  Best-effort; the host wraps the underlying emit in try/catch. */
+    emitLog: (entry: {
+        level: 'warn';
+        category: {
+            kind: 'Project';
+        };
+        source: {
+            kind: 'System';
+        };
+        message: string;
+    }) => void;
 }
-
-/** Coerce the install `mode` arg. The renderer sends the object form
- *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update"
- *  plus an optional `target_id`. A bare "update" resolves its target from the
- *  explicit `target_id`, else from the target the draft RECORDED at
- *  `write_motif_draft { from }`; neither present is refused naming both ways to
- *  supply one, before anything is written. */
-function parseMode(mode: unknown, targetId: unknown, draftId: string, store: UserMotifStore): InstallArgs['mode'] {
-  if (typeof mode === 'string' && mode !== 'new' && mode !== 'update')
-    throw new Error(`install_motif mode '${mode}' is neither 'new' nor 'update'`)
-  if (mode === 'new') return { kind: 'new' }
-  if (mode === 'update') {
-    const explicit = typeof targetId === 'string' && targetId.trim() !== '' ? targetId.trim() : null
-    const target = explicit ?? store.readDraftTarget(draftId)
-    if (target === null) {
-      throw new Error(`install_motif { mode: "update" } needs a target, and draft '${draftId}' records none: pass target_id (an installed Motif's id — list_motifs reports them), write the draft with write_motif_draft { from } so it records one, or install it as mode "new"`)
-    }
-    return { kind: 'update', target_id: target }
-  }
-  return mode as InstallArgs['mode']
-}
-
 export function runMotifTool(name: string, rawArgs: Record<string, unknown>, deps: MotifToolDeps): unknown {
-  // Renderer write/install nest under `args`; everything else is flat. MCP is flat.
-  const a = (rawArgs.args ?? rawArgs) as Record<string, unknown>
-  switch (name) {
-    case 'list_motifs':
-      return listMotifsInner(deps.store, deps.builtins)
-    case 'get_motif_source':
-      return getMotifSource(deps.store, deps.builtins, a.id as string)
-    case 'write_motif_draft': {
-      const from = (a.from as string | undefined) ?? null
-      const files = from ? motifSourceFiles(deps.store, deps.builtins, from) : []
-      const id = writeMotifDraftCore(deps.store, a.manifest as Manifest, a.html as string, from, files)
-      deps.emitChanged(); deps.refreshCatalog()
-      return id
+    const a = rawArgs;
+    const workspace = new MotifWorkspace(deps.store, deps.builtins);
+    const transfers = new FileTransfers(path.join(deps.store.root(), '.transfers'));
+    const changed = () => { deps.emitChanged(); deps.refreshCatalog(); };
+    switch (name) {
+        case 'list_motifs': return workspace.list(a.status as string | undefined);
+        case 'read_motif': {
+            const info = workspace.read(a.id as string);
+            if (a.path === undefined) {
+                const { html: _html, ...overview } = info;
+                return overview;
+            }
+            const file = motifSourceFiles(deps.store, deps.builtins, a.id as string).find(f => f.path === a.path);
+            const bytes = file?.bytes ?? (a.path === 'index.html' ? Buffer.from(info.html) : null);
+            if (!bytes)
+                throw new Error('Unknown Motif file: ' + a.path);
+            if (a.encoding === 'text') {
+                if (bytes.length > 256 * 1024)
+                    throw new Error('Text exceeds 256 KiB; request a file transfer');
+                return { id: a.id, manifest: info.manifest, revision: info.revision, path: a.path, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+            }
+            return { id: a.id, revision: info.revision, path: a.path, ...transfers.put(bytes) };
+        }
+        case 'open_motif_draft': {
+            const source = a.source as DraftSource | {
+                kind: 'zip';
+                file_id: string;
+            };
+            if (!source || typeof source !== 'object')
+                throw new Error('A draft source is required');
+            if ('file_id' in source && Object.keys(source).some(k => k !== 'kind' && k !== 'file_id'))
+                throw new Error('ZIP source needs exactly one path or file_id');
+            const opened = source.kind === 'zip' && 'file_id' in source ? workspace.openFiles(decodeMotifZip(transfers.bytes(source.file_id))) : workspace.open(source as DraftSource);
+            changed();
+            return opened;
+        }
+        case 'update_motif_files': {
+            const updated = workspace.update(a.draft_id as string, a.expected_revision as string, a.files as FileChange[], id => transfers.bytes(id));
+            changed();
+            return updated;
+        }
+        case 'export_motif': {
+            const info = workspace.read(a.id as string);
+            if (info.diagnostic)
+                throw new Error(info.diagnostic);
+            if (a.expected_revision !== undefined && a.expected_revision !== info.revision)
+                throw new Error('Motif revision conflict');
+            const files = motifSourceFiles(deps.store, deps.builtins, a.id as string);
+            const bytes = Buffer.from(encodeMotifZip(a.id as string, [{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files.filter(f => f.path !== 'index.html')]));
+            if (a.path !== undefined) {
+                if (!path.isAbsolute(a.path as string))
+                    throw new Error('Export path must be absolute');
+                writeFileSync(a.path as string, bytes);
+                return { id: a.id, revision: info.revision, path: a.path };
+            }
+            return { id: a.id, revision: info.revision, ...transfers.put(bytes) };
+        }
+        case 'delete_motif':
+            workspace.delete(a.id as string);
+            changed();
+            return { motif_id: a.id };
+        case 'install_motif': {
+            const { updates, ...result } = workspace.install(a.draft_id as string, a.expected_revision as string, a.target_id as string | undefined, a.expected_version as number | undefined, deps.motifLayers());
+            if (updates.length)
+                deps.dispatchRebind(updates);
+            changed();
+            return result;
+        }
+        case 'begin_file_upload': return transfers.begin(a.size as number, a.sha256 as string);
+        case 'write_file_chunk': return transfers.write(a.file_id as string, a.offset as number, a.base64 as string);
+        case 'read_file_transfer': return transfers.read(a.file_id as string, a.offset as number | undefined, a.length as number | undefined);
+        case 'delete_file_transfer':
+            transfers.delete(a.file_id as string);
+            return { file_id: a.file_id };
+        case 'motif_staleness_report': {
+            const current = currentVersions(deps.builtins, deps.store.listManifests());
+            const layers = deps.motifLayers().map((l) => ({ motifId: l.motifId, placedVersion: l.version }));
+            const report: MotifStaleEntry[] = buildStalenessReport(layers, current);
+            if (report.length) {
+                const summary = report
+                    .map((e) => `${e.motif_id} v${e.placed_version}→v${e.current_version} (${e.layer_count} layer(s))`)
+                    .join(', ');
+                deps.emitLog({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `Motifs changed since placement: ${summary}` });
+            }
+            return report;
+        }
+        case 'acknowledge_motif_staleness': {
+            const current = currentVersions(deps.builtins, deps.store.listManifests());
+            const layers = deps.motifLayers().map((l) => ({ layerId: l.layerId, motifId: l.motifId, placedVersion: l.version, props: l.props }));
+            const updates = buildAckEntries(layers, current);
+            if (updates.length)
+                deps.dispatchRebind(updates);
+            // Refresh so applyUpdateLayerParams' content-window clamp sees the
+            // current manifests. Cheap + idempotent.
+            deps.refreshCatalog();
+            return updates.length;
+        }
+        default:
+            throw new Error(`runMotifTool: unhandled tool ${name}`);
     }
-    case 'amend_motif_draft': {
-      // Renderer arg shape: { draftId, source } (camelCase, flat).
-      amendDraftHtml(deps.store, a.draftId as string, a.source as string)
-      deps.emitChanged(); deps.refreshCatalog()
-      return null
-    }
-    case 'create_edit_draft': {
-      const id = createEditDraftCore(deps.store, deps.builtins, a.sourceId as string)
-      deps.emitChanged(); deps.refreshCatalog()
-      return id
-    }
-    case 'import_motif': {
-      if (a.directory === true || typeof a.path !== 'string' || path.extname(a.path).toLowerCase() !== '.zip') {
-        throw new Error('Import Motif accepts only .zip packages. Package index.html and its resources in a ZIP first.')
-      }
-      const id = importMotifPackage(deps.store, readMotifZip(a.path))
-      deps.emitChanged(); deps.refreshCatalog()
-      return id
-    }
-    case 'export_motif': {
-      const id = a.id as string
-      const source = getMotifSource(deps.store, deps.builtins, id)
-      const files = motifSourceFiles(deps.store, deps.builtins, id)
-      const bytes = encodeMotifZip(id, [
-        { path: 'index.html', bytes: Buffer.from(source.html) },
-        ...files.filter(f => f.path !== 'index.html'),
-      ])
-      writeFileSync(a.path as string, bytes)
-      return null
-    }
-    case 'delete_motif': {
-      deleteMotifCore(deps.store, a.id as string)
-      deps.emitChanged(); deps.refreshCatalog()
-      return null
-    }
-    case 'install_motif': {
-      const draftId = a.draft_id as string
-      const args: InstallArgs = { draft_id: draftId, mode: parseMode(a.mode, a.target_id, draftId, deps.store) }
-      const { publishedId, updates } = installMotifCompute(deps.store, deps.motifLayers(), args)
-      if (updates.length) deps.dispatchRebind(updates)
-      deps.emitChanged(); deps.refreshCatalog()
-      return publishedId
-    }
-    case 'motif_staleness_report': {
-      const current = currentVersions(deps.builtins, deps.store.listManifests())
-      const layers = deps.motifLayers().map((l) => ({ motifId: l.motifId, placedVersion: l.version }))
-      const report: MotifStaleEntry[] = buildStalenessReport(layers, current)
-      if (report.length) {
-        const summary = report
-          .map((e) => `${e.motif_id} v${e.placed_version}→v${e.current_version} (${e.layer_count} layer(s))`)
-          .join(', ')
-        deps.emitLog({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `Motifs changed since placement: ${summary}` })
-      }
-      return report
-    }
-    case 'acknowledge_motif_staleness': {
-      const current = currentVersions(deps.builtins, deps.store.listManifests())
-      const layers = deps.motifLayers().map((l) => ({ layerId: l.layerId, motifId: l.motifId, placedVersion: l.version, props: l.props }))
-      const updates = buildAckEntries(layers, current)
-      if (updates.length) deps.dispatchRebind(updates)
-      // Refresh so applyUpdateLayerParams' content-window clamp sees the
-      // current manifests. Cheap + idempotent.
-      deps.refreshCatalog()
-      return updates.length
-    }
-    default:
-      throw new Error(`runMotifTool: unhandled tool ${name}`)
-  }
 }

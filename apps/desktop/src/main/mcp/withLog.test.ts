@@ -22,7 +22,7 @@ import { mediaItemTemplate } from '../state/mutations/media'
 import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
 import { root } from '../state/__tests__/fixtures/project'
 
-// preview_motif_draft's route ends in a real CDP frame capture, which has no
+// preview_motif's route ends in a real CDP frame capture, which has no
 // business running in a unit test. Stubbed so the tool still crosses the funnel
 // — what the sweep asserts is the row, not the picture.
 vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => 'iVBOR' }))
@@ -37,7 +37,7 @@ const RUST_TOOLS = (
 /** Every tool the funnel can be asked for. Derived from the DEFINITION tables
  *  plus the two unadvertised sets, not from the name sets alone: `MOTIF_TOOLS`
  *  and `MCP_TOOLS` are projections that can lag their defs, and
- *  `preview_motif_draft` is exactly that case — advertised by `MOTIF_TOOL_DEFS`,
+ *  `preview_motif` is exactly that case — advertised by `MOTIF_TOOL_DEFS`,
  *  a member of no set. Deriving from what the catalog ADVERTISES is what makes
  *  "a new tool cannot escape this sweep" true. */
 const EVERY_TOOL = [...new Set([
@@ -126,7 +126,7 @@ describe('every MCP tool reaches the LogBus', () => {
   it('each tool in the union produces exactly one Mcp row naming itself', async () => {
     // Canary for the derivation above: this tool belongs to no name set, so a
     // union rebuilt from the sets alone silently stops covering it.
-    expect(EVERY_TOOL).toContain('preview_motif_draft')
+    expect(EVERY_TOOL).toContain('preview_motif')
     for (const name of EVERY_TOOL) {
       const { entries, deps } = collector()
       await decoratedCallTool(deps)(name)
@@ -310,17 +310,17 @@ describe('slow ops are one op, fast ops are one row', () => {
 })
 
 describe('oversized args are elided before the payload leaves TS', () => {
-  it("a 40 KB html body keeps the row under Rust's 4 KB cap with its manifest intact", async () => {
+  it("a 40 KB file body keeps the row under Rust's 4 KB cap with its revision intact", async () => {
     const { entries, deps } = collector()
     const html = 'x'.repeat(40 * 1024)
-    await decoratedCallTool(deps)('write_motif_draft', { manifest: { name: 'Lower third', size: [1920, 1080], default_duration_s: 4 }, html })
+    await decoratedCallTool(deps)('update_motif_files', {draft_id:'draft',expected_revision:'revision',files:[{path:'index.html',text:html}]})
 
     const details = detailsOf(entries[0])
     expect(JSON.stringify(details).length).toBeLessThan(4096)
-    expect(details.tool).toBe('write_motif_draft')
-    const args = details.args as { manifest: Record<string, unknown>; html: Record<string, unknown> }
-    expect(args.manifest).toEqual({ name: 'Lower third', size: [1920, 1080], default_duration_s: 4 })
-    expect(args.html).toEqual({ omitted: true, bytes: 40 * 1024, sha256_8: expect.stringMatching(/^[0-9a-f]{8}$/) })
+    expect(details.tool).toBe('update_motif_files')
+    const args = details.args as {expected_revision:string;files:Array<{path:string;text:unknown}>}
+    expect(args.expected_revision).toBe('revision')
+    expect(args.files[0]!.text).toEqual({ omitted: true, bytes: 40 * 1024, sha256_8: expect.stringMatching(/^[0-9a-f]{8}$/) })
   })
 
   it("the threshold is bytes, not code units, and the caller's args survive the walk", () => {

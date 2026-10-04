@@ -433,8 +433,8 @@ async function dispatchTool(
     }
     // route === 'rust' → fall through (other reads are served by the backend).
   }
-  if (name === 'preview_motif_draft') {
-    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number | null; height?: number | null }
+  if (name === 'preview_motif') {
+    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
     const motifId = a.id ?? a.motif_id ?? ''
     // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
     // few catalog fields, so it serves both the advertised default size and the
@@ -444,6 +444,9 @@ async function dispatchTool(
       ? (tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown> & { id: string; size?: [number, number] }>).find((m) => m.id === motifId)
       : undefined
     if (tsHost && !entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids` })
+    const source = tsHost?.motifTool('read_motif', {id:motifId}) as {revision:string;diagnostic?:string} | undefined
+    if(source?.diagnostic)return toolErrorResult({code:'invalid_params',message:source.diagnostic})
+    if(a.expected_revision && a.expected_revision!==source?.revision)return toolErrorResult({code:'invalid_params',message:'Motif revision conflict'})
     // Props canonicalised against the manifest exactly as `add_motif_layer` does:
     // missing keys take the schema defaults (a lower third previews WITH its
     // text), an unknown key is refused naming it.
@@ -459,10 +462,10 @@ async function dispatchTool(
     const rootFps = snap?.compositions?.[snap.root_id]?.fps
     const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
-      width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: '',
+      width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: source?.revision ?? '',
       ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
     })
-    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
+    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision})}] } as unknown as ServerResult
   }
   // Decided HERE, from the catalog this process advertises, rather than left to
   // the backend's `not_found` envelope: the name is known or it is not, and a

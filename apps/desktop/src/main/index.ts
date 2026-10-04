@@ -23,6 +23,7 @@ import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
+import { MotifWorkspace } from './motif/workspace.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
 import { registerScreenPick } from './screenPick.js'
@@ -880,10 +881,12 @@ app.whenReady().then(async () => {
   // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
   // the actor catalog (so a disk-written Motif is placeable via add_motif)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
+  const motifWorkspace = new MotifWorkspace(motifStore, motifBuiltins)
   motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
+    motifWorkspace.syncLinked()
     tsHost?.refreshMotifCatalog()
     emitToRenderer('motifs:changed', {})
-  })
+  }, () => motifWorkspace.directoryRoots())
 
   // The two engine-selection closures the clip-compute tools resolve against.
   // Defined once and shared by the MCP host below and the renderer's

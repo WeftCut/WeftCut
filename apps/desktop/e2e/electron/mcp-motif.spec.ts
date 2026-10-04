@@ -23,12 +23,12 @@ test('MCP motif tools are advertised and callable', async () => {
   const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
   const client = await connect(info.url, info.bearer_token)
 
-  // list_motifs, add_motif_layer, preview_motif_draft must appear in listTools
+  // list_motifs, add_motif_layer, preview_motif must appear in listTools
   const toolsResult = await client.listTools()
   const names = toolsResult.tools.map((t) => t.name)
   expect(names).toContain('list_motifs')
   expect(names).toContain('add_motif_layer')
-  expect(names).toContain('preview_motif_draft')
+  expect(names).toContain('preview_motif')
 
   // list_motifs returns the catalog
   const listResult = await client.callTool({ name: 'list_motifs', arguments: {} })
@@ -47,9 +47,9 @@ test('MCP motif tools are advertised and callable', async () => {
   const layerId = (JSON.parse((addResult.content[0] as { type: string; text: string }).text) as { layer_id: string }).layer_id
   expect(layerId).toMatch(/^[0-9a-f-]{36}$/)
 
-  // preview_motif_draft returns image content (JS-side capture)
+  // preview_motif returns image content (JS-side capture)
   const previewResult = await client.callTool({
-    name: 'preview_motif_draft',
+    name: 'preview_motif',
     arguments: { id: 'countdown', t_sec: 0 },
   })
   expect(previewResult.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })

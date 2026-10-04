@@ -18,15 +18,15 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('add_motif_layer')).toBe('ts')
   })
   it('routes the 5 MCP motif tools to the motif route', () => {
-    for (const t of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif'])
+    for (const t of ['list_motifs', 'read_motif', 'open_motif_draft', 'delete_motif', 'install_motif'])
       expect(routeMcpTool(t), t).toBe('motif')
   })
   it('routes motif_staleness_report and acknowledge_motif_staleness to the motif route', () => {
     expect(routeMcpTool('motif_staleness_report')).toBe('motif')
     expect(routeMcpTool('acknowledge_motif_staleness')).toBe('motif')
   })
-  it('preview_motif_draft stays rust (special-cased capture in server.ts)', () => {
-    expect(routeMcpTool('preview_motif_draft')).toBe('rust')
+  it('preview_motif stays rust (special-cased capture in server.ts)', () => {
+    expect(routeMcpTool('preview_motif')).toBe('rust')
   })
   it('routes the live rust-native tools to rust', () => {
     // Link reads come from the project://current summary resource (it includes
@@ -60,7 +60,7 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
   // Simulate a Rust catalog that still advertises TS-executed names — the merge
   // must stay a duplicate-free union where every name routes to exactly one engine.
   const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
-    [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'get_motif_source' }, { name: 'preview_motif_draft' },
+    [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'read_motif' }, { name: 'preview_motif' },
      { name: 'detect_pauses' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
      { name: 'install_motif' }, { name: 'motif_staleness_report' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
   )

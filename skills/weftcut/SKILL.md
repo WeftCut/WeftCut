@@ -131,35 +131,36 @@ descriptions:
 
 ## Motifs (animated overlays)
 
-To author or update a Motif, first read `motif-authoring.md` next to this file
-— the document contract, whose one law is that visible state is a function of
-`t`, never an accumulation. Then:
+Read `motif-authoring.md` and `motif-workspaces.md` next to this file before
+creating or changing a Motif. Visible state must be a function of absolute time.
 
-1. `list_motifs`, and read the closest existing Motif with `get_motif_source`
-   — base your draft on what already renders correctly.
-2. `write_motif_draft` (pass `from` when your draft updates an existing Motif).
-3. **The user approves, not you.** Place the draft with `add_motif_layer`, ask the
-   user to play it in the app, and call `install_motif` only after they
-   confirm. If you can read images, pre-check with `preview_motif_draft` at
-   three timestamps (start, middle, near the end) and once with non-default
-   props before involving the user — their confirmation is still the gate.
-4. After installing, remove the trial layer unless the user wants it kept.
+1. Prefer a self-contained working folder with index.html, manifest.json and
+   companion code/assets. Call `open_motif_draft` with a directory source once;
+   keep editing the folder with your normal file tools. The app watches changes.
+   Opening the same directory reuses its draft. Use an existing Motif or ZIP
+   source to copy a package; copying does not select an update target.
+2. When you cannot access the app filesystem, start an empty draft or import an
+   uploaded ZIP. Use `read_motif` for inventory or file content, then
+   `update_motif_files` for a batch of text replacements, uploaded file references
+   or deletions. Always pass the revision you read. Upload binary bytes with
+   `begin_file_upload` and `write_file_chunk`; `read_file_transfer` downloads
+   content or reports upload progress. `delete_file_transfer` releases temporary
+   files after use. Uploads are not model-specific.
+3. Use `preview_motif` at start, middle and near the end, plus non-default props.
+   Check its returned revision and any diagnostics. Fix invalid sources before
+   publishing; do not treat the last valid frame as the current source.
+4. **The user approves publication.** Place the draft with `add_motif_layer`
+   when useful and ask the user to review it. After confirmation, call
+   `install_motif` with the reviewed revision. To overwrite another publication,
+   explicitly supply its target id and current version. The draft remains
+   editable; publishing the same revision again does not increment the version.
+   Remove trial layers afterwards unless the user wants them kept.
+5. `export_motif` produces a complete ZIP (downloadable or saved to a local
+   path). `delete_motif` removes a draft/publication; unlinking a directory
+   never deletes the author's source folder.
 
-**3D Motifs can use Three.js (`WebGLRenderer`).** Current limits:
-
-- Supply Three.js and addons inline or as local package files; there is no
-  built-in `THREE` global, npm resolution or CDN access. Local ES modules may
-  use an import map. Resources must come from the Motif's own directory or
-  supported `data:` / `blob:` URLs.
-- Await asset loading in `setup`; calculate animation from absolute `t` and
-  call `renderer.render(scene, camera)` in `frame(t)`. Avoid accumulated
-  deltas or a self-running animation loop; keep `settle_rafs: 2`.
-- Local/Blob decoder Workers and WASM are supported during awaited `setup`.
-  Draco and KTX2 ETC1S/UASTC work with the offline `templates/three-model.zip`
-  beside this file. Read `motif-three-model.md` before using it: its Basis build
-  avoids JS eval, and loaders must be recreated when props rebuild the scene.
-- Import complete binary resource packages with `import_motif { path }`
-  (absolute ZIP path, returns `draft_id`, no publication), or **Import Motif**.
-  HTML drafts can still inherit resources with `from`.
-  **Export Motif ZIP** shares the complete folder with its resources.
-  See `motif-authoring.md` for the full loading contract.
+**Three.js Motifs** use local dependencies and relative URLs; no CDN access.
+Read `motif-three-model.md` and start from `templates/three-model.zip` beside
+this file for Draco/KTX2. Await decoding in setup; local/Blob Workers and WASM
+are available there, ordinary JS eval is not. Create fresh decoder loaders per
+setup, derive animation from absolute time and keep `settle_rafs: 2`.

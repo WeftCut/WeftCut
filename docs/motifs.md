@@ -66,9 +66,8 @@ is a function of `t`, never an accumulation), the manifest and its three
 duration shapes, the `props_schema` variants, the fonts rule, and the sandbox
 limits an author designs around — lives in
 [`motif-authoring.md`](motif-authoring.md), the single normative spec. That
-file is deliberately self-contained (it links to no other doc): the build ships
-a verbatim copy of it inside the agent skill bundle, where no other repo
-document is reachable.
+file ships inside the agent skill bundle together with the workspace and Three.js
+guides it references.
 
 Facts the rest of this document leans on:
 
@@ -451,14 +450,17 @@ selected layer swaps in place onto the draft so the source panel previews it. Fr
 - **Discard** swaps the layer back to the original and deletes the draft.
 
 A Motif can also be **imported** through one **Import Motif** action from a
-`.zip` package. Direct HTML and folder imports are not supported; even a
-single-file Motif is packaged as `index.html` in a ZIP. A ZIP holds one complete Motif folder
+`.zip` package in the picker. Agents can also open a live directory workspace
+through `open_motif_draft`; see [motif-workspaces.md](motif-workspaces.md).
+A ZIP holds one complete Motif folder
 rooted at `index.html` (root-level contents are also accepted). The package may
 supply a `manifest.json` if its HTML has no
 manifest island. Import validates the manifest, assigns a fresh id and copies
 all companion files into a draft. Edit/fork and publication preserve the entire
-package. The original import folder is not watched; subsequent edits use the
-stored copy. See the authoring contract for local module and loader rules.
+package. ZIP imports use a stored copy; directory workspaces watch the source
+folder and refresh a validated app-owned snapshot. Publication retains the draft
+and uses a separate installed id. See the authoring contract for local module
+and loader rules.
 
 **Export Motif ZIP** packages the selected built-in, installed or draft Motif
 as `<motif-id>/` with all its companion resources. Private draft Update metadata
@@ -505,10 +507,10 @@ indistinguishably from a built-in.
 
 The lifecycle is **draft → preview → install**:
 
-- **Create** — three entry points: the picker's **New** (a starter draft), **Import** of an
-  external `.zip` package, or an agent over MCP (`write_motif_draft` for HTML,
-  `import_motif` for complete ZIP packages). A draft gets a
-  unique, final-ready id at birth, so installing it needs no layer rebind.
+- **Create** — the picker and MCP share `open_motif_draft`: associate a working
+  directory, copy an existing Motif or ZIP, or start empty. A draft has a stable
+  id and content revision. Reopening a directory reuses its draft; source
+  provenance does not choose an overwrite target.
 - **Preview** — a draft is a placeable layer; the compositor renders it **into the real
   project canvas** so the author sees it in context. A draft's frames are keyed by
   `content_hash`, which covers the manifest, HTML and sorted companion paths/bytes,
@@ -520,8 +522,10 @@ The lifecycle is **draft → preview → install**:
   cache-buster force a fresh capture. This covers installed Motifs too: any disk edit
   re-renders every placement. Editing an *installed* Motif opens a working draft (see
   [Editing an installed Motif](#editing-an-installed-motif)).
-- **Install** — **publish-new** (under the draft's own id) or **update-in-place** (republish
-  over the target, bump its version). Updates are **live/mutable**: every placement — this
+- **Install** — publish a reviewed revision as a separate installed id, retaining
+  the draft; further publishes update that recorded target. Replacing another
+  publication requires its explicit id and expected version. Trial layers rebind
+  to the published id. Updates are **live/mutable**: every placement — this
   project and others — re-renders with the new look (the cache key is source-derived, never
   the layer's stored `motif_version`). **Save-as-new** is the "keep my old look" escape hatch.
 
@@ -564,12 +568,13 @@ same backend cores (so the two surfaces can't drift):
   mirrors it. Raster state is read-only (`idle | warming | rastering | ready | error`); the
   export "preparing" wait blocks on pending bakes. (The MCP list is manifest-only — `html` is
   stripped so it doesn't bloat agent context; agents fetch source on demand.)
-- **Author.** `get_motif_source {id}` reads a Motif's `{ manifest, html }`; `write_motif_draft
-  { manifest, html, from? }` writes a draft (`from` records an existing Motif as the Update
-  target); `preview_motif_draft { id, t_sec, width?, height?, props? }` returns a base64 PNG of
-  one frame so the agent can **see its output and self-correct**; `install_motif { draft_id, mode:
-  new | update }` publishes (update bumps the version + rebinds + migrates placed layers);
-  `delete_motif { id }` removes a user Motif (built-ins rejected).
+- **Author.** `open_motif_draft` opens the working source; `read_motif` reads
+  inventory or a selected file; `update_motif_files` applies a revision-checked
+  batch. `preview_motif` returns a frame and exact revision; `install_motif`
+  publishes that revision without consuming the draft. `export_motif` returns
+  a complete ZIP and `delete_motif` removes managed content or unlinks an external
+  folder without deleting it. Generic uploads/downloads cover clients without
+  shared filesystem access. Full contracts: [motif-workspaces.md](motif-workspaces.md).
 
 Agents observe and author; they never drive the renderer directly.
 

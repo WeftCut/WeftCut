@@ -27,6 +27,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const SKILL_SOURCES = [
   path.join(repoRoot, 'skills/weftcut/SKILL.md'),
   path.join(repoRoot, 'docs/motif-authoring.md'),
+  path.join(repoRoot, 'docs/motif-workspaces.md'),
+  path.join(repoRoot, 'docs/motif-three-model.md'),
 ]
 
 const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as {
@@ -52,7 +54,7 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 // with a live tool name (checked below).
 const KNOWN_NON_TOOLS = new Set([
   // SKILL.md — tool params
-  'from', 'pad_us', 't_start_us', 'segments', 'word_timing', 'source_us', 'playback_rate', 'time_fraction', 't_local_us', 'preset_id', 'src_out_us',
+  'pad_us', 't_start_us', 'segments', 'word_timing', 'source_us', 'playback_rate', 'time_fraction', 't_local_us', 'preset_id', 'src_out_us',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
   'adjusted', 'siblings',
   // SKILL.md — the MCP protocol method whose `instructions` the head mirrors
@@ -67,7 +69,7 @@ const KNOWN_NON_TOOLS = new Set([
   // motif-authoring.md — lifecycle / code identifiers
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
   // motif-authoring.md — npm package example and private draft metadata file
-  'three', 'target',
+  'three', 'target', 'model', 'eval',
 ])
 
 // Exact examples only: do not exempt entire schemes and hide misspelled URIs.

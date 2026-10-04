@@ -69,27 +69,27 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
       else if (r === 'motif') expect(motifNames.has(n), n).toBe(true)
       else {
         // route 'rust' = backend-dispatched (present in the live snapshot) OR
-        // preview_motif_draft, whose def is TS-sourced but whose execution is the
+        // preview_motif, whose def is TS-sourced but whose execution is the
         // CDP-capture special-case in server.ts rather than the backend catalog.
         expect(
-          rustNames.has(n) || n === 'preview_motif_draft',
+          rustNames.has(n) || n === 'preview_motif',
           `${n} routes 'rust' but is neither in the live Rust snapshot nor the preview capture special-case`,
         ).toBe(true)
       }
     }
   })
 
-  it('4. every TS def routes ts (hybrid for TS-owned hybrid defs); every motif def routes motif except preview_motif_draft (rust capture)', () => {
+  it('4. every TS def routes ts (hybrid for TS-owned hybrid defs); every motif def routes motif except preview_motif (rust capture)', () => {
     // A TS def normally routes 'ts'; a TS-owned HYBRID def (auto_split_by_shot,
     // remove_pauses) routes 'hybrid' — HYBRID_TOOLS is consulted before
     // MCP_TOOLS, because their input computes in Rust while the edit writes
     // through the TS actor.
     for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name), d.name).toBe(HYBRID_TOOLS.has(d.name) ? 'hybrid' : 'ts')
     for (const d of MOTIF_TOOL_DEFS) {
-      // preview_motif_draft is the one motif DEF whose EXECUTION is not the motif-store
+      // preview_motif is the one motif DEF whose EXECUTION is not the motif-store
       // route: it is served by the CDP-capture special-case in server.ts, so it routes
       // 'rust'. Its def still lives in MOTIF_TOOL_DEFS. The others route to the motif store.
-      if (d.name === 'preview_motif_draft') expect(routeMcpTool(d.name)).toBe('rust')
+      if (d.name === 'preview_motif') expect(routeMcpTool(d.name)).toBe('rust')
       else expect(routeMcpTool(d.name), d.name).toBe('motif')
     }
   })

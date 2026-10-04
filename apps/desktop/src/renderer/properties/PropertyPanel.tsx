@@ -31,6 +31,7 @@ import {
   getMotifSource,
   amendMotifDraft,
   createEditDraft,
+  copyMotifDraft,
   AUDIO_ROLES,
   type AudioRole,
   type CompositionSummary,
@@ -1378,7 +1379,8 @@ function MotifLifecycleRow({
   }
 
   // status === "draft"
-  const target = manifest?.target_id;
+  const sourceTarget = manifest?.source_id;
+  const target = manifest?.target_id ?? (sourceTarget && getMotif(sourceTarget)?.manifest.status === 'installed' ? sourceTarget : undefined);
   // Non-hook read inside the click handler (NOT a top-level hook). Blast radius
   // of an Update = every layer in THIS project that will change: those still on
   // the target id PLUS those swapped onto this working draft (they rebind to the
@@ -1403,6 +1405,7 @@ function MotifLifecycleRow({
       <span className="motif-card-status status-draft">
         {t("property_panel.motif_status.draft")}
       </span>
+      {manifest?.diagnostic && <p className="settings-error">{manifest.diagnostic}</p>}
       {target ? (
         <>
           <Button
@@ -1410,13 +1413,14 @@ function MotifLifecycleRow({
             disabled={busy}
             onClick={() => {
               const n = updateBlastRadius(target);
+              const targetVersion = getMotif(target)?.manifest.version;
               const message = n === 1
                 ? t("property_panel.motif_update_confirm_one")
                 : t("property_panel.motif_update_confirm_many", { count: n });
               setPending({
                 message,
                 action: async () => {
-                  await installMotif(motifId, { kind: "update", target_id: target });
+                  await installMotif(motifId, { kind: "update", target_id: target }, manifest?.content_hash, targetVersion);
                   await onMutated();
                 },
               });
@@ -1428,7 +1432,9 @@ function MotifLifecycleRow({
             size="sm"
             disabled={busy}
             onClick={run(async () => {
-              await installMotif(motifId, { kind: "new" });
+              const copy = await copyMotifDraft(motifId);
+              const published = await installMotif(copy, { kind: "new" });
+              await updateLayerParams(layerId, {kind:'Motif',motif_id:published,motif_version:1});
               await onMutated();
             })}
           >
@@ -1452,7 +1458,7 @@ function MotifLifecycleRow({
             size="sm"
             disabled={busy}
             onClick={run(async () => {
-              await installMotif(motifId, { kind: "new" });
+              await installMotif(motifId, { kind: "new" }, manifest?.content_hash);
               await onMutated();
             })}
           >
@@ -1489,6 +1495,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
   useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
   const status = getMotif(motifId)?.manifest.status;
   const [source, setSource] = useState<string | null>(null);
+  const [revision, setRevision] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1498,7 +1505,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
     setErr(null);
     setSource(null);
     getMotifSource(motifId)
-      .then((s) => { if (alive) setSource(s.html); })
+      .then((s) => { if (alive) { setSource(s.html); setRevision(s.revision); } })
       .catch((e) => { if (alive) setErr(String(e)); });
     return () => { alive = false; };
   }, [motifId]);
@@ -1510,7 +1517,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
     setBusy(true);
     setErr(null);
     try {
-      await amendMotifDraft(motifId, source);
+      setRevision(await amendMotifDraft(motifId, source, revision));
     } catch (e) {
       setErr(refusalText(e));
     } finally {

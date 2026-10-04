@@ -18,11 +18,7 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
  *  runMotifTool. The advertised members take their defs from TS
  *  MOTIF_TOOL_DEFS (mcpCatalog dedups by name); the two staleness tools are
  *  unadvertised. The Rust catalog carries no motif arms. */
-export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
-  'list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif',
-  'import_motif',
-  'motif_staleness_report', 'acknowledge_motif_staleness',
-])
+export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
 
 /** The tools that answer while no project is open — default-deny: every tool
  *  NOT named here is refused with `NoProjectOpen` on the start screen, so a new
@@ -31,12 +27,7 @@ export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
  *
  *  Liveness, the Motif LIBRARY (its store, not placed layers — `install_motif`
  *  rebinds nothing while no project is open), and the two ways INTO a project. */
-export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([
-  'ping',
-  'list_motifs', 'get_motif_source', 'write_motif_draft', 'preview_motif_draft', 'install_motif', 'delete_motif',
-  'import_motif',
-  'open_project', 'create_project',
-])
+export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set(['ping', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'preview_motif', 'open_project', 'create_project'])
 
 /** `read_project` views the host answers without the actor's project. */
 const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects'])

@@ -122,11 +122,7 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
 
 /** Motif catalog-read + authoring + install + staleness channels, served in TS
  *  by runMotifTool. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
-  'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
-  'create_edit_draft', 'import_motif', 'export_motif', 'delete_motif', 'install_motif',
-  'motif_staleness_report', 'acknowledge_motif_staleness',
-])
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it

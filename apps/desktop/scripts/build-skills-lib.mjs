@@ -23,7 +23,7 @@ export const REQUIRED_SKILL = 'weftcut'
 /// these by bare filename ("read motif-authoring.md next to this file"), so the
 /// name has to survive the copy — and the same list is what the layout
 /// assertion looks for afterwards.
-export const REQUIRED_DOCS = ['motif-authoring.md', 'motif-three-model.md']
+export const REQUIRED_DOCS = ['motif-authoring.md', 'motif-three-model.md', 'motif-workspaces.md']
 export const REQUIRED_ASSETS = ['templates/three-model.zip']
 
 /// Record the app version inside a SKILL.md's frontmatter.

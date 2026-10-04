@@ -43,9 +43,9 @@ export const MOTIF_SCHEME_ENTRY = {
 } as const
 
 /// Serve motif://<id>/<rest> from TS (built-in assets + the user store). The
-/// `?v=<content_hash>` query is ignored by resolution (it only busts the host
-/// page cache). Companion files use no-store so an HTML reload after an asset
-/// edit cannot pick up an old unversioned JS/model/texture from Chromium's cache.
+/// Captures pin user packages under /.revisions/<hash>/ so relative companion
+/// URLs read the same immutable navigation snapshot. The ?v= query also busts
+/// the host page cache. Unversioned library/parameter resources use no-store.
 ///
 /// With `standard:true`, `motif://countdown/index.html` parses with
 /// `hostname === 'countdown'` and `pathname === '/index.html'`.

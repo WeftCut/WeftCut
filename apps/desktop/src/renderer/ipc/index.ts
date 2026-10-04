@@ -1,3 +1,4 @@
+import { parseManifestIsland } from '../../shared/motifs/catalog';
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
@@ -2992,9 +2993,10 @@ export interface MotifSummary {
   settle_rafs?: number;
   status?: "builtin" | "installed" | "draft";
   content_hash?: string;
-  /// The installed Motif id this draft was forked from (`create_edit_draft`).
-  /// Present only on edit-mode drafts; absent for new drafts and installed/builtin entries.
+  /// The installed Motif last published from this retained draft.
   target_id?: string;
+  source_id?: string;
+  diagnostic?: string;
   /// True when a `params.html` sits next to this Motif's `index.html`, i.e. the
   /// Motif owns its parameter UI and the property panel embeds that page
   /// instead of generating the fallback form. Presence of the file is the whole
@@ -3050,25 +3052,35 @@ export async function addMotif(args: {
 export const MOTIFS_CHANGED_EVENT = "motifs:changed";
 
 export interface MotifSource {
+  revision: string;
   manifest: MotifManifest;
   html: string;
 }
 
 export async function getMotifSource(id: string): Promise<MotifSource> {
-  return invoke<MotifSource>("get_motif_source", { id });
+  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{id,path:'index.html',encoding:'text'});
+  return {manifest:file.manifest,revision:file.revision,html:file.text};
 }
 
 /// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
 export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
-  return invoke<string>("write_motif_draft", { args: { manifest, html } });
+  const draft = await invoke<{draft_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
+  await invoke('update_motif_files',{draft_id:draft.draft_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
+  return draft.draft_id;
 }
 
 /// Install a draft. `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
 export async function installMotif(
   draftId: string,
   mode: { kind: "new" } | { kind: "update"; target_id: string },
+  expectedRevision?: string,
+  expectedTargetVersion?: number,
 ): Promise<string> {
-  return invoke<string>("install_motif", { args: { draft_id: draftId, mode } });
+  const draft=await invoke<{revision:string}>('read_motif',{id:draftId});
+  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{id:mode.target_id}):null;
+  const result=await invoke<{motif_id:string}>('install_motif',{draft_id:draftId,expected_revision:expectedRevision??draft.revision,
+    ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{})});
+  return result.motif_id;
 }
 
 export async function deleteMotif(id: string): Promise<void> {
@@ -3078,20 +3090,29 @@ export async function deleteMotif(id: string): Promise<void> {
 /// Overwrite an existing draft from its full edited source (in-app source panel).
 /// Keeps the draft id stable; the backend re-parses the manifest island, forces
 /// id/version, re-composes, and emits `motifs:changed`.
-export async function amendMotifDraft(draftId: string, source: string): Promise<void> {
-  await invoke("amend_motif_draft", { draftId, source });
+export async function amendMotifDraft(draftId:string,source:string,expectedRevision:string):Promise<string> {
+  const result=await invoke<{revision:string}>('update_motif_files',{draft_id:draftId,expected_revision:expectedRevision,
+    files:[{path:'index.html',text:source},{path:'manifest.json',text:JSON.stringify(parseManifestIsland(source))}]});
+  return result.revision;
 }
 
 /// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
 /// → forced fork (no Update target). Returns the working draft id.
 export async function createEditDraft(sourceId: string): Promise<string> {
-  return invoke<string>("create_edit_draft", { sourceId });
+  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'motif',id:sourceId}})).draft_id;
+}
+
+/** Explicit independent copy; opening a draft id itself resumes that draft. */
+export async function copyMotifDraft(id:string):Promise<string> {
+  const transfer=await invoke<{file_id:string}>('export_motif',{id});
+  try {return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',file_id:transfer.file_id}})).draft_id;}
+  finally {await invoke('delete_file_transfer',{file_id:transfer.file_id});}
 }
 
 /// Import a Motif ZIP package from the OS dialog.
 /// Copies a snapshot into a new draft and returns its id.
 export async function importMotif(path: string): Promise<string> {
-  return invoke<string>("import_motif", { path });
+  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).draft_id;
 }
 
 /// Export the complete package (built-in, installed or draft) as one ZIP folder.
