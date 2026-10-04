@@ -32,11 +32,9 @@ import {
   acquireRoleMeterDemand,
   resetMasterPeakHold,
   SILENCE_DB,
-  useMasterPeakDb,
-  useMasterPeakHoldDb,
-  useMasterRmsDb,
   useRoleRmsDb,
 } from "../state/masterMeterStore";
+import { METER_FLOOR_DB, useMasterMeterDisplay } from "./useMasterMeterDisplay";
 import { anyRoleSolo, roleAudible } from "../render/audio/roleGate";
 import {
   clearRoleGainOverride,
@@ -83,8 +81,6 @@ const CONSOLE_LAYOUT_MIN_WIDTH = 392;
 // level have to fill to the same fraction, or the Panel shows two scales and
 // neither can be read against the other. (Silence is the store's `SILENCE_DB`
 // sentinel, rendered "−∞".)
-const METER_FLOOR_DB = -60;
-
 type MixerLayout = "cards" | "console";
 
 /// Role identity is a glyph, not a colour: four fixed Roles each claiming a hue
@@ -565,7 +561,7 @@ function RoleMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) 
 
 /// One vertical meter column: the ramp on the track, uncovered by a shade
 /// retreating from the top, and — where a peak is given — a tick across the
-/// same column at the live peak. The ONE column the four Role strips and the
+/// same column at the displayed peak. The ONE column the four Role strips and the
 /// master strip all draw, so a colour and a height mean one level wherever they
 /// appear on the console. The ramp is a clipped box of its own rather than the
 /// column's background because the peak tick deliberately stands wider than the
@@ -575,7 +571,7 @@ function RoleMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) 
 function MeterColumn({ rmsDb, peakDb }: { rmsDb: number; peakDb?: number }) {
   return (
     <div className="mixer-meter-column" aria-hidden>
-      <div className="mixer-meter-column-ramp">
+      <div className="mixer-meter-column-ramp" aria-hidden>
         <div
           className="mixer-meter-column-shade"
           style={{ height: `${(1 - meterFill(rmsDb)) * 100}%` }}
@@ -584,6 +580,7 @@ function MeterColumn({ rmsDb, peakDb }: { rmsDb: number; peakDb?: number }) {
       {peakDb !== undefined ? (
         <div
           className="mixer-meter-column-peak"
+          aria-hidden
           style={{ top: `${(1 - meterFill(peakDb)) * 100}%` }}
         />
       ) : null}
@@ -614,19 +611,10 @@ function RoleStripMeter({ role, roleLabel }: { role: AudioRole; roleLabel: strin
   );
 }
 
-/// The loudest master peak since the hold was last reset, and the control that
-/// resets it — one button, as a console's peak display is: the number IS the
-/// click target, so there is nothing else to find. The bar and the tick beside
-/// it read the live signal; this number stands at the pass's maximum (the
-/// store's `peakHoldDb` states why it survives a stopped transport). At 0 dBFS
-/// and above it takes the ramp's clip colour and keeps it until reset, so a
-/// clip that lasted one sample is still on record when the pass ends — which a
-/// bar that has already fallen back cannot say. `labelled` spells the reading
-/// out where it shares a line with the RMS; the console's head has "Master"
-/// over it and prints the bare number.
-function PeakHoldReadout({ labelled }: { labelled: boolean }) {
+/// The compact layout's recent peak and reset control. It shares the marker's
+/// timed hold and fast silent release rather than the store's pass maximum.
+function PeakHoldReadout({ peakHoldDb }: { peakHoldDb: number }) {
   const { t } = useTranslation();
-  const peakHoldDb = useMasterPeakHoldDb();
   const value = meterText(peakHoldDb);
   const hint = t("mixer.peak_hold", { value });
   return (
@@ -638,20 +626,18 @@ function PeakHoldReadout({ labelled }: { labelled: boolean }) {
       aria-label={hint}
       onClick={resetMasterPeakHold}
     >
-      {labelled ? t("mixer.master_peak", { value }) : value}
+      {t("mixer.master_peak", { value })}
     </button>
   );
 }
 
-/// The single real Master meter, on one line: RMS as the track's uncovered
-/// ramp, the live peak as a tick on the same track, and beside them the RMS
-/// number and the peak HOLD — the number a meter is read by after the pass.
+/// The compact master: signal peak drives the bar and pushes a held marker;
+/// the RMS and recent peak numbers share the readout beside it.
 /// Subscribes to the shared master store the preview audio graph publishes to,
 /// rather than polling the Compositor.
 function MasterMeter() {
   const { t } = useTranslation();
-  const rmsDb = useMasterRmsDb();
-  const peakDb = useMasterPeakDb();
+  const { rmsDb, levelDb, peakDb } = useMasterMeterDisplay();
   return (
     <div className="mixer-master" role="group" aria-label={t("mixer.master_meter")}>
       <span className="mixer-master-label">{t("mixer.master")}</span>
@@ -663,7 +649,7 @@ function MasterMeter() {
         <div className="mixer-meter-ramp" aria-hidden>
           <div
             className="mixer-meter-shade"
-            style={{ width: `${(1 - meterFill(rmsDb)) * 100}%` }}
+            style={{ width: `${(1 - meterFill(levelDb)) * 100}%` }}
           />
         </div>
         <div
@@ -675,7 +661,7 @@ function MasterMeter() {
       <span className="mixer-master-value">
         <span>{t("mixer.master_rms", { value: meterText(rmsDb) })}</span>
         <span aria-hidden> · </span>
-        <PeakHoldReadout labelled />
+        <PeakHoldReadout peakHoldDb={peakDb} />
       </span>
     </div>
   );
@@ -683,17 +669,16 @@ function MasterMeter() {
 
 /// The same master reading as the console's fifth strip, shaped like the four
 /// beside it: one column on the travel the faders use, so output level and Role
-/// gains read on one axis; the live peak as a tick across that column; the peak
-/// hold at the head under the strip's name, where a console prints a channel's
-/// peak; and the RMS reading on the readout row, in line with the four gain
-/// readouts. One column and not two — a second column on a mixer reads as the
+/// gains read on one axis. The signal peak drives the bar and pushes a marker
+/// that holds briefly, then falls; silence releases both quickly. The only
+/// number is RMS below the column, in line with the four gain readouts.
+/// One column and not two — a second column on a mixer reads as the
 /// right channel whatever its caption says, and the analyser reads combined
 /// channels; when it splits, a second column here will mean L | R. Standing on
 /// a sunken surface is what says "not a Role" without spending a label on it.
 function MasterMeterStrip() {
   const { t } = useTranslation();
-  const rmsDb = useMasterRmsDb();
-  const peakDb = useMasterPeakDb();
+  const { rmsDb, levelDb, peakDb } = useMasterMeterDisplay();
   const rms = meterText(rmsDb);
   return (
     <div
@@ -703,12 +688,11 @@ function MasterMeterStrip() {
     >
       <div className="mixer-strip-head">
         <span className="mixer-master-label">{t("mixer.master")}</span>
-        <PeakHoldReadout labelled={false} />
       </div>
       {/* The fader row, so the master's level and the Roles' gains are the same
           box — the layout `.mixer-strip-meter` gives a Role's column. */}
       <div className="mixer-strip-meter">
-        <MeterColumn rmsDb={rmsDb} peakDb={peakDb} />
+        <MeterColumn rmsDb={levelDb} peakDb={peakDb} />
       </div>
       {/* Named by its title: the strip has no room for a caption row, and the
           column above is the same RMS column every Role strip carries. */}
