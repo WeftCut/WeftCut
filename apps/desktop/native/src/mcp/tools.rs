@@ -1096,6 +1096,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(feature = "speech")]
+    #[test]
+    fn describe_fractional_retimed_window_accepts_the_layer_endpoint() {
+        use crate::state::{timing, Transform, VideoClipParams};
+        let mut layer = audio_layer(0, 2_000_000);
+        let media = audio_media("fractional-video");
+        let mut media = media;
+        media.kind = crate::state::MediaKind::Video;
+        layer.t_end_us = 1_000_000;
+        layer.params = LayerParams::VideoClip(VideoClipParams {
+            timing: timing::TimingFields {
+                time_map: Some(timing::TimeMap::Affine {
+                    rate: timing::Fraction {
+                        num: 3_000_001,
+                        den: 1_500_000,
+                    },
+                }),
+                source_phase: Some(timing::Phase {
+                    in_: timing::Fraction { num: 0, den: 1 },
+                    out: timing::Fraction { num: 2, den: 3 },
+                }),
+                ..Default::default()
+            },
+            media: media.id,
+            src_in_us: 0,
+            src_out_us: 2_000_000,
+            transform: Transform::default(),
+            opacity: Default::default(),
+            crop: None,
+            flip_h: false,
+            flip_v: false,
+            blend_mode: Default::default(),
+            fade_in_us: 0,
+            fade_out_us: 0,
+        });
+        let resolved = resolve_clip_video_source(Some(&layer), Some(&media), layer.id, None, None)
+            .expect("a valid fractional endpoint must not be refused as beyond the source window");
+        assert_eq!(resolved.source_in_us, 0);
+        assert_eq!(resolved.source_out_us, 2_000_001);
+        assert!(resolve_clip_video_source(
+            Some(&layer),
+            Some(&media),
+            layer.id,
+            None,
+            Some(1_000_001)
+        )
+        .is_err());
+    }
+
     // Subtitle cue-shift + parse coverage lives in the subtitles module tests +
     // the TS-side hybrid e2e.
 }
@@ -1624,7 +1673,7 @@ fn resolve_clip_video_source(
     let source_out = timing
         .content_time(src_in_us, (t_end - layer.t_start_us) as f64)
         .round() as i64;
-    if source_out > src_out_us {
+    if source_out > timing.source_end(src_out_us).ceil() as i64 {
         return Err(McpToolError::invalid_params(
             format!(
                 "description window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
