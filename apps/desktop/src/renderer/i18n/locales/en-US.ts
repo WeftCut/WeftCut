@@ -85,6 +85,22 @@ const enUS = {
     key_optional: "Optional for services without authentication",
   },
   motion_path: {
+    conversion_calculating:'Calculating preview… You can keep editing or cancel.',
+    conversion_ready:'Preview updated. Apply to save this conversion.',
+    conversion_limited:'Preview updated, but the target error was not met.',
+    conversion_applying:'Applying conversion…',
+    conversion_unavailable:'Open a composition to calculate the conversion.',
+    conversion_failed:'Could not calculate the preview. Change the settings or reopen the conversion to try again.',
+    conversion_apply_failed:'Could not apply the conversion. Your preview is retained; try applying again.',
+    conversion_tolerance_error:'The target error was not met. Shorten the range or increase the target error.',
+    conversion_details:'About this conversion',
+    conversion_range_note:'Only motion within this range is retained; outside it, the position holds at the endpoints.',
+    node:'Path point', choose_node:'Choose a point…', node_progress:'Point {{index}} · {{progress}}',
+    arrive_here:'Reach point at current time',
+    arrival_caption:'Set a progress keyframe at the playhead.',
+    insert_caption:'Double-click the path to add a point.',
+    arrival_hint:'Add or update a progress keyframe at the playhead. Existing keys are preserved.',
+    arrival_outside:'Move the playhead inside this clip to set an arrival keyframe.',
     // `mode_xy` / `mode_path` are the position mode switcher's segments, and
     // `mode_xy` doubles as the caption on the X|Y value row it governs.
     mode_xy:'XY', mode_path:'Path',

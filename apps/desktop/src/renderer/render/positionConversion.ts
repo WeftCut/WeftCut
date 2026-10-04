@@ -1,8 +1,8 @@
 import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY, type Animated } from '../../shared/keyframe';
-import { positionProblem, staticPosition, type MotionPath, type PositionAnimation } from '../../shared/position';
+import { positionProblem, staticPosition, type PositionAnimation } from '../../shared/position';
 import { fitMotionPath } from '../../shared/pathFitting';
-import { pathPointAt } from '../../shared/pathGeometry';
-import { compileMotionPath, evaluateMotionPath, MAX_KEYFRAMES } from '../eval';
+import { progressAtParameter } from './pathProgress';
+import { evaluateMotionPath, MAX_KEYFRAMES } from '../eval';
 import { evaluatePositions } from './position';
 
 export interface ConversionOptions {
@@ -70,22 +70,6 @@ function criticalTimes(source: PositionAnimation, start: number, end: number): n
             throw new PositionConversionError('jump_error');
     }
     return times;
-}
-
-/** Map fitted Bezier parameters to the very same distance table used in playback.
- * Project the evaluated point within its flattened chord: interpolating t alone
- * would give incorrect distance even on a straight cubic with uneven handles. */
-function progressAtParameter(path: MotionPath, parameter: number): number {
-    const { samples, length } = compileMotionPath(path);
-    if (length === 0 || parameter <= 0) return 0;
-    if (parameter >= path.nodes.length - 1) return 1;
-    let low = 1, high = samples.length / 4 - 1;
-    while (low < high) { const mid = (low + high) >>> 1; if (samples[mid * 4 + 3]! < parameter) low = mid + 1; else high = mid; }
-    const a = (low - 1) * 4, b = low * 4, segment = Math.floor(parameter);
-    const p = pathPointAt(path, segment, parameter - segment);
-    const dx = samples[b]! - samples[a]!, dy = samples[b + 1]! - samples[a + 1]!, squared = dx * dx + dy * dy;
-    const u = squared > 0 ? Math.max(0, Math.min(1, ((p.x - samples[a]!) * dx + (p.y - samples[a + 1]!) * dy) / squared)) : 0;
-    return (samples[a + 2]! + u * (samples[b + 2]! - samples[a + 2]!)) / length;
 }
 
 /** Bounded cubic fitting + adaptive temporal refinement, with no authoring writes.

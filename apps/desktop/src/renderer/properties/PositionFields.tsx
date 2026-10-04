@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
-import { CirclePlus, Eye, Plus, Spline, Trash2 } from 'lucide-react';
-import { setPosition, type LayerSummary } from '../ipc';
+import { CirclePlus, DiamondPlus, Eye, Plus, Spline, Trash2 } from 'lucide-react';
+import { setPosition, updateLayerParamTrack, type LayerSummary } from '../ipc';
 import { PATH_PROGRESS, X, Y } from '../keyframe/descriptors';
 import { InspectorAnimField } from './InspectorAnimField';
 import { InspectorRow } from './InspectorRow';
@@ -12,6 +12,9 @@ import { evaluatePosition } from '../render/position';
 import { PositionConversionFields, type ConversionKind } from './PositionConversionFields';
 import { Button } from '@/components/ui/button';
 import { insertPathNode, setPathNodeMode } from '../../shared/pathGeometry';
+import { AppSelect } from '../components/AppSelect';
+import { progressAtParameter } from '../render/pathProgress';
+import { upsertKeyframe } from '../keyframe/edits';
 
 /// ADR 0060's node budget. The add/insert actions stop at it rather than
 /// letting the actor refuse a gesture the panel offered.
@@ -69,7 +72,28 @@ export function PositionFields(props: {
     const path = position.mode === 'Path' ? position : null;
     const editing = edit.layerId === layer.id;
     const nodes = path?.path.nodes ?? [];
-    const selected = path ? nodes.findIndex(n => n.id === edit.nodeId) : -1;
+    const selected = path && editing ? nodes.findIndex(n => n.id === edit.nodeId) : -1;
+    const nodeProgress = nodes.map((_, index) => progressAtParameter(path!.path, index));
+    const percent = (value: number) => `${Number((value * 100).toFixed(2))}%`;
+    const arriveAtNode = async () => {
+        if (!path || selected < 0 || !props.playheadInSpan || busy) return;
+        setBusy(true);
+        setError('');
+        try {
+            // Retain the static start when the first arrival is later in the clip.
+            // Existing keys keep their identities and easing.
+            const track = path.progress.mode === 'Static' && tInLayerUs > 0
+                ? upsertKeyframe(path.progress, 0, path.progress.value)
+                : path.progress;
+            await updateLayerParamTrack(layer.id, PATH_PROGRESS.paramKey,
+                upsertKeyframe(track, tInLayerUs, nodeProgress[selected]!));
+            await props.onMutated();
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setBusy(false);
+        }
+    };
     // A span action needs a node with something after it.
     const inSpan = selected >= 0 && selected < nodes.length - 1;
     const change = async (next: PositionAnimation, geometryOnly = false) => {
@@ -98,8 +122,11 @@ export function PositionFields(props: {
             edit.setLayer(layer.id);
     };
     const chooseMode = async (next: PositionAnimation['mode']) => {
-        if (next === position.mode)
+        if (busy) return;
+        if (next === position.mode) {
+            setConversion(null);
             return;
+        }
         // Static X/Y carry no timing to preserve, so a path can be built
         // outright; anything animated has to be fitted and measured first.
         if (next === 'Path' && position.mode === 'XY' && position.x.mode === 'Static' && position.y.mode === 'Static')
@@ -130,21 +157,22 @@ export function PositionFields(props: {
         if (!last) return;
         updateNodes([...nodes, { ...last, tangent_mode: 'Corner', id: crypto.randomUUID(), point: { x: last.point.x + 100, y: last.point.y }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }]);
     };
-    return <div data-testid="position-fields">
+    return <div className="position-fields" data-testid="position-fields">
     <InspectorRow label={t('property_panel.position')} reserveStopwatch>
       <PropSegmented
         label={t('property_panel.position')}
-        value={position.mode}
+        value={conversion ? (conversion === 'to_path' ? 'Path' : 'XY') : position.mode}
         options={[{ value: 'XY' as const, label: t('motion_path.mode_xy') }, { value: 'Path' as const, label: t('motion_path.mode_path') }]}
         onSelect={chooseMode}/>
       {/* XY mode draws no trajectory unless asked (`MotionPathOverlay` returns
           null for an unedited XY position), so this is the only way to see the
           motion on canvas. Path mode always draws it, so the toggle there
-          would be a no-op — the well's Edit/Done owns that flag instead. */}
+          would be a no-op — Edit/Done owns that flag instead. */}
       {!path && <Button size="icon-xs" variant={editing ? 'secondary' : 'ghost'} aria-pressed={editing} aria-label={t('motion_path.show')} title={t('motion_path.show')} onClick={() => edit.setLayer(editing ? null : layer.id)}>
         <Eye size={13} aria-hidden/>
       </Button>}
     </InspectorRow>
+    <div className="position-fields-body">
     {path
       ? <InspectorAnimField {...props} desc={PATH_PROGRESS}/>
       : <InspectorRow label={t('motion_path.mode_xy')}>
@@ -153,39 +181,59 @@ export function PositionFields(props: {
         </InspectorRow>}
     {conversion
       ? <PositionConversionFields kind={conversion} position={position} layerId={layer.id} durationUs={layer.t_end_us - layer.t_start_us} busy={busy} onApply={change} onClose={() => setConversion(null)}/>
-      : path && <div className="prop-well">
-        <div className="prop-well-head">
-          <span className="prop-well-title">{t('motion_path.path')} <em>· {t('motion_path.nodes', { count: nodes.length })}</em></span>
-          <Button size="xs" variant={editing ? 'default' : 'secondary'} disabled={busy} onClick={() => edit.setLayer(editing ? null : layer.id)}>
+      : path && <div className="position-path-controls">
+        <InspectorRow label={t('motion_path.path')} reserveStopwatch>
+          <span className="position-path-count">{t('motion_path.nodes', { count: nodes.length })}</span>
+          <Button size="xs" variant="ghost" aria-pressed={editing} disabled={busy} onClick={() => edit.setLayer(editing ? null : layer.id)}>
             {editing ? t('motion_path.done') : t('motion_path.edit')}
           </Button>
-        </div>
-        {editing && (selected >= 0
-          ? <InspectorRow label={t('motion_path.node_of', { index: selected + 1, count: nodes.length })} reserveStopwatch>
-              <PropSegmented
-                label={t('motion_path.node_mode')}
-                value={nodes[selected]!.tangent_mode}
-                options={[{ value: 'Corner' as const, label: t('motion_path.mode_corner') }, { value: 'Smooth' as const, label: t('motion_path.mode_smooth') }, { value: 'Auto' as const, label: t('motion_path.mode_auto') }]}
-                onSelect={mode => void change({ ...path, path: setPathNodeMode(path.path, selected, mode) }, true)}/>
-            </InspectorRow>
-          : <p className="prop-hint">{t('motion_path.select_node')}</p>)}
+        </InspectorRow>
+        <InspectorRow label={t('motion_path.node')} reserveStopwatch>
+          <AppSelect
+            ariaLabel={t('motion_path.node')}
+            value={selected >= 0 ? nodes[selected]!.id : ''}
+            disabled={busy}
+            options={[
+              { value: '', label: t('motion_path.choose_node'), disabled: true },
+              ...nodes.map((node, index) => ({ value: node.id, label: t('motion_path.node_progress', { index: index + 1, progress: percent(nodeProgress[index]!) }) })),
+            ]}
+            onValueChange={id => { if (!editing) edit.setLayer(layer.id); edit.setNode(id); }}/>
+        </InspectorRow>
+        {selected >= 0 && <>
+          <div className="position-path-arrival">
+            <Button size="xs" variant="secondary" title={t('motion_path.arrival_hint')} disabled={busy || !props.playheadInSpan} onClick={() => void arriveAtNode()}>
+              <DiamondPlus size={13} aria-hidden/>
+              {t('motion_path.arrive_here')}
+            </Button>
+            <p className="prop-hint">{t(props.playheadInSpan ? 'motion_path.arrival_caption' : 'motion_path.arrival_outside')}</p>
+          </div>
+          <InspectorRow label={t('motion_path.node_mode')} reserveStopwatch>
+            <AppSelect
+              ariaLabel={t('motion_path.node_mode')}
+              value={nodes[selected]!.tangent_mode}
+              disabled={busy}
+              options={[{ value: 'Corner', label: t('motion_path.mode_corner') }, { value: 'Smooth', label: t('motion_path.mode_smooth') }, { value: 'Auto', label: t('motion_path.mode_auto') }]}
+              onValueChange={mode => void change({ ...path, path: setPathNodeMode(path.path, selected, mode as PathNode['tangent_mode']) }, true)}/>
+          </InspectorRow>
+        </>}
         {editing && <>
-          {/* Appending needs no selection, so it is always here. The per-node
-              actions appear WITH the selection they act on: shown greyed with
-              nothing selected, they read as four dead controls rather than as
-              "pick a point first", which the line above already says. */}
-          <div className="prop-well-toolbar">
+          <div className="position-path-toolbar">
+            <span className="position-path-selection">{selected >= 0
+              ? t('motion_path.node_of', { index: selected + 1, count: nodes.length })
+              : t('motion_path.select_node')}</span>
+            <div className="prop-well-toolbar">
             <NodeAction label={t('motion_path.add')} disabled={busy || nodes.length >= MAX_NODES} onClick={append}><Plus size={13} aria-hidden/></NodeAction>
             {selected >= 0 && <>
               <NodeAction label={t('motion_path.insert')} disabled={busy || !inSpan || nodes.length >= MAX_NODES} onClick={() => void insert()}><CirclePlus size={13} aria-hidden/></NodeAction>
               <NodeAction label={t('motion_path.curve')} disabled={busy || !inSpan} onClick={toggleCurve}><Spline size={13} aria-hidden/></NodeAction>
               <NodeAction label={t('motion_path.remove')} disabled={busy || nodes.length < 2} onClick={() => updateNodes(nodes.filter((_, i) => i !== selected))}><Trash2 size={13} aria-hidden/></NodeAction>
             </>}
+            </div>
           </div>
-          <p className="prop-hint">{t('motion_path.insert_hint')}</p>
+          <p className="prop-hint" title={t('motion_path.insert_hint')}>{t('motion_path.insert_caption')}</p>
         </>}
       </div>}
-    {path && <p className="prop-hint">{t(layer.kind === 'Text' ? 'motion_path.anchor' : 'motion_path.corner')}</p>}
     {error && <p role="alert" className="prop-hint text-destructive">{error}</p>}
+    </div>
   </div>;
 }

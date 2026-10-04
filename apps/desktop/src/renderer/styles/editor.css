@@ -1856,7 +1856,27 @@
 }
 .anim-field-control { display: flex; align-items: center; gap: 6px; min-width: 0; }
 
-/* A nested operation inside a section: the path's node controls, a conversion
+/* All position controls belong beneath the mode row. Borrow the indent from
+ * the label column so the inputs still align with the surrounding inspector. */
+.position-fields, .position-fields-body, .position-path-controls { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.position-fields { container: position-fields / inline-size; --position-label-col: var(--prop-label-col, 96px); padding-bottom: 8px; }
+.position-fields > .anim-field > .anim-field-label { color: var(--foreground); font-weight: 500; }
+.position-fields-body { --prop-label-col: calc(var(--position-label-col) - 12px); padding-inline-start: 12px; }
+.position-fields-body .prop-well { --prop-label-col: calc(var(--position-label-col) - 20px); }
+.position-path-count { flex: 1; min-width: 0; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.position-path-controls .app-select { width: 100%; min-width: 0; }
+.position-path-arrival { display: flex; flex-direction: column; gap: 4px; padding-block: 2px 6px; }
+.position-path-arrival > button { white-space: normal; min-height: 26px; }
+.position-path-arrival .prop-hint { margin: 0; }
+.position-path-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.position-path-selection { flex: 1 1 80px; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+/* When the inspector is very narrow, keep node names and percentages legible. */
+@container position-fields (max-width: 210px) {
+  .position-path-controls .anim-field { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .position-path-controls .prop-value-slot::before { display: none; }
+}
+
+/* A nested operation inside a section: a conversion
  * in flight. The label column drops by the well's own inset so rows inside it
  * keep the panel's value edge; change one and change the other. */
 .prop-well {

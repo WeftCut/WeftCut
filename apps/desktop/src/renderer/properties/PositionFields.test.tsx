@@ -9,10 +9,14 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 
-const { setPosition } = vi.hoisted(() => ({ setPosition: vi.fn(async () => {}) }));
+const { setPosition, updateLayerParamTrack } = vi.hoisted(() => ({
+  setPosition: vi.fn(async () => {}),
+  updateLayerParamTrack: vi.fn(async (..._args: unknown[]) => {}),
+}));
 vi.mock("../ipc", async (importActual) => ({
   ...(await importActual<typeof import("../ipc")>()),
   setPosition,
+  updateLayerParamTrack,
 }));
 // Isolate from the keyframe field stack: this file is about the mode choice
 // and the node controls, not about how a value row renders.
@@ -27,6 +31,7 @@ import type { AnimTrack, LayerSummary } from "../ipc";
 import { usePathEditingStore } from "../state/pathEditingStore";
 import type { PathNode, PositionAnimation } from "../../shared/position";
 import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY } from "../../shared/keyframe";
+import { evaluatePosition } from "../render/position";
 
 const staticTrack = (value: number): AnimTrack<number> => ({ mode: "Static", value });
 
@@ -53,7 +58,7 @@ const pathOf = (...nodes: PathNode[]): PositionAnimation => ({
 
 const onMutated = vi.fn(async () => {});
 
-function renderFields(position: PositionAnimation) {
+function renderFields(position: PositionAnimation, tInLayerUs = 0, playheadInSpan = true) {
   render(
     <PositionFields
       layer={{
@@ -63,8 +68,8 @@ function renderFields(position: PositionAnimation) {
         t_end_us: 2_000_000,
         params: { kind: "Text", x: staticTrack(0), y: staticTrack(0), position },
       } as unknown as LayerSummary}
-      tInLayerUs={0}
-      playheadInSpan
+      tInLayerUs={tInLayerUs}
+      playheadInSpan={playheadInSpan}
       onMutated={onMutated}
     />,
   );
@@ -192,7 +197,7 @@ describe("the path node well", () => {
     renderFields(pathOf(node("a", 0), node("b", 200)));
     // The well says what it holds and how much of it, so the count is legible
     // without counting handles on the canvas.
-    expect(document.querySelector(".prop-well-title")?.textContent).toBe("Path · 2 points");
+    expect(screen.getByText("2 points")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add point" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Edit path" }));
@@ -212,7 +217,7 @@ describe("the path node well", () => {
     for (const action of ["Insert after point", "Line / curve", "Remove point"]) {
       expect(screen.queryByRole("button", { name: action }), action).toBeNull();
     }
-    expect(screen.queryByRole("group", { name: "Spatial node" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Spatial node" })).toBeNull();
   });
 
   it("names the selected node and offers its tangent modes", async () => {
@@ -222,7 +227,8 @@ describe("the path node well", () => {
     // Which node, not just that one is selected: the canvas is where it was
     // picked, and the caption is what confirms the panel followed.
     expect(screen.getByText("Point 2 / 3")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Smooth" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Spatial node" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Smooth" }));
 
     expect(setPosition).toHaveBeenCalledTimes(1);
     const [, next] = setPosition.mock.calls[0]! as unknown as [string, PositionAnimation];
@@ -237,5 +243,82 @@ describe("the path node well", () => {
     expect(screen.getByRole("button", { name: "Line / curve" })).toHaveProperty("disabled", true);
     // Removing it is still fine — it is a node, just not a span start.
     expect(screen.getByRole("button", { name: "Remove point" })).toHaveProperty("disabled", false);
+  });
+});
+
+describe("arrival at a path node", () => {
+  const arrival = () => screen.getByRole("button", { name: "Reach point at current time" });
+
+  it("selects the 32% node from the panel and keys its exact position at the playhead", async () => {
+    const position = pathOf(node("a", 0), node("b", 320), node("c", 1000));
+    renderFields(position, 750_000);
+    await userEvent.click(screen.getByRole("combobox", { name: "Path point" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Point 2 · 32%" }));
+    expect(usePathEditingStore.getState().nodeId).toBe("b");
+    expect(setPosition).not.toHaveBeenCalled();
+    await userEvent.click(arrival());
+    expect(updateLayerParamTrack).toHaveBeenCalledTimes(1);
+    const [layerId, param, progress] = updateLayerParamTrack.mock.calls[0]! as [string, string, AnimTrack<number>];
+    expect([layerId, param]).toEqual(["L1", "path_progress"]);
+    expect(progress.mode).toBe("Keyframed");
+    if (progress.mode !== "Keyframed") throw new Error("not keyed");
+    expect(progress.value.map(k => [k.t_us, k.value])).toEqual([[0, 0], [750_000, 0.32]]);
+    expect(evaluatePosition({ ...position, progress } as PositionAnimation, 750_000)).toEqual({ x: 320, y: 100 });
+    expect(onMutated).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates an existing arrival without duplicating its key or changing other keys", async () => {
+    selectNode("b");
+    const progress = keyedTrack(0, 1);
+    renderFields({ mode: "Path", path: { nodes: [node("a", 0), node("b", 320), node("c", 1000)] }, progress }, 1_000_000);
+    await userEvent.click(arrival());
+    const next = updateLayerParamTrack.mock.calls[0]![2] as AnimTrack<number>;
+    if (next.mode !== "Keyframed" || progress.mode !== "Keyframed") throw new Error("not keyed");
+    expect(next.value).toEqual([progress.value[0], { ...progress.value[1], value: 0.32 }]);
+    expect(next.extrapolate).toEqual(progress.extrapolate);
+  });
+
+  it("uses curve length and full precision even though the selector rounds the percentage", async () => {
+    selectNode("b");
+    const a = { ...node("a", 0), segment: "Cubic" as const, out_handle: { x: 0, y: 600 } };
+    const b = { ...node("b", 320), in_handle: { x: 0, y: 600 } };
+    const position = pathOf(a, b, node("c", 1000));
+    renderFields(position, 800_000);
+    await userEvent.click(arrival());
+    const progress = updateLayerParamTrack.mock.calls[0]![2] as AnimTrack<number>;
+    if (progress.mode !== "Keyframed") throw new Error("not keyed");
+    expect(progress.value[1]!.value).not.toBeCloseTo(0.32, 2);
+    const point = evaluatePosition({ ...position, progress } as PositionAnimation, 800_000);
+    expect(point.x).toBeCloseTo(b.point.x, 8);
+    expect(point.y).toBeCloseTo(b.point.y, 8);
+  });
+
+  it("does not create an extra start key when authoring at the clip start", async () => {
+    selectNode("b");
+    renderFields(pathOf(node("a", 0), node("b", 1000)));
+    await userEvent.click(arrival());
+    const progress = updateLayerParamTrack.mock.calls[0]![2] as AnimTrack<number>;
+    expect(progress.value).toEqual([expect.objectContaining({ t_us: 0, value: 1 })]);
+  });
+
+  it("disables arrival outside the clip and explains how to enable it", async () => {
+    selectNode("b");
+    renderFields(pathOf(node("a", 0), node("b", 1000)), -100_000, false);
+    expect(arrival()).toHaveProperty("disabled", true);
+    expect(screen.getByText("Move the playhead inside this clip to set an arrival keyframe.")).toBeTruthy();
+    await userEvent.click(arrival());
+    expect(updateLayerParamTrack).not.toHaveBeenCalled();
+  });
+
+  it("reports failed writes and allows retrying", async () => {
+    selectNode("b");
+    renderFields(pathOf(node("a", 0), node("b", 1000)), 500_000);
+    updateLayerParamTrack.mockRejectedValueOnce(new Error("Write failed"));
+    await userEvent.click(arrival());
+    expect(screen.getByRole("alert").textContent).toContain("Write failed");
+    expect(onMutated).not.toHaveBeenCalled();
+    await userEvent.click(arrival());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onMutated).toHaveBeenCalledTimes(1);
   });
 });
