@@ -163,7 +163,7 @@ import {
   DockWorkspace,
   type DockPanelContracts,
 } from "./DockWorkspace";
-import { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID } from "./panelRegistry";
+import { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID, PANEL_KINDS } from "./panelRegistry";
 import {
   focusedCompositionId,
   openComposition,
@@ -576,6 +576,45 @@ describe("DockWorkspace React integration", () => {
       document.querySelector('.weft-dock-tab[data-panel-kind="effect"]')!,
     );
     expect(effect?.api.maximize).toHaveBeenCalledOnce();
+  });
+
+  it.each(PANEL_KINDS)("closes only the right-clicked %s panel from its tab", async (kind) => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: kind,
+      title: kind,
+      group: { panels: [{ id: kind }, { id: "other-panel" }] },
+    };
+
+    render(<DockWorkspace contracts={contracts} />);
+    const panel = dock.panels.get(kind) ?? dock.addPanel({ id: kind, title: kind });
+    const otherPanels = [...dock.panels.values()].filter((other) => other !== panel);
+
+    fireEvent.contextMenu(document.querySelector(`.weft-dock-tab[data-panel-kind="${kind}"]`)!);
+    fireEvent.click(await screen.findByText("Close Panel"));
+
+    expect(panel.api.close).toHaveBeenCalledOnce();
+    for (const other of otherPanels) expect(other.api.close).not.toHaveBeenCalled();
+    expect(screen.queryByText("Close Panel")).toBeNull();
+  });
+
+  it("dismisses a panel tab's context menu with Escape without closing the panel", async () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "effect",
+      title: "Effect",
+      group: { panels: [{ id: "effect" }] },
+    };
+    render(<DockWorkspace contracts={contracts} />);
+
+    fireEvent.contextMenu(document.querySelector('.weft-dock-tab[data-panel-kind="effect"]')!);
+    await screen.findByText("Close Panel");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    expect(screen.queryByText("Close Panel")).toBeNull();
+    expect(dock.panels.get("effect")?.api.close).not.toHaveBeenCalled();
   });
 
   // A bound timeline Panel is addressed by its composition, but everything the

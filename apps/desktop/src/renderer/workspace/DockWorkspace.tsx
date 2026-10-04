@@ -892,7 +892,7 @@ function DockGripTab({
         <Grip size={12} aria-hidden="true" />
       </div>
       {menuAt ? (
-        <GripContextMenu
+        <PanelTabContextMenu
           x={menuAt.x}
           y={menuAt.y}
           onClose={() => setMenuAt(null)}
@@ -906,10 +906,8 @@ function DockGripTab({
   );
 }
 
-/** The grip's right-click menu. Same virtual-anchor Base UI menu as the media
- *  pool's, so outside-click / Escape / arrow navigation come for free. Without
- *  a tab there is no other in-place way to dismiss the strip. */
-function GripContextMenu({
+/** Shared right-click close menu for Panel tabs and the Quick Actions grip. */
+function PanelTabContextMenu({
   x,
   y,
   onClose,
@@ -921,21 +919,7 @@ function GripContextMenu({
   onClosePanel: () => void;
 }) {
   const { t } = useTranslation();
-  const anchor = useMemo(
-    () => ({
-      getBoundingClientRect: () => ({
-        x,
-        y,
-        top: y,
-        left: x,
-        right: x,
-        bottom: y,
-        width: 0,
-        height: 0,
-      }),
-    }),
-    [x, y],
-  );
+  const anchor = useCursorAnchor(x, y);
   return (
     <MenuPrimitive.Root
       open
@@ -953,15 +937,10 @@ function GripContextMenu({
           className="app-popup-positioner"
         >
           <MenuPrimitive.Popup className="app-menu-list">
-            <MenuPrimitive.Item
-              className="app-menu-item"
-              onClick={onClosePanel}
-            >
-              <span className="app-menu-item-check" aria-hidden="true" />
-              <span className="app-menu-item-label">
-                {t("dock_workspace.close_panel")}
-              </span>
-            </MenuPrimitive.Item>
+            <MenuItem
+              label={t("dock_workspace.close_panel")}
+              onSelect={onClosePanel}
+            />
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>
@@ -969,8 +948,8 @@ function GripContextMenu({
   );
 }
 
-/** The standard Panel tab: label, selection marker, hover tracking, and
- *  double-click-to-maximize. */
+/** The standard Panel tab: label, selection marker, hover tracking,
+ *  double-click-to-maximize, and right-click-to-close. */
 function DockPanelTab({
   kind,
   id,
@@ -981,25 +960,44 @@ function DockPanelTab({
   title: string;
 }) {
   const chrome = useWorkspaceChrome();
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   return (
-    <div
-      className="weft-dock-tab"
-      data-panel-kind={kind ?? undefined}
-      onPointerEnter={() => chrome.setHoveredPanel(id)}
-      onPointerLeave={() => chrome.setHoveredPanel(null)}
-      onDoubleClick={(event) => {
-        if (!id) return;
-        event.preventDefault();
-        event.stopPropagation();
-        chrome.toggleMaximize(id);
-      }}
-    >
-      {/* Selection marker: CSS shows it (and the bottom accent) only on
-          `.dv-active-tab` — this renderer isn't re-run on activation
-          changes, so the marker lives in the DOM of every tab. */}
-      <span className="weft-dock-tab-label">{title}</span>
-      <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
-    </div>
+    <>
+      <div
+        className="weft-dock-tab"
+        data-panel-kind={kind ?? undefined}
+        onPointerEnter={() => chrome.setHoveredPanel(id)}
+        onPointerLeave={() => chrome.setHoveredPanel(null)}
+        onDoubleClick={(event) => {
+          if (!id) return;
+          event.preventDefault();
+          event.stopPropagation();
+          chrome.toggleMaximize(id);
+        }}
+        onContextMenu={(event) => {
+          if (!id) return;
+          event.preventDefault();
+          setMenuAt({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        {/* Selection marker: CSS shows it (and the bottom accent) only on
+            `.dv-active-tab` — this renderer isn't re-run on activation
+            changes, so the marker lives in the DOM of every tab. */}
+        <span className="weft-dock-tab-label">{title}</span>
+        <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
+      </div>
+      {menuAt && id ? (
+        <PanelTabContextMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          onClose={() => setMenuAt(null)}
+          onClosePanel={() => {
+            setMenuAt(null);
+            chrome.closePanel(id);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
