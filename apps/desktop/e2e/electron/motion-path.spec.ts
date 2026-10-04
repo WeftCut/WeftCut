@@ -127,7 +127,7 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await page.screenshot({ path: test.info().outputPath('path-editor.png') })
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(moved)
-    // Leaving a multi-node path bakes: the switcher opens the conversion rather than
+    // Leaving a multi-node path converts: the switcher opens the conversion rather than
     // dropping the geometry.
     await toXY(fields).click()
     await expect(page.getByTestId('position-conversion')).toBeVisible()
@@ -154,6 +154,49 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await fields.getByRole('button', { name: /Show trajectory|显示轨迹/ }).click()
     await expect(page.getByTestId('motion-path-overlay')).toBeVisible()
     expect(await position(page, id), 'trajectory display is not a conversion').toEqual(original)
+  } finally { await app.close() }
+})
+
+test('path conversion defaults to sparse editable axes and offers explicit frame baking', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-e2e-path-sparse-'), name: `sparse-${Date.now()}`, canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 } })
+    const id = await invokeCmd<string>(page, 'add_text_layer', { tStartUs: 0, durationUs: 2_000_000, content: 'Editable motion' })
+    const source: PositionAnimation = {
+      mode: 'Path', path: { nodes: [0, 1].map(i => ({ id: randomUUID(), point: { x: 100 + 400 * i, y: 300 },
+        in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, tangent_mode: 'Corner', segment: 'Line' })) },
+      progress: { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' },
+        value: [0, 1].map(i => ({ id: randomUUID(), t_us: i * 2_000_000, value: i,
+          in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) },
+    }
+    await invokeCmd(page, 'set_position', { layerId: id, position: source })
+    await waitForHook(page, 'revealLayer')
+    await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), id)
+    const fields = page.getByTestId('position-fields')
+    await toXY(fields).click()
+    await expect(page.getByRole('button', { name: /Editable curves|可编辑曲线/ })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByLabel(/Maximum frame interval|最大采样间隔/)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Apply conversion|应用转换/ })).toBeEnabled()
+    await page.getByRole('button', { name: /Apply conversion|应用转换/ }).click()
+    await expect.poll(async () => (await position(page, id)).mode).toBe('XY')
+    const editable = await position(page, id)
+    if (editable.mode !== 'XY' || editable.x.mode !== 'Keyframed') throw new Error('Expected editable X keys')
+    expect(editable.x.value).toHaveLength(2)
+    expect(editable.y).toEqual({ mode: 'Static', value: 300 })
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(() => position(page, id)).toEqual(source)
+    await toXY(fields).click()
+    await page.getByRole('button', { name: /Frame baking|按帧烘焙/ }).click()
+    await expect(page.getByLabel(/Maximum frame interval|最大采样间隔/)).toHaveValue('1')
+    await expect(page.getByRole('button', { name: /Apply conversion|应用转换/ })).toBeEnabled()
+    await page.getByRole('button', { name: /Apply conversion|应用转换/ }).click()
+    await expect.poll(async () => (await position(page, id)).mode).toBe('XY')
+    const baked = await position(page, id)
+    if (baked.mode !== 'XY') throw new Error('Expected XY')
+    for (const track of [baked.x, baked.y]) {
+      if (track.mode !== 'Keyframed') throw new Error('Expected baked keys')
+      expect(track.value).toHaveLength(61)
+    }
   } finally { await app.close() }
 })
 

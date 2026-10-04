@@ -140,7 +140,7 @@ describe("the position mode switcher", () => {
     await userEvent.click(segment(/^XY$/));
 
     expect(setPosition).not.toHaveBeenCalled();
-    expect(screen.getByText("Bake to XY…")).toBeTruthy();
+    expect(screen.getByText("Convert to XY…")).toBeTruthy();
   });
 
   it("hides the node controls while a conversion is in flight", async () => {

@@ -840,6 +840,7 @@ jobs:
           # linkage, so it tests standalone. (Its wasm build is gated separately
           # via the Linux `npm test` TS goldens, which run the same fixtures.)
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
+          cargo test -p weftcut-conversion --manifest-path native/Cargo.toml
           # The production feature union is the crate `default` (jobs/export/mcp/
           # speech — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
           # feature). Features are additive, so `--features test-noop` = defaults +

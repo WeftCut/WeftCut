@@ -1,8 +1,8 @@
 # The napi crate is the workspace root; members: the dependency-light
-# `weftcut-eval` leaf (native + wasm32) and the optional `weftcut-native-decode`
+# `weftcut-eval` leaf, offline `weftcut-conversion` (native + wasm32), and optional `weftcut-native-decode`
 # component addon (the only ffmpeg-next consumer — see decode/Cargo.toml).
 [workspace]
-members = ["eval", "decode"]
+members = ["eval", "conversion", "decode"]
 
 [package]
 name = "weftcut"

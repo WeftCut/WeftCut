@@ -41,6 +41,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe('automatic conversion preview', () => {
+    it('defaults to editable curves, exposes the interval only for baking, and cancels obsolete modes', async () => {
+        render(<PositionConversionFields {...props} kind="to_xy" />);
+        expect(screen.getByRole('button', { name: 'Editable curves' }).getAttribute('aria-pressed')).toBe('true');
+        expect(screen.queryByRole('spinbutton', { name: 'Maximum frame interval' })).toBeNull();
+        await tick();
+        expect(run.mock.calls[0]![1].xyMode).toBe('editable');
+        fireEvent.click(screen.getByRole('button', { name: 'Frame baking' }));
+        expect(pending[0]!.signal.aborted).toBe(true);
+        change('Maximum frame interval', '4');
+        await tick();
+        expect(run.mock.calls[1]![1]).toMatchObject({ xyMode: 'bake', everyFrames: 4 });
+        change('Maximum frame interval', '');
+        fireEvent.click(screen.getByRole('button', { name: 'Editable curves' }));
+        await tick();
+        expect(run.mock.calls[2]![1]).toMatchObject({ xyMode: 'editable', everyFrames: 1 });
+        await finish(2, { ...result(), position: staticPosition(10, 20) });
+        expect(screen.getByTestId('conversion-error').textContent).toContain('X: 0 keys · Y: 0 keys');
+    });
+
     it('calculates on opening and applies the exact preview with no preview button', async () => {
         render(<PositionConversionFields {...props} />);
         expect(screen.queryByRole('button', { name: 'Preview conversion' })).toBeNull();

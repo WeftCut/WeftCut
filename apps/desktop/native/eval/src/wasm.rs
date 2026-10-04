@@ -30,7 +30,7 @@ use crate::{
 /// handful per property). LANDMINE: this caps the wasm PREVIEW only — native
 /// export's `value_at` evaluates the full keyframe vector, so a >MAXKF property
 /// would make preview diverge from export. TS `loadTrack` (MAX_KEYFRAMES) warns.
-const MAXKF: usize = 4096;
+const MAXKF: usize = crate::MAX_RESIDENT_KEYFRAMES;
 
 // Exact-time results use two f64 SAFE INTEGERS. No rational is converted into
 // a floating-point timestamp here. The result is copied synchronously by the

@@ -49,6 +49,27 @@ it('converts a single-node path to static XY even with animated progress', () =>
     }
     expect(source).toEqual(original);
 });
+it('defaults to two editable X keys and static Y, independently of the baking interval', () => {
+    const path = convertPosition(animated(), options).position;
+    for (const everyFrames of [1, 30]) {
+        const result = convertPosition(path, { ...options, everyFrames });
+        expect(result.withinTolerance).toBe(true);
+        if (result.position.mode !== 'XY') throw new Error('expected XY');
+        expect(result.position.x.mode).toBe('Keyframed');
+        if (result.position.x.mode === 'Keyframed') expect(result.position.x.value).toHaveLength(2);
+        expect(result.position.y).toEqual(animated().y);
+    }
+});
+it('keeps explicit frame baking available separately from sparse curves', () => {
+    const path = convertPosition(animated(), options).position;
+    const result = convertPosition(path, { ...options, xyMode: 'bake' });
+    expect(result.withinTolerance).toBe(true);
+    if (result.position.mode !== 'XY') throw new Error('expected XY');
+    for (const track of [result.position.x, result.position.y]) {
+        if (track.mode !== 'Keyframed') throw new Error('expected baked keys');
+        expect(track.value).toHaveLength(61);
+    }
+});
 it('refuses a Hold jump instead of connecting an instantaneous teleport', () => {
     const source = animated();
     if (source.x.mode === 'Keyframed')
@@ -63,11 +84,11 @@ it('uses exact fractional-rate frame anchors and holds outside the chosen range'
 it('rejects invalid ranges and oversized baking instead of truncating', () => {
     expect(() => convertPosition(animated(), { ...options, endFrame: 0 })).toThrow();
     const path = convertPosition(animated(), options).position;
-    expect(() => convertPosition(path, { ...options, endFrame: 5000 })).toThrow('4096');
+    expect(() => convertPosition(path, { ...options, xyMode: 'bake', endFrame: 5000 })).toThrow('4096');
 });
 it('evaluates every key in a dense 4096-sample bake and switches back to a short track', () => {
     const path = convertPosition(animated(), options).position;
-    const result = convertPosition(path, { ...options, endFrame: 4095 });
+    const result = convertPosition(path, { ...options, xyMode: 'bake', endFrame: 4095 });
     expect(result.sampleCount).toBe(4096);
     expect(evaluatePosition(result.position, Math.round(4095e6 / 30))).toEqual({ x: 310, y: 22.1234567 });
     expect(evaluatePosition(animated(), 1000000).x).toBe(160);
@@ -94,7 +115,7 @@ it('fits curved XY motion with a small editable cubic path and a measured qualit
     }
     const bake = convertPosition(result.position, { ...options, tolerancePx: 0.5, everyFrames: 30 });
     expect(bake.withinTolerance).toBe(true);
-    expect(bake.sampleCount).toBeGreaterThan(3);
+    expect(bake.sampleCount).toBeLessThanOrEqual(3);
 });
 it('retains the order of retracing motion and PingPong extrapolation', () => {
     const source = animated();
@@ -122,5 +143,5 @@ it('does not label an unrepresentable subframe excursion as meeting the target',
     const result = convertPosition(source, { ...options, endFrame: 1, tolerancePx: 0.05 });
     expect(result.withinTolerance).toBe(false);
     expect(result.limit).toBe('frame_grid');
-    expect(result.maxErrorPx).toBeGreaterThan(100);
+    expect(result.maxErrorPx).toBeGreaterThan(0.05);
 });

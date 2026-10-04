@@ -13,7 +13,7 @@
 // On wasm32 the crate is no_std and links as a standalone cdylib, so it must
 // supply its own panic handler. wasm32-unknown-unknown defaults to panic=abort,
 // so no eh_personality is needed. Never compiled natively (std supplies one).
-#[cfg(all(target_arch = "wasm32", not(test)))]
+#[cfg(all(target_arch = "wasm32", not(test), not(feature = "hosted")))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -25,9 +25,12 @@ pub mod path;
 
 pub mod time_mapping;
 
+/// Playback's resident per-track capacity; offline authoring must respect it.
+pub const MAX_RESIDENT_KEYFRAMES: usize = 4096;
+
 // Resident-ABI scalar exports for the renderer. wasm32 only (the native crate
 // links the leaf as an rlib and calls the functions below directly).
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "hosted")))]
 mod wasm;
 
 // ===========================================================================
@@ -472,6 +475,7 @@ impl Interpolate for Rgba8 {
 /// the stored numbers (a `1 − (1 − x)` round trip is not exact in f64 and would
 /// break the exact-equality preset lookup and the byte-identical goldens).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Kf<T = f64> {
     pub t_us: f64,
     pub value: T,

@@ -10,6 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
+# A std/allocator-owning Wasm host links the math without the standalone ABI.
+hosted = []
 # `Interpolation`'s serde wire shape (`{kind: ...}`), enabled by the napi crate so
 # `Keyframe<T>` stays Serialize/Deserialize. The wasm build leaves it OFF (it
 # passes an i32 interp code across the boundary, not serde).

@@ -5,44 +5,46 @@ pub const MAX_SAMPLES: usize = (MAX_NODES - 1) * 512 + 1;
 pub const TOLERANCE: f64 = 0.01;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 impl Point {
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
-    fn add(self, b: Self) -> Self {
+    pub fn plus(self, b: Self) -> Self {
         Self {
             x: self.x + b.x,
             y: self.y + b.y,
         }
     }
-    fn sub(self, b: Self) -> Self {
+    pub fn minus(self, b: Self) -> Self {
         Self {
             x: self.x - b.x,
             y: self.y - b.y,
         }
     }
-    fn mul(self, s: f64) -> Self {
+    pub fn scaled(self, s: f64) -> Self {
         Self {
             x: self.x * s,
             y: self.y * s,
         }
     }
-    fn distance(self, b: Self) -> f64 {
-        let d = self.sub(b);
+    pub fn distance(self, b: Self) -> f64 {
+        let d = self.minus(b);
         libm::sqrt(d.x * d.x + d.y * d.y)
     }
-    fn unit(self) -> Self {
+    pub fn unit(self) -> Self {
         let n = self.distance(Self::ZERO);
         if n > 0.0 {
-            self.mul(1.0 / n)
+            self.scaled(1.0 / n)
         } else {
             Self::ZERO
         }
     }
 }
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node {
     pub point: Point,
     pub incoming: Point,
@@ -63,9 +65,9 @@ fn flatten(p: [Point; 4], depth: u8, t0: f64, t1: f64, emit: &mut impl FnMut(Poi
     let polygon = p[0].distance(p[1]) + p[1].distance(p[2]) + p[2].distance(p[3]);
     // Distance from controls to the chord also bounds geometric deviation.
     let deviation = if chord > 0.0 {
-        let d = p[3].sub(p[0]);
-        let a = p[1].sub(p[0]);
-        let b = p[2].sub(p[0]);
+        let d = p[3].minus(p[0]);
+        let a = p[1].minus(p[0]);
+        let b = p[2].minus(p[0]);
         libm::fabs(d.x * a.y - d.y * a.x).max(libm::fabs(d.x * b.y - d.y * b.x)) / chord
     } else {
         polygon
@@ -74,12 +76,12 @@ fn flatten(p: [Point; 4], depth: u8, t0: f64, t1: f64, emit: &mut impl FnMut(Poi
         emit(p[3], t1);
         return;
     }
-    let a = p[0].add(p[1]).mul(0.5);
-    let b = p[1].add(p[2]).mul(0.5);
-    let c = p[2].add(p[3]).mul(0.5);
-    let d = a.add(b).mul(0.5);
-    let e = b.add(c).mul(0.5);
-    let m = d.add(e).mul(0.5);
+    let a = p[0].plus(p[1]).scaled(0.5);
+    let b = p[1].plus(p[2]).scaled(0.5);
+    let c = p[2].plus(p[3]).scaled(0.5);
+    let d = a.plus(b).scaled(0.5);
+    let e = b.plus(c).scaled(0.5);
+    let m = d.plus(e).scaled(0.5);
     let tm = (t0 + t1) * 0.5;
     flatten([p[0], a, d, m], depth + 1, t0, tm, emit);
     flatten([m, e, c, p[3]], depth + 1, tm, t1, emit);
@@ -106,8 +108,8 @@ pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 4])) -> (Point, Point)
             flatten(
                 [
                     a.point,
-                    a.point.add(a.outgoing),
-                    b.point.add(b.incoming),
+                    a.point.plus(a.outgoing),
+                    b.point.plus(b.incoming),
                     b.point,
                 ],
                 0,
@@ -127,11 +129,11 @@ pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 4])) -> (Point, Point)
         let candidates = if a.cubic {
             [
                 a.outgoing,
-                b.point.add(b.incoming).sub(a.point),
-                b.point.sub(a.point),
+                b.point.plus(b.incoming).minus(a.point),
+                b.point.minus(a.point),
             ]
         } else {
-            [b.point.sub(a.point); 3]
+            [b.point.minus(a.point); 3]
         };
         for d in candidates {
             if d != Point::ZERO {
@@ -148,12 +150,12 @@ pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 4])) -> (Point, Point)
         let b = pair[1];
         let candidates = if a.cubic {
             [
-                b.incoming.mul(-1.0),
-                b.point.sub(a.point.add(a.outgoing)),
-                b.point.sub(a.point),
+                b.incoming.scaled(-1.0),
+                b.point.minus(a.point.plus(a.outgoing)),
+                b.point.minus(a.point),
             ]
         } else {
-            [b.point.sub(a.point); 3]
+            [b.point.minus(a.point); 3]
         };
         for d in candidates {
             if d != Point::ZERO {
@@ -180,10 +182,10 @@ pub fn evaluate(samples: &[[f64; 4]], progress: f64, start: Point, end: Point) -
         return first;
     }
     if progress <= 0.0 {
-        return first.add(start.mul(progress * total));
+        return first.plus(start.scaled(progress * total));
     }
     if progress >= 1.0 {
-        return last.add(end.mul((progress - 1.0) * total));
+        return last.plus(end.scaled((progress - 1.0) * total));
     }
     let distance = progress * total;
     let mut lo = 1;

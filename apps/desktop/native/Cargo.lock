@@ -2730,6 +2730,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "weftcut-conversion"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "weftcut-eval",
+]
+
+[[package]]
 name = "weftcut-eval"
 version = "0.0.0"
 dependencies = [

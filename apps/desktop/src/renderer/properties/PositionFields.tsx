@@ -40,7 +40,8 @@ function NodeAction({ label, disabled, onClick, children }: {
 /// The mode switcher is the ONLY entry to changing representation, and it
 /// branches on what the data allows: static X/Y become a stationary single-node path
 /// immediately (one undo), keyframed X/Y have to be fitted, and leaving a
-/// multi-node path bakes. A single node returns directly to static XY.
+/// multi-node path converts to editable XY curves (or explicit frame baking).
+/// A single node returns directly to static XY.
 /// So no control is ever silently unavailable while a second one
 /// elsewhere is the real route.
 export function PositionFields(props: {

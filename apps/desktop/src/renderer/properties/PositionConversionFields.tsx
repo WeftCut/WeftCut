@@ -7,6 +7,8 @@ import { useOpenComposition } from '../state/projectStore';
 import { usePathEditingStore } from '../state/pathEditingStore';
 import { usePositionConversion } from './usePositionConversion';
 import { Field } from './Field';
+import { PropSegmented } from './PropSegmented';
+import { InspectorRow } from './InspectorRow';
 
 export type ConversionKind = 'to_path' | 'to_xy';
 
@@ -26,6 +28,7 @@ export function PositionConversionFields({ kind, position, layerId, durationUs, 
     const lastFrame = fpsNum > 0 && fpsDen > 0 ? Math.round(durationUs * fpsNum / (1e6 * fpsDen)) : 0;
     // Preserve empty/partial text while typing; it must not become a valid zero.
     const [draft, setDraft] = useState({ start: '0', end: String(lastFrame), tolerance: '1', interval: '1' });
+    const [xyMode, setXyMode] = useState<'editable' | 'bake'>('editable');
     const [applyError, setApplyError] = useState('');
     const [applying, setApplying] = useState(false);
     const applyingRef = useRef(false);
@@ -38,11 +41,10 @@ export function PositionConversionFields({ kind, position, layerId, durationUs, 
         if (![startFrame, endFrame].every(n => Number.isSafeInteger(n) && n >= 0)
             || endFrame <= startFrame || endFrame > lastFrame)
             return { options: null, error: 'range_error' };
-        if (endFrame - startFrame > 16384) return { options: null, error: 'conversion_range_error' };
-        if (!Number.isFinite(tolerancePx) || tolerancePx < 0.05 || !Number.isInteger(everyFrames) || everyFrames < 1)
+        if (!Number.isFinite(tolerancePx) || tolerancePx < 0.05 || (xyMode === 'bake' && (!Number.isInteger(everyFrames) || everyFrames < 1)))
             return { options: null, error: 'conversion_options_error' };
-        return { options: { fpsNum, fpsDen, startFrame, endFrame, tolerancePx, everyFrames }, error: null };
-    }, [draft, fpsNum, fpsDen, lastFrame]);
+        return { options: { fpsNum, fpsDen, startFrame, endFrame, tolerancePx, everyFrames: xyMode === 'bake' ? everyFrames : 1, xyMode }, error: null };
+    }, [draft, fpsNum, fpsDen, lastFrame, xyMode]);
     const state = usePositionConversion(position, layerId, parsed.options);
     const result = !parsed.error && state.status === 'ready' ? state.result : null;
     const error = parsed.error ? t(`motion_path.${parsed.error}`)
@@ -80,13 +82,21 @@ export function PositionConversionFields({ kind, position, layerId, durationUs, 
         {field('start', t('motion_path.start_frame'), 0)}
         {field('end', t('motion_path.end_frame'), 1)}
         {field('tolerance', t('motion_path.tolerance'), 0.05, 0.05)}
-        {kind === 'to_xy' && field('interval', t('motion_path.every_frames'), 1)}
+        {kind === 'to_xy' && <InspectorRow label={t('motion_path.conversion_method')}>
+            <PropSegmented label={t('motion_path.conversion_method')} value={xyMode} onSelect={setXyMode} options={[
+                { value: 'editable', label: t('motion_path.editable_curves'), ...(locked ? { unavailable: t('motion_path.conversion_applying') } : {}) },
+                { value: 'bake', label: t('motion_path.frame_bake'), ...(locked ? { unavailable: t('motion_path.conversion_applying') } : {}) },
+            ]}/>
+        </InspectorRow>}
+        {kind === 'to_xy' && xyMode === 'bake' && field('interval', t('motion_path.every_frames'), 1)}
         <p className="prop-hint">{t('motion_path.conversion_range_note')}</p>
         <div role="status" aria-live="polite" className="prop-hint">
             {locked ? t('motion_path.conversion_applying') : calculating ? t('motion_path.conversion_calculating')
                 : result ? t(result.withinTolerance ? 'motion_path.conversion_ready' : 'motion_path.conversion_limited') : null}
         </div>
-        {result && <p data-testid="conversion-error" className="prop-hint">{t('motion_path.error', { error: result.maxErrorPx.toFixed(3), count: result.checkCount })} · {result.sampleCount} {t('motion_path.samples_used')}{result.nodeCount > 0 ? ` · ${t('motion_path.nodes_used', { count: result.nodeCount })}` : ''}</p>}
+        {result && <p data-testid="conversion-error" className="prop-hint">{t('motion_path.error', { error: result.maxErrorPx.toFixed(3), count: result.checkCount })} · {result.position.mode === 'XY'
+            ? t('motion_path.axis_keys', { x: result.position.x.mode === 'Static' ? 0 : result.position.x.value.length, y: result.position.y.mode === 'Static' ? 0 : result.position.y.value.length })
+            : `${result.sampleCount} ${t('motion_path.samples_used')} · ${t('motion_path.nodes_used', { count: result.nodeCount })}`}</p>}
         {result && !result.withinTolerance && <p role="alert" className="prop-hint text-destructive">{t(`motion_path.${result.limit ?? 'conversion_tolerance_error'}`)}</p>}
         {(error || applyError) && <p role="alert" className="prop-hint text-destructive">{error || applyError}</p>}
         <details className="prop-hint">

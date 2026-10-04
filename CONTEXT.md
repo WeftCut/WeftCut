@@ -741,6 +741,10 @@ _Avoid_: node index, speed (speed is its rate of change)
 An explicit conversion of motion into independent XY keyframes at chosen sampling times; positions between those samples are an approximation.
 _Avoid_: lossless conversion, unlinking
 
+**Editable position conversion**:
+The default Path → XY conversion: fit independent temporal curves within a measured pixel-error target, retaining sparse keys at motion changes and static values on constant axes. Sampling measures fidelity; it does not dictate the output key count. Frame baking remains an explicit alternative.
+_Avoid_: exact conversion, one key per sample
+
 **Spatial node mode**:
 How a motion-path node's handles behave: Corner lets them move independently, Smooth keeps them aligned, and Auto derives a smooth direction from neighbouring points. This is distinct from the temporal easing of path progress.
 _Avoid_: keyframe easing, interpolation mode (without specifying space or time)

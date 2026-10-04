@@ -1,9 +1,6 @@
-import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY, type Animated } from '../../shared/keyframe';
-import { positionProblem, staticPosition, type PositionAnimation } from '../../shared/position';
-import { fitMotionPath } from '../../shared/pathFitting';
-import { progressAtParameter } from './pathProgress';
-import { evaluateMotionPath, MAX_KEYFRAMES } from '../eval';
-import { evaluatePositions } from './position';
+import { HOLD_EXTRAPOLATION, keyTimeUs, type Animated, type Extrapolation, type Segment } from '../../shared/keyframe';
+import { positionProblem, type PositionAnimation, type Point } from '../../shared/position';
+import { CONVERSION_WASM_BASE64 } from '../eval/evalWasm.generated';
 
 export interface ConversionOptions {
     fpsNum: number;
@@ -12,11 +9,13 @@ export interface ConversionOptions {
     startFrame: number;
     endFrame: number;
     tolerancePx: number;
-    /** Initial maximum XY baking interval; quality checks may add more keys. */
+    /** Used only by explicit frame baking. */
     everyFrames: number;
+    xyMode?: 'editable' | 'bake';
 }
 export interface PositionConversion {
     position: PositionAnimation;
+    /** Largest output track count; static tracks have zero keys. */
     sampleCount: number;
     nodeCount: number;
     maxErrorPx: number;
@@ -26,150 +25,64 @@ export interface PositionConversion {
 }
 export class PositionConversionError extends Error {
     constructor(readonly code: 'jump_error' | 'conversion_range_error' | 'conversion_options_error' | 'conversion_capacity_error') {
-        super(code === 'conversion_capacity_error' ? `Conversion exceeds ${MAX_KEYFRAMES} keys or the bounded check budget.` : code);
+        super(code === 'conversion_capacity_error' ? 'Conversion exceeds 4096 keys per track or available memory.' : code);
     }
 }
 
-/** Fold authored boundaries into the requested interval, including repetitions.
- * A continuous fit cannot faithfully represent an instantaneous spatial jump. */
-function criticalTimes(source: PositionAnimation, start: number, end: number): number[] {
-    const times: number[] = [];
-    const tracks = source.mode === 'XY' ? [source.x, source.y] : [source.progress];
-    const jumps = (a: number, b: number) => {
-        if (source.mode === 'XY') return Math.abs(a - b) > 1e-9;
-        const p = evaluateMotionPath(source.path, a), q = evaluateMotionPath(source.path, b);
-        return Math.hypot(p.x - q.x, p.y - q.y) > 1e-9;
-    };
-    for (const track of tracks) {
-        if (track.mode !== 'Keyframed' || track.value.length < 2) continue;
-        const keys = track.value, first = keys[0]!.t_us, last = keys.at(-1)!.t_us, period = last - first;
-        if (period <= 0) continue;
-        const repeating = (mode: string) => ['Loop', 'PingPong', 'Offset'].includes(mode);
-        const low = repeating(track.extrapolate.before) ? Math.min(0, Math.floor((start - first) / period) - 1) : 0;
-        const high = repeating(track.extrapolate.after) ? Math.max(0, Math.ceil((end - first) / period) + 1) : 0;
-        if (high - low > 65536 || (high - low) * keys.length > 262144)
-            throw new PositionConversionError('conversion_capacity_error');
-        for (let cycle = low; cycle <= high; cycle++) {
-            const mode = cycle < 0 ? track.extrapolate.before : track.extrapolate.after;
-            if (cycle !== 0 && !['Loop', 'PingPong', 'Offset'].includes(mode)) continue;
-            const reverse = cycle !== 0 && mode === 'PingPong' && Math.abs(cycle % 2) === 1;
-            for (let i = 0; i < keys.length; i++) {
-                const key = keys[i]!, at = first + cycle * period + (reverse ? last - key.t_us : key.t_us - first);
-                if (at >= start && at <= end) times.push(at);
-                if (i > 0 && keys[i - 1]!.segment.kind === 'Hold' && jumps(keys[i - 1]!.value, key.value)
-                    && (reverse ? at >= start && at < end : at > start && at <= end))
-                    throw new PositionConversionError('jump_error');
-            }
-            const seam = first + cycle * period;
-            const seamMode = cycle <= 0 ? track.extrapolate.before : track.extrapolate.after;
-            if (seamMode === 'Loop' && jumps(keys[0]!.value, keys.at(-1)!.value)
-                && seam > start && seam <= end && !(cycle === 1 && seam === end))
-                throw new PositionConversionError('jump_error');
-        }
-        if (start === last && end > start && track.extrapolate.after === 'Loop' && jumps(keys[0]!.value, keys.at(-1)!.value))
-            throw new PositionConversionError('jump_error');
-    }
-    return times;
+// Calculation DTOs use eval's existing Kf/Node/Segment records. IDs and editor
+// tangent modes remain outside Rust; these are not new persistent project types.
+interface ScalarKey { t_us: number; value: number; out: [number, number]; in_: [number, number]; segment: Segment }
+interface ScalarTrack { keys: ScalarKey[]; extrapolate: Extrapolation }
+interface Node { point: Point; incoming: Point; outgoing: Point; cubic: boolean }
+interface Result extends Omit<PositionConversion, 'position'> { nodes: Node[] | null; tracks: ScalarTrack[] }
+interface ConversionExports {
+    memory: WebAssembly.Memory;
+    conversion_input(length: number): number;
+    conversion_run(): number;
+    conversion_output(): number;
 }
-
-/** Bounded cubic fitting + adaptive temporal refinement, with no authoring writes.
- * Error is measured at quarter-frames and folded key/jump boundaries; it is NOT
- * a continuous-time guarantee. Failed targets remain previewable, not applicable. */
+let instance: ConversionExports | undefined;
+function engine(): ConversionExports {
+    // Production invokes this only in the disposable worker. Tests exercise
+    // the same Rust implementation, without a TS numerical fallback.
+    instance ??= new WebAssembly.Instance(new WebAssembly.Module(
+        Uint8Array.from(atob(CONVERSION_WASM_BASE64), c => c.charCodeAt(0)),
+    )).exports as unknown as ConversionExports;
+    return instance;
+}
+function pack(track: Animated<number>): ScalarTrack {
+    return track.mode === 'Static'
+        ? { keys: [{ t_us: 0, value: track.value, out: [1 / 3, 1 / 3], in_: [2 / 3, 2 / 3], segment: { kind: 'Linear' } }], extrapolate: HOLD_EXTRAPOLATION }
+        : { keys: track.value.map(k => ({ t_us: keyTimeUs(k), value: k.value, out: [k.out.x, k.out.y], in_: [k.in.x, k.in.y], segment: k.segment })), extrapolate: track.extrapolate };
+}
+function unpack(track: ScalarTrack): Animated<number> {
+    if (track.keys.length === 1) return { mode: 'Static', value: track.keys[0]!.value };
+    return { mode: 'Keyframed', extrapolate: track.extrapolate, value: track.keys.map(k => ({
+        id: crypto.randomUUID(), t_us: k.t_us, value: k.value, segment: k.segment,
+        in: { x: k.in_[0], y: k.in_[1], mode: 'Free' },
+        out: { x: k.out[0], y: k.out[1], mode: 'Free' }, continuity: 'Broken',
+    })) };
+}
+/** Transport only: sampling, fitting, frame alignment and quality checks execute
+ * in Rust in one call. No per-sample Wasm crossings or TS math fallback. */
 export function convertPosition(source: PositionAnimation, options: ConversionOptions): PositionConversion {
-    const { fpsNum, fpsDen, startFrame, endFrame, tolerancePx, everyFrames } = options;
-    if (![fpsNum, fpsDen].every(n => Number.isSafeInteger(n) && n > 0)
-        || ![startFrame, endFrame].every(n => Number.isSafeInteger(n) && n >= 0)
-        || endFrame <= startFrame || endFrame - startFrame > 16384)
-        throw new PositionConversionError('conversion_range_error');
-    if (!Number.isFinite(tolerancePx) || tolerancePx < 0.05 || !Number.isInteger(everyFrames) || everyFrames < 1)
-        throw new PositionConversionError('conversion_options_error');
     const problem = positionProblem(source);
     if (problem) throw new Error(problem);
-    // A single node has no spatial span: progress cannot change its position.
-    // Convert exactly without generating redundant temporal samples or keys.
-    if (source.mode === 'Path' && source.path.nodes.length === 1) {
-        const { x, y } = source.path.nodes[0]!.point;
-        return { position: staticPosition(x, y), sampleCount: 0, nodeCount: 0,
-            maxErrorPx: 0, checkCount: 0, withinTolerance: true, limit: null };
-    }
-    const tracks = source.mode === 'XY' ? [source.x, source.y] : [source.progress];
-    if (tracks.some(t => t.mode === 'Keyframed' && t.value.length > MAX_KEYFRAMES))
-        throw new PositionConversionError('conversion_capacity_error');
-    const time = (frame: number) => Math.round(frame * 1e6 * fpsDen / fpsNum);
-    const firstUs = time(startFrame), lastUs = time(endFrame);
-    if (!Number.isSafeInteger(lastUs) || time(startFrame + 0.25) <= firstUs)
-        throw new PositionConversionError('conversion_range_error');
-    const checks = new Set<number>();
-    for (let f = startFrame; f <= endFrame; f += 0.25) checks.add(time(f));
-    for (const boundary of criticalTimes(source, firstUs, lastUs))
-        for (const at of [boundary - 1, boundary, boundary + 1]) if (at >= firstUs && at <= lastUs) checks.add(at);
-    const times = [...checks].sort((a, b) => a - b), original = evaluatePositions(source, times);
-    const indices = new Map(times.map((t, i) => [t, i]));
-    const fit = source.mode === 'XY' ? fitMotionPath(original, tolerancePx * 0.35, () => crypto.randomUUID()) : null;
-    const values = fit ? [Array.from(fit.parameters, p => progressAtParameter(fit.path, p))]
-        : [original.map(p => p.x), original.map(p => p.y)];
-    const slopes = values.map(axis => axis.map((_, i) => {
-        const a = Math.max(0, i - 1), b = Math.min(times.length - 1, i + 1);
-        return (axis[b]! - axis[a]!) / (times[b]! - times[a]!);
+    const input = new TextEncoder().encode(JSON.stringify({
+        nodes: source.mode === 'Path' ? source.path.nodes.map(n => ({ point: n.point, incoming: n.in_handle, outgoing: n.out_handle, cubic: n.segment === 'Cubic' })) : null,
+        tracks: (source.mode === 'Path' ? [source.progress] : [source.x, source.y]).map(pack), options,
     }));
-    const selected = new Set<number>([startFrame, endFrame]);
-    if (!fit) {
-        if (Math.ceil((endFrame - startFrame) / everyFrames) + 1 > MAX_KEYFRAMES)
-            throw new PositionConversionError('conversion_capacity_error');
-        for (let f = startFrame; f < endFrame; f += everyFrames) selected.add(f);
-    }
-    const track = (axis: number, frames: number[]): Animated<number> => {
-        const keys = frames.map(f => ({
-            id: crypto.randomUUID(), t_us: time(f), value: values[axis]![indices.get(time(f))!]!,
-            in: { ...IN_IDENTITY, mode: 'Free' as const }, out: { ...OUT_IDENTITY, mode: 'Free' as const },
-            continuity: 'Broken' as const, segment: { kind: 'Linear' as 'Linear' | 'Spline' },
-        }));
-        for (let i = 0; i + 1 < keys.length; i++) {
-            const a = keys[i]!, b = keys[i + 1]!, dv = b.value - a.value, dt = b.t_us - a.t_us;
-            if (Math.abs(dv) < 1e-12) continue;
-            const clamp = (y: number) => fit ? Math.max(0, Math.min(1, y)) : y;
-            a.segment = { kind: 'Spline' };
-            a.out.y = clamp(slopes[axis]![indices.get(a.t_us)!]! * dt / (3 * dv));
-            b.in.y = clamp(1 - slopes[axis]![indices.get(b.t_us)!]! * dt / (3 * dv));
-            if (Math.abs(a.out.y - OUT_IDENTITY.y) < 1e-9 && Math.abs(b.in.y - IN_IDENTITY.y) < 1e-9) {
-                a.segment = { kind: 'Linear' };
-                a.out.y = OUT_IDENTITY.y;
-                b.in.y = IN_IDENTITY.y;
-            }
-        }
-        return { mode: 'Keyframed', extrapolate: { ...HOLD_EXTRAPOLATION }, value: keys };
-    };
-    for (let attempt = 0; ; attempt++) {
-        const frames = [...selected].sort((a, b) => a - b);
-        const position: PositionAnimation = fit ? { mode: 'Path', path: fit.path, progress: track(0, frames) }
-            : { mode: 'XY', x: track(0, frames), y: track(1, frames) };
-        const invalid = positionProblem(position);
-        if (invalid) throw new Error(invalid);
-        const converted = evaluatePositions(position, times);
-        let maxErrorPx = 0, interval = 0;
-        const worst = new Map<number, { error: number; at: number }>();
-        for (let i = 0; i < times.length; i++) {
-            const at = times[i]!, a = original[i]!, b = converted[i]!;
-            const error = Math.hypot(a.x - b.x, a.y - b.y);
-            if (!Number.isFinite(error)) throw new Error('Cannot convert non-finite positions.');
-            maxErrorPx = Math.max(maxErrorPx, error);
-            while (interval + 1 < frames.length - 1 && at > time(frames[interval + 1]!)) interval++;
-            if (error > tolerancePx && error > (worst.get(interval)?.error ?? 0)) worst.set(interval, { error, at });
-        }
-        const result = (limit: PositionConversion['limit']): PositionConversion => ({
-            position, sampleCount: frames.length, nodeCount: fit?.path.nodes.length ?? 0,
-            maxErrorPx, checkCount: times.length, withinTolerance: maxErrorPx <= tolerancePx, limit,
-        });
-        if (maxErrorPx <= tolerancePx) return result(null);
-        if (fit?.limited) return result('node_limit');
-        const additions = new Set<number>();
-        for (const [span, { at }] of worst) {
-            const f = at * fpsNum / (1e6 * fpsDen);
-            for (const next of [Math.floor(f), Math.ceil(f), Math.floor((frames[span]! + frames[span + 1]!) / 2)])
-                if (next > startFrame && next < endFrame && !selected.has(next)) additions.add(next);
-        }
-        if (!additions.size || attempt >= 32) return result('frame_grid');
-        if (selected.size + additions.size > MAX_KEYFRAMES) return result('key_limit');
-        for (const f of additions) selected.add(f);
-    }
+    const e = engine();
+    const ptr = e.conversion_input(input.length);
+    new Uint8Array(e.memory.buffer, ptr, input.length).set(input);
+    const length = e.conversion_run();
+    const response = JSON.parse(new TextDecoder().decode(new Uint8Array(e.memory.buffer, e.conversion_output(), length))) as
+        { ok: true; result: Result } | { ok: false; code: PositionConversionError['code'] };
+    if (!response.ok) throw new PositionConversionError(response.code);
+    const { nodes, tracks, ...report } = response.result;
+    const position: PositionAnimation = nodes
+        ? { mode: 'Path', path: { nodes: nodes.map(n => ({ id: crypto.randomUUID(), point: n.point,
+            in_handle: n.incoming, out_handle: n.outgoing, tangent_mode: 'Corner', segment: n.cubic ? 'Cubic' : 'Line' })) }, progress: unpack(tracks[0]!) }
+        : { mode: 'XY', x: unpack(tracks[0]!), y: unpack(tracks[1]!) };
+    return { ...report, position };
 }
