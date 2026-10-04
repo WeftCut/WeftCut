@@ -4,6 +4,8 @@
 // snake_case to match the file written historically by the Rust addon, so
 // existing users' app_settings.json keeps working after the move to TS.
 
+import type { PausePreset, PausePresetChange } from "./pause-presets";
+
 export type DisplayMode = "AbRoll" | "AllTracks";
 
 /// Preview playback resolution — the user-owned quality/throughput dial every
@@ -25,6 +27,7 @@ export type MediaPoolLayout = "large" | "grid" | "list";
 export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
+  pause_presets?: PausePreset[];
   display_mode: DisplayMode;
   /// Half-width of the symmetric playhead window in microseconds (default
   /// 10_000_000 = 10 s). Clamped on write to [1 s, 5 min].
@@ -120,6 +123,8 @@ export interface AppSettings {
 /// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
+  /** A single atomic library edit; never replace another window's whole list. */
+  pause_preset_change?: PausePresetChange;
   display_mode?: DisplayMode;
   delta_window_us?: number;
   tail_snap_enabled?: boolean;
@@ -146,6 +151,7 @@ export interface AppSettingsPatch {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
+  pause_presets: undefined,
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,
   tail_snap_enabled: true,

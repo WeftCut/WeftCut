@@ -57,12 +57,14 @@ export function PropSection({
   sectionId,
   title,
   defaultCollapsed = false,
+  className,
   children,
 }: {
   layerKind: string;
   sectionId: string;
   title: string;
   defaultCollapsed?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   const key = `${layerKind}:${sectionId}`;
@@ -98,7 +100,7 @@ export function PropSection({
   };
 
   return (
-    <section className="prop-section" aria-label={title}>
+    <section className={className ? `prop-section ${className}` : "prop-section"} aria-label={title}>
       <button
         type="button"
         className="prop-section-header"

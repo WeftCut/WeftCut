@@ -19,6 +19,41 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('persists personal pause presets across readers without replacing unrelated edits', () => {
+    const { fs } = memFs()
+    const a = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    const b = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    const preset = { id: 'one', name: ' Interview ', thresholdDb: -32, minMs: 600, padMs: 150 }
+    a.apply({ pause_preset_change: { kind: 'create', preset } })
+    b.apply({ pause_preset_change: { kind: 'create', preset: { ...preset, id: 'two', name: 'Lecture' } } })
+    a.apply({ pause_preset_change: { kind: 'update', id: 'one', values: { thresholdDb: -30, minMs: 800, padMs: 200 } } })
+    b.apply({ pause_preset_change: { kind: 'rename', id: 'one', name: 'Podcast' } })
+    expect(a.get().pause_presets).toEqual([
+      { id: 'one', name: 'Podcast', thresholdDb: -30, minMs: 800, padMs: 200 },
+      { ...preset, id: 'two', name: 'Lecture' },
+    ])
+    a.apply({ language: 'zh-CN' })
+    expect(b.get().pause_presets).toHaveLength(2)
+    b.apply({ pause_preset_change: { kind: 'delete', id: 'one' } })
+    expect(a.get().pause_presets?.map(p => p.id)).toEqual(['two'])
+  })
+
+  it('rejects duplicate names and invalid pause parameters without changing saved recipes', () => {
+    const s = store()
+    const preset = { id: 'one', name: 'Interview', thresholdDb: -32, minMs: 600, padMs: 150 }
+    s.apply({ pause_preset_change: { kind: 'create', preset } })
+    expect(() => s.apply({ pause_preset_change: { kind: 'create', preset: { ...preset, id: 'two', name: ' INTERVIEW ' } } })).toThrow('already exists')
+    expect(() => s.apply({ pause_preset_change: { kind: 'update', id: 'one', values: { ...preset, padMs: 300 } } })).toThrow('Invalid')
+    expect(() => s.apply({ pause_preset_change: { kind: 'update', id: 'missing', values: preset } })).toThrow('no longer exists')
+    expect(s.get().pause_presets).toEqual([preset])
+  })
+
+  it('recovers valid recipes from a partly damaged library and defaults old settings', () => {
+    const valid = { id: 'one', name: 'Interview', thresholdDb: -32, minMs: 600, padMs: 150 }
+    const s = store({ [PATH]: JSON.stringify({ pause_presets: [null, {}, valid, valid, { ...valid, id: 'bad', padMs: -1 }] }) })
+    expect(s.get().pause_presets).toEqual([valid])
+    expect(store({ [PATH]: '{}' }).get().pause_presets).toBeUndefined()
+  })
   it('persists and clears the default text font across independent readers', () => {
     const { fs, files } = memFs()
     const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })

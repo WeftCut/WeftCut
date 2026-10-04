@@ -283,6 +283,78 @@ test.describe('pauses', () => {
     `A/V fixture not found at ${FIXTURE} (run: cd apps/desktop/e2e && npm run fixtures)`,
   )
 
+  test('personal presets can be saved, updated, managed and reused in another project', async ({}, testInfo) => {
+    test.setTimeout(240_000)
+    const { app, page } = await launchApp({ locale: 'zh-CN' })
+    try {
+      const first = await seedPair(page, 'e2e-pause-presets')
+      await waitForPeaks(page, first.mediaId)
+      await detectFromContextMenu(page, first.audioLayerId, '检测停顿…')
+      const section = pausesSection(page, '停顿')
+      const preset = section.getByRole('button', { name: '预设', exact: true })
+      const choose = async (name: string) => {
+        await preset.click()
+        await page.getByRole('menuitem', { name, exact: true }).click()
+      }
+      await expect(section.getByRole('button', { name: '标记停顿', exact: true })).toBeEnabled()
+      await section.screenshot({ path: testInfo.outputPath('pauses-panel-zh.png') })
+      await choose('另存为预设…')
+      const name = page.getByRole('textbox', { name: '预设名称' })
+      await expect(name).toBeFocused()
+      await name.fill('访谈停顿')
+      await page.locator('.pauses-preset-editor').screenshot({ path: testInfo.outputPath('pause-save-zh.png') })
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await expect(preset).toHaveText('访谈停顿')
+      await section.getByRole('textbox', { name: '每侧保留时长' }).fill('150')
+      await section.getByRole('textbox', { name: '每侧保留时长' }).press('Tab')
+      await expect(preset).toHaveText('访谈停顿 · 已修改')
+      await choose('更新“访谈停顿”')
+      await expect(preset).toHaveText('访谈停顿')
+      await choose('管理预设…')
+      await page.getByRole('button', { name: '重命名“访谈停顿”' }).click()
+      await name.fill('播客剪辑')
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await expect(preset).toHaveText('播客剪辑')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+
+      const next = await seedPair(page, 'e2e-pause-presets-next')
+      await waitForPeaks(page, next.mediaId)
+      await detectFromContextMenu(page, next.audioLayerId, '检测停顿…')
+      await choose('播客剪辑')
+      await expect(section.getByRole('textbox', { name: '每侧保留时长' })).toHaveValue('150')
+      const saved = await invokeCmd<{ pause_presets: Array<{ name: string; padMs: number }> }>(page, 'app_settings_get', {})
+      expect(saved.pause_presets).toEqual([expect.objectContaining({ name: '播客剪辑', padMs: 150 })])
+      await preset.focus()
+      await page.keyboard.press('ArrowDown')
+      await expect(page.getByRole('menuitem', { name: '播客剪辑', exact: true })).toBeVisible()
+      await page.locator('.pauses-preset-menu').screenshot({ path: testInfo.outputPath('pause-presets-zh.png') })
+      await page.keyboard.press('Escape')
+      await expect(preset).toBeFocused()
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1280, 800))
+      await expect(async () => {
+        const overflow = await section.evaluate(element => element.scrollWidth > element.clientWidth)
+        expect(overflow).toBe(false)
+      }).toPass()
+      await section.screenshot({ path: testInfo.outputPath('pauses-panel-narrow-zh.png') })
+      await page.locator('.attribute-panel').screenshot({ path: testInfo.outputPath('pauses-inspector-zh.png') })
+      await preset.click()
+      const menuLeft = (await page.locator('.pauses-preset-menu').boundingBox())!.x
+      await page.getByRole('menuitem', { name: '管理预设…', exact: true }).click()
+      const editor = page.locator('.pauses-preset-editor')
+      await expect(editor).toBeVisible()
+      await expect(async () => {
+        expect(Math.abs((await editor.boundingBox())!.x - menuLeft)).toBeLessThanOrEqual(1)
+      }).toPass()
+      await editor.screenshot({ path: testInfo.outputPath('pause-manage-zh.png') })
+      await page.getByRole('button', { name: '删除“播客剪辑”', exact: true }).click()
+      await expect(preset).toHaveText('自定义')
+      await expect(section.getByRole('textbox', { name: '每侧保留时长' })).toHaveValue('150')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+    } finally {
+      await app.close()
+    }
+  })
+
   test('the command opens the section and the bands land on the sound', async () => {
     // Two background jobs (conform + waveform) behind a debounced detection. No
     // export and no analyzer, so the budget is a launch plus the import
@@ -320,7 +392,7 @@ test.describe('pauses', () => {
       // the milliseconds are the LOD's (see REMOVED_TOLERANCE_US).
       const summaryLine = page.getByTestId('pauses-summary')
       await expect(summaryLine).toHaveText(
-        /^4 pauses · removes 00:00:04\.\d{3} · result 00:00:01\.\d{3}$/,
+        /^Found 4 pausesRemoves 4\.\d{1,3} s · leaves 1\.\d{1,3} s$/,
       )
       console.log(`[e2e] pauses summary: ${await summaryLine.textContent()}`)
       // Nothing has been written: measuring is not an edit, so re-tuning a
@@ -489,7 +561,7 @@ test.describe('pauses', () => {
         timeout: 60_000,
       })
       await expect(page.getByTestId('pauses-summary')).toHaveText(
-        /^4 处停顿，移除 00:00:04\.\d{3}，结果 00:00:01\.\d{3}$/,
+        /^找到 4 处停顿预计移除 4\.\d{1,3} 秒 · 剩余 1\.\d{1,3} 秒$/,
       )
       await expect(section.getByRole('button', { name: '标记停顿', exact: true })).toBeEnabled()
       await expect(section.getByRole('button', { name: '移除停顿', exact: true })).toBeEnabled()

@@ -1534,19 +1534,39 @@ Attribute panel and expands the section, the same gesture *Review shots…* make
 on the Shots Panel. A command that only opened the panel would leave the user
 hunting for a collapsed header.
 
-**The parameters are in the units an audio person reasons in.** A preset row
-sets the two that matter — *Speech / podcast*, *Noisy room*, *Music /
-ambience* — with *Custom* lighting when the numbers match none of them.
+**The parameters use the Attribute panel's label/value rows.** The preset
+dropdown groups *Speech / podcast*, *Noisy room*, *Music / ambience* under
+built-in presets and saved recipes under *My presets*. Built-ins set threshold
+and shortest pause, retaining the current pad (clamped to fit). Personal
+presets copy all three parameters. Manual edits retain the source name with
+*Modified*; an unmatched recipe reads *Custom*.
 **Threshold** is a slider in dB (−60 … −20, a dB per step, read out as
-`−34 dB`) whose ends are labelled *true silence only* and *allow room noise*;
+`−34 dB`) with its direction explained in the label's help tooltip;
 amplitude is what the detector takes, and amplitude 0..1 is linear on a
 logarithmic quantity, so one step of it is 6 dB at the bottom of the range and
-a fifth of a dB at the top — a control that cannot be aimed. **Auto** sets the
+a fifth of a dB at the top — a control that cannot be aimed. **Use suggested**, beside the
+threshold readout above the slider, applies a suggested value once and re-detects
+pauses. Its tooltip previews the value it will apply. It sets the
 threshold 6 dB above the clip's own noise floor, which every detection returns
 and the section prints (*Noise floor ≈ −48 dB*), so the number has a referent
-instead of being a number. **Shortest pause** is a millisecond field, and
-**Keep each side** is the pad *Remove* leaves behind. *Reset to defaults*
-restores the detector's own values.
+instead of being a number. **Minimum pause** is a millisecond field, and
+**Keep per side** is the pad *Remove* leaves behind. The header's *Reset
+parameters to defaults* restores the detector's values without touching the
+personal library. Before measurement, the noise floor reads `—` and
+*Use suggested* is disabled. The line below the slider contains only the noise-floor readout.
+
+**Personal presets are app preferences, available across projects.** *Save as
+preset…* opens a small name form showing all three values. Names are trimmed,
+case-insensitively unique and limited to 80 characters. A changed personal
+recipe can be explicitly updated or saved under a new name; built-ins cannot
+be overwritten. *Manage presets…* holds rename/delete in a popover aligned
+with the preset menu. Deleting a selected recipe keeps the working parameters and
+shows *Custom*. Save failures retain the form for retry. The main process
+applies each library edit atomically to its latest settings, so independent
+windows do not replace each other's lists. Projects keep copied parameter
+values: library changes never propagate into already configured projects.
+Measured noise floors, detections and audition state are not saved; an
+automatically estimated threshold is saved as a fixed number.
 
 **Every change re-detects, live**, on a short debounce with the latest run
 winning: a detection walks pre-computed waveform peaks and decodes nothing, so
@@ -1565,15 +1585,17 @@ floor, and a pause is a fact about the audio after it — so the bands and the
 waveform drawn under them cannot disagree, and a subject whose bake is still
 running falls back rather than refusing.
 
-**One summary line and the bands, not a list.** The section says *{{count}}
-pauses · removes {{removed}} · result {{result}}* and puts the rest on the
+**A compact result and the bands, not a list.** The result region shows *Found
+{{count}} pauses* and *Removes {{removed}} · leaves {{result}}*, using seconds
+with exact wall-clock times in the detail tooltip. Waiting, detecting and
+empty results occupy the same region. The section puts the rest on the
 timeline: one band per pause on the subject's own audio block, the whole range
 in faint amber and the core *Remove* would actually cut in a stronger one.
 Nothing is drawn on the linked picture or on the ruler — a filmstrip under a
 band verifies nothing, and the link's accent already says the picture follows.
 Nobody confirms forty rows one by one; *where* is answered by the bands and
 *how it sounds* by the audition. A clip with nothing under the threshold reads
-*No pauses at this threshold* and both verbs grey; nothing is written.
+*No pauses detected with the current settings* and both verbs grey; nothing is written.
 
 **Audition result** answers the question a list cannot. It stitches the audio
 that would survive around the first three joins from the playhead (the clip's
@@ -1599,7 +1621,7 @@ left to tell "the picture changes here" from "nobody is speaking through here".
 **Remove pauses** is the other verb over the same detection: each pause is cut
 out of the clip and the gap it vacated closes behind it, so the clip — and the
 film — get shorter ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
-What goes is the pause's core, not the pause: *Keep each side* stays at both
+What goes is the pause's core, not the pause: *Keep per side* stays at both
 ends, because erasing a pause outright makes speech breathless and clips the
 soft onset of a word that a ten-millisecond peak window read as quiet. A pause
 touching the clip's head or tail keeps its pad on the inner side only and is

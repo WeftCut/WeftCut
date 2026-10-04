@@ -14,8 +14,10 @@ import { layerRateNumber } from '../layerTiming';
 // something a person does WHILE looking at the waveform and playing the clip,
 // which a modal takes away.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { LoaderCircle, Play, RotateCcw, Square } from "lucide-react";
+import { DEFAULT_PAUSE_VALUES, validPauseValues, type PauseValues } from "../../shared/pause-presets";
 
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { AppNumberField } from "../components/AppNumberField";
@@ -44,6 +46,10 @@ import { clearPausePreview, setPausePreview } from "../state/pausePreviewStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useOpenComposition, useProjectStore } from "../state/projectStore";
 import { PropSection } from "./PropSection";
+import { Field } from "./Field";
+import { Button } from "../components/ui/button";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { inferPausePreset, PausePresetControl, type PausePresetSource } from "./PausePresetControl";
 
 /// Rust's own defaults, as the section states them.
 ///
@@ -55,9 +61,7 @@ import { PropSection } from "./PropSection";
 ///
 /// The section always sends its values EXPLICITLY, so these decide only what an
 /// untuned project starts at — never what the tool falls back to.
-const DEFAULT_THRESHOLD_DB = -34;
-const DEFAULT_MIN_MS = 500;
-const DEFAULT_PAD_MS = 100;
+const { thresholdDb: DEFAULT_THRESHOLD_DB, minMs: DEFAULT_MIN_MS, padMs: DEFAULT_PAD_MS } = DEFAULT_PAUSE_VALUES;
 
 /// The dB window the slider spans. Below −60 every recording is "silent" and
 /// above −20 quiet speech starts counting as a pause, so the ends are the range
@@ -83,15 +87,6 @@ const MS_STEP = 50;
 /// here commits — a superseded read costs one cache walk, and the latest-wins
 /// guard makes an overlapping pair harmless.
 const REDETECT_DEBOUNCE_MS = 120;
-
-/// The three starting points, threshold and minimum only — a preset that also
-/// set the pad would overwrite a choice that has nothing to do with how quiet
-/// the room is.
-const PRESETS = [
-  { id: "speech", db: -34, minMs: 500 },
-  { id: "noisy", db: -28, minMs: 800 },
-  { id: "music", db: -45, minMs: 1500 },
-] as const;
 
 /// What the section is showing, or waiting for.
 ///
@@ -144,16 +139,19 @@ function maxPadMs(minMs: number): number {
 export function PausesSection({ layer }: { layer: LayerSummary }) {
   const { t } = useTranslation();
   const composition = useOpenComposition();
+  const projectId = useProjectStore(s => s.summary?.project_id);
+  const recipe = useRef<{ projectId: string | undefined; source: PausePresetSource | null } | null>(null);
   const subject = resolvePauseSubjectSummary(layer, composition);
   if (subject === null) return null;
   return (
     <PropSection
+      className="pauses-section"
       layerKind={layer.kind}
       sectionId={PAUSES_SECTION_ID}
       title={t("property_panel.pauses")}
       defaultCollapsed
     >
-      <PausesBody layer={layer} subject={subject} />
+      <PausesBody key={projectId} layer={layer} subject={subject} projectId={projectId} recipe={recipe} />
     </PropSection>
   );
 }
@@ -165,13 +163,23 @@ export function PausesSection({ layer }: { layer: LayerSummary }) {
 /// and the published bands all be plain effects: a collapsed section holds
 /// none of them, and no second "is it open" flag exists to disagree with the
 /// tree.
-function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSummary }) {
+function PausesBody({ layer, subject, projectId, recipe }: {
+  layer: LayerSummary; subject: LayerSummary; projectId: string | undefined;
+  recipe: RefObject<{ projectId: string | undefined; source: PausePresetSource | null } | null>;
+}) {
   const { t } = useTranslation();
   const [thresholdDb, setThresholdDb] = useState(DEFAULT_THRESHOLD_DB);
   const [minMs, setMinMs] = useState(DEFAULT_MIN_MS);
   const [padMs, setPadMs] = useState(DEFAULT_PAD_MS);
   const [pauses, setPauses] = useState<readonly PauseRegion[]>([]);
-  const [floorAmp, setFloorAmp] = useState(0);
+  const [floorAmp, setFloorAmp] = useState<number | null>(null);
+  const [source, setSource] = useState<PausePresetSource | null>(null);
+  const [resultKey, setResultKey] = useState("");
+  const [preferenceError, setPreferenceError] = useState("");
+  const selectSource = (next: PausePresetSource | null) => {
+    recipe.current = { projectId, source: next };
+    setSource(next);
+  };
   const [phase, setPhase] = useState<Phase>("detecting");
   const [error, setError] = useState("");
   // WHICH write is in flight, not merely whether one is: both verbs grey while
@@ -210,6 +218,9 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
   const thresholdAmp = ampFromDb(thresholdDb);
   const minPauseUs = minMs * 1_000;
   const padUs = padMs * 1_000;
+  const values = { thresholdDb, minMs, padMs };
+  const detectionKey = JSON.stringify([subjectId, thresholdAmp, minPauseUs, subjectWindow, fxStatus, retry]);
+  const ready = phase === "ready" && resultKey === detectionKey;
 
   /// Stop whatever is playing. Idempotent, and the ONE place the ref is
   /// cleared — every trigger (unmount, subject change, parameter change, a
@@ -236,20 +247,19 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
         return;
       }
       if (!alive) return;
-      if (review !== null) {
-        setThresholdDb(dbFromAmp(review.threshold_amp));
-        setMinMs(Math.round(review.min_pause_us / 1_000));
-        setPadMs(Math.round(review.pad_us / 1_000));
-      }
+      const next = review === null ? DEFAULT_PAUSE_VALUES : {
+        thresholdDb: dbFromAmp(review.threshold_amp), minMs: Math.round(review.min_pause_us / 1_000), padMs: Math.round(review.pad_us / 1_000),
+      };
+      setThresholdDb(next.thresholdDb);
+      setMinMs(next.minMs);
+      setPadMs(next.padMs);
+      selectSource(recipe.current && recipe.current.projectId === projectId ? recipe.current.source
+        : inferPausePreset(next, useAppSettingsStore.getState().settings.pause_presets ?? []));
       setHydrated(true);
     };
     void hydrate();
-    const unsub = useProjectStore.subscribe((s, prev) => {
-      if (s.summary?.project_id !== prev.summary?.project_id) void hydrate();
-    });
     return () => {
       alive = false;
-      unsub();
     };
   }, []);
 
@@ -257,6 +267,7 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
   /// and the proxy preferences: tuning a threshold is a preference, and a
   /// gesture that logged undo entries would bury the edit before it.
   const persist = (db: number, min: number, pad: number): void => {
+    setPreferenceError("");
     void updateProjectSettings({
       pause_review: {
         threshold_amp: ampFromDb(db),
@@ -266,7 +277,7 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
     }).catch((err) => {
       // A preference that cannot be written leaves the section fully usable at
       // the values on screen; they are simply not remembered for next time.
-      console.warn("[PausesSection] could not persist the review parameters", err);
+      setPreferenceError(t("pauses.parameters_save_failed", { reason: refusalText(err) }));
     });
   };
 
@@ -279,13 +290,15 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
   // the same parameters would read.
   useEffect(() => {
     if (!hydrated) return;
+    reads.invalidate();
+    setPhase("detecting");
     const timer = setTimeout(() => {
-      setPhase("detecting");
       void reads.run(
         () => detectPauses({ layerId: subjectId, thresholdAmp, minPauseUs }),
         (result) => {
           setPauses(result.pauses);
           setFloorAmp(result.noise_floor_amp);
+          setResultKey(detectionKey);
           setPhase("ready");
           setError("");
         },
@@ -301,15 +314,17 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
         },
       );
     }, REDETECT_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [reads, hydrated, subjectId, thresholdAmp, minPauseUs, subjectWindow, fxStatus, retry]);
+    return () => { clearTimeout(timer); reads.invalidate(); };
+  }, [reads, hydrated, subjectId, thresholdAmp, minPauseUs, subjectWindow, fxStatus, retry, detectionKey]);
+
+  useEffect(() => { setFloorAmp(null); }, [subjectId, subjectWindow, fxStatus, retry]);
 
   // A parameter change invalidates what is playing: the excerpt was stitched at
   // the old pad around the old joins, so continuing it would demonstrate an
   // edit the section is no longer offering.
   useEffect(() => {
     stopAudition();
-  }, [subjectId, thresholdAmp, minPauseUs, padUs]);
+  }, [subjectId, thresholdAmp, minPauseUs, padUs, subjectWindow, fxStatus]);
 
   // The waveform job. Subscribed for as long as the section is open rather than
   // only while waiting: a re-import or a regenerated peaks file changes the
@@ -339,11 +354,11 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
   useEffect(() => {
     setPausePreview({
       subjectLayerId: subjectId,
-      pauses: pauses.map((p) => ({ t_start_us: p.t_start_us, t_end_us: p.t_end_us })),
+      pauses: ready ? pauses.map((p) => ({ t_start_us: p.t_start_us, t_end_us: p.t_end_us })) : [],
       padUs,
       auditioning: auditionJoins ?? [],
     });
-  }, [subjectId, pauses, padUs, auditionJoins]);
+  }, [subjectId, pauses, padUs, auditionJoins, ready]);
 
   // Teardown: the bands go with the body, and so does anything playing. Its own
   // effect with an empty dependency list, so a parameter change cannot blank a
@@ -369,16 +384,14 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
   // One gate for both verbs: neither may run while a detection is in flight
   // (the set would not be the one on screen), on a clip with no pauses, or
   // while the other one is mid-commit.
-  const canAct = phase === "ready" && pauses.length > 0 && busy === null;
-  const preset = PRESETS.find((p) => p.db === thresholdDb && p.minMs === minMs);
+  const canAct = ready && pauses.length > 0 && busy === null && validPauseValues(values);
   const padCeilingMs = maxPadMs(minMs);
 
-  const applyPreset = (db: number, min: number): void => {
-    const pad = Math.min(padMs, maxPadMs(min));
-    setThresholdDb(db);
-    setMinMs(min);
-    setPadMs(pad);
-    persist(db, min, pad);
+  const applyPreset = (next: PauseValues): void => {
+    setThresholdDb(next.thresholdDb);
+    setMinMs(next.minMs);
+    setPadMs(next.padMs);
+    persist(next.thresholdDb, next.minMs, next.padMs);
   };
 
   const commitMin = (value: number): void => {
@@ -417,7 +430,7 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
       ...(retimed ? { retimedLayerId: subject.id } : {}),
       segments: plan.segments,
       onEnded: stopAudition,
-      onFailed: (err) => setError(refusalText(err)),
+      onFailed: (err) => { stopAudition(); setError(refusalText(err)); },
     });
   };
 
@@ -530,177 +543,103 @@ function PausesBody({ layer, subject }: { layer: LayerSummary; subject: LayerSum
       },
     );
 
+  const reset = () => {
+    setThresholdDb(DEFAULT_THRESHOLD_DB);
+    setMinMs(DEFAULT_MIN_MS);
+    setPadMs(DEFAULT_PAD_MS);
+    selectSource(inferPausePreset(DEFAULT_PAUSE_VALUES, []));
+    setPreferenceError("");
+    void updateProjectSettings({ pause_review: null }).catch(err => {
+      setPreferenceError(t("pauses.parameters_save_failed", { reason: refusalText(err) }));
+    });
+  };
+  const controlsDisabled = !hydrated || busy !== null;
+  const suggestedThresholdDb = floorAmp === null ? null
+    : Math.min(DB_MAX, Math.max(DB_MIN, dbFromAmp(floorAmp) + AUTO_HEADROOM_DB));
+  const processing = phase === "detecting" || (phase === "ready" && !ready);
+  const seconds = (us: number) => t("pauses.seconds", { value: new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(us / 1_000_000) });
+
   return (
     <div className="pauses-body">
-      {layer.id !== subjectId && (
-        <p className="prop-effect-order-hint" data-testid="pauses-delegated">
-          {t("pauses.delegated", { clip: clipName })}
-        </p>
-      )}
-      <div className="pauses-presets">
-        {PRESETS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className="pauses-preset"
-            aria-pressed={preset?.id === p.id}
-            onClick={() => applyPreset(p.db, p.minMs)}
-          >
-            {t(`pauses.preset_${p.id}`)}
-          </button>
-        ))}
-        {/* Custom is a READOUT, not a choice: there is nothing for it to set,
-            and lighting it is how the row says the numbers below are the
-            user's own rather than one of the three above. */}
-        <span
-          className="pauses-preset pauses-preset--custom"
-          data-active={preset === undefined}
-          data-testid="pauses-preset-custom"
-        >
-          {t("pauses.preset_custom")}
-        </span>
-      </div>
-      <div className="prop-field">
-        <span className="prop-field-label">{t("pauses.threshold")}</span>
-        <div className="prop-field-control">
-          <AppSlider
-            value={thresholdDb}
-            min={DB_MIN}
-            max={DB_MAX}
-            step={DB_STEP}
-            ariaLabel={t("pauses.threshold")}
-            getAriaValueText={(v) => t("pauses.db", { db: formatDb(v) })}
-            onValueChange={setThresholdDb}
-            onValueCommitted={(v) => persist(v, minMs, padMs)}
-          />
-          <span className="pauses-readout">{t("pauses.db", { db: formatDb(thresholdDb) })}</span>
+      <Button className="pauses-reset" size="icon-xs" variant="ghost" disabled={controlsDisabled}
+        aria-label={t("pauses.reset")} title={t("pauses.reset")} onClick={reset}>
+        <RotateCcw size={12} aria-hidden />
+      </Button>
+      {layer.id !== subjectId && <p className="prop-hint" data-testid="pauses-delegated">{t("pauses.delegated", { clip: clipName })}</p>}
+      <PausePresetControl values={values} source={source} onSourceChange={selectSource} onApply={applyPreset} disabled={controlsDisabled} />
+      <Field label={t("pauses.threshold")} as="div" hint={t("pauses.threshold_hint")}>
+        <div className="pauses-threshold-control">
+          <div className="pauses-threshold-input">
+            <span className="pauses-readout">{t("pauses.db", { db: formatDb(thresholdDb) })}</span>
+            <Button size="xs" variant="outline" disabled={controlsDisabled || suggestedThresholdDb === null}
+              title={suggestedThresholdDb === null ? t("pauses.suggestion_pending")
+                : t("pauses.suggestion_hint", { db: formatDb(suggestedThresholdDb) })}
+              onClick={() => {
+                if (suggestedThresholdDb === null) return;
+                setThresholdDb(suggestedThresholdDb);
+                persist(suggestedThresholdDb, minMs, padMs);
+              }}>{t("pauses.use_suggested")}</Button>
+          </div>
+          <AppSlider value={thresholdDb} min={DB_MIN} max={DB_MAX} step={DB_STEP} disabled={controlsDisabled}
+            ariaLabel={t("pauses.threshold")} getAriaValueText={v => t("pauses.db", { db: formatDb(v) })}
+            onValueChange={setThresholdDb} onValueCommitted={v => persist(v, minMs, padMs)} />
+          <div className="pauses-floor">
+            <span data-testid="pauses-floor">{floorAmp === null ? t("pauses.noise_floor_pending") : t("pauses.noise_floor", { db: formatDb(dbFromAmp(floorAmp)) })}</span>
+          </div>
         </div>
-      </div>
-      {/* The ends say what the two directions MEAN. A dB number is a referent
-          only to someone who already knows the room. */}
-      <p className="pauses-ends">
-        <span>{t("pauses.threshold_low")}</span>
-        <span>{t("pauses.threshold_high")}</span>
-      </p>
-      <p className="pauses-floor">
-        <span data-testid="pauses-floor">
-          {t("pauses.noise_floor", { db: formatDb(dbFromAmp(floorAmp)) })}
-        </span>
-        {/* The floor is measured, so *Auto* is the one control here that knows
-            something the user does not. */}
-        <button
-          type="button"
-          className="effect-add-trigger"
-          onClick={() => {
-            const db = Math.min(
-              DB_MAX,
-              Math.max(DB_MIN, dbFromAmp(floorAmp) + AUTO_HEADROOM_DB),
-            );
-            setThresholdDb(db);
-            persist(db, minMs, padMs);
-          }}
-        >
-          {t("pauses.auto")}
-        </button>
-      </p>
-      <div className="prop-field">
-        <span className="prop-field-label">{t("pauses.min_length")}</span>
-        <div className="prop-field-control">
-          <AppNumberField
-            value={minMs}
-            min={MIN_PAUSE_FLOOR_MS}
-            step={MS_STEP}
-            ariaLabel={t("pauses.min_length")}
-            onValueChange={setMinMs}
-            onCommit={commitMin}
-          />
-          <span className="settings-toggle-hint">{t("pauses.unit_ms")}</span>
+      </Field>
+      <Field label={t("pauses.min_length")} hint={t("pauses.min_length_hint")}>
+        <div className="pauses-number-control">
+        <AppNumberField value={minMs} min={MIN_PAUSE_FLOOR_MS} step={MS_STEP} disabled={controlsDisabled}
+          ariaLabel={t("pauses.min_length")} onValueChange={v => {
+            setMinMs(v);
+            setPadMs(pad => Math.min(pad, maxPadMs(v)));
+          }} onCommit={commitMin} />
+        <span className="pauses-unit">{t("pauses.unit_ms")}</span>
         </div>
-      </div>
-      <div className="prop-field">
-        <span className="prop-field-label">{t("pauses.pad")}</span>
-        <div className="prop-field-control">
-          <AppNumberField
-            value={padMs}
-            min={0}
-            max={padCeilingMs}
-            step={MS_STEP}
-            ariaLabel={t("pauses.pad")}
-            onValueChange={setPadMs}
-            onCommit={(v) => {
-              const pad = Math.min(padCeilingMs, Math.max(0, Math.round(v)));
-              setPadMs(pad);
-              persist(thresholdDb, minMs, pad);
-            }}
-          />
-          <span className="settings-toggle-hint">{t("pauses.unit_ms")}</span>
+      </Field>
+      <Field label={t("pauses.pad")} hint={t("pauses.pad_hint")}>
+        <div className="pauses-number-control">
+        <AppNumberField value={padMs} min={0} max={padCeilingMs} step={MS_STEP} disabled={controlsDisabled}
+          ariaLabel={t("pauses.pad")} onValueChange={setPadMs} onCommit={v => {
+            const pad = Math.min(padCeilingMs, Math.max(0, Math.round(v)));
+            setPadMs(pad);
+            persist(thresholdDb, minMs, pad);
+          }} />
+        <span className="pauses-unit">{t("pauses.unit_ms")}</span>
         </div>
+      </Field>
+      <div className="pauses-summary" data-testid="pauses-summary" role="status" aria-live="polite" aria-atomic="true">
+        {phase === "waiting_waveform" ? <span><LoaderCircle size={12} className="pauses-spinner" aria-hidden />{t("pauses.waiting_waveform")}</span>
+          : processing ? <span><LoaderCircle size={12} className="pauses-spinner" aria-hidden />{t("pauses.detecting")}</span>
+          : phase === "failed" ? <span>{t("pauses.detect_failed")}</span>
+          : pauses.length === 0 ? <span>{t("pauses.none")}</span>
+          : <>
+            <span>{t("pauses.found", { count: pauses.length })}</span>
+            <span className="pauses-summary-detail" title={t("pauses.summary", {
+              count: pauses.length, removed: formatWallClock(removedUs), result: formatWallClock(resultUs),
+            })}>{t("pauses.result_detail", { removed: seconds(removedUs), result: seconds(resultUs) })}</span>
+          </>}
       </div>
-      <p className="pauses-summary" data-testid="pauses-summary">
-        {phase === "waiting_waveform"
-          ? t("pauses.waiting_waveform")
-          : phase === "detecting"
-            ? t("pauses.detecting")
-            : phase === "failed"
-              ? ""
-              : pauses.length === 0
-                ? t("pauses.none")
-                : t("pauses.summary", {
-                    count: pauses.length,
-                    // Wall clock rather than a timecode, and not for want of a
-                    // frame rate: a pause is measured by ear, and
-                    // `formatWallClock` is the readout whose digits agree with
-                    // what the user hears (`frames.ts` states the split).
-                    removed: formatWallClock(removedUs),
-                    result: formatWallClock(resultUs),
-                  })}
-      </p>
-      {error !== "" && <p className="settings-error" data-testid="pauses-error">{error}</p>}
+      {error !== "" && <p className="settings-error" role="alert" data-testid="pauses-error">{error}</p>}
+      {preferenceError && <p className="settings-error" role="alert">{preferenceError}</p>}
       <div className="pauses-actions">
-        <button
-          type="button"
-          className="effect-add-trigger"
-          disabled={!canAct && auditionJoins === null}
-          onClick={auditionResult}
-        >
+        <Button size="xs" variant="ghost" disabled={(!canAct || removedUs === 0) && auditionJoins === null} onClick={auditionResult}
+          aria-pressed={auditionJoins !== null}>
+          {auditionJoins === null ? <Play size={12} aria-hidden /> : <Square size={12} aria-hidden />}
           {auditionJoins === null ? t("pauses.audition") : t("pauses.audition_stop")}
-        </button>
-        {/* Remove before Mark, so the primary verb sits where a press lands.
-            Mark stays the default one: it is the reversible half, and the
-            native-NLE habit is that the destructive verb is the deliberate
-            second reach. */}
-        <button
-          type="button"
-          className="effect-add-trigger"
-          disabled={!canAct}
-          onClick={() => void remove()}
-        >
-          {busy === "remove" ? t("pauses.removing") : t("pauses.remove")}
-        </button>
-        <button
-          type="button"
-          className="effect-add-trigger pauses-primary"
-          disabled={!canAct}
-          onClick={() => void mark()}
-        >
-          {busy === "mark" ? t("pauses.marking") : t("pauses.mark")}
-        </button>
+        </Button>
+        <div className="pauses-write-actions">
+          <Button size="xs" variant="ghost" disabled={!canAct || removedUs === 0} onClick={() => void remove()}>
+            {busy === "remove" && <LoaderCircle size={12} className="pauses-spinner" aria-hidden />}
+            {busy === "remove" ? t("pauses.removing") : t("pauses.remove")}
+          </Button>
+          <Button size="xs" variant="secondary" disabled={!canAct} onClick={() => void mark()}>
+            {busy === "mark" && <LoaderCircle size={12} className="pauses-spinner" aria-hidden />}
+            {busy === "mark" ? t("pauses.marking") : t("pauses.mark")}
+          </Button>
+        </div>
       </div>
-      <button
-        type="button"
-        className="pauses-reset"
-        onClick={() => {
-          setThresholdDb(DEFAULT_THRESHOLD_DB);
-          setMinMs(DEFAULT_MIN_MS);
-          setPadMs(DEFAULT_PAD_MS);
-          // `null` and not the defaults spelled out: clearing the tuning is
-          // what "reset" means, and a project that stores the defaults would
-          // stop following a later change to them.
-          void updateProjectSettings({ pause_review: null }).catch(() => {});
-        }}
-      >
-        {t("pauses.reset")}
-      </button>
     </div>
   );
 }

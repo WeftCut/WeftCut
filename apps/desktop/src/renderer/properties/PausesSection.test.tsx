@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getProjectSettings: vi.fn(),
   updateProjectSettings: vi.fn(),
   logEmit: vi.fn(),
+  appSettingsSet: vi.fn(),
   listen: vi.fn(),
   unlisten: vi.fn(),
   startAudition: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("../ipc", async (importActual) => {
     getProjectSettings: mocks.getProjectSettings,
     updateProjectSettings: mocks.updateProjectSettings,
     logEmit: mocks.logEmit,
+    appSettingsSet: mocks.appSettingsSet,
   };
 });
 vi.mock("@/bridge/events", () => ({ listen: mocks.listen }));
@@ -53,6 +55,9 @@ import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 import { usePausePreviewStore } from "../state/pausePreviewStore";
 import { useProjectStore } from "../state/projectStore";
 import { PausesSection } from "./PausesSection";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { APP_SETTINGS_DEFAULTS, type AppSettingsPatch } from "../../shared/app-settings";
+import { changePausePresets } from "../../shared/pause-presets";
 import { clearPropSectionMemory } from "./PropSection";
 
 const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
@@ -163,11 +168,21 @@ async function open(layer: LayerSummary): Promise<void> {
   await waitFor(() => expect(mocks.detectPauses).toHaveBeenCalled());
 }
 
+async function choosePreset(name: string): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Preset" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name }));
+}
+
 const button = (name: string): HTMLButtonElement =>
   screen.getByRole("button", { name }) as HTMLButtonElement;
 
 describe("PausesSection", () => {
   beforeEach(() => {
+    useAppSettingsStore.getState().hydrate({ ...APP_SETTINGS_DEFAULTS });
+    mocks.appSettingsSet.mockReset().mockImplementation(async (patch: AppSettingsPatch) => {
+      const current = useAppSettingsStore.getState().settings;
+      return { ...current, pause_presets: changePausePresets(current.pause_presets ?? [], patch.pause_preset_change!) };
+    });
     // 1.5 s + 0.8 s of pause, and a floor two steps under the default
     // threshold.
     mocks.detectPauses.mockReset().mockResolvedValue({
@@ -249,7 +264,7 @@ describe("PausesSection", () => {
     // 10 s clip ends at 8.1 s.
     await waitFor(() =>
       expect(screen.getByTestId("pauses-summary").textContent).toBe(
-        "2 pauses · removes 00:00:01.900 · result 00:00:08.100",
+        "Found 2 pausesRemoves 1.9 s · leaves 8.1 s",
       ),
     );
   });
@@ -264,7 +279,7 @@ describe("PausesSection", () => {
     seed([audio]);
     await open(audio);
     await waitFor(() =>
-      expect(screen.getByText("No pauses at this threshold")).toBeTruthy(),
+      expect(screen.getByText("No pauses detected with the current settings")).toBeTruthy(),
     );
     expect(button("Mark pauses").disabled).toBe(true);
     expect(button("Remove pauses").disabled).toBe(true);
@@ -281,14 +296,14 @@ describe("PausesSection", () => {
     expect(button("Remove pauses").disabled).toBe(true);
   });
 
-  it("sets both numbers from a preset and lights its chip", async () => {
+  it("copies a built-in preset into the property rows", async () => {
     const audio = audioLayer("a-1", "m-1");
     seed([audio]);
     await open(audio);
     // Custom is dark while the defaults match the speech preset.
-    expect(button("Speech / podcast").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Preset").textContent).toBe("Speech / podcast");
 
-    fireEvent.click(button("Noisy room"));
+    await choosePreset("Noisy room");
     await waitFor(() =>
       expect(mocks.detectPauses).toHaveBeenLastCalledWith({
         layerId: "a-1",
@@ -296,9 +311,9 @@ describe("PausesSection", () => {
         minPauseUs: 800_000,
       }),
     );
-    expect(button("Noisy room").getAttribute("aria-pressed")).toBe("true");
-    expect(button("Speech / podcast").getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByTestId("pauses-preset-custom").getAttribute("data-active")).toBe("false");
+    expect(button("Preset").textContent).toBe("Noisy room");
+
+
   });
 
   // The one control that knows something about this recording the user does
@@ -312,14 +327,15 @@ describe("PausesSection", () => {
         "Noise floor ≈ −48 dB",
       ),
     );
-    fireEvent.click(button("Auto"));
+    expect(button("Use suggested").title).toContain("−42 dB");
+    fireEvent.click(button("Use suggested"));
     await waitFor(() =>
       expect(mocks.detectPauses).toHaveBeenLastCalledWith(
         expect.objectContaining({ thresholdAmp: expect.closeTo(10 ** (-42 / 20), 6) }),
       ),
     );
     // …and the numbers are no longer any preset's.
-    expect(screen.getByTestId("pauses-preset-custom").getAttribute("data-active")).toBe("true");
+    expect(button("Preset").textContent).toBe("Speech / podcast · Modified");
   });
 
   // `2 × pad < min` is the constraint that makes a core exist, and the field
@@ -328,16 +344,16 @@ describe("PausesSection", () => {
     const audio = audioLayer("a-1", "m-1");
     seed([audio]);
     await open(audio);
-    const pad = screen.getByLabelText("Keep each side") as HTMLInputElement;
+    const pad = screen.getByLabelText("Keep per side") as HTMLInputElement;
     expect(pad.value).toBe("100");
     // Music / ambience raises the minimum to 1500 ms, so the ceiling rises…
-    fireEvent.click(button("Music / ambience"));
+    await choosePreset("Music / ambience");
     fireEvent.change(pad, { target: { value: "700" } });
     fireEvent.blur(pad);
     await waitFor(() => expect(pad.value).toBe("700"));
     // …and the noisy preset's 800 ms minimum pulls it back to (800 − 50) / 2,
     // floored to the step.
-    fireEvent.click(button("Noisy room"));
+    await choosePreset("Noisy room");
     await waitFor(() => expect(pad.value).toBe("350"));
   });
 
@@ -455,7 +471,7 @@ describe("PausesSection", () => {
       expect(usePausePreviewStore.getState().preview?.auditioning).toEqual([0, 1]),
     );
     // A second press stops it.
-    fireEvent.click(button("Stop"));
+    fireEvent.click(button("Stop audition"));
     await waitFor(() =>
       expect(usePausePreviewStore.getState().preview?.auditioning).toEqual([]),
     );
@@ -477,9 +493,9 @@ describe("PausesSection", () => {
       thresholdAmp: expect.closeTo(10 ** (-45 / 20), 6),
       minPauseUs: 1_500_000,
     });
-    expect(button("Music / ambience").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Preset").textContent).toBe("Music / ambience");
 
-    fireEvent.click(button("Speech / podcast"));
+    await choosePreset("Speech / podcast");
     await waitFor(() =>
       expect(mocks.updateProjectSettings).toHaveBeenCalledWith({
         pause_review: {
@@ -498,14 +514,103 @@ describe("PausesSection", () => {
     const audio = audioLayer("a-1", "m-1");
     seed([audio]);
     await open(audio);
-    fireEvent.click(button("Noisy room"));
+    await choosePreset("Noisy room");
     await waitFor(() => expect(mocks.updateProjectSettings).toHaveBeenCalled());
     mocks.updateProjectSettings.mockClear();
-    fireEvent.click(button("Reset to defaults"));
+    fireEvent.click(button("Reset parameters to defaults"));
     await waitFor(() =>
       expect(mocks.updateProjectSettings).toHaveBeenCalledWith({ pause_review: null }),
     );
-    expect(button("Speech / podcast").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Preset").textContent).toBe("Speech / podcast");
+  });
+
+  it("saves all three parameters, updates explicitly, and keeps the recipe through collapse", async () => {
+    const audio = audioLayer("a-1", "m-1");
+    seed([audio]);
+    await open(audio);
+    await choosePreset("Save as preset…");
+    fireEvent.change(await screen.findByLabelText("Preset name"), { target: { value: "Interview" } });
+    fireEvent.click(button("Save"));
+    await waitFor(() => expect(button("Preset").textContent).toBe("Interview"));
+    expect(useAppSettingsStore.getState().settings.pause_presets).toEqual([
+      expect.objectContaining({ name: "Interview", thresholdDb: -34, minMs: 500, padMs: 100 }),
+    ]);
+    const pad = screen.getByLabelText("Keep per side");
+    fireEvent.change(pad, { target: { value: "150" } });
+    fireEvent.blur(pad);
+    await waitFor(() => expect(button("Preset").textContent).toBe("Interview · Modified"));
+    expect(useAppSettingsStore.getState().settings.pause_presets![0]!.padMs).toBe(100);
+    fireEvent.click(button("Pauses"));
+    // Simulate the project's persisted copy on remount.
+    mocks.getProjectSettings.mockResolvedValue({ pause_review: { threshold_amp: 10 ** (-34 / 20), min_pause_us: 500_000, pad_us: 150_000 } });
+    fireEvent.click(button("Pauses"));
+    await waitFor(() => expect(button("Preset").textContent).toBe("Interview · Modified"));
+    await choosePreset("Update “Interview”");
+    await waitFor(() => expect(button("Preset").textContent).toBe("Interview"));
+    expect(useAppSettingsStore.getState().settings.pause_presets![0]!.padMs).toBe(150);
+    fireEvent.click(button("Reset parameters to defaults"));
+    await choosePreset("Interview");
+    await waitFor(() => expect((screen.getByLabelText("Keep per side") as HTMLInputElement).value).toBe("150"));
+  });
+
+  it("renames and deletes a personal preset without changing project parameters", async () => {
+    useAppSettingsStore.getState().hydrate({ ...APP_SETTINGS_DEFAULTS, pause_presets: [
+      { id: "interview", name: "Interview", thresholdDb: -34, minMs: 500, padMs: 100 },
+    ] });
+    const audio = audioLayer("a-1", "m-1");
+    seed([audio]);
+    await open(audio);
+    await choosePreset("Manage presets…");
+    fireEvent.click(await screen.findByRole("button", { name: "Rename “Interview”" }));
+    fireEvent.change(screen.getByLabelText("Preset name"), { target: { value: "Podcast" } });
+    fireEvent.click(button("Save"));
+    await waitFor(() => expect(button("Preset").textContent).toBe("Podcast"));
+    fireEvent.click(button("Delete “Podcast”"));
+    await waitFor(() => expect(button("Preset").textContent).toBe("Custom"));
+    expect(useAppSettingsStore.getState().settings.pause_presets).toEqual([]);
+    expect(mocks.updateProjectSettings).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Keep per side") as HTMLInputElement).value).toBe("100");
+  });
+
+  it("rejects blank and duplicate names and retains the name after a failed save", async () => {
+    useAppSettingsStore.getState().hydrate({ ...APP_SETTINGS_DEFAULTS, pause_presets: [
+      { id: "interview", name: "Interview", thresholdDb: -34, minMs: 500, padMs: 100 },
+    ] });
+    const audio = audioLayer("a-1", "m-1");
+    seed([audio]);
+    await open(audio);
+    await choosePreset("Save as preset…");
+    const input = await screen.findByLabelText("Preset name");
+    expect(button("Save").disabled).toBe(true);
+    fireEvent.change(input, { target: { value: " INTERVIEW " } });
+    expect(button("Save").disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "Lecture" } });
+    mocks.appSettingsSet.mockRejectedValueOnce(new Error("Disk full"));
+    fireEvent.click(button("Save"));
+    await screen.findByText(/Could not save presets:.*Disk full/);
+    expect((input as HTMLInputElement).value).toBe("Lecture");
+    expect(useAppSettingsStore.getState().settings.pause_presets).toHaveLength(1);
+    expect(button("Save").disabled).toBe(false);
+  });
+
+  it("does not invent a noise floor or allow automatic estimation before measurement", async () => {
+    mocks.detectPauses.mockReturnValue(new Promise(() => {}));
+    const audio = audioLayer("a-1", "m-1");
+    seed([audio]);
+    await open(audio);
+    expect(screen.getByTestId("pauses-floor").textContent).toBe("Noise floor —");
+    expect(button("Use suggested").disabled).toBe(true);
+  });
+
+  it("invalidates an old detection immediately while the new parameter read is debounced", async () => {
+    const audio = audioLayer("a-1", "m-1");
+    seed([audio]);
+    await open(audio);
+    await waitFor(() => expect(button("Mark pauses").disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText("Minimum pause"), { target: { value: "800" } });
+    expect(button("Mark pauses").disabled).toBe(true);
+    expect(button("Remove pauses").disabled).toBe(true);
+    expect(usePausePreviewStore.getState().preview?.pauses).toEqual([]);
   });
 
   // A trim changes which peaks are inside the clip, so bands from the old

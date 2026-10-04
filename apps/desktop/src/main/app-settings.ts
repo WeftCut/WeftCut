@@ -8,6 +8,7 @@
 // Bad-config recovery: a missing / empty / corrupt file degrades to
 // all-defaults so a hand-edit mishap can't brick the editor.
 
+import { changePausePresets, readPausePresets } from '../shared/pause-presets'
 import {
   APP_SETTINGS_DEFAULTS,
   DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US,
@@ -47,6 +48,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     // or wrong-typed field falls back to its default; unknown keys are ignored.
     const d = APP_SETTINGS_DEFAULTS
     return {
+      pause_presets: parsed.pause_presets === undefined ? undefined : readPausePresets(parsed.pause_presets),
       display_mode: parsed.display_mode === 'AllTracks' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
       tail_snap_enabled: typeof parsed.tail_snap_enabled === 'boolean' ? parsed.tail_snap_enabled : d.tail_snap_enabled,
@@ -145,6 +147,9 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     get: read,
     apply(patch) {
       const current = read()
+      if (patch.pause_preset_change !== undefined) {
+        current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)
+      }
       if (patch.display_mode !== undefined) current.display_mode = patch.display_mode
       if (patch.delta_window_us !== undefined) current.delta_window_us = clamp(patch.delta_window_us, DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US)
       if (patch.tail_snap_enabled !== undefined) current.tail_snap_enabled = patch.tail_snap_enabled

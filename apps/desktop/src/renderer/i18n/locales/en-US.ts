@@ -2694,6 +2694,37 @@ const enUS = {
   // is what the feature is about, and the old noun collided with mute. The one
   // exception is the slider end below, where the phrase names the sound itself.
   pauses: {
+    preset: "Preset",
+    preset_modified: "{{name}} · Modified",
+    presets_builtin: "Built-in presets",
+    presets_personal: "My presets",
+    presets_empty: "No saved presets yet",
+    presets_loading: "Loading presets…",
+    preset_save_as: "Save as preset…",
+    preset_update: "Update “{{name}}”",
+    presets_manage: "Manage presets…",
+    presets_scope: "Available across projects. Changes do not alter parameters already applied to a project.",
+    preset_name: "Preset name",
+    preset_values: "Threshold {{thresholdDb}} dB · shortest pause {{minMs}} ms · keep {{padMs}} ms each side",
+    preset_duplicate: "A preset with this name already exists.",
+    preset_save: "Save",
+    preset_cancel: "Cancel",
+    preset_done: "Done",
+    preset_rename: "Rename",
+    preset_delete: "Delete",
+    preset_rename_named: "Rename “{{name}}”",
+    preset_delete_named: "Delete “{{name}}”",
+    preset_saved: "Preset saved",
+    preset_deleted: "Deleted “{{name}}”. Current parameters are unchanged.",
+    preset_save_failed: "Could not save presets: {{reason}}",
+    parameters_save_failed: "Could not remember these parameters: {{reason}}",
+    threshold_hint: "Lower values detect only very quiet audio. Higher values include more room noise and may include quiet speech.",
+    noise_floor_pending: "Noise floor —",
+    found_one: "Found 1 pause",
+    found_other: "Found {{count}} pauses",
+    result_detail: "Removes {{removed}} · leaves {{result}}",
+    seconds: "{{value}} s",
+    detect_failed: "Could not detect pauses",
     // Named on the delegating clip, so the user knows the numbers are not about
     // the picture they selected.
     delegated: "Measured on the linked audio “{{clip}}”",
@@ -2718,18 +2749,22 @@ const enUS = {
     // Measured from the clip's own peaks, which is what makes Auto worth a
     // button: it knows something about this recording that the user does not.
     noise_floor: "Noise floor ≈ {{db}} dB",
-    auto: "Auto",
-    min_length: "Shortest pause",
+    use_suggested: "Use suggested",
+    suggestion_hint: "Set the threshold to {{db}} dB based on this clip’s noise floor and detect pauses again.",
+    suggestion_pending: "A suggested threshold will be available after the waveform is measured.",
+    min_length: "Minimum pause",
+    min_length_hint: "Audio must remain below the threshold for at least this duration to count as a pause.",
     // “Keep”, not “pad” or “trim”: the number is what SURVIVES on each side of a
     // pause, and a removal that erased them outright makes speech breathless.
-    pad: "Keep each side",
+    pad: "Keep per side",
+    pad_hint: "When removing pauses, keep this duration on each side that joins the surrounding audio for a more natural cut. This does not affect pause markers.",
     unit_ms: "ms",
     // Three numbers and no list: nobody confirms forty rows one by one. WHERE
     // the pauses are is answered by the bands on the clip, how it sounds by the
     // audition, and what it costs by this line.
     summary_one: "1 pause · removes {{removed}} · result {{result}}",
     summary_other: "{{count}} pauses · removes {{removed}} · result {{result}}",
-    none: "No pauses at this threshold",
+    none: "No pauses detected with the current settings",
     detecting: "Reading the waveform…",
     // A state, not a failure: on a fresh import the peaks are still being
     // generated, and the section retries by itself once they are.
@@ -2737,13 +2772,13 @@ const enUS = {
     // “Result”, because what plays is the stitched OUTCOME of a removal and not
     // the clip as it stands.
     audition: "Audition result",
-    audition_stop: "Stop",
+    audition_stop: "Stop audition",
     mark: "Mark pauses",
     marking: "Marking…",
     remove: "Remove pauses",
     removing: "Removing…",
     // The parameters are remembered per project, so there has to be a way back.
-    reset: "Reset to defaults",
+    reset: "Reset parameters to defaults",
   },
   search: {
     placeholder: "Search commands, media, clips, captions, descriptions…",

@@ -2380,6 +2380,37 @@ const zhCN: Resources = {
   //
   // 通篇用“停顿”：说的是说话之间那段安静，旧名字与“静音”相撞。
   pauses: {
+    preset: "预设",
+    preset_modified: "{{name}} · 已修改",
+    presets_builtin: "内置预设",
+    presets_personal: "我的预设",
+    presets_empty: "还没有保存的预设",
+    presets_loading: "正在读取预设…",
+    preset_save_as: "另存为预设…",
+    preset_update: "更新“{{name}}”",
+    presets_manage: "管理预设…",
+    presets_scope: "跨项目可用。修改预设不会改变项目已使用的参数。",
+    preset_name: "预设名称",
+    preset_values: "阈值 {{thresholdDb}} dB · 最短停顿时长 {{minMs}} 毫秒 · 每侧保留时长 {{padMs}} 毫秒",
+    preset_duplicate: "已存在同名预设，请换一个名称。",
+    preset_save: "保存",
+    preset_cancel: "取消",
+    preset_done: "完成",
+    preset_rename: "重命名",
+    preset_delete: "删除",
+    preset_rename_named: "重命名“{{name}}”",
+    preset_delete_named: "删除“{{name}}”",
+    preset_saved: "预设已保存",
+    preset_deleted: "已删除“{{name}}”，当前参数保持不变。",
+    preset_save_failed: "无法保存预设：{{reason}}",
+    parameters_save_failed: "无法记住当前参数：{{reason}}",
+    threshold_hint: "调低只检测更安静的片段；调高会包含更多环境噪音，也可能把轻声说话识别成停顿。",
+    noise_floor_pending: "底噪 —",
+    found_one: "找到 1 处停顿",
+    found_other: "找到 {{count}} 处停顿",
+    result_detail: "预计移除 {{removed}} · 剩余 {{result}}",
+    seconds: "{{value}} 秒",
+    detect_failed: "未能完成停顿检测",
     // 写在委托过来的画面片段上，好让用户知道这些数字说的不是他选中的画面。
     delegated: "按链接的音频“{{clip}}”计算",
     // 是起点而不是模式：各自把阈值和最短长度设好就退开。用录音的样子来命名，因为
@@ -2399,29 +2430,33 @@ const zhCN: Resources = {
     // 从这个片段自己的峰值算出来的，这也是“自动”值得有个按钮的原因：它知道一件
     // 用户不知道的、关于这段录音的事。
     noise_floor: "底噪约 {{db}} dB",
-    auto: "自动",
-    min_length: "最短停顿",
+    use_suggested: "使用建议值",
+    suggestion_hint: "根据当前片段的底噪，将阈值设为 {{db}} dB，并重新检测停顿。",
+    suggestion_pending: "波形测量完成后，即可使用建议阈值。",
+    min_length: "最短停顿时长",
+    min_length_hint: "低于阈值的声音持续达到此时长，才会被识别为停顿。",
     // 写“保留”而不是“补偿”：这个数字是每段停顿两侧活下来的部分，整段抹掉会让
     // 说话听着喘不过气。
-    pad: "两侧各保留",
+    pad: "每侧保留时长",
+    pad_hint: "移除停顿时，在停顿与声音衔接的每一侧保留这段时长，让衔接更自然。标记停顿不受此参数影响。",
     unit_ms: "毫秒",
     // 三个数字，不列清单：没有人会一条一条去确认四十行。停顿在哪由片段上的色带
     // 回答，听起来怎么样由试听回答，代价多大由这一行回答。
     summary_one: "1 处停顿，移除 {{removed}}，结果 {{result}}",
     summary_other: "{{count}} 处停顿，移除 {{removed}}，结果 {{result}}",
-    none: "这个阈值下没有停顿",
+    none: "当前参数下未检测到停顿",
     detecting: "正在读取波形…",
     // 这是一种状态，不是失败：刚导入的素材峰值还在生成，完成后这一节会自己重试。
     waiting_waveform: "正在等待波形…",
     // 写“效果”：放出来的是把移除的结果拼起来的样子，而不是片段现在的样子。
     audition: "试听效果",
-    audition_stop: "停止",
+    audition_stop: "停止试听",
     mark: "标记停顿",
     marking: "正在标记…",
     remove: "移除停顿",
     removing: "正在移除…",
     // 参数是按项目记住的，所以要留一条回去的路。
-    reset: "恢复默认",
+    reset: "恢复默认参数",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕、画面描述…",
