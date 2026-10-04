@@ -1,6 +1,6 @@
 // apps/desktop/src/main/mcp/motifToolDefs.ts
 // TS-owned MCP tool defs + resource defs for the motif surface.
-// inputSchemas are TS-owned: all 6 motif tool DEFS live here, and
+// inputSchemas are TS-owned: all motif tool DEFS live here, and
 // rust-catalog-snapshot.json carries no motif arms (do not expect a regenerated
 // one to contain them). preview_motif_draft's def is TS-sourced like the others,
 // but its EXECUTION routes 'rust' (the CDP capture special-case in server.ts).
@@ -8,7 +8,7 @@
 // Schemas carry no meta-schema / title envelope and no format hints: an agent
 // reads none of them, and every ListTools pays for them (mcp.description-budget).
 
-import { ANN_DESTRUCTIVE, ANN_READ, ANN_SET, type ToolAnnotations } from '../state/mcp-commands.js'
+import { ANN_DESTRUCTIVE, ANN_READ, ANN_SET, ANN_WRITE, type ToolAnnotations } from '../state/mcp-commands.js'
 
 export interface MotifToolDef {
   name: string
@@ -25,6 +25,16 @@ export interface MotifResourceDef {
 }
 
 export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
+  {
+    name: 'import_motif',
+    annotations: ANN_WRITE,
+    description: 'Import a local Motif ZIP (HTML and binary resources, max 256 MiB). Returns { draft_id }; previewable, not published.',
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { path: { type: 'string', description: 'Absolute ZIP path on the app machine.' } },
+      required: ['path'],
+    },
+  },
   {
     name: 'list_motifs',
     annotations: ANN_READ,

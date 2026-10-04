@@ -23,6 +23,7 @@ export function shapeMotifMcpResult(name: string, raw: unknown, args: Record<str
     case 'get_motif_source':
       return toolJson(raw)
     case 'write_motif_draft':
+    case 'import_motif':
       return toolRecord({ draft_id: raw as string })
     case 'install_motif':
       return toolRecord({ motif_id: raw as string })

@@ -154,9 +154,12 @@ To author or update a Motif, first read `motif-authoring.md` next to this file
 - Await asset loading in `setup`; calculate animation from absolute `t` and
   call `renderer.render(scene, camera)` in `frame(t)`. Avoid accumulated
   deltas or a self-running animation loop; keep `settle_rafs: 2`.
-- Workers and WASM compilation remain disabled. Use uncompressed models and
-  ordinary image textures; Draco/KTX2 decoder pipelines are not supported yet.
-- MCP drafts accept HTML, not binary uploads. Inline resources, inherit an
-  existing package with `from`, or use the app's **Import Motif** for a resource
-  ZIP. **Export Motif ZIP** shares the complete folder with its resources.
+- Local/Blob decoder Workers and WASM are supported during awaited `setup`.
+  Draco and KTX2 ETC1S/UASTC work with the offline `templates/three-model.zip`
+  beside this file. Read `motif-three-model.md` before using it: its Basis build
+  avoids JS eval, and loaders must be recreated when props rebuild the scene.
+- Import complete binary resource packages with `import_motif { path }`
+  (absolute ZIP path, returns `draft_id`, no publication), or **Import Motif**.
+  HTML drafts can still inherit resources with `from`.
+  **Export Motif ZIP** shares the complete folder with its resources.
   See `motif-authoring.md` for the full loading contract.

@@ -32,6 +32,9 @@ let hangReadyProbe = false
 let hungCommand: string | null = null
 let renderedSurface = -1
 let committedSurface = -1
+let setupDelayMs = 0
+let hangSetup = false
+let hangFrame = false
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -71,10 +74,15 @@ vi.mock('electron', () => {
           }
           if (method === 'Runtime.evaluate') {
             const expr = params?.expression ?? ''
+            if (expr.startsWith('window.__motifSetup(')) {
+              if (hangSetup) return new Promise(() => {})
+              return (setupDelayMs ? delay(setupDelayMs) : Promise.resolve()).then(() => ({ result: { value: true } }))
+            }
             if (hangReadyProbe && expr.includes('typeof window.__motifRender')) {
               return new Promise(() => {})
             }
             if (expr.startsWith('window.__motifRender(')) {
+              if (hangFrame) return new Promise(() => {})
               lastRenderExpr = expr
               renderCalls++
               renderedSurface = JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!)
@@ -146,6 +154,39 @@ describe('capture host shutdown', () => {
     setRuntimeSource('/* clock-takeover runtime */')
     await expect(captureMotifFrameB64(args)).resolves.toBe('UE5H')
     expect(opened).toBe(1)
+  })
+
+  it('allows a 6s setup but bounds initialization and each frame independently', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    vi.useFakeTimers()
+    try {
+      setupDelayMs = 6000
+      const shotsBefore = screenshotCalls
+      const slow = captureMotifFrameB64({ ...args, motifId: 'slow-setup' })
+      await vi.advanceTimersByTimeAsync(5001)
+      expect(screenshotCalls).toBe(shotsBefore)
+      await vi.advanceTimersByTimeAsync(1000)
+      await expect(slow).resolves.toBe('UE5H')
+      setupDelayMs = 0
+      hangSetup = true
+      const timeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-setup' })).rejects.toThrow(/30000ms.*setup/)
+      await vi.advanceTimersByTimeAsync(30_001)
+      await timeout
+      hangSetup = false
+      hangFrame = true
+      const frameTimeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-frame' })).rejects.toThrow(/5000ms/)
+      await vi.advanceTimersByTimeAsync(5001)
+      await frameTimeout
+      hangFrame = false
+      const beforeRecovery = opened
+      const recovered = captureMotifFrameB64({ ...args, motifId: 'recovered' })
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(recovered).resolves.toBe('UE5H')
+      expect(opened).toBe(beforeRecovery + 1)
+    } finally {
+      setupDelayMs = 0; hangSetup = false; hangFrame = false
+      vi.useRealTimers()
+    }
   })
 
   it('supersedes a queued same-key request without executing it', async () => {

@@ -22,6 +22,9 @@ describe('shapeMotifMcpResult', () => {
   it('delete_motif names what it deleted', () => {
     expect(shapeMotifMcpResult('delete_motif', null, { id: 'foo' }).structuredContent).toEqual({ motif_id: 'foo' })
   })
+  it('import_motif returns the imported draft id', () => {
+    expect(shapeMotifMcpResult('import_motif', 'model-2').structuredContent).toEqual({ draft_id: 'model-2' })
+  })
   it('motif_staleness_report → json array', () => {
     const r = shapeMotifMcpResult('motif_staleness_report', [{ motif_id: 'a', name: 'A', placed_version: 1, current_version: 2, layer_count: 1 }])
     expect(r.content[0].type).toBe('text')              // toolJson serializes to a text block

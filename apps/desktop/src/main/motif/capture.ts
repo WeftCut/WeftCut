@@ -21,6 +21,7 @@ export interface CaptureArgs {
 }
 
 const CAPTURE_TIMEOUT_MS = 5000
+const SETUP_TIMEOUT_MS = 30_000
 const READY_ATTEMPTS = 30
 const READY_POLL_MS = 100
 
@@ -40,12 +41,12 @@ export function setMotifStore(s: UserMotifStore): void {
 
 export function isMotifContentFailure(a: CaptureArgs, error: unknown): boolean {
   return failedLanes.get(laneKeyOf(a.motifId, a.contentHash)) === error
-    || String(error).includes('__motifRender threw:')
+    || /__motif(?:Setup|Render) threw:/.test(String(error))
 }
 
 interface Host {
   win: BrowserWindow
-  send: (method: string, params?: object) => Promise<any>
+  send: (method: string, params?: object, timeoutMs?: number, label?: string) => Promise<any>
   loadedId: string | null
   loadedV: string | null
   readyFor: string | null
@@ -208,8 +209,8 @@ async function buildHost(): Promise<Host> {
     dbg.attach('1.3')
     // Every CDP command is bounded by construction, including Emulation.
     // Callers cannot accidentally wedge the serial queue with an untimed send.
-    const send = (method: string, params: object = {}) =>
-      withTimeout(dbg.sendCommand(method, params), CAPTURE_TIMEOUT_MS, method)
+    const send = (method: string, params: object = {}, timeoutMs = CAPTURE_TIMEOUT_MS, label = method) =>
+      withTimeout(dbg.sendCommand(method, params), timeoutMs, label)
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource })
@@ -328,9 +329,20 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
     throw e
   }
   let ev: any
+  let phase = '__motifSetup'
   try {
-    h.frames?.prepare()
-    ev = await h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+    const setup = await h.send('Runtime.evaluate', {
+      expression: `window.__motifSetup(${JSON.stringify(props)}, ${JSON.stringify(meta)})`,
+      awaitPromise: true, returnByValue: true,
+    }, SETUP_TIMEOUT_MS, 'setup (model loading / decoder initialization)')
+    // Setup failures use the same lane handling as frame failures; the runtime
+    // has already retired its workers. A timeout tears down the entire host.
+    if (setup?.exceptionDetails) ev = setup
+    else {
+      phase = '__motifRender'
+      h.frames?.prepare()
+      ev = await h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+    }
   } catch (e) {
     // A hung __motifRender is the Motif's own script (e.g. an infinite loop) —
     // content — but it also wedges the renderer for every other lane: mark the
@@ -344,7 +356,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
     // answered fine, so tearing the host down would punish every other Motif
     // with re-navigation + runtime re-injection. Fail the LANE instead —
     // same-lane captures fast-reject until contentHash changes (see failedLanes).
-    const err = new Error('__motifRender threw: ' + JSON.stringify(ev.exceptionDetails))
+    const err = new Error(phase + ' threw: ' + JSON.stringify(ev.exceptionDetails))
     if (a.contentHash !== '') failLane(lane, err)
     throw err
   }

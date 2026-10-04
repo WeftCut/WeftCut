@@ -56,14 +56,15 @@ describe('cspForMotifFile', () => {
   it('keeps params companion scripts separate from render embedded-asset access', () => {
     expect(MOTIF_PARAMS_CSP).toContain("script-src 'unsafe-inline' motif:")
     expect(MOTIF_PARAMS_CSP).toContain("style-src 'unsafe-inline' motif:")
-    expect(MOTIF_CSP).toContain("script-src 'unsafe-inline' 'self';")
+    expect(MOTIF_CSP).toContain("script-src 'unsafe-inline' 'self' 'wasm-unsafe-eval';")
     expect(MOTIF_CSP).toContain("style-src 'unsafe-inline' 'self';")
     expect(MOTIF_PARAMS_CSP).toContain("default-src 'none'")
     expect(MOTIF_CSP).toContain("default-src 'none'")
     expect(MOTIF_CSP).toContain("connect-src 'self' data: blob:;")
     expect(MOTIF_CSP).toContain("img-src 'self' data: blob:;")
     expect(MOTIF_CSP).toContain("font-src 'self' data:;")
-    expect(MOTIF_CSP).toContain("worker-src 'none'")
+    expect(MOTIF_CSP).toContain("worker-src 'self' blob:")
+    expect(MOTIF_CSP).not.toContain("'unsafe-eval'")
     expect(MOTIF_PARAMS_CSP).toContain('img-src data: motif:;')
     // The opaque-origin params frame receives no fetch grant.
     expect(MOTIF_PARAMS_CSP).not.toContain('connect-src')

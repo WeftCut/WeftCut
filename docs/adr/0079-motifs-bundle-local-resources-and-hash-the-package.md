@@ -4,6 +4,10 @@ status: accepted
 
 # Motifs bundle local resources and hash the package
 
+The original Worker/WASM restriction below is superseded by
+[ADR 0093](0093-motif-local-decoder-workers-and-wasm.md). The package, hashing
+and offline resource decisions remain in force.
+
 ## Context
 
 Three.js scenes need local JS modules, model buffers and textures. The old render

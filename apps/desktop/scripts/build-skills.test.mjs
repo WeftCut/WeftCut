@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { assertSkillLayout, assertSkillVersions, stampSkillVersion } from './build-skills-lib.mjs'
+import { assertSkillLayout, assertSkillVersions, stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS } from './build-skills-lib.mjs'
 
 const SKILL = `---
 name: weftcut
@@ -43,14 +43,18 @@ test('an author-written metadata block fails loudly rather than being clobbered'
 })
 
 /// A staged bundle, minus whatever the caller leaves out.
-function bundle(t, { skills = ['weftcut'], docs = ['motif-authoring.md'], version = '0.1.7', skillFile = true } = {}) {
+function bundle(t, { skills = ['weftcut'], docs = REQUIRED_DOCS, assets = REQUIRED_ASSETS, version = '0.1.7', skillFile = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-skill-bundle-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   for (const skill of skills) {
     fs.mkdirSync(path.join(root, skill), { recursive: true })
     if (skillFile) fs.writeFileSync(path.join(root, skill, 'SKILL.md'), stampSkillVersion(SKILL, version))
   }
-  for (const doc of docs) fs.writeFileSync(path.join(root, skills[0], doc), 'the contract')
+  for (const doc of skills.length ? [...docs, ...assets] : []) {
+    const target = path.join(root, skills[0], doc)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, 'the contract')
+  }
   return root
 }
 
@@ -79,6 +83,11 @@ test('a skill folder without SKILL.md is not a skill any client would load', t =
 test('a disclosed doc that did not get copied fails before it can dangle on a user machine', t => {
   const root = bundle(t, { docs: [] })
   assert.throws(() => assertSkillLayout(root), /motif-authoring\.md is not inside/)
+})
+
+test('the offline 3D template must ship with the skill', t => {
+  const root = bundle(t, { assets: [] })
+  assert.throws(() => assertSkillLayout(root), /templates\/three-model\.zip is not inside/)
 })
 
 test('an unstamped or mismatched skill fails: a copy that cannot name its app version is the drift hazard', t => {

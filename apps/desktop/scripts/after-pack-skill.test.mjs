@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import afterPackSkill from './after-pack-skill.mjs'
-import { stampSkillVersion } from './build-skills-lib.mjs'
+import { stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS } from './build-skills-lib.mjs'
 
 const SKILL = `---
 name: weftcut
@@ -25,7 +25,11 @@ function packed(t, { version = '0.1.7', staged = version } = {}) {
     const skill = path.join(resources, 'skills', 'weftcut')
     fs.mkdirSync(skill, { recursive: true })
     fs.writeFileSync(path.join(skill, 'SKILL.md'), stampSkillVersion(SKILL, staged))
-    fs.writeFileSync(path.join(skill, 'motif-authoring.md'), 'the contract')
+    for (const file of [...REQUIRED_DOCS, ...REQUIRED_ASSETS]) {
+      const target = path.join(skill, file)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, 'the contract')
+    }
   }
   return { appOutDir, packager: { getResourcesDir: (dir) => path.join(dir, 'resources'), appInfo: { version } } }
 }

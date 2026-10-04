@@ -419,6 +419,8 @@ subscriber, cancelling queued capture only when no consumers remain.
   timeout, including viewport and transparent-background setup. Callers cannot omit
   the deadline. Settled commands clear their timeout timers; a transport failure
   tears down the host so the next ticket can rebuild it.
+  Awaited decoder setup has a separate 30-second deadline; normal frame/CDP
+  operations retain 5 seconds, and capture transport allows 60 seconds.
 
 Two remaining limitations are worth keeping explicit. `BakedKeyIndex` is a
 disk-read hint based on directory presence, not a certificate that every frame is
@@ -504,7 +506,8 @@ indistinguishably from a built-in.
 The lifecycle is **draft → preview → install**:
 
 - **Create** — three entry points: the picker's **New** (a starter draft), **Import** of an
-  external `.zip` package, or an agent over MCP (`write_motif_draft`). A draft gets a
+  external `.zip` package, or an agent over MCP (`write_motif_draft` for HTML,
+  `import_motif` for complete ZIP packages). A draft gets a
   unique, final-ready id at birth, so installing it needs no layer rebind.
 - **Preview** — a draft is a placeable layer; the compositor renders it **into the real
   project canvas** so the author sees it in context. A draft's frames are keyed by
@@ -580,6 +583,11 @@ editor), no preload / disabled Node integration on the `motif:` origin, and CSP
 `default-src 'none'` — offline, with `connect-src 'self' data: blob:` for its own
 package and embedded buffers. Scripts/styles also load only inline or from the
 same origin; network and cross-Motif resource fetches remain blocked.
+Dedicated local/Blob Workers and WASM are permitted for decoder initialization;
+ordinary JS eval remains blocked. The runtime retires managed Workers after
+setup and limits that live set to eight. This is lifecycle management; CSP and
+Electron isolation enforce security. See [ADR 0093](adr/0093-motif-local-decoder-workers-and-wasm.md)
+and the [offline 3D template](motif-three-model.md).
 That window-as-sandbox carries both trusted built-ins and untrusted user Motifs. On
 top of it:
 

@@ -9,6 +9,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { zipSync } from 'fflate'
+import { buildThreeMotifFiles } from './build-three-motif.mjs'
 import {
   assertSkillLayout,
   assertSkillVersions,
@@ -27,10 +29,14 @@ fs.cpSync(path.join(REPO, 'skills'), OUT, { recursive: true })
 // Docs land inside the required skill, so the layout has to hold before they
 // can be placed. Asserting here rather than letting `copyFileSync` raise ENOENT
 // is what turns "skills/ was emptied or renamed" into a message that says so.
-const staged = assertSkillLayout(OUT, { requiredDocs: [] })
+const staged = assertSkillLayout(OUT, { requiredDocs: [], requiredAssets: [] })
 for (const doc of REQUIRED_DOCS) {
   fs.copyFileSync(path.join(REPO, 'docs', doc), path.join(OUT, REQUIRED_SKILL, doc))
 }
+
+const templates = path.join(OUT, REQUIRED_SKILL, 'templates')
+fs.mkdirSync(templates, { recursive: true })
+fs.writeFileSync(path.join(templates, 'three-model.zip'), zipSync(buildThreeMotifFiles()))
 
 // A copy on a user's machine outlives the session that installed it and can be
 // reinstalled from any app version, so it has to say which one it came from.

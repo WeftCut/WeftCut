@@ -1,0 +1,41 @@
+{
+  "sourceCommit": "b76a431c6a39c07fe8bb2edf1cbf44781150ed6b",
+  "image": "emscripten/emsdk@sha256:8847dad4171ebc8a53d9ae5cda86a2546ef5b2e68834c14dc1ba2b2962e125cc",
+  "flags": [
+    "/src/transcoder/basisu_transcoder.cpp",
+    "/src/webgl/transcoder/basis_wrappers.cpp",
+    "/src/zstd/zstddeclib.c",
+    "-I/src/transcoder",
+    "-std=c++11",
+    "-O3",
+    "-fno-strict-aliasing",
+    "--bind",
+    "-DNDEBUG",
+    "-DBASISD_SUPPORT_UASTC_HDR=1",
+    "-DBASISD_SUPPORT_UASTC=1",
+    "-DBASISD_SUPPORT_BC7=1",
+    "-DBASISD_SUPPORT_ATC=0",
+    "-DBASISD_SUPPORT_ASTC_HIGHER_OPAQUE_QUALITY=0",
+    "-DBASISD_SUPPORT_PVRTC2=0",
+    "-DBASISD_SUPPORT_FXT1=0",
+    "-DBASISD_SUPPORT_ETC2_EAC_RG11=0",
+    "-DBASISU_SUPPORT_ENCODING=0",
+    "-DBASISD_ENABLE_DEBUG_FLAGS=1",
+    "-DBASISD_SUPPORT_KTX2=1",
+    "-DBASISD_SUPPORT_KTX2_ZSTD=1",
+    "-sALLOW_MEMORY_GROWTH=1",
+    "-sASSERTIONS=0",
+    "-sMALLOC=emmalloc",
+    "-sMODULARIZE=1",
+    "-sEXPORT_NAME=BASIS",
+    "-sDYNAMIC_EXECUTION=0",
+    "-sEXPORTED_RUNTIME_METHODS=HEAP8",
+    "-sENVIRONMENT=web,worker",
+    "-o",
+    "/output/basis_transcoder.js"
+  ],
+  "sha256": {
+    "basis_transcoder.js": "f964f9376bc18765326b1d106479c6b6cf41ee1a663fbfe3981d350e829486a2",
+    "basis_transcoder.wasm": "b22945a793aac537e04a4f2bce2e739acc575405f90520e734223ed77bc0d14c"
+  }
+}

@@ -144,9 +144,9 @@ The document renders in an offline, isolated capture host. Hard limits:
 - **Local resource loading.** Render pages may fetch their own `motif://<id>/`
   files and `data:` / `blob:` URLs. Images may use those same sources; fonts may
   use local files or `data:` URLs. Other Motifs, `file:`, project-media schemes,
-  HTTP(S), WebSocket and remote scripts remain blocked. Workers and eval/WASM
-  compilation are not enabled: decoder-based Draco/KTX2 pipelines require
-  additional support; use uncompressed assets for now.
+  HTTP(S), WebSocket and remote scripts remain blocked. Dedicated local/Blob
+  Workers and WASM compilation support decoder initialization during `setup`.
+  JavaScript eval remains blocked; use the official CSP-compatible Basis build.
 - **Import a snapshot.** **Import Motif** accepts only `.zip` packages, including
   for single-file Motifs: put the HTML in the ZIP as `index.html`.
   ZIPs contain one Motif folder (or its contents
@@ -173,8 +173,10 @@ The document renders in an offline, isolated capture host. Hard limits:
 - **Transparency is real.** The capture preserves alpha: keep
   `html, body { background: transparent }` unless the Motif is deliberately
   opaque.
-- **Frames time out.** Each capture has a wall-clock cap; an infinite loop or a
-  never-resolving `setup` fails the frame instead of hanging the app.
+- **Initialization and frames time out.** Setup has 30 seconds; normal frame/CDP
+  operations have 5 seconds. A timeout tears down the capture host. Await all
+  decoding in setup; its managed Workers (at most eight live) are terminated
+  on completion or failure. Workers do not drive frame animation.
 
 ### Three.js
 
@@ -186,6 +188,13 @@ Ship the library and any addons locally. Build the scene and `await` loaders in
 renderer/geometries/materials/textures when rebuilding after a props change.
 Standard `GLTFLoader.loadAsync('./assets/model.glb')` and texture loaders can now
 read local files, including embedded GLB textures materialized as Blob URLs.
+
+For Draco geometry and KTX2 ETC1S/UASTC textures, start with the offline template
+described in [motif-three-model.md](motif-three-model.md). It bundles pinned
+Three.js, local decoders and a Basis build that does not require JS eval.
+Create fresh decoder loaders for each setup, and dispose their pools before
+returning. Worker clocks are not virtualized. GPU output is not promised to
+be bit-identical across hardware.
 
 ### Fonts
 
@@ -212,7 +221,7 @@ only switch. That page is a separate, sandboxed document with its own protocol,
 
 ## Authoring over MCP
 
-The MCP tools (`list_motifs`, `get_motif_source`, `write_motif_draft`,
+The MCP tools (`list_motifs`, `get_motif_source`, `write_motif_draft`, `import_motif`,
 `preview_motif_draft`, `install_motif`, `delete_motif`) carry their own
 per-tool contracts; the document-level facts that matter when writing:
 
@@ -229,4 +238,5 @@ per-tool contracts; the document-level facts that matter when writing:
 - `write_motif_draft { from }` copies that Motif's companion files into the new
   draft as well as recording its Update target. The tool still accepts HTML,
   not a binary resource upload; import new resource ZIPs through **Import Motif**
-  or author their files in the stored draft directory.
+  or `import_motif { path: <absolute ZIP path> }`. The latter returns `draft_id`
+  without publishing and is available without an open project.

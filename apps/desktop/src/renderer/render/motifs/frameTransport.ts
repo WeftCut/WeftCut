@@ -41,10 +41,11 @@ function request(args: Record<string, unknown>): Promise<FrameReply> {
   }
   const id = ++nextId;
   return new Promise((resolve, reject) => {
+    // Capture includes bounded initialization (30s), frame (5s) and queue/transport.
     const timeout = setTimeout(() => {
       pending.delete(id);
       reject(new Error("Motif frame transport timed out"));
-    }, 15000);
+    }, args.capture ? 60_000 : 15_000);
     pending.set(id, {
       resolve: frame => { clearTimeout(timeout); resolve(frame); },
       reject: error => { clearTimeout(timeout); reject(error); },

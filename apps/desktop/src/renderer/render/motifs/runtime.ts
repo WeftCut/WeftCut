@@ -59,6 +59,42 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
 
   var rt = (${createMotifRuntime.toString()})(window);
   var def = null, didSetup = false, lastPropsKey = null;
+  // Decoder workers belong to one setup. They must not outlive it and mutate
+  // later frames on a real clock. This is lifecycle management, not a sandbox:
+  // the protocol CSP and Electron isolation confine their capabilities.
+  var setupActive = false, rejectWorker = null;
+  var workers = new Set();
+  var NativeWorker = window.Worker;
+  function retireWorkers() {
+    setupActive = false;
+    for (var worker of workers) worker.terminate();
+    workers.clear();
+    rejectWorker = null;
+  }
+  if (NativeWorker) {
+    window.Worker = class extends NativeWorker {
+      constructor(url, options) {
+        if (!setupActive) throw new Error('motif: decoder Workers may only be created during setup()');
+        if (workers.size >= 8) throw new Error('motif: setup supports at most 8 concurrent decoder Workers');
+        super(url, options);
+        workers.add(this);
+        this.motifWorkerError = function (event) {
+          if (rejectWorker) rejectWorker(new Error('motif: decoder worker failed (' + url + '): ' +
+            (event.message || 'script loading, CSP or decoder initialization failed')));
+        };
+        this.addEventListener('error', this.motifWorkerError);
+      }
+      terminate() {
+        this.removeEventListener('error', this.motifWorkerError);
+        workers.delete(this);
+        super.terminate();
+      }
+    };
+  }
+  if (window.SharedWorker) window.SharedWorker = function () {
+    throw new Error('motif: SharedWorker is unsupported; use dedicated decoder Workers during setup()');
+  };
+  window.addEventListener('pagehide', retireWorkers);
 
   function makeRandom(seedKey) {
     // Minimal seeded PRNG stub (Mulberry32). seedKey is a string; hash it to seed.
@@ -77,7 +113,7 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
   }
 
   window.motif = {
-    define: function (d) { def = d; },
+    define: function (d) { def = d; didSetup = false; lastPropsKey = null; },
     random: makeRandom,
   };
 
@@ -92,19 +128,35 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     };
   }
 
+  // Main gives initialization its own wall-clock budget, separate from frame.
+  // __motifRender also calls this for standalone authoring/test compatibility.
+  window.__motifSetup = async function (props, meta) {
+    if (!def) throw new Error("motif: no motif.define() called");
+    var propsKey = JSON.stringify(props);
+    if (didSetup && propsKey === lastPropsKey) return true;
+    didSetup = false;
+    setupActive = true;
+    var workerFailure = new Promise(function (_, reject) { rejectWorker = reject; });
+    try {
+      await Promise.race([
+        (async function () {
+          if (def.setup) await def.setup(props, ctxFor(0, props, meta));
+          if (document.fonts && document.fonts.ready) await document.fonts.ready;
+        })(),
+        workerFailure
+      ]);
+      didSetup = true; lastPropsKey = propsKey;
+      return true;
+    } finally { retireWorkers(); }
+  };
+
   // Driven from the Electron main process (main/motif/capture.ts) via CDP
   // Runtime.evaluate(awaitPromise:true).
   // Resolves once setup (once-per-props) + frame(t) + seek + a double-rAF settle
   // have run, i.e. the frame for time t (seconds) is visually ready to capture.
   window.__motifRender = function (t, props, meta) {
     return (async function () {
-      if (!def) throw new Error("motif: no motif.define() called");
-      var propsKey = JSON.stringify(props);
-      if (!didSetup || propsKey !== lastPropsKey) {
-        if (def.setup) await def.setup(props, ctxFor(0, props, meta));
-        if (document.fonts && document.fonts.ready) await document.fonts.ready;
-        didSetup = true; lastPropsKey = propsKey;
-      }
+      await window.__motifSetup(props, meta);
       if (def.frame) def.frame(t, ctxFor(t, props, meta));
       rt.seek(t * 1000);
       // settleRafs: how many real browser frames to wait so the paint commits.

@@ -62,17 +62,25 @@ offscreen capture window, and its security rests on **two orthogonal axes**:
   scheme with:
 
   ```
-  default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self' data: blob:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'none'
+  default-src 'none'; script-src 'unsafe-inline' 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline' 'self'; connect-src 'self' data: blob:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:
   ```
 
   `'self'` is the render page's own `motif://<id>` origin. It permits local ES
   modules, styles, models, textures and fonts, plus embedded data/blob fetches and
   images. It grants no HTTP(S), WebSocket, `file:`, other Motif origins or editor
-  media schemes. Workers and eval remain denied. This bounds what a Motif can
+  media schemes. Local/Blob dedicated Workers and WASM support decoder setup;
+  ordinary JavaScript eval remains denied. This bounds what a Motif can
   *reach* while remaining offline. The file resolver rejects traversal and
   symbolic links/junctions; private draft metadata (`target`) is not served.
   Responses use `Cache-Control: no-store` so companion URLs cannot outlive an
   asset edit. Render hashes cover companion paths and bytes (ADR 0079).
+
+  Decoder Workers are retired after setup, which has a 30-second budget;
+  frame/CDP operations retain 5-second deadlines. The runtime's managed
+  eight-worker limit is an authoring/lifecycle contract, not an isolation
+  boundary against untrusted JavaScript. Worker clocks are not virtualized.
+  The supplied Basis build disables dynamic execution rather than widening
+  the eval grant. See ADR 0093 and `motif-three-model.md`.
 
   A Motif's **parameter page** (`params.html`, the one document the app frames rather
   than captures) retains its separate policy: inline and `motif:` scripts/styles,

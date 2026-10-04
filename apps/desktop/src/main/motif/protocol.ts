@@ -6,9 +6,10 @@ import type { UserMotifStore } from './store.js'
 /// CSP served with every Motif RENDER document (`index.html` and friends).
 /// Render documents load scripts/styles/models from their OWN motif origin,
 /// plus embedded data/blob assets. Other Motifs, the network, file: and the
-/// editor's privileged schemes remain inaccessible. Workers/eval stay denied.
+/// editor's privileged schemes remain inaccessible. Local decoder Workers and
+/// WASM are allowed; JavaScript eval remains denied.
 export const MOTIF_CSP =
-  "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self' data: blob:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'none'"
+  "default-src 'none'; script-src 'unsafe-inline' 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline' 'self'; connect-src 'self' data: blob:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:"
 
 /// CSP served with a Motif's params page. `script-src` and `style-src`
 /// allow the `motif:` scheme, so a params page may

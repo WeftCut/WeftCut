@@ -23,7 +23,8 @@ export const REQUIRED_SKILL = 'weftcut'
 /// these by bare filename ("read motif-authoring.md next to this file"), so the
 /// name has to survive the copy — and the same list is what the layout
 /// assertion looks for afterwards.
-export const REQUIRED_DOCS = ['motif-authoring.md']
+export const REQUIRED_DOCS = ['motif-authoring.md', 'motif-three-model.md']
+export const REQUIRED_ASSETS = ['templates/three-model.zip']
 
 /// Record the app version inside a SKILL.md's frontmatter.
 ///
@@ -62,7 +63,7 @@ export function readSkillVersion(source) {
 /// a defect, so the steps that still know the difference between "the bundle"
 /// and "nothing" are the ones that refuse to pass it on.
 export function assertSkillLayout(dir, opts = {}) {
-  const { requiredSkill = REQUIRED_SKILL, requiredDocs = REQUIRED_DOCS, label = '[build:skills]' } = opts
+  const { requiredSkill = REQUIRED_SKILL, requiredDocs = REQUIRED_DOCS, requiredAssets = REQUIRED_ASSETS, label = '[build:skills]' } = opts
   const skills = fs.existsSync(dir)
     ? fs
         .readdirSync(dir, { withFileTypes: true })
@@ -83,7 +84,7 @@ export function assertSkillLayout(dir, opts = {}) {
       throw new Error(`${label} ${skill}/ has no SKILL.md — an agent client would not load it as a skill at all.`)
     }
   }
-  for (const doc of requiredDocs) {
+  for (const doc of [...requiredDocs, ...requiredAssets]) {
     if (!fs.existsSync(path.join(dir, requiredSkill, doc))) {
       throw new Error(
         `${label} ${doc} is not inside the ${requiredSkill} skill — a disclosed pointer would dangle on the user's machine.`,
