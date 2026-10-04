@@ -183,6 +183,8 @@ export function contextMenuFinalFocus(): boolean {
 interface SubMenuProps {
   /// Label rendered on the trigger row.
   label: string;
+  /// Tooltip explaining the submenu's choice.
+  hint?: string;
   disabled?: boolean;
   /// `MenuItem` / `MenuSeparator` / `MenuHeading` children.
   children: ReactNode;
@@ -211,11 +213,12 @@ interface SubMenuProps {
 /// `.app-menu-item:hover` in `styles/menu.css`; what is given up is hover
 /// setting the ARMED row, so Enter still acts on the arrow-key row, not the
 /// hovered one. On a menu opened by right-click that is the right trade.
-export function SubMenu({ label, disabled, children }: SubMenuProps) {
+export function SubMenu({ label, hint, disabled, children }: SubMenuProps) {
   return (
     <MenuPrimitive.SubmenuRoot>
       <MenuPrimitive.SubmenuTrigger
         className="app-menu-item app-submenu-trigger"
+        title={hint}
         disabled={disabled ?? false}
       >
         {/* Empty check-column spacer so the label aligns with MenuItem rows. */}

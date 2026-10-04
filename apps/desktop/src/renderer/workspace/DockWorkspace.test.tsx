@@ -738,7 +738,7 @@ describe("DockWorkspace React integration", () => {
     // One placement is not a choice, so the submenu is not offered at all.
     fireEvent.contextMenu(tab);
     expect(await screen.findByText("Close Panel")).toBeTruthy();
-    expect(screen.queryByText("Switch anchor")).toBeNull();
+    expect(screen.queryByText("Switch instance")).toBeNull();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
     act(() => {
@@ -747,7 +747,8 @@ describe("DockWorkspace React integration", () => {
     fireEvent.contextMenu(tab);
     // The rows themselves are `anchorEntryLabel`'s, covered in
     // `timelineTabName.test.ts`; what the tab decides is whether to offer them.
-    expect(await screen.findByText("Switch anchor")).toBeTruthy();
+    expect(await screen.findByText("Switch instance")).toBeTruthy();
+    expect(screen.getByTitle("Choose the placement instance this Group timeline refers to")).toBeTruthy();
   });
 
   // The strip's grip IS this tab, repositioned by CSS onto the button row. The

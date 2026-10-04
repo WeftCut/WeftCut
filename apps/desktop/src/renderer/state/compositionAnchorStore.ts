@@ -239,7 +239,7 @@ export function openComposition(
 }
 
 /// Re-anchor an already open composition on a different placement of it — the
-/// tab's `Switch anchor` menu. Only the anchor moves: the Panel, its scroll and
+/// tab's `Switch instance` menu. Only the anchor moves: the Panel, its scroll and
 /// its selection all stand, because the composition being shown has not
 /// changed, only the account of where it sits in the film. False when the layer
 /// is not a Group clip pointing at `compositionId`.
@@ -546,7 +546,7 @@ export function wouldCycleIn(
 
 /// Every placement of `compositionId` in the project — one entry per Group clip
 /// pointing at it, each with the anchor that placement would give and where it
-/// starts in ROOT time. The tab's `Switch anchor` menu is the only caller, and
+/// starts in ROOT time. The tab's `Switch instance` menu is the only caller, and
 /// it offers the list only when there is more than one.
 export interface CompositionPlacement {
   /// The Group layer this placement is.

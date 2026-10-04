@@ -535,7 +535,8 @@ const enUS = {
       // Offered only where a Group is placed more than once: two placements are
       // two different answers to "where on the film's clock does this sit", and
       // the tab has to say which one it reads its times against.
-      switch_anchor: "Switch anchor",
+      switch_anchor: "Switch instance",
+      switch_anchor_hint: "Choose the placement instance this Group timeline refers to",
       anchor_entry: "{{path}} · {{time}}",
     },
     panels: {

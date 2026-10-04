@@ -90,7 +90,7 @@ import {
 import { jumpToTimeUs } from "../state/navigation";
 import { setTool, useActiveTool } from "../state/toolStore";
 import { useCursorAnchor } from "../timeline/contextMenuAnchor";
-import { Menu, MenuItem, SubMenu } from "../menu/Menu";
+import { closeContextMenuOn, Menu, MenuItem, SubMenu } from "../menu/Menu";
 import { FOCUS_REGION_INSTANCE_ATTR } from "../focus/focusRegion";
 import {
   anchorEntryLabel,
@@ -924,9 +924,7 @@ function PanelTabContextMenu({
     <MenuPrimitive.Root
       open
       modal={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner
@@ -1074,7 +1072,7 @@ function TimelineDockTab({
 
 /**
  * The timeline tab's right-click menu, whose one non-obvious row is
- * `Switch anchor`.
+ * `Switch instance`.
  *
  * Root-to-local projection is unambiguous, local-to-root is not, so a Group
  * placed more than once needs the tab to say WHICH placement its times are
@@ -1123,9 +1121,7 @@ function TimelineTabContextMenu({
       // A submenu lives in this menu, so the pointer-driven highlight has to go
       // — see the LANDMINE on `SubMenu` in `menu/Menu.tsx`.
       highlightItemOnHover={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner
@@ -1137,7 +1133,10 @@ function TimelineTabContextMenu({
         >
           <MenuPrimitive.Popup className="app-menu-list">
             {placements.length > 1 ? (
-              <SubMenu label={t("dock_workspace.timeline_tab.switch_anchor")}>
+              <SubMenu
+                label={t("dock_workspace.timeline_tab.switch_anchor")}
+                hint={t("dock_workspace.timeline_tab.switch_anchor_hint")}
+              >
                 {placements.map((placement) => (
                   <MenuItem
                     key={placement.layerId}

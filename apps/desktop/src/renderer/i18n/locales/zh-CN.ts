@@ -471,7 +471,8 @@ const zhCN: Resources = {
     },
     timeline_tab: {
       project: "项目",
-      switch_anchor: "切换锚点",
+      switch_anchor: "切换实例",
+      switch_anchor_hint: "选择当前 Group 时间线对应的放置实例",
       anchor_entry: "{{path}} · {{time}}",
     },
     panels: {

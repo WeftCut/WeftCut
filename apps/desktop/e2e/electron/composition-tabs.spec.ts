@@ -156,6 +156,87 @@ const visibleTimelinePanelIds = (page: Page): Promise<string[]> =>
       els.map((e) => e.getAttribute("data-focus-region-instance") ?? "").sort(),
     );
 
+test("a timeline anchor menu stays open while the pointer enters its submenu", async () => {
+  const { app, page } = await launchApp();
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir("weftcut-anchor-menu-"),
+      name: "anchor-menu-focus",
+      canvas: CANVAS,
+    });
+    await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
+    const initial = await wire(page);
+    const trackId = trackWithRole(rootOf(initial), "a-roll");
+    await invokeCmd<string>(page, "add_color_layer", {
+      trackId,
+      tStartUs: 0,
+      durationUs: CUT_US,
+      color: RED,
+      compositionId: initial.root_id,
+    });
+    await timelinePanel(page, initial.root_id)
+      .locator('[data-testid="timeline-ruler"]')
+      .click({ position: { x: 120, y: 10 } });
+    await page.keyboard.press(`${MOD}+A`);
+    await page.keyboard.press(`${MOD}+G`);
+    await expect.poll(async () => groupIdsOf(await wire(page)).length).toBe(1);
+    const groupId = groupIdsOf(await wire(page))[0]!;
+    const secondPlacementId = await invokeCmd<string>(page, "add_group_layer", {
+      sourceCompositionId: groupId,
+      trackId,
+      tStartUs: 2_000_000,
+      compositionId: initial.root_id,
+    });
+    await waitForHook(page, "setOpenComposition");
+    await page.evaluate((id) => (window as any).__weftcutTest.setOpenComposition(id), groupId);
+    await expect(timelineDvTab(page, groupId)).toBeVisible();
+
+    await timelineDvTab(page, groupId).click({ button: "right" });
+    const trigger = page.locator(".app-submenu-trigger").filter({ hasText: /Switch instance|切换实例/ });
+    await expect(trigger).toBeVisible();
+    const triggerBox = await trigger.boundingBox();
+    if (!triggerBox) throw new Error("anchor menu trigger has no layout box");
+    await page.mouse.move(triggerBox.x + triggerBox.width / 2, triggerBox.y + triggerBox.height / 2, { steps: 8 });
+    await expect(trigger).toBeVisible();
+    await expect(page.locator(".app-menu-list")).toHaveCount(2);
+    const secondPlacement = page.locator(".app-menu-list").last().locator(".app-menu-item").nth(1);
+    const placementBox = await secondPlacement.boundingBox();
+    if (!placementBox) throw new Error("anchor menu placement has no layout box");
+    await page.mouse.move(placementBox.x + placementBox.width / 2, placementBox.y + placementBox.height / 2, { steps: 12 });
+    await expect(secondPlacement).toBeVisible();
+    await secondPlacement.click();
+    await expect(page.locator(".app-menu-list")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__weftcutTest.getOpenComposition()?.crumbs.at(-1)?.layerId)).toBe(secondPlacementId);
+
+    // Keyboard focus stays in the menu tree; Escape closes one level at a time
+    // and returns focus to the tab that opened it.
+    const tab = timelineDvTab(page, groupId);
+    await tab.focus();
+    await tab.click({ button: "right" });
+    await expect(trigger).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".app-menu-list")).toHaveCount(2);
+    await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.app-menu-list'))).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".app-menu-list")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".app-menu-list")).toHaveCount(0);
+    await expect(tab).toBeFocused();
+
+    // A real outside press still dismisses the root menu.
+    await tab.click({ button: "right" });
+    await expect(trigger).toBeVisible();
+    await timelinePanel(page, groupId)
+      .locator('[data-testid="timeline-ruler"]')
+      .click({ position: { x: 120, y: 10 } });
+    await expect(page.locator(".app-menu-list")).toHaveCount(0);
+    await expect(timelinePanel(page, groupId)).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
 /// Every timeline TAB, by the composition its Panel id names.
 const timelineTabIds = (page: Page): Promise<string[]> =>
   page

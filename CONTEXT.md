@@ -701,7 +701,7 @@ The `CompositionRef` a timeline tab was entered through — the Group clip that
 fixes where this timeline's moment sits in the film. Root-to-local needs none;
 local-to-root does, and that is the direction a scrub inside a Group travels.
 Where a Group is placed more than once the two placements are two answers, and
-the tab says which one it is reading against. UI word: Switch anchor / 切换锚点.
+the tab says which one it is reading against. UI word: Switch instance / 切换实例.
 _Avoid_: path, breadcrumb, parent
 
 **Moment**:

@@ -373,7 +373,7 @@ test("the Quick Actions bar's thickness resists the splitter beside it", async (
 
 /**
  * Every Panel tab and the Quick Actions grip offers our Close Panel menu.
- * Timeline tabs additionally offer Switch anchor when a composition has
+ * Timeline tabs additionally offer Switch instance when a composition has
  * multiple placements. Dockview's default actions stay off, so its menus and
  * close buttons cannot compete with the application's menu.
  */

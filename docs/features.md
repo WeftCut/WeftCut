@@ -743,7 +743,7 @@ opening the same Group twice activates the tab it already has (ADR 0053). The
 tab prints the composition's name and its tooltip the route to it —
 `‹project› › Group A › Group B`; drag the tab out and the two timelines stand
 side by side, each scrolling and zooming on its own. Where a Group is placed
-more than once, the tab's context menu offers `Switch anchor` to say which
+more than once, the tab's context menu offers `Switch instance` to say which
 placement its times are read against. The timeline's empty space is tinted one
 step per level so depth reads without looking at the tab — Resolve does the
 same for a compound clip. Moving between tabs drops the selection, the marked

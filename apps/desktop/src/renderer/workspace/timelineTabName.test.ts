@@ -71,7 +71,7 @@ describe("compositionPathText", () => {
   });
 });
 
-/// A `Switch anchor` row has to tell two placements of one Group apart, and the
+/// A `Switch instance` row has to tell two placements of one Group apart, and the
 /// only clock they share is the root's.
 describe("anchorEntryLabel", () => {
   const label = (

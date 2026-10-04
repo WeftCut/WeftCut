@@ -54,7 +54,7 @@ export function compositionPathText(
   return steps.join(PATH_SEPARATOR);
 }
 
-/// One `Switch anchor` row: where the placement sits, and where it starts on
+/// One `Switch instance` row: where the placement sits, and where it starts on
 /// the ROOT's clock. Both halves are needed to tell placements apart — two
 /// clips of one Group can share a parent, and two parents can hold a clip at
 /// the same local time — and the root's clock is the one they have in common.
