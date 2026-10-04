@@ -66,6 +66,46 @@ afterEach(() => {
 });
 
 describe("formatCommandError — curated tier", () => {
+  it('retime refusals retain collision names and limits in English and Chinese', async () => {
+    seedStore();
+    await i18n.changeLanguage('zh-CN');
+    try {
+      const out = formatCommandError({ error: 'RetimeRejected', reason: {
+        kind: 'Collision', layer_id: 'l-a', blocking_layer_id: 'l-b',
+        maximum_duration_us: 1_000_000, minimum_rate: { num: 2, den: 3 },
+      } });
+      expect(out.message).toContain('“Interview A” would overlap “Ember.mp4”');
+      expect(out.message).toContain('Maximum duration: 00:00:01:00; minimum speed: ≈0.66666667×');
+      const local = i18n.t(out.i18n_key!, out.i18n_args!);
+      expect(local).toContain('“Interview A”会与“Ember.mp4”重叠');
+      expect(local).toContain('最大时长：00:00:01:00');
+    } finally { await i18n.changeLanguage('en-US'); }
+  });
+
+  it('names a collision without inventing limits when no positive free span exists', () => {
+    seedStore();
+    const out = formatCommandError({ error: 'RetimeRejected', reason: {
+      kind: 'Collision', layer_id: 'l-a', blocking_layer_id: 'l-b',
+      maximum_duration_us: null, minimum_rate: null,
+    } });
+    expect(out.message).toContain('“Interview A” would overlap “Ember.mp4”');
+    expect(out.message).not.toContain('Maximum duration');
+    expect(out.message).not.toContain('null');
+  });
+
+  it('identifies the conflicting transition by its participants', () => {
+    seedStore();
+    const summary = structuredClone(useProjectStore.getState().summary!);
+    summary.compositions[summary.root_id]!.transitions.push({
+      id: 'tr', from_layer: 'l-a', to_layer: 'l-b', duration_us: 500_000,
+      extended_us: 0, kind: { kind: 'Crossfade' },
+    });
+    useProjectStore.getState().apply(summary);
+    const out = formatCommandError({ error: 'RetimeRejected', reason: { kind: 'Transition', transition_id: 'tr' } });
+    expect(out.message).toContain('transition “Interview A → Ember.mp4”');
+    expect(out.message).not.toContain('minimum speed');
+  });
+
   it("LayerOverlap names both clips and the track", () => {
     seedStore();
     const out = formatCommandError({

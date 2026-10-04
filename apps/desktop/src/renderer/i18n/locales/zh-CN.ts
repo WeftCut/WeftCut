@@ -10,6 +10,13 @@ const zhCN: Resources = {
     "apply_selection": "应用到全部 {{count}} 个选中片段",
     "mixed": "选中片段的速率或时长不同，输入值会应用到全部选中片段。",
     "refused": "{{reason}}",
+    "details": {
+      "collision": "“{{clip}}”会与“{{blocking}}”重叠，请缩短时长或提高倍率。",
+      "collision_limits": "“{{clip}}”会与“{{blocking}}”重叠。最大时长：{{duration}}；最低倍率：约 {{rate}}×。",
+      "transition": "此变更会使转场“{{transition}}”失效；转场时长和相邻片段位置必须保持不变。"
+    },
+    "pitch_scope_one": "作用于选中的 {{count}} 个音频或组片段。",
+    "pitch_scope_other": "作用于选中的 {{count}} 个音频或组片段。",
     "conflicts": {
       "EmptyTargets": "请至少选择一个片段。",
       "LayerMissing": "选中的片段已不存在。",

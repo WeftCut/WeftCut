@@ -2,6 +2,7 @@ import i18n from "../i18n";
 import { formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
+import { audioUnits, formatAudioTime } from "../state/audioUnitsStore";
 import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import type {
   CommandError,
@@ -61,6 +62,8 @@ export interface RefusalContext {
   timecode(us: number): string;
   seconds(us: number): string;
   fps(r: Rational): string;
+  transition(id: string): string;
+  retimeDuration(us: number, layerId: string): string;
 }
 
 function shortId(id: string): string {
@@ -121,7 +124,45 @@ export function liveRefusalContext(
       const value = r.num / r.den;
       return Number.isInteger(value) ? String(value) : value.toFixed(2);
     },
+    transition(id) {
+      const store = useProjectStore.getState();
+      const transition = Object.values(store.summary?.compositions ?? {})
+        .flatMap(c => c.transitions).find(candidate => candidate.id === id);
+      if (!transition) return shortId(id);
+      const name = (layerId: string) => {
+        const layer = store.layerById.get(layerId);
+        return layer ? layerDisplayName(layer, t, store.groupOrdinals) : shortId(layerId);
+      };
+      return `${name(transition.from_layer)} → ${name(transition.to_layer)}`;
+    },
+    retimeDuration(us, layerId) {
+      const store = useProjectStore.getState();
+      const layer = store.layerById.get(layerId);
+      const compId = store.compositionIdByLayerId.get(layerId);
+      const comp = compId ? store.summary?.compositions[compId] : currentOpenComposition();
+      return formatAudioTime(us, layer?.params.kind === 'Audio' ? audioUnits() : 'frames', comp?.fps_num ?? 30, comp?.fps_den ?? 1);
+    },
   };
+}
+
+/** Shared by the local plan preview and actor refusals after a stale preview. */
+export function formatRetimeConflict(reason: Record<string, unknown>, ctx: RefusalContext): string {
+  if (reason.kind === 'Collision' && typeof reason.layer_id === 'string' && typeof reason.blocking_layer_id === 'string') {
+    const args = { clip: ctx.layer(reason.layer_id), blocking: ctx.layer(reason.blocking_layer_id) };
+    const rate = reason.minimum_rate as Rational | null | undefined;
+    if (typeof reason.maximum_duration_us === 'number' && reason.maximum_duration_us > 0
+      && rate && Number.isFinite(rate.num) && Number.isFinite(rate.den) && rate.num > 0 && rate.den > 0) {
+      return ctx.t('retime.details.collision_limits', { ...args,
+        duration: ctx.retimeDuration(reason.maximum_duration_us, reason.layer_id),
+        rate: Number((rate.num / rate.den).toPrecision(8)).toString(),
+      });
+    }
+    return ctx.t('retime.details.collision', args);
+  }
+  if (reason.kind === 'Transition' && typeof reason.transition_id === 'string') {
+    return ctx.t('retime.details.transition', { transition: ctx.transition(reason.transition_id) });
+  }
+  return ctx.t(`retime.conflicts.${String(reason.kind)}`);
 }
 
 // ── The tier ledger ─────────────────────────────────────────────────────────
@@ -145,7 +186,7 @@ type Spec<E> =
     };
 
 const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
-  RetimeRejected: { tier: "curated", key: "retime.refused", args: (e, ctx) => ({ reason: ctx.t(`retime.conflicts.${String(e.reason.kind)}`) }) },
+  RetimeRejected: { tier: "curated", key: "retime.refused", args: (e, ctx) => ({ reason: formatRetimeConflict(e.reason, ctx) }) },
   TrackNotFound: { tier: "generic" },
   LayerNotFound: { tier: "generic" },
   CompositionNotFound: { tier: "generic" },

@@ -12,6 +12,7 @@ import { Field } from './Field';
 import { exactTime } from '../timeMapping';
 import { layerRateNumber, layerContentTiming } from '../layerTiming';
 import { refusalText } from '../errors/tryMutate';
+import { formatRetimeConflict, liveRefusalContext } from '../errors/formatCommandError';
 import type { RetimeTarget } from '../../shared/timeMapping';
 
 import { planRetime, type RetimeClip } from '../retimePlan';
@@ -56,6 +57,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   }, [layer.id, layer.t_start_us, rate, duration, units, fpsNum, fpsDen]);
   if (!supported) return null;
   const ids = applyToSelection && selected.has(layer.id) ? [...selected] : [layer.id];
+  const conflictText = (conflict: Record<string, unknown>) => formatRetimeConflict(conflict, liveRefusalContext((key, values) => t(key, values ?? {})));
   const preview = (target: RetimeTarget) => {
     if (!summary) return null;
     const clips: RetimeClip[] = Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers.map(l => ({
@@ -75,8 +77,11 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   const draftTarget = editing ? targetFor(editing, editing === 'Rate' ? rateInput : (durationUs ?? 0) / 1e6) : null;
   const draft = draftTarget ? preview(draftTarget) : null;
   const previewError = editing && !draftTarget ? t('retime.conflicts.InvalidTarget')
-    : draft && !draft.ok ? t('retime.conflicts.' + draft.conflict.kind) : null;
-  const selectedLayers = summary ? Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers)).filter(l => ids.includes(l.id)) : [];
+    : draft && !draft.ok ? conflictText(draft.conflict) : null;
+  const selectedLayers = summary ? Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers)).filter(l => ids.includes(l.id)) : [layer];
+  const pitchLayers = selectedLayers.filter(l => l.params.kind === 'Audio' || l.params.kind === 'CompositionRef');
+  const pitchOn = pitchLayers.filter(l => 'preserve_pitch' in l.params ? l.params.preserve_pitch !== false : true).length;
+  const pitchMixed = pitchOn > 0 && pitchOn < pitchLayers.length;
   const mixed = selectedLayers.some(l => layerRateNumber(l.params) !== rate || (l.t_end_us - l.t_start_us) / 1e6 !== duration);
   const commit = (kind: 'Rate' | 'Duration', value: number) => {
     const target = targetFor(kind, value);
@@ -108,7 +113,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   const apply = async (target: RetimeTarget) => {
     if (disabled || busy) return;
     const plan = preview(target);
-    if (plan && !plan.ok) { setError(t('retime.conflicts.' + plan.conflict.kind)); resetInputs(); return; }
+    if (plan && !plan.ok) { setError(conflictText(plan.conflict)); resetInputs(); return; }
     setBusy(true); setError(null);
     try {
       await retimeLayers(ids, target);
@@ -183,11 +188,18 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
         </Button>
       </Field>
     </div>
-    {layer.params.kind === 'Audio' || layer.params.kind === 'CompositionRef' ? <label className="prop-hint prop-retime-checkbox">
-      <input type="checkbox" checked={layer.params.preserve_pitch !== false} disabled={disabled || busy}
-        onChange={e => { setBusy(true); void setPreservePitch(ids, e.target.checked).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false)); }} />
+    {pitchLayers.length > 0 ? <label className="prop-hint prop-retime-checkbox">
+      <input type="checkbox" checked={pitchOn === pitchLayers.length} disabled={disabled || busy}
+        ref={input => { if (input) input.indeterminate = pitchMixed; }}
+        aria-checked={pitchMixed ? 'mixed' : pitchOn === pitchLayers.length}
+        onChange={e => {
+          const preserve = pitchMixed || e.target.checked;
+          setBusy(true); setError(null);
+          void setPreservePitch(pitchLayers.map(l => l.id), preserve).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false));
+        }} />
       <span>{t('retime.pitch')}</span>
     </label> : null}
+    {applyToSelection && pitchLayers.length > 0 && <p className="prop-hint">{t('retime.pitch_scope', { count: pitchLayers.length })}</p>}
     {mixed && <p className="prop-hint">{t('retime.mixed')}</p>}
     {(error || previewError) && <p role="alert" className="prop-hint">{error || previewError}</p>}
   </>;

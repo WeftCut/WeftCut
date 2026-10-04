@@ -17,7 +17,8 @@ test('time remapping: Timing UI, undo, nested audio preparation and export', asy
     const layer = async () => (await summary(page)).tracks.flatMap(t => t.layers).find(l => l.id === layerId)!;
     const before = await layer();
     await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId);
-    const rate = page.getByRole('textbox', { name: 'Playback rate', exact: true });
+    await page.getByRole('button', { name: 'Speed', exact: true }).click();
+    const rate = page.getByRole('textbox', { name: 'Speed', exact: true });
     await expect(rate).toBeVisible();
     await rate.fill('2'); await rate.press('Enter');
     await expect.poll(async () => (await layer()).t_end_us).toBe(before.t_start_us + (before.t_end_us - before.t_start_us) / 2);

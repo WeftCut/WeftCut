@@ -8,6 +8,13 @@ const enUS = {
     "apply_selection": "Apply to all {{count}} selected clips",
     "mixed": "Selected clips have different rates or durations. Entering a value applies it to every selected clip.",
     "refused": "{{reason}}",
+    "details": {
+      "collision": "“{{clip}}” would overlap “{{blocking}}”. Shorten the duration or increase the speed.",
+      "collision_limits": "“{{clip}}” would overlap “{{blocking}}”. Maximum duration: {{duration}}; minimum speed: ≈{{rate}}×.",
+      "transition": "This change would invalidate the transition “{{transition}}”. Its duration and the neighbouring clips must stay fixed."
+    },
+    "pitch_scope_one": "Applies to the {{count}} selected audio or Group clip.",
+    "pitch_scope_other": "Applies to the {{count}} selected audio or Group clips.",
     "conflicts": {
       "EmptyTargets": "Select at least one clip.",
       "LayerMissing": "A selected clip no longer exists.",

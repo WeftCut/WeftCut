@@ -21,6 +21,9 @@ the selected content; Target duration uses the same time units as Duration and
 commits on blur or Enter, with no confirmation buttons or result preview.
 Explicit target IDs are the complete
 batch; links never expand a retime request.
+For a batch, Preserve pitch targets only its Audio/Group clips, displays their
+count, and shows a mixed state when their policies differ. Clicking the mixed
+state enables Preserve pitch for those clips.
 
 A retime keeps starts and selected content endpoints. It snaps the new end to
 that clip's frame/sample grid, derives the actual rate from the snapped duration,
@@ -31,6 +34,9 @@ planner is shared by inspector and actor; commit recomputes from live state and
 rejects the complete batch on collisions, locks, illegal transitions, nested
 selected targets or unrepresentable rational arithmetic. Transitions retain
 their duration and provenance, and neighbours stay fixed.
+Both local preview refusals and commit refusals name the colliding clips and
+show the available maximum duration and approximate minimum rate when known;
+transition refusals identify the transition by its participants.
 
 Schema 3 persists an Affine time_map and fractional remainders next to integral
 source/key/fade coordinates. Images and Motifs have an unwrapped content_window;
