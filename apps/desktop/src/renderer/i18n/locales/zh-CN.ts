@@ -5,7 +5,32 @@ import type { Resources } from "./en-US";
 // 术语：英文里的 layer 与 clip 在界面上一律写作「片段」，不写「图层」——图层在 NLE 里
 // 名不副实，还会被读成「轨道」的同义词。见 CONTEXT.md 的 Layer 词条。
 const zhCN: Resources = {
-  retime: {"apply_selection":"应用到全部 {{count}} 个选中片段","trim_hint":"裁剪片段末尾；如需保留内容区间并改变播放速率，请使用“变速后时长”。","mixed":"选中片段的速率或时长不同，输入值会应用到全部选中片段。","refused":"{{reason}}","conflicts":{"EmptyTargets":"请至少选择一个片段。","LayerMissing":"选中的片段已不存在。","Locked":"请先解锁选中的片段及其轨道。","UnsupportedContent":"请选择视频、音频、动画图片、Motif 或组。","NestedTargets":"不能同时对组及其内部片段变速。","InvalidSnapshot":"片段的时间数据无效。","InvalidTarget":"请输入大于零的速率或时长。","Numeric":"请求的时间超出了支持的精度范围。","DurationTooShort":"时长必须至少包含一帧或一个音频采样。","Transition":"此变更会使现有转场失效。","Collision":"新的时长会与其他片段重叠，请缩短时长或提高速率。"},"sampling":"帧采样","sampling_hint":"预览与导出均使用帧采样，帧混合和光流暂不可用。","preview":"实际：{{rate}}× · {{duration}} 秒",rate:"播放倍率",duration:"变速后时长（秒）",reset:"恢复 1 倍",pitch:"保留音调",hint:"保持起点和内容范围，对明确选中的 {{count}} 个片段应用；不会联动其他片段。"},
+  retime: {
+    "title": "变速",
+    "apply_selection": "应用到全部 {{count}} 个选中片段",
+    "mixed": "选中片段的速率或时长不同，输入值会应用到全部选中片段。",
+    "refused": "{{reason}}",
+    "conflicts": {
+      "EmptyTargets": "请至少选择一个片段。",
+      "LayerMissing": "选中的片段已不存在。",
+      "Locked": "请先解锁选中的片段及其轨道。",
+      "UnsupportedContent": "请选择视频、音频、动画图片、Motif 或组。",
+      "NestedTargets": "不能同时对组及其内部片段变速。",
+      "InvalidSnapshot": "片段的时间数据无效。",
+      "InvalidTarget": "请输入大于零的速率或时长。",
+      "Numeric": "请求的时间超出了支持的精度范围。",
+      "DurationTooShort": "时长必须至少包含一帧或一个音频采样。",
+      "Transition": "此变更会使现有转场失效。",
+      "Collision": "新的时长会与其他片段重叠，请缩短时长或提高速率。"
+    },
+    "sampling": "帧采样",
+    "sampling_hint": "预览与导出均使用帧采样，帧混合和光流暂不可用。",
+    "rate": "播放倍率",
+    "duration": "目标时长",
+    "reset": "恢复原速",
+    "pitch": "保留音调",
+    "hint": "保持内容范围，通过变速调整时长。"
+  },
   crop: { title: "画面裁切", edit: "在画面中裁切", done: "结束裁切（Enter / Esc）", reset: "重置裁切", unavailable: "请选择预览合成中可见且未锁定的视频片段进行裁切" },
   fonts: {
     app_default: "应用默认（Liberation Sans / Noto Sans SC）",
@@ -1886,10 +1911,11 @@ const zhCN: Resources = {
     advanced: "高级",
     label: "标签",
     enabled: "启用",
-    t_start: "开始",
+    t_start: "开始位置",
     audio_units_hint:
       "音频编辑对齐到精确的 48 kHz 采样，因此这些字段可读取并接受帧内时间。拖拽仍吸附到帧——最大缩放下一个采样仅 0.042 像素宽。使用 Alt+←/→ 微调一个采样，Alt+Shift+←/→ 微调 1 毫秒。",
-    t_start_hint: "包含该时刻——此时间码对应的帧是片段的第一帧。",
+    t_start_hint: "移动片段，保持时长。",
+    t_end: "结束",
     kind: "类型",
     link_none: "未链接",
     link_of_one: "链接（{{count}} 个片段）",

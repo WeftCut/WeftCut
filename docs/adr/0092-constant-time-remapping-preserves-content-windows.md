@@ -5,9 +5,21 @@ status: accepted
 # Constant time remapping preserves content windows
 
 Video, Audio, animated images, Motifs and Group instances support a positive
-constant rational playback rate. The inspector's Timing group offers Playback
-rate, Retimed duration, Reset to 1× and the Audio/Group Preserve pitch policy.
-The existing Duration field still trims. Explicit target IDs are the complete
+constant rational playback rate. The inspector's single Timing group offers
+vertically stacked Start, Duration and read-only End rows, using the same label
+and control alignment as other properties. End is the exclusive timeline
+boundary (Start plus Duration), displayed in the same frame/audio units.
+Start moves the clip; Duration remains an out-edge trim.
+A Retime / 变速 row beneath these fields has target
+duration followed by a speed multiplier (1.00×), Reset to 1× and the Audio/Group
+Preserve pitch policy. Caption, target duration and speed share one compact row.
+Speed is a text button until clicked, then an automatically focused input with
+a trailing ×; Enter or blur commits, Escape cancels the edit. Its tooltip and
+accessible label name the speed without a separate visible caption.
+There is no nested disclosure or divider. Both directly retime
+the selected content; Target duration uses the same time units as Duration and
+commits on blur or Enter, with no confirmation buttons or result preview.
+Explicit target IDs are the complete
 batch; links never expand a retime request.
 
 A retime keeps starts and selected content endpoints. It snaps the new end to

@@ -221,7 +221,9 @@ describe("AttributePanel Layer envelope", () => {
     // 30 fps: 2 s → 00:00:02:00; duration = End − Start.
     expectTimecode(within(env).getByLabelText("Duration"), "00:00:02:00");
     // Identity, flags and timing fields are always visible.
-    expect(screen.queryByLabelText("End")).toBeNull();
+    const end = screen.getByLabelText("End");
+    expect(end.tagName).toBe("OUTPUT");
+    expect(end.textContent).toBe("00:00:02:00");
     expect(screen.getByLabelText("Start")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Locked", pressed: false })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Locked" }).getAttribute("aria-pressed")).toBe("false");
@@ -604,7 +606,7 @@ describe("AttributePanel local disclosures", () => {
   it("shows fade durations directly under Effects", () => {
     renderPanel(videoTrack(), "layer-v1");
     expect(screen.getByLabelText("Duration")).toBeTruthy();
-    expect(screen.getByLabelText("Playback rate")).toBeTruthy();
+    expect(screen.getByLabelText("Speed")).toBeTruthy();
     expect(screen.getByLabelText("Label")).toHaveProperty("placeholder", "clip.mp4");
     expect(screen.getByRole("button", { name: "Flip horizontal" })).toBeTruthy();
     const effects = screen.getByRole("region", { name: "Effects" });
@@ -784,4 +786,115 @@ it('retimes the inspected clip unless the user explicitly enables selection-wide
   await user.click(screen.getByRole('checkbox', { name: 'Apply to all 2 selected clips' }));
   await user.click(screen.getByRole('button', { name: 'Reset to 1×' }));
   expect(retimeLayers).toHaveBeenLastCalledWith(['layer-v1', 'layer-a1'], { kind: 'Rate', value: { num: 1, den: 1 } });
+});
+
+describe('direct retime duration editing', () => {
+  function renderVideoTiming() {
+    const video = videoTrack();
+    useProjectStore.getState().apply(summaryFixture({ root: { tracks: [video] } }));
+    renderPanel(video, 'layer-v1');
+    expect(screen.getByLabelText('Speed')).toHaveProperty('disabled', false);
+    expect(screen.queryByRole('button', { name: 'Apply retime' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retime to duration…' })).toBeNull();
+    return within(screen.getByRole('group', { name: 'Target duration' })).getByLabelText('seconds');
+  }
+
+  it('keeps both fields visible and lets Escape discard an unfinished edit', async () => {
+    const seconds = renderVideoTiming();
+    fireEvent.change(seconds, { target: { value: '1' } });
+    expect(screen.queryByText(/Result:/)).toBeNull();
+    expectTimecode(screen.getByRole('group', { name: 'Duration' }), '00:00:02:00');
+    expect(screen.getByRole('button', { name: 'Speed' }).textContent).toBe('1.00×');
+    fireEvent.keyDown(seconds, { key: 'Escape' });
+    fireEvent.blur(seconds);
+    expect(retimeLayers).not.toHaveBeenCalled();
+    expect(trimLayer).not.toHaveBeenCalled();
+    expectTimecode(screen.getByRole('group', { name: 'Target duration' }), '00:00:02:00');
+  });
+
+  it.each(['blur', 'Enter'])('commits exactly one retime on %s and keeps the field visible', async (gesture) => {
+    const seconds = renderVideoTiming();
+    fireEvent.focus(seconds);
+    fireEvent.change(seconds, { target: { value: '1' } });
+    if (gesture === 'blur') fireEvent.blur(seconds);
+    else fireEvent.keyDown(seconds, { key: 'Enter' });
+    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-v1'], { kind: 'Duration', duration_us: 1_000_000 }));
+    expect(trimLayer).not.toHaveBeenCalled();
+    expect(screen.getByRole('group', { name: 'Target duration' })).toBeTruthy();
+  });
+
+  it('refuses a zero duration without submitting and allows correction', async () => {
+    const seconds = renderVideoTiming();
+    fireEvent.change(seconds, { target: { value: '0' } });
+    fireEvent.blur(seconds);
+    expect(screen.getByRole('alert').textContent).toBe('Enter a positive rate or duration.');
+    expect(retimeLayers).not.toHaveBeenCalled();
+    const restoredSeconds = within(screen.getByRole('group', { name: 'Target duration' })).getByLabelText('seconds');
+    expectTimecode(screen.getByRole('group', { name: 'Target duration' }), '00:00:02:00');
+    fireEvent.change(restoredSeconds, { target: { value: '1' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.blur(restoredSeconds);
+    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-v1'], { kind: 'Duration', duration_us: 1_000_000 }));
+  });
+
+  it('does not retime when an unchanged target duration loses focus', () => {
+    const seconds = renderVideoTiming();
+    fireEvent.focus(seconds);
+    fireEvent.blur(seconds);
+    expect(retimeLayers).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['ms', '00:00:01.500', 1_500_000],
+    ['samples', '72000', 1_500_000],
+  ] as const)('uses the selected audio %s unit for target duration', async (units, value, durationUs) => {
+    const audio = audioTrack();
+    useProjectStore.getState().apply(summaryFixture({ root: { tracks: [audio] } }));
+    setAudioUnits(units);
+    renderPanel(audio, 'layer-a1');
+    fireEvent.change(screen.getByLabelText('Target duration'), { target: { value } });
+    fireEvent.blur(screen.getByLabelText('Target duration'));
+    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-a1'], { kind: 'Duration', duration_us: durationUs }));
+  });
+
+  it.each([
+    ['2', { num: 2, den: 1 }],
+    ['0.5', { num: 1, den: 2 }],
+  ] as const)('applies the displayed %s× multiplier as the playback rate', async (input, value) => {
+    const video = videoTrack();
+    useProjectStore.getState().apply(summaryFixture({ root: { tracks: [video] } }));
+    renderPanel(video, 'layer-v1');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Speed' }));
+    await user.clear(screen.getByLabelText('Speed'));
+    await user.type(screen.getByLabelText('Speed'), input);
+    await user.tab();
+    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-v1'], { kind: 'Rate', value }));
+    expect(screen.queryByRole('textbox', { name: 'Speed' })).toBeNull();
+  });
+
+  it('focuses speed on click and cancels an unfinished multiplier edit with Escape', async () => {
+    renderVideoTiming();
+    const user = userEvent.setup();
+    expect(screen.queryByRole('textbox', { name: 'Speed' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Speed' }));
+    const input = screen.getByRole('textbox', { name: 'Speed' });
+    expect(document.activeElement).toBe(input);
+    await user.clear(input);
+    await user.type(input, '0.5');
+    await user.keyboard('{Escape}');
+    expect(retimeLayers).not.toHaveBeenCalled();
+    expect(screen.queryByRole('textbox', { name: 'Speed' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Speed' }).textContent).toBe('1.00×');
+  });
+
+  it('commits the multiplier once on Enter without an extra confirmation', async () => {
+    renderVideoTiming();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Speed' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Speed' }));
+    await user.type(screen.getByRole('textbox', { name: 'Speed' }), '2{Enter}');
+    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-v1'], { kind: 'Rate', value: { num: 2, den: 1 } }));
+    expect(screen.queryByRole('textbox', { name: 'Speed' })).toBeNull();
+  });
 });

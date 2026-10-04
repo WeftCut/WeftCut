@@ -3,7 +3,32 @@
 // UI word for a placed item is `clip` — never `layer`, which stays the model word in
 // code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
-  retime: {"apply_selection":"Apply to all {{count}} selected clips","trim_hint":"Trims the clip end. Use Retimed duration to keep the content range and change playback rate.","mixed":"Selected clips have different rates or durations. Entering a value applies it to every selected clip.","refused":"{{reason}}","conflicts":{"EmptyTargets":"Select at least one clip.","LayerMissing":"A selected clip no longer exists.","Locked":"Unlock the selected clip and its track.","UnsupportedContent":"Select video, audio, animated images, Motifs or Groups.","NestedTargets":"Select either the Group or its children.","InvalidSnapshot":"The clip timing is invalid.","InvalidTarget":"Enter a positive rate or duration.","Numeric":"The requested timing exceeds the supported precision.","DurationTooShort":"The duration must span at least one frame or audio sample.","Transition":"This change would invalidate an existing transition.","Collision":"The new duration overlaps another clip. Shorten it or increase the rate."},"sampling":"Frame sampling","sampling_hint":"Preview and export use frame sampling. Frame blending and optical flow are not available.","preview":"Actual: {{rate}}× · {{duration}} s","rate":"Playback rate","duration":"Retimed duration (seconds)","reset":"Reset to 1×","pitch":"Preserve pitch","hint":"Keep the start and content range for {{count}} selected clips. Linked clips are not added."},
+  retime: {
+    "title": "Retime",
+    "apply_selection": "Apply to all {{count}} selected clips",
+    "mixed": "Selected clips have different rates or durations. Entering a value applies it to every selected clip.",
+    "refused": "{{reason}}",
+    "conflicts": {
+      "EmptyTargets": "Select at least one clip.",
+      "LayerMissing": "A selected clip no longer exists.",
+      "Locked": "Unlock the selected clip and its track.",
+      "UnsupportedContent": "Select video, audio, animated images, Motifs or Groups.",
+      "NestedTargets": "Select either the Group or its children.",
+      "InvalidSnapshot": "The clip timing is invalid.",
+      "InvalidTarget": "Enter a positive rate or duration.",
+      "Numeric": "The requested timing exceeds the supported precision.",
+      "DurationTooShort": "The duration must span at least one frame or audio sample.",
+      "Transition": "This change would invalidate an existing transition.",
+      "Collision": "The new duration overlaps another clip. Shorten it or increase the rate."
+    },
+    "sampling": "Frame sampling",
+    "sampling_hint": "Preview and export use frame sampling. Frame blending and optical flow are not available.",
+    "rate": "Speed",
+    "duration": "Target duration",
+    "reset": "Reset to 1×",
+    "pitch": "Preserve pitch",
+    "hint": "Change duration by adjusting speed, keeping the content range."
+  },
   crop: { title: "Crop", edit: "Crop in preview", done: "Finish cropping (Enter / Esc)", reset: "Reset crop", unavailable: "Select an unlocked, visible video clip in the preview composition to crop" },
   fonts: {
     app_default: "App default (Liberation Sans / Noto Sans SC)",
@@ -2141,7 +2166,8 @@ const enUS = {
     audio_units_hint:
       "Audio edits land on exact 48 kHz samples, so these fields read and accept sub-frame times. Dragging still snaps to frames — samples are 0.042 px wide at maximum zoom. Use Alt+←/→ to nudge one sample, Alt+Shift+←/→ for 1 ms.",
     t_start: "Start",
-    t_start_hint: "Inclusive — frame at this timecode is the clip's first.",
+    t_start_hint: "Move the clip, keeping its duration.",
+    t_end: "End",
     kind: "Kind",
     link_none: "Not linked",
     link_of_one: "Link of {{count}} clip",

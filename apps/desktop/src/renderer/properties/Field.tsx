@@ -7,6 +7,7 @@ export function Field({
   label,
   hint,
   stacked = false,
+  as: Tag = "label",
   children,
 }: {
   label: string;
@@ -17,10 +18,12 @@ export function Field({
   /// whole story.
   hint?: string;
   stacked?: boolean;
+  /// Use a div for a shared caption covering several independently named controls.
+  as?: "label" | "div";
   children: React.ReactNode;
 }) {
   return (
-    <label className={stacked ? "prop-field prop-field--stacked" : "prop-field"}>
+    <Tag className={stacked ? "prop-field prop-field--stacked" : "prop-field"}>
       <span className="prop-field-label">
         {label}
         {hint ? (
@@ -59,6 +62,6 @@ export function Field({
         ) : null}
       </span>
       <div className="prop-field-control">{children}</div>
-    </label>
+    </Tag>
   );
 }

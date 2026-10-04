@@ -1189,6 +1189,53 @@
   display: none;
 }
 
+/* The derived end shares the standard timing field alignment. */
+.prop-time-end-value {
+  padding: 4px 6px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-body);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.prop-retime-row .app-timecode {
+  flex: 0 0 auto;
+}
+
+.prop-retime-row .prop-field-control > .app-input:not(.app-timecode) {
+  flex: 1;
+  min-width: 0;
+}
+
+.prop-retime-multiplier {
+  position: relative;
+  flex: 0 0 60px;
+  min-width: 0;
+}
+
+.prop-retime-rate-readout {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+  padding-inline: 4px;
+}
+
+.prop-retime-multiplier .app-input {
+  padding-inline-start: 6px;
+  padding-inline-end: 17px;
+}
+
+.prop-retime-multiplier-suffix {
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-foreground);
+  font-size: var(--font-size-body);
+  pointer-events: none;
+}
+
 /* The title uses the whole row. Show its source separately only while a
    custom label replaces that source name in the input. */
 .prop-identity {

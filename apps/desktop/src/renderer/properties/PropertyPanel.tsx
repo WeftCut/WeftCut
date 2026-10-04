@@ -290,7 +290,7 @@ function CompositionPanel({
             {`${composition.width} × ${composition.height}`}
           </span>
         </Field>
-        <Field label={t("property_panel.duration")} hint={t("retime.trim_hint")}>
+        <Field label={t("property_panel.duration")}>
           <span className="font-mono text-xs text-muted-foreground">
             {formatTimecode(composition.duration_us, fpsNum, fpsDen)}
           </span>
@@ -414,29 +414,6 @@ function LayerPanel({
         <TransformFields layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="timing" title={t("property_panel.timing")}>
-        <Field label={t("property_panel.duration")}>
-          {env.isAudio && env.units !== "frames" ? (
-            <AppInput
-              value={env.durTc}
-              mono
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.duration")}
-              onValueChange={env.setDurTc}
-              onBlur={() => void env.commitDuration()}
-            />
-          ) : (
-            <AppTimecodeField
-              key={`${layer.id}:duration:${env.durationReset}`}
-              valueUs={parseTimecode(env.durTc, fpsNum, fpsDen) ?? 0}
-              fpsNum={fpsNum}
-              fpsDen={fpsDen}
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.duration")}
-              onCommit={(us) => void env.commitDuration(formatTimecode(us, fpsNum, fpsDen))}
-            />
-          )}
-        </Field>
-        <RetimeFields layer={layer} disabled={env.timingDisabled} onMutated={onMutated} />
         <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
           {env.isAudio && env.units !== "frames" ? (
             <AppInput
@@ -459,6 +436,36 @@ function LayerPanel({
             />
           )}
         </Field>
+        <Field label={t("property_panel.duration")}>
+          {env.isAudio && env.units !== "frames" ? (
+            <AppInput
+              value={env.durTc}
+              mono
+              disabled={env.timingDisabled}
+              ariaLabel={t("property_panel.duration")}
+              onValueChange={env.setDurTc}
+              onBlur={() => void env.commitDuration()}
+            />
+          ) : (
+            <AppTimecodeField
+              key={`${layer.id}:duration:${env.durationReset}`}
+              valueUs={parseTimecode(env.durTc, fpsNum, fpsDen) ?? 0}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+              disabled={env.timingDisabled}
+              ariaLabel={t("property_panel.duration")}
+              onCommit={(us) => void env.commitDuration(formatTimecode(us, fpsNum, fpsDen))}
+            />
+          )}
+        </Field>
+        <Field as="div" label={t("property_panel.t_end")}>
+          <output className="prop-time-end-value" aria-label={t("property_panel.t_end")}>
+            {env.isAudio
+              ? formatAudioTime(layer.t_end_us, env.units, fpsNum, fpsDen)
+              : formatTimecode(layer.t_end_us, fpsNum, fpsDen)}
+          </output>
+        </Field>
+        <RetimeFields key={layer.id} layer={layer} disabled={env.timingDisabled} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
         {env.isAudio ? (
           // Premiere's "audio units" equivalent, placed with the readouts it governs.
           // Scoped to audio times only: the ruler stays frame-based, because there is no
