@@ -132,8 +132,9 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     commit('Rate', value);
   };
   return <>
-    {selected.has(layer.id) && selected.size > 1 && <label className="prop-hint">
-      <input type="checkbox" checked={applyToSelection} disabled={disabled || busy} onChange={e => setApplyToSelection(e.target.checked)} /> {t('retime.apply_selection', { count: selected.size })}
+    {selected.has(layer.id) && selected.size > 1 && <label className="prop-hint prop-retime-checkbox">
+      <input type="checkbox" checked={applyToSelection} disabled={disabled || busy} onChange={e => setApplyToSelection(e.target.checked)} />
+      <span>{t('retime.apply_selection', { count: selected.size })}</span>
     </label>}
     <div className="prop-retime-row">
       <Field as="div" label={t('retime.title')} hint={t('retime.hint')}>
@@ -182,9 +183,10 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
         </Button>
       </Field>
     </div>
-    {layer.params.kind === 'Audio' || layer.params.kind === 'CompositionRef' ? <label className="prop-hint">
+    {layer.params.kind === 'Audio' || layer.params.kind === 'CompositionRef' ? <label className="prop-hint prop-retime-checkbox">
       <input type="checkbox" checked={layer.params.preserve_pitch !== false} disabled={disabled || busy}
-        onChange={e => { setBusy(true); void setPreservePitch(ids, e.target.checked).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false)); }} /> {t('retime.pitch')}
+        onChange={e => { setBusy(true); void setPreservePitch(ids, e.target.checked).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false)); }} />
+      <span>{t('retime.pitch')}</span>
     </label> : null}
     {mixed && <p className="prop-hint">{t('retime.mixed')}</p>}
     {(error || previewError) && <p role="alert" className="prop-hint">{error || previewError}</p>}

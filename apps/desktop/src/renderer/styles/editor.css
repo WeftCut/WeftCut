@@ -1201,6 +1201,24 @@
   user-select: text;
 }
 
+.prop-retime-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.prop-retime-checkbox > input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.prop-retime-checkbox > span {
+  min-width: 0;
+}
+
 .prop-retime-row .app-timecode {
   flex: 0 0 auto;
 }
