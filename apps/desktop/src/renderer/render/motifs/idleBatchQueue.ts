@@ -1,10 +1,10 @@
 // The idle-loop skeleton shared by MotifPrewarmer and MotifBaker: a target
-// queue drained in small CONCURRENT batches on scheduled (idle) callbacks.
+// queue drained with bounded concurrency on scheduled (idle) callbacks.
 // The owner injects the pull-time mapping (`take`) and the per-item async
 // work (`run`); this class owns only the loop discipline:
 //
 //   - never arm with an empty queue (an idle loop must not spin);
-//   - never re-arm while a batch is running or a callback is scheduled;
+//   - replenish free slots without waiting for the slowest sibling;
 //   - cancel the pending callback on dispose;
 //   - a frame's failure is caught per item — it never escapes the batch.
 
@@ -12,7 +12,7 @@ export interface IdleBatchQueueDeps<T, I> {
   /// Schedule a callback for "later" (idle). Returns a cancel token.
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  /// Max items pulled into one batch before yielding back to idle.
+  /// Max items in flight; refill free slots on the next idle callback.
   batchSize: number | (() => number);
   /// Map a queued target to its batch item at PULL time — so a mid-batch
   /// re-plan can't swap the owner's spec out from under an in-flight item —
@@ -32,7 +32,7 @@ export interface IdleBatchQueueDeps<T, I> {
 export class IdleBatchQueue<T, I> {
   private queue: T[] = [];
   private scheduled: number | null = null;
-  private running = false;
+  private running = 0;
   private disposed = false;
 
   constructor(private readonly deps: IdleBatchQueueDeps<T, I>) {}
@@ -49,7 +49,7 @@ export class IdleBatchQueue<T, I> {
   }
 
   private arm(): void {
-    if (this.disposed || this.running || this.scheduled != null) return;
+    if (this.disposed || this.running >= this.limit() || this.scheduled != null) return;
     if (this.queue.length === 0) return;
     this.scheduled = this.deps.schedule(() => {
       this.scheduled = null;
@@ -57,20 +57,24 @@ export class IdleBatchQueue<T, I> {
     });
   }
 
+  private limit(): number {
+    return typeof this.deps.batchSize === "function" ? this.deps.batchSize() : this.deps.batchSize;
+  }
+
   private async drainBatch(): Promise<void> {
     if (this.disposed) return;
-    this.running = true;
     try {
       // Pull up to batchSize FRESH items (`take` drops stale/cached targets),
       // then run them CONCURRENTLY. Renders serialize through the per-motif
       // harness (microtask-serialized — safe), but async work parallelizes
       // across the RasterPool, so the loop fills at pool speed instead of 1x.
       const batch: I[] = [];
-      const batchSize = typeof this.deps.batchSize === "function" ? this.deps.batchSize() : this.deps.batchSize;
+      const batchSize = Math.max(0, this.limit() - this.running);
       while (batch.length < batchSize && this.queue.length > 0) {
         const item = this.deps.take(this.queue.shift()!);
         if (item !== null) batch.push(item);
       }
+      this.running += batch.length;
       await Promise.all(
         batch.map(async (item) => {
           try {
@@ -78,12 +82,14 @@ export class IdleBatchQueue<T, I> {
           } catch {
             // A frame's work failed (e.g. raster/persist on a disposed pool)
             // — drop it, keep going. One bad frame never kills the loop.
+          } finally {
+            this.running--;
+            this.arm();
           }
         }),
       );
     } finally {
       this.deps.onBatchDone?.();
-      this.running = false;
       this.arm(); // more queued? reschedule. else idle.
     }
   }

@@ -19,8 +19,8 @@ const BUDGET_WAIT_MS = 250
  * Old native pools survive until Electron releases all imported references. */
 export class MotifGpuTransport {
   private sessions = new Map<string, Session>()
-  private readonly tails: Promise<unknown>[]
-  private nextLane = 0
+  private readonly freeLanes: number[]
+  private readonly laneWaiters: ((lane: number) => void)[] = []
   // Includes imports in progress and retired textures still held by Chromium.
   private allocatedBytes = 0
   private allocatedSessions = 0
@@ -31,7 +31,18 @@ export class MotifGpuTransport {
   private generations = new WeakMap<WebContents, number>()
   constructor(private readonly createPool: PoolFactory, concurrency = 3) {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('Invalid Motif transport concurrency')
-    this.tails = Array.from({ length: concurrency }, () => Promise.resolve())
+    this.freeLanes = Array.from({ length: concurrency }, (_, lane) => lane)
+  }
+
+  private acquireLane(): Promise<number> {
+    const lane = this.freeLanes.shift()
+    return lane === undefined ? new Promise(resolve => this.laneWaiters.push(resolve)) : Promise.resolve(lane)
+  }
+
+  private releaseLane(lane: number): void {
+    const next = this.laneWaiters.shift()
+    if (next) next(lane)
+    else this.freeLanes.push(lane)
   }
 
   private budgetChanged(): void {
@@ -92,11 +103,8 @@ export class MotifGpuTransport {
     }
     // Independent leases let native reading/upload overlap the preceding
     // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
-    const lane = this.nextLane++ % this.tails.length
-    const previous = this.tails[lane]!
-    let unlock!: () => void
-    this.tails[lane] = new Promise<void>(resolve => { unlock = resolve })
-    await previous.catch(() => {})
+    const lane = await this.acquireLane()
+    const unlock = (): void => this.releaseLane(lane)
     let active: Session | undefined
     const address = `${owner.id}:${width}:${height}:${format}:${lane}`
     try {

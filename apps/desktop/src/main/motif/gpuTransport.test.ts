@@ -19,6 +19,22 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('uses an acknowledged lane while a sibling still holds its lease', async () => {
+    const { owner, pools, transport } = fixture(3)
+    try {
+      const frames = await Promise.all(['a', 'b', 'c'].map(file => transport.read(owner, file, 128, 128)))
+      transport.release(owner, frames[1]!.token)
+      let next: Awaited<ReturnType<typeof transport.read>> | undefined
+      void transport.read(owner, 'next', 128, 128).then(frame => { next = frame }, () => {})
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(next).toBeDefined()
+      expect(pools[0]!.uploadFile).toHaveBeenCalledTimes(1)
+      expect(pools[1]!.uploadFile).toHaveBeenLastCalledWith('next', 0)
+      expect(pools).toHaveLength(3)
+      transport.release(owner, next!.token)
+    } finally { transport.close(owner) }
+  })
+
   it('bounds allocation waits while retired imports remain held, then recovers on release', async () => {
     vi.useFakeTimers()
     const released: (() => void)[] = []

@@ -521,6 +521,12 @@ and imminent content within 500 ms, with a small recent-frame window and a share
 byte cap. Repeated Group instances retain their own time windows. See
 [ADR 0096](adr/0096-motif-preview-progress.md) and [`motifs.md`](motifs.md).
 
+Persisted prewarming replenishes each available slot on an idle callback,
+skipping frames already in flight across replans. GPU delivery takes an
+acknowledged free lane rather than waiting for a fixed lane's turn. The existing
+concurrency and memory limits still apply; see
+[ADR 0097](adr/0097-motif-prewarm-replenishes-available-lanes.md).
+
 The **Motif lag / hold** PerfHUD tile measures content lag and outdated bitmap
 hold time, including missing frames and pending requests. A steady composite
 submission cadence alone cannot establish that Motif content is progressing.

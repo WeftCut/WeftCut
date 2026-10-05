@@ -5,6 +5,28 @@ import { MotifFrameCache } from "./frameCache";
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
 
 describe("MotifPrewarmer", () => {
+  it("does not refill with an already in-flight frame after replanning", async () => {
+    const pending: (() => void)[] = [];
+    const releases = new Map<number, (bitmap: ImageBitmap) => void>();
+    const cached = new Set<number>();
+    const render = vi.fn((frame: number) => new Promise<ImageBitmap>(resolve => releases.set(frame, resolve)));
+    const prewarmer = new MotifPrewarmer({
+      capBytes: 64, batchSize: 1, hasFrame: (_k, f) => cached.has(f),
+      setFrame: (_k, f) => { cached.add(f); }, prioritizeFrames: () => {},
+      schedule: cb => { pending.push(cb); return pending.length; }, cancel: () => {},
+    });
+    const specs = [{ cacheKey: "animation", contentFrame: 0, contentDurationFrames: 64, frameBytes: 1, persisted: true, render }];
+    prewarmer.setTargets(specs);
+    pending.shift()!(); // frames 0, 1, 2
+    prewarmer.setTargets(specs); // compositor replans while those reads run
+    releases.get(1)!(makeBmp());
+    await new Promise(r => setTimeout(r, 0));
+    pending.shift()!();
+    expect(render.mock.calls.map(([frame]) => frame)).toEqual([0, 1, 2, 3]);
+    prewarmer.dispose();
+    releases.forEach(resolve => resolve(makeBmp()));
+  });
+
   it.each([true, false])("pipelines persisted reads but preserves the live capture limit (persisted=%s)", async (persisted) => {
     const pending: (() => void)[] = [];
     const release: ((bitmap: ImageBitmap) => void)[] = [];

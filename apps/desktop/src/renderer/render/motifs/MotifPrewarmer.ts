@@ -26,7 +26,7 @@ export interface MotifPrewarmerDeps {
   /// requestIdleCallback with a setTimeout fallback. Tests inject a manual one.
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  /// Max frames to raster per scheduled batch before yielding. Keeps the loop
+  /// Max frames in flight before yielding. Keeps the loop
   /// off the play tick's back.
   batchSize?: number;
   /// Fired after each drained batch so a watcher can recompute cache coverage
@@ -38,15 +38,17 @@ export interface MotifPrewarmerDeps {
 /// A queued target resolved to its spec at pull time (see `take`).
 interface PrewarmBatchItem extends PrewarmTarget {
   spec: PrewarmContentSpec;
+  address: string;
 }
 
 /// Budget-paced background filler. `setTargets` (re)plans; the shared
 /// `IdleBatchQueue` loop rasters missing frames in priority order until the
-/// plan is fully cached, yielding between batches. Never owns bitmaps (the
+/// plan is fully cached, refilling free slots on idle callbacks. Never owns bitmaps (the
 /// cache does). Preview-only.
 export class MotifPrewarmer {
   private specsByKey = new Map<string, PrewarmContentSpec>();
   private targetFrames = new Map<string, Set<number>>();
+  private readonly inFlight = new Set<string>();
   private readonly loop: IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>;
 
   constructor(private readonly deps: MotifPrewarmerDeps) {
@@ -57,19 +59,26 @@ export class MotifPrewarmer {
         ? Math.max(3, deps.batchSize ?? 3) : deps.batchSize ?? 3,
       take: (target) => {
         if (this.deps.hasFrame(target.cacheKey, target.frame)) return null; // already cached
+        const address = JSON.stringify([target.cacheKey, target.frame]);
+        if (this.inFlight.has(address)) return null;
         const spec = this.specsByKey.get(target.cacheKey);
         if (!spec) return null; // content no longer active
-        return { ...target, spec };
+        this.inFlight.add(address);
+        return { ...target, spec, address };
       },
-      run: async ({ cacheKey, frame, spec }) => {
-        const bmp = await spec.render(frame);
-        if (this.loop.isDisposed() || !this.targetFrames.get(cacheKey)?.has(frame)) {
-          // A seek/re-plan can retire this request while it is in flight.
-          // Do not let an obsolete result evict the new window's frames.
-          bmp.close();
-          return;
+      run: async ({ cacheKey, frame, spec, address }) => {
+        try {
+          const bmp = await spec.render(frame);
+          if (this.loop.isDisposed() || !this.targetFrames.get(cacheKey)?.has(frame)) {
+            // A seek/re-plan can retire this request while it is in flight.
+            // Do not let an obsolete result evict the new window's frames.
+            bmp.close();
+            return;
+          }
+          this.deps.setFrame(cacheKey, frame, bmp);
+        } finally {
+          this.inFlight.delete(address);
         }
-        this.deps.setFrame(cacheKey, frame, bmp);
       },
       onBatchDone: () => {
         if (!this.loop.isDisposed()) this.deps.onProgress?.();
@@ -97,5 +106,6 @@ export class MotifPrewarmer {
     this.loop.dispose();
     this.specsByKey.clear();
     this.targetFrames.clear();
+    this.inFlight.clear();
   }
 }

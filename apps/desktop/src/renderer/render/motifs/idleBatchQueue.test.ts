@@ -40,6 +40,27 @@ function makeQueue(overrides: {
 }
 
 describe("IdleBatchQueue", () => {
+  it("refills a free slot without waiting for the slowest sibling", async () => {
+    const pending: (() => void)[] = [];
+    const releases = new Map<number, () => void>();
+    const ran: number[] = [];
+    const { q } = makeQueue({ pending, batchSize: 3, run: n => {
+      ran.push(n);
+      return new Promise<void>(resolve => releases.set(n, resolve));
+    } });
+    q.setQueue([0, 1, 2, 3, 4]);
+    pending.shift()!();
+    expect(ran).toEqual([0, 1, 2]);
+    releases.get(1)!();
+    await new Promise(r => setTimeout(r, 0));
+    expect(pending).toHaveLength(1);
+    pending.shift()!();
+    expect(ran).toEqual([0, 1, 2, 3]);
+    expect(pending).toHaveLength(0); // three unresolved items still cap admission
+    q.dispose();
+    releases.forEach(release => release());
+  });
+
   it("never arms with an empty queue", () => {
     const pending: (() => void)[] = [];
     const { q, schedule } = makeQueue({ pending });

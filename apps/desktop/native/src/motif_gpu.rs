@@ -12,6 +12,46 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 type Reply = tokio::sync::oneshot::Sender<Result<(), String>>;
+
+/// Disk frames have straight alpha; Electron imports premultiplied textures.
+fn premultiply(pixels: &mut [u8]) {
+    for px in pixels.as_chunks_mut::<4>().0 {
+        match px[3] {
+            0 => px[..3].fill(0),
+            255 => {}
+            alpha => {
+                for c in &mut px[..3] {
+                    *c = ((u32::from(*c) * u32::from(alpha) + 127) / 255) as u8;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::premultiply;
+
+    #[test]
+    fn premultiplication_preserves_rounding_for_every_alpha_and_channel() {
+        let mut pixels = Vec::new();
+        for alpha in 0..=255u8 {
+            for channel in 0..=255u8 {
+                pixels.extend_from_slice(&[channel, 255 - channel, channel ^ 127, alpha]);
+            }
+        }
+        let mut expected = pixels.clone();
+        for px in expected.as_chunks_mut::<4>().0 {
+            let alpha = u32::from(px[3]);
+            for c in &mut px[..3] {
+                *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
+            }
+        }
+        premultiply(&mut pixels);
+        assert_eq!(pixels, expected);
+    }
+}
+
 enum Command {
     Upload(String, usize, Reply),
     Copy(usize, usize, Reply),
@@ -71,14 +111,7 @@ impl MotifGpuPool {
                                     w == width && h == height,
                                     "Motif GPU size changed"
                                 );
-                                // Electron imports RGBA textures as premultiplied.
-                                // Disk frames are straight alpha (the PNG contract).
-                                for px in pixels.as_chunks_mut::<4>().0 {
-                                    let alpha = u32::from(px[3]);
-                                    for c in &mut px[..3] {
-                                        *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
-                                    }
-                                }
+                                premultiply(&mut pixels);
                                 unsafe { pool.upload(slot, &pixels) }
                             })();
                             let _ = reply.send(result.map_err(|e: anyhow::Error| e.to_string()));
