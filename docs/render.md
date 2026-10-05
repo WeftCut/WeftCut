@@ -513,6 +513,16 @@ whose class your change touches.
 
 ### Text layout: the box
 
+Font registration belongs to the document or export Worker's `FontFaceSet`,
+not to an individual Compositor. `loadFontsIntoFaceSet` registers each family
+once per set and shares in-flight loads; a failed family can be retried without
+duplicating successful siblings. Font bytes are session-stable through the
+font registry. Closing and reopening Preview therefore reuses the document's
+fonts, while an export Worker still installs its own copies before rendering.
+This matters for native memory: adding another `FontFace` for the same family
+does not replace the previous face in `document.fonts`, and JavaScript GC cannot
+release faces that the document still owns.
+
 Text is the only visual kind with no intrinsic size, so `TextParams` carries a
 layout box — `box_w`, `box_h`, in composition pixels, local (pre-`scale`).
 Which fields are set *is* the resize mode; there is no enum to contradict them
