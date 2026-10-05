@@ -63,6 +63,32 @@ describe("runTranscribe", () => {
   });
   afterEach(() => setTranscribing(false));
 
+  it("waits for the input warning decision and cancels without inference or writes", async () => {
+    let answer!: (decision: false) => void;
+    const pending = runTranscribe({ ...target(), confirmInput: () => new Promise<false>(resolve => { answer = resolve; }) });
+    expect(useTranscribeRunStore.getState().transcribing).toBe(true);
+    expect(mocks.transcribeClip).not.toHaveBeenCalled();
+    await runTranscribe(target());
+    expect(mocks.transcribeClip).not.toHaveBeenCalled();
+    answer(false);
+    expect(await pending).toBe("");
+    expect(mocks.applyTranscripts).not.toHaveBeenCalled();
+    expect(mocks.logEmit).not.toHaveBeenCalled();
+    expect(useTranscribeRunStore.getState().transcribing).toBe(false);
+  });
+
+  it("continues with the existing unmodified transcription request after acknowledgement", async () => {
+    await runTranscribe({ ...target(), confirmInput: async () => ({ normalizeLayerIds: [] }) });
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("l-1");
+    expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the run guard if the input prompt fails", async () => {
+    expect(await runTranscribe({ ...target(), confirmInput: async () => { throw new Error("prompt failed"); } })).toContain("prompt failed");
+    expect(useTranscribeRunStore.getState().transcribing).toBe(false);
+    expect(mocks.transcribeClip).not.toHaveBeenCalled();
+  });
+
   // The two steps in order, and the second fed by the first: the write half
   // takes the normalized transcript returned by the read half. No
   // language goes on the wire — detection is the engine's, not a field's.

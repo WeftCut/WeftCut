@@ -226,6 +226,11 @@
             "description": "Target VideoClip or Audio layer id.",
             "type": "string"
           },
+          "normalize_audio": {
+            "default": false,
+            "description": "Explicit opt-in: normalize only the transcription copy toward -3 dBFS\npeak, at most +24 dB. Original media/timeline stay unchanged. Default false.",
+            "type": "boolean"
+          },
           "t_end_us": {
             "description": "Optional transcription window end in timeline microseconds.\nDefaults to the layer's `t_end_us`. Must lie within the layer.",
             "type": "integer"

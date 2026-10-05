@@ -2,12 +2,9 @@
 // whole of it, in one place, so the command is the only surface that has to
 // state the log rows and the in-flight flag.
 //
-// There is no dialog in front of it. The one field a dialog used to carry, a
-// language hint, was optional and empty was the recommended answer: every
-// engine detects the language at least as well as a user guesses it —
-// whisper.cpp runs `-l auto`, OpenAI omits the form field, and FunASR's model
-// IS the language — so a box whose right answer is "leave it empty" was a click
-// that asked nothing. The clips are the selection, so nothing is left to confirm.
+// The UI checks source levels before starting inference and asks whether to
+// proceed when audio is quiet or the check is unavailable. Normalization is
+// explicit per run, only for selected quiet sources' inference copies.
 //
 // A run reads N clips and writes ONCE (ADR 0070). The reads go one at a time,
 // in timeline order — two engines on one machine would fight for the same
@@ -28,6 +25,7 @@
 // (`speech/autoCaptionEligibility.ts` folds it into the verdict).
 
 import { create } from "zustand";
+import type { TranscriptionInputDecision } from "./transcriptionInput";
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import {
@@ -65,6 +63,9 @@ export interface TranscribeRunTarget {
   /// In the order they are read — the caller hands them over in timeline
   /// order (`transcribeSubjects`), already reduced to one subject per source.
   clips: readonly TranscribeClip[];
+  /// Optional UI preflight. The in-flight guard covers the check and prompt;
+  /// false cancels before inference, caption writes or a Started log row.
+  confirmInput?: () => Promise<TranscriptionInputDecision>;
   /// Reveals the Caption Panel once cues have landed. Without it a successful
   /// transcription looks like nothing happened: the cues land on a track whose
   /// editor may well be closed.
@@ -160,18 +161,50 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   // answer to "no target".
   if (clips.length === 0) return "";
   setTranscribing(true);
+  let normalizeLayerIds: readonly string[] = [];
+  if (target.confirmInput) {
+    let proceed = false;
+    try {
+      const decision = await target.confirmInput();
+      if (decision === false) return "";
+      normalizeLayerIds = decision.normalizeLayerIds;
+      proceed = true;
+    } catch (err) {
+      logMutationFailure(err, "transcription_input");
+      return refusalText(err);
+    } finally {
+      if (!proceed) setTranscribing(false);
+    }
+  }
   const opId = crypto.randomUUID();
   void logEmit(startedRow(clips, opId));
 
   // The read half: one call per clip, in order, stopping at the first that
-  // fails. No language hint goes on the wire, so every engine runs its own
-  // detection (the module note says why that is the right default, not a
-  // missing option).
+  // fails. No language hint goes on the wire, so the engine detects it.
   const transcripts: TranscriptResult[] = [];
   let failed: { clip: TranscribeClip; err: unknown } | null = null;
   for (const clip of clips) {
     try {
-      transcripts.push(await transcribeClip(clip.layerId));
+      const normalize = normalizeLayerIds.includes(clip.layerId);
+      if (normalize) void logEmit({
+        level: "info", ...ROW,
+        message: `Transcription copy normalization requested: ${clip.label}`,
+        i18n_key: "log.auto_caption_normalize_requested", i18n_args: { clip: clip.label },
+        details: { context: "transcribe_clip", layer_id: clip.layerId, normalize_audio: true },
+      });
+      const result = normalize
+        ? await transcribeClip(clip.layerId, { normalizeAudio: true })
+        : await transcribeClip(clip.layerId);
+      transcripts.push(result);
+      if (result.input_normalization) {
+        const gain = result.input_normalization.gain_db.toFixed(1);
+        void logEmit({
+          level: "info", ...ROW,
+          message: `Transcription copy gain for ${clip.label}: +${gain} dB`,
+          i18n_key: "log.auto_caption_normalized", i18n_args: { clip: clip.label, gain },
+          details: { context: "transcribe_clip", layer_id: clip.layerId, ...result.input_normalization },
+        });
+      }
     } catch (err) {
       failed = { clip, err };
       break;

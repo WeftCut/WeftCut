@@ -1,10 +1,9 @@
 // The two speech gestures as commands: transcribe a clip, and speak a script.
 //
 // They differ in shape, and the difference is what each one still has to ask.
-// Transcription RUNS: its parameters are the clip, which is the selection, and
-// a language hint every engine detects for itself, so there is nothing left to
-// ask before starting and the menu label carries no ellipsis
-// (`speech/transcribeRun.ts` says why the hint was never worth a field).
+// Transcription checks the selected sources' levels, prompts only when a
+// warning needs a decision, then uses original audio or explicitly normalized
+// inference copies. Source files and timeline audio are never edited here.
 // Voiceover only RAISES a dialog — a script is not something a selection can
 // supply, so the authored recipe (`native/src/mcp/prompts.rs`) is not complete
 // without asking, and the dialog owns the inline error slot its failures
@@ -24,6 +23,9 @@ import {
   transcribeTargets,
 } from "../speech/autoCaptionEligibility";
 import { runTranscribe } from "../speech/transcribeRun";
+import { confirmTranscriptionInput } from "../speech/transcriptionInputPrompt";
+import { contentAtUs, sourceIn, sourceOut } from "../layerTiming";
+import { approximateTime } from "../timeMapping";
 import { openVoiceoverPrompt } from "../speech/voiceoverPrompt";
 import { useProjectStore } from "../state/projectStore";
 
@@ -70,10 +72,21 @@ export async function transcribeSelected(deps: {
   const compositionId = state.compositionIdByLayerId.get(clips[0]!.id);
   if (!projectId || !compositionId) return;
   const t = (key: string, values: Record<string, unknown>) => i18n.t(key, values);
+  const sources = clips.map(layer => ({
+    layerId: layer.id,
+    label: layerDisplayName(layer, t),
+    mediaId: layer.params.media_id,
+    sourceStartUs: Math.max(0, Math.round(approximateTime(sourceIn(layer.params)))),
+    sourceEndUs: Math.min(
+      Math.ceil(approximateTime(sourceOut(layer))),
+      Math.round(contentAtUs(layer.params, layer.t_end_us - layer.t_start_us)),
+    ),
+  }));
   const message = await runTranscribe({
     projectId,
     compositionId,
-    clips: clips.map((layer) => ({ layerId: layer.id, label: layerDisplayName(layer, t) })),
+    clips: sources,
+    confirmInput: () => confirmTranscriptionInput(sources),
     revealCaptions: deps.revealCaptions,
   });
   // The failure's own sentence is already in the status log (`runTranscribe`

@@ -2512,6 +2512,10 @@ const enUS = {
     auto_caption_started_many: "Transcribing {{count}} clips",
     auto_caption_done: "{{cues}} caption cues added ({{engine}})",
     auto_caption_failed: "Transcribing “{{clip}}” failed: {{reason}}",
+    auto_caption_quiet: "“{{clip}}” has low source audio volume. Transcription may miss speech or detect the wrong language.",
+    auto_caption_level_unavailable: "Could not check the source audio volume of “{{clip}}”.",
+    auto_caption_normalize_requested: "Normalizing the transcription copy of “{{clip}}” at your request.",
+    auto_caption_normalized: "Transcription copy of “{{clip}}”: gain +{{gain}} dB. Source and timeline volume unchanged.",
     shots_analyze_started: "Analyzing shots in “{{clip}}”",
     // The CANDIDATE count, not a shot count: the scan's product is the
     // candidate list, and how many shots come out of it is whatever threshold
@@ -2741,6 +2745,18 @@ const enUS = {
     marker: "Marker",
   },
   // The voiceover dialog.
+  transcription_input: {
+    title: "Check audio before transcription",
+    quiet: "These clips have low source audio volume. Transcription may miss words or detect the wrong language.",
+    unavailable: "Audio levels could not be checked for these clips. Their waveforms may still be preparing.",
+    unchanged: "Continue at original volume uses the audio as-is. Your media files and timeline volume stay unchanged with either option.",
+    normalize_note: "Normalize and transcribe adjusts only this run’s audio copies for the low-volume clips listed above. Target peak: −3 dBFS; maximum boost: 24 dB. Actual gain is measured again and logged. Silence and unchecked clips stay at original volume; background noise may also become louder.",
+    estimate: "estimated boost +{{gain}} dB",
+    normalize: "Normalize and transcribe",
+    remedy: "You can cancel to check the source audio first. Transcription reads the original source; timeline volume and effects do not change its input.",
+    cancel: "Cancel",
+    continue: "Continue at original volume",
+  },
   voiceover: {
     title: "Voiceover",
     script: "Script",

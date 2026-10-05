@@ -2572,23 +2572,27 @@ export interface TranscriptResult {
   segments: TranscriptSegment[];
   language?: string | null;
   word_timing: WordTiming;
+  input_normalization?: { input_peak_dbfs: number | null; gain_db: number; target_peak_dbfs: number; max_gain_db: number };
 }
 
 /// Transcribe one VideoClip or Audio layer's whole span. The engine is chosen by
 /// the user's Settings → Transcription preference then availability; when
 /// nothing is configured the call rejects with the message that names that
 /// panel. `language` blank/omitted lets the engine auto-detect.
+/// `normalizeAudio` is an explicit per-request opt-in for the inference copy;
+/// it leaves source media, timeline volume and the raw extraction cache intact.
 ///
 /// A read: it commits nothing, so it neither enters undo nor dirties the
 /// project. Applying the result is `applyTranscripts`.
 export async function transcribeClip(
   layerId: string,
-  opts: { language?: string } = {},
+  opts: { language?: string; normalizeAudio?: boolean } = {},
 ): Promise<TranscriptResult> {
   const language = opts.language?.trim();
   return invoke<TranscriptResult>("transcribe_clip", {
     layer_id: layerId,
     ...(language ? { language } : {}),
+    ...(opts.normalizeAudio ? { normalize_audio: true } : {}),
   });
 }
 

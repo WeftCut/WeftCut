@@ -131,6 +131,7 @@ import {
   transcribeSelected,
 } from "./commands/speechCommands";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
+import { TranscriptionInputDialog } from "./speech/TranscriptionInputDialog";
 import { setTool } from "./state/toolStore";
 import { resetPreviewView } from "./state/previewViewStore";
 import { logEmit } from "./ipc";
@@ -1216,6 +1217,7 @@ export function App({ onCloseProject }: AppProps) {
           becomes visible in and the settings deep-link, through the handler map
           above. */}
       <VoiceoverDialog />
+      <TranscriptionInputDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

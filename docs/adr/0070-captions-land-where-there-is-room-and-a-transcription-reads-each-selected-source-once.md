@@ -44,6 +44,23 @@ transcripts concatenate into one body and one write.
 
 ## Decision
 
+- **Source-level warnings precede UI transcription.** A read-only check of
+  cached raw waveforms over each selected source window warns when even its
+  peak is below −24 dBFS. This is a conservative amplitude advisory, not a
+  speech-quality assessment; silence surrounding normal-volume speech alone
+  does not trigger it. Missing/incomplete waveforms are reported as unchecked.
+  One prompt lists affected clips and offers Cancel, Continue at original
+  volume, or explicit Normalize and transcribe for measured non-silent quiet
+  clips. The in-flight guard covers this prompt too. Normalization applies
+  only to private, per-run transcription copies, never source files, cached
+  raw extracts, timeline gain or export. It remeasures the extracted mono WAV,
+  applies constant gain toward −3 dBFS peak with a +24 dB ceiling, and retains
+  zero gain for silence or already-loud input. The copy is deleted when the
+  request ends. There is no persistent opt-in or implicit fallback.
+  The UI shows estimated gain; the status log records the choice and actual
+  gain. MCP `normalize_audio` defaults false; an opted-in result includes
+  `input_normalization` with the measured peak and applied gain.
+
 - **Packing tries the existing caption tracks first.** `add_caption_track`
   builds its candidate list from the target composition's unlocked
   caption-role tracks, in track order, and appends every lane it opens. Each

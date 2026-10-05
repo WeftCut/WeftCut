@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 
 pub mod audio_extract;
+pub mod audio_normalize;
 pub mod backend;
 pub mod backends;
 pub mod config;

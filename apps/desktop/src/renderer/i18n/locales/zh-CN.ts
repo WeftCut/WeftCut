@@ -2253,6 +2253,10 @@ const zhCN: Resources = {
     auto_caption_started_many: "正在转写 {{count}} 个片段",
     auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
     auto_caption_failed: "转写“{{clip}}”失败：{{reason}}",
+    auto_caption_quiet: "“{{clip}}”的源音频音量偏低，转写可能漏字或误判语言。",
+    auto_caption_level_unavailable: "未能检查“{{clip}}”的源音频音量。",
+    auto_caption_normalize_requested: "已按你的选择，对“{{clip}}”的本次识别副本进行归一化。",
+    auto_caption_normalized: "“{{clip}}”的本次识别副本：增益 +{{gain}} dB，原素材和时间线音量未改变。",
     shots_analyze_started: "正在分析“{{clip}}”的镜头",
     // 报的是候选数而不是镜头数：扫描的产物是候选列表，
     // 从中得出多少个镜头取决于随后读的阈值。
@@ -2433,6 +2437,18 @@ const zhCN: Resources = {
     marker: "标记",
   },
   // 配音对话框。
+  transcription_input: {
+    title: "转写前检查音频",
+    quiet: "以下片段的源音频音量偏低，转写可能漏字或误判语言。",
+    unavailable: "以下片段的音量检查未完成，音频波形可能仍在准备中。",
+    unchanged: "“按原音量继续”会使用原始音量。两种方式都不会修改素材文件或时间线音量。",
+    normalize_note: "“归一化后转写”仅处理上方低音量片段的本次识别副本，目标峰值 −3 dBFS，最多提升 24 dB。实际增益会重新测量并记录在日志中；静音和未完成检查的片段保持原音量，背景噪声也可能被放大。",
+    estimate: "预计增益 +{{gain}} dB",
+    normalize: "归一化后转写",
+    remedy: "你可以取消并先检查源音频。转写读取原始素材，时间线上的音量和效果调整不会改变识别输入。",
+    cancel: "取消",
+    continue: "按原音量继续",
+  },
   voiceover: {
     title: "配音",
     script: "文稿",

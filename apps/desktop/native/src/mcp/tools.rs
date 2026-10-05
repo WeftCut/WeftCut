@@ -1185,6 +1185,10 @@ pub(super) struct TranscribeClipArgs {
     /// `word_timing` reports what you got.
     #[serde(default)]
     pub word_timestamps: Option<bool>,
+    /// Explicit opt-in: normalize only the transcription copy toward -3 dBFS
+    /// peak, at most +24 dB. Original media/timeline stay unchanged. Default false.
+    #[serde(default)]
+    pub normalize_audio: bool,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
     /// `skip_serializing` keeps the slice out of the tool's log details.
     #[serde(default, skip_serializing)]
@@ -1423,6 +1427,8 @@ struct TranscribeClipResult<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<&'a str>,
     word_timing: speech::WordTiming,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_normalization: Option<&'a speech::audio_normalize::NormalizationReport>,
 }
 
 #[cfg(feature = "speech")]
@@ -1502,9 +1508,14 @@ pub(super) async fn transcribe_clip(
     .await
     .map_err(|e| McpToolError::internal_error(format!("audio extract: {e:#}"), None))?;
 
+    // Keep the private copy alive until inference has consumed it. Original
+    // mode returns the exact cached WAV without processing or cache mutation.
+    let prepared = speech::audio_normalize::prepare(audio_path, args.normalize_audio)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("transcription audio: {e:#}"), None))?;
     let raw = transcriber
         .transcribe(speech::TranscribeRequest {
-            audio_path,
+            audio_path: prepared.path.clone(),
             language: args.language,
             want_word_timing: args.word_timestamps.unwrap_or(true),
         })
@@ -1529,6 +1540,7 @@ pub(super) async fn transcribe_clip(
         segments: &transcript.segments,
         language: transcript.language.as_deref(),
         word_timing: transcript.word_timing,
+        input_normalization: prepared.normalization.as_ref(),
     };
     ToolResult::json(&result)
 }
