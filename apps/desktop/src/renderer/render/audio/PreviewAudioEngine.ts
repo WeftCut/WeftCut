@@ -85,7 +85,18 @@ export class PreviewAudioEngine {
   positionUs(): number {
     if (this.previewUs !== null) return this.previewUs;
     if (this.graph.ctx.state === "running") this.clock.tick();
-    return this.clock.positionUs();
+    return this.transportPositionUs();
+  }
+  private transportPositionUs(): number {
+    const tUs = this.clock.positionUs();
+    const comp = compositionOrRoot(this.summary, this.targetId);
+    // Presentation can round onto the exclusive end before the raw clock
+    // reaches it, or tick before the independent end timer. Hold the last
+    // visible frame in both cases; leave the raw audio clock running so the
+    // timer still stops at the actual end. Explicit paused seeks stay free.
+    return this.isPlaying() && this.playableEndUs > 0 && comp
+      ? Math.min(tUs, lastFrameAnchorUs(this.playableEndUs, comp.fps_num, comp.fps_den))
+      : tUs;
   }
   onStateChange(cb: (state: PlaybackSnapshot) => void): () => void {
     this.stateListeners.add(cb); return () => this.stateListeners.delete(cb);
@@ -225,7 +236,10 @@ export class PreviewAudioEngine {
     if (this.disposed) return;
     const started = performance.now();
     if (this.graph.ctx.state === "running") this.clock.tick();
+    const tUs = this.transportPositionUs();
     this.invalidate();
+    // A manual pause can win the same race as a presentation tick.
+    if (this.clock.positionUs() > tUs) this.clock.setPosition(tUs);
     this.stopCommandMs = performance.now() - started;
     this.setState("paused");
     this.emitTime();
@@ -402,7 +416,7 @@ export class PreviewAudioEngine {
     for (const cb of this.stateListeners) cb(this.state);
   }
   private emitTime(): void {
-    const tUs = this.clock.positionUs();
+    const tUs = this.transportPositionUs();
     if (tUs === this.lastEmittedUs) return;
     this.lastEmittedUs = tUs;
     for (const cb of this.timeListeners) cb(tUs);

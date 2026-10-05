@@ -252,6 +252,31 @@ describe("session-owned preview audio transport", () => {
     engine.dispose();
   });
 
+  it("holds observable time at the last frame while raw time still approaches the end", async () => {
+    const { engine, ctx } = setup();
+    const moments: number[] = [];
+    engine.onTimeUpdate(us => moments.push(us));
+    try {
+      engine.play(); await settle();
+      // The start lead is 10 ms: raw time is 4.985s, which rounds to the
+      // exclusive 5s boundary. The audio must still play its remaining tail.
+      ctx.currentTime = 14.995;
+      await vi.advanceTimersByTimeAsync(16);
+      expect(engine.isPlaying()).toBe(true);
+      expect(engine.positionUs()).toBe(4_966_667);
+      expect(moments.at(-1)).toBe(4_966_667);
+      ctx.currentTime = 15.015;
+      expect(engine.positionUs()).toBe(4_966_667);
+      engine.pause();
+      expect(engine.positionUs()).toBe(4_966_667);
+      // User-directed paused seeks and edit previews are not playback.
+      engine.seek(6_000_000);
+      expect(engine.positionUs()).toBe(6_000_000);
+      engine.seek(7_000_000, "preview");
+      expect(engine.positionUs()).toBe(7_000_000);
+    } finally { engine.dispose(); }
+  });
+
   it("schedules two placements of a trimmed Group independently, before either is drawn", async () => {
     const { engine, sources, summary, layer, track, ctx } = setup();
     engine.setProject(null, null);
