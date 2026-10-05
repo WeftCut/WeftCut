@@ -5,14 +5,14 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import { Radio } from "@base-ui/react/radio";
 import { ChevronDownIcon } from "lucide-react";
 import { AppNumberField } from "../components/AppNumberField";
-import { AppSelect } from "../components/AppSelect";
+import { PerformanceCalibrationControl } from "./PerformanceCalibrationControl";
+import type { AppSettingsPatch } from "../../shared/app-settings";
 import {
   PERFORMANCE_DEFAULTS, PERFORMANCE_FIELDS,
   type PerformanceKey, type PerformanceSettings,
 } from "../../shared/performance-settings";
 import {
-  PERFORMANCE_PRESETS, PERFORMANCE_TIERS, performancePresetOf, performanceGroupTierOf,
-  performanceGroupPatch, isPerformanceTier, type PerformanceGroup,
+  PERFORMANCE_PRESETS, PERFORMANCE_TIERS, performancePresetOf, isPerformanceTier,
 } from "../../shared/performance-presets";
 import { setAppSettings, useAppSettingsStore } from "./appSettingsStore";
 
@@ -28,17 +28,22 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
   const { t } = useTranslation();
   const settings = useAppSettingsStore(s => s.settings.performance ?? PERFORMANCE_DEFAULTS);
   const loaded = useAppSettingsStore(s => s.loaded);
+  const calibration = useAppSettingsStore(s => s.settings.performance_calibration);
+  const calibrationTier = useAppSettingsStore(s => s.settings.performance_calibration_tier ?? 'standard');
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const advancedId = useId();
-  const preset = performancePresetOf(settings);
-  const disabled = !loaded || saving;
+  const matches = (tier: typeof calibrationTier) => !!calibration && settings.preview_gpu_sessions === calibration[tier].preview_gpu_sessions
+    && settings.preview_gpu_pixel_area === calibration[tier].preview_gpu_pixel_area;
+  const preset = calibration ? (matches(calibrationTier) ? calibrationTier : PERFORMANCE_TIERS.find(matches) ?? 'custom') : performancePresetOf(settings);
+  const disabled = !loaded || saving || testing;
 
-  const save: Save = async patch => {
+  const commit = async (patch: AppSettingsPatch) => {
     setSaving(true);
     onError("");
     try {
-      const after = await setAppSettings({ performance: patch });
+      const after = await setAppSettings(patch);
       return after.performance ?? PERFORMANCE_DEFAULTS;
     } catch (error) {
       onError(String(error));
@@ -47,6 +52,7 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
       setSaving(false);
     }
   };
+  const save: Save = patch => commit({ performance: patch });
 
   return (
     <>
@@ -60,7 +66,9 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
         </div>
         <RadioGroup className="settings-radio-cards" value={preset}
           aria-label={t("performance.preset_label")}
-          onValueChange={next => { if (isPerformanceTier(next)) void save(PERFORMANCE_PRESETS[next]); }}>
+          onValueChange={next => { if (isPerformanceTier(next)) void commit(calibration
+            ? { performance: calibration[next], performance_calibration_tier: next }
+            : { performance: PERFORMANCE_PRESETS[next] }); }}>
           {PERFORMANCE_TIERS.map(tier => (
             <Radio.Root key={tier} value={tier} disabled={disabled} className="settings-radio-card">
               <span className="settings-radio-card-dot" aria-hidden="true">
@@ -73,13 +81,10 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
             </Radio.Root>
           ))}
         </RadioGroup>
-        <p className="settings-toggle-hint">{t("performance.preset_hint")}</p>
-      </section>
-      <section className="settings-section">
-        <h3>{t("performance.adjust_heading")}</h3>
-        {(["cache", "parallel"] as const).map(group => (
-          <PerformanceGroupControl key={group} group={group} settings={settings} disabled={disabled} save={save} />
-        ))}
+        <p className="settings-toggle-hint">{t(calibration ? "performance.calibrated_hint" : "performance.preset_hint")}</p>
+        <PerformanceCalibrationControl disabled={!loaded || saving} accepted={calibration ?? null} onRunning={setTesting} onError={onError}
+          onApply={async recommendation => !!await commit({ performance: recommendation.standard,
+            performance_calibration: recommendation, performance_calibration_tier: 'standard' })} />
       </section>
       <section className="settings-section">
         <Button variant="ghost" className="settings-performance-disclosure"
@@ -87,7 +92,6 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
           <ChevronDownIcon size={14} aria-hidden="true" />
           {t("performance.advanced_heading")}
         </Button>
-        <p className="settings-toggle-hint">{t("performance.advanced_hint")}</p>
       </section>
       <div id={advancedId} hidden={!advanced}>
         {GROUPS.map(group => (
@@ -99,41 +103,16 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
             ))}
           </section>
         ))}
+        <section className="settings-section">
+          <p className="settings-toggle-hint">{t("performance.activation")}</p>
+          <div className="settings-control-row">
+            <Button variant="secondary" disabled={disabled} onClick={() => void commit({ performance: null, performance_calibration: null })}>
+              {t("performance.reset")}
+            </Button>
+          </div>
+        </section>
       </div>
-      <section className="settings-section">
-        <p className="settings-toggle-hint">{t("performance.activation")}</p>
-        <div className="settings-control-row">
-          <Button variant="secondary" disabled={disabled} onClick={() => void save(null)}>
-            {t("performance.reset")}
-          </Button>
-        </div>
-      </section>
     </>
-  );
-}
-
-function PerformanceGroupControl({ group, settings, disabled, save }: {
-  group: PerformanceGroup;
-  settings: PerformanceSettings;
-  disabled: boolean;
-  save: Save;
-}) {
-  const { t } = useTranslation();
-  const tier = performanceGroupTierOf(settings, group);
-  return (
-    <div className="settings-control-row settings-performance-row">
-      <div className="settings-performance-copy">
-        <span className="settings-toggle-label">{t(`performance.${group}_label`)}</span>
-        <p className="settings-toggle-hint">{t(`performance.${group}_hint`)}</p>
-      </div>
-      <AppSelect className="settings-performance-tier" value={tier} disabled={disabled}
-        ariaLabel={t(`performance.${group}_label`)}
-        options={[
-          ...(tier === "custom" ? [{ value: "custom", label: t("performance.custom"), disabled: true }] : []),
-          ...PERFORMANCE_TIERS.map(value => ({ value, label: t(`performance.${value}`) })),
-        ]}
-        onValueChange={next => { if (isPerformanceTier(next)) void save(performanceGroupPatch(group, next)); }} />
-    </div>
   );
 }
 

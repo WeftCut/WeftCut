@@ -10,6 +10,7 @@
 
 import { changePausePresets, readPausePresets } from '../shared/pause-presets'
 import { patchPerformanceSettings, readPerformanceSettings } from '../shared/performance-settings'
+import { readCalibrationRecommendation } from '../shared/playback-calibration'
 import {
   APP_SETTINGS_DEFAULTS,
   DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US,
@@ -51,6 +52,9 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     const d = APP_SETTINGS_DEFAULTS
     return {
       performance: readPerformanceSettings(parsed.performance),
+      performance_calibration: readCalibrationRecommendation(parsed.performance_calibration),
+      performance_calibration_tier: parsed.performance_calibration_tier === 'less' || parsed.performance_calibration_tier === 'maximum'
+        ? parsed.performance_calibration_tier : 'standard',
       pause_presets: parsed.pause_presets === undefined ? undefined : readPausePresets(parsed.pause_presets),
       display_mode: parsed.display_mode === 'AllTracks' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
@@ -150,6 +154,15 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     get: read,
     apply(patch) {
       const current = read()
+      if (patch.performance_calibration_tier !== undefined) {
+        if (!['less', 'standard', 'maximum'].includes(patch.performance_calibration_tier)) throw new Error('Invalid calibration tier')
+        current.performance_calibration_tier = patch.performance_calibration_tier
+      }
+      if (patch.performance_calibration !== undefined) {
+        const profile = readCalibrationRecommendation(patch.performance_calibration)
+        if (patch.performance_calibration !== null && !profile) throw new Error('Invalid calibration profile')
+        current.performance_calibration = profile
+      }
       if (patch.performance !== undefined) current.performance = patchPerformanceSettings(current.performance, patch.performance)
       if (patch.pause_preset_change !== undefined) {
         current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)

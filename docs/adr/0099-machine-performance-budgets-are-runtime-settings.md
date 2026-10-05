@@ -13,19 +13,26 @@ ranges and validation. App settings own persistence and cross-window delivery.
 A performance patch merges individual fields; null restores the shipping
 profile. Main publishes a runtime snapshot after a successful atomic disk write,
 and renderer settings hydration publishes the corresponding renderer snapshot.
-The Settings performance pane and future machine detection use this same write
-interface. No detection or inferred hardware profile is introduced here.
+The Settings performance pane and machine calibration use this same write
+interface.
 
 Simple settings map Less / Standard / Maximum to fixed numeric budgets in a
 separate shared preset module. Maximum preserves the existing shipping profile;
-the other tiers reduce it. Full presets replace all performance fields, while
-independent cache and parallel-video controls patch only their owned fields.
-The per-video buffer count stays advanced-only for independent adjustments.
+the other tiers reduce it. Built-in presets replace all performance fields.
+Separate cache and parallel-video controls have been removed from the panel.
 Advanced settings remain available in a collapsed section on the same page.
 Selection is derived from actual saved values, including a Custom state; no
-preset ID is persisted or replayed on upgrade. This keeps existing user values
-stable if the preset mapping changes. Automatic detection and calibration are
-deferred; Maximum names the highest offered preset, not detected machine capacity.
+preset ID is replayed on upgrade. This keeps existing user values stable if the
+built-in mapping changes. Maximum names the highest offered preset, not an
+exhaustive hardware limit.
+
+The 2026-10-06 extension adds an explicitly experimental Windows test action.
+It runs a fixed H.264 4K/60 fps sequence in an isolated process. User acceptance
+persists the two-field candidate family and its selected tier; equal numeric
+tiers on limited hardware retain the user's selection. Applying these presets
+preserves the seven unmeasured fields. Neither accepted profiles nor earlier
+scores change subsequent test plans. Cancelled or invalid tests cannot apply
+budgets. See [the calibration protocol](../controlled-playback-calibration.md).
 
 Consumers read policy at admission or maintenance time. Lowering a limit can
 leave usage above it until existing leases close or cache maintenance runs;

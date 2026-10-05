@@ -90,6 +90,9 @@ win:
   target: [nsis]
   icon: build/icon.png
   extraResources:
+    - from: e2e/fixtures/decode-bench/calibration-60
+      to: performance-calibration
+      filter: ["h264-4k60.mp4", "manifest.json"]
     # LGPL ffmpeg runtime for @weftcut/native-decode (dynamic linking + separate
     # files satisfies LGPL §6; LICENSE + manifest.json carry the notice + exact
     # source pointer). *.dll only — the exes in bin/ are fetch-time tooling.

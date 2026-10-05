@@ -16,7 +16,8 @@ import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
-import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
+import { registerMotifProtocol } from './motif/protocol.js'
+import { installPerformanceCalibration } from './performanceCalibration.js'
 import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture } from './motif/capture.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
@@ -44,8 +45,8 @@ import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-proje
 import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './audioFx/baker.js'
 import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx/fxPaths.js'
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
-import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu, hwBudget } from './previewGpu.js'
-import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
+import { installPreviewGpuIpc } from './previewGpuIpc.js'
+import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
@@ -66,14 +67,6 @@ import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
 import { MODEL_EVENTS, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'weftcut-media',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
-  },
-  MOTIF_SCHEME_ENTRY,
-])
 
 const require_ = createRequire(import.meta.url)
 const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
@@ -1588,37 +1581,8 @@ app.whenReady().then(async () => {
   // mid-read (tearing / a dropped frame). Native's AcquireSync on a still-held
   // slot now backstops this with a finite timeout (Error-poke + skip) rather
   // than hanging, but the ack ordering still exists to avoid paying that cost.
-  ipcMain.handle(
-    'previewGpu:open',
-    (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace; codedWidth: number; codedHeight: number }) => {
-      const win = BrowserWindow.fromWebContents(e.sender) ?? mainWindow
-      if (!win) throw new Error('previewGpu:open — no window for sender')
-      return openPreviewGpu(
-        ndBackend(),
-        win,
-        a.streamId,
-        a.path,
-        a.poolSize,
-        a.colorSpace,
-        a.codedWidth,
-        a.codedHeight,
-      )
-    },
-  )
-  ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
-    requestFrameAtPreviewGpu(ndBackend(), a.streamId, a.targetUs),
-  )
-  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number; gen: number }) => {
-    // Record the round-trip at handler entry (t_ack_received) BEFORE forwarding.
-    recordConsumeAck(a.streamId, a.slot, performance.now())
-    return consumeAckPreviewGpu(ndBackend(), a.streamId, a.slot, a.gen)
-  })
-  ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(ndBackend(), a.streamId))
-  // Read-only budget probe: no `ndBackend()`, so it answers on every platform,
-  // including the ones where the addon's previewGpu* methods throw.
-  ipcMain.handle('previewGpu:budget', () => hwBudget())
-  ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(ndBackend(), a.streamId))
-  ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())
+  installPreviewGpuIpc(ndBackend, () => mainWindow)
+  installPerformanceCalibration()
 
   // Availability of the optional native-decode component (level-0 gate). The
   // renderer pulls this once on mount to gray out the Native-engine setting +

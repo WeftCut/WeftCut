@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
+import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
 
 const PATH = '/cfg/app_settings.json'
 const DIR = '/cfg'
@@ -20,6 +21,22 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('persists calibrated presets and applies only their two fields atomically', () => {
+    const s = store()
+    const profile = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({
+      count, status: count <= 5 ? 'pass' : 'slow', reasons: [],
+    })))!
+    s.apply({ performance: { frame_ring_mib: 700, preview_gpu_pool_slots: 6 } })
+    s.apply({ performance_calibration: profile, performance_calibration_tier: 'standard', performance: profile.standard })
+    expect(s.get().performance_calibration).toEqual(profile)
+    expect(s.get().performance).toMatchObject({ ...profile.standard, frame_ring_mib: 700, preview_gpu_pool_slots: 6 })
+    expect(() => s.apply({ performance_calibration: { ...profile, maximum: { preview_gpu_sessions: 99, preview_gpu_pixel_area: 1 } },
+      performance: profile.less })).toThrow('Invalid calibration')
+    expect(s.get().performance?.preview_gpu_sessions).toBe(3)
+    s.apply({ performance_calibration: null, performance: null })
+    expect(s.get().performance_calibration).toBeNull()
+    expect(s.get().performance).toEqual(PERFORMANCE_DEFAULTS)
+  })
   it('persists partial performance edits across writers, and resets only performance', () => {
     const { fs } = memFs()
     const a = createAppSettingsStore({ fs, path: PATH, dir: DIR })

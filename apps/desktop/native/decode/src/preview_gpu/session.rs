@@ -35,7 +35,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
-use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
+use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGIKeyedMutex, IDXGIResource1};
 
 use super::convert::ConvertPass;
 use super::decoder::{StreamFrame, VideoStream};
@@ -534,6 +534,35 @@ pub struct OpenInfo {
     pub width: u32,
     pub height: u32,
     pub slot_handles: Vec<i64>,
+    pub adapter: Option<DecoderAdapter>,
+}
+
+/// Identity comes from the device that actually owns this decoder, never from
+/// enumeration order. Only plain data crosses the decoder thread boundary.
+pub struct DecoderAdapter {
+    pub name: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub luid: String,
+}
+
+fn decoder_adapter(device: &ID3D11Device) -> Option<DecoderAdapter> {
+    let dxgi: IDXGIDevice = device.cast().ok()?;
+    let desc = unsafe { dxgi.GetAdapter().ok()?.GetDesc().ok()? };
+    let end = desc
+        .Description
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(desc.Description.len());
+    Some(DecoderAdapter {
+        name: String::from_utf16_lossy(&desc.Description[..end]),
+        vendor_id: desc.VendorId,
+        device_id: desc.DeviceId,
+        luid: format!(
+            "{:08x}:{:08x}",
+            desc.AdapterLuid.HighPart as u32, desc.AdapterLuid.LowPart
+        ),
+    })
 }
 
 /// The registry's per-session handle. COM objects live on the thread, not here;
@@ -1219,6 +1248,7 @@ fn session_thread(
         width: state.width,
         height: state.height,
         slot_handles: state.slot_handles(),
+        adapter: decoder_adapter(&state._device),
     };
     if init_tx.send(Ok(info)).is_err() {
         // `open` gave up waiting; drop `state` (Drop closes the handles).

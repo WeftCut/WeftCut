@@ -63,7 +63,9 @@ export default defineConfig({
   main: {
     build: {
       outDir: 'out/main',
-      lib: { entry: 'src/main/index.ts' },
+      lib: { entry: process.env.VITE_WEFTCUT_E2E === '1'
+        ? { index: 'src/main/entry.ts', calibration: 'src/main/calibration-host.ts' }
+        : { index: 'src/main/entry.ts' } },
       // Externalize native + node-resolved deps. `@modelcontextprotocol/sdk`
       // ships ESM with subpath `.js` imports (e.g. `…/sdk/server/index.js`);
       // the regex keeps those subpaths external too, so Node resolves them from
@@ -99,6 +101,7 @@ export default defineConfig({
       rollupOptions: { input: {
         index: path.resolve(HERE, 'src/renderer/index.html'),
         screenPick: path.resolve(HERE, 'src/renderer/screen-pick.html'),
+        calibration: path.resolve(HERE, 'src/renderer/calibration.html'),
       } },
     },
     server: { port: 1420, strictPort: true },

@@ -399,6 +399,11 @@ import type {
 import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
+  performanceCalibration: {
+    status(): Promise<import('./playback-calibration').CalibrationSnapshot>
+    start(): Promise<import('./playback-calibration').CalibrationSnapshot>
+    cancel(): Promise<import('./playback-calibration').CalibrationSnapshot>
+  }
   colorPick: import('./screenPick').ScreenPickApi
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */

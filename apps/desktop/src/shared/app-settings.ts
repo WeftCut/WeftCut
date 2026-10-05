@@ -30,6 +30,8 @@ export type TimelineWheelAxis = "horizontal" | "vertical";
 export interface AppSettings {
   /** Machine-local resource budgets; absent in older settings files. */
   performance?: PerformanceSettings;
+  performance_calibration?: import('./playback-calibration').CalibrationRecommendation | null;
+  performance_calibration_tier?: 'less' | 'standard' | 'maximum';
   pause_presets?: PausePreset[];
   display_mode: DisplayMode;
   /// Half-width of the symmetric playhead window in microseconds (default
@@ -128,6 +130,8 @@ export interface AppSettings {
 export interface AppSettingsPatch {
   /** Merge individual budgets; null restores all performance defaults. */
   performance?: Partial<PerformanceSettings> | null;
+  performance_calibration?: import('./playback-calibration').CalibrationRecommendation | null;
+  performance_calibration_tier?: 'less' | 'standard' | 'maximum';
   /** A single atomic library edit; never replace another window's whole list. */
   pause_preset_change?: PausePresetChange;
   display_mode?: DisplayMode;
@@ -157,6 +161,8 @@ export interface AppSettingsPatch {
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
   performance: PERFORMANCE_DEFAULTS,
+  performance_calibration: null,
+  performance_calibration_tier: 'standard',
   pause_presets: undefined,
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,

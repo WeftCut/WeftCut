@@ -1,10 +1,12 @@
 # Performance calibration timing prototype
 
-Automatic hardware detection and in-app calibration are deferred. The product
-currently provides fixed simple settings and presets; see
-[Performance settings](performance-settings.md). This document preserves the
-prototype, measurements and constraints for future work. Selecting a preset
-does not run a benchmark.
+For the new memory-only H.264 4K/60 fps test host, see
+[Controlled playback calibration](controlled-playback-calibration.md). The
+measurements below describe the earlier project-based 30 fps prototype.
+
+The product now offers a separate experimental test action alongside its presets;
+see [Performance settings](performance-settings.md). This document preserves the
+earlier prototype and measurements. Selecting a preset does not run a benchmark.
 
 This developer tool measures how long calibration takes and where time could
 be saved. It is not the automatic calibration feature and does not derive machine

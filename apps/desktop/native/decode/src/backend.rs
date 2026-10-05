@@ -26,6 +26,15 @@ pub struct PreviewGpuOpenInfo {
     pub width: u32,
     pub height: u32,
     pub slots: Vec<PreviewGpuSlot>,
+    pub adapter: Option<PreviewGpuAdapter>,
+}
+
+#[napi(object)]
+pub struct PreviewGpuAdapter {
+    pub name: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub luid: String,
 }
 
 /// Per-metric ms summary of native preview timing. Field names cross to JS as
@@ -517,6 +526,12 @@ impl NativeDecode {
         Ok(PreviewGpuOpenInfo {
             width: info.width,
             height: info.height,
+            adapter: info.adapter.map(|a| PreviewGpuAdapter {
+                name: a.name,
+                vendor_id: a.vendor_id,
+                device_id: a.device_id,
+                luid: a.luid,
+            }),
             slots: info
                 .slot_handles
                 .into_iter()

@@ -17,6 +17,7 @@ import {
 } from "react";
 import { convertFileSrc } from "@/bridge/ipc";
 import { Application as PixiApplication } from "@pixi/react";
+import { installPreviewPresentation } from "./installPreviewPresentation";
 import { GlobalResourceRegistry, Rectangle, type Application } from "pixi.js";
 import type { PlaybackResolution } from "../../shared/app-settings";
 
@@ -52,7 +53,6 @@ import {
 import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
-  slotFenceBackendForRenderer,
 } from "./decoder/transports/slotFenceQueue";
 import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
@@ -88,7 +88,6 @@ import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
 import { webgpuDeviceOf } from "./webgpuDevice";
 import {
-  installTimedPresent,
   setPixiPresentationVisible,
 } from "./previewPresentation";
 import type { PreviewFrameCapture } from "../testhook/e2eHook";
@@ -373,7 +372,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // intervals late on an idle GPU). Registered from the host rather than
       // reached for by the transport: the device belongs to the Application's
       // lifecycle, not to any one decode session.
-      setSlotFenceBackend(slotFenceBackendForRenderer(app.renderer));
+      installPreviewPresentation(app);
       // Display geometry: at a fit of 1 the canvas box is CSS's contain-fit
       // (`.pixi-preview-canvas`); below it `applyPreviewFit` writes the box as
       // the buffer's own device pixels, centered on the device grid. Either way
@@ -475,10 +474,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
       );
       compositor.setPresentationVisible(visibleRef.current);
-      // Before the visibility call: that one early-returns when the state is
-      // unchanged (the usual init case, already visible), so it would never
-      // install the timed present on its own.
-      installTimedPresent(app);
+      // Shared initialization above installs the timed present even when this
+      // visibility call early-returns for the already-visible initial state.
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
       // Read imperatively: Application init is async, so the target at mount

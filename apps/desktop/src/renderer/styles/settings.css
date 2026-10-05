@@ -186,11 +186,6 @@
   margin: 0;
 }
 
-.settings-performance-tier {
-  width: 184px;
-  flex: 0 0 184px;
-}
-
 .settings-performance-disclosure {
   align-self: flex-start;
   padding-left: 0;

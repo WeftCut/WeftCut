@@ -5,6 +5,9 @@ native/index.d.ts
 native/decode/*.node
 native/decode/index.js
 native/decode/index.d.ts
+# napi-rs replacement journal / retired binary when a dev app holds the old DLL.
+native/decode/.napi-rs-filesystem-transaction.swp/
+native/decode/.*.retired.tmp*
 # Co-located LGPL shared libs (staged next to the .node by napi-build-decode.mjs)
 native/decode/*.so
 native/decode/*.so.*

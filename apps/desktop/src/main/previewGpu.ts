@@ -12,7 +12,7 @@
 // selection gate upstream decides when a GPU session is even opened.
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
-import type { NativeDecode } from '@weftcut/native-decode'
+import type { NativeDecode, PreviewGpuAdapter } from '@weftcut/native-decode'
 import {
   HW_BUDGET_EXCEEDED,
   HW_BUDGET_RESERVATION_MISMATCH,
@@ -36,9 +36,15 @@ interface GpuSession {
   width: number
   height: number
   budgetLease: PreviewGpuBudgetLease
+  adapter: PreviewGpuAdapter | null
 }
 
 const sessions = new Map<string, GpuSession>()
+
+/** Actual active decoder identities, including unknown identity explicitly. */
+export function previewGpuDevices(): Array<{ streamId: string; adapter: PreviewGpuAdapter | null }> {
+  return [...sessions].map(([streamId, session]) => ({ streamId, adapter: session.adapter }))
+}
 
 /// The import tag for every A′ slot texture: the native conversion shader
 /// already produced working-space RGBA, so the browser must treat the bytes
@@ -253,6 +259,7 @@ async function doOpenPreviewGpu(
       width: info.width,
       height: info.height,
       budgetLease,
+      adapter: info.adapter ?? null,
     })
     return {
       width: info.width,

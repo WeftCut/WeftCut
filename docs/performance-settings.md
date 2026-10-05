@@ -3,14 +3,15 @@
 Open **Settings → Performance** to edit this machine's resource policy.
 Changes persist in `<userData>/app_settings.json` under `performance`, across
 projects and restarts. Edits save automatically. Restore defaults resets only
-performance settings. Automatic hardware detection and calibration are deferred;
-the local benchmark prototype remains a separate development tool.
+performance settings and clears accepted test presets. Windows installations
+also include an explicitly experimental playback test.
 
 ## Simple settings and presets
 
-The Performance pane opens with **Less / Standard / Maximum** presets and two
-independent controls: **Cache amount** and **Videos processed at once**. Advanced
-settings are collapsed on the same page and expose all nine numeric fields.
+The Performance pane opens with **Less / Standard / Maximum**, an experimental
+test action, then a collapsed **Advanced settings** section. Advanced exposes
+all nine numeric fields and Restore defaults. Separate cache/parallel controls
+have been removed.
 Expanding or collapsing Advanced does not change any setting.
 
 Maximum deliberately uses the existing shipping budgets. Standard and Less
@@ -35,19 +36,36 @@ Less does not promise lower total CPU use.
 
 - Selecting a full preset replaces **all nine** performance values in one atomic
   settings patch, including previous Advanced edits.
-- Cache amount patches only the six cache/animation-retention fields. Videos
-  processed at once patches only session count and total pixel area. Each
-  control preserves the other group's custom values. The per-video buffer slot
-  count remains advanced-only and survives either independent control.
-- Each control derives its current tier from actual values. A mismatch shows
-  Custom. The overall selection requires all nine fields to match, so mixed
-  groups or an advanced-only edit produce an overall Custom state.
-- Only resolved numeric values are persisted. Opening the panel, upgrading a
+- Built-in selection requires all nine fields to match; manual edits can show
+  Custom. With accepted test presets, selection compares the two calibrated
+  fields. The chosen tier is retained when small capacities make tiers equal.
+- Resolved values are persisted. Opening the panel, upgrading a
   preset table or recognizing a selection does not rewrite existing values.
   Existing budgets stay unchanged; the previous default now displays Maximum.
   Reselecting a preset explicitly applies its current mapping.
 - These controls do not change preview resolution, decode-engine preference,
   export quality or other settings. Saving still uses the shared runtime interface.
+
+## Experimental test
+
+**Test this computer (experimental)** pauses editor playback and launches an
+isolated app process with a visible test window. Progress and Cancel remain in
+Settings. Closing Settings does not abandon the process; reopening it restores
+progress. Closing the app cancels its owned test. Other applications and retained
+editor resources can still affect results.
+
+The fixed H.264 4K/60 fps test takes about two minutes on the development machine.
+No history or hardware model chooses stages. Completion never changes settings.
+**Use test presets** atomically stores the candidate family under
+`performance_calibration`, selects Standard, and patches only video count and
+combined picture size. Subsequent Less/Standard/Maximum choices preserve the
+other seven values. Invalid or cancelled runs cannot be applied; an all-slow
+result explicitly offers conservative presets rather than a claimed pass.
+
+The UI warns that results are experimental and may differ from real projects.
+See [the measurement protocol](controlled-playback-calibration.md) for the known
+editor/test-host discrepancy and thresholds. Accepted presets survive restarts
+but are never consulted when a new test selects its plan.
 
 ## Numeric settings
 

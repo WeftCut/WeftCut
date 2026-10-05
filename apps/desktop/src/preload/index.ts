@@ -45,6 +45,11 @@ type Listener = (payload: unknown) => void
 // channel is `backend.invoke`, which fronts the napi/Rust command dispatcher —
 // a single controlled capability that validates its own commands.
 const api: WeftcutApi = {
+  performanceCalibration: {
+    status: () => ipcRenderer.invoke('performanceCalibration:status'),
+    start: () => ipcRenderer.invoke('performanceCalibration:start'),
+    cancel: () => ipcRenderer.invoke('performanceCalibration:cancel'),
+  },
   colorPick: {
     start: request => ipcRenderer.invoke('colorpick:start', request),
     cancel: id => ipcRenderer.invoke('colorpick:cancel', id),
