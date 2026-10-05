@@ -70,9 +70,12 @@ export function planPreviewDecodePriority(
   }
 
   // Never drop any participant of the nearest boundary. Further speculation
-  // is limited to two clips and three total active/upcoming clips, and only
-  // crosses non-overlapping cuts (not extra concurrent layers).
-  const limit = Math.max(upcoming.length, Math.min(2, 3 - active.length));
+  // can cross three sequential cuts when at most one video is active. Two
+  // tiny cuts must not leave their successor only a few frames to open/seek.
+  // Concurrent playback keeps the conservative three-session plan. Only
+  // non-overlapping cuts are added; main still owns hardware admission.
+  const speculativeLimit = active.length <= 1 ? 3 : Math.max(0, 3 - active.length);
+  const limit = Math.max(upcoming.length, speculativeLimit);
   future.sort((a, b) => a.tStartUs - b.tStartUs);
   let endUs = Math.max(...upcoming.map(l => l.tEndUs));
   for (let i = 0; i < future.length && upcoming.length < limit;) {

@@ -112,8 +112,18 @@ describe("preview decode priority plan", () => {
       video("active", 0, 2_000_000),
       ...[0, 1, 2, 3].map(i => video(`cut-${i}`, 2_000_000 + i * 100_000, 2_100_000 + i * 100_000)),
     ]), 1_500_000, 1_000_000);
-    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["cut-0", "cut-1"]);
-    expect(plan.poolKeys).not.toContain("cut-2");
+    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["cut-0", "cut-1", "cut-2"]);
+    expect(plan.poolKeys).not.toContain("cut-3");
+  });
+
+  it("gives the third sequential cut a full prewarm window across tiny clips", () => {
+    const plan = planPreviewDecodePriority(summary([
+      video("active", 0, 2_000_000),
+      video("tiny", 2_000_000, 2_033_333),
+      video("short", 2_033_333, 2_233_333),
+      video("after-short", 2_233_333, 3_000_000),
+    ]), 1_500_000, 1_000_000);
+    expect(plan.upcomingLayers.map(l => l.id)).toEqual(["tiny", "short", "after-short"]);
   });
 
   it("does not add speculative sessions to a composition with several active videos", () => {

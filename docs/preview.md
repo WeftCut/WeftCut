@@ -333,11 +333,12 @@ overlap-swap pool keys. The plan uses the shared recursive placement walk,
 including Group instance paths and source trims. The same plan drives active
 requests and preloading, so their resource protection and source times agree.
 For sequential short cuts, the plan also looks past
-the nearest clip to the next non-overlapping boundary in that window. Extra
-speculation is capped at two upcoming clips and three active/upcoming clips
-in total; participants of the nearest boundary are never dropped to meet
-that cap. These are prewarm limits, not hardware admission limits. Warming
-only the nearest cut would give its successor just a few frames of startup
+the nearest clip to subsequent non-overlapping boundaries in that window.
+With at most one active video, speculation is capped at three upcoming clips;
+concurrent playback keeps a cap of three active/upcoming clips in total.
+Participants of the nearest boundary are never dropped to meet that cap.
+These are prewarm limits, not hardware admission limits. Warming
+only the first two short cuts can give their successor just a few frames of startup
 time, leaving its decoder empty at the cut. A priority source that receives
 `hw-budget-exceeded` may ask `SourceDecoderPool` to close only non-priority
 FFmpeg hardware handles retained from older timeline regions. The pool awaits
