@@ -968,6 +968,7 @@ describe("Timeline seek/selection coupling", () => {
     // feedback from the preview into the timeline's playhead store.
     const compositeFrame = vi.fn();
     const compositor = {
+      setOutputClock: vi.fn(),
       setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(),
@@ -1020,6 +1021,7 @@ describe("Timeline seek/selection coupling", () => {
   ))("keeps the playhead parked throughout a transition $edge edge drag ending in $ending", ({ edge, ending }) => {
     const compositeFrame = vi.fn();
     const compositor = {
+      setOutputClock: vi.fn(),
       setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
@@ -5075,6 +5077,7 @@ describe("collapsed keyframe row", () => {
     ipcMocks.updateParamTracksMulti.mockClear();
     clearKeyframeSelection();
     const compositor = {
+      setOutputClock: vi.fn(),
       setMasterPlayState: vi.fn(),
       getAudioGraph: () => null,
       setClockAnchor: vi.fn(), setScrubbing: vi.fn(), setAnchorTime: vi.fn(),
