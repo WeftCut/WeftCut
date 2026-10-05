@@ -36,6 +36,7 @@ import {
   sharedMotifFrameCache,
   acquireBakedMotifFrame,
   resetMotifFrameRequests,
+  cancelMotifFrameRequest,
 } from "./motifRasterCache";
 import { encodeBitmapToPng } from "./pngEncode";
 import { onPrebakeRequest } from "./prebakeBus";
@@ -130,13 +131,7 @@ export class MotifFrameService {
             },
             schedule: (cb) => scheduleIdle(cb),
             cancel: (t) => cancelIdle(t),
-            // Live captures serialize in the main process (the single
-            // capture host's promise chain in main/motif/capture.ts), so a
-            // larger batch only adds head-of-line latency for an on-demand
-            // scrub. One in-flight capture per loop keeps the shared host
-            // queue short. Persisted frames use the prewarmer's three-read
-            // pipeline instead, matching the bounded GPU transport.
-            batchSize: 1,
+            cancelRequest: cancelMotifFrameRequest,
             onProgress: () => this.recomputeBakeStatuses(),
           })
         : null;
@@ -145,7 +140,7 @@ export class MotifFrameService {
         ? new MotifBaker({
             schedule: (cb) => scheduleIdle(cb),
             cancel: (t) => cancelIdle(t),
-            // batchSize 1: same head-of-line rationale as the prewarmer above.
+            // Background persistence remains idle-paced, one frame at a time.
             batchSize: 1,
             isOnDisk: async (k, f) => sharedBakedKeyIndex.framesFor(k)?.has(f)
               ?? sharedMotifFrameCache.hasPersistedFrame(k, f),
@@ -312,7 +307,6 @@ export class MotifFrameService {
       const durationSec = desc.durationSec;
       specs.push({
         cacheKey: desc.cacheKey,
-        persisted: sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames),
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
         historyFrames: MOTIF_RECENT_FRAMES,
@@ -322,7 +316,7 @@ export class MotifFrameService {
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
         // Disk-first: prefer a baked frame over a live raster, falling through
         // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
-        render: (frame: number) =>
+        render: (frame: number, requestKey: string) =>
           resolveMotifFrame(
             motif,
             desc.cacheKey,
@@ -330,9 +324,11 @@ export class MotifFrameService {
             (frame * fpsDen) / fpsNum,
             durationSec,
             canonicalProps,
-            undefined,
+            requestKey,
             fpsNum,
             fpsDen,
+            false,
+            'background',
           ),
       });
     }, 500_000);

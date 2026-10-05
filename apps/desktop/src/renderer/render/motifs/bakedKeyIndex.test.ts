@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { BakedKeyIndex } from "./bakedKeyIndex";
 
 describe("BakedKeyIndex", () => {
+  it("distinguishes saved frames, known holes and unknown coverage", () => {
+    const idx = new BakedKeyIndex();
+    expect(idx.hasFrame("a", 0)).toBe(false);
+    idx.add("a");
+    expect(idx.hasFrame("a", 0)).toBeUndefined();
+    idx.add("a", 2);
+    expect(idx.hasFrame("a", 2)).toBe(true);
+    expect(idx.hasFrame("a", 0)).toBeUndefined();
+    idx.restoreFrames("a", new Set([0, 1]));
+    expect(idx.hasFrame("a", 3)).toBe(false);
+    idx.forgetFrame("a", 1);
+    expect(idx.hasFrame("a", 1)).toBe(false);
+    expect(idx.isComplete("a", 3)).toBe(false);
+    idx.add("a", 1);
+    expect(idx.isComplete("a", 3)).toBe(true);
+  });
   it("add / has by cacheKey", () => {
     const idx = new BakedKeyIndex();
     expect(idx.has("a")).toBe(false);

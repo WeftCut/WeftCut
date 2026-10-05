@@ -6,6 +6,7 @@ import { hashCacheKey } from "./frameCache";
 /// so `hydrateFromHashes` maps a set of live cacheKeys onto the dir names a
 /// `readDir(Cache/raster)` returned.
 export class BakedKeyIndex {
+  constructor(private readonly onChange: () => void = () => {}) {}
   private keys = new Set<string>();
   private frames = new Map<string, Set<number>>();
   /// A successful write proves one frame, not that the directory was scanned.
@@ -34,6 +35,18 @@ export class BakedKeyIndex {
     return this.enumerated.has(cacheKey) ? this.frames.get(cacheKey) : undefined;
   }
 
+  /// Unknown coverage may still warrant a disk probe; known holes do not.
+  hasFrame(cacheKey: string, frame: number): boolean | undefined {
+    if (this.frames.get(cacheKey)?.has(frame)) return true;
+    return this.enumerated.has(cacheKey) || !this.keys.has(cacheKey) ? false : undefined;
+  }
+
+  forgetFrame(cacheKey: string, frame: number): void {
+    this.frames.get(cacheKey)?.delete(frame);
+    this.prefixes.set(cacheKey, Math.min(this.prefixes.get(cacheKey) ?? 0, frame));
+    this.onChange();
+  }
+
   isComplete(cacheKey: string, total: number): boolean {
     return total > 0 && (this.prefixes.get(cacheKey) ?? 0) >= total;
   }
@@ -46,6 +59,7 @@ export class BakedKeyIndex {
     let prefix = 0;
     while (merged.has(prefix)) prefix++;
     this.prefixes.set(cacheKey, prefix);
+    this.onChange();
   }
   /// The set of cacheKeys the caller considers "live" this project (active
   /// motif layers). Set by the Compositor before `hydrateFromHashes`.
@@ -66,6 +80,7 @@ export class BakedKeyIndex {
       while (frames.has(prefix)) prefix++;
       this.prefixes.set(cacheKey, prefix);
     }
+    this.onChange();
   }
 
   clear(): void {

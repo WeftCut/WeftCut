@@ -23,6 +23,7 @@ export interface PrewarmTarget {
 export function planPrewarmTargets(
   contents: PrewarmContent[],
   capBytes: number,
+  maxTargets = Number.POSITIVE_INFINITY,
 ): PrewarmTarget[] {
   const groups = new Map<string, PrewarmContent[]>();
   for (const c of contents) {
@@ -33,7 +34,7 @@ export function planPrewarmTargets(
   const keys = [...groups.keys()];
   const perContent = [...groups.values()].map(windows => {
     const frameBytes = Math.max(1, ...windows.map(c => c.frameBytes));
-    const budget = Math.max(0, Math.floor(capBytes / (keys.length * frameBytes)));
+    const budget = Math.min(maxTargets, Math.max(0, Math.floor(capBytes / (keys.length * frameBytes))));
     const orders = windows.map(c => {
       const n = c.contentDurationFrames;
       const want = Math.min(budget, n);
@@ -59,8 +60,8 @@ export function planPrewarmTargets(
 
   const out: PrewarmTarget[] = [];
   const maxLen = perContent.reduce((m, a) => Math.max(m, a.length), 0);
-  for (let i = 0; i < maxLen; i++) {
-    for (let c = 0; c < keys.length; c++) {
+  for (let i = 0; i < maxLen && out.length < maxTargets; i++) {
+    for (let c = 0; c < keys.length && out.length < maxTargets; c++) {
       const frames = perContent[c]!;
       if (i < frames.length) out.push({ cacheKey: keys[c]!, frame: frames[i]! });
     }

@@ -1,111 +1,99 @@
-import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from "./prewarmPlan";
-import { IdleBatchQueue } from "./idleBatchQueue";
+import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from './prewarmPlan';
 
-/// One active motif content the prewarmer can rasterize. The planning fields
-/// (cacheKey, contentFrame, contentDurationFrames) come from
-/// `motifFrameDescriptor`; `render(frame)` rasters an arbitrary content frame
-/// of this content.
 export interface PrewarmContentSpec extends PrewarmContent {
-  /// Disk reads can overlap; live captures retain the configured batch limit.
-  persisted?: boolean;
-  render: (frame: number) => Promise<ImageBitmap>;
+  /// The shared acquisition module owns disk/capture admission. The request
+  /// key is a cancellable BACKGROUND subscription, not foreground demand.
+  render: (frame: number, requestKey: string) => Promise<ImageBitmap>;
 }
 
 export interface MotifPrewarmerDeps {
-  /// Warm budget in BYTES, shared across all active contents; the planner
-  /// divides it by each content's `frameBytes`. Sourced from the L0 cache's
-  /// byte budget so the plan fits. `prioritizeFrames` makes the cache prefer
-  /// that window over past frames which playback has recently touched.
   capBytes: number;
   hasFrame: (cacheKey: string, frame: number) => boolean;
   setFrame: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
-  /// Refresh retention priority of cached targets, highest-priority first.
-  /// No bitmap ownership transfer and no change to the cache's byte budget.
   prioritizeFrames: (targets: readonly PrewarmTarget[]) => void;
-  /// Schedule a callback for "later" (idle). Returns a cancel token. Real impl:
-  /// requestIdleCallback with a setTimeout fallback. Tests inject a manual one.
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  /// Max frames in flight before yielding. Keeps the loop
-  /// off the play tick's back.
-  batchSize?: number;
-  /// Fired after each drained batch so a watcher can recompute cache coverage
-  /// (the prewarmer doesn't own status — the Compositor reads L0 coverage).
-  /// Never throws. Optional so existing callers/tests don't need it.
+  cancelRequest: (requestKey: string) => void;
   onProgress?: () => void;
 }
 
-/// A queued target resolved to its spec at pull time (see `take`).
-interface PrewarmBatchItem extends PrewarmTarget {
-  spec: PrewarmContentSpec;
-  address: string;
-}
+interface Request extends PrewarmTarget { key: string }
+const address = (target: PrewarmTarget) => JSON.stringify([target.cacheKey, target.frame]);
+// Small authored sizes can fit thousands of frames in the pixel budget. Also
+// bound subscription metadata and synchronous admission work (4s at 60 fps).
+const MAX_PREWARM_REQUESTS = 256;
 
-/// Budget-paced background filler. `setTargets` (re)plans; the shared
-/// `IdleBatchQueue` loop rasters missing frames in priority order until the
-/// plan is fully cached, refilling free slots on idle callbacks. Never owns bitmaps (the
-/// cache does). Preview-only.
+/** Owns a byte-bounded, playhead-relative demand window. Register the whole
+ * window so holes waiting for capture cannot hide saved frames further ahead.
+ * Requests carry metadata only until the shared acquisition module admits
+ * actual work. Replans retain useful subscriptions and cancel obsolete ones. */
 export class MotifPrewarmer {
-  private specsByKey = new Map<string, PrewarmContentSpec>();
-  private targetFrames = new Map<string, Set<number>>();
-  private readonly inFlight = new Set<string>();
-  private readonly loop: IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>;
+  private specs = new Map<string, PrewarmContentSpec>();
+  private targets: PrewarmTarget[] = [];
+  private readonly requests = new Map<string, Request>();
+  private readonly prefix = `motif-prewarm:${crypto.randomUUID()}`;
+  private sequence = 0;
+  private scheduled: number | null = null;
+  private disposed = false;
 
-  constructor(private readonly deps: MotifPrewarmerDeps) {
-    this.loop = new IdleBatchQueue<PrewarmTarget, PrewarmBatchItem>({
-      schedule: deps.schedule,
-      cancel: deps.cancel,
-      batchSize: () => [...this.specsByKey.values()].every(spec => spec.persisted)
-        ? Math.max(3, deps.batchSize ?? 3) : deps.batchSize ?? 3,
-      take: (target) => {
-        if (this.deps.hasFrame(target.cacheKey, target.frame)) return null; // already cached
-        const address = JSON.stringify([target.cacheKey, target.frame]);
-        if (this.inFlight.has(address)) return null;
-        const spec = this.specsByKey.get(target.cacheKey);
-        if (!spec) return null; // content no longer active
-        this.inFlight.add(address);
-        return { ...target, spec, address };
-      },
-      run: async ({ cacheKey, frame, spec, address }) => {
-        try {
-          const bmp = await spec.render(frame);
-          if (this.loop.isDisposed() || !this.targetFrames.get(cacheKey)?.has(frame)) {
-            // A seek/re-plan can retire this request while it is in flight.
-            // Do not let an obsolete result evict the new window's frames.
-            bmp.close();
-            return;
-          }
-          this.deps.setFrame(cacheKey, frame, bmp);
-        } finally {
-          this.inFlight.delete(address);
-        }
-      },
-      onBatchDone: () => {
-        if (!this.loop.isDisposed()) this.deps.onProgress?.();
-      },
-    });
+  constructor(private readonly deps: MotifPrewarmerDeps) {}
+
+  setTargets(specs: PrewarmContentSpec[]): void {
+    if (this.disposed) return;
+    this.specs = new Map(specs.map(spec => [spec.cacheKey, spec]));
+    this.targets = planPrewarmTargets(specs, this.deps.capBytes, MAX_PREWARM_REQUESTS);
+    const wanted = new Set(this.targets.map(address));
+    for (const [id, request] of this.requests) {
+      if (!wanted.has(id)) {
+        this.requests.delete(id);
+        this.deps.cancelRequest(request.key);
+      }
+    }
+    this.deps.prioritizeFrames(this.targets);
+    if (this.scheduled === null && this.targets.some(target =>
+      !this.requests.has(address(target)) && !this.deps.hasFrame(target.cacheKey, target.frame))) {
+      this.scheduled = this.deps.schedule(() => {
+        this.scheduled = null;
+        this.pump();
+      });
+    }
   }
 
-  /// Replace the active contents (deduped by cacheKey by the planner) and the
-  /// playhead-relative plan, then (re)arm the loop.
-  setTargets(specs: PrewarmContentSpec[]): void {
-    if (this.loop.isDisposed()) return;
-    this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    const targets = planPrewarmTargets(specs, this.deps.capBytes);
-    this.targetFrames.clear();
-    for (const { cacheKey, frame } of targets) {
-      let frames = this.targetFrames.get(cacheKey);
-      if (!frames) this.targetFrames.set(cacheKey, frames = new Set());
-      frames.add(frame);
+  private pump(): void {
+    if (this.disposed) return;
+    for (const target of this.targets) {
+      const id = address(target);
+      if (this.requests.has(id) || this.deps.hasFrame(target.cacheKey, target.frame)) continue;
+      const spec = this.specs.get(target.cacheKey);
+      if (!spec) continue;
+      const request = { ...target, key: `${this.prefix}:${++this.sequence}` };
+      this.requests.set(id, request);
+      void this.acquire(id, request, spec);
     }
-    this.deps.prioritizeFrames(targets);
-    this.loop.setQueue(targets);
+  }
+
+  private async acquire(id: string, request: Request, spec: PrewarmContentSpec): Promise<void> {
+    let owned: ImageBitmap | null = null;
+    try {
+      owned = await spec.render(request.frame, request.key);
+      if (this.disposed || this.requests.get(id) !== request) return;
+      this.deps.setFrame(request.cacheKey, request.frame, owned);
+      owned = null;
+    } catch { /* Retry failures on the next demand update, never in a tight loop. */ }
+    finally {
+      owned?.close();
+      if (this.requests.get(id) === request) this.requests.delete(id);
+      if (!this.disposed) this.deps.onProgress?.();
+    }
   }
 
   dispose(): void {
-    this.loop.dispose();
-    this.specsByKey.clear();
-    this.targetFrames.clear();
-    this.inFlight.clear();
+    this.disposed = true;
+    if (this.scheduled !== null) this.deps.cancel(this.scheduled);
+    this.scheduled = null;
+    for (const request of this.requests.values()) this.deps.cancelRequest(request.key);
+    this.requests.clear();
+    this.targets = [];
+    this.specs.clear();
   }
 }

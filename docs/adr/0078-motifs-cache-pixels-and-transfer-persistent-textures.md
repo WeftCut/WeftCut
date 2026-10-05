@@ -24,7 +24,9 @@ choice is introduced.
 Playback uses three independently leased transport lanes. Each lane waits for
 its own read-completion acknowledgment before reuse; disk prewarming admits
 three concurrent reads for fully baked content, while live capture retains its
-single-request limit. The 128 MiB/eight-pool allocation limit includes imports
+single-request limit. [ADR 0098](0098-motif-frame-admission-follows-per-frame-coverage.md)
+replaces that full-content gate with shared per-frame read/capture admission.
+The 128 MiB/eight-pool allocation limit includes imports
 in progress and retired textures until Electron releases their references.
 Failed leases retire only their own lane; renderer close cancels queued work.
 

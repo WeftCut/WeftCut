@@ -1,4 +1,4 @@
-// The idle-loop skeleton shared by MotifPrewarmer and MotifBaker: a target
+// The idle-loop skeleton used by MotifBaker: a target
 // queue drained with bounded concurrency on scheduled (idle) callbacks.
 // The owner injects the pull-time mapping (`take`) and the per-item async
 // work (`run`); this class owns only the loop discipline:

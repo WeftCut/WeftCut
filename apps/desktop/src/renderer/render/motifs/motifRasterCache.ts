@@ -13,6 +13,7 @@ import type { Motif } from "./catalog";
 import { rasterMotifFrame } from "./motifRaster";
 import { motifPreviewActive, subscribeMotifPreview } from "./previewOverlay";
 import { FrameBroker } from './FrameBroker';
+import { MotifFrameScheduler } from './MotifFrameScheduler';
 import { captureMotifFrameResult } from './host';
 import { controlStoredMotifCapture, type CapturedFrame } from './frameTransport';
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
@@ -41,13 +42,18 @@ export const sharedMotifOverlayCache = new MotifFrameCache(OVERLAY_LANE_MAX_BYTE
 function broker(cache: MotifFrameCache) {
   return new FrameBroker({ cache, clone: bitmap => createImageBitmap(bitmap),
     control: (key, action, bake) => {
+      frameScheduler.wake();
       if (action === 'bake') { if (bake) controlStoredMotifCapture({ key, action, bake }); }
       else controlStoredMotifCapture({ key, action });
     } });
 }
 const committedBroker = broker(sharedMotifFrameCache);
 const overlayBroker = broker(sharedMotifOverlayCache);
-export function resetMotifFrameRequests(): void { committedBroker.reset(); overlayBroker.reset(); }
+let requestEpoch = 0;
+export function resetMotifFrameRequests(): void {
+  requestEpoch++;
+  frameScheduler.reset(); committedBroker.reset(); overlayBroker.reset();
+}
 export function cancelMotifFrameRequest(key: string): void {
   committedBroker.cancel(key);
   overlayBroker.cancel(key);
@@ -64,16 +70,21 @@ subscribeMotifPreview(() => {
 
 /// Process-wide index of which cacheKeys have frames baked on disk. The
 /// Compositor hydrates it on project load; the baker `add`s on each write.
-export const sharedBakedKeyIndex = new BakedKeyIndex();
+export const sharedBakedKeyIndex = new BakedKeyIndex(() => frameScheduler.wake());
+const frameScheduler = new MotifFrameScheduler({
+  shouldRead: (key, frame) => sharedBakedKeyIndex.hasFrame(key, frame) !== false,
+  read: (key, frame) => sharedMotifFrameCache.readBitmap(key, frame),
+  readMiss: (key, frame) => sharedBakedKeyIndex.forgetFrame(key, frame),
+});
 
 /// Obtain one motif frame, preferring a pre-baked frame on disk over a live
 /// raster. Read-only: writing is the MotifBaker's job (single writer →
 /// no LRU-eviction race on a fire-and-forget encode). Shared by the on-demand
 /// sprite path and the prewarmer, so disk-first is uniform.
 ///
-/// Disk read is attempted only when `sharedBakedKeyIndex.has(cacheKey)` — so an
-/// un-baked motif never pays an IPC. Any read/permission error is swallowed
-/// and falls through to a live raster, so an fs hiccup can never blank preview.
+/// Exact coverage skips disk I/O for known holes; an unscanned directory is
+/// still probed. The shared scheduler releases failed reads before admitting
+/// their live-capture fallback, so fallback cannot consume disk-read capacity.
 export async function resolveMotifFrame(
   motif: Motif,
   cacheKey: string,
@@ -87,13 +98,14 @@ export async function resolveMotifFrame(
   fpsNum?: number,
   fpsDen?: number,
   overlay = false,
+  priority: 'foreground' | 'background' = 'foreground',
 ): Promise<ImageBitmap> {
   // The DOM-less export path and node tests retain the portable producer.
   if (typeof window !== 'undefined' && typeof MessageChannel !== 'undefined') {
-    return (await acquireFrame(motif, cacheKey, frame, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, false, overlay)).bitmap;
+    return (await acquireFrame(motif, cacheKey, frame, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, false, overlay, priority)).bitmap;
   }
   if (!overlay) await sharedBakedKeyIndex.whenHydrated();
-  if (sharedBakedKeyIndex.has(cacheKey)) {
+  if (!overlay && sharedBakedKeyIndex.hasFrame(cacheKey, frame) !== false) {
     try {
       const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame);
       if (bitmap) return bitmap;
@@ -120,21 +132,19 @@ function acquireFrame(
   motif: Motif, cacheKey: string, frame: number, tSec: number, props: Record<string, unknown>,
   coalesceKey: string | undefined, fpsNum: number | undefined, fpsDen: number | undefined,
   bake: boolean, overlay: boolean,
+  priority: 'foreground' | 'background' = 'foreground',
 ): Promise<CapturedFrame> {
+  const epoch = requestEpoch;
   return (overlay ? overlayBroker : committedBroker).acquire(cacheKey, frame, async ticket => {
     if (!overlay) await sharedBakedKeyIndex.whenHydrated();
-    if (!bake && !overlay && sharedBakedKeyIndex.has(cacheKey)) {
-      try {
-        const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame);
-        if (bitmap) return { bitmap, persisted: true };
-      } catch { /* unavailable disk cache: capture live */ }
-    }
-    if (!ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
+    if (epoch !== requestEpoch || !ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
     const [w, h] = motif.manifest.size;
-    return captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!, motif.manifest.settle_rafs,
-      motif.manifest.content_hash, fpsNum, fpsDen, {
-        key: ticket.key, high: ticket.high(),
-        ...(ticket.bake() ? { bake: ticket.bake()! } : {}),
-      });
-  }, coalesceKey, bake ? { hash: hashCacheKey(cacheKey), frame } : undefined);
+    return frameScheduler.acquire({ cacheKey, frame, ticket, captureOnly: bake || overlay,
+      capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!, motif.manifest.settle_rafs,
+        motif.manifest.content_hash, fpsNum, fpsDen, {
+          key: ticket.key, high: ticket.high(),
+          ...(ticket.bake() ? { bake: ticket.bake()! } : {}),
+        }),
+    });
+  }, coalesceKey, bake ? { hash: hashCacheKey(cacheKey), frame } : undefined, priority);
 }

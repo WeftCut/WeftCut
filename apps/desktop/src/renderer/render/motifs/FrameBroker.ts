@@ -41,7 +41,7 @@ export class FrameBroker {
 
   cancel(coalesceKey: string): void { this.latest.get(coalesceKey)?.cancel(); }
 
-  acquire(identity: string, frame: number, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress): Promise<CapturedFrame> {
+  acquire(identity: string, frame: number, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress, priority: 'foreground' | 'background' = 'foreground'): Promise<CapturedFrame> {
     if (coalesceKey) this.latest.get(coalesceKey)?.cancel();
     const address = JSON.stringify([identity, frame]);
     let job = this.jobs.get(address);
@@ -86,7 +86,7 @@ export class FrameBroker {
         }
       };
       const subscriber: Subscriber = {
-        active: true, high: !!coalesceKey,
+        active: true, high: !!coalesceKey && priority === 'foreground',
         cancel: () => {
           if (!subscriber.active) return;
           subscriber.active = false; reject(new Error(CAPTURE_SUPERSEDED_MESSAGE)); retire();
@@ -95,7 +95,7 @@ export class FrameBroker {
       current.subscribers.add(subscriber);
       if (coalesceKey) {
         this.latest.set(coalesceKey, subscriber);
-        if (!current.cached) this.deps.control(current.key, 'promote');
+        if (subscriber.high && !current.cached) this.deps.control(current.key, 'promote');
       }
       void current.result.then(async value => {
         if (!subscriber.active) return;
