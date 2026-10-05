@@ -329,6 +329,11 @@ async function createWindow(): Promise<BrowserWindow> {
   win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
     console.log(`[renderer:${level}] ${message} (${sourceId}:${lineNumber})`)
   })
+  // Log the primary failure before transport teardown: otherwise a black
+  // window only leaves secondary disposed-frame/texture-release errors.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[renderer:gone] reason=${details.reason} exitCode=${details.exitCode}`)
+  })
 
   if (isDev) {
     await win.loadURL(process.env['ELECTRON_RENDERER_URL']!)

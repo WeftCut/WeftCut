@@ -8,7 +8,7 @@ vi.mock('electron', () => ({ sharedTexture: {
 } }))
 afterEach(() => vi.useRealTimers())
 function fixture(concurrency = 1) {
-  const owner = { id: 1, isDestroyed: () => false, send: vi.fn(), mainFrame: {} } as unknown as WebContents
+  const owner = { id: 1, isDestroyed: () => false, send: vi.fn(), mainFrame: { isDestroyed: vi.fn(() => false), detached: false } } as unknown as WebContents
   const pools: { handles: ReturnType<typeof vi.fn>; uploadFile: ReturnType<typeof vi.fn>; copyTexture: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }[] = []
   const create = vi.fn(() => {
     const pool = { handles: vi.fn(() => [Buffer.alloc(8)]), uploadFile: vi.fn(async () => {}), copyTexture: vi.fn(async () => {}), close: vi.fn() }
@@ -19,6 +19,92 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('rejects work for a disposed frame before allocating or announcing a texture', async () => {
+    const { owner, create, transport } = fixture()
+    vi.mocked(owner.mainFrame.isDestroyed).mockReturnValue(true)
+    await expect(transport.read(owner, 'a', 128, 128)).rejects.toThrow('Motif consumer closed')
+    expect(create).not.toHaveBeenCalled()
+    expect(owner.send).not.toHaveBeenCalled()
+  })
+
+  it('retires an import finishing after close and allows the replacement document to read', async () => {
+    const { owner, pools, transport } = fixture()
+    let finish!: () => void
+    vi.mocked(sharedTexture.sendSharedTexture).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const read = transport.read(owner, 'old', 128, 128)
+    const rejected = expect(read).rejects.toThrow('Motif consumer closed')
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    transport.close(owner)
+    expect(pools[0]!.close).not.toHaveBeenCalled()
+    finish()
+    await rejected
+    expect(pools[0]!.uploadFile).not.toHaveBeenCalled()
+    expect(pools[0]!.close).toHaveBeenCalledOnce()
+    const fresh = await transport.read(owner, 'new', 128, 128)
+    transport.release(owner, fresh.token)
+    transport.close(owner)
+    expect(pools[1]!.close).toHaveBeenCalledOnce()
+  })
+
+  it('does not deliver a texture when close races an in-flight upload', async () => {
+    const { owner, pools, transport } = fixture()
+    const frame = await transport.read(owner, 'first', 128, 128)
+    transport.release(owner, frame.token)
+    let finish!: () => void
+    pools[0]!.uploadFile.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    const rejected = expect(transport.read(owner, 'old', 128, 128)).rejects.toThrow('Motif consumer closed')
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    transport.close(owner)
+    finish()
+    await rejected
+    const fresh = await transport.read(owner, 'new', 128, 128)
+    expect(fresh.key).not.toBe(frame.key)
+    transport.release(owner, fresh.token)
+    transport.close(owner)
+    for (const pool of pools) expect(pool.close).toHaveBeenCalledOnce()
+  })
+
+  it.each(['destroyed', 'detached', 'inaccessible'] as const)('does not send to a %s frame while WebContents is still alive', async state => {
+    const { owner, pools, transport } = fixture(3)
+    await Promise.all(['a', 'b', 'c'].map(file => transport.read(owner, file, 128, 128)))
+    const queued = transport.read(owner, 'queued', 128, 128)
+    const rejected = expect(queued).rejects.toThrow('Motif consumer closed')
+    if (state === 'destroyed') vi.mocked(owner.mainFrame.isDestroyed).mockReturnValue(true)
+    if (state === 'detached') Object.defineProperty(owner.mainFrame, 'detached', { value: true })
+    if (state === 'inaccessible') Object.defineProperty(owner, 'mainFrame', { get() { throw new Error('Object has been destroyed') } })
+    const errors = vi.fn()
+    vi.mocked(owner.send).mockImplementation(() => {
+      errors('Render frame was disposed before WebFrameMain could be accessed')
+    })
+    transport.close(owner)
+    await rejected
+    expect(errors).not.toHaveBeenCalled()
+    for (const pool of pools) expect(pool.close).toHaveBeenCalledOnce()
+  })
+
+  it('releases imports and queued leases even when the close notification throws', async () => {
+    const { owner, pools, transport } = fixture()
+    await transport.read(owner, 'a', 128, 128)
+    const rejected = expect(transport.read(owner, 'queued', 128, 128)).rejects.toThrow('Motif consumer closed')
+    vi.mocked(owner.send).mockImplementation(() => { throw new Error('Object has been destroyed') })
+    expect(() => transport.close(owner)).not.toThrow()
+    await rejected
+    expect(pools[0]!.close).toHaveBeenCalledOnce()
+  })
+
+  it('releases a partially sent import when the renderer dies during transfer', async () => {
+    const { owner, pools, transport } = fixture()
+    vi.mocked(sharedTexture.sendSharedTexture).mockImplementationOnce(async () => {
+      vi.mocked(owner.mainFrame.isDestroyed).mockReturnValue(true)
+      vi.mocked(owner.send).mockClear()
+      throw new Error('Texture transfer failed')
+    })
+    await expect(transport.read(owner, 'a', 128, 128)).rejects.toThrow('Texture transfer failed')
+    expect(owner.send).not.toHaveBeenCalled()
+    expect(pools[0]!.close).toHaveBeenCalledOnce()
+    transport.close(owner)
+  })
+
   it('uses an acknowledged lane while a sibling still holds its lease', async () => {
     const { owner, pools, transport } = fixture(3)
     try {

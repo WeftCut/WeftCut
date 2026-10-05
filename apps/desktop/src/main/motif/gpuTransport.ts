@@ -14,6 +14,14 @@ type Session = { owner: WebContents; key: string; width: number; height: number;
 const MAX_BYTES = 128 * 1024 * 1024
 const BUDGET_WAIT_MS = 250
 
+function consumerFrameAlive(owner: WebContents): boolean {
+  try {
+    if (owner.isDestroyed()) return false
+    const frame = owner.mainFrame
+    return !frame.isDestroyed() && !frame.detached
+  } catch { return false }
+}
+
 /** Bounded transport lanes, NOT the decoded-frame cache. The receiver snapshots
  * into its own ImageBitmap, completes the GPU read, then releases the lease.
  * Old native pools survive until Electron releases all imported references. */
@@ -66,10 +74,20 @@ export class MotifGpuTransport {
     for (const [address, s] of this.sessions) if (s.owner === owner) this.retireSession(address, s)
   }
 
+  private notifyRetired(owner: WebContents, key: string): void {
+    // WebContents can outlive its render frame (notably after a crash).
+    // Electron logs disposed-frame sends internally, so catching send alone
+    // cannot prevent the error. Notification must never block local cleanup.
+    try {
+      if (!consumerFrameAlive(owner)) return
+      owner.send('evt:motifGpu:close', { key })
+    } catch { /* renderer/frame already gone */ }
+  }
+
   private retireSession(address: string, s: Session): void {
     if (this.sessions.get(address) !== s) return
     this.sessions.delete(address)
-    if (!s.owner.isDestroyed()) s.owner.send('evt:motifGpu:close', { key: s.key })
+    this.notifyRetired(s.owner, s.key)
     try { s.imported.release() } catch { /* renderer/GPU process already gone */ }
     this.budgetChanged()
   }
@@ -99,7 +117,7 @@ export class MotifGpuTransport {
     if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
     const generation = this.generations.get(owner) ?? 0
     const assertOpen = (): void => {
-      if (owner.isDestroyed() || (this.generations.get(owner) ?? 0) !== generation) throw new Error('Motif consumer closed')
+      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new Error('Motif consumer closed')
     }
     // Independent leases let native reading/upload overlap the preceding
     // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
@@ -164,7 +182,7 @@ export class MotifGpuTransport {
             return { owner, key, width, height, pool, imported, busy: true }
           } catch (error) {
             if ((this.generations.get(owner) ?? 0) === generation) this.unavailable.add(owner)
-            if (!owner.isDestroyed()) owner.send('evt:motifGpu:close', { key })
+            this.notifyRetired(owner, key)
             if (imported) imported.release()
             else { try { pool.close() } finally { releaseBudget() } }
             throw error
