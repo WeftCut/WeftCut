@@ -1338,12 +1338,14 @@ pub(super) fn resolve_clip_audio_source(
             })
     };
     let source_in = to_source(t_start)?;
-    let source_out = to_source(t_end)?;
-    if source_out > timing.source_end(src_out_us).ceil() as i64 {
+    // Timeline endpoints are snapped to the layer's sample/frame grid while
+    // its source range keeps the original endpoint. A valid placed clip can
+    // therefore end just after its source does. Read only the intersection,
+    // preserving source phase and rate instead of rejecting the entire clip.
+    let source_out = to_source(t_end)?.min(timing.source_end(src_out_us).ceil() as i64);
+    if source_out <= source_in {
         return Err(McpToolError::invalid_params(
-            format!(
-                "audio window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
-            ),
+            "audio window contains no source audio within the layer's source range",
             None,
         ));
     }

@@ -333,6 +333,56 @@ mod tests {
     }
 
     #[test]
+    fn sample_rounded_audio_end_stays_inside_source_window() {
+        // A source end between 48 kHz samples rounds up by 9 microseconds
+        // when placed on the timeline. Transcription must still read it.
+        let media = audio_media(PathBuf::from("source.wav"), 2_000_012);
+        let mut layer = audio_layer(media.id, 0, 2_000_012);
+        layer.t_end_us = weftcut_eval::snap_frame_round(layer.t_end_us, 48_000, 1);
+        assert_eq!(layer.t_end_us, 2_000_021);
+        let resolved = resolve_clip_audio_source(Some(&layer), Some(&media), layer.id, None, None)
+            .expect("sample-rounded clip must be transcribable");
+        assert_eq!(resolved.source_out_us, 2_000_012);
+        assert_eq!(resolved.timeline_end_us, 2_000_021);
+    }
+
+    #[test]
+    fn rounded_audio_end_respects_retimed_source_phase() {
+        use crate::state::timing::{Fraction, Phase, TimeMap};
+        let media = audio_media(PathBuf::from("source.wav"), 4_000_000);
+        let mut layer = audio_layer(media.id, 1_000_000, 2_000_012);
+        layer.t_end_us = 2_000_021;
+        if let LayerParams::Audio(ref mut p) = layer.params {
+            p.src_in_us = 500_000;
+            p.src_out_us = 2_500_031;
+            p.timing.time_map = Some(TimeMap::Affine {
+                rate: Fraction { num: 2, den: 1 },
+            });
+            p.timing.source_phase = Some(Phase {
+                in_: Fraction { num: 1, den: 2 },
+                out: Fraction { num: 1, den: 2 },
+            });
+        }
+        let resolved =
+            resolve_clip_audio_source(Some(&layer), Some(&media), layer.id, Some(1_500_000), None)
+                .unwrap();
+        assert_eq!(resolved.source_in_us, 1_500_001);
+        assert_eq!(resolved.source_out_us, 2_500_032);
+        assert_eq!(resolved.playback_rate, 2.0);
+    }
+
+    #[test]
+    fn audio_window_entirely_after_source_end_is_refused() {
+        let media = audio_media(PathBuf::from("source.wav"), 2_000_012);
+        let mut layer = audio_layer(media.id, 0, 2_000_012);
+        layer.t_end_us = 2_000_021;
+        let err =
+            resolve_clip_audio_source(Some(&layer), Some(&media), layer.id, Some(2_000_013), None)
+                .unwrap_err();
+        assert!(err.message.contains("no source audio"), "{}", err.message);
+    }
+
+    #[test]
     fn retimed_extract_reports_source_window_and_playback_rate() {
         let media = audio_media(std::path::PathBuf::from("source.wav"), 6_000_000);
         let mut layer = audio_layer(media.id, 5_000_000, 6_000_000);
