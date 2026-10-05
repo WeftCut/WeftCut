@@ -417,7 +417,7 @@ function PerfDashboard({
           }
           meta={snap?.underrun?.active ? "behind NOW" : "this play session"}
           warn={Boolean(snap?.underrun?.active)}
-          title="Underrun counts while the master clock ran (underrunTracker): comp frames painted from a stale ring / composite ticks past one comp-frame budget. The transport-bar dot mirrors both."
+          title="Session totals: comp frames painted from a stale ring / composite ticks past one comp-frame budget. The transport-bar indicator clears its episode counts after three quiet seconds; these diagnostic totals remain."
         />
         <StatTile
           label="Prewarm"

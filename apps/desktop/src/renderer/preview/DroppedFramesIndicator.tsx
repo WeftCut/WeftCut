@@ -1,9 +1,8 @@
 // Transport-bar underrun indicator — the NLE-standard "playback couldn't
 // keep up" signal (Premiere's dropped-frame dot, Resolve's red fps
-// readout). Lit while playback is actively behind; stays visible with the
-// session counts after recovery/pause (they reset on the next play).
-// Renders nothing when the session was clean, so the transport bar stays
-// clean in the common case.
+// readout). Lit while playback is actively behind, then dims and disappears
+// after three seconds without a new problem. Counts describe this episode;
+// cumulative session totals remain in PerfHUD and the status log.
 //
 // Two counts, never merged into a total — see `render/underrunTracker.ts`
 // for why the two causes stay apart.

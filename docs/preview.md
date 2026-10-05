@@ -526,6 +526,18 @@ submission cadence alone cannot establish that Motif content is progressing.
 
 ## Diagnostics
 
+The transport-bar dropped/late indicator counts the current episode. It dims
+after 1.5 seconds without an observed problem and clears both counts after
+3 seconds, including while paused. Ongoing stale frames extend the quiet window
+even when frame deduplication does not increase the count. At expiry, the
+tracker records the totals and confirms them on the following composite before
+clearing. A new problem cancels that confirmation even if deduplication kept the
+totals unchanged. Judging precedes clearing synchronously. The existing
+composite tick handles decay, with no UI timer or per-frame React updates.
+PerfHUD and the pause summary retain cumulative totals for the play session;
+a new incident therefore starts at one in the transport bar without erasing
+diagnostic history.
+
 `PerfHUD.tsx` is a `import.meta.env.DEV`-gated overlay mounted in
 the top-right corner of the preview surface (`Ctrl+Shift+P` toggles).
 It reads the Compositor and PlaybackEngine via refs every 500 ms and

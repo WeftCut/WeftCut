@@ -128,6 +128,96 @@ function makeTracker(opts: { holdMs?: number; graceMaxMs?: number; minEmitInterv
 }
 
 describe("UnderrunTracker", () => {
+  it("clears the indicator after three quiet seconds but preserves diagnostic totals", () => {
+    const { tracker, emissions, advance } = makeTracker();
+    tracker.beginPlay();
+    tracker.judgeSweep(true, 0);
+    advance(100);
+    tracker.judgeSweep(true, FRAME_US); // also one late tick
+    advance(2_999);
+    tracker.tickDecay();
+    expect(emissions.at(-1)).toEqual({ active: false, droppedFrames: 2, lateFrames: 1 });
+    advance(1);
+    tracker.tickDecay();
+    expect(emissions.at(-1)).toEqual({ active: false, droppedFrames: 2, lateFrames: 1 });
+    advance(16);
+    tracker.tickDecay(); // confirm unchanged readings on the following sweep
+    expect(emissions.at(-1)).toEqual({ active: false, droppedFrames: 0, lateFrames: 0 });
+    expect(tracker.snapshot()).toEqual({ active: false, droppedFrames: 2, lateFrames: 1 });
+    expect(tracker.takeSessionSummary()).toEqual({ droppedFrames: 2, lateFrames: 1 });
+    const count = emissions.length;
+    advance(1_000);
+    tracker.tickDecay();
+    expect(emissions).toHaveLength(count);
+    tracker.judgeSweep(true, 2 * FRAME_US);
+    expect(emissions.at(-1)).toEqual({ active: true, droppedFrames: 1, lateFrames: 0 });
+    expect(tracker.snapshot().droppedFrames).toBe(3);
+  });
+
+  it("extends the quiet window for ongoing problems, even on an already-counted content frame", () => {
+    const { tracker, emissions, advance } = makeTracker();
+    tracker.beginPlay();
+    tracker.judgeSweep(true, 0);
+    advance(2_900);
+    tracker.tickDecay();
+    tracker.judgeSweep(true, 0); // same frame: no new count, still unhealthy
+    advance(2_999);
+    tracker.tickDecay();
+    expect(emissions.at(-1)!.droppedFrames).toBe(1);
+    advance(1);
+    tracker.tickDecay();
+    advance(16);
+    tracker.tickDecay();
+    expect(emissions.at(-1)!.droppedFrames).toBe(0);
+    tracker.beginPlay();
+    tracker.judgeSweep(true, FRAME_US);
+    expect(emissions.at(-1)!.droppedFrames).toBe(1);
+    expect(tracker.snapshot().droppedFrames).toBe(1);
+  });
+
+  it.each(['drop', 'late tick', 'same stale frame'])(
+    'cancels a pending clear when the next sweep reports %s', (cause) => {
+      const { tracker, emissions, advance } = makeTracker();
+      tracker.beginPlay();
+      tracker.judgeSweep(true, 0);
+      advance(3_000);
+      tracker.tickDecay(); // take a candidate reading, do not clear yet
+      expect(emissions.at(-1)!.droppedFrames).toBe(1);
+      const before = emissions.length;
+      advance(cause === 'late tick' ? 50 : 16);
+      tracker.judgeSweep(cause !== 'late tick', cause === 'same stale frame' ? 0 : FRAME_US);
+      tracker.tickDecay();
+      const expected = { active: true, droppedFrames: cause === 'drop' ? 2 : 1,
+        lateFrames: cause === 'late tick' ? 1 : 0 };
+      expect(emissions.at(-1)).toEqual(expected);
+      expect(emissions.slice(before).every(s => s.droppedFrames > 0 || s.lateFrames > 0)).toBe(true);
+      advance(2_999);
+      tracker.tickDecay();
+      expect(emissions.at(-1)!.droppedFrames).toBe(expected.droppedFrames);
+      advance(1);
+      tracker.tickDecay();
+      advance(16);
+      tracker.tickDecay();
+      expect(emissions.at(-1)).toEqual({ active: false, droppedFrames: 0, lateFrames: 0 });
+      expect(tracker.snapshot()).toEqual({ ...expected, active: false });
+    },
+  );
+
+  it('preserves a report immediately after clearing as a new visible incident', () => {
+    const { tracker, emissions, advance } = makeTracker();
+    tracker.beginPlay();
+    tracker.judgeSweep(true, 0);
+    advance(3_000);
+    tracker.tickDecay();
+    advance(16);
+    tracker.tickDecay();
+    expect(emissions.at(-1)!.droppedFrames).toBe(0);
+    tracker.judgeSweep(true, FRAME_US); // same timestamp, after the clear
+    tracker.tickDecay();
+    expect(emissions.at(-1)).toEqual({ active: true, droppedFrames: 1, lateFrames: 0 });
+    expect(tracker.takeSessionSummary()).toEqual({ droppedFrames: 2, lateFrames: 0 });
+  });
+
   it("activates immediately on the first late sweep and counts the frame", () => {
     const { tracker, emissions } = makeTracker();
     tracker.beginPlay();

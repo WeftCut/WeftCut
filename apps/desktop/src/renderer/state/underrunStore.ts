@@ -17,11 +17,11 @@ interface State {
   /// True while an underrun of either cause was observed within the
   /// tracker's hold window — the indicator's "lit" state.
   active: boolean;
-  /// Comp frames painted from a stale ring in the current/most-recent
-  /// play session.
+  /// Comp frames painted from a stale ring in the current indicator episode.
+  /// Cleared after three quiet seconds; diagnostics retain session totals.
   droppedFrames: number;
   /// Composite ticks that landed past one comp-frame budget in the
-  /// same session.
+  /// same episode.
   lateFrames: number;
 }
 
