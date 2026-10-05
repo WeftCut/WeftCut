@@ -17,7 +17,7 @@ import {
 } from "react";
 import { convertFileSrc } from "@/bridge/ipc";
 import { Application as PixiApplication } from "@pixi/react";
-import { Rectangle, type Application } from "pixi.js";
+import { GlobalResourceRegistry, Rectangle, type Application } from "pixi.js";
 import type { PlaybackResolution } from "../../shared/app-settings";
 
 import { previewAudioEngine } from "./audio/previewAudioSession";
@@ -301,7 +301,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // Electron 44 freeze exactly as leaving it to the garbage collector does.
       // ADR 0059.
       const device = webgpuDeviceOf(app.renderer);
-      app.stage.once("destroyed", () => queueMicrotask(() => device?.destroy()));
+      app.stage.once("destroyed", () => queueMicrotask(() => {
+        try {
+          // @pixi/react calls app.destroy() without renderer options. Drain
+          // the same pools as releaseGlobalResources after its teardown.
+          // Preview is this realm's only Application; exports own Workers.
+          GlobalResourceRegistry.release();
+        } finally {
+          device?.destroy();
+        }
+      }));
       // `app.screen` is exact only here, before the first `resize` — Pixi
       // initialized it from the composition-sized props at resolution 1.
       const logical = { width: app.screen.width, height: app.screen.height };

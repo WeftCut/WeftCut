@@ -59,6 +59,14 @@ before the next Application exists.
    it answers null for a WebGL renderer and for a renderer that never
    initialized, so the rule costs nothing on the paths that have no device.
 
+   The same teardown also drains Pixi's global resource pools. Export passes
+   `{ removeView: true, releaseGlobalResources: true }` explicitly (Pixi also
+   enables this cleanup for the previous `true` shorthand). `@pixi/react`
+   exposes no renderer destroy options, so Preview calls the equivalent
+   `GlobalResourceRegistry.release()` in its existing post-teardown microtask,
+   before ending the device's life. Preview is the only Application in the
+   document; export Workers have independent registries.
+
 2. **After, never before.** Destroying the device in the host's cleanup, ahead of
    Pixi's teardown, is measured to freeze exactly like the leak. The
    specification makes operations on a destroyed device no-ops, but Chromium 152

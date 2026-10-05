@@ -729,7 +729,7 @@ function cleanup({
   // and leak the device it exists to reclaim. ADR 0059.
   const device = webgpuDeviceOf(app.renderer);
   try {
-    app.destroy(true);
+    app.destroy({ removeView: true, releaseGlobalResources: true });
   } catch {
     // app may already be in a torn-down state; ignore.
   } finally {
