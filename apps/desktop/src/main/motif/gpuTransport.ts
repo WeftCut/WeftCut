@@ -1,3 +1,4 @@
+import { MIB, performanceSettings } from "../../shared/performance-settings";
 import { sharedTexture, type SharedTextureImported, type WebContents, type OffscreenSharedTexture } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
@@ -11,7 +12,6 @@ export interface MotifPool {
 }
 type PoolFactory = (w: number, h: number, bgra: boolean) => MotifPool
 type Session = { owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
-const MAX_BYTES = 128 * 1024 * 1024
 const BUDGET_WAIT_MS = 250
 
 function consumerFrameAlive(owner: WebContents): boolean {
@@ -131,16 +131,16 @@ export class MotifGpuTransport {
       if (s) { this.sessions.delete(address); this.sessions.set(address, s) }
       if (!s) {
         const bytes = width * height * 4
-        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > MAX_BYTES) throw new Error('Motif GPU budget exhausted')
+        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > (performanceSettings().motif_gpu_mib * MIB)) throw new Error('Motif GPU budget exhausted')
         const deadline = performance.now() + BUDGET_WAIT_MS
         for (;;) {
           assertOpen()
           for (const [key, old] of this.sessions) {
-            if (this.allocatedBytes + bytes <= MAX_BYTES && this.allocatedSessions < 8) break
+            if (this.allocatedBytes + bytes <= (performanceSettings().motif_gpu_mib * MIB) && this.allocatedSessions < performanceSettings().motif_gpu_sessions) break
             if (old.busy) continue
             this.retireSession(key, old)
           }
-          if (this.allocatedBytes + bytes <= MAX_BYTES && this.allocatedSessions < 8) break
+          if (this.allocatedBytes + bytes <= (performanceSettings().motif_gpu_mib * MIB) && this.allocatedSessions < performanceSettings().motif_gpu_sessions) break
           // Retired imports can outlive their document. Keep their pools alive,
           // but let the caller read on CPU instead of wedging every GPU lane.
           // Once stalled, new allocations fail promptly until references free.

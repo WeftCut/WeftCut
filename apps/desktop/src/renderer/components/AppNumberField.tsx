@@ -43,6 +43,7 @@ export interface AppNumberFieldProps {
   onFocus?: () => void;
   onBlur?: () => void;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
   className?: string;
 }
 
@@ -67,6 +68,7 @@ export function AppNumberField({
   onFocus,
   onBlur,
   ariaLabel,
+  ariaDescribedBy,
   className,
 }: AppNumberFieldProps) {
   // Debounced auto-commit plumbing. `slot` is a closure-stable timer slot;
@@ -154,6 +156,7 @@ export function AppNumberField({
       <NumberField.Group className="app-number-group" {...{ [FOCUS_GROUP_ATTR]: "" }}>
         <NumberField.Input
           aria-label={ariaLabel}
+          aria-describedby={ariaDescribedBy}
           // Capture the committed baseline at edit-start for the dedup guard,
           // then notify the call site (focus-gated resync).
           onFocus={() => {

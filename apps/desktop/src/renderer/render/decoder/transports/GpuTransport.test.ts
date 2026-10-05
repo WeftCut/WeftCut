@@ -6,6 +6,7 @@
 // `ports` (a real transfer list does not populate them) — hence the fakes.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GpuTransport } from "./GpuTransport";
+import { hydratePerformanceSettings } from "../../../../shared/performance-settings";
 import {
   setSlotFenceBackend,
   sharedSlotFenceQueue,
@@ -101,12 +102,30 @@ function delegatedFrame(streamId: string, slot: number, ptsUs: number, bitmap: I
 }
 
 afterEach(() => {
+  hydratePerformanceSettings(undefined);
   vi.restoreAllMocks();
   delete (window as unknown as { api?: unknown }).api;
   setSlotFenceBackend(null);
 });
 
 describe("GpuTransport", () => {
+  it("uses the current pool size on each new session and retains explicit diagnostic overrides", async () => {
+    const { api } = installFakePreviewGpu();
+    const first = new GpuTransport();
+    hydratePerformanceSettings({ preview_gpu_pool_slots: 6 });
+    await first.open({ streamId: "six", path: "C:/x.mp4" });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 6 }));
+    hydratePerformanceSettings({ preview_gpu_pool_slots: 2 });
+    expect(api.open).toHaveBeenCalledTimes(1);
+    const next = new GpuTransport();
+    await next.open({ streamId: "two", path: "C:/x.mp4" });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 2 }));
+    const explicit = new GpuTransport();
+    await explicit.open({ streamId: "override", path: "C:/x.mp4", poolSize: 4 });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 4 }));
+    await Promise.all([first.dispose(), next.dispose(), explicit.dispose()]);
+  });
+
   it("does not resolve disposal until main has released the session lease", async () => {
     const { api } = installFakePreviewGpu();
     let finishClose!: () => void;

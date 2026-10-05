@@ -453,7 +453,14 @@ app.whenReady().then(async () => {
   // SINGLE owner of app_settings.json (the resolver and every later consumer
   // reuse this instance; no second parse anywhere).
   const { createAppSettingsStore } = await import('./app-settings.js')
-  const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
+  const { hydratePerformanceSettings } = await import('../shared/performance-settings.js')
+  const appSettings = createAppSettingsStore({
+    fs: atomicFs,
+    path: path.join(app.getPath('userData'), 'app_settings.json'),
+    dir: app.getPath('userData'),
+    onCommitted: settings => hydratePerformanceSettings(settings.performance),
+  })
+  hydratePerformanceSettings(appSettings.get().performance)
 
   // Speech-backend config store — persists <userData>/speech_config.json (NON-
   // secret: preferred engine + each local engine's binary/model/device/threads).

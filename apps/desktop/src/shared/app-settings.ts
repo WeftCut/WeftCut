@@ -5,6 +5,7 @@
 // existing users' app_settings.json keeps working after the move to TS.
 
 import type { PausePreset, PausePresetChange } from "./pause-presets";
+import { PERFORMANCE_DEFAULTS, type PerformanceSettings } from "./performance-settings";
 
 export type DisplayMode = "AbRoll" | "AllTracks";
 
@@ -27,6 +28,8 @@ export type MediaPoolLayout = "large" | "grid" | "list";
 export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
+  /** Machine-local resource budgets; absent in older settings files. */
+  performance?: PerformanceSettings;
   pause_presets?: PausePreset[];
   display_mode: DisplayMode;
   /// Half-width of the symmetric playhead window in microseconds (default
@@ -123,6 +126,8 @@ export interface AppSettings {
 /// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
+  /** Merge individual budgets; null restores all performance defaults. */
+  performance?: Partial<PerformanceSettings> | null;
   /** A single atomic library edit; never replace another window's whole list. */
   pause_preset_change?: PausePresetChange;
   display_mode?: DisplayMode;
@@ -151,6 +156,7 @@ export interface AppSettingsPatch {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
+  performance: PERFORMANCE_DEFAULTS,
   pause_presets: undefined,
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,

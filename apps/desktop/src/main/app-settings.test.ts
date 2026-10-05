@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
+import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 
 const PATH = '/cfg/app_settings.json'
 const DIR = '/cfg'
@@ -19,6 +20,39 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('persists partial performance edits across writers, and resets only performance', () => {
+    const { fs } = memFs()
+    const a = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    const b = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    a.apply({ performance: { preview_gpu_sessions: 2 }, language: 'zh-CN' })
+    b.apply({ performance: { motif_cache_mib: 64 } })
+    expect(a.get().performance).toEqual({ ...PERFORMANCE_DEFAULTS, preview_gpu_sessions: 2, motif_cache_mib: 64 })
+    a.apply({ performance: null })
+    expect(b.get().performance).toEqual(PERFORMANCE_DEFAULTS)
+    expect(b.get().language).toBe('zh-CN')
+  })
+
+  it('publishes only committed settings and leaves disk/runtime unchanged on invalid patches or failed writes', () => {
+    const { fs, files } = memFs()
+    const onCommitted = vi.fn()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR, onCommitted })
+    s.apply({ performance: { preview_gpu_sessions: 2 } })
+    const saved = files.get(PATH)
+    expect(onCommitted).toHaveBeenCalledTimes(1)
+    expect(() => s.apply({ language: 'en-US', performance: { motif_cache_mib: NaN } })).toThrow()
+    expect(files.get(PATH)).toBe(saved)
+    fs.rename = () => { throw new Error('disk full') }
+    expect(() => s.apply({ performance: { preview_gpu_sessions: 8 } })).toThrow('disk full')
+    expect(onCommitted).toHaveBeenCalledTimes(1)
+    expect(s.get().performance?.preview_gpu_sessions).toBe(2)
+  })
+
+  it('recovers malformed performance fields and non-object settings files', () => {
+    const s = store({ [PATH]: JSON.stringify({ performance: { frame_ring_mib: 256, motif_cache_mib: 'bad' } }) })
+    expect(s.get().performance).toEqual({ ...PERFORMANCE_DEFAULTS, frame_ring_mib: 256 })
+    for (const body of ['null', '[]', '42']) expect(store({ [PATH]: body }).get()).toEqual(APP_SETTINGS_DEFAULTS)
+  })
+
   it('persists personal pause presets across readers without replacing unrelated edits', () => {
     const { fs } = memFs()
     const a = createAppSettingsStore({ fs, path: PATH, dir: DIR })

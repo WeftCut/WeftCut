@@ -1,3 +1,4 @@
+import { MIB, PERFORMANCE_DEFAULTS, performanceSettings } from "../../../shared/performance-settings";
 import {
   audioFxReverify,
   getWaveformLevels,
@@ -19,7 +20,7 @@ export const TILE_PEAKS = 2048;
 export const PX_PER_PEAK_TARGET = 1.5;
 /// Engine-side budget for waveform tiles (~48 KB each -> ~680 tiles, far
 /// above what the viewport-bounded fetch can request at once).
-export const WAVEFORM_TILE_BUDGET_BYTES = 32 * 1024 * 1024;
+export const WAVEFORM_TILE_BUDGET_BYTES = PERFORMANCE_DEFAULTS.waveform_cache_mib * MIB;
 
 /// Which peaks artifact a strip reads.
 ///
@@ -196,7 +197,7 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
   registered = true;
   engine.register<TileValue>({
     kind: WAVEFORM_KIND,
-    budgetBytes: WAVEFORM_TILE_BUDGET_BYTES,
+    get budgetBytes() { return performanceSettings().waveform_cache_mib * MIB; },
     // `lod` encodes level; `index` encodes channel*BIG + tileIndex.
     fetch: async (key: TileKey) => {
       const channel = Math.floor(key.index / 1_000_000);

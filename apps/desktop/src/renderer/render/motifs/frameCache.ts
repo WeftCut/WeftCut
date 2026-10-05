@@ -1,3 +1,4 @@
+import { MIB, PERFORMANCE_DEFAULTS, performanceSettings } from "../../../shared/performance-settings";
 // Per-frame raster cache for animated motifs.
 //
 // A motif animates over its duration: each composition frame is a distinct
@@ -38,7 +39,7 @@ export interface Closeable {
 /// 480×480 ones — deep enough that a scrub through a typical Motif stays
 /// warm, shallow enough that a worst-case 1080p Motif can't pin gigabytes
 /// (the old 240-FRAME cap could: 240 × 8.3 MB ≈ 2 GB).
-export const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
+export const DEFAULT_MAX_BYTES = PERFORMANCE_DEFAULTS.motif_cache_mib * MIB;
 
 /// Composite L0 map key. `frameIndex` is appended after a `#`; callers'
 /// cacheKeys are JSON and may themselves contain `#`, so any code that
@@ -94,7 +95,10 @@ export class MotifFrameCache {
   /// LAST is the most-recent. `get` and `set` both move a touched entry
   /// to the tail (delete + re-insert) so recency stays accurate.
   private readonly store = new Map<string, { bmp: Closeable; bytes: number }>();
-  private readonly maxBytes: number;
+  private readonly fixedMaxBytes: number | undefined;
+  private get maxBytes(): number {
+    return this.fixedMaxBytes ?? performanceSettings().motif_cache_mib * MIB;
+  }
   /// Sum of the stored entries' `bytes` — the quantity eviction bounds.
   private bytesUsed = 0;
   /// Bound-by-a-sprite counts. A frame that leaves the store while pinned is
@@ -110,13 +114,13 @@ export class MotifFrameCache {
   /// service's. Late readers see existing frames without replaying events.
   private readonly frameCounts = new Map<string, number>();
 
-  constructor(maxBytes: number = DEFAULT_MAX_BYTES) {
+  constructor(maxBytes?: number) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
     // cap is especially dangerous: `bytesUsed > NaN` is always false, so
     // eviction would never fire and the cache would grow unbounded — fall back
     // to the default in that case rather than clamping NaN (Math.max(1, NaN) is
     // NaN). Non-integer caps floor to a sane bound.
-    this.maxBytes = Number.isFinite(maxBytes)
+    this.fixedMaxBytes = maxBytes === undefined ? undefined : Number.isFinite(maxBytes)
       ? Math.max(1, Math.floor(maxBytes))
       : DEFAULT_MAX_BYTES;
   }

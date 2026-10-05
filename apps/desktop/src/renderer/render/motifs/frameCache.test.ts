@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
+import { hydratePerformanceSettings } from "../../../shared/performance-settings";
+
+afterEach(() => hydratePerformanceSettings(undefined));
 
 /// Stand-in for the browser `ImageBitmap`. The L0 store treats values
 /// opaquely except for the `close()` call on eviction / clear / dispose and
@@ -15,6 +18,21 @@ function fakeBitmap(width = 1, height = 1): ImageBitmap & { close: ReturnType<ty
 const BYTES_FOR = (n: number) => n * 4;
 
 describe("MotifFrameCache — L0 LRU", () => {
+  test("a live budget reduction evicts on insertion but preserves pinned frames until release", () => {
+    const c = new MotifFrameCache();
+    const pinned = fakeBitmap(2048, 2048); // 16 MiB
+    c.setFrame("k", 0, pinned);
+    c.retain(pinned);
+    c.setFrame("k", 1, fakeBitmap(2048, 2048));
+    hydratePerformanceSettings({ motif_cache_mib: 16 });
+    c.setFrame("k", 2, fakeBitmap(2048, 2048));
+    expect(c.size()).toBe(1);
+    expect(pinned.close).not.toHaveBeenCalled();
+    c.release(pinned);
+    expect(pinned.close).toHaveBeenCalledOnce();
+    c.dispose();
+  });
+
   test("getFrame returns null on miss", () => {
     const c = new MotifFrameCache();
     expect(c.getFrame("k", 0)).toBeNull();

@@ -1,3 +1,4 @@
+import { performanceSettings } from "../../../../shared/performance-settings";
 // Native-GPU `DecodeTransport` — the MessagePort + shared-texture path (see
 // docs/decode-bench.md for the full transport recap):
 // `window.api.previewGpu.{open,requestFrameAt,close,requestPort}` are the only
@@ -190,7 +191,7 @@ export class GpuTransport implements DecodeTransport {
     await window.api.previewGpu.open({
       streamId: this.streamId,
       path: o.path,
-      poolSize: o.poolSize ?? 3,
+      poolSize: o.poolSize ?? performanceSettings().preview_gpu_pool_slots,
       colorSpace: deriveColorSpace(o.sourceColor),
       // Missing/invalid probe dimensions deliberately ride as zero: main's
       // budget validates and fails closed before native allocation.

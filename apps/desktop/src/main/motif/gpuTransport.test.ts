@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sharedTexture, type WebContents } from 'electron'
 import { MotifGpuTransport } from './gpuTransport'
+import { hydratePerformanceSettings } from '../../shared/performance-settings'
 
 vi.mock('electron', () => ({ sharedTexture: {
   importSharedTexture: vi.fn(({ allReferencesReleased }: { allReferencesReleased: () => void }) => ({ release: allReferencesReleased })),
   sendSharedTexture: vi.fn(async () => {}),
 } }))
-afterEach(() => vi.useRealTimers())
+afterEach(() => { vi.useRealTimers(); hydratePerformanceSettings(undefined) })
 function fixture(concurrency = 1) {
   const owner = { id: 1, isDestroyed: () => false, send: vi.fn(), mainFrame: { isDestroyed: vi.fn(() => false), detached: false } } as unknown as WebContents
   const pools: { handles: ReturnType<typeof vi.fn>; uploadFile: ReturnType<typeof vi.fn>; copyTexture: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }[] = []
@@ -19,6 +20,20 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('reads changed allocation budgets without closing a leased texture', async () => {
+    const { owner, pools, transport } = fixture(2)
+    const first = await transport.read(owner, 'first', 4096, 2048)
+    hydratePerformanceSettings({ motif_gpu_mib: 16 })
+    await expect(transport.read(owner, 'too-large', 2048, 4096)).rejects.toThrow('budget exhausted')
+    expect(pools[0]!.close).not.toHaveBeenCalled()
+    transport.release(owner, first.token)
+    hydratePerformanceSettings({ motif_gpu_mib: 64, motif_gpu_sessions: 1 })
+    const second = await transport.read(owner, 'replacement', 2048, 4096)
+    expect(pools[0]!.close).toHaveBeenCalledOnce()
+    transport.release(owner, second.token)
+    transport.close(owner)
+  })
+
   it('rejects work for a disposed frame before allocating or announcing a texture', async () => {
     const { owner, create, transport } = fixture()
     vi.mocked(owner.mainFrame.isDestroyed).mockReturnValue(true)

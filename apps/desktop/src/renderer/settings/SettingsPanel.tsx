@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { AgentSection } from "./AgentSection";
 import { PreviewSection } from "./PreviewSection";
+import { PerformanceSection } from "./PerformanceSection";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
 import {
@@ -78,6 +79,7 @@ function clampPreviewSnapStrength(value: number): number {
 /// type at that boundary would let one of them name a tab that does not exist.
 export type SettingsCategory =
   | "general"
+  | "performance"
   | "project"
   | "keyboard"
   | "speech"
@@ -88,6 +90,7 @@ export type SettingsCategory =
 /// in-progress input and per-section fetches survive a tab switch.
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "general", labelKey: "settings.cat_general" },
+  { id: "performance", labelKey: "performance.heading" },
   { id: "project", labelKey: "settings.cat_project" },
   { id: "keyboard", labelKey: "settings.cat_keyboard" },
   { id: "speech", labelKey: "settings.cat_speech" },
@@ -309,6 +312,16 @@ export function SettingsPanel({
               <PreviewSection onError={setError} />
               <PreviewSnapSection onError={setError} />
             </section>
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-performance"
+            aria-labelledby="settings-tab-performance"
+            hidden={category !== "performance"}
+            className="settings-pane"
+          >
+            <PerformanceSection onError={setError} />
           </div>
 
           {showProjectCategory && (

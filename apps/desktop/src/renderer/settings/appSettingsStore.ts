@@ -13,6 +13,8 @@
 
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
+import { APP_SETTINGS_DEFAULTS } from "../../shared/app-settings";
+import { hydratePerformanceSettings } from "../../shared/performance-settings";
 
 import i18n, { SUPPORTED_LOCALES, type Locale } from "../i18n";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
@@ -39,30 +41,14 @@ interface AppSettingsActions {
   hydrate: (next: AppSettings) => void;
 }
 
-const FALLBACK: AppSettings = {
-  display_mode: "AbRoll",
-  delta_window_us: 10_000_000,
-  tail_snap_enabled: true,
-  tail_snap_strength_px: 12,
-  preview_snap_enabled: true,
-  preview_snap_strength_px: 12,
-  prebake_motifs: false,
-  preview_effects_enabled: true,
-  decode_engine: "auto",
-  playback_resolution: "full",
-  media_pool_layout: "large",
-  timeline_wheel_axis: "horizontal",
-  timeline_follow_playhead: true,
-  auto_delete_empty_tracks: true,
-  markers_visible: true,
-  safe_area_guides_visible: false,
-};
-
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
   (set) => ({
-    settings: FALLBACK,
+    settings: APP_SETTINGS_DEFAULTS,
     loaded: false,
-    hydrate: (next) => set({ settings: next, loaded: true }),
+    hydrate: (next) => {
+      hydratePerformanceSettings(next.performance);
+      set({ settings: next, loaded: true });
+    },
   }),
 );
 

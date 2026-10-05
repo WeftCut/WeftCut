@@ -141,6 +141,70 @@
   flex: 1 1 auto;
 }
 
+/* Performance uses the same label/hint and compact controls as General. Keep
+ * a stable value column without allowing the numeric input to fill the row. */
+.settings-performance-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.settings-performance-copy {
+  flex: 1 1 230px;
+  min-width: 0;
+}
+
+.settings-performance-copy .settings-toggle-hint {
+  margin-bottom: 0;
+}
+
+.settings-performance-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 184px;
+}
+
+.settings-performance-value .settings-input {
+  width: 100px;
+  flex: 0 0 100px;
+}
+
+.settings-performance-value .settings-slider-unit {
+  white-space: nowrap;
+}
+
+.settings-performance-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-performance-heading h3,
+.settings-performance-heading .settings-toggle-hint {
+  margin: 0;
+}
+
+.settings-performance-tier {
+  width: 184px;
+  flex: 0 0 184px;
+}
+
+.settings-performance-disclosure {
+  align-self: flex-start;
+  padding-left: 0;
+}
+
+.settings-performance-disclosure[aria-expanded="false"] > svg {
+  transform: rotate(-90deg);
+}
+
+.settings-radio-card[data-disabled] {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .settings-select {
   min-width: 168px;
 }

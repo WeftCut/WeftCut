@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { createPreviewGpuBudget } from "./previewGpuBudget";
+import { PERFORMANCE_DEFAULTS } from "../shared/performance-settings";
 
 describe("preview GPU budget", () => {
+  it("changes admission live without revoking leases, then admits again after release or an increase", () => {
+    let settings = { ...PERFORMANCE_DEFAULTS, preview_gpu_sessions: 2, preview_gpu_pixel_area: 100 };
+    const budget = createPreviewGpuBudget(() => settings);
+    const first = budget.reserve("first", { width: 5, height: 10 })!;
+    const second = budget.reserve("second", { width: 5, height: 10 })!;
+    settings = { ...settings, preview_gpu_sessions: 1, preview_gpu_pixel_area: 50 };
+    expect(budget.snapshot().sessions).toEqual({ used: 2, max: 1 });
+    expect(budget.reserve("third", { width: 1, height: 1 })).toBeNull();
+    budget.release(first);
+    expect(budget.reserve("third", { width: 1, height: 1 })).toBeNull();
+    budget.release(second);
+    expect(budget.reserve("third", { width: 5, height: 10 })).not.toBeNull();
+    settings = { ...settings, preview_gpu_sessions: 3 };
+    expect(budget.reserve("fourth", { width: 1, height: 1 })).toBeNull(); // area still full
+    settings = { ...settings, preview_gpu_pixel_area: 100 };
+    expect(budget.reserve("fourth", { width: 1, height: 1 })).not.toBeNull();
+    settings = { ...settings, preview_gpu_sessions: 0 };
+    expect(budget.reserve("disabled", { width: 1, height: 1 })).toBeNull();
+    expect(budget.snapshot().sessions.used).toBe(2);
+  });
+
   it("admits at most five concurrent sessions even when their coded area is tiny", () => {
     const budget = createPreviewGpuBudget();
 

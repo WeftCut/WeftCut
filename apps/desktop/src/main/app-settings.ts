@@ -9,6 +9,7 @@
 // all-defaults so a hand-edit mishap can't brick the editor.
 
 import { changePausePresets, readPausePresets } from '../shared/pause-presets'
+import { patchPerformanceSettings, readPerformanceSettings } from '../shared/performance-settings'
 import {
   APP_SETTINGS_DEFAULTS,
   DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US,
@@ -34,7 +35,7 @@ export interface AppSettingsStore {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi)
 
-export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; dir: string }): AppSettingsStore {
+export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; dir: string; onCommitted?: (settings: AppSettings) => void }): AppSettingsStore {
   function read(): AppSettings {
     if (!deps.fs.exists(deps.path)) return { ...APP_SETTINGS_DEFAULTS }
     let body: string
@@ -44,10 +45,12 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     let parsed: Record<string, unknown>
     try { parsed = JSON.parse(body) as Record<string, unknown> }
     catch (e) { console.warn(`[app-settings] parse ${deps.path}:`, e); return { ...APP_SETTINGS_DEFAULTS } }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...APP_SETTINGS_DEFAULTS }
     // Per-field defaulting (parity with serde #[serde(default = ...)]): a missing
     // or wrong-typed field falls back to its default; unknown keys are ignored.
     const d = APP_SETTINGS_DEFAULTS
     return {
+      performance: readPerformanceSettings(parsed.performance),
       pause_presets: parsed.pause_presets === undefined ? undefined : readPausePresets(parsed.pause_presets),
       display_mode: parsed.display_mode === 'AllTracks' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
@@ -147,6 +150,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     get: read,
     apply(patch) {
       const current = read()
+      if (patch.performance !== undefined) current.performance = patchPerformanceSettings(current.performance, patch.performance)
       if (patch.pause_preset_change !== undefined) {
         current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)
       }
@@ -177,6 +181,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         current.default_text_font = patch.default_text_font.trim() || undefined
       }
       write(current)
+      deps.onCommitted?.(current)
       return current
     },
   }

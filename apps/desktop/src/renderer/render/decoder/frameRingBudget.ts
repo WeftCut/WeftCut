@@ -21,35 +21,9 @@
 //
 // Preview only: export retains frames in `ExportFrameStore`, not here.
 
-/// Total retained decoded-frame bytes across all live rings.
-///
-/// This is a **safety ceiling for the pathological case, not a tuning knob**.
-/// LANDMINE: do not tighten it below ~1 GiB. A shallower ring re-requests the
-/// frames it just evicted, and on a long GOP one re-seek re-decodes the whole
-/// GOP prefix — memory falls while drops and tick p99 get much worse (numbers:
-/// docs/playback-perf.md). The software lane has flow control now — its native
-/// pump continues forward instead of re-seeking, and `FfmpegSource` honours
-/// `isLookaheadFull` — so this ceiling could be re-tuned against a re-measured
-/// churn cost. The WebCodecs lane's re-seek cost is unchanged.
-///
-/// So: sized to leave the cases that measure well ALONE and only bound the
-/// multi-gigabyte ones, at 30 fps (1080p frame = 8.29 MB, 4K = 33.2 MB):
-///
-/// | live rings | 1080p frames each | 4K frames each |
-/// |---|---|---|
-/// | 1 | 129 (uncapped — window is 45) | 32 |
-/// | 2 | 64 (uncapped — measured 62) | 16 |
-/// | 3 | 43 (measured 50 — mild) | 10 (floored) |
-///
-/// 1080p at one and two clips is therefore untouched, and the 4K blow-up that
-/// asked for ~4 GB is bounded to ~1 GB.
-///
-/// Deliberately not derived from real VRAM: `app.getGPUInfo()` lives in main and
-/// reports the adapter, not the budget Chromium will actually grant a tab, so
-/// plumbing it would add a cross-process dependency for a number that still
-/// needs the bench to validate. Re-tune from `npm run bench:playback` — and
-/// re-read the churn note above before tightening it.
-const TOTAL_RETAINED_BYTES = 1024 * 1024 * 1024;
+// Runtime target; lower budgets can increase long-GOP re-seek churn.
+// The FrameRing forward-frame floor still overrides this target.
+import { MIB, performanceSettings } from "../../../shared/performance-settings";
 
 let liveRings = 0;
 
@@ -68,7 +42,7 @@ export function unregisterFrameRing(): void {
 
 /// This ring's share of the total, in bytes.
 export function frameRingByteBudget(): number {
-  return TOTAL_RETAINED_BYTES / Math.max(1, liveRings);
+  return (performanceSettings().frame_ring_mib * MIB) / Math.max(1, liveRings);
 }
 
 /// Diagnostics + tests: how many rings are dividing the budget.

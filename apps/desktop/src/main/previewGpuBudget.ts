@@ -1,12 +1,13 @@
 import type { PreviewGpuBudgetSnapshot } from '../shared/ipc'
+import { PERFORMANCE_DEFAULTS, performanceSettings, type PerformanceSettings } from '../shared/performance-settings'
 
-export const PREVIEW_GPU_MAX_SESSIONS = 5
+export const PREVIEW_GPU_MAX_SESSIONS = PERFORMANCE_DEFAULTS.preview_gpu_sessions
 // Admission currency is coded pixel AREA (30fps-calibrated), not bytes — but
 // area implies pool VRAM: slot bytes = area × 4 (RGBA8) × poolSize (3 by
 // default), i.e. this cap fully subscribed ≈ 3×(3840×2160) × 4B × 3 slots ≈
 // 299MB of shared pool. The live number (not this arithmetic) is
 // `hwBudget().slotVram` / takeTimings' `poolSlotBytes`.
-export const PREVIEW_GPU_MAX_CODED_PIXEL_AREA = 3 * 3840 * 2160
+export const PREVIEW_GPU_MAX_CODED_PIXEL_AREA = PERFORMANCE_DEFAULTS.preview_gpu_pixel_area
 export const PREVIEW_GPU_BUDGET_CALIBRATED_FPS = 30
 
 export interface PreviewGpuCodedSize {
@@ -28,14 +29,15 @@ export interface PreviewGpuBudgetController {
   snapshot(): Omit<PreviewGpuBudgetSnapshot, 'slotVram'>
 }
 
-export function createPreviewGpuBudget(): PreviewGpuBudgetController {
+export function createPreviewGpuBudget(getSettings: () => PerformanceSettings = performanceSettings): PreviewGpuBudgetController {
   const leases = new Map<string, PreviewGpuBudgetLease>()
   let usedCodedPixelArea = 0
 
   return {
     reserve(sessionId, codedSize) {
+      const limits = getSettings()
       if (leases.has(sessionId)) return null
-      if (leases.size >= PREVIEW_GPU_MAX_SESSIONS) return null
+      if (leases.size >= limits.preview_gpu_sessions) return null
       if (
         !Number.isSafeInteger(codedSize.width)
         || !Number.isSafeInteger(codedSize.height)
@@ -46,7 +48,7 @@ export function createPreviewGpuBudget(): PreviewGpuBudgetController {
       }
       const codedPixelArea = codedSize.width * codedSize.height
       if (!Number.isSafeInteger(codedPixelArea)) return null
-      if (usedCodedPixelArea + codedPixelArea > PREVIEW_GPU_MAX_CODED_PIXEL_AREA) return null
+      if (usedCodedPixelArea + codedPixelArea > limits.preview_gpu_pixel_area) return null
       const lease = Object.freeze({
         sessionId,
         codedPixelArea,
@@ -63,12 +65,13 @@ export function createPreviewGpuBudget(): PreviewGpuBudgetController {
     },
 
     snapshot() {
+      const limits = getSettings()
       return {
         currency: 'coded-pixel-area',
-        sessions: { used: leases.size, max: PREVIEW_GPU_MAX_SESSIONS },
+        sessions: { used: leases.size, max: limits.preview_gpu_sessions },
         codedPixelArea: {
           used: usedCodedPixelArea,
-          max: PREVIEW_GPU_MAX_CODED_PIXEL_AREA,
+          max: limits.preview_gpu_pixel_area,
           calibratedFps: PREVIEW_GPU_BUDGET_CALIBRATED_FPS,
         },
       }

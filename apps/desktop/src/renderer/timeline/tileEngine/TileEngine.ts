@@ -1,3 +1,4 @@
+import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings";
 import { listen } from "@/bridge/events";
 import { MEDIA_JOB_EVENTS } from "../../ipc";
 
@@ -44,7 +45,7 @@ export interface TileProducer<T> {
   budgetBytes?: number;
 }
 
-export const DEFAULT_TILE_BUDGET_BYTES = 192 * 1024 * 1024;
+export const DEFAULT_TILE_BUDGET_BYTES = (PERFORMANCE_DEFAULTS.filmstrip_cache_mib + PERFORMANCE_DEFAULTS.waveform_cache_mib) * MIB;
 
 /// A failed fetch parks the slot as `error`; `request()` retries it once this
 /// cooldown has elapsed, so a transient failure (file mid-promote, ffmpeg
