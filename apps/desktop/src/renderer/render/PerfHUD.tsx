@@ -399,6 +399,13 @@ function PerfDashboard({
           title="Last 600 active render-submission intervals. Clock skew is composite target minus estimated audio output; positive means ahead. Zero decode drops does not imply smooth presentation."
         />
         <StatTile
+          label="Motif lag / hold"
+          value={`${Math.max(0, ...(snap?.motifs ?? []).map(m => m.lagFrames ?? 0))} frames / ${formatMs(Math.max(0, ...(snap?.motifs ?? []).map(m => m.heldMs)))} ms`}
+          meta={`peak hold ${formatMs(Math.max(0, ...(snap?.motifs ?? []).map(m => m.maxHeldMs)))} ms · pending ${(snap?.motifs ?? []).filter(m => m.pending).length} · missing ${(snap?.motifs ?? []).filter(m => m.boundFrame === null).length}`}
+          warn={(snap?.motifs ?? []).some(m => m.heldMs > 50)}
+          title="Visible Motif content frames behind demand and time holding an older bitmap during playback. A normal composite submission cadence can hide a frozen Motif. Capped/static content is not counted as a hold."
+        />
+        <StatTile
           label="Drop / late"
           value={
             (snap?.underrun?.droppedFrames ?? 0) === 0 &&

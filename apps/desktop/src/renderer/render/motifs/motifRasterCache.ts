@@ -48,6 +48,10 @@ function broker(cache: MotifFrameCache) {
 const committedBroker = broker(sharedMotifFrameCache);
 const overlayBroker = broker(sharedMotifOverlayCache);
 export function resetMotifFrameRequests(): void { committedBroker.reset(); overlayBroker.reset(); }
+export function cancelMotifFrameRequest(key: string): void {
+  committedBroker.cancel(key);
+  overlayBroker.cancel(key);
+}
 
 // The lane is transient: when the last pending patch clears (gesture commit
 // / cancel / panel teardown), every frame in it is garbage. Wipe on that

@@ -112,6 +112,23 @@ describe('FrameBroker ownership and subscribers', () => {
     expect(h.clone).toHaveBeenCalledTimes(1); // only the still-wanted frame
   });
 
+  it('explicit cursor cancellation releases only its subscriber, preserving a shared bake', async () => {
+    const h = setup(), wait = deferred<{ bitmap: ImageBitmap; persisted: boolean }>();
+    let ticket!: FrameTicket;
+    const capture = vi.fn((t: FrameTicket) => { ticket = t; return wait.promise; });
+    const bake = h.broker.acquire('c', 0, capture);
+    const preview = h.broker.acquire('c', 0, capture, 'instance');
+    const rejected = expect(preview).rejects.toThrow('superseded');
+    await flush();
+    h.broker.cancel('instance');
+    await rejected;
+    expect(ticket.wanted()).toBe(true);
+    expect(h.control).not.toHaveBeenCalledWith(ticket.key, 'cancel');
+    wait.resolve({ bitmap: bitmap(), persisted: true });
+    expect((await bake).persisted).toBe(true);
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
   it('retires failures so the same frame can be retried', async () => {
     const h = setup();
     const capture = vi.fn().mockRejectedValueOnce(new Error('GPU lost')).mockResolvedValue({ bitmap: bitmap(), persisted: false });

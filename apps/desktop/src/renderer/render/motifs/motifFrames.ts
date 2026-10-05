@@ -9,6 +9,8 @@
 import { frameIndexInLayer } from "../../frames";
 
 export const US_PER_SEC = 1_000_000;
+/// Bounded tolerance shared by preview selection and the prewarm history.
+export const MOTIF_RECENT_FRAMES = 3;
 
 /// Total animated frames a motif spans over `durationUs` on the comp-fps
 /// grid, clamped to at least 1 (a zero/sub-frame placement still shows frame

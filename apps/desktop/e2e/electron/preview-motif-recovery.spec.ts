@@ -125,7 +125,7 @@ test('@serial paused motif recovers after a real capture bitmap rejection withou
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
   page.on('console', (message) => {
-    if (message.type() === 'error' && message.text().includes('MotifSprite')) failures.push(message.text())
+    if (message.type() === 'error' && message.text().includes('[weftcut/motifs] preview frame failed')) failures.push(message.text())
   })
   try {
     await setup(page)
@@ -159,4 +159,48 @@ test('@serial paused motif recovers after a real capture bitmap rejection withou
   } finally {
     await app.close()
   }
+})
+
+test('@serial motif content progresses when frame delivery is slower than the display clock', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const { app, page } = await launchApp()
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  try {
+    await setup(page)
+    await page.evaluate(() => {
+      const clone = window.createImageBitmap.bind(window)
+      window.createImageBitmap = (async (...args: Parameters<typeof createImageBitmap>) => {
+        const bitmap = await Reflect.apply(clone, window, args)
+        if (args[0] instanceof ImageBitmap) await new Promise(resolve => setTimeout(resolve, 80))
+        return bitmap
+      }) as typeof createImageBitmap
+      return (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifAddCountdown()
+    })
+    await expect.poll(async () => (await picture(page)).accent, { timeout: 30_000 }).toBeGreaterThan(200)
+    const initial = await picture(page)
+    const rows = await page.evaluate(async () => {
+      const h = (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest
+      const rows = []
+      h.transportPlay()
+      for (let i = 0; i < 48; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        rows.push(h.compositorPerfSnapshot()?.motifs?.[0])
+      }
+      h.transportPause()
+      return rows
+    })
+    expect(rows.every(Boolean)).toBe(true)
+    const frames = rows.map(row => row!.boundFrame).filter((f): f is number => f !== null)
+    expect(new Set(frames).size, 'content must advance, not merely keep submitting the same texture').toBeGreaterThan(10)
+    expect(frames.at(-1)!).toBeGreaterThan(40)
+    expect(frames.every((f, i) => i === 0 || f >= frames[i - 1]!)).toBe(true)
+    expect(Math.max(...rows.map(row => row!.heldMs))).toBeLessThan(500)
+    expect((await picture(page)).hash).not.toBe(initial.hash)
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.compositorPerfSnapshot()?.motifs?.[0]?.lagFrames),
+    { timeout: 20_000 }).toBe(0)
+    expect(errors).toEqual([])
+    await testInfo.attach('motif-progress.json', { body: JSON.stringify(rows), contentType: 'application/json' })
+  } finally { await app.close() }
 })

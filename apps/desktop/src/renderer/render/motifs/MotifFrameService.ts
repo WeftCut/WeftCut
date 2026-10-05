@@ -29,6 +29,7 @@ import { getMotif } from "./catalog";
 import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifBaker, type BakeContentSpec } from "./MotifBaker";
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
+import { MOTIF_RECENT_FRAMES } from "./motifFrames";
 import {
   resolveMotifFrame,
   sharedBakedKeyIndex,
@@ -264,19 +265,24 @@ export class MotifFrameService {
   private forEachMotifLayer(
     tUs: number,
     f: (layer: LayerSummary & { params: { kind: "Motif" } }, tInLayerUs: number) => void,
+    lookaheadUs?: number,
   ): void {
     const summary = this.deps.projectSummary();
     if (!summary) return;
     const fpsNum = this.deps.fpsNum();
     const fpsDen = this.deps.fpsDen();
-    forEachLayer(summary, this.deps.openCompositionId(), ({ layer, offsetUs, clock }) => {
+    forEachLayer(summary, this.deps.openCompositionId(), ({ layer, offsetUs, clock, tStartUs, tEndUs }) => {
       if (layer.params.kind !== "Motif") return;
+      // Prewarm only the visible/soon-visible window. Root spans already
+      // include Group trims; sample a future layer at its actual entry time.
+      if (lookaheadUs !== undefined && (tEndUs <= tUs || tStartUs > tUs + lookaheadUs)) return;
+      const sampleUs = lookaheadUs === undefined ? tUs : Math.max(tUs, tStartUs);
       // `compositionLocalUs`, not a bare subtraction: the descriptor's
       // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
       // asking for is derived through the same re-snap on its way down the
       // nodes. A µs of lattice residual between the two would warm a key
       // nothing ever reads.
-      const tLocalUs = clock ? localAt(clock, tUs) : compositionLocalUs(tUs - offsetUs, fpsNum, fpsDen);
+      const tLocalUs = clock ? localAt(clock, sampleUs) : compositionLocalUs(sampleUs - offsetUs, fpsNum, fpsDen);
       f(layer as LayerSummary & { params: { kind: "Motif" } }, tLocalUs - layer.t_start_us);
     });
   }
@@ -309,6 +315,7 @@ export class MotifFrameService {
         persisted: sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames),
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
+        historyFrames: MOTIF_RECENT_FRAMES,
         // What one warmed frame costs the byte-bounded L0 cache — the planner
         // budget is in bytes, so a small Motif warms deeper than a 1080p one.
         frameBytes: desc.renderW * desc.renderH * 4,
@@ -328,7 +335,7 @@ export class MotifFrameService {
             fpsDen,
           ),
       });
-    });
+    }, 500_000);
     this.prewarmer.setTargets(specs);
   }
 

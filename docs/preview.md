@@ -506,15 +506,23 @@ reads that decision, never writes it.
 
 ## Motifs
 
-`MotifSprite` binds a Motif's captured PNG frame as a Pixi texture. The Motif's
-page is driven to the playhead's layer-relative time in an offscreen Electron
-window and grabbed as a taint-free PNG via the DevTools Protocol
-(`Page.captureScreenshot`) — unlike an SVG `<foreignObject>`, that real browser
-raster is not cross-origin-tainted (the wall that ruled out HTML/CSS rasterizing
-before). In preview the frame is captured on demand, with a RAM lookahead ring
-for heavy Motifs; the cache is keyed on content identity (motif id + version +
-props + render size + fps + content-duration frames), shared across sprite
-instances of the same Motif. See [`motifs.md`](motifs.md).
+`MotifSprite` binds cache-owned bitmaps as Pixi textures. The shared frame
+broker reads persisted frames first and otherwise captures the offscreen Motif
+host; transport and ownership follow [ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md).
+The cache uses content identity (motif id, version, props, render size, fps and
+content duration), so identical content can share pixels across instances.
+
+Each sprite's `MotifPlaybackCursor` keeps one admitted request and the latest
+demand. During playback, useful late results advance the picture; newer cached
+frames can overtake them without rolling back. Pause and seek require the exact
+target, and export keeps its exact injected-frame path. Prewarming covers visible
+and imminent content within 500 ms, with a small recent-frame window and a shared
+byte cap. Repeated Group instances retain their own time windows. See
+[ADR 0096](adr/0096-motif-preview-progress.md) and [`motifs.md`](motifs.md).
+
+The **Motif lag / hold** PerfHUD tile measures content lag and outdated bitmap
+hold time, including missing frames and pending requests. A steady composite
+submission cadence alone cannot establish that Motif content is progressing.
 
 ## Diagnostics
 

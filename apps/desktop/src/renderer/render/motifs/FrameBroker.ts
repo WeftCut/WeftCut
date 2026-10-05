@@ -39,6 +39,8 @@ export class FrameBroker {
    * persisted acknowledgement. Existing consumers keep their owned results. */
   reset(): void { this.jobs.clear(); }
 
+  cancel(coalesceKey: string): void { this.latest.get(coalesceKey)?.cancel(); }
+
   acquire(identity: string, frame: number, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress): Promise<CapturedFrame> {
     if (coalesceKey) this.latest.get(coalesceKey)?.cancel();
     const address = JSON.stringify([identity, frame]);

@@ -1,7 +1,6 @@
 // Motif layer rendered via the CDP capture path → per-frame raster → texture.
-// A Motif animates over its layer duration: each composition frame is a
-// distinct `resolveMotifFrame` call rasterized to an `ImageBitmap` and
-// bound by frame index.
+// A Motif animates over its layer duration. A per-instance playback cursor
+// selects cache-owned bitmaps and coalesces asynchronous frame demand.
 //
 // Frames are stored in a process-wide `sharedMotifFrameCache` (an in-RAM
 // LRU keyed by `(cacheKey, frameIndex)`) so two sprites referencing the same
@@ -12,11 +11,9 @@
 // tears down the sprite's Pixi Texture wrapper but does NOT close the
 // underlying bitmap — the cache (whichever lane holds it) owns its lifetime.
 //
-// Capture is async: on a cache miss the sprite calls `resolveMotifFrame`
-// (in-RAM cache → on-disk PNG → live `rasterMotifFrame` CDP screenshot of the
-// hidden Motif host), stores the result, and binds it if the playhead still
-// wants that (cacheKey, frame). The export Worker (no `document`) never takes
-// this path — it binds pre-baked `injectedFrames` by index instead.
+// Cache misses resolve through the shared broker (disk first, then the hidden
+// capture host). Useful late results advance forward playback. The export
+// Worker binds exact pre-baked `injectedFrames` by index instead.
 
 import { type Container, Sprite, Texture } from "pixi.js";
 
@@ -24,9 +21,9 @@ import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
-import { resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from "../motifs/motifRasterCache";
+import { sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { MotifPlaybackCursor, type MotifPlaybackSnapshot } from "../motifs/MotifPlaybackCursor";
 import type { MotifFrameCache } from "../motifs/frameCache";
-import { isCaptureSuperseded } from "../motifs/host";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
@@ -63,25 +60,6 @@ export interface MotifSpriteInit {
   onLoaded?: () => void;
 }
 
-interface CaptureTarget {
-  cacheKey: string;
-  frame: number;
-  /// Which lane this target's frames live in: the small overlay LRU when the
-  /// descriptor resolved with a pending params-page patch, else the shared
-  /// committed-content LRU. The overlay flag folds into `cacheKey` (props are
-  /// keyed), so a gesture start/end always mints a fresh target anyway.
-  overlay: boolean;
-  state: "idle" | "pending" | "bound";
-  failures: number;
-  retryAt: number;
-}
-
-// A paused/capped content frame must recover without a seek, but an unavailable
-// capture host must not receive a new request on every display tick. Saturate
-// the delay, not the number of attempts: a longer outage must still recover.
-// A background cache fill can satisfy the target before its retry is due.
-const CAPTURE_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const;
-
 export class MotifSprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
@@ -89,9 +67,7 @@ export class MotifSprite implements StageableSprite {
   private readonly fpsNum: number;
   private readonly fpsDen: number;
   private motif: Motif | null;
-  /// Desired frame and its request state. Identity guards async completion,
-  /// including a seek away and back to the same (key, frame).
-  private target: CaptureTarget | null = null;
+  private readonly playback: MotifPlaybackCursor;
   /// Last comp-frame index bound from `injectedFrames` (export mode). Lets a
   /// repeated index (output fps < comp fps, or a held frame) skip the rebind +
   /// per-tick GPU texture churn. -1 = nothing bound yet.
@@ -119,6 +95,11 @@ export class MotifSprite implements StageableSprite {
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
     this.motif = getMotif(this.motifId);
+    this.playback = new MotifPlaybackCursor({
+      motif: () => this.motif, fpsNum: this.fpsNum, fpsDen: this.fpsDen,
+      bind: (bitmap, lane) => this.bindBitmap(bitmap, lane),
+      onLoaded: () => this.onLoaded?.(),
+    });
     if (!this.motif && typeof document !== "undefined") {
       // eslint-disable-next-line no-console
       console.warn(
@@ -153,6 +134,7 @@ export class MotifSprite implements StageableSprite {
     tInLayerUs: number,
     durationUs: number,
     injectedFrames?: InjectedMotifFrames,
+    playing = false,
   ): void {
     if (this.disposed) return;
 
@@ -232,31 +214,14 @@ export class MotifSprite implements StageableSprite {
       console.warn(`[weftcut/pixi] MotifSprite ${this.layerId}: canonicalize failed`);
       return;
     }
-    const { cacheKey, contentFrame: frame, tSec, durationSec, canonicalProps: canonical } = desc;
-    // Gesture frames (pending params-page patch) go to the small overlay lane
-    // so a drag's per-tick cacheKeys can't evict committed content from the
-    // shared LRU. No overlay pending ⇒ the shared lane, exactly as before.
-    const lane = desc.overlayActive ? sharedMotifOverlayCache : sharedMotifFrameCache;
-    if (cacheKey !== this.target?.cacheKey || frame !== this.target.frame) {
-      this.target = { cacheKey, frame, overlay: desc.overlayActive, state: "idle", failures: 0, retryAt: 0 };
-    }
-    const target = this.target;
-    if (target.state === "bound" || target.state === "pending") return;
-    const cached = lane.getFrame(cacheKey, frame);
-    if (cached) {
-      this.bindBitmap(cached, lane);
-      target.state = "bound";
-      return;
-    }
-    if (performance.now() < target.retryAt) return;
-    // First-ever cold frame: show a neutral placeholder so the layer doesn't
-    // flash empty while frame 0 is captured. Later misses hold the last bitmap.
+    this.playback.update(desc, playing);
     if (!this.boundOnce && this.texture === null && typeof document !== "undefined") {
       this.bindBitmap(neutralPlaceholder());
     }
-    target.state = "pending";
-    void this.captureAndBind(target, tSec, durationSec, canonical);
   }
+
+  playbackSnapshot(): MotifPlaybackSnapshot { return this.playback.snapshot(); }
+  invalidatePlayback(): void { this.playback.invalidate(); }
 
   /// Re-fetch this layer's Motif from the runtime catalog and reset the render
   /// target so the next `update()` re-evaluates the cache key and re-captures.
@@ -266,74 +231,7 @@ export class MotifSprite implements StageableSprite {
   refreshMotif(): void {
     if (this.disposed) return;
     this.motif = getMotif(this.motifId);
-    this.target = null;
-  }
-
-  /// Render + rasterize one frame, store it, and bind it iff the playhead
-  /// still wants this exact (cacheKey, frame) and the sprite is alive. The
-  /// rasterized bitmap is handed to the shared cache even when superseded /
-  /// disposed so the work isn't wasted (another sprite — or a later seek back
-  /// — may want it). Everything here is async + DOM-touching, kept off the
-  /// synchronous `update()` path so the document-less export Worker doesn't
-  /// throw out of the composite loop.
-  private async captureAndBind(
-    target: CaptureTarget,
-    tSec: number,
-    durationSec: number,
-    canonicalProps: Record<string, unknown>,
-  ): Promise<void> {
-    if (!this.motif) return;
-    const { cacheKey, frame } = target;
-    const lane = target.overlay ? sharedMotifOverlayCache : sharedMotifFrameCache;
-    try {
-      const bitmap = await resolveMotifFrame(
-           this.motif, cacheKey, frame, tSec, durationSec, canonicalProps,
-           // Latest-wins on the serial capture chain: a newer frame's request
-           // from THIS sprite replaces a still-queued older one, so playback
-           // can't build a stale-request backlog ahead of the prewarmer/baker.
-           `sprite:${this.layerId}`,
-           // The rate tSec was derived from — the capture's meta.fps must
-           // agree with it (30 fps fallback would render wrong at other rates).
-           this.fpsNum, this.fpsDen, target.overlay,
-         );
-      // Hand the bitmap to the target's lane cache. `setFrame` is idempotent:
-      // if a sibling sprite already cached this (cacheKey, frame), it keeps
-      // that bitmap and closes ours, returning the CANONICAL cache-owned
-      // bitmap. Bind THAT, so no sprite ever binds a bitmap a sibling could
-      // close (the cause of the "External Image has been detached" WebGPU
-      // error on project reopen).
-      const canonical = lane.setFrame(cacheKey, frame, bitmap);
-      // A later `update` may have superseded this request while we awaited;
-      // only bind if we still want exactly this (cacheKey, frame).
-      if (this.disposed) return;
-      if (this.target !== target) return;
-      this.bindBitmap(canonical, lane);
-      target.state = "bound";
-      this.onLoaded?.();
-    } catch (e) {
-      if (this.disposed || this.target !== target) return;
-      // Superseded by this sprite's own newer request (latest-wins queueing):
-      // not a failure — no backoff, no error log. The frame stays retrievable
-      // if the playhead returns to it.
-      if (isCaptureSuperseded(e)) {
-        if (target.state !== "bound") target.state = "idle";
-        return;
-      }
-      // Callback errors must not turn an already-bound frame into a failed
-      // capture. Otherwise a repaint callback could cause repeated rebinds.
-      if (target.state !== "bound") {
-        target.state = "idle";
-        const delay = CAPTURE_RETRY_DELAYS_MS[Math.min(target.failures++, CAPTURE_RETRY_DELAYS_MS.length - 1)]!;
-        target.retryAt = performance.now() + delay;
-      }
-      // Keep a persistent failure visible without a stream of identical logs.
-      if (target.failures > 3 && target.failures % 10 !== 0) return;
-      // eslint-disable-next-line no-console
-      console.error(
-        `[weftcut/pixi] MotifSprite ${this.layerId}: capture/rasterize failed`,
-        e,
-      );
-    }
+    this.playback.invalidate();
   }
 
   /// `pinCache` is the lane the bitmap belongs to (shared / overlay); the pin
@@ -377,7 +275,7 @@ export class MotifSprite implements StageableSprite {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.target = null;
+    this.playback.dispose();
     this.sprite.destroy({ children: true });
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {

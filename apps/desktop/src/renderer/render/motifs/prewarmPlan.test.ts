@@ -75,4 +75,18 @@ describe("planPrewarmTargets", () => {
   it("returns [] for no contents", () => {
     expect(planPrewarmTargets([], 240)).toEqual([]);
   });
+
+  it("reserves a small recent window so slightly late reads remain useful", () => {
+    const plan = planPrewarmTargets([{ ...content("a", 10, 100), historyFrames: 3 }], 8);
+    expect(plan.map(p => p.frame)).toEqual([10, 11, 12, 13, 14, 9, 8, 7]);
+  });
+
+  it("keeps both instance windows of the same content within one byte budget", () => {
+    const plan = planPrewarmTargets([content("a", 0, 100), content("a", 50, 100)], 4);
+    expect(plan.map(p => p.frame)).toEqual([0, 50, 1, 51]);
+  });
+
+  it("does not exceed its byte cap even when one frame cannot fit", () => {
+    expect(planPrewarmTargets([content("a", 0, 100, 10)], 9)).toEqual([]);
+  });
 });

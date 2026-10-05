@@ -8,6 +8,8 @@ export interface PrewarmContent {
   /// is in bytes, so a 480×480 Motif warms ~9× more frames than a 1080p one
   /// while both stay within the same memory bound.
   frameBytes: number;
+  /// Keep recently passed frames eligible for a late prewarm completion.
+  historyFrames?: number;
 }
 
 export interface PrewarmTarget {
@@ -15,44 +17,52 @@ export interface PrewarmTarget {
   frame: number;
 }
 
-/// Plan which (cacheKey, frame) to ensure cached, in priority order. Dedups
-/// contents by cacheKey; each unique content gets a per-content budget of
-/// floor(capBytes / uniqueContentCount / frameBytes) FRAMES (>= 1), or the
-/// WHOLE content when it fits. Per content the order is playhead-first:
-/// contentFrame, then forward to the budget edge, then the earlier frames
-/// (backfill for small backward scrubs). Contents are ROUND-ROBINED so one
-/// long content can't starve others. The union's total byte cost never
-/// exceeds `capBytes`, so the cache LRU can't evict a still-targeted frame.
+/// Share the byte budget across content identities, then round-robin both
+/// contents and their instance windows. Repeated Group instances can need
+/// different frames of the same content without paying twice for shared ones.
 export function planPrewarmTargets(
   contents: PrewarmContent[],
   capBytes: number,
 ): PrewarmTarget[] {
-  const seen = new Set<string>();
-  const uniq: PrewarmContent[] = [];
+  const groups = new Map<string, PrewarmContent[]>();
   for (const c of contents) {
-    if (seen.has(c.cacheKey)) continue;
-    seen.add(c.cacheKey);
-    uniq.push(c);
+    const windows = groups.get(c.cacheKey) ?? [];
+    if (!windows.some(w => w.contentFrame === c.contentFrame)) windows.push(c);
+    groups.set(c.cacheKey, windows);
   }
-  if (uniq.length === 0) return [];
-  const perContent: number[][] = uniq.map((c) => {
-    const n = c.contentDurationFrames;
-    // A degenerate 0 frameBytes must not divide-by-zero into Infinity.
-    const budget = Math.max(1, Math.floor(capBytes / (uniq.length * Math.max(1, c.frameBytes))));
-    const want = Math.min(budget, n);
-    const start = Math.max(0, Math.min(c.contentFrame, n - 1));
-    const order: number[] = [];
-    for (let f = start; f < n && order.length < want; f++) order.push(f);   // current → forward
-    for (let f = 0; f < start && order.length < want; f++) order.push(f);   // backfill earlier
-    return order;
+  const keys = [...groups.keys()];
+  const perContent = [...groups.values()].map(windows => {
+    const frameBytes = Math.max(1, ...windows.map(c => c.frameBytes));
+    const budget = Math.max(0, Math.floor(capBytes / (keys.length * frameBytes)));
+    const orders = windows.map(c => {
+      const n = c.contentDurationFrames;
+      const want = Math.min(budget, n);
+      const start = Math.max(0, Math.min(c.contentFrame, n - 1));
+      const history = Math.min(c.historyFrames ?? 0, start, Math.max(0, want - 1));
+      const order: number[] = [];
+      for (let f = start; f < n && order.length < want - history; f++) order.push(f);
+      for (let f = start - 1; f >= start - history && order.length < want; f--) order.push(f);
+      for (let f = 0; f < start && order.length < want; f++) {
+        if (f < start - history) order.push(f);
+      }
+      return order;
+    });
+    const frames = new Set<number>();
+    const depth = Math.max(0, ...orders.map(a => a.length));
+    for (let i = 0; i < depth && frames.size < budget; i++) {
+      for (const order of orders) {
+        if (i < order.length && frames.size < budget) frames.add(order[i]!);
+      }
+    }
+    return [...frames];
   });
 
   const out: PrewarmTarget[] = [];
   const maxLen = perContent.reduce((m, a) => Math.max(m, a.length), 0);
   for (let i = 0; i < maxLen; i++) {
-    for (let c = 0; c < uniq.length; c++) {
+    for (let c = 0; c < keys.length; c++) {
       const frames = perContent[c]!;
-      if (i < frames.length) out.push({ cacheKey: uniq[c]!.cacheKey, frame: frames[i]! });
+      if (i < frames.length) out.push({ cacheKey: keys[c]!, frame: frames[i]! });
     }
   }
   return out;

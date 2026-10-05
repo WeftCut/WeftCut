@@ -48,6 +48,7 @@ import {
   CompositionNode,
   type ActiveClipProbe,
   type ClipPerfRow,
+  type MotifPerfRow,
   type CompositionNodeHost,
   type ResolvedRendererSource,
 } from "./CompositionNode";
@@ -63,6 +64,7 @@ const UPCOMING_CLIP_PREWARM_US = 1_000_000;
 /// or sprite references leak out.
 export interface CompositorPerfSnapshot {
   sync?: PreviewSyncSnapshot;
+  motifs?: MotifPerfRow[];
   /// Most recent `compositeFrame` body duration in ms.
   compositeMsLast: number;
   /// Running peak since the last `resetPerfPeaks()`.
@@ -455,12 +457,14 @@ export class Compositor {
   /// PlaybackEngine flips this during rapid scrub; rationale on the
   /// `scrubbing` field.
   setScrubbing(s: boolean): void {
+    if (s) this.root.invalidateMotifPlayback();
     this.scrubbing = s;
   }
 
   /// PlaybackEngine writes its current play state here on play /
   /// pause / seek so decoder targeting knows whether to advance.
   setMasterPlayState(playing: boolean): void {
+    if (playing !== this.playing) this.root.invalidateMotifPlayback();
     // Master-clock release = new play session: reset the dropped-frame
     // counters so the indicator reflects this run, not history.
     if (playing && !this.playing) { this.underrun.beginPlay(); this.sync.reset(); }
@@ -748,6 +752,8 @@ export class Compositor {
   getPerfSnapshot(): CompositorPerfSnapshot {
     const clips: ClipPerfRow[] = [];
     this.root.clipPerfRows(clips);
+    const motifs: MotifPerfRow[] = [];
+    this.root.motifPerfRows(motifs);
     return {
       compositeMsLast: this.compositeMsLast,
       compositeMsMax: this.compositeMsMax,
@@ -755,6 +761,7 @@ export class Compositor {
       swapsInFlight: this.root.swapsInFlight(),
       underrun: this.underrun.snapshot(),
       sync: this.sync.snapshot(),
+      motifs,
       transitions: this.root.transitionStats(),
       clips,
     };

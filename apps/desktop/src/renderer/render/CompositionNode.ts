@@ -54,6 +54,7 @@ import { ColorSprite } from "./sprite/ColorSprite";
 import { CompositionRefSprite } from "./sprite/CompositionRefSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { MotifSprite } from "./sprite/MotifSprite";
+import type { MotifPlaybackSnapshot } from "./motifs/MotifPlaybackCursor";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { swapKeys } from "./swapKeys";
@@ -75,6 +76,12 @@ import {
   placeLayer,
   refPath,
 } from "./compositionWalk";
+
+export interface MotifPerfRow extends MotifPlaybackSnapshot {
+  instanceKey: string;
+  layerId: string;
+  motifId: string;
+}
 
 /// Preview mode's resolved decode source for one media, produced by the injected
 /// `resolveSource` (PixiPreview gathers the store inputs and runs the pure
@@ -850,6 +857,16 @@ export class CompositionNode {
     return this.transitionNodes?.stats() ?? null;
   }
 
+  motifPerfRows(out: MotifPerfRow[]): void {
+    for (const { sprite } of this.activeMotifs.values()) {
+      if (sprite.displayObject.parent) out.push({ instanceKey: this.keyFor(sprite.layerId),
+        layerId: sprite.layerId, motifId: sprite.motifId, ...sprite.playbackSnapshot() });
+    }
+    for (const ref of this.refs.values()) {
+      if (ref.sprite.displayObject.parent) ref.sprite.node.motifPerfRows(out);
+    }
+  }
+
   swapsInFlight(): number {
     let n = this.swaps.size;
     for (const ref of this.refs.values()) n += ref.sprite.node.swapsInFlight();
@@ -955,6 +972,11 @@ export class CompositionNode {
     for (const ref of this.refs.values()) ref.sprite.node.refreshMotifs();
   }
 
+  invalidateMotifPlayback(): void {
+    for (const { sprite } of this.activeMotifs.values()) sprite.invalidatePlayback();
+    for (const ref of this.refs.values()) ref.sprite.node.invalidateMotifPlayback();
+  }
+
   /// Open the boundary clip's decode session ahead of the playhead (preview).
   /// Returns null when the clip cannot be built or its handle is stale.
   prewarmClip(layer: LayerSummary, path = ""): DecodeSession | null {
@@ -978,6 +1000,7 @@ export class CompositionNode {
   /// sweep re-acquires through the normal `ensureClip` path. The pool itself
   /// is the Compositor's to dispose.
   suspend(): void {
+    for (const { sprite } of this.activeMotifs.values()) sprite.invalidatePlayback();
     for (const c of this.clips.values()) {
       c.sprite.dispose();
       c.effects.dispose();
@@ -1691,6 +1714,7 @@ export class CompositionNode {
       tInLayerUs,
       durationUs,
       injected,
+      this.host.playing() && !this.host.scrubbing(),
     );
     tmpl.sprite.sprite.zIndex = z;
   }
