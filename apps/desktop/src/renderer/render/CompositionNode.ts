@@ -277,6 +277,8 @@ export interface CompositionNodeHost {
   noteUnsupported(mediaId: string): void;
   /// A visible VideoClip painted a stale or missing frame this sweep.
   noteLateLayer(): void;
+  noteFrameTiming?(startUs: number | null, endUs: number | null): void;
+  noteHeldScene?(rootUs: number | null): void;
 }
 
 export interface CompositionNodeInit {
@@ -447,6 +449,7 @@ export class CompositionNode {
   /// Most recent LOCAL composition time this node composited at; the swap
   /// poll reads it to find the visible frame.
   private lastTUs = 0;
+  private lastPresentedRootUs: number | null = null;
   private disposed = false;
   private readonly cropFilters = new Map<string, CropFilter>();
 
@@ -614,8 +617,10 @@ export class CompositionNode {
     // Forward underruns and source swaps still keep their valid held frame.
     if (this.host.mode === "preview" && !this.canPresentClipsAt(tUs) && this.container.children.length > 0) {
       this.host.noteLateLayer();
+      this.host.noteHeldScene?.(this.lastPresentedRootUs);
       return;
     }
+    this.lastPresentedRootUs = effectOpts.rootTimeUs!;
     const tRebuild = stageNow();
     this.container.removeChildren();
     stageAdd(STAGE.SceneRebuild, tRebuild);
@@ -1388,6 +1393,19 @@ export class CompositionNode {
         mediaDurationUs: media?.duration_us ?? null,
       });
       if (verdict === "late") this.host.noteLateLayer();
+    }
+    if (this.host.mode === "preview" && this.host.playing() && !this.host.scrubbing()) {
+      const pts = selected?.ptsUs ?? clip.boundFramePtsUs;
+      const duration = selected?.durationUs ?? clip.boundFrameDurationUs;
+      const groupRate = approximateTime(this.clock.rate);
+      const sourceRate = groupRate * layerRateNumber(params);
+      const rootUs = approximateTime(this.clock.origin) + tUs / groupRate;
+      const startUs = pts === null ? null : rootUs + (pts - srcTUs) / sourceRate;
+      // Unknown durations and EOS holds have no reliable expiry; keep them
+      // explicit instead of manufacturing a zero-lag sample.
+      const endUs = startUs === null || !duration || (media?.duration_us != null && srcTUs >= media.duration_us)
+        ? null : startUs + duration / sourceRate;
+      this.host.noteFrameTiming?.(startUs, endUs);
     }
     if (frame && selected) {
       if (isTenBitFrame(frame)) {

@@ -31,6 +31,7 @@ export class PlaybackEngine {
     this.compositor = init.compositor;
     this.ticker = init.ticker;
     this.audio = init.audio;
+    this.compositor.setOutputClock(() => this.audio.outputClockSnapshot());
     this.scrubCoalescer = new ScrubCoalescer({ debounceMs: 50, maxWaitMs: 180,
       onStableSeek: async (tUs) => {
         this.compositor.setScrubbing(false);
@@ -78,6 +79,7 @@ export class PlaybackEngine {
   getAudioMeter() { return this.audio.graph.meterSnapshot(); }
   resetWarmupStats(): void { this.audio.resetStats(); }
   dispose(): void {
+    this.compositor.setOutputClock(null);
     this.ticker.remove(this.tick, this);
     this.scrubCoalescer.cancel();
     for (const cleanup of this.cleanups) cleanup();

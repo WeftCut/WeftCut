@@ -40,6 +40,16 @@ function controllableBackend(): {
 const fakeBitmap = (): ImageBitmap => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap;
 
 describe("SlotFenceQueue", () => {
+  it("reports live stalled-slot age even when no more frames arrive", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(100);
+    const q = new SlotFenceQueue(); const { backend, probes } = controllableBackend();
+    q.setBackend(backend); q.submit("s", 0, fakeBitmap(), vi.fn());
+    now.mockReturnValue(190);
+    expect(q.turnover("s")).toEqual({ pending: 1, oldestMs: 90, completed: 0, waitP95Ms: null });
+    probes[0]!.signal();
+    expect(q.turnover("s")).toEqual({ pending: 0, oldestMs: 0, completed: 1, waitP95Ms: 90 });
+    q.dropFor("s"); expect(q.turnover("s")).toBeNull(); now.mockRestore();
+  });
   it("acks a slot once its probe signals, and reports the fence it took", () => {
     const q = new SlotFenceQueue();
     const { backend, probes } = controllableBackend();
@@ -296,12 +306,12 @@ describe("SlotFenceQueue", () => {
   // to INCORRECT — and must say so, or a bench leg publishes the fallback's cost
   // under the fence's name. In this environment there is no OffscreenCanvas
   // either, so the ladder bottoms out at `none`, which is the alarm reading.
-  it("falls back and acks synchronously when no device is registered", () => {
+  it("reports failure without releasing an unproven read when no device is registered", () => {
     const q = new SlotFenceQueue();
     const ack = vi.fn();
     const r = q.submit("s1", 0, fakeBitmap(), ack);
     expect(r.applied).not.toBe("rendererFence");
-    expect(ack).toHaveBeenCalledTimes(1);
+    expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(0);
   });
 
@@ -311,13 +321,13 @@ describe("SlotFenceQueue", () => {
     const ack = vi.fn();
     const r = q.submit("s1", 0, fakeBitmap(), ack);
     expect(r.applied).not.toBe("rendererFence");
-    expect(ack).toHaveBeenCalledTimes(1);
+    expect(ack).not.toHaveBeenCalled();
   });
 
   // The bottom rung must not be able to break the invariant either: `drawImage`
   // THROWS on a detached bitmap where the backend merely returns null, and a
   // throw escaping `submit` would strand the slot for good.
-  it("still acks when the fallback itself throws", () => {
+  it("does not ack when the fallback itself throws", () => {
     const q = new SlotFenceQueue();
     q.setBackend({
       submit: () => {
@@ -332,7 +342,7 @@ describe("SlotFenceQueue", () => {
     } as unknown as ImageBitmap;
 
     expect(() => q.submit("s1", 0, detached, ack)).not.toThrow();
-    expect(ack).toHaveBeenCalledTimes(1);
+    expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(0);
   });
 

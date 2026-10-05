@@ -45,6 +45,9 @@ export class SwTransport implements DecodeTransport {
   /// fire-and-forget `send`, so there is no async round-trip to coalesce
   /// behind.
   private lastSentTargetUs: number | null = null;
+  /// Discontinuity generation, not a refill sequence. Forward refills must
+  /// accept still-useful frames already travelling from the preceding horizon.
+  private requestId = 1;
 
   /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI, macOS
   /// VideoToolbox), forwarded to main on `open()` so the GPU/OS media engine
@@ -121,6 +124,17 @@ export class SwTransport implements DecodeTransport {
   private handleFrame(f: PreviewSwFrameMsg): void {
     if (f.streamId !== this.streamId) return;
     if (this._disposed) return;
+    try {
+      // The receipt is still returned for stale/corrupt frames. A new request
+      // never manufactures credit for bytes that remain in napi or IPC.
+      if (f.requestId !== undefined && f.requestId !== this.requestId) return;
+      this.acceptFrame(f);
+    } finally {
+      if (f.receipt) window.api.previewSw.consume({ streamId: this.streamId, receipt: f.receipt });
+    }
+  }
+
+  private acceptFrame(f: PreviewSwFrameMsg): void {
     let frame: TransportFrame;
     try {
       const init = {
@@ -187,8 +201,11 @@ export class SwTransport implements DecodeTransport {
   requestFrameAt(tUs: number): void {
     if (this._disposed) return;
     if (tUs === this.lastSentTargetUs) return;
+    if (this.lastSentTargetUs !== null && (tUs < this.lastSentTargetUs || tUs - this.lastSentTargetUs > 1_000_000)) {
+      this.requestId = (this.requestId + 1) >>> 0;
+    }
     this.lastSentTargetUs = tUs;
-    window.api.previewSw.requestFrameAt({ streamId: this.streamId, targetUs: tUs });
+    window.api.previewSw.requestFrameAt({ streamId: this.streamId, targetUs: tUs, requestId: this.requestId });
   }
 
   /// Drop the same-target dedup latch. Without this, a ring flush followed by a
@@ -198,6 +215,7 @@ export class SwTransport implements DecodeTransport {
   /// caller provides one.
   resetRequestDedup(): void {
     this.lastSentTargetUs = null;
+    this.requestId = (this.requestId + 1) >>> 0;
   }
 
   /// Tear down: unsubscribe from frame events, close the native session

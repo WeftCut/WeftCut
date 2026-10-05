@@ -16,6 +16,9 @@
 // Plan: docs/render.md
 
 import { Application, Container } from "pixi.js";
+import { PreviewSyncTracker, type PreviewSyncSnapshot } from "./previewSync";
+import { observePreviewSubmit } from "./previewPresentation";
+import type { ClockSyncSnapshot } from "./clock";
 import type { InjectedMotifFrames } from "./worker/motifStream";
 
 import { snapFrameFloor } from "../frames";
@@ -59,6 +62,7 @@ const UPCOMING_CLIP_PREWARM_US = 1_000_000;
 /// are safe to ship to a React state hook every 500ms; no live decoder
 /// or sprite references leak out.
 export interface CompositorPerfSnapshot {
+  sync?: PreviewSyncSnapshot;
   /// Most recent `compositeFrame` body duration in ms.
   compositeMsLast: number;
   /// Running peak since the last `resetPerfPeaks()`.
@@ -162,6 +166,11 @@ export interface CompositorInit {
 }
 
 export class Compositor {
+  private readonly sync = new PreviewSyncTracker();
+  private readOutputClock: (() => ClockSyncSnapshot) | null = null;
+  private stopObservingSubmit: (() => void) | null = null;
+
+  setOutputClock(reader: (() => ClockSyncSnapshot) | null): void { this.readOutputClock = reader; }
   readonly app: Application;
   readonly stage: Container;
   readonly pool: DecoderPool;
@@ -313,7 +322,16 @@ export class Compositor {
       noteLateLayer: () => {
         this.sweepLateLayers += 1;
       },
+      noteFrameTiming: (startUs, endUs) => this.sync.frame(startUs, endUs),
+      noteHeldScene: (startUs) => this.sync.hold(startUs, 1_000_000 * this.fpsDen / this.fpsNum),
     };
+    if (this.mode === "preview") {
+      this.stopObservingSubmit = observePreviewSubmit(init.app, () => {
+        if (this.playing && !this.scrubbing && !this.suspended && this.presentationVisible) {
+          this.sync.submit(performance.now(), this.readOutputClock?.() ?? null);
+        } else this.sync.interrupt();
+      });
+    }
     this.root = this.buildRoot(EMPTY_COMPOSITION, null);
     this.motifService = new MotifFrameService({
       projectSummary: () => this.projectSummary,
@@ -445,7 +463,8 @@ export class Compositor {
   setMasterPlayState(playing: boolean): void {
     // Master-clock release = new play session: reset the dropped-frame
     // counters so the indicator reflects this run, not history.
-    if (playing && !this.playing) this.underrun.beginPlay();
+    if (playing && !this.playing) { this.underrun.beginPlay(); this.sync.reset(); }
+    if (!playing) this.sync.interrupt();
     this.playing = playing;
   }
 
@@ -455,6 +474,7 @@ export class Compositor {
   /// every timeline click during playback would flash the indicator.
   noteSeekWhilePlaying(): void {
     this.underrun.noteSeekWhilePlaying();
+    this.sync.reset();
   }
 
   /// Session-end dropped + late counts for the LogBus summary row; at most
@@ -613,6 +633,7 @@ export class Compositor {
     this.unsupportedMedia = new Set<string>();
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
+    this.sync.begin(tUsSnapped);
 
     this.root.compositeVisual(tUsSnapped, effectInput ? { previewEffectsEnabled, effectInput } : { previewEffectsEnabled });
 
@@ -733,6 +754,7 @@ export class Compositor {
       upcomingPrewarm: this.upcomingPrewarm,
       swapsInFlight: this.root.swapsInFlight(),
       underrun: this.underrun.snapshot(),
+      sync: this.sync.snapshot(),
       transitions: this.root.transitionStats(),
       clips,
     };
@@ -743,6 +765,7 @@ export class Compositor {
   /// forever.
   resetPerfPeaks(): void {
     this.compositeMsMax = 0;
+    this.sync.reset();
   }
 
   /// The untransformed content size of a live layer of the OPEN composition,
@@ -771,6 +794,9 @@ export class Compositor {
   /// Release every sprite + decoder + the stage container. Does NOT
   /// touch the Application — the host owns its lifecycle.
   dispose(): void {
+    this.stopObservingSubmit?.();
+    this.stopObservingSubmit = null;
+    this.readOutputClock = null;
     if (this.disposed) return;
     this.disposed = true;
     // No final `onUnsupported` fire: the host's listener dies with this

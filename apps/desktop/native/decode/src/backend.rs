@@ -96,6 +96,8 @@ pub struct PreviewSwOpenInfoJs {
 /// follows them — not the source resolution.
 #[napi(object)]
 pub struct PreviewSwFrame {
+    pub receipt: u32,
+    pub request_id: u32,
     pub stream_id: String,
     pub pts_us: f64,
     pub dur_us: f64,
@@ -137,6 +139,8 @@ pub struct PreviewGpuProbeResult {
 /// when napi marshals the `Buffer` across the JS boundary.
 fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> PreviewSwFrame {
     PreviewSwFrame {
+        receipt: 0,
+        request_id: 0,
         stream_id: stream_id.to_string(),
         pts_us: f.pts_us as f64,
         dur_us: f.dur_us as f64,
@@ -384,12 +388,17 @@ impl NativeDecode {
             registry.set_frame_sink(Box::new(move |poke| {
                 use crate::preview_sw::SwFramePoke;
                 match poke {
-                    SwFramePoke::Frame { stream_id, frame } => {
+                    SwFramePoke::Frame {
+                        stream_id,
+                        frame,
+                        receipt,
+                        request_id,
+                    } => {
                         if let Some(tsfn) = sinks_for_cb.lock_recover().get(&stream_id) {
-                            let _ = tsfn.call(
-                                Ok(sw_frame_to_napi(&stream_id, frame)),
-                                ThreadsafeFunctionCallMode::NonBlocking,
-                            );
+                            let mut wire = sw_frame_to_napi(&stream_id, frame);
+                            wire.receipt = receipt;
+                            wire.request_id = request_id;
+                            let _ = tsfn.call(Ok(wire), ThreadsafeFunctionCallMode::NonBlocking);
                         }
                     }
                     SwFramePoke::Eof { stream_id } => tracing::debug!(%stream_id, "preview-sw eof"),
@@ -816,10 +825,23 @@ impl NativeDecode {
         &self,
         stream_id: String,
         target_us: f64,
+        request_id: Option<u32>,
     ) -> napi::Result<()> {
         self.preview_sw
-            .request_frame_at(&stream_id, target_us as i64)
+            .request_frame_at_with_id(&stream_id, target_us as i64, request_id)
             .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub fn preview_sw_enable_flow(&self, stream_id: String) -> napi::Result<()> {
+        self.preview_sw
+            .enable_flow(&stream_id)
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub fn preview_sw_consume(&self, stream_id: String, receipt: u32) {
+        self.preview_sw.consume(&stream_id, receipt);
     }
 
     /// Tear down a session: close the decode thread FIRST, THEN drop the

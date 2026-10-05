@@ -3,6 +3,12 @@ import { UPDATE_PRIORITY, type Application } from "pixi.js";
 import { STAGE, stageAdd, stageNow } from "./perf/stageTimers";
 
 const presentationState = new WeakMap<Application, boolean>();
+const submitObservers = new WeakMap<Application, () => void>();
+
+export function observePreviewSubmit(app: Application, observer: () => void): () => void {
+  submitObservers.set(app, observer);
+  return () => { if (submitObservers.get(app) === observer) submitObservers.delete(app); };
+}
 /// Per-app timed present. `Ticker.remove` matches on function identity, so the
 /// listener re-added on every re-show must be the SAME object each time.
 const timedPresents = new WeakMap<Application, () => void>();
@@ -28,6 +34,7 @@ function timedPresentFor(app: Application): () => void {
       const t = stageNow();
       try {
         app.render();
+        submitObservers.get(app)?.();
       } catch (e) {
         if (failures++ % RENDER_ERROR_LOG_EVERY === 0) {
           // eslint-disable-next-line no-console

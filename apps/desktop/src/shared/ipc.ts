@@ -289,6 +289,8 @@ export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummar
 /// follows these two, never the media's. The Compositor renormalizes with
 /// `media.width / textureW`, so the on-canvas rect is unchanged either way.
 export type PreviewSwFrameMsg = {
+  receipt?: number
+  requestId?: number
   streamId: string
   ptsUs: number
   durUs: number
@@ -533,7 +535,8 @@ export interface WeftcutApi {
     /// source on the videotoolbox lane; every frame then carries the matching
     /// `format` tag.
     open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: 'NV12' | 'I420P10' | null }): Promise<{ width: number; height: number }>
-    requestFrameAt(args: { streamId: string; targetUs: number }): void
+    requestFrameAt(args: { streamId: string; targetUs: number; requestId?: number }): void
+    consume(args: { streamId: string; receipt: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void
   }

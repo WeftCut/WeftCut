@@ -1012,6 +1012,7 @@ async function runCell(leg, tracks) {
         // high-water mark over the session, so it is read absolute like
         // `conversionPeak` below and never diffed.
         fenceWaitP50: c.handoff?.fenceWaitP50 ?? null,
+        slotTurnover: c.handoff?.slotTurnover ?? null,
         fencePendingQueuePeak: c.handoff?.fencePendingQueuePeak ?? null,
         // Both forced-spin counters are CUMULATIVE over the session —
         // `HandoffTimings` keeps them as maxima so they survive ring eviction —
@@ -1125,6 +1126,7 @@ async function runCell(leg, tracks) {
       replayGate,
       proxyState,
       compositeMsLast: endPerf?.compositeMsLast ?? null,
+      sync: endPerf?.sync ?? null,
       compositeMsMax: endPerf?.compositeMsMax ?? null,
       swapsInFlight: endPerf?.swapsInFlight ?? null,
       stages,

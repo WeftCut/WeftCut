@@ -76,6 +76,10 @@ export class PreviewAudioEngine {
   }
 
   snapshot(): PlaybackSnapshot { return this.state; }
+  outputClockSnapshot(): import("../clock").ClockSyncSnapshot {
+    if (this.state.phase === "playing") this.clock.tick();
+    return this.clock.syncSnapshot();
+  }
   isPlaying(): boolean { return this.state.phase === "playing"; }
   isPlayRequested(): boolean { return this.state.requestedPlaying; }
   positionUs(): number {

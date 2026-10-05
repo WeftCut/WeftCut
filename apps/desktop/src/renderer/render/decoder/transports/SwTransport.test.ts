@@ -14,6 +14,7 @@ import { SwTransport } from "./SwTransport";
 interface FakePreviewSwApi {
   open: ReturnType<typeof vi.fn>;
   requestFrameAt: ReturnType<typeof vi.fn>;
+  consume: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   onFrame: ReturnType<typeof vi.fn>;
 }
@@ -23,6 +24,7 @@ function installApi(): { api: FakePreviewSwApi; emit: (f: unknown) => void } {
   const api: FakePreviewSwApi = {
     open: vi.fn(async () => {}),
     requestFrameAt: vi.fn(() => {}),
+    consume: vi.fn(),
     close: vi.fn(() => {}),
     onFrame: vi.fn((cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
   };
@@ -36,6 +38,40 @@ afterEach(() => {
 });
 
 describe("SwTransport", () => {
+  it("returns receipts after acceptance, stale seeks, malformed payloads and consumer errors", async () => {
+    const { api, emit } = installApi();
+    const t = new SwTransport();
+    const got = vi.fn(); t.onFrame(got);
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    t.requestFrameAt(500_000); t.requestFrameAt(0);
+    const f = { streamId: "s1", data: new Uint8Array(6), width: 2, height: 2,
+      ptsUs: 0, durUs: 33_333, requestId: 2, receipt: 1 };
+    emit({ ...f, requestId: 1 });
+    expect(got).not.toHaveBeenCalled();
+    emit({ ...f, receipt: 2 }); expect(got).toHaveBeenCalledOnce();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    emit({ ...f, receipt: 3, data: new Uint8Array(0) });
+    got.mockImplementationOnce(() => { throw new Error("consumer failed"); });
+    expect(() => emit({ ...f, receipt: 4 })).toThrow("consumer failed");
+    expect(api.consume.mock.calls.map(([a]) => a.receipt)).toEqual([1, 2, 3, 4]);
+    emit({ ...f, streamId: "foreign", receipt: 5 });
+    expect(api.consume).toHaveBeenCalledTimes(4);
+    t.dispose(); emit({ ...f, receipt: 6 });
+    expect(api.consume).toHaveBeenCalledTimes(4);
+  });
+  it("keeps frames from an earlier forward refill, but discards them after a cache flush", async () => {
+    const { api, emit } = installApi(); const t = new SwTransport();
+    const got = vi.fn(); t.onFrame(got);
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    t.requestFrameAt(0); t.requestFrameAt(33_333);
+    expect(api.requestFrameAt.mock.calls.map(([a]) => a.requestId)).toEqual([1, 1]);
+    const f = { streamId: "s1", data: new Uint8Array(6), width: 2, height: 2,
+      ptsUs: 66_667, durUs: 33_333, requestId: 1, receipt: 1 };
+    emit(f); expect(got).toHaveBeenCalledOnce();
+    t.resetRequestDedup(); t.requestFrameAt(33_333);
+    emit({ ...f, receipt: 2 }); expect(got).toHaveBeenCalledOnce();
+    expect(api.consume).toHaveBeenCalledTimes(2); t.dispose();
+  });
   it("wraps NV12 frames zero-copy as NativeNv12Frame for its stream and ignores foreign ones", async () => {
     const { emit } = installApi();
     const t = new SwTransport();

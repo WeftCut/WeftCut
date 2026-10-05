@@ -24,11 +24,19 @@ the project opening is replaced.
 
 ## Clock and transport
 
-The audio hardware clock remains master. The session owns the single
+The audio output clock remains master. The session owns the single
 `ClockAnchor` used by all AudioMixers; the visual attachment reads its
 frame-snapped position. PCM scheduling uses unsnapped time. The session's
 16 ms timer publishes deduplicated Moment updates and refills a three-second
 audio schedule, without relying on visual frames.
+
+The anchor is taken on `AudioContext.currentTime`, where PCM is scheduled.
+Presentation projects `getOutputTimestamp()` to the current performance time;
+it does not add the render/output offset back. Missing/stale device stamps use
+the base/output latency properties when both exist, otherwise the render clock,
+and diagnostics name the fallback. The position holds at a new play/seek target
+until that audio reaches output. This is an output estimate, not a measurement
+of a physical speaker or display (ADR 0095).
 
 Play resumes the AudioContext and prepares the first 100 ms of PCM, then
 starts all audio against one anchor with a 10 ms lead. Video lookahead is
@@ -263,6 +271,16 @@ means for licensing.
   instead costs the whole GOP prefix every tick — measured 137× decode
   amplification on a 240-frame GOP, which is what made this lane unusable for
   long-GOP and 10-bit sources.
+- **SW delivery has end-to-end credits.** Production opens enable an eight-frame,
+  32 MiB payload window spanning native, napi and Electron IPC. The renderer
+  returns a unique receipt after accepting or discarding each frame, including
+  obsolete-seek and malformed frames. An oversized frame can travel alone; the
+  decoder can retain one additional pending frame. This bounds payloads, not
+  total process memory or IPC's transient copies. New seeks do not reset the
+  outstanding receipts. Requests carry an identity checked during decode and
+  again before renderer acceptance. An eight-ms cooperative work slice yields
+  between decoded frames and resumes the same cursor; it cannot interrupt a
+  blocking FFmpeg call. Renderer loss/reload closes the producer.
 - **HW→SW fallback is internal.** A HW decode error or device loss disposes the
   GPU transport and opens the SW transport **into the same `FrameRing`** — a
   fresh `streamId` so no stale GPU frame lands, the last HW frame held so

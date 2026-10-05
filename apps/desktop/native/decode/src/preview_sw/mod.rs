@@ -8,5 +8,6 @@
 //! (the napi addon wires that sink + registry).
 
 pub mod decoder;
+mod flow;
 mod session;
 pub use session::{PreviewSwRegistry, SwFramePoke};

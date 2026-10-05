@@ -25,7 +25,8 @@
 //
 // INVARIANT — every live submitted bitmap acks EXACTLY ONCE, and only after its
 // probe signals. `submit` either queues the ack or performs a completed fallback
-// before returning; nothing else may ack. The ack is deliberately independent
+// before returning; a failed fallback reports failure without ack so the caller
+// can close the stream. Nothing else may ack. The ack is deliberately independent
 // of PAINT: a frame the ring evicts, or one that arrives while the compositor is
 // suspended, still holds a slot and still acks. The one exception is a stream
 // tearing down (`dropFor`), where the slots cease to exist with the native
@@ -86,6 +87,8 @@ type StreamStats = {
   pendingPeak: number;
   forcedWaits: number;
   lastWaitMs: number | null;
+  completed: number;
+  waits: number[];
 };
 
 /// CPU-readback fallback: rasterize 1px of the bitmap and read it back, which
@@ -134,7 +137,8 @@ export class SlotFenceQueue {
   }
 
   /// Take responsibility for one delivered bitmap's slot. Returns the rung that
-  /// ran; the ack is either queued (fence) or already done (fallback).
+  /// ran; the ack is queued (fence), completed (readback), or withheld (`none`,
+  /// requiring the caller to close the stream).
   submit(streamId: string, slot: number, bmp: ImageBitmap, ack: () => void): SlotFenceSubmission {
     const t0 = performance.now();
     // The copy is what forces completion; the probe only reports it. Both are
@@ -159,18 +163,16 @@ export class SlotFenceQueue {
       this.schedulePump();
       return { applied: "rendererFence", drawMs, readMs: 0 };
     }
-    // The fallback may THROW where the backend merely returns null — `drawImage`
-    // rejects a detached bitmap. Swallowed rather than propagated so the ack below
-    // is unconditional: an escaping throw would strand this slot, and `pool_size`
-    // stranded slots wedge the session for good. A frame that forced nothing
-    // reports `none`, which is an alarm and not a cost.
+    // A failed CPU fallback proves nothing about the outstanding GPU read.
+    // Report `none` without ack: GpuTransport closes this stream and reports
+    // failure to its owner, which may switch lanes inside the same FrameRing.
     let cost: { drawMs: number; readMs: number } | null = null;
     try {
       cost = forceReadCompleteOnCpu(bmp);
     } catch {
       cost = null;
     }
-    ack();
+    if (cost) ack();
     return cost
       ? { applied: "readback", ...cost }
       : { applied: "none", drawMs: 0, readMs: 0 };
@@ -209,6 +211,7 @@ export class SlotFenceQueue {
       const stats = this.statsFor(p.streamId);
       stats.pending = Math.max(0, stats.pending - 1);
       stats.lastWaitMs = performance.now() - p.submittedAt;
+      stats.waits[stats.completed++ % 120] = stats.lastWaitMs;
       if (!done) stats.forcedWaits += 1;
       // `!done` is reachable only through the explicitly unsafe constructor
       // option. Keep it observable rather than silently presenting that result
@@ -271,10 +274,21 @@ export class SlotFenceQueue {
     return this.pending.length;
   }
 
+  turnover(streamId: string): { pending: number; oldestMs: number; completed: number; waitP95Ms: number | null } | null {
+    const s = this.statsByStream.get(streamId);
+    if (!s) return null;
+    const now = performance.now();
+    let oldestMs = 0;
+    for (const p of this.pending) if (p.streamId === streamId) oldestMs = Math.max(oldestMs, now - p.submittedAt);
+    const waits = [...s.waits].sort((a, b) => a - b);
+    return { pending: s.pending, oldestMs, completed: s.completed,
+      waitP95Ms: waits.length ? waits[Math.ceil(waits.length * 0.95) - 1]! : null };
+  }
+
   private statsFor(streamId: string): StreamStats {
     let s = this.statsByStream.get(streamId);
     if (!s) {
-      s = { pending: 0, pendingPeak: 0, forcedWaits: 0, lastWaitMs: null };
+      s = { pending: 0, pendingPeak: 0, forcedWaits: 0, lastWaitMs: null, completed: 0, waits: [] };
       this.statsByStream.set(streamId, s);
     }
     return s;

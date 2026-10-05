@@ -1,35 +1,102 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SyntheticClock } from "./clock";
-import { timeUsAtFrame } from "../frames";
+import { snapFrameRound } from "../frames";
 
 afterEach(() => vi.restoreAllMocks());
 
+describe("SyntheticClock audible output mapping", () => {
+  it("keeps the PCM scheduling anchor but presents the sample reaching the output", () => {
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const ctx = {
+      state: "running", currentTime: 100,
+      getOutputTimestamp: () => ({ contextTime: ctx.currentTime - 0.1, performanceTime: now }),
+    };
+    const clock = new SyntheticClock();
+    clock.bindAudio(ctx as unknown as AudioContext);
+    clock.play(0.01);
+    expect(clock.getAnchor()).toEqual({ compUs: 0, ctxTime: 100.01 });
+    now += 510; ctx.currentTime += 0.51;
+    clock.tick();
+    expect(clock.rawPositionUs()).toBeCloseTo(400_000, 4);
+    expect(clock.syncSnapshot()).toMatchObject({ source: "output-timestamp", timestampAgeMs: 0 });
+    expect(clock.syncSnapshot().renderCompUs).toBeCloseTo(500_000, 4);
+    expect(clock.syncSnapshot().outputCompUs).toBeCloseTo(400_000, 4);
+  });
+
+  it("holds the seek target until its scheduled audio reaches output, and resets on replay", () => {
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    const ctx = { state: "running", currentTime: 100,
+      getOutputTimestamp: () => ({ contextTime: ctx.currentTime - 0.1, performanceTime: 1000 }) };
+    const c = new SyntheticClock(); c.bindAudio(ctx as unknown as AudioContext);
+    c.setPosition(5_000_000); c.play(0.01);
+    ctx.currentTime += 0.05;
+    c.tick(); expect(c.rawPositionUs()).toBe(5_000_000);
+    ctx.currentTime += 0.1;
+    c.tick(); expect(c.rawPositionUs()).toBeCloseTo(5_040_000, 4);
+    c.pause(); const held = c.rawPositionUs();
+    ctx.currentTime = 200; c.play(); c.tick();
+    expect(c.rawPositionUs()).toBe(held);
+  });
+
+  it("exposes an increased output delay without reanchoring or moving the playhead backwards", () => {
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    let delay = 0.05;
+    const ctx = { state: "running", currentTime: 100,
+      getOutputTimestamp: () => ({ contextTime: ctx.currentTime - delay, performanceTime: 1000 }) };
+    const c = new SyntheticClock(); c.bindAudio(ctx as unknown as AudioContext); c.play();
+    const anchor = c.getAnchor();
+    ctx.currentTime = 101; c.tick();
+    delay = 0.2; c.tick();
+    expect(c.rawPositionUs()).toBeCloseTo(950_000, 4);
+    expect(c.syncSnapshot().outputCompUs).toBeCloseTo(800_000, 4);
+    expect(c.getAnchor()).toBe(anchor);
+    ctx.currentTime = 101.3; c.tick();
+    expect(c.rawPositionUs()).toBeCloseTo(1_100_000, 4);
+  });
+
+  it("labels stale, missing and throwing timestamp fallbacks and estimates latency only when available", () => {
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    const ctx = { state: "running", currentTime: 100, baseLatency: 0.01, outputLatency: 0.09,
+      getOutputTimestamp: () => ({ contextTime: 99, performanceTime: 1 }) };
+    const c = new SyntheticClock(); c.bindAudio(ctx as unknown as AudioContext); c.play();
+    ctx.currentTime = 101; c.tick();
+    expect(c.rawPositionUs()).toBeCloseTo(900_000, 4);
+    expect(c.syncSnapshot().source).toBe("latency-estimate");
+    ctx.getOutputTimestamp = () => { throw new Error("device unavailable"); };
+    c.tick(); expect(c.syncSnapshot().source).toBe("latency-estimate");
+    ctx.outputLatency = NaN; c.tick();
+    expect(c.syncSnapshot().source).toBe("render-clock");
+    expect(c.rawPositionUs()).toBeCloseTo(1_000_000, 4);
+  });
+});
+
 describe("SyntheticClock audio quantum interpolation", () => {
-  it("recalibrates on seek, suspension and stale output timestamps", () => {
+  it("reanchors scheduling on seek/resume and labels stale timestamp estimates", () => {
     let now = 1000;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     let stamp = { contextTime: 99.95, performanceTime: now };
-    const ctx = { state: "running", currentTime: 100, getOutputTimestamp: () => stamp };
+    const ctx = { state: "running", currentTime: 100, baseLatency: 0, outputLatency: 0.05, getOutputTimestamp: () => stamp };
     const clock = new SyntheticClock();
     clock.bindFps(60, 1);
     clock.bindAudio(ctx as unknown as AudioContext);
     clock.play();
     now += 1000; ctx.currentTime += 1; stamp = { contextTime: 100.95, performanceTime: now };
-    expect(clock.tick().tUs).toBe(1_000_000);
+    expect(clock.tick().tUs).toBe(950_000);
     clock.setPosition(5_000_000);
     expect(clock.getAnchor()).toEqual({ compUs: 5_000_000, ctxTime: 101 });
-    now += 1000; ctx.currentTime += 1; // stale timestamp: use currentTime
-    expect(clock.tick().tUs).toBe(6_000_000);
+    now += 1000; ctx.currentTime += 1; // stale timestamp: use latency properties
+    expect(clock.tick().tUs).toBe(5_950_000);
     stamp = { contextTime: 101.95, performanceTime: now };
-    expect(clock.tick().tUs).toBe(6_000_000);
+    expect(clock.tick().tUs).toBe(5_950_000);
     ctx.state = "suspended";
     clock.tick();
     expect(clock.getAnchor()).toBeNull();
     ctx.state = "running"; ctx.currentTime = 500;
     stamp = { contextTime: 499.95, performanceTime: now };
-    expect(clock.tick().tUs).toBe(6_000_000);
+    expect(clock.tick().tUs).toBe(5_950_000);
     now += 1000; ctx.currentTime += 1; stamp = { contextTime: 500.95, performanceTime: now };
-    expect(clock.tick().tUs).toBe(7_000_000);
+    expect(clock.tick().tUs).toBe(6_900_000);
   });
 
   it("presents every 60 fps frame across a 512-sample audio device quantum at any start phase", () => {
@@ -51,7 +118,8 @@ describe("SyntheticClock audio quantum interpolation", () => {
       const anchor = clock.getAnchor();
       for (let frame = 1; frame <= 600; frame++) {
         now = 1000 + phase + frame * 1000 / 60;
-        expect(clock.tick().tUs, `phase ${phase}, frame ${frame}`).toBe(timeUsAtFrame(frame, 60, 1));
+        const audibleUs = Math.max(0, phase * 1000 + frame * 1_000_000 / 60 - 50_000);
+        expect(clock.tick().tUs, `phase ${phase}, frame ${frame}`).toBe(snapFrameRound(audibleUs, 60, 1));
       }
       // Visual interpolation never shifts audio scheduling's anchor.
       expect(clock.getAnchor()).toBe(anchor);

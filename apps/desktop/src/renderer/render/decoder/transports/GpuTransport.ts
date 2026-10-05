@@ -261,6 +261,12 @@ export class GpuTransport implements DecodeTransport {
         const applied = queue.submit(this.streamId, data.slot, data.bitmap, () =>
           this.postSlotAck(data.slot, data.gen),
         );
+        if (applied.applied === "none") {
+          data.bitmap.close();
+          this.errorCb?.("GPU slot read completion could not be verified");
+          void this.dispose().catch(() => {});
+          return;
+        }
         barrierApplied = applied.applied;
         barrierDrawMs = applied.drawMs;
         barrierReadMs = applied.readMs;
@@ -308,7 +314,8 @@ export class GpuTransport implements DecodeTransport {
   /// Preload handoff timings for this session, or null before the first
   /// instrumented frame. Diagnostics only — nothing decides on it.
   handoffTimings(): HandoffTimingSummary | null {
-    return this.timings.summary();
+    const summary = this.timings.summary();
+    return summary ? { ...summary, slotTurnover: sharedSlotFenceQueue().turnover(this.streamId) } : null;
   }
 
   onFrame(cb: (bitmap: ImageBitmap, ptsUs: number, durUs: number) => void): void {

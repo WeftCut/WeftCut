@@ -35,6 +35,7 @@ export interface FenceHandoffStats {
 }
 
 export interface HandoffTimingSummary {
+  slotTurnover?: { pending: number; oldestMs: number; completed: number; waitP95Ms: number | null } | null;
   /// Samples in the window.
   n: number;
   /// The synchronous read-completion barrier, ms.

@@ -9,12 +9,13 @@
 //!
 //! What this DROPS vs. the GPU mirror (and why): there is no D3D11 anywhere — no
 //! shared-texture pool, no keyed mutex, no slot free-list, no `ConsumeAck`
-//! round-trip, and none of the decode-bench timing probes. The GPU path needs all
+//! round-trip, and none of the decode-bench timing probes. Software delivery has
+//! renderer receipts for flow control, independent of GPU ownership. The GPU path needs all
 //! of that because a decoded surface is a *borrowed* GPU texture valid only until
 //! the next `next_frame`, so the renderer must ack before the slot is reused. Here
 //! the frame bytes ARE the payload: [`SwFrame`] is fully owned and `Send`, so it
 //! travels through the sink and outlives the stream — no coherence protocol
-//! needed, and no background refill pump.
+//! needed. Credits and cooperative slice wake-ups resume the forward cursor.
 //!
 //! Requests are served forward-continuing (a seek only when the target moves
 //! backward or lands too far ahead) and coalesced latest-wins at the loop top —
@@ -31,12 +32,13 @@
 //! view the public API is `dead_code` (the unit test exercises it).
 #![allow(dead_code)]
 
+use super::flow::PreviewFlow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::decoder::{DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream};
 use crate::recover::{panic_message, LockExt};
@@ -111,7 +113,12 @@ pub enum SwFramePoke {
     /// A decoded frame, owned packed bytes (`frame.format` names the layout:
     /// NV12 or I420P10) + timing/color. The consumer keeps or drops it freely —
     /// nothing on the session thread references it after this.
-    Frame { stream_id: String, frame: SwFrame },
+    Frame {
+        stream_id: String,
+        frame: SwFrame,
+        receipt: u32,
+        request_id: u32,
+    },
     /// The stream reached its end; no more frames until a `request_frame_at` seeks
     /// backward.
     Eof { stream_id: String },
@@ -127,11 +134,12 @@ pub enum SwFramePoke {
 /// `PokeSink`.
 type FrameSink = Arc<Mutex<Option<Box<dyn Fn(SwFramePoke) + Send>>>>;
 
-/// Control messages posted to a session thread by the registry. No `ConsumeAck`:
-/// with owned frame bytes there is no slot to release.
+/// Control messages posted to a session thread by the registry. Renderer
+/// receipts release byte credits and wake the cursor; no GPU slot is involved.
 enum SwSessionMsg {
     /// Seek to this source-microsecond target and decode a bounded burst forward.
-    RequestFrameAt(i64),
+    RequestFrameAt(i64, u32),
+    Wake,
     /// Tear down and exit the thread.
     Close,
 }
@@ -140,6 +148,7 @@ enum SwSessionMsg {
 /// this side keeps only the command channel + shutdown flag + done signal +
 /// join handle.
 struct Session {
+    flow: Arc<PreviewFlow>,
     tx: Sender<SwSessionMsg>,
     /// Set (Release) by `close` BEFORE its `Close` send; the thread checks it
     /// (Acquire) on each message and inside a burst, and bails. The loop-top
@@ -188,6 +197,7 @@ fn emit(sink: &FrameSink, poke: SwFramePoke) {
 /// Owned by the session thread, never crosses a boundary.
 #[derive(Default)]
 struct PumpCursor {
+    needs_resume: bool,
     /// A frame decoded past the previous request's horizon, held so the next
     /// forward request resumes ON it rather than decoding it a second time.
     pending: Option<SwFrame>,
@@ -277,6 +287,7 @@ fn robust_seek_and_probe(
 /// stays open for retry. Once `shutdown` is observed set, returns without
 /// emitting anything further — no `Error` poke, this is a normal teardown, not a
 /// failure.
+#[allow(clippy::too_many_arguments)]
 fn serve_request(
     stream: &mut SwVideoStream,
     cursor: &mut PumpCursor,
@@ -284,13 +295,24 @@ fn serve_request(
     sink: &FrameSink,
     stream_id: &str,
     shutdown: &AtomicBool,
+    flow: &PreviewFlow,
+    request_id: u32,
 ) {
+    cursor.needs_resume = false;
+    if !flow.current(request_id) {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_millis(8);
     // Saturating, as the GPU twin is at every equivalent site: `target_us`
     // arrives as `f64 as i64` from napi, so an absurd JS value sits at the i64
     // extremes, where plain `-` panics in debug and wraps (misclassifying
     // forward/backward) in release.
     let forward = cursor.last_target_us.is_some_and(|lt| {
-        target_us >= lt && target_us.saturating_sub(cursor.frontier_us) <= FORWARD_CONTINUE_US
+        // A cooperative yield can leave a long GOP's frontier far behind the
+        // SAME target. Resuming that target must never seek back to its keyframe.
+        target_us == lt
+            || (target_us > lt
+                && target_us.saturating_sub(cursor.frontier_us) <= FORWARD_CONTINUE_US)
     });
 
     // Forward past a drained stream: there is nothing left to decode and the
@@ -348,6 +370,13 @@ fn serve_request(
 
     let mut emitted = 0usize;
     loop {
+        if !flow.current(request_id) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            cursor.needs_resume = true;
+            return;
+        }
         let frame = match cursor.pending.take() {
             Some(f) => f,
             None => {
@@ -406,14 +435,21 @@ fn serve_request(
         }
         // No Frame poke may fire once teardown is observed — the consumer side
         // is being torn down and must not receive late frames.
-        if shutdown.load(Ordering::Acquire) {
+        if shutdown.load(Ordering::Acquire) || !flow.current(request_id) {
+            cursor.pending = Some(frame);
             return;
         }
+        let Some(receipt) = flow.acquire(frame.data.len()) else {
+            cursor.pending = Some(frame);
+            return; // the next real renderer receipt wakes this exact cursor
+        };
         emit(
             sink,
             SwFramePoke::Frame {
                 stream_id: stream_id.to_string(),
                 frame,
+                receipt,
+                request_id,
             },
         );
         emitted += 1;
@@ -427,11 +463,9 @@ fn serve_request(
 /// `open`, then run a blocking message loop until `Close`, the `shutdown` flag,
 /// or the sender drops.
 ///
-/// A plain blocking `rx.recv()` is sufficient here (unlike the GPU mirror's
-/// `recv_timeout` pump): there is no background slot-refill work to do between
-/// messages, so the thread simply sleeps until the next command. Each wake-up
-/// then drains the channel non-blockingly and coalesces latest-wins before
-/// serving — see the loop body.
+/// Idle/credit-blocked sessions sleep until a command or receipt. A work-slice
+/// yield uses a short timed wake-up to resume without waiting for a new target.
+/// Each wake-up drains commands and coalesces the newest target before serving.
 #[allow(clippy::too_many_arguments)]
 fn session_thread(
     stream_id: String,
@@ -444,6 +478,7 @@ fn session_thread(
     init_tx: Sender<Result<PreviewSwOpenInfo, String>>,
     sink: FrameSink,
     shutdown: Arc<AtomicBool>,
+    flow: Arc<PreviewFlow>,
 ) {
     let mut stream = match SwVideoStream::open_with_accel(&path, out_format, accel, out_scale) {
         Ok(s) => s,
@@ -466,7 +501,21 @@ fn session_thread(
     // lets consecutive requests share one forward decode pass.
     let mut cursor = PumpCursor::default();
 
-    while let Ok(first) = rx.recv() {
+    let mut demand = None;
+    let mut last_generation = None;
+    loop {
+        let first = if cursor.needs_resume {
+            match rx.recv_timeout(Duration::from_millis(1)) {
+                Ok(msg) => msg,
+                Err(mpsc::RecvTimeoutError::Timeout) => SwSessionMsg::Wake,
+                Err(_) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(msg) => msg,
+                Err(_) => break,
+            }
+        };
         // Teardown preempts the queued backlog: the channel is FIFO, so `Close`
         // sits behind every pending `RequestFrameAt`; the flag doesn't.
         if shutdown.load(Ordering::Acquire) {
@@ -482,14 +531,16 @@ fn session_thread(
         // request. The shutdown flag stays the teardown authority — see the
         // `Session::shutdown` field. No timers, no extra threads — purely a
         // non-blocking sweep of what recv() woke up to.
-        let mut target_us = match first {
-            SwSessionMsg::RequestFrameAt(t) => t,
+        match first {
+            SwSessionMsg::RequestFrameAt(t, id) => demand = Some((t, id)),
+            SwSessionMsg::Wake => {}
             SwSessionMsg::Close => break,
-        };
+        }
         let mut close_drained = false;
         loop {
             match rx.try_recv() {
-                Ok(SwSessionMsg::RequestFrameAt(t)) => target_us = t,
+                Ok(SwSessionMsg::RequestFrameAt(t, id)) => demand = Some((t, id)),
+                Ok(SwSessionMsg::Wake) => {}
                 Ok(SwSessionMsg::Close) => {
                     close_drained = true;
                     break;
@@ -505,6 +556,16 @@ fn session_thread(
         if close_drained || shutdown.load(Ordering::Acquire) {
             break;
         }
+        let Some((target_us, request_id)) = demand else {
+            continue;
+        };
+        // Production ids represent discontinuities. A renderer cache flush
+        // must redeliver even the exact same target, while normal forward
+        // refills preserve the cursor and all useful in-flight frames.
+        if flow.enabled() && last_generation != Some(request_id) {
+            cursor.invalidate();
+        }
+        last_generation = Some(request_id);
         // Catch a decode panic and surface it as an `Error` poke (see the
         // `recover` module docs, hazard 2), then stop: the stream's libav state
         // is suspect after an unwind, so we never touch it again — which is
@@ -518,6 +579,8 @@ fn session_thread(
                 &sink,
                 &stream_id,
                 &shutdown,
+                &flow,
+                request_id,
             );
         }));
         if let Err(payload) = outcome {
@@ -631,6 +694,8 @@ impl PreviewSwRegistry {
         let path_owned = path.to_string();
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_thread = Arc::clone(&shutdown);
+        let flow = Arc::new(PreviewFlow::default());
+        let flow_for_thread = Arc::clone(&flow);
 
         let join = thread::Builder::new()
             .name(format!("preview-sw-{sid}"))
@@ -650,6 +715,7 @@ impl PreviewSwRegistry {
                     init_tx,
                     sink,
                     shutdown_for_thread,
+                    flow_for_thread,
                 )
             })
             .map_err(|e| format!("spawn preview-sw session thread failed: {e}"))?;
@@ -659,6 +725,7 @@ impl PreviewSwRegistry {
                 sessions.insert(
                     stream_id.to_string(),
                     Session {
+                        flow,
                         tx: cmd_tx,
                         shutdown,
                         done_rx,
@@ -685,14 +752,48 @@ impl PreviewSwRegistry {
     /// Ask a session to decode toward `target_us`. Fire-and-forget: the thread
     /// seeks + decodes the burst and pokes each frame out through the sink.
     pub fn request_frame_at(&self, stream_id: &str, target_us: i64) -> Result<(), String> {
+        self.request_frame_at_with_id(stream_id, target_us, None)
+    }
+
+    pub fn request_frame_at_with_id(
+        &self,
+        stream_id: &str,
+        target_us: i64,
+        request_id: Option<u32>,
+    ) -> Result<(), String> {
         let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-sw session '{stream_id}'"))?;
+        let id = request_id.unwrap_or_else(|| {
+            session
+                .flow
+                .request_id
+                .load(Ordering::Acquire)
+                .wrapping_add(1)
+        });
+        session.flow.request_id.store(id, Ordering::Release);
         session
             .tx
-            .send(SwSessionMsg::RequestFrameAt(target_us))
+            .send(SwSessionMsg::RequestFrameAt(target_us, id))
             .map_err(|_| format!("preview-sw session '{stream_id}' thread is gone"))
+    }
+
+    pub fn enable_flow(&self, stream_id: &str) -> Result<(), String> {
+        let sessions = self.sessions.lock_recover();
+        let s = sessions
+            .get(stream_id)
+            .ok_or_else(|| format!("no preview-sw session '{stream_id}'"))?;
+        s.flow.enable();
+        Ok(())
+    }
+
+    pub fn consume(&self, stream_id: &str, receipt: u32) {
+        if let Some(s) = self.sessions.lock_recover().get(stream_id) {
+            if s.flow.release(receipt) {
+                let _ = s.tx.send(SwSessionMsg::Wake);
+            }
+        }
     }
 
     /// Signal the session thread to tear down and wait a BOUNDED grace
@@ -784,6 +885,7 @@ impl PreviewSwRegistry {
         self.sessions.lock_recover().insert(
             stream_id.to_string(),
             Session {
+                flow: Arc::new(PreviewFlow::default()),
                 tx: cmd_tx,
                 shutdown: Arc::new(AtomicBool::new(false)),
                 done_rx,
@@ -798,6 +900,62 @@ mod tests {
     use super::*;
     use crate::test_wait::wait_for;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn credits_bound_real_decode_delivery_and_seek_survives_pending_receipts() {
+        let reg = PreviewSwRegistry::new();
+        let (tx, rx) = mpsc::channel();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame {
+                receipt,
+                request_id,
+                frame,
+                ..
+            } = poke
+            {
+                let _ = tx.send((receipt, request_id, frame.pts_us));
+            }
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("credit", p).unwrap();
+        reg.enable_flow("credit").unwrap();
+        reg.request_frame_at_with_id("credit", 0, Some(1)).unwrap();
+        let mut receipts = Vec::new();
+        for _ in 0..5 {
+            receipts.push(rx.recv_timeout(Duration::from_secs(2)).unwrap().0);
+        }
+        reg.request_frame_at_with_id("credit", 500_000, Some(2))
+            .unwrap();
+        for _ in 0..3 {
+            receipts.push(rx.recv_timeout(Duration::from_secs(2)).unwrap().0);
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(80)).is_err(),
+            "unreceived bytes must stop production"
+        );
+        reg.request_frame_at_with_id("credit", 0, Some(3)).unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_millis(80)).is_err(),
+            "seek must not reset in-flight credit"
+        );
+        reg.consume("credit", receipts[0]);
+        reg.consume("credit", receipts[0]); // duplicate is not a second credit
+        let (_, id, pts) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(pts, 0);
+        assert!(rx.recv_timeout(Duration::from_millis(80)).is_err());
+        // Cache invalidation at an identical target must redeliver its first
+        // frame, rather than resuming beyond pixels the renderer discarded.
+        reg.request_frame_at_with_id("credit", 0, Some(4)).unwrap();
+        reg.consume("credit", receipts[1]);
+        let (_, id, pts) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(id, 4);
+        assert_eq!(pts, 0);
+        reg.close("credit").unwrap(); // close must not wait for missing receipts
+    }
 
     #[test]
     fn open_then_request_delivers_a_frame() {

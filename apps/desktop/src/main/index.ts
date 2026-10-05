@@ -46,7 +46,7 @@ import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu, hwBudget } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
-import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
+import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
 import { MAIN_WINDOW_MINIMUM_SIZE, MAIN_WINDOW_GEOMETRY_DEFAULTS, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
@@ -1701,16 +1701,20 @@ app.whenReady().then(async () => {
     if (!win) throw new Error('previewSw:open — no window for sender')
     return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null, a.cadenceDiv ?? null, a.outFormat ?? null)
   })
-  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
+  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number; requestId?: number }) => {
     // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
     // race) — this is a fire-and-forget .on listener, not .handle, so an uncaught
     // throw here would be an uncaught exception in the main process. Swallow.
-    try { requestFrameAtPreviewSw(ndBackend(), a.streamId, a.targetUs) }
+    try { requestFrameAtPreviewSw(ndBackend(), a.streamId, a.targetUs, a.requestId) }
     catch (e) { console.warn('[main] previewSw:requestFrameAt failed', e) }
   })
   ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
     try { closePreviewSw(ndBackend(), a.streamId) }
     catch (e) { console.warn('[main] previewSw:close failed', e) }
+  })
+  ipcMain.on('previewSw:consume', (e, a: { streamId: string; receipt: number }) => {
+    try { consumePreviewSw(ndBackend(), e.sender.id, a.streamId, a.receipt) }
+    catch (e) { console.warn('[main] previewSw:consume failed', e) }
   })
 
   // Native SOFTWARE export-decode (blind-spot originals) — the EXPORT-side

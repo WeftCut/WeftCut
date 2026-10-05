@@ -429,23 +429,20 @@ describe("GpuTransport", () => {
   });
 
   it("does not report a fence when there is no device to take one on", async () => {
-    const { getPort } = installFakePreviewGpu();
+    const { api, getPort } = installFakePreviewGpu();
     // No device registered — jsdom has no OffscreenCanvas either, so the ladder
     // bottoms out and reports `none`, which is the correctness alarm.
     const t = new GpuTransport();
-    t.onFrame(() => {});
+    const delivered = vi.fn(); const error = vi.fn();
+    t.onFrame(delivered); t.onError(error);
     await t.open({ streamId: "rf6", path: "C:/x.mp4" });
     const port = getPort()!;
     port.onmessage!({ data: delegatedFrame("rf6", 0, 10, makeFakeBitmap(1)) });
 
-    expect(t.handoffTimings()!.barrierModeObserved).not.toBe("rendererFence");
-    // ...and the slot is still released, synchronously.
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "consumeAck",
-      streamId: "rf6",
-      slot: 0,
-      gen: 1,
-    });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith("GPU slot read completion could not be verified");
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(api.close).toHaveBeenCalled();
     t.dispose();
   });
 

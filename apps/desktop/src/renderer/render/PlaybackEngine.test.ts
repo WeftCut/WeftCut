@@ -13,7 +13,7 @@ it("detaching/replacing presentation leaves the session playing and unsubscribes
     resume: async () => {}, dispose: vi.fn() } as unknown as AudioGraph;
   const audio = new PreviewAudioEngine(graph, () => null);
   audio.setProject(summaryFixture(), ROOT_ID);
-  const compositor = { setMasterPlayState: vi.fn(), setScrubbing: vi.fn() } as unknown as Compositor;
+  const compositor = { setMasterPlayState: vi.fn(), setScrubbing: vi.fn(), setOutputClock: vi.fn() } as unknown as Compositor;
   const ticker = { add: vi.fn(), remove: vi.fn() } as unknown as Ticker;
   const first = new PlaybackEngine({ compositor, ticker, audio });
   audio.play();
@@ -23,7 +23,7 @@ it("detaching/replacing presentation leaves the session playing and unsubscribes
   vi.mocked(compositor.setMasterPlayState).mockClear();
   expect(audio.isPlaying()).toBe(true);
   expect(graph.dispose).not.toHaveBeenCalled();
-  const secondCompositor = { setMasterPlayState: vi.fn(), setScrubbing: vi.fn() } as unknown as Compositor;
+  const secondCompositor = { setMasterPlayState: vi.fn(), setScrubbing: vi.fn(), setOutputClock: vi.fn() } as unknown as Compositor;
   const second = new PlaybackEngine({ compositor: secondCompositor, ticker, audio });
   expect(secondCompositor.setMasterPlayState).toHaveBeenCalledWith(true);
   audio.pause();

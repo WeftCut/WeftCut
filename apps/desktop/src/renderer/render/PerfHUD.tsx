@@ -387,6 +387,18 @@ function PerfDashboard({
           title="Stop command handling time. Device latency estimates are separate; this is not a physical speaker measurement."
         />
         <StatTile
+          label="Video late / lead"
+          value={`${snap?.sync?.videoLateMs == null ? "—" : formatMs(snap.sync.videoLateMs)} / ${snap?.sync?.videoLeadMs == null ? "—" : formatMs(snap.sync.videoLeadMs)} ms`}
+          meta={`${snap?.sync?.clock?.source ?? "unavailable"} · missing ${snap?.sync?.missingLayers ?? 0} · held scenes ${snap?.sync?.heldScenes ?? 0}`}
+          title="Worst visible frame interval relative to estimated audio output at render submission. Includes held pixels and time remapping; not physical screen/speaker measurement. Unknown frame duration has no measured expiry."
+        />
+        <StatTile
+          label="Submit p95 / p99"
+          value={`${snap?.sync?.submitIntervalMs == null ? "—" : formatMs(snap.sync.submitIntervalMs.p95)} / ${snap?.sync?.submitIntervalMs == null ? "—" : formatMs(snap.sync.submitIntervalMs.p99)} ms`}
+          meta={`clock skew ${snap?.sync?.clockSkewMs == null ? "—" : formatMs(snap.sync.clockSkewMs)} ms · ${snap?.sync?.samples ?? 0} submissions`}
+          title="Last 600 active render-submission intervals. Clock skew is composite target minus estimated audio output; positive means ahead. Zero decode drops does not imply smooth presentation."
+        />
+        <StatTile
           label="Drop / late"
           value={
             (snap?.underrun?.droppedFrames ?? 0) === 0 &&
@@ -570,7 +582,9 @@ function PerfDashboard({
                             `max ${clip.handoff.barrierMax.toFixed(2)} ms · ` +
                             `createImageBitmap p50 ${clip.handoff.cibP50.toFixed(2)} · ` +
                             `whole handoff p50 ${clip.handoff.residentP50.toFixed(2)} · ` +
-                            `n=${clip.handoff.n}`
+                            `n=${clip.handoff.n} · slots pending ${clip.handoff.slotTurnover?.pending ?? "—"}` +
+                            ` · oldest ${clip.handoff.slotTurnover?.oldestMs.toFixed(1) ?? "—"} ms` +
+                            ` · turn p95 ${clip.handoff.slotTurnover?.waitP95Ms?.toFixed(1) ?? "—"} ms`
                           }
                         >
                           {clip.handoff.barrierP50.toFixed(1)}/{clip.handoff.barrierP95.toFixed(1)}
