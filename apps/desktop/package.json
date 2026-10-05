@@ -30,6 +30,8 @@
     "typecheck": "npm run build:wasm && tsc -b",
     "test": "npm run build:wasm && vitest run --exclude '**/*.browser.test.ts'",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\" \"e2e/**/*.test.mjs\"",
+    "bench:calibration": "node e2e/scripts/performance-calibration-prototype.mjs",
+    "bench:calibration:fixtures": "node e2e/scripts/gen-calibration-fixtures.mjs",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "napi:build:decode": "node scripts/napi-build-decode.mjs",
