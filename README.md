@@ -18,6 +18,7 @@
   <a href="https://github.com/WeftCut/WeftCut/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/github/v/release/WeftCut/WeftCut?style=flat-square&label=Download&labelColor=475569&color=6696E6&logo=github&logoColor=white" /></a>
   <img alt="Runs on Windows, macOS and Linux" src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-5B7196?style=flat-square&labelColor=475569" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/WeftCut/WeftCut?style=flat-square&label=License&labelColor=475569&color=5B7196" /></a>
+  <a href="https://discord.gg/SjsFCpzDe"><img alt="Join the WeftCut Discord community" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=flat-square&labelColor=475569&logo=discord&logoColor=white" /></a>
   <a href="https://glama.ai/mcp/servers/WeftCut/WeftCut"><img alt="Glama MCP server score" src="https://glama.ai/mcp/servers/WeftCut/WeftCut/badges/score.svg" /></a>
 </p>
 
@@ -167,6 +168,10 @@ Start with **[architecture](docs/architecture.md)** for the system map, or **[MC
 - **[v1 target](https://github.com/WeftCut/WeftCut/issues/11)** — release scope and open work, tracked as an issue: `docs/` describes what exists today.
 
 </details>
+
+## Community
+
+Join the [WeftCut Discord community](https://discord.gg/SjsFCpzDe) to share feedback, discuss feature ideas, and get help. Please use [GitHub Issues](https://github.com/WeftCut/WeftCut/issues) for bug reports and feature requests so they can be tracked.
 
 ## Maintainer
 
