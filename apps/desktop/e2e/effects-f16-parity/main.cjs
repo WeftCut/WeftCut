@@ -28,8 +28,8 @@ app.whenReady().then(() => {
     },
   });
 
-  win.webContents.on("console-message", (_e, _level, msg) => {
-    process.stdout.write(`CONSOLE ${msg}\n`);
+  win.webContents.on("console-message", ({ message }) => {
+    process.stdout.write(`CONSOLE ${message}\n`);
   });
 
   ipcMain.on("gate-result", (_e, data) => finish("GATE_RESULT", data));

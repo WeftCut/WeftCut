@@ -41,8 +41,8 @@ app.whenReady().then(() => {
     },
   });
 
-  win.webContents.on("console-message", (_e, _level, msg) => {
-    process.stdout.write(`CONSOLE ${msg}\n`);
+  win.webContents.on("console-message", ({ message }) => {
+    process.stdout.write(`CONSOLE ${message}\n`);
   });
 
   ipcMain.on("wgsl-result", (_e, data) => finish("WGSL_RESULT", data));

@@ -326,9 +326,8 @@ async function createWindow(): Promise<BrowserWindow> {
   win.on('leave-full-screen', sendFullscreenState)
 
   // Capture renderer console messages to stdout for diagnostics
-  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-    const lvl = ['verbose', 'info', 'warning', 'error'][level] ?? 'log'
-    console.log(`[renderer:${lvl}] ${message} (${sourceId}:${line})`)
+  win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${lineNumber})`)
   })
 
   if (isDev) {
