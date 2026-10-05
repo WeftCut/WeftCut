@@ -7,6 +7,7 @@ import { PNG } from 'pngjs'
 import { zipSync } from 'fflate'
 import { readMotifDirectory } from '../../src/main/motif/packageFiles'
 import { launchApp, tmpDir } from './helpers/driver'
+import { publishMotifDraft } from './helpers/motif'
 
 const require = createRequire(import.meta.url)
 
@@ -108,21 +109,21 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     const id = (await invoke<{draft_id:string}>('open_motif_draft', { source:{kind:'zip',path:archive} })).draft_id
     expect(id).not.toBe(sourceId)
     const catalog = () => invoke<Array<{ id: string; content_hash: string }>>('list_motifs')
-    const hash = async () => (await catalog()).find(m => m.id === id)!.content_hash
-    const capture = async (tSec: number, contentHash: string) => {
+    const hash = async (motifId: string) => (await catalog()).find(m => m.id === motifId)!.content_hash
+    const capture = async (motifId: string, tSec: number, contentHash: string) => {
       const bytes = await page.evaluate(async (args) => {
         const data = await (window as any).api.backend.invoke('motif_capture_frame', args)
         return Array.from(data as Uint8Array)
-      }, { motifId: id, tSec, propsJson: '{}', width: 64, height: 64, settleRafs: 2, contentHash })
+      }, { motifId, tSec, propsJson: '{}', width: 64, height: 64, settleRafs: 2, contentHash })
       return Buffer.from(bytes)
     }
-    const firstHash = await hash()
-    const first = await capture(0, firstHash)
+    const firstHash = await hash(id)
+    const first = await capture(id, 0, firstHash)
     const pixels = PNG.sync.read(first)
     const center = (32 * 64 + 32) * 4
     expect([...pixels.data.subarray(center, center + 4)]).toEqual([255, 0, 0, 255])
-    expect((await capture(0.4, firstHash)).equals(first)).toBe(false)
-    expect((await capture(0, firstHash)).equals(first)).toBe(true) // backward seek
+    expect((await capture(id, 0.4, firstHash)).equals(first)).toBe(false)
+    expect((await capture(id, 0, firstHash)).equals(first)).toBe(true) // backward seek
 
     const confinement = await app.evaluate(async ({ webContents }, motifId) => {
       const host = webContents.getAllWebContents().find(w => w.getURL().startsWith(`motif://${motifId}/`))!
@@ -145,16 +146,22 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     expect(confinement.value).toBe('local-buffer')
     expect(confinement.hasNode).toBe(false)
 
-    await invoke('install_motif', { draft_id: id, mode: 'new' })
-    const installed = path.join(userDataDir, 'data', 'motifs', id)
+    const publishedId = await publishMotifDraft(page, id)
+    expect(publishedId).not.toBe(id)
+    const publishedHash = await hash(publishedId)
+    expect((await capture(publishedId, 0, publishedHash)).equals(first)).toBe(true)
+    const installed = path.join(userDataDir, 'data', 'motifs', publishedId)
     writeFileSync(path.join(installed, 'assets', 'texture.png'), texture(0, 255))
     writeFileSync(path.join(installed, 'scene.js'), sceneSource(0.5))
-    const changedHash = await hash()
-    expect(changedHash).not.toBe(firstHash)
-    const updated = PNG.sync.read(await capture(0, changedHash))
+    const changedHash = await hash(publishedId)
+    expect(changedHash).not.toBe(publishedHash)
+    const updated = PNG.sync.read(await capture(publishedId, 0, changedHash))
     expect([...updated.data.subarray(center, center + 4)]).toEqual([0, 0, 255, 255])
     // The smaller triangle proves the unversioned companion JS refreshed too.
     expect(updated.data[(48 * 64 + 32) * 4 + 3]).toBe(0)
     expect(pixels.data[(48 * 64 + 32) * 4 + 3]).toBe(255)
+    // Publication retains an independent draft; installed edits cannot alter it.
+    expect(await hash(id)).toBe(firstHash)
+    expect((await capture(id, 0, firstHash)).equals(first)).toBe(true)
   } finally { await app.close() }
 })

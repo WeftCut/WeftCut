@@ -1,27 +1,41 @@
-import { test, expect } from '@playwright/test'
+import { test as base, expect, type Page } from '@playwright/test'
 import { launchApp, newProject, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 interface Info { url: string; bearer_token: string }
 
-async function connect(url: string, token: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(url), {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
-  })
-  const client = new Client({ name: 'e2e-motifs', version: '0.0.0' }, { capabilities: {} })
-  await client.connect(transport)
-  return client
-}
+// Fixture teardown has its own budget, including after a test times out.
+// Own the client before connecting so a failed handshake also gets cleaned up.
+const test = base.extend<{ motifSession: { page: Page; client: Client } }>({
+  motifSession: [async ({}, use) => {
+    const { app, page } = await launchApp()
+    const client = new Client({ name: 'e2e-motifs', version: '0.0.0' }, { capabilities: {} })
+    try {
+      await use({ page, client })
+    } finally {
+      try {
+        await client.close()
+      } finally {
+        await app.close()
+      }
+    }
+  }, { timeout: 30_000 }],
+})
 
-test('MCP motif tools are advertised and callable', async () => {
-  const { app, page } = await launchApp()
+test('MCP motif tools are advertised and callable', async ({ motifSession: { page, client } }) => {
   // add_motif_layer places into the open project; project tools refuse on the
   // start screen, so create one first.
-  await newProject(page, { parentFolder: tmpDir('weftcut-mcp-motif-'), name: 'mcp-motif', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
+  await test.step('Create an editable project', async () => {
+    await newProject(page, { parentFolder: tmpDir('weftcut-mcp-motif-'), name: 'mcp-motif', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
+  })
 
-  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
-  const client = await connect(info.url, info.bearer_token)
+  await test.step('Connect the MCP client', async () => {
+    const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
+    await client.connect(new StreamableHTTPClientTransport(new URL(info.url), {
+      requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } },
+    }))
+  })
 
   // list_motifs, add_motif_layer, preview_motif must appear in listTools
   const toolsResult = await client.listTools()
@@ -48,16 +62,13 @@ test('MCP motif tools are advertised and callable', async () => {
   expect(layerId).toMatch(/^[0-9a-f-]{36}$/)
 
   // preview_motif returns image content (JS-side capture)
-  const previewResult = await client.callTool({
+  const previewResult = await test.step('Capture a Motif preview over MCP', () => client.callTool({
     name: 'preview_motif',
     arguments: { id: 'countdown', t_sec: 0 },
-  })
+  }))
   expect(previewResult.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })
 
   // motifs://current resource is readable
   const motifRes = await client.readResource({ uri: 'motifs://current' })
   expect(motifRes.contents[0].mimeType).toBe('application/json')
-
-  await client.close()
-  await app.close()
 })

@@ -78,6 +78,10 @@ interface Rect extends Pt {
 async function rectOf(l: Locator): Promise<Rect> {
   const b = await l.boundingBox();
   if (!b) throw new Error("element has no layout box");
+  return asRect(b);
+}
+
+function asRect(b: { x: number; y: number; width: number; height: number }): Rect {
   return {
     x: b.x,
     y: b.y,
@@ -522,14 +526,30 @@ test.describe("timeline marquee — the rectangles are the ones we think they ar
 
       const lanes = page.locator('[data-testid="track-lane"]');
       await expect(lanes).toHaveCount(2);
-      const last = await rectOf(lanes.nth(1));
-      const chip = await rectOf(chipEl.first());
-      const panelBox = await rectOf(panel);
       // `min-h-full` on the lanes' container is what hands the leftover space to
       // the scrolling body, which is already the `clip` anchor. Owned by the
       // scroll ROOT instead, that band reached no anchor at all and was dead.
       // jsdom has no layout, so this is the only layer that can see it.
-      expect(panelBox.bottom - last.bottom).toBeGreaterThan(120);
+      // The maximize state can precede Dockview's DOM layout. Sample all boxes
+      // in one browser task and wait for the same geometry this test requires.
+      let layout: { last: Rect; chip: Rect; panel: Rect } | undefined;
+      await expect.poll(async () => {
+        const boxes = await panel.evaluate(element => {
+          const lanes = element.querySelectorAll('[data-testid="track-lane"]');
+          const last = lanes[lanes.length - 1];
+          const chip = element.querySelector('.timeline-layer');
+          if (!last || !chip) throw new Error('timeline geometry is missing');
+          return {
+            last: last.getBoundingClientRect().toJSON(),
+            chip: chip.getBoundingClientRect().toJSON(),
+            panel: element.getBoundingClientRect().toJSON(),
+          };
+        });
+        layout = { last: asRect(boxes.last), chip: asRect(boxes.chip), panel: asRect(boxes.panel) };
+        return layout.panel.bottom - layout.last.bottom;
+      }, { message: 'maximized timeline leaves a usable band below the last track', timeout: 10_000 })
+        .toBeGreaterThan(120);
+      const { last, chip } = layout!;
       const bandY = last.bottom + 60;
 
       // Press in the band, drag UP across the clip — sideways too, because a

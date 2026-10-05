@@ -137,7 +137,7 @@ test('motif authoring: open_motif_draft → install → list → delete', async 
     expect((draftId as string).length).toBeGreaterThan(0)
     console.log('[lifecycle] draft id:', draftId)
 
-    // install_motif (New mode) — the motif tool expects { args: { draft_id, mode: { kind: "new" } } }
+    // Publish the reviewed revision and use the separate installed identity.
     const publishedId = await publishMotifDraft(page,draftId)
     expect(typeof publishedId).toBe('string')
     expect((publishedId as string).length).toBeGreaterThan(0)
