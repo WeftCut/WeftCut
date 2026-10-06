@@ -29,6 +29,11 @@ test('resource preferences are understandable, persistent and independent of dec
     await expect(memory).toBeFocused();
     await pane.getByRole('combobox', { name: '处理强度', exact: true }).click();
     await expect(page.getByRole('option')).toHaveText(['低占用', '均衡', '高性能']);
+    const triggerBounds = await pane.getByRole('combobox', { name: '处理强度', exact: true }).boundingBox();
+    const popupBounds = await page.getByRole('listbox').boundingBox();
+    expect(triggerBounds).not.toBeNull();
+    expect(popupBounds).not.toBeNull();
+    expect(Math.abs(popupBounds!.width - triggerBounds!.width)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath('processing-options.png'), animations: 'disabled' });
     await page.getByRole('option', { name: '低占用', exact: true }).click();
     await pane.getByLabel('临时缓存空间', { exact: true }).fill('3');

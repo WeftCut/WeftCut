@@ -33,6 +33,19 @@
   cursor: not-allowed;
 }
 
+/* Select options share the menu skin, but size from the trigger and content
+ * rather than inheriting the general menu's 220px minimum. */
+.app-select-popup {
+  width: max-content;
+  min-width: min(var(--anchor-width), var(--available-width));
+  max-width: var(--available-width);
+}
+
+.app-select-popup .app-menu-item-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .font-select { min-width: 0; width: 100%; }
 .font-select .app-select { width: 100%; }
 .font-select .app-select > span:first-child {

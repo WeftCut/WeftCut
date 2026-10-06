@@ -63,7 +63,7 @@ export function AppSelect({
           alignItemWithTrigger={false}
           className="app-popup-positioner"
         >
-          <Select.Popup className={cn("app-menu-list", popupClassName)}>
+          <Select.Popup className={cn("app-menu-list", "app-select-popup", popupClassName)}>
             {options.map((o) => (
               <Select.Item
                 key={o.value}
