@@ -41,7 +41,8 @@ export function PerformanceCalibrationControl({ disabled, accepted, onRunning, o
   const reportKey = JSON.stringify(report ?? null);
   const applied = savedReport === reportKey && !!accepted && JSON.stringify(accepted) === JSON.stringify(recommendation);
   const progress = report?.cells.filter(cell => cell.status !== 'not-run').length ?? 0;
-  const status = snapshot?.running ? t('performance.test_progress', { count: progress })
+  const status = snapshot?.running ? report?.state === 'preparing-media' ? t('performance.test_preparing')
+    : t('performance.test_progress', { count: progress })
     : report?.state === 'cancelled' ? t('performance.test_cancelled')
     : report?.state === 'error' || (report?.state === 'complete' && !recommendation) ? t('performance.test_failed')
     : recommendation ? t(recommendation.conservative ? 'performance.test_conservative' : 'performance.test_complete',

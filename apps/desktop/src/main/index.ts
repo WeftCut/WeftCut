@@ -1619,7 +1619,7 @@ app.whenReady().then(async () => {
   // slot now backstops this with a finite timeout (Error-poke + skip) rather
   // than hanging, but the ack ordering still exists to avoid paying that cost.
   installPreviewGpuIpc(ndBackend, () => mainWindow)
-  installPerformanceCalibration()
+  installPerformanceCalibration(dataRoot.cacheDir)
   ipcMain.handle('performanceResources:info', () => ({
     total_memory_mib: Math.floor(os.totalmem() / MIB),
     gpu: performanceGpu,

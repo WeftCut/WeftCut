@@ -1,7 +1,6 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
-import { ChevronDownIcon } from 'lucide-react';
 import { PerformanceCalibrationControl } from './PerformanceCalibrationControl';
 import type { AppSettings, AppSettingsPatch } from '../../shared/app-settings';
 import { MIB } from '../../shared/performance-settings';
@@ -23,11 +22,7 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
   const [resourceFailed, setResourceFailed] = useState(false);
   const [pending, setPending] = useState(0);
   const [testing, setTesting] = useState(false);
-  const [advanced, setAdvanced] = useState(true);
-  const [testExpanded, setTestExpanded] = useState(true);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const advancedId = useId();
-  const testId = useId();
   useEffect(() => {
     let alive = true;
     const refresh = async () => {
@@ -72,11 +67,8 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
       </div>
     </section>
     <section className="settings-section">
-      <Button variant="ghost" className="settings-performance-disclosure" aria-expanded={advanced}
-        aria-controls={advancedId} onClick={() => setAdvanced(open => !open)}>
-        <ChevronDownIcon size={14} aria-hidden="true" />{t('performance.details_heading')}
-      </Button>
-      <div id={advancedId} hidden={!advanced}>
+      <h3>{t('performance.details_heading')}</h3>
+      <div>
         <p className="settings-toggle-hint" data-testid="performance-cache-usage">{t('performance.cache_usage', {
           used: (cacheUsage.total / MIB).toFixed(1), limit: (cacheUsage.limit / MIB).toFixed(1),
         })}</p>
@@ -89,11 +81,8 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
       </div>
     </section>
     <section className="settings-section">
-      <Button variant="ghost" className="settings-performance-disclosure" aria-expanded={testExpanded || testing}
-        aria-controls={testId} disabled={testing} onClick={() => setTestExpanded(open => !open)}>
-        <ChevronDownIcon size={14} aria-hidden="true" />{t('performance.test_heading')}
-      </Button>
-      <div id={testId} hidden={!testExpanded && !testing}>
+      <h3>{t('performance.test_heading')}</h3>
+      <div>
         <p className="settings-toggle-hint">{t('performance.test_scope')}</p>
         <PerformanceCalibrationControl disabled={!loaded || pending > 0} accepted={compatible ? profile?.calibration ?? null : null}
           onRunning={setTesting} onError={onError}

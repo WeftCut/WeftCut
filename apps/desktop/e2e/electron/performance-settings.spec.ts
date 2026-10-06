@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { launchApp, invokeCmd } from './helpers/driver';
 import type { AppSettings } from '../../src/shared/app-settings';
 import { PLAYBACK_CALIBRATION, playbackCalibrationRecommendation } from '../../src/shared/playback-calibration';
@@ -9,8 +11,10 @@ async function openPerformance(page: Page) {
   await page.getByRole('tab', { name: '性能', exact: true }).click();
   const pane = page.locator('#settings-panel-performance');
   await expect(pane.getByLabel('内存使用目标', { exact: true })).toBeEnabled();
-  await expect(pane.getByRole('button', { name: '资源使用详情', exact: true })).toHaveAttribute('aria-expanded', 'true');
-  await expect(pane.getByRole('button', { name: '本机性能测试（实验性）', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(pane.getByRole('heading', { name: '资源使用详情', exact: true })).toBeVisible();
+  await expect(pane.getByTestId('performance-cache-usage')).toBeVisible();
+  await expect(pane.getByRole('heading', { name: '本机性能测试（实验性）', exact: true })).toBeVisible();
+  await expect(pane.getByRole('button', { name: '进行基准测试', exact: true })).toBeVisible();
   return pane;
 }
 
@@ -120,20 +124,26 @@ test('legacy cache values do not become an application memory limit', async () =
 
 test('benchmark cancellation and completion never silently modify budgets @serial @matrix', async () => {
   test.skip(process.platform !== 'win32', 'D3D11VA prototype');
-  test.setTimeout(360_000);
+  test.setTimeout(960_000);
   const { app, page } = await launchApp({ locale: 'zh-CN' });
   try {
     const pane = await openPerformance(page);
     const read = () => invokeCmd<AppSettings>(page, 'app_settings_get');
     const before = (await read()).performance;
     const status = () => page.evaluate(() => window.api.performanceCalibration.status());
+    const cache = path.join(await app.evaluate(({ app }) => app.getPath('userData')), 'data', 'cache', 'performance-calibration');
+    expect(fs.existsSync(path.join(cache, 'h264-4k60.mp4'))).toBe(false);
     await pane.getByRole('button', { name: '进行基准测试', exact: true }).click();
     await expect.poll(async () => (await status()).running).toBe(true);
     await pane.getByRole('button', { name: '取消测试', exact: true }).click();
     await expect.poll(async () => (await status()).running).toBe(false);
     expect((await read()).performance).toEqual(before);
     await pane.getByRole('button', { name: '进行基准测试', exact: true }).click();
-    await expect.poll(async () => (await status()).running, { timeout: 300_000, intervals: [1000] }).toBe(false);
+    await expect.poll(async () => (await status()).running, { timeout: 900_000, intervals: [1000] }).toBe(false);
+    const manifest = JSON.parse(fs.readFileSync(path.join(cache, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ version: 1, codec: 'h264', width: 3840, height: 2160, fps: 60, durationUs: 20_000_000 });
+    expect(fs.statSync(path.join(cache, 'h264-4k60.mp4')).size).toBe(manifest.bytes);
+    expect(fs.readdirSync(cache).filter(name => name.startsWith('.prepare-'))).toEqual([]);
     expect((await read()).performance).toEqual(before);
     const report = (await status()).report;
     if (report?.state === 'complete' && report.recommendation) {

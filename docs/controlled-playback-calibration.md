@@ -2,8 +2,9 @@
 
 This experimental Windows test measures the production playback pipeline in an
 isolated Electron process. Settings → Performance can start/cancel it and
-save its recommendation, then apply it separately. Test media ships with Windows
-builds; saved recommendations persist across restarts. The older
+save its recommendation, then apply it separately. Windows builds generate test
+media on first use with their bundled FFmpeg; saved recommendations persist across
+restarts. The older
 [project-based timing prototype](performance-calibration-prototype.md) remains
 available for comparison.
 
@@ -35,9 +36,14 @@ process also cancels testing on application exit. Test reports and the child's
 isolated profile are retained beneath the OS temporary directory in
 `weftcut-performance-calibration/run-*`.
 
-Windows dev/build/E2E preparation generates or validates the synthetic reference;
-the Windows package includes it via `extraResources/performance-calibration`.
-Other platforms do not generate or package this currently unsupported test.
+The first in-app run generates the synthetic reference under
+`<dataRoot>/cache/performance-calibration` with the app's bundled FFmpeg and
+validates it with bundled FFprobe. Later runs reuse the cache after checking its
+recipe version, FFmpeg binary hash, byte size and SHA-256. Missing, corrupted or
+outdated media is regenerated. Preparation has its own cancellable phase outside
+the measured playback run; partial files are removed after cancellation/failure.
+The installer carries no test video, and dev/build/E2E build preparation no longer
+generates one. Other platforms still report this test as unsupported.
 
 From `apps/desktop`, with native dependencies available:
 

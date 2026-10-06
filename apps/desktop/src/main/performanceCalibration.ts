@@ -2,16 +2,22 @@ import { app, ipcMain } from 'electron'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs'
 import { CalibrationService } from './calibrationService'
+import { ensureCalibrationFixture } from './calibrationFixture'
 import { reserveResources } from './resources'
 import { PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
 import { MIB } from '../shared/performance-settings'
 
-export function installPerformanceCalibration(): void {
+export function installPerformanceCalibration(cacheDirectory: string): void {
+  const toolDirectory = app.isPackaged ? path.join(process.resourcesPath, 'ffmpeg')
+    : path.resolve(import.meta.dirname, '../../resources/ffmpeg', process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux')
+  const extension = process.platform === 'win32' ? '.exe' : ''
+  const tools = { ffmpeg: path.join(toolDirectory, `ffmpeg${extension}`), ffprobe: path.join(toolDirectory, `ffprobe${extension}`) }
   const service = new CalibrationService({
     supported: process.platform === 'win32',
-    fixtureDirectory: app.isPackaged ? path.join(process.resourcesPath, 'performance-calibration')
-      : path.resolve(import.meta.dirname, '../../e2e/fixtures/decode-bench/calibration-60'),
+    toolsAvailable: () => fs.existsSync(tools.ffmpeg) && fs.existsSync(tools.ffprobe),
+    prepareFixture: signal => ensureCalibrationFixture(path.join(cacheDirectory, 'performance-calibration'), tools, signal),
     runsDirectory: path.join(os.tmpdir(), 'weftcut-performance-calibration'),
     // The isolated process keeps a fixed measurement protocol, but it must
     // reserve its peak workload in the parent authority before it launches.

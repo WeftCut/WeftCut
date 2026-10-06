@@ -189,15 +189,6 @@
   margin: 0;
 }
 
-.settings-performance-disclosure {
-  align-self: flex-start;
-  padding-left: 0;
-}
-
-.settings-performance-disclosure[aria-expanded="false"] > svg {
-  transform: rotate(-90deg);
-}
-
 .settings-performance-advanced {
   margin-top: 16px;
 }

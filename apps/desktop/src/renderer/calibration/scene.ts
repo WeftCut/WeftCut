@@ -1,9 +1,8 @@
 import type { AnimTrack, MediaSummary, ProjectSummary, TrackSummary } from '../ipc';
 import { PLAYBACK_CALIBRATION as protocol } from '../../shared/playback-calibration';
+import type { CalibrationFixture } from '../../shared/calibration-fixture';
+export type { CalibrationFixture } from '../../shared/calibration-fixture';
 
-export interface CalibrationFixture {
-  path: string; sha256: string; bytes: number; width: number; height: number; fps: number; durationUs: number;
-}
 const value = (n: number): AnimTrack<number> => ({ mode: 'Static', value: n });
 
 /** Immutable input shape for the existing compositor; no project store or disk project. */

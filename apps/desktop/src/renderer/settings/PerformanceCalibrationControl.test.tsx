@@ -55,3 +55,13 @@ it('offers no apply action for invalid results', async () => {
   expect(screen.queryByRole('button', { name: 'Save recommendation' })).toBeNull();
   expect(onApply).not.toHaveBeenCalled();
 });
+
+it('shows first-use preparation and allows cancelling it', async () => {
+  api.status.mockResolvedValue({ available: true, running: true, report: { state: 'preparing-media', cells: [] } });
+  api.cancel.mockResolvedValue({ available: true, running: false, report: { state: 'cancelled', cells: [], recommendation: null } });
+  render(<PerformanceCalibrationControl disabled={false} onApply={onApply} onRunning={onRunning} onError={onError} />);
+  await screen.findByText('Preparing test media… The first run may take a few minutes.');
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Cancel test' }));
+  expect(api.cancel).toHaveBeenCalledOnce();
+  expect(onApply).not.toHaveBeenCalled();
+});

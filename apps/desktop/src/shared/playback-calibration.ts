@@ -32,7 +32,7 @@ export interface CalibrationReport {
 }
 export interface CalibrationSnapshot {
   available: boolean;
-  unavailableReason?: 'platform' | 'fixture';
+  unavailableReason?: 'platform' | 'tools';
   running: boolean;
   report: CalibrationReport | null;
 }

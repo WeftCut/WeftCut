@@ -84,12 +84,11 @@ it('shows diagnostics as read-only details and restores default values without c
   useAppSettingsStore.getState().hydrate(store.get());
   render(<PerformanceSection onError={onError} />);
   const before = store.get();
-  const details = screen.getByRole('button', { name: 'Resource usage details' });
-  expect(details.getAttribute('aria-expanded')).toBe('true');
-  expect(screen.getByRole('button', { name: 'Test this computer (experimental)' }).getAttribute('aria-expanded')).toBe('true');
-  await user.click(details);
-  expect(details.getAttribute('aria-expanded')).toBe('false');
-  await user.click(details);
+  expect(screen.getByRole('heading', { name: 'Resource usage details' })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Resource usage details' })).toBeNull();
+  expect(screen.getByTestId('performance-cache-usage').closest('[hidden]')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Test this computer (experimental)' })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Test this computer (experimental)' })).toBeNull();
   expect(store.get()).toEqual(before);
   expect(screen.getAllByRole('textbox')).toHaveLength(2);
   expect(screen.getByRole('combobox', { name: 'Processing effort' })).toBeDefined();
