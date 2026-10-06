@@ -72,6 +72,11 @@ pub fn read_header(path: &Path) -> Result<ConformHeader> {
     })
 }
 
+pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
+    let dest = cache.audio_conform(&media.file_hash_blake3);
+    (cached_ok(&dest) && read_header(&dest).is_ok()).then_some(dest)
+}
+
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot conform audio");
@@ -86,11 +91,8 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let dest = cache.audio_conform(&media.file_hash_blake3);
     if cached_ok(&dest) {
         // Format-version check: stale versions regenerate.
-        if read_header(&dest)
-            .map(|h| h.version == CONFORM_FORMAT_VERSION)
-            .unwrap_or(false)
-        {
-            return Ok(dest);
+        if let Some(path) = cached_path(cache, media) {
+            return Ok(path);
         }
         let _ = tokio::fs::remove_file(&dest).await;
     }
@@ -266,6 +268,29 @@ mod tests {
             file_mtime: 0,
             imported_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn cached_conform_rejects_missing_truncated_and_old_format_headers() {
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        let media = media_for("/nonexistent/source.wav".into(), 1, "synthetic");
+        assert!(cached_path(&cache, &media).is_none());
+        let dest = cache.audio_conform(&media.file_hash_blake3);
+        std::fs::write(&dest, MAGIC).unwrap();
+        assert!(cached_path(&cache, &media).is_none());
+        let mut header = MAGIC.to_vec();
+        header.extend_from_slice(&0u32.to_le_bytes());
+        header.extend_from_slice(&CONFORM_SAMPLE_RATE.to_le_bytes());
+        header.extend_from_slice(&1u32.to_le_bytes());
+        header.extend_from_slice(&1u64.to_le_bytes());
+        std::fs::write(&dest, &header).unwrap();
+        assert!(cached_path(&cache, &media).is_none());
+        header[8..12].copy_from_slice(&CONFORM_FORMAT_VERSION.to_le_bytes());
+        header.extend_from_slice(&0f32.to_le_bytes());
+        std::fs::write(&dest, &header).unwrap();
+        assert_eq!(cached_path(&cache, &media), Some(dest));
     }
 
     #[tokio::test]

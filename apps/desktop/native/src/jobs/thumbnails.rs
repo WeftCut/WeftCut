@@ -132,7 +132,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     Ok(dest_dir)
 }
 
-fn all_thumbnails_present(cache: &CacheLayout, hash: &str) -> bool {
+pub(super) fn all_thumbnails_present(cache: &CacheLayout, hash: &str) -> bool {
     (0..THUMB_COUNT).all(|i| cached_ok(&cache.thumbnail(hash, i)))
 }
 

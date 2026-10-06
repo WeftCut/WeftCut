@@ -1,7 +1,8 @@
 //! Background-job pipeline for media derivatives.
 //!
-//! Each `enqueue_*` spawns a tokio task that runs ffmpeg under a global
-//! ffmpeg semaphore (`MAX_PARALLEL_FFMPEG`). On completion, the task routes the
+//! Each `enqueue_*` spawns a tokio task that adopts valid cached artifacts
+//! before acquiring application-wide background resources for generation.
+//! On completion, the task routes the
 //! `MediaItem`'s derivative patch through `commit_media_derivatives`, which
 //! always emits a `media:derivatives` event the TS state actor (the sole
 //! writer, applied by Electron main) consumes — so subscribers (UI,
@@ -101,6 +102,51 @@ pub const EVENT_ERROR: &str = "media:job_error";
 /// The authority owns thread, memory, playback and pressure checks.
 pub(crate) fn ffmpeg_sem() -> &'static crate::resources::BackgroundGate {
     &crate::resources::BackgroundGate
+}
+
+/// Cache adoption is bookkeeping, not processing: it must remain possible
+/// while playback, memory pressure or other work closes background admission.
+/// Keep completion/write-back events so readers can recover missing paths.
+async fn run_derivative(
+    events: &Arc<dyn EventSink>,
+    cache: &CacheLayout,
+    media: &MediaItem,
+    kind: JobKind,
+    generate: impl std::future::Future<Output = anyhow::Result<std::path::PathBuf>>,
+) -> anyhow::Result<std::path::PathBuf> {
+    let hash = &media.file_hash_blake3;
+    let cached = match kind {
+        JobKind::Conform => conform::cached_path(cache, media),
+        JobKind::Thumbnails => {
+            thumbnails::all_thumbnails_present(cache, hash).then(|| cache.thumbnails(hash))
+        }
+        JobKind::Waveform => {
+            let path = cache.waveform(hash);
+            crate::cache::cached_ok(&path).then_some(path)
+        }
+        JobKind::QuickProxy => {
+            let path = cache.quick_proxy(hash);
+            crate::cache::cached_ok(&path).then_some(path)
+        }
+        JobKind::Proxy => {
+            let path = cache.proxy(hash);
+            crate::cache::cached_ok(&path).then_some(path)
+        }
+        JobKind::AudioFx | JobKind::ProxyBypass => None,
+    };
+    if let Some(path) = cached {
+        return Ok(path);
+    }
+    emit(
+        events,
+        EVENT_STARTED,
+        &JobStarted {
+            media_id: media.id.to_string(),
+            kind,
+        },
+    );
+    let _permit = ffmpeg_sem().acquire().await?;
+    generate.await
 }
 
 /// Per-media in-flight set for conform jobs. The export gate re-kicks any
@@ -442,19 +488,14 @@ fn spawn_conform(
     tokio::spawn(async move {
         let media_id = media.id;
         let _guard = ConformGuard(media_id);
-        emit(
+        let result = run_derivative(
             &events,
-            EVENT_STARTED,
-            &JobStarted {
-                media_id: media_id.to_string(),
-                kind: JobKind::Conform,
-            },
-        );
-
-        let result = match ffmpeg_sem().acquire().await {
-            Ok(_permit) => conform::run(&cache, &media).await,
-            Err(error) => Err(error),
-        };
+            &cache,
+            &media,
+            JobKind::Conform,
+            conform::run(&cache, &media),
+        )
+        .await;
 
         match result {
             Ok(conform_path) => {
@@ -656,19 +697,14 @@ fn spawn_thumbnails(
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
-        emit(
+        let result = run_derivative(
             &events,
-            EVENT_STARTED,
-            &JobStarted {
-                media_id: media_id.to_string(),
-                kind: JobKind::Thumbnails,
-            },
-        );
-
-        let result = match ffmpeg_sem().acquire().await {
-            Ok(_permit) => thumbnails::run(&cache, &media).await,
-            Err(error) => Err(error),
-        };
+            &cache,
+            &media,
+            JobKind::Thumbnails,
+            thumbnails::run(&cache, &media),
+        )
+        .await;
 
         match result {
             Ok(thumbs_dir) => {
@@ -732,19 +768,14 @@ fn spawn_quick_proxy(
     tokio::spawn(async move {
         let _guard = guard;
         let media_id = media.id;
-        emit(
+        let result = run_derivative(
             &events,
-            EVENT_STARTED,
-            &JobStarted {
-                media_id: media_id.to_string(),
-                kind: JobKind::QuickProxy,
-            },
-        );
-
-        let result = match ffmpeg_sem().acquire().await {
-            Ok(_permit) => quick_proxy::run(&cache, &media, source_gop_secs).await,
-            Err(error) => Err(error),
-        };
+            &cache,
+            &media,
+            JobKind::QuickProxy,
+            quick_proxy::run(&cache, &media, source_gop_secs),
+        )
+        .await;
 
         match result {
             Ok(quick_proxy_path) => {
@@ -812,19 +843,14 @@ fn spawn_proxy(
     tokio::spawn(async move {
         let _guard = guard;
         let media_id = media.id;
-        emit(
+        let result = run_derivative(
             &events,
-            EVENT_STARTED,
-            &JobStarted {
-                media_id: media_id.to_string(),
-                kind: JobKind::Proxy,
-            },
-        );
-
-        let result = match ffmpeg_sem().acquire().await {
-            Ok(_permit) => proxy::run(&cache, &media).await,
-            Err(error) => Err(error),
-        };
+            &cache,
+            &media,
+            JobKind::Proxy,
+            proxy::run(&cache, &media),
+        )
+        .await;
 
         match result {
             Ok(proxy_path) => {
@@ -883,19 +909,14 @@ fn spawn_waveform(
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
-        emit(
+        let result = run_derivative(
             &events,
-            EVENT_STARTED,
-            &JobStarted {
-                media_id: media_id.to_string(),
-                kind: JobKind::Waveform,
-            },
-        );
-
-        let result = match ffmpeg_sem().acquire().await {
-            Ok(_permit) => waveform::run(&cache, &media).await,
-            Err(error) => Err(error),
-        };
+            &cache,
+            &media,
+            JobKind::Waveform,
+            waveform::run(&cache, &media),
+        )
+        .await;
 
         match result {
             Ok(waveform_path) => {
@@ -1335,6 +1356,99 @@ mod tests {
             "imported_at": chrono::Utc::now(),
         }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cached_pictures_and_proxies_never_enter_generation() {
+        use crate::events::VecEventSink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheLayout::new(dir.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let media = media_named(None, "/nonexistent/source.mp4");
+        let hash = &media.file_hash_blake3;
+        std::fs::create_dir_all(cache.thumbnails(hash)).unwrap();
+        for i in 0..10 {
+            std::fs::write(cache.thumbnail(hash, i), b"cached thumbnail").unwrap();
+        }
+        std::fs::write(cache.quick_proxy(hash), b"cached quick proxy").unwrap();
+        std::fs::write(cache.proxy(hash), b"cached export master").unwrap();
+        let sink = Arc::new(VecEventSink::new());
+        let events: Arc<dyn EventSink> = sink.clone();
+        for (kind, path) in [
+            (JobKind::Thumbnails, cache.thumbnails(hash)),
+            (JobKind::QuickProxy, cache.quick_proxy(hash)),
+            (JobKind::Proxy, cache.proxy(hash)),
+        ] {
+            let result = run_derivative(&events, &cache, &media, kind, async {
+                panic!("a cache hit must never run the producer");
+            })
+            .await
+            .unwrap();
+            assert_eq!(result, path);
+        }
+        assert!(
+            sink.names().is_empty(),
+            "cache adoption must not emit started"
+        );
+    }
+
+    #[tokio::test]
+    async fn reopening_cached_audio_restores_four_derivatives_without_starting_processing() {
+        use crate::events::VecEventSink;
+        use crate::state::AudioStreamMeta;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheLayout::new(dir.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let sink = Arc::new(VecEventSink::new());
+        for hash in ["cached-audio-a", "cached-audio-b"] {
+            let mut media = media_named(None, "/nonexistent/source.wav");
+            media.kind = MediaKind::Audio;
+            media.file_hash_blake3 = hash.into();
+            media.metadata.audio = Some(AudioStreamMeta {
+                codec: "pcm_f32le".into(),
+                sample_rate: 48_000,
+                channels: 1,
+                start_pts_us: None,
+            });
+            let mut header = conform::MAGIC.to_vec();
+            header.extend_from_slice(&conform::CONFORM_FORMAT_VERSION.to_le_bytes());
+            header.extend_from_slice(&conform::CONFORM_SAMPLE_RATE.to_le_bytes());
+            header.extend_from_slice(&1u32.to_le_bytes());
+            header.extend_from_slice(&1u64.to_le_bytes());
+            header.extend_from_slice(&0f32.to_le_bytes());
+            std::fs::write(cache.audio_conform(hash), header).unwrap();
+            std::fs::write(cache.waveform(hash), b"cached peaks").unwrap();
+            enqueue_for_media(sink.clone(), LogBusSlot::new(), cache.clone(), media);
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if sink
+                    .names()
+                    .iter()
+                    .filter(|name| *name == EVENT_COMPLETE)
+                    .count()
+                    == 4
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("cached derivatives must be restored immediately");
+        assert!(
+            !sink.names().iter().any(|name| name == EVENT_STARTED),
+            "reopening already-cached media must not report generation"
+        );
+        assert_eq!(
+            sink.names()
+                .iter()
+                .filter(|name| *name == "media:derivatives")
+                .count(),
+            4
+        );
     }
 
     #[test]

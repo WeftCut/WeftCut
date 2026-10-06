@@ -32,6 +32,11 @@ shared/resource-policy.ts validates intent and derives allocation. Main supplies
 host facts, merges partial edits against the latest settings, atomically persists
 them and publishes the effective allocation. Live telemetry never rewrites intent.
 
+Already-landed media derivatives are adopted before processing admission. Cache
+hits still publish readiness and restore media paths, but do not reserve a
+background slot or report generation. Playback or memory pressure must not block
+this bookkeeping. Missing/stale artifacts continue through normal admission.
+
 The native resources::Governor is the single working-memory/processing admission
 authority. Native jobs and Electron-held leases use the same ledger. Admission
 precedes managed expensive allocation; release follows teardown, including

@@ -6,7 +6,7 @@ import { renderLogMessage } from "./renderMessage";
 import { useAgentActivity } from "../agent/activityStore";
 import { useLogStore } from "./store";
 import { useLinkOverride } from "../state/linkOverrideStore";
-import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
+import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 
 /// Persistent status bar pinned to the bottom of the editor view.
@@ -42,12 +42,10 @@ export function StatusBar({
   const agentRunningCount = useAgentActivity(s =>
     s.snapshot?.activities.filter(a => a.state === "running").length ?? 0,
   );
-  // Derivative-job tracker. Increments on `media:job_started`,
-  // decrements on `media:job_complete` / `media:job_error`. The total
-  // renders a "Generating derivatives (N)…" pill so the user sees that
-  // proxies / thumbnails / waveforms are still grinding in the
-  // background.
-  const [pendingDerivatives, setPendingDerivatives] = useState<number>(0);
+  // Track identities: adopting a cached file emits completion without starting
+  // processing, and must not decrement another media item's running job.
+  const [derivativeJobs, setDerivativeJobs] = useState<ReadonlySet<string>>(() => new Set());
+  const pendingDerivatives = derivativeJobs.size;
   // The visually-hidden live region is only updated on errors. Tracked
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
@@ -68,16 +66,26 @@ export function StatusBar({
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
     let cancelled = false;
+    const updateJob = (job: MediaJobEvent, started: boolean) => {
+      const key = `${job.media_id}:${job.kind}`;
+      setDerivativeJobs((jobs) => {
+        if (jobs.has(key) === started) return jobs;
+        const next = new Set(jobs);
+        if (started) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    };
     (async () => {
       const [onStarted, onComplete, onError] = await Promise.all([
-        listen(MEDIA_JOB_EVENTS.started, () => {
-          setPendingDerivatives((n) => n + 1);
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.started, (e) => {
+          updateJob(e.payload, true);
         }),
-        listen(MEDIA_JOB_EVENTS.complete, () => {
-          setPendingDerivatives((n) => Math.max(0, n - 1));
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.complete, (e) => {
+          updateJob(e.payload, false);
         }),
-        listen(MEDIA_JOB_EVENTS.error, () => {
-          setPendingDerivatives((n) => Math.max(0, n - 1));
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
+          updateJob(e.payload, false);
         }),
       ]);
       if (cancelled) {
