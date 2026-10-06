@@ -9,6 +9,8 @@ async function openPerformance(page: Page) {
   await page.getByRole('tab', { name: '性能', exact: true }).click();
   const pane = page.locator('#settings-panel-performance');
   await expect(pane.getByLabel('内存使用目标', { exact: true })).toBeEnabled();
+  await expect(pane.getByRole('button', { name: '资源使用详情', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(pane.getByRole('button', { name: '本机性能测试（实验性）', exact: true })).toHaveAttribute('aria-expanded', 'true');
   return pane;
 }
 
@@ -78,7 +80,6 @@ test('saving a test is separate from applying, restoring defaults retains it, an
     await invokeCmd(page, 'app_settings_set', { patch: { performance_test_recommendation: profile } });
     expect((await read()).performance).toEqual(before);
     const pane = await openPerformance(page);
-    await pane.getByRole('button', { name: '本机性能测试（实验性）', exact: true }).click();
     await expect(pane.getByTestId('performance-test-record')).toContainText('通过 5 路');
     await pane.getByRole('button', { name: '应用测试配置', exact: true }).click();
     await expect.poll(async () => (await read()).performance_policy?.decode).toBe('tested');
@@ -90,7 +91,6 @@ test('saving a test is separate from applying, restoring defaults retains it, an
     expect((await read()).performance_test_profile).toEqual(record);
     await page.reload();
     await openPerformance(page);
-    await pane.getByRole('button', { name: '本机性能测试（实验性）', exact: true }).click();
     await expect(pane.getByTestId('performance-test-record')).toContainText('通过 5 路');
     await pane.getByRole('button', { name: '清除测试记录', exact: true }).click();
     await expect.poll(async () => (await read()).performance_test_profile).toBeNull();
@@ -122,7 +122,6 @@ test('benchmark cancellation and completion never silently modify budgets @seria
     const read = () => invokeCmd<AppSettings>(page, 'app_settings_get');
     const before = (await read()).performance;
     const status = () => page.evaluate(() => window.api.performanceCalibration.status());
-    await pane.getByRole('button', { name: '本机性能测试（实验性）', exact: true }).click();
     await pane.getByRole('button', { name: '进行基准测试', exact: true }).click();
     await expect.poll(async () => (await status()).running).toBe(true);
     await pane.getByRole('button', { name: '取消测试', exact: true }).click();

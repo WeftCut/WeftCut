@@ -227,6 +227,12 @@
   min-width: 168px;
 }
 
+.settings-performance-processing {
+  min-width: 0;
+  width: 126px;
+  flex: 0 0 126px;
+}
+
 /* width × height + Apply. Wraps as a unit so a narrow panel breaks the group
  * onto its own line rather than squeezing the number fields. */
 .settings-size-fields {
@@ -301,7 +307,7 @@
 
 .settings-badge-beta {
   flex-shrink: 0;
-  margin-left: 0;
+  margin-left: auto;
   padding: 1px 5px;
   color: var(--color-amber-300);
   background: rgba(251, 191, 36, 0.12);

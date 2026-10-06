@@ -32,7 +32,7 @@ export function ResourceControls({ settings, disabled, save }: {
     <div className="settings-control-row">
       <div className="settings-performance-copy"><span className="settings-toggle-label">{t('resources.processing')}</span>
         <p className="settings-toggle-hint">{t('resources.processing_hint')}</p></div>
-      <AppSelect className="settings-select" ariaLabel={t('resources.processing')} disabled={disabled} value={policy.processing}
+      <AppSelect className="settings-select settings-performance-processing" ariaLabel={t('resources.processing')} disabled={disabled} value={policy.processing}
         onValueChange={value => void commit({ processing: value as 'low' | 'balanced' | 'high' })}
         options={(['low', 'balanced', 'high'] as const).map(value => ({ value, label: t('resources.' + value) }))} />
     </div>
