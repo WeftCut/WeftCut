@@ -106,7 +106,11 @@ impl Transcriber for WhisperCpp {
             of_prefix,
             req.want_word_timing,
             req.language.as_deref(),
-            self.threads,
+            Some(
+                self.threads
+                    .unwrap_or(crate::resources::task_threads())
+                    .min(crate::resources::task_threads()),
+            ),
         );
         args.extend(device_args);
 

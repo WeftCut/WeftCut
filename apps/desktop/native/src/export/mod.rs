@@ -15,11 +15,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{Context, Result};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use uuid::Uuid;
 
 use crate::process::NoConsoleWindow;
@@ -137,7 +136,10 @@ async fn mix_and_encode(
         }
     }
 
-    let mut cmd = Command::new(ffmpeg_path());
+    let _resources = crate::resources::interactive(128)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let mut cmd = crate::ffmpeg::command();
     cmd.no_console_window();
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
@@ -149,7 +151,8 @@ async fn mix_and_encode(
     for arg in audio_encode_args(&audio.codec, audio.bitrate) {
         cmd.arg(arg);
     }
-    cmd.arg(output);
+    cmd.args(["-threads", &crate::resources::task_threads().to_string()])
+        .arg(output);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -267,7 +270,10 @@ pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) ->
         anyhow::bail!("ffmpeg is not installed");
     }
     let has_audio = audio_path.exists();
-    let mut cmd = Command::new(ffmpeg_path());
+    let _resources = crate::resources::interactive(64)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let mut cmd = crate::ffmpeg::command();
     cmd.no_console_window();
     cmd.args(mux_args(video_path, audio_path, output));
     cmd.stdin(Stdio::null())

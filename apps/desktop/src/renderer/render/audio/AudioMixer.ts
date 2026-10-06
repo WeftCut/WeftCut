@@ -27,6 +27,7 @@ import {
 } from "./envelope";
 import { buildPanGraph, constantPanGains, panCurves, type PanGraph } from "./panGraph";
 import { ConformSource } from "./conformSource";
+import { acquireRenderResources } from '../resourceClient';
 import {
   type ClockAnchor,
   MICRO_FADE_S,
@@ -63,6 +64,7 @@ interface PreparedChunk {
 }
 
 export class AudioMixer {
+  private releaseResources: (() => void) | null = null;
   readonly layerId: string;
 
   private readonly graph: AudioGraph;
@@ -135,6 +137,9 @@ export class AudioMixer {
     if (this.sourcePending) return;
     this.sourcePending = true;
     try {
+      const release = await acquireRenderResources(12);
+      if (this.disposed) { release(); return; }
+      this.releaseResources = release;
       const source = await ConformSource.open(url, this.sourceAbort.signal);
       // A dispose that landed during the fetch already severed this mixer's
       // graph and nulled `source` — assigning here would resurrect it:
@@ -145,6 +150,9 @@ export class AudioMixer {
       this.source = source;
       this.installPanGraph(this.source.header.channels);
       this.deriveFromView();
+    } catch (error) {
+      this.releaseResources?.(); this.releaseResources = null;
+      throw error;
     } finally {
       this.sourcePending = false;
     }
@@ -552,5 +560,6 @@ export class AudioMixer {
       // ignored
     }
     this.source = null;
+    this.releaseResources?.(); this.releaseResources = null;
   }
 }

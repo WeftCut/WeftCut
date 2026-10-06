@@ -1,4 +1,4 @@
-import { PERFORMANCE_DEFAULTS } from './performance-settings.ts';
+import { MIB, PERFORMANCE_DEFAULTS } from './performance-settings.ts';
 
 /** Fixed experimental protocol. Changing any measurement rule requires a version bump. */
 export const PLAYBACK_CALIBRATION = Object.freeze({
@@ -9,6 +9,10 @@ export const PLAYBACK_CALIBRATION = Object.freeze({
   maxAnomalyRatio: .02, maxHeldMs: 100,
   outputWidth: 1280, outputHeight: 720,
   performance: Object.freeze({ ...PERFORMANCE_DEFAULTS,
+    // Isolated test must fit all eight 4K triple-buffered videos plus the
+    // shipping animation allowance. The fixed protocol never changes with user
+    // budgets; the parent reserves capacity for the full run before launch.
+    gpu_buffer_mib: Math.ceil((8 * 3840 * 2160 * 4 * 3 / MIB + PERFORMANCE_DEFAULTS.motif_gpu_mib) / 16) * 16,
     preview_gpu_sessions: 8, preview_gpu_pixel_area: 8 * 3840 * 2160 }),
 });
 

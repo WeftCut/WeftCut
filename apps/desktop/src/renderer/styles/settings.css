@@ -161,8 +161,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 184px;
+  flex: 0 0 auto;
 }
+
+.settings-performance-budget { margin-bottom: 20px; }
+.settings-performance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
 .settings-performance-value .settings-input {
   width: 100px;
@@ -194,6 +197,26 @@
 .settings-performance-disclosure[aria-expanded="false"] > svg {
   transform: rotate(-90deg);
 }
+
+.settings-performance-advanced {
+  margin-top: 16px;
+}
+
+.settings-performance-allocation {
+  display: grid;
+  gap: 8px;
+  font-size: var(--font-size-body);
+}
+
+.settings-performance-allocation > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-performance-allocation dt { color: var(--muted-foreground); }
+.settings-performance-allocation dd { margin: 0; text-align: right; }
+.settings-performance-reset { align-self: flex-start; }
 
 .settings-radio-card[data-disabled] {
   cursor: default;
@@ -274,6 +297,18 @@
   color: var(--muted-foreground);
   background: rgba(156, 163, 175, 0.08);
   border: 1px solid var(--border);
+}
+
+.settings-badge-beta {
+  flex-shrink: 0;
+  margin-left: 0;
+  padding: 1px 5px;
+  color: var(--color-amber-300);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  line-height: 1.2;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /* A second badge on the same row (e.g. the exact-word-timing capability badge
@@ -439,6 +474,9 @@
 }
 
 .settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   appearance: none;
   border: none;
   background: transparent;

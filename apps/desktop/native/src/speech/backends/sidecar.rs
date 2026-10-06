@@ -89,7 +89,30 @@ impl SidecarRun {
     /// [`RawTranscript`]. Errors: [`SpeechError::Spawn`] if the child cannot
     /// start, [`SpeechError::Timeout`] if it overruns, [`SpeechError::EngineExit`]
     /// on a non-zero exit.
-    pub async fn run(self) -> Result<RawTranscript, SpeechError> {
+    pub async fn run(mut self) -> Result<RawTranscript, SpeechError> {
+        let _resources = crate::resources::interactive(crate::resources::model_memory_mib(
+            &self.args, &self.cwd,
+        ))
+        .await
+        .map_err(|e| SpeechError::Io(std::io::Error::other(e)))?;
+        // Argument preparation can precede an admission wait and settings edit.
+        // Clamp again against the admitted allocation immediately before spawn.
+        let threads = crate::resources::task_threads();
+        for index in 0..self.args.len() {
+            if self.args[index] == "-t" && index + 1 < self.args.len() {
+                let requested = self.args[index + 1]
+                    .to_string_lossy()
+                    .parse::<u32>()
+                    .unwrap_or(threads);
+                self.args[index + 1] = requested.clamp(1, threads).to_string().into();
+            } else if let Some(requested) = self.args[index]
+                .to_string_lossy()
+                .strip_prefix("--num-threads=")
+            {
+                let requested = requested.parse::<u32>().unwrap_or(threads);
+                self.args[index] = format!("--num-threads={}", requested.clamp(1, threads)).into();
+            }
+        }
         let mut cmd = Command::new(program_path(&self.program)?);
         cmd.no_console_window() // Windows: no conhost flash under Electron.
             .kill_on_drop(true) // dropped future (timeout/cancel) reaps the child.

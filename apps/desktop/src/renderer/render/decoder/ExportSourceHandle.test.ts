@@ -134,6 +134,40 @@ afterEach(() => {
 });
 
 describe("ExportSourceHandle EOS tail", () => {
+  it('rejects queue growth before decoding beyond admitted memory without waiting for the consumer', async () => {
+    const resources = await import('../resourceClient');
+    const release = vi.fn();
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockResolvedValueOnce(release)
+      .mockRejectedValue(new Error('Memory target too small'));
+    sink = makeSink(Array.from({ length: 40 }, (_, i) => pkt(i * .02, i === 0 ? 'key' : 'delta')));
+    const handle = makeHandle();
+    try {
+      await expect(handle.decodeRange(0, 800_000)).rejects.toThrow('Memory target too small');
+      expect(FakeVideoDecoder.instances[0]!.decoded).toHaveLength(24);
+      handle.dispose(); handle.dispose(); expect(release).toHaveBeenCalledOnce();
+    } finally { handle.dispose(); admission.mockRestore(); }
+  });
+
+  it('charges long-GOP pending packets, returns extra capacity after consumption and releases the base on disposal', async () => {
+    const resources = await import('../resourceClient');
+    const releases: ReturnType<typeof vi.fn>[] = [];
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockImplementation(async () => {
+      const release = vi.fn(); releases.push(release); return release;
+    });
+    sink = makeSink(Array.from({ length: 70 }, (_, i) => pkt(i * .02, i === 0 ? 'key' : 'delta')));
+    const handle = makeHandle();
+    try {
+      await handle.decodeRange(0, 1_400_000);
+      expect(releases).toHaveLength(3);
+      const decoder = FakeVideoDecoder.instances[0]!;
+      for (let i = 0; i < 70; i++) decoder.output(decodedFrame(i * 20_000, 20_000));
+      handle.evictBefore(1_400_000);
+      expect(releases[0]).not.toHaveBeenCalled();
+      expect(releases[1]).toHaveBeenCalledOnce(); expect(releases[2]).toHaveBeenCalledOnce();
+      handle.dispose(); expect(releases[0]).toHaveBeenCalledOnce();
+    } finally { handle.dispose(); admission.mockRestore(); }
+  });
+
   it("stores decoded frames in normalized source time for non-zero media starts", async () => {
     const startUs = 299_674;
     sink = makeSink([pkt(startUs / 1e6, "key"), pkt((startUs + 20_000) / 1e6, "delta")]);

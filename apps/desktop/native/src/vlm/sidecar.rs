@@ -295,11 +295,20 @@ async fn run(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<String, VlmError> {
+    let _resources = crate::resources::interactive(crate::resources::model_memory_mib(args, cwd))
+        .await
+        .map_err(|e| VlmError::Io(std::io::Error::other(e)))?;
     let child = Command::new(program_path(program)?)
         .no_console_window()
         .kill_on_drop(true)
         .current_dir(cwd)
         .args(args)
+        .args([
+            "--threads",
+            &crate::resources::task_threads().to_string(),
+            "--threads-batch",
+            &crate::resources::task_threads().to_string(),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

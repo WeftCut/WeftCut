@@ -5,7 +5,9 @@
 // existing users' app_settings.json keeps working after the move to TS.
 
 import type { PausePreset, PausePresetChange } from "./pause-presets";
+import { DEFAULT_RESOURCE_POLICY, resolveResourcePolicy } from './resource-policy';
 import { PERFORMANCE_DEFAULTS, type PerformanceSettings } from "./performance-settings";
+import { DEFAULT_PERFORMANCE_POLICY, BASELINE_BUDGETS, type PerformancePolicy, type PerformancePolicyPatch, type PerformanceTestProfile } from './performance-policy';
 
 export type DisplayMode = "AbRoll" | "AllTracks";
 
@@ -28,8 +30,17 @@ export type MediaPoolLayout = "large" | "grid" | "list";
 export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
+  resource_policy?: import('./resource-policy').ResourcePolicy;
+  resource_allocation?: import('./resource-policy').ResourceAllocation;
   /** Machine-local resource budgets; absent in older settings files. */
   performance?: PerformanceSettings;
+  /** Budget intent; when present, performance is its derived runtime view. */
+  performance_budget?: import('./performance-budgets').PerformanceBudgets | null;
+  performance_policy?: PerformancePolicy | null;
+  performance_automatic_budget?: import('./performance-budgets').PerformanceBudgets;
+  performance_test_profile?: PerformanceTestProfile | null;
+  /** Derived on this machine; never used as persisted authority. */
+  performance_test_compatible?: boolean;
   performance_calibration?: import('./playback-calibration').CalibrationRecommendation | null;
   performance_calibration_tier?: 'less' | 'standard' | 'maximum';
   pause_presets?: PausePreset[];
@@ -128,8 +139,13 @@ export interface AppSettings {
 /// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
+  resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */
   performance?: Partial<PerformanceSettings> | null;
+  performance_budget?: Partial<import('./performance-budgets').PerformanceBudgets> | null;
+  performance_policy?: PerformancePolicyPatch;
+  performance_action?: 'restore_defaults' | 'restore_auto' | 'restore_tested' | 'clear_test';
+  performance_test_recommendation?: import('./playback-calibration').CalibrationRecommendation;
   performance_calibration?: import('./playback-calibration').CalibrationRecommendation | null;
   performance_calibration_tier?: 'less' | 'standard' | 'maximum';
   /** A single atomic library edit; never replace another window's whole list. */
@@ -160,7 +176,14 @@ export interface AppSettingsPatch {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
+  resource_policy: { ...DEFAULT_RESOURCE_POLICY },
+  resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY),
   performance: PERFORMANCE_DEFAULTS,
+  performance_budget: BASELINE_BUDGETS,
+  performance_policy: DEFAULT_PERFORMANCE_POLICY,
+  performance_automatic_budget: BASELINE_BUDGETS,
+  performance_test_profile: null,
+  performance_test_compatible: false,
   performance_calibration: null,
   performance_calibration_tier: 'standard',
   pause_presets: undefined,

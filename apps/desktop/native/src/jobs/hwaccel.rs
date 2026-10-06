@@ -3,7 +3,6 @@
 
 use std::process::Output;
 
-use crate::ffmpeg::ffmpeg_path;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
@@ -49,7 +48,7 @@ where
     F: FnMut(bool, &mut Command),
 {
     if preferred_hwaccel().is_some() {
-        let mut cmd = Command::new(ffmpeg_path());
+        let mut cmd = crate::ffmpeg::command();
         cmd.no_console_window();
         // LANDMINE: without kill_on_drop, dropping the output() future (tokio
         // runtime shutdown, task abort) ORPHANS the ffmpeg child, which keeps
@@ -72,7 +71,7 @@ where
         );
     }
 
-    let mut cmd = Command::new(ffmpeg_path());
+    let mut cmd = crate::ffmpeg::command();
     cmd.no_console_window();
     cmd.kill_on_drop(true); // see the hw-attempt landmine above
     build(false, &mut cmd);

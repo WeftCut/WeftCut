@@ -7,9 +7,8 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{anyhow, Context, Result};
-use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
@@ -68,7 +67,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // per thumbnail. The fps filter rounds, so `-frames:v` is what caps the set
     // at exactly `THUMB_COUNT`; -fps_mode passthrough so the fps filter's
     // output isn't second-guessed.
-    let status = Command::new(ffmpeg_path())
+    let status = crate::ffmpeg::command()
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the temp dir; see
         // hwaccel.rs.
@@ -143,6 +142,7 @@ mod tests {
     use chrono::Utc;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
+    use tokio::process::Command;
 
     use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata};
 

@@ -23,21 +23,15 @@ import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors
 /// from one bitmap. Single instance — import this, never `new`.
 export const sharedMotifFrameCache = new MotifFrameCache();
 
-/// Byte budget for the gesture lane: a params-page drag mints a fresh
-/// cacheKey per tick (previewOverlay folds the pending patch into the key),
-/// so the lane is churn by design — 64 MB holds ~7 1080p / ~71 480×480
-/// gesture frames, deep enough to scrub mid-drag, shallow enough that the
-/// churn can't pressure RAM.
-const OVERLAY_LANE_MAX_BYTES = 64 * 1024 * 1024;
-
-/// The preview-overlay gesture lane: a SEPARATE small LRU for frames whose
+/// The preview-overlay gesture lane: a separate LRU sharing the same aggregate
+/// retention allowance for frames whose
 /// descriptor resolved with a pending (uncommitted) params-page patch
 /// (`overlayActive`). Without it, every gesture tick's fresh cacheKey would
 /// enter `sharedMotifFrameCache` and evict COMMITTED content under the
 /// playhead. Frames here never touch L2 (the baker omits `layerId`, so an
 /// overlay key is never in `sharedBakedKeyIndex` and `resolveMotifFrame`'s
 /// disk-first branch never fires for one).
-export const sharedMotifOverlayCache = new MotifFrameCache(OVERLAY_LANE_MAX_BYTES);
+export const sharedMotifOverlayCache = new MotifFrameCache();
 
 function broker(cache: MotifFrameCache) {
   return new FrameBroker({ cache, clone: bitmap => createImageBitmap(bitmap),

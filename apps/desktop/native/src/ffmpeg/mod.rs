@@ -33,6 +33,25 @@ use tracing::{info, warn};
 
 use crate::process::NoConsoleWindow;
 
+/// All production ffmpeg builders start here. Both decoder and filter thread
+/// defaults follow the cross-platform allocation; encoder callers also put
+/// `-threads` before their output (input and output options have separate scope).
+pub fn command() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(ffmpeg_path());
+    let threads = crate::resources::task_threads().to_string();
+    command.args([
+        "-threads",
+        &threads,
+        "-filter_threads",
+        &threads,
+        "-filter_complex_threads",
+        &threads,
+        "-cpucount",
+        &threads,
+    ]);
+    command
+}
+
 #[derive(Debug, Clone)]
 pub enum BootstrapStatus {
     Ready(String),

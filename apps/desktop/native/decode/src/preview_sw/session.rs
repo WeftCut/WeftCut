@@ -697,9 +697,11 @@ impl PreviewSwRegistry {
         let flow = Arc::new(PreviewFlow::default());
         let flow_for_thread = Arc::clone(&flow);
 
+        let thread_limit = super::decoder::configured_decode_threads();
         let join = thread::Builder::new()
             .name(format!("preview-sw-{sid}"))
             .spawn(move || {
+                super::decoder::set_session_threads(thread_limit);
                 // Held, never used: its drop — on return AND on panic unwind —
                 // is the done signal `close` bounds its wait on. Do NOT overload
                 // `init_tx` for this; it is consumed by the open handshake.

@@ -5,9 +5,8 @@ use std::{path::PathBuf, process::Stdio};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tokio::process::Command;
 
-use crate::{ffmpeg::ffmpeg_path, process::NoConsoleWindow};
+use crate::process::NoConsoleWindow;
 
 const TARGET_DBFS: f64 = -3.0;
 const MAX_GAIN_DB: f64 = 24.0;
@@ -64,7 +63,7 @@ pub async fn prepare(path: PathBuf, normalize: bool) -> Result<PreparedAudio> {
         .acquire()
         .await
         .context("acquire ffmpeg slot")?;
-    let measured = Command::new(ffmpeg_path())
+    let measured = crate::ffmpeg::command()
         .no_console_window()
         .kill_on_drop(true)
         .args(["-hide_banner", "-nostats", "-i"])
@@ -101,7 +100,7 @@ pub async fn prepare(path: PathBuf, normalize: bool) -> Result<PreparedAudio> {
         .prefix("weftcut-transcription-")
         .tempdir()?;
     let output = directory.path().join("normalized.wav");
-    let result = Command::new(ffmpeg_path())
+    let result = crate::ffmpeg::command()
         .no_console_window()
         .kill_on_drop(true)
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
@@ -187,7 +186,7 @@ mod tests {
         assert_ne!(prepared.path, path);
         let report = prepared.normalization.as_ref().unwrap();
         assert!((report.gain_db - 23.23).abs() < 0.02, "{report:?}");
-        let decoded = Command::new(ffmpeg_path())
+        let decoded = crate::ffmpeg::command()
             .args(["-v", "error", "-i"])
             .arg(&prepared.path)
             .args(["-f", "s16le", "-"])
@@ -198,7 +197,9 @@ mod tests {
         assert_eq!(decoded.stdout.len(), 32000);
         let peak = decoded
             .stdout
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|s| i16::from_le_bytes([s[0], s[1]]).unsigned_abs())
             .max()
             .unwrap();

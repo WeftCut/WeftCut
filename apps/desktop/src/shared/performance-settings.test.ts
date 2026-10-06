@@ -37,4 +37,11 @@ describe("performance settings contract", () => {
     expect(Object.isFrozen(b)).toBe(true);
     expect(PERFORMANCE_DEFAULTS.preview_gpu_sessions).toBe(5);
   });
+
+  it('recovers the combined buffer allowance from an old custom texture pool', () => {
+    const loaded = readPerformanceSettings({ preview_gpu_pool_slots: 6 });
+    expect(loaded.preview_gpu_pool_slots).toBe(6);
+    expect(loaded.gpu_buffer_mib).toBe(704);
+    expect(readPerformanceSettings({ preview_gpu_pool_slots: 6, gpu_buffer_mib: 128 }).gpu_buffer_mib).toBe(128);
+  });
 });

@@ -8,8 +8,9 @@
 // Sessions close when their renderer disappears or navigates away.
 import type { BrowserWindow } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
+import { reserveDecoderResources } from './resources'
 
-const sessions = new Map<string, { win: BrowserWindow; cleanup: () => void }>()
+const sessions = new Map<string, { win: BrowserWindow; cleanup: () => void; release: () => void }>()
 
 /// Open a native SW-decode session. Synchronous on the addon side: returns
 /// frame dimensions immediately, and registers the frame callback BEFORE the
@@ -45,6 +46,9 @@ export function openPreviewSw(
   cadenceDiv: number | null,
   outFormat: string | null,
 ): { width: number; height: number } {
+  if (sessions.has(streamId)) throw new Error('Decoder session already exists')
+  const release = reserveDecoderResources(path)
+  try {
   const info = backend.previewSwOpen(streamId, path, (err: Error | null, frame) => {
     if (err || win.isDestroyed() || win.webContents.isDestroyed()) {
       closePreviewSw(backend, streamId)
@@ -63,12 +67,13 @@ export function openPreviewSw(
   function navigation(details: { isMainFrame: boolean; isSameDocument: boolean }) {
     if (details.isMainFrame && !details.isSameDocument) stop()
   }
-  sessions.set(streamId, { win, cleanup: () => {
+  sessions.set(streamId, { win, release, cleanup: () => {
     win.webContents.removeListener('destroyed', stop)
     win.webContents.removeListener('render-process-gone', stop)
     win.webContents.removeListener('did-start-navigation', navigation)
   } })
   return { width: info.width, height: info.height }
+  } catch (error) { release(); throw error }
 }
 
 export function consumePreviewSw(backend: NativeDecode, senderId: number, streamId: string, receipt: number): void {
@@ -89,5 +94,5 @@ export function closePreviewSw(backend: NativeDecode, streamId: string): void {
   if (!session) return
   sessions.delete(streamId)
   session.cleanup()
-  backend.previewSwClose(streamId)
+  try { backend.previewSwClose(streamId) } finally { session.release() }
 }

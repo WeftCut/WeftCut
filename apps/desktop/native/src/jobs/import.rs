@@ -435,6 +435,13 @@ async fn copy_to_workspace(
     workspace_root: &Path,
     cancel: Arc<AtomicBool>,
 ) -> Result<Option<CopyResult>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    let _resources = tokio::select! {
+        permit = crate::resources::interactive(16) => permit.map_err(anyhow::Error::msg)?,
+        _ = async { while !cancel.load(Ordering::Relaxed) { tokio::time::sleep(std::time::Duration::from_millis(50)).await; } } => return Ok(None),
+    };
     if !source.is_file() {
         anyhow::bail!("source not found: {}", source.display());
     }

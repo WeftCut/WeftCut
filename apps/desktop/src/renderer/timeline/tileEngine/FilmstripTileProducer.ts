@@ -86,6 +86,7 @@ export function registerFilmstripProducer(engine: TileEngine = tileEngine): void
   registered = true;
   engine.register<FilmstripTileValue>({
     kind: FILMSTRIP_KIND,
+    cacheKind: 'filmstrip_cache_mib',
     invalidateOn: FILMSTRIP_INVALIDATE_ON,
     get budgetBytes() { return performanceSettings().filmstrip_cache_mib * MIB; },
     fetch: async (key: TileKey) => {

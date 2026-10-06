@@ -15,6 +15,7 @@ import {
   unregisterFrameRing,
 } from "./frameRingBudget";
 import { isNativeNv12Frame } from "./nv12Frame";
+import { cacheBudget } from '../cacheBudget';
 import { isTenBitFrame } from "./tenBitFrame";
 import type { TransportFrame } from "./transports/DecodeTransport";
 
@@ -176,6 +177,7 @@ export class FrameRing {
     const [first] = this.entries.splice(index, 1);
     if (!first) return;
     this._retainedBytes -= FrameRing.bytesOf(first.frame);
+    cacheBudget.update(this, 'frame_ring_mib', this._retainedBytes);
     this._fate.evicted += 1;
     if (!first.served) this._fate.evictedUnserved += 1;
     first.frame.close();
@@ -277,6 +279,7 @@ export class FrameRing {
     this._pushCount += 1;
     this._fate.pushed += 1;
     this._retainedBytes += FrameRing.bytesOf(frame);
+    cacheBudget.update(this, 'frame_ring_mib', this._retainedBytes);
     // Fast path: append in order. The proxy disables B-frames
     // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
     // order; the async `createImageBitmap` step is sequenced via
@@ -396,6 +399,7 @@ export class FrameRing {
     }
     this.entries = [];
     this._retainedBytes = 0;
+    cacheBudget.release(this);
     // A flushed ring can re-push the same PTS, and the compositor painting it
     // again is a genuine new selection rather than a held frame.
     this.lastServedPtsUs = null;

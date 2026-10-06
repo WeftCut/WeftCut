@@ -21,6 +21,7 @@ import { rootCompositionOf } from "../../ipc/compositions";
 import { exportMotifPlanner } from "../exportMotifSource";
 import { motifLayersToBake } from "../exportBake";
 import { MotifFrameProducer } from "./motifStream";
+import { acquireRenderResources, exportBufferBytes } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
@@ -181,9 +182,6 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     originalFilePaths,
   };
 
-  // 2. OffscreenCanvas to transfer to the Worker.
-  const offscreen = new OffscreenCanvas(comp.width, comp.height);
-
   // 3. Encoder config. Output fps follows the caller's override, else
   // composition fps. The default config's framerate must match.
   const outFpsNum = init.outputFps?.num ?? fpsNum;
@@ -202,10 +200,19 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
   // 4. Spawn the Worker. Vite resolves the URL at bundle time via
   // `new URL(..., import.meta.url) + type: "module"`.
-  const worker = new Worker(
+  // Reserve composition/encoder working frames separately from streamed motifs.
+  // The global working-memory authority rejects an export too large for the
+  // target before either the canvas or worker allocates its buffers.
+  const pixelBytes = comp.width * comp.height * (init.bitDepth === 10 ? 8 : 4);
+  const motifBufferBytes = hasMotifs ? Math.max(pixelBytes, Math.floor(exportBufferBytes() / 2)) : 0;
+  const releaseResources = await acquireRenderResources(64 + (pixelBytes * 8 + motifBufferBytes) / 1048576);
+  let worker: Worker;
+  try { init.signal?.throwIfAborted(); worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),
     { type: "module" },
-  );
+  ); } catch (error) { releaseResources(); throw error; }
+  try {
+  const offscreen = new OffscreenCanvas(comp.width, comp.height);
   // Attach immediately: a warm worker can report ready as soon as this turn
   // yields. Missing either this message or its load error would strand export.
   const workerReady = new Promise<void>((resolve, reject) => {
@@ -277,9 +284,11 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   let framesEncoded = 0;
   let totalFrames = 0;
 
-  return new Promise<RunExportResult>((resolve, reject) => {
+  return await new Promise<RunExportResult>((resolve, reject) => {
     let disposed = false;
+    const workerResources = new Map<string, () => void>();
     const motifProducer = hasMotifs ? new MotifFrameProducer({
+      maxBytes: motifBufferBytes,
       totalFrames: exportFrameCount(Math.max(0, startUs), Math.min(comp.duration_us, endUs), outFpsNum, outFpsDen),
       plan: exportMotifPlanner(summary, Math.max(0, startUs), outFpsNum, outFpsDen),
       send: packet => worker.postMessage({ type: "motif:frame", packet } satisfies ExportRequest,
@@ -366,6 +375,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       // here — on every terminal path — or the native decode threads leak.
       if (nativeDecodeMediaIds.length > 0) window.api.exportSw.closeAll();
       worker.terminate();
+      for (const release of workerResources.values()) release();
+      workerResources.clear();
+      releaseResources();
     };
 
     const onAbort = () => {
@@ -462,11 +474,22 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         window.api.exportSw.decodeRange({ sessionId: ev.sessionId, aUs: ev.aUs, bUs: ev.bUs });
       } else if (ev.type === "nd:returnCredit") {
         window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
+      } else if (ev.type === 'resource:acquire') {
+        void acquireRenderResources(ev.memoryMiB, ev.threads).then(release => {
+          if (disposed) { release(); return; }
+          workerResources.set(ev.id, release);
+          worker.postMessage({ type: 'resource:result', id: ev.id } satisfies ExportRequest);
+        }, error => {
+          if (!disposed) worker.postMessage({ type: 'resource:result', id: ev.id, error: String(error) } satisfies ExportRequest);
+        });
+      } else if (ev.type === 'resource:release') {
+        workerResources.get(ev.id)?.(); workerResources.delete(ev.id);
       } else if (ev.type === "nd:close") {
         window.api.exportSw.close({ sessionId: ev.sessionId });
       }
     };
   });
+  } finally { worker.terminate(); releaseResources(); }
 }
 
 /// Collect distinct font_family strings from every Text layer the export can

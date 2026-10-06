@@ -9,6 +9,7 @@ export interface CalibrationServiceOptions {
   fixtureDirectory: string
   runsDirectory: string
   launch(input: string, directory: string): ChildProcess
+  reserve?: () => () => void
 }
 
 /** Owns one isolated run; UI lifetimes never own processes or overwrite settings. */
@@ -47,13 +48,16 @@ export class CalibrationService {
     fs.writeFileSync(input, JSON.stringify({ fixture: { ...manifest, path: fixturePath }, protocol: PLAYBACK_CALIBRATION }))
     this.cancelled = false
     this.report = { state: 'preparing', cells: PLAYBACK_CALIBRATION.counts.map(count => ({ count, status: 'not-run', reasons: [] })) }
+    let release = () => {}
     try {
+      release = this.options.reserve?.() ?? release
       const child = this.options.launch(input, directory)
       this.child = child
       const finish = (error?: string) => {
         if (this.child !== child) return
         this.status()
         this.child = null
+        release()
         if (this.watchdog) clearTimeout(this.watchdog)
         this.watchdog = null
         if (!this.cancelled && this.report?.state !== 'complete') this.fail(error ?? this.report?.error ?? 'Test window closed before completion')
@@ -65,7 +69,7 @@ export class CalibrationService {
         this.cancelled = true
         child.kill()
       }, 360_000)
-    } catch (error) { this.fail(String(error)); throw error }
+    } catch (error) { release(); this.fail(String(error)); throw error }
     return this.status()
   }
 

@@ -3,6 +3,8 @@ import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
+import { resolvePerformanceBudgets } from '../shared/performance-budgets'
+import { automaticPerformanceBudgets, DEFAULT_PERFORMANCE_POLICY } from '../shared/performance-policy'
 
 const PATH = '/cfg/app_settings.json'
 const DIR = '/cfg'
@@ -21,6 +23,155 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('merges resource intent across windows, reprojects on restart and never reinterprets legacy caches', () => {
+    const { fs, files } = memFs();
+    const a = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 8192, cores: 4 });
+    const b = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 8192, cores: 4 });
+    a.apply({ performance: { frame_ring_mib: 700 } });
+    const legacy = a.get().performance;
+    a.apply({ resource_policy: { memory_mib: 4096 } });
+    b.apply({ resource_policy: { processing: 'low' } });
+    expect(a.get().resource_policy).toMatchObject({ memory_mib: 4096, processing: 'low' });
+    expect(a.get().performance).toEqual(legacy);
+    const restarted = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 65536, cores: 32 });
+    expect(restarted.get().resource_allocation).toMatchObject({ memory_mib: 4096, cpu_threads: 8 });
+    const before = files.get(PATH);
+    expect(() => a.apply({ resource_policy: { memory_mib: -1 } })).toThrow();
+    expect(files.get(PATH)).toBe(before);
+  });
+  it('persists advanced limits, keeps manual budgets across hardware changes and resets all overrides', () => {
+    const { fs } = memFs()
+    const deps = { fs, path: PATH, dir: DIR, totalMemoryMiB: 65536, gpuMemoryMiB: 16384 }
+    const s = createAppSettingsStore(deps)
+    expect(s.get().performance_budget).toEqual({ cache_mib: 3456, gpu_buffer_mib: 2048 })
+    s.apply({ performance_policy: { gpu_buffer_mib: 4096, decoder_limit: 12, buffer_frames: 6 } })
+    const reload = createAppSettingsStore({ ...deps, gpuMemoryMiB: 8192 })
+    expect(reload.get().performance).toMatchObject({ gpu_buffer_mib: 4096, preview_gpu_sessions: 12, preview_gpu_pool_slots: 6 })
+    reload.apply({ performance_action: 'restore_defaults' })
+    expect(reload.get().performance).toMatchObject({ gpu_buffer_mib: 1024, preview_gpu_sessions: 5, preview_gpu_pool_slots: 3 })
+  })
+  it('keeps independent automatic modes across writers, restarts and hardware capacity changes', () => {
+    const { fs } = memFs()
+    const a = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 32768 })
+    const b = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 32768 })
+    a.apply({ performance_policy: { cache_mib: 2304 } })
+    b.apply({ performance_policy: { gpu_buffer_mib: 768 }, language: 'zh-CN' })
+    expect(a.get().performance_policy).toEqual({ ...DEFAULT_PERFORMANCE_POLICY, cache_mib: 2304, gpu_buffer_mib: 768 })
+    a.apply({ performance_policy: { cache_mib: null } })
+    const small = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 4096 })
+    expect(small.get().performance_budget).toEqual({ cache_mib: 512, gpu_buffer_mib: 768 })
+    expect(small.get().language).toBe('zh-CN')
+  })
+
+  it('saves tests without changing runtime, restores a snapshot, and resets without deleting evidence', () => {
+    const { fs } = memFs()
+    const deps = { fs, path: PATH, dir: DIR, totalMemoryMiB: 32768, machineId: 'test-machine', appVersion: '1', now: () => '2026-01-01T00:00:00Z' }
+    const s = createAppSettingsStore(deps)
+    const recommendation = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({ count, status: count <= 5 ? 'pass' : 'slow', reasons: [] })))!
+    s.apply({ performance_policy: { cache_mib: 2304, gpu_buffer_mib: 768 } })
+    const before = s.get().performance
+    s.apply({ performance_test_recommendation: recommendation })
+    expect(s.get().performance).toEqual(before)
+    const record = s.get().performance_test_profile!
+    expect(record).toMatchObject({ machine_id: 'test-machine', app_version: '1', saved_at: deps.now(), budgets: { cache_mib: 2304 } })
+    s.apply({ performance_action: 'restore_tested' })
+    expect(s.get().performance_budget).toEqual(record.budgets)
+    expect(s.get().performance?.preview_gpu_pixel_area).toBe(recommendation.maximum.preview_gpu_pixel_area)
+    const active = s.get().performance
+    const slower = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({ count, status: count <= 2 ? 'pass' : 'slow', reasons: [] })))!
+    s.apply({ performance_test_recommendation: slower })
+    expect(s.get().performance).toEqual(active)
+    s.apply({ performance_action: 'restore_defaults' })
+    expect(s.get().performance).toEqual(PERFORMANCE_DEFAULTS)
+    expect(s.get().performance_policy).toEqual({ ...DEFAULT_PERFORMANCE_POLICY, ...automaticPerformanceBudgets(32768) })
+    expect(s.get().performance_test_profile?.calibration).toEqual(slower)
+    expect(createAppSettingsStore(deps).get()).toEqual(s.get())
+    s.apply({ performance_action: 'clear_test' })
+    expect(s.get().performance_test_profile).toBeNull()
+    expect(() => s.apply({ performance_action: 'restore_tested' })).toThrow('No compatible')
+  })
+
+  it('retains stale test evidence and manual budgets without applying stale throughput', () => {
+    const { fs } = memFs()
+    const deps = { fs, path: PATH, dir: DIR, machineId: 'machine-a', appVersion: '1' }
+    const s = createAppSettingsStore(deps)
+    const recommendation = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({ count, status: 'pass', reasons: [] })))!
+    s.apply({ performance_test_recommendation: recommendation })
+    s.apply({ performance_action: 'restore_tested' })
+    const moved = createAppSettingsStore({ ...deps, machineId: 'machine-b' })
+    expect(moved.get().performance_test_compatible).toBe(false)
+    expect(moved.get().performance_test_profile).toEqual(s.get().performance_test_profile)
+    expect(moved.get().performance_budget).toEqual(s.get().performance_budget)
+    expect(moved.get().performance?.preview_gpu_sessions).toBe(PERFORMANCE_DEFAULTS.preview_gpu_sessions)
+    expect(() => moved.apply({ performance_action: 'restore_tested' })).toThrow('No compatible')
+    moved.apply({ performance_policy: { gpu_buffer_mib: 2048 } })
+    expect(moved.get().performance_budget?.gpu_buffer_mib).toBe(2048)
+    moved.apply({ performance_test_recommendation: recommendation })
+    expect(moved.get().performance_policy?.decode).toBe('baseline')
+    expect(moved.get().performance?.preview_gpu_sessions).toBe(PERFORMANCE_DEFAULTS.preview_gpu_sessions)
+  })
+
+  it('does not trust an active test when its provenance is missing or corrupt', () => {
+    const { fs, files } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    const recommendation = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({ count, status: 'pass', reasons: [] })))!
+    s.apply({ performance_test_recommendation: recommendation })
+    s.apply({ performance_action: 'restore_tested' })
+    const raw = JSON.parse(files.get(PATH)!)
+    files.set(PATH, JSON.stringify({ ...raw, performance_test_profile: { ...raw.performance_test_profile, saved_at: 'invalid' } }))
+    expect(s.get().performance_test_profile).toBeNull()
+    expect(s.get().performance?.preview_gpu_sessions).toBe(PERFORMANCE_DEFAULTS.preview_gpu_sessions)
+    expect(s.get().performance_budget).toEqual(raw.performance_budget)
+  })
+
+  it('validates a policy atomically and publishes nothing when persistence fails', () => {
+    const { fs, files } = memFs()
+    const onCommitted = vi.fn()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR, onCommitted })
+    s.apply({ performance_policy: { gpu_buffer_mib: 512 } })
+    const before = files.get(PATH)
+    for (const performance_policy of [{ cache_mib: -1 }, { gpu_buffer_mib: NaN }, { unknown: 1 }]) {
+      expect(() => s.apply({ performance_policy } as never)).toThrow()
+      expect(files.get(PATH)).toBe(before)
+    }
+    expect(() => s.apply({ performance_action: 'restore_defaults', performance_policy: {} })).toThrow()
+    fs.rename = () => { throw new Error('disk full') }
+    expect(() => s.apply({ performance_policy: { cache_mib: 2048 } })).toThrow('disk full')
+    expect(onCommitted).toHaveBeenCalledTimes(1)
+    expect(files.get(PATH)).toBe(before)
+  })
+
+  it('starts new installations with the machine recommendation without rewriting an old file', () => {
+    const { fs, files } = memFs()
+    const fresh = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 16384 })
+    const budgets = automaticPerformanceBudgets(16384)
+    expect(fresh.get().performance_budget).toEqual(budgets)
+    expect(fresh.get().performance).toEqual(resolvePerformanceBudgets(budgets))
+    files.set(PATH, JSON.stringify({ performance: { frame_ring_mib: 700, preview_gpu_pool_slots: 6 } }))
+    const old = fresh.get()
+    expect(old.performance_budget).toBeNull()
+    expect(old.performance?.frame_ring_mib).toBe(700)
+    expect(old.performance?.gpu_buffer_mib).toBe(704)
+  })
+  it('persists budget intent, derives consumers on reload, and preserves legacy values until adoption', () => {
+    const { fs, files } = memFs({ [PATH]: JSON.stringify({ performance: { frame_ring_mib: 700, preview_gpu_pool_slots: 6 } }) })
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(s.get().performance?.frame_ring_mib).toBe(700)
+    expect(s.get().performance?.preview_gpu_pool_slots).toBe(6)
+    expect(s.get().performance_budget).toBeNull()
+    const budgets = { cache_mib: 2048, gpu_buffer_mib: 256 }
+    s.apply({ performance_budget: budgets })
+    expect(s.get().performance).toEqual(resolvePerformanceBudgets(budgets))
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().performance_budget).toEqual(budgets)
+    const saved = files.get(PATH)
+    expect(() => s.apply({ performance_budget: { cache_mib: -1 }, language: 'zh-CN' })).toThrow('Invalid performance budgets')
+    expect(files.get(PATH)).toBe(saved)
+    s.apply({ performance_budget: { gpu_buffer_mib: 512 } })
+    expect(s.get().performance_budget).toEqual({ cache_mib: 2048, gpu_buffer_mib: 512 })
+    s.apply({ performance: { frame_ring_mib: 700 } })
+    expect(s.get().performance_budget).toBeNull()
+    expect(s.get().performance?.frame_ring_mib).toBe(700)
+  })
   it('persists calibrated presets and applies only their two fields atomically', () => {
     const s = store()
     const profile = playbackCalibrationRecommendation(PLAYBACK_CALIBRATION.counts.map(count => ({

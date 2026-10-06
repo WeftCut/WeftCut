@@ -3,6 +3,12 @@ import { sourceSignature } from './state/mutations/textCorrection.js'
 import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
+import { configureResources } from './resources.js'
+import { installResourceIpc } from './resourceIpc.js'
+import { hydrateResourceAllocation } from '../shared/resource-policy.js'
+import { gpuBufferBudget } from './gpuBufferBudget.js'
+import { MIB } from '../shared/performance-settings.js'
+import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
@@ -447,13 +453,44 @@ app.whenReady().then(async () => {
   // reuse this instance; no second parse anywhere).
   const { createAppSettingsStore } = await import('./app-settings.js')
   const { hydratePerformanceSettings } = await import('../shared/performance-settings.js')
+  let performanceGpu: PerformanceGpuHardware | null = null
+  try {
+    const probe = (require_('@weftcut/core') as { gpuHardwareInfo?: () => PerformanceGpuHardware }).gpuHardwareInfo
+    performanceGpu = probe?.() ?? null
+  } catch (error) { console.warn('[performance] GPU capacity unavailable:', error) }
+  // Machine/build provenance is local-only. A driver/device change invalidates
+  // the old test's applicability without deleting its report or manual budgets.
+  const gpuIdentity = await app.getGPUInfo('basic').then(info => {
+    const gpu = info as { gpuDevice?: unknown; auxAttributes?: { driverVendor?: unknown; driverVersion?: unknown } }
+    return { devices: gpu.gpuDevice, driverVendor: gpu.auxAttributes?.driverVendor, driverVersion: gpu.auxAttributes?.driverVersion }
+  }).catch(() => null)
+  const performanceMachineId = createHash('sha256').update(JSON.stringify({
+    platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model,
+    memory: os.totalmem(), gpu: gpuIdentity, previewGpu: performanceGpu && { name: performanceGpu.name, memory: performanceGpu.dedicatedMemoryMib }, electron: process.versions.electron,
+  })).digest('hex')
   const appSettings = createAppSettingsStore({
     fs: atomicFs,
     path: path.join(app.getPath('userData'), 'app_settings.json'),
     dir: app.getPath('userData'),
-    onCommitted: settings => hydratePerformanceSettings(settings.performance),
+    totalMemoryMiB: Math.floor(os.totalmem() / MIB),
+    cores: os.availableParallelism(),
+    gpuMemoryMiB: performanceGpu?.dedicatedMemoryMib,
+    machineId: performanceMachineId, appVersion: app.getVersion(),
+    onCommitted: settings => {
+      hydrateResourceAllocation(settings.resource_allocation)
+      configureResources(settings.resource_allocation!)
+      hydratePerformanceSettings(settings.performance,
+      !settings.performance_policy || settings.performance_policy.decode === 'tested' && settings.performance_test_compatible
+        ? settings.performance_calibration : null, !!settings.performance_policy)
+    },
   })
-  hydratePerformanceSettings(appSettings.get().performance)
+  const initialAppSettings = appSettings.get()
+  hydrateResourceAllocation(initialAppSettings.resource_allocation)
+  configureResources(initialAppSettings.resource_allocation!)
+  installResourceIpc()
+  hydratePerformanceSettings(initialAppSettings.performance,
+    !initialAppSettings.performance_policy || initialAppSettings.performance_policy.decode === 'tested' && initialAppSettings.performance_test_compatible
+      ? initialAppSettings.performance_calibration : null, !!initialAppSettings.performance_policy)
 
   // Speech-backend config store — persists <userData>/speech_config.json (NON-
   // secret: preferred engine + each local engine's binary/model/device/threads).
@@ -1583,6 +1620,11 @@ app.whenReady().then(async () => {
   // than hanging, but the ack ordering still exists to avoid paying that cost.
   installPreviewGpuIpc(ndBackend, () => mainWindow)
   installPerformanceCalibration()
+  ipcMain.handle('performanceResources:info', () => ({
+    total_memory_mib: Math.floor(os.totalmem() / MIB),
+    gpu: performanceGpu,
+    gpu_buffers: gpuBufferBudget.snapshot(),
+  }))
 
   // Availability of the optional native-decode component (level-0 gate). The
   // renderer pulls this once on mount to gray out the Native-engine setting +
@@ -1722,8 +1764,8 @@ app.whenReady().then(async () => {
   // A Worker terminated mid-teardown may never send its per-session close, so
   // the renderer signals main to close them directly — else the native decode
   // threads leak. Idempotent; no-ops when nothing is open.
-  ipcMain.on('exportSw:closeAll', () => {
-    try { closeAllExportSw(ndBackend()) }
+  ipcMain.on('exportSw:closeAll', event => {
+    try { closeAllExportSw(ndBackend(), event.sender.id) }
     catch (e) { console.warn('[main] exportSw:closeAll failed', e) }
   })
 

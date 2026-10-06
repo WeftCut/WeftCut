@@ -221,6 +221,8 @@ export function SettingsPanel({
               type="button"
               role="tab"
               id={`settings-tab-${c.id}`}
+              aria-label={t(c.labelKey)}
+              aria-describedby={c.id === "performance" ? "settings-performance-beta" : undefined}
               aria-selected={category === c.id}
               aria-controls={`settings-panel-${c.id}`}
               tabIndex={category === c.id ? 0 : -1}
@@ -232,6 +234,9 @@ export function SettingsPanel({
               onClick={() => setCategory(c.id)}
             >
               {t(c.labelKey)}
+              {c.id === "performance" && (
+                <span id="settings-performance-beta" className="settings-badge settings-badge-beta">beta</span>
+              )}
             </button>
           ))}
         </div>

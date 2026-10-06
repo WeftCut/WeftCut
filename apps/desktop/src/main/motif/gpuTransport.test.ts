@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sharedTexture, type WebContents } from 'electron'
 import { MotifGpuTransport } from './gpuTransport'
-import { hydratePerformanceSettings } from '../../shared/performance-settings'
+import { MIB, hydratePerformanceSettings, performanceSettings } from '../../shared/performance-settings'
+import { createGpuBufferBudget } from '../gpuBufferBudget'
 
 vi.mock('electron', () => ({ sharedTexture: {
   importSharedTexture: vi.fn(({ allReferencesReleased }: { allReferencesReleased: () => void }) => ({ release: allReferencesReleased })),
@@ -16,10 +17,49 @@ function fixture(concurrency = 1) {
     pools.push(pool)
     return pool
   })
-  return { owner, pools, create, transport: new MotifGpuTransport(create, concurrency) }
+  const buffers = createGpuBufferBudget(() => performanceSettings().gpu_buffer_mib * MIB)
+  return { owner, pools, create, buffers, transport: new MotifGpuTransport(create, concurrency, buffers) }
 }
 
 describe('Motif GPU leases', () => {
+  it('borrows unused video memory in budget mode while legacy mode retains its own cap', async () => {
+    hydratePerformanceSettings({ gpu_buffer_mib: 256, motif_gpu_mib: 16 }, null, true)
+    const { owner, buffers, transport } = fixture()
+    const frame = await transport.read(owner, 'borrowed', 4096, 2048)
+    expect(buffers.snapshot().motif_bytes).toBe(32 * MIB)
+    transport.release(owner, frame.token)
+    transport.close(owner)
+    hydratePerformanceSettings({ gpu_buffer_mib: 256, motif_gpu_mib: 16 })
+    await expect(transport.read(owner, 'legacy', 4096, 2048)).rejects.toThrow('budget exhausted')
+  })
+  it('shares the byte limit with video and retries after video releases capacity', async () => {
+    hydratePerformanceSettings({ gpu_buffer_mib: 64 })
+    const { owner, buffers, transport, create } = fixture()
+    const video = buffers.reserve('preview', 60 * MIB)!
+    await expect(transport.read(owner, 'blocked', 2048, 1024)).rejects.toThrow('budget exhausted')
+    expect(create).not.toHaveBeenCalled()
+    buffers.release(video)
+    const frame = await transport.read(owner, 'allowed', 2048, 1024)
+    expect(buffers.snapshot().motif_bytes).toBe(8 * MIB)
+    transport.release(owner, frame.token)
+    transport.close(owner)
+    expect(buffers.snapshot().used_bytes).toBe(0)
+  })
+
+  it('keeps retired Motif textures in the shared budget until Electron releases their references', async () => {
+    const { owner, buffers, transport } = fixture()
+    let finalReference!: () => void
+    vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(({ allReferencesReleased }) => {
+      finalReference = allReferencesReleased!
+      return { release: vi.fn() } as unknown as ReturnType<typeof sharedTexture.importSharedTexture>
+    })
+    const frame = await transport.read(owner, 'held', 2048, 1024)
+    transport.release(owner, frame.token)
+    transport.close(owner)
+    expect(buffers.snapshot().motif_bytes).toBe(8 * MIB)
+    finalReference()
+    expect(buffers.snapshot().motif_bytes).toBe(0)
+  })
   it('reads changed allocation budgets without closing a leased texture', async () => {
     const { owner, pools, transport } = fixture(2)
     const first = await transport.read(owner, 'first', 4096, 2048)

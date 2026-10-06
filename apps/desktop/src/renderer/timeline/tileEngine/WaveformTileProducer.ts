@@ -197,6 +197,7 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
   registered = true;
   engine.register<TileValue>({
     kind: WAVEFORM_KIND,
+    cacheKind: 'waveform_cache_mib',
     get budgetBytes() { return performanceSettings().waveform_cache_mib * MIB; },
     // `lod` encodes level; `index` encodes channel*BIG + tileIndex.
     fetch: async (key: TileKey) => {

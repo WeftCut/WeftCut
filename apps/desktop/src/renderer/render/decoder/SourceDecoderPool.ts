@@ -144,6 +144,7 @@ export class SourceMedia {
 }
 
 export class SourceHandle {
+  private releaseResources: (() => void) | null = null;
   private requestVersion = 0;
   readonly layerId: string;
   readonly media: SourceMedia;
@@ -241,12 +242,26 @@ export class SourceHandle {
   async ensureReady(): Promise<void> {
     if (this.ready && this.decoder) return;
     if (this.readyP) return this.readyP;
-    this.readyP = this._doEnsureReady();
+    this.readyP = this._doEnsureReady().catch(error => {
+      try { this.decoder?.close(); } catch { /* already closed */ }
+      this.decoder = null;
+      this.releaseResources?.(); this.releaseResources = null;
+      this.readyP = null;
+      throw error;
+    });
     return this.readyP;
   }
 
   private async _doEnsureReady(): Promise<void> {
     this.config = await this.media.ensureReady();
+    if (this._disposed) return;
+    if (!this.releaseResources) {
+      const { acquireRenderResources } = await import('../resourceClient');
+      const width = this.config.codedWidth ?? 1920, height = this.config.codedHeight ?? 1080;
+      const release = await acquireRenderResources(64 + width * height * 64 / 1048576);
+      if (this._disposed) { release(); return; }
+      this.releaseResources = release;
+    }
     // Capture the decoder identity so that stale error callbacks from
     // a decoder we've since replaced (via inactivity-rebuild) bail
     // before re-firing the recovery path. Chrome can deliver multiple
@@ -543,6 +558,7 @@ export class SourceHandle {
       this.decoder = null;
     }
     this.ring.dispose();
+    this.releaseResources?.(); this.releaseResources = null;
     // The opened media lives on the shared `SourceMedia`; the pool releases
     // it (refcounted) when the last handle on this mediaId goes away. We
     // intentionally don't touch `this.media` here.

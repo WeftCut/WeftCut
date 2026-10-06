@@ -71,17 +71,15 @@ describe("Motif export credits", () => {
     expect(first.close).toHaveBeenCalledOnce(); expect(send).not.toHaveBeenCalled();
   });
 
-  it("admits a frame larger than the budget alone without deadlocking", async () => {
-    const send = vi.fn();
-    const producer = new MotifFrameProducer({ totalFrames: 2, maxBytes: 1, send, fail: vi.fn(),
-      plan: index => [{ layerId: 'a', frame: index, bytes: 16, read: async () => bitmap() }],
+  it("rejects an oversized frame before allocating or reading it", () => {
+    const send = vi.fn(), fail = vi.fn(), read = vi.fn(async () => bitmap());
+    const producer = new MotifFrameProducer({ totalFrames: 2, maxBytes: 1, send, fail,
+      plan: index => [{ layerId: 'a', frame: index, bytes: 16, read }],
     });
     producer.start();
-    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    producer.release(0);
-    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-    expect(producer.stats.peakBytes).toBe(32);
-    producer.dispose(); for (const [p] of send.mock.calls) closeMotifPacket(p);
+    expect(fail).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('memory target') }));
+    expect(send).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled();
+    expect(producer.stats.peakBytes).toBe(0);
   });
 });
 

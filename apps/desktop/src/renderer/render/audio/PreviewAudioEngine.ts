@@ -13,6 +13,7 @@ import type { AudioGraph } from "./AudioGraph";
 import { LOOKAHEAD_S } from "./chunkSchedule";
 import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./roleGate";
 
+import { setResourcePlayback } from '../resourceClient';
 export type PlaybackPhase = "paused" | "preparing" | "playing" | "error";
 export interface PlaybackSnapshot {
   phase: PlaybackPhase;
@@ -412,6 +413,8 @@ export class PreviewAudioEngine {
     this.setState("error", error instanceof Error ? error.message : String(error));
   }
   private setState(phase: PlaybackPhase, error: string | null = null): void {
+    setResourcePlayback(phase === 'playing');
+    if (typeof window !== 'undefined') window.api?.resources?.playing(phase === 'playing');
     this.state = { phase, requestedPlaying: phase === "preparing" || phase === "playing", error };
     for (const cb of this.stateListeners) cb(this.state);
   }

@@ -96,6 +96,7 @@ export interface NativeDecodeOpenInfo {
 }
 
 export type ExportRequest =
+  | { type: 'resource:result'; id: string; error?: string }
   | {
       type: "start";
       project: ExportProjectSnapshot;
@@ -211,6 +212,8 @@ export interface ExportPerf {
 }
 
 export type ExportEvent =
+  | { type: 'resource:acquire'; id: string; memoryMiB: number; threads: number }
+  | { type: 'resource:release'; id: string }
   | { type: "ready" }
   | { type: "motif:consumed"; index: number }
   | { type: "progress"; framesEncoded: number; totalFrames: number }

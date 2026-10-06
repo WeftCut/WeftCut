@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { notifyResourceCacheWrite } from '../resources'
 import type { MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport.js'
 
 async function replaceFile(temp: string, destination: string): Promise<void> {
@@ -76,6 +77,7 @@ export class MotifFrameStore {
       try {
         await fs.writeFile(temp, bytes, { flag: 'wx' })
         await replaceFile(temp, `${stem}.wfrm`)
+        notifyResourceCacheWrite()
       } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
     }
     return {

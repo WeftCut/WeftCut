@@ -3,6 +3,8 @@ import type { CaptureArgs } from './capture'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
 import type { MotifCacheAddress, MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors'
+import { reserveResources } from '../resources'
+import { isResourceCapacityError } from '../../shared/resource-policy'
 
 export interface TextureEncoder { encode(handle: Buffer): Promise<Buffer>; close(): void }
 export interface CaptureRequest extends CaptureArgs {
@@ -34,6 +36,7 @@ export class MotifCaptureService {
 
   async capture(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean = () => true): Promise<StoredMotifFrame> {
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576)
     const { coalesceKey, high, bake, ...args } = request
     const key = coalesceKey === undefined ? undefined : `${owner.id}:${coalesceKey}`
     // Begin resolving the workspace now, without postponing capture admission:
@@ -86,7 +89,7 @@ export class MotifCaptureService {
             return { ...await this.deps.copy!(owner, texture), persisted }
           }, key, high)
         } catch (error) {
-          if (writeFailed || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE) || this.deps.isContentFailure(args, error)) throw error
+          if (writeFailed || isResourceCapacityError(error) || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE) || this.deps.isContentFailure(args, error)) throw error
           this.useTexture = false
           this.deps.setTextureEnabled(false)
         }
@@ -96,6 +99,7 @@ export class MotifCaptureService {
       const persisted = destination ? await write(await destination, bytes, true) : false
       return { kind: 'png', bytes, persisted }
     } finally {
+      releaseResources()
       acceptingBake = false
       if (key && this.jobs.get(key) === job) this.jobs.delete(key)
     }

@@ -12,6 +12,7 @@ import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
+import { isResourceCapacityError } from '../../../shared/resource-policy';
 import { isTenBitPixFmt } from "../../../shared/hwLaneEligibility";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
 import { noteLaneOpen } from "./ffmpegLaneTrail";
@@ -98,6 +99,8 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// forced-lane bench run leaves it null and falls to the GPU transport.
   private hwPlan: { lane: string; device: string | null } | null = null;
   private startedHardware = false;
+  private capacityError: unknown = null;
+  private capacityRetryAfter = 0;
   private readyP: Promise<void> | null = null;
   private ready = false;
   private _disposed = false;
@@ -172,8 +175,8 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// over-approximates twice: `lane` is assigned before `open` settles and
   /// survives `closeTransportForFallback` nulling the transport (a window where
   /// "hardware" owns nothing), and the copy-back lanes (nvdec/vaapi/
-  /// videotoolbox) ride `previewSw`, which has no admission budget at all. A
-  /// reclaim that picks a non-holder tears down a live clip and frees nothing.
+  /// videotoolbox) ride `previewSw`: they hold global memory credits but no
+  /// shared-texture HW session slot. This reclaim only targets that HW slot.
   holdsHwSessionLease(): boolean {
     return (
       !this._disposed
@@ -200,7 +203,15 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.lastUseMs = performance.now();
     if (this.ready) return;
     if (this.readyP) return this.readyP;
-    this.readyP = this._doEnsureReady();
+    if (this.capacityError && performance.now() < this.capacityRetryAfter) throw this.capacityError;
+    this.readyP = this._doEnsureReady().catch(async error => {
+      if (isResourceCapacityError(error)) {
+        await this.closeTransportForFallback();
+        this.capacityError = error; this.capacityRetryAfter = performance.now() + 1000;
+        this.readyP = null;
+      }
+      throw error;
+    });
     return this.readyP;
   }
 
@@ -233,6 +244,9 @@ export class FfmpegSource implements PreviewDecodeSession {
       await this.openLane(this.lane);
     } catch (err) {
       if (this._disposed) return;
+      // Global pressure is neither hardware capability nor a request to reduce
+      // preview quality. Leave the source retryable on every platform.
+      if (isResourceCapacityError(err)) throw err;
       // A HARDWARE open failure (budget full, device lost at open) is recoverable
       // the same way a runtime HW error is — fall to SW in place, keeping the ring.
       // Not for a forced lane (bench) or a software open (that IS total failure).
@@ -304,6 +318,7 @@ export class FfmpegSource implements PreviewDecodeSession {
           await this.openLane("software", { from: "hardware", reason });
         } catch (swErr) {
           if (this._disposed) return;
+          if (isResourceCapacityError(swErr)) throw swErr;
           this.fireFatal(swErr instanceof Error ? swErr.message : String(swErr));
           throw swErr;
         }

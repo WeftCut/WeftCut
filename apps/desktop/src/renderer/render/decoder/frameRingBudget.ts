@@ -23,7 +23,7 @@
 
 // Runtime target; lower budgets can increase long-GOP re-seek churn.
 // The FrameRing forward-frame floor still overrides this target.
-import { MIB, performanceSettings } from "../../../shared/performance-settings";
+import { cacheBudget } from '../cacheBudget';
 
 let liveRings = 0;
 
@@ -42,7 +42,7 @@ export function unregisterFrameRing(): void {
 
 /// This ring's share of the total, in bytes.
 export function frameRingByteBudget(): number {
-  return (performanceSettings().frame_ring_mib * MIB) / Math.max(1, liveRings);
+  return cacheBudget.allowance('frame_ring_mib') / Math.max(1, liveRings);
 }
 
 /// Diagnostics + tests: how many rings are dividing the budget.

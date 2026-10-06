@@ -35,11 +35,10 @@ pub(crate) mod sim;
 /// per-(source, tier) sidecar. Owns the one measurement function; [`attach_stats`]
 /// is its other caller.
 pub(crate) mod stats;
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use async_trait::async_trait;
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::cache::CacheLayout;
 use crate::process::NoConsoleWindow;
@@ -148,7 +147,7 @@ impl ShotDetector for FfmpegShotDetector {
         // backslash escaping, and `file=-` collides with the null muxer on
         // stdout. So run at info level and parse the captured stderr.
         let vf = format!("select='gt(scene,{})',metadata=print", opts.sensitivity);
-        let output = Command::new(ffmpeg_path())
+        let output = crate::ffmpeg::command()
             .no_console_window()
             .kill_on_drop(true)
             .args([
@@ -631,7 +630,7 @@ pub(crate) async fn extract_rgb(video: &Path, t_us: i64, dest: &Path) -> Result<
         .acquire()
         .await
         .context("acquire ffmpeg slot")?;
-    let output = Command::new(ffmpeg_path())
+    let output = crate::ffmpeg::command()
         .no_console_window()
         .kill_on_drop(true)
         .args([

@@ -136,7 +136,8 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
         // see `source_color_args`.
         cmd.args(&color_args);
-        cmd.arg(&tmp)
+        cmd.args(["-threads", &crate::resources::task_threads().to_string()])
+            .arg(&tmp)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());

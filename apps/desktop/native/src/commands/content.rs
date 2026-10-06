@@ -31,8 +31,10 @@ const BZIP2_MAGIC: [u8; 3] = *b"BZh";
 /// whisper.cpp / llama.cpp Linux tarballs depend on — their binaries resolve
 /// `libwhisper.so.1` and friends through `$ORIGIN` links.
 pub async fn extract_tar(archive_path: String, dest_dir: String) -> Result<u32, String> {
+    let resources = crate::resources::interactive(128).await?;
     // Decompression is CPU-bound for seconds — keep it off the async runtime.
     tokio::task::spawn_blocking(move || {
+        let _resources = resources;
         std::fs::create_dir_all(&dest_dir).map_err(|e| format!("create {dest_dir}: {e}"))?;
         let file = File::open(&archive_path).map_err(|e| format!("open {archive_path}: {e}"))?;
         let mut reader = BufReader::new(file);

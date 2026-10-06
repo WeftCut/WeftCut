@@ -187,22 +187,21 @@ export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
 /// software without poisoning the per-media hardware capability cache.
 export const HW_BUDGET_RESERVATION_MISMATCH = 'hw-budget-reservation-mismatch'
 
-/// Live preview-GPU admission snapshot. Main greedily reserves BOTH a hard
-/// session slot and the source's coded width×height before native open.
+/// Live preview-GPU admission snapshot. Main reserves a decoder session,
+/// coded width×height and shared buffer bytes before native open.
 ///
-/// `codedPixelArea` is calibrated from the measured 30 fps fixtures. It is
+/// `codedPixelArea` uses the shipping 30 fps reference or accepted 60 fps test. It is
 /// deliberately NOT called pixel-rate: fps is not yet carried into admission,
 /// and multiplying this number by an assumed rate would overstate the model.
 /// `calibratedFps` makes that empirical boundary visible to diagnostics.
 export type PreviewGpuBudgetSnapshot = {
   currency: 'coded-pixel-area'
   sessions: { used: number; max: number }
-  codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+  codedPixelArea: { used: number; max: number; calibratedFps: 30 | 60 }
   /// Live shared-pool VRAM across every OPEN session: Σ width×height×4 (RGBA8)
-  /// × that session's slot count, from main's session records (admission
-  /// leases don't know pool sizes). The pool-VRAM instrument: admission still
-  /// prices coded AREA only — this field exists so a run can SEE the bytes
-  /// that area implies instead of assuming them.
+  /// × that session's slot count, from main's session records. Closed imports
+  /// still held by Chromium remain in performanceResources.info's aggregate
+  /// byte accounting until their final references are released.
   slotVram: { usedBytes: number; bytesPerPixel: 4 }
 }
 
@@ -399,6 +398,13 @@ import type {
 import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
+  resources: {
+    acquire(request: { id: string; memoryMiB: number; threads: number }): Promise<void>;
+    release(id: string): void;
+    playing(value: boolean): void;
+    status(): Promise<import('./resource-policy').ResourceStatus>;
+  }
+  performanceResources: { info(): Promise<import('./performance-budgets').PerformanceResourceInfo> }
   performanceCalibration: {
     status(): Promise<import('./playback-calibration').CalibrationSnapshot>
     start(): Promise<import('./playback-calibration').CalibrationSnapshot>

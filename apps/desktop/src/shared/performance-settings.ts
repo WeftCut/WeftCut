@@ -1,9 +1,10 @@
-/** Machine-local resource policy. Defaults preserve the measured shipping profile.
+/** Machine-local runtime values. Defaults preserve the stable shipping profile.
  * Units and validation live here; consumers must read at admission/maintenance,
  * never capture these defaults at module initialization. */
 export const MIB = 1024 * 1024;
 
 export const PERFORMANCE_FIELDS = Object.freeze({
+  gpu_buffer_mib: { default: 416, min: 64, max: 8192, unit: "MiB" },
   preview_gpu_sessions: { default: 5, min: 0, max: 32, unit: "count" },
   preview_gpu_pixel_area: { default: 3 * 3840 * 2160, min: 1, max: 16 * 7680 * 4320, unit: "pixels" },
   preview_gpu_pool_slots: { default: 3, min: 1, max: 16, unit: "count" },
@@ -37,6 +38,13 @@ export function readPerformanceSettings(value: unknown): PerformanceSettings {
   if (isRecord(value)) for (const key of PERFORMANCE_KEYS) {
     if (valid(key, value[key])) result[key] = value[key];
   }
+  // Old files had separate pool limits. Recover their combined allowance
+  // from the maximum shared RGBA footprint instead of silently tightening
+  // custom slot counts with the new shipping byte limit.
+  if (isRecord(value) && value.gpu_buffer_mib === undefined) {
+    const legacyMiB = result.preview_gpu_pixel_area * 4 * result.preview_gpu_pool_slots / MIB + result.motif_gpu_mib;
+    result.gpu_buffer_mib = Math.min(8192, Math.max(64, Math.ceil(legacyMiB / 16) * 16));
+  }
   return Object.freeze(result);
 }
 
@@ -60,7 +68,13 @@ export function patchPerformanceSettings(current: unknown, patch: unknown): Perf
 // Each process has one read-only snapshot. Only app-settings bootstrap/commit
 // (main) and app-settings hydration (renderer) publish it; never persist here.
 let current = PERFORMANCE_DEFAULTS;
+let referenceFps: 30 | 60 = 30;
+let sharedResourceAllocation = false;
+export function sharedResourceAllocationEnabled(): boolean { return sharedResourceAllocation; }
 export function performanceSettings(): PerformanceSettings { return current; }
-export function hydratePerformanceSettings(value: unknown): void {
+export function previewGpuReferenceFps(): 30 | 60 { return referenceFps; }
+export function hydratePerformanceSettings(value: unknown, calibration?: import('./playback-calibration').CalibrationRecommendation | null, shareResources = false): void {
   current = readPerformanceSettings(value);
+  referenceFps = calibration ? 60 : 30;
+  sharedResourceAllocation = shareResources;
 }

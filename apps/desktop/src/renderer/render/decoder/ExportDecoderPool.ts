@@ -16,6 +16,7 @@ import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
+import { acquireRenderResources } from '../resourceClient';
 import type { NativeNv12Frame } from "./nv12Frame";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
 
@@ -32,7 +33,8 @@ const REORDER_MARGIN = 16;
 /// clamped to [MIN, MAX]. The MIN floor is the deadlock guard — output is
 /// presentation-ordered, so an unsatisfied waiter implies everything held is
 /// evictable, but the floor keeps headroom over the DPB-16 reorder window.
-/// No cross-ring budget: N simultaneous 10-bit sources stack N× this bound.
+/// Each source's ring and pending decoder/copy queue are charged to the global
+/// working-memory authority before dispatch; the ring gate alone is insufficient.
 const TENBIT_RING_TARGET_BYTES = 320 << 20;
 const TENBIT_RING_MIN_ENTRIES = 20;
 const TENBIT_RING_MAX_ENTRIES = 48;
@@ -102,6 +104,8 @@ export class ExportFrameStore implements FrameStore {
   get tenBitHighWater(): number {
     return this.derivedTenBitHighWater ?? TENBIT_RING_MAX_ENTRIES;
   }
+
+  get residentFrames(): number { return this.entries.length; }
 
   push(frame: VideoFrame | TenBitFrame | NativeNv12Frame, ptsUs = frame.timestamp): void {
     if (this.derivedTenBitHighWater === null && isTenBitFrame(frame)) {
@@ -400,6 +404,12 @@ export class ExportFrameStore implements FrameStore {
 }
 
 export class ExportSourceHandle implements ExportDecodeSession {
+  private releaseResources: (() => void) | null = null;
+  private frameBytes = 0;
+  private admittedFrames = 24;
+  private pendingPackets = 0;
+  private pendingCopies = 0;
+  private queueLeases: Array<() => void> = [];
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
   /// Source color tags (ffprobe-mapped), for original AND proxy decode
@@ -501,7 +511,14 @@ export class ExportSourceHandle implements ExportDecodeSession {
   async ensureReady(): Promise<void> {
     if (this.config && this.decoder) return;
     if (this.readyP) return this.readyP;
-    this.readyP = this._doEnsureReady();
+    this.readyP = this._doEnsureReady().catch(error => {
+      try { this.decoder?.close(); } catch { /* already closed */ }
+      this.decoder = null;
+      this.releaseResources?.(); this.releaseResources = null;
+      this.opened?.dispose(); this.opened = null;
+      this.readyP = null;
+      throw error;
+    });
     return this.readyP;
   }
 
@@ -522,6 +539,13 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // resolution default) — for original AND proxy decodes alike (a proxy
     // preserves the source's colorimetry).
     this.config = withDefaultColorSpace(config, this.sourceColor);
+    if (!this.releaseResources) {
+      this.frameBytes = (config.codedWidth ?? 1920) * (config.codedHeight ?? 1080) * (this.tenBitLane ? 8 : 4);
+      // 24 admitted frames plus codec-private/reorder surfaces and context.
+      const release = await acquireRenderResources(64 + this.frameBytes * 40 / 1048576);
+      if (this._disposed) { release(); return; }
+      this.releaseResources = release;
+    }
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] source ${this.mediaId} ready: codec=${config.codec} ` +
@@ -569,6 +593,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
           frame.close();
           return;
         }
+        this.pendingPackets = Math.max(0, this.pendingPackets - 1);
         this.outputFrameCount += 1;
         if (!this.firstFrameDiag) {
           const cs = frame.colorSpace;
@@ -594,16 +619,16 @@ export class ExportSourceHandle implements ExportDecodeSession {
           );
         }
         if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
+          this.pendingCopies++;
           this.copyChain = this.copyChain.then(async () => {
             // Backpressure: while the ring is at high water (resolution-derived,
             // see tenBitHighWaterFor), block the copy chain here. Note: SW
             // decoders don't stall on held frames the way HW decoders do (no
             // pool slots), so this gate bounds the RING entry count, not the
-            // decoder. The un-copied frames backlogged in the chain are bounded
-            // by the dispatch window (chunk/GOP + REORDER_MARGIN), which
-            // for long-GOP 4K sources can be large — see the known-limitation
-            // note on TENBIT_RING_TARGET_BYTES.
+            // decoder. Pending copies and packets also retain global working
+            // credits, so a long GOP cannot bypass the application budget.
             await this.ring.waitBelowTenBitHighWater();
+            if (this.decoder !== dec) { frame.close(); return; }
             const tb = await copyToTenBit(frame);
             const ptsUs = this.clock.sourceUs(tb.timestamp);
             frame.close();
@@ -618,7 +643,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
             // A dropped frame is silent corruption and a parked-forever waiter —
             // fail the ring loudly so the worker's waitForPts rejects the export.
             this.ring.fail(msg);
-          });
+          }).finally(() => { this.pendingCopies--; });
           return;
         }
         this.ring.push(frame, this.clock.sourceUs(frame.timestamp));
@@ -666,6 +691,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// frames stay.
   private rebuildDecoder(): void {
     this.generation += 1;
+    this.pendingPackets = 0;
     try {
       this.decoder?.close();
     } catch {
@@ -822,7 +848,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
       while (pkt) {
         const ptsUs = this.clock.sourceUs(pkt.microsecondTimestamp);
         if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
+        const admission = this.reserveDispatchMemory();
+        if (admission) await admission;
+        if (this._disposed) return;
+        if (this.generation !== gen) continue restart;
         const prepared = this.clock.prepare(pkt);
+        this.pendingPackets++;
         this.decoder.decode(prepared.chunk);
         this.cursor = pkt;
         this.lastDispatchedPtsUs = prepared.sourcePtsUs;
@@ -845,7 +876,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
       // continues from the cursor, so nothing is ever fed twice.
       let extra = 0;
       while (pkt && extra < REORDER_MARGIN) {
+        const admission = this.reserveDispatchMemory();
+        if (admission) await admission;
+        if (this._disposed) return;
+        if (this.generation !== gen) continue restart;
         const prepared = this.clock.prepare(pkt);
+        this.pendingPackets++;
         this.decoder.decode(prepared.chunk);
         this.cursor = pkt;
         this.lastDispatchedPtsUs = prepared.sourcePtsUs;
@@ -938,6 +974,21 @@ export class ExportSourceHandle implements ExportDecodeSession {
 
   evictBefore(cutoffUs: number): void {
     this.ring.evictBefore(cutoffUs);
+    while (this.queueLeases.length && this.admittedFrames - 32 >= this.heldFrames() + 16) {
+      this.queueLeases.pop()!(); this.admittedFrames -= 32;
+    }
+  }
+
+  private heldFrames(): number { return this.pendingPackets + this.pendingCopies + this.ring.residentFrames; }
+
+  private reserveDispatchMemory(): Promise<void> | null {
+    if (this.heldFrames() + 1 <= this.admittedFrames) return null;
+    // Dispatch precedes consumption in this pipeline: waiting for eviction here
+    // would deadlock. Request more capacity or fail explicitly before decode.
+    return acquireRenderResources(this.frameBytes * 32 / 1048576).then(release => {
+      if (this._disposed) { release(); return; }
+      this.queueLeases.push(release); this.admittedFrames += 32;
+    });
   }
 
   dispose(): void {
@@ -952,6 +1003,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
     }
     this.ring.dispose();
     this.opened?.dispose();
+    const releases = [...this.queueLeases.splice(0), ...(this.releaseResources ? [this.releaseResources] : [])];
+    this.releaseResources = null;
+    // The copy chain owns VideoFrames even after the codec closes. Keep its
+    // credits until those frames close; ring disposal wakes a parked copy.
+    if (this.pendingCopies) void this.copyChain.finally(() => releases.forEach(release => release()));
+    else releases.forEach(release => release());
     this.opened = null;
     this.config = null;
     this.readyP = null;

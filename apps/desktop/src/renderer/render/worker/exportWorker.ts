@@ -77,8 +77,24 @@ function postChunk(data: Uint8Array): Promise<void> {
   });
 }
 
+const resourceWaiters = new Map<string, { resolve(): void; reject(error: Error): void }>();
+import { installWorkerResourceClient } from '../resourceClient';
+installWorkerResourceClient(async (memoryMiB, threads) => {
+  const id = crypto.randomUUID();
+  await new Promise<void>((resolve, reject) => {
+    resourceWaiters.set(id, { resolve, reject });
+    post({ type: 'resource:acquire', id, memoryMiB, threads });
+  });
+  let live = true;
+  return () => { if (live) { live = false; post({ type: 'resource:release', id }); } };
+});
 self.onmessage = (e: MessageEvent<ExportRequest>) => {
   const req = e.data;
+  if (req.type === 'resource:result') {
+    const pending = resourceWaiters.get(req.id); resourceWaiters.delete(req.id);
+    if (req.error) pending?.reject(new Error(req.error)); else pending?.resolve();
+    return;
+  }
   if (req.type === "start") {
     void runExport(req).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);

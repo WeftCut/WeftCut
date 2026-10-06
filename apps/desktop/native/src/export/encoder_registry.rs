@@ -15,9 +15,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::ffmpeg::ffmpeg_path;
 use serde::Serialize;
-use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
@@ -611,7 +609,7 @@ impl CapabilityProbe for FfmpegCapabilityProbe {
             BitDepth::Ten => "color=c=black:s=640x360:d=0.1:r=30,format=yuv420p10le",
         };
 
-        let mut cmd = Command::new(ffmpeg_path());
+        let mut cmd = crate::ffmpeg::command();
         cmd.no_console_window();
         cmd.kill_on_drop(true);
         cmd.args([

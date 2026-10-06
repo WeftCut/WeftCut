@@ -885,6 +885,50 @@ caption boundaries. Missing word times are estimated within the original cue;
 estimated timing remains distinguished from engine word timing.
 _Avoid_: 强制对齐 (the distinct acoustic timing operation), 文稿对齐 (as the product name)
 
+## Performance resources
+
+**Resource policy**:
+Application-wide intent: memory target, processing effort, temporary cache space
+and background processing during playback. Main derives machine-specific
+allocations; one native authority admits managed working allocations and tasks
+for every renderer/native job on Windows, macOS and Linux. Process-tree memory
+is a separate measured pressure signal. Targets are cooperative, not OS hard caps.
+UI words: Memory target / 内存使用目标; Processing effort / 处理强度;
+Temporary cache space / 临时缓存空间. See ADR 0101.
+_Avoid_: guaranteed RAM cap, CPU percentage cap, total VRAM limit
+
+**Cache budget**:
+The desired combined retention of video pictures, animation pictures, timeline
+thumbnails and waveforms. Active pictures and playback readiness may temporarily
+exceed it. Picture storage can use CPU memory or graphics memory; it is not the
+application's total memory limit.
+Diagnostic word: Preview cache / 预览缓存; an internal allocation, not a preference.
+Categories may borrow unused shares while preserving active
+pictures and playback readiness.
+_Avoid_: RAM limit, total memory cap
+
+**Shared graphics buffer budget**:
+The combined allocation allowance for the video and animation buffers used to
+transfer pictures to preview. A buffer remains accounted for while any consumer
+still holds it, including after retirement. Other graphics resources are outside
+this allowance.
+Diagnostic word: GPU buffers / GPU 缓冲, with transport-only scope stated.
+This internal allowance is also charged to global working memory.
+_Avoid_: total VRAM limit, graphics card capacity
+
+**Performance policy**:
+The legacy preview compatibility input, separate from application resource
+policy and decode throughput evidence. Saved preview values remain valid but
+cannot raise the app ceiling. Internal decoder counts and buffer depths are not
+user preferences. See ADR 0100 for the original contract and ADR 0101 for the
+replacement UI and shared authority.
+
+**Computer test profile**:
+A saved experimental workload recommendation with machine, application and
+protocol provenance. Saving does not apply it; restoring defaults retains it.
+Its cache value is copied from the user's settings, not measured by the test.
+_Avoid_: hardware capacity, optimal configuration, certification
+
 ## Agent activity
 
 **Agent view**:

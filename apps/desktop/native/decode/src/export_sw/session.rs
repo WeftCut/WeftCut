@@ -514,9 +514,11 @@ impl ExportSwRegistry {
         let sid = session_id.to_string();
         let path_owned = path.to_string();
 
+        let thread_limit = crate::preview_sw::decoder::configured_decode_threads();
         let join = thread::Builder::new()
             .name(format!("export-sw-{sid}"))
             .spawn(move || {
+                crate::preview_sw::decoder::set_session_threads(thread_limit);
                 session_thread(
                     sid,
                     path_owned,

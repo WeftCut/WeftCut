@@ -1,7 +1,8 @@
-import { MIB, performanceSettings } from "../../shared/performance-settings";
+import { MIB, performanceSettings, sharedResourceAllocationEnabled } from "../../shared/performance-settings";
 import { sharedTexture, type SharedTextureImported, type WebContents, type OffscreenSharedTexture } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
+import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
 import type { MotifTextureFrame } from '../../shared/motifs/frameTransport.js'
 
 export interface MotifPool {
@@ -37,7 +38,7 @@ export class MotifGpuTransport {
   private pending = new Map<string, { owner: number; retire: () => void; release: () => void }>()
   private unavailable = new WeakSet<WebContents>()
   private generations = new WeakMap<WebContents, number>()
-  constructor(private readonly createPool: PoolFactory, concurrency = 3) {
+  constructor(private readonly createPool: PoolFactory, concurrency = 3, private readonly buffers: GpuBufferBudget = gpuBufferBudget) {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('Invalid Motif transport concurrency')
     this.freeLanes = Array.from({ length: concurrency }, (_, lane) => lane)
   }
@@ -113,6 +114,13 @@ export class MotifGpuTransport {
       pool => pool.copyTexture(handle.ntHandle!, 0))
   }
 
+  private textureBudgetBytes(): number {
+    const settings = performanceSettings()
+    // Budget mode can borrow unused video allowance; the aggregate byte lease
+    // still accounts for every live or retired texture. Legacy sub-limits stay.
+    return (sharedResourceAllocationEnabled() ? settings.gpu_buffer_mib : settings.motif_gpu_mib) * MIB
+  }
+
   private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', fill: (pool: MotifPool) => Promise<void>): Promise<MotifTextureFrame> {
     if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
     const generation = this.generations.get(owner) ?? 0
@@ -131,16 +139,22 @@ export class MotifGpuTransport {
       if (s) { this.sessions.delete(address); this.sessions.set(address, s) }
       if (!s) {
         const bytes = width * height * 4
-        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > (performanceSettings().motif_gpu_mib * MIB)) throw new Error('Motif GPU budget exhausted')
+        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > this.textureBudgetBytes()) throw new Error('Motif GPU budget exhausted')
         const deadline = performance.now() + BUDGET_WAIT_MS
+        let bufferLease: GpuBufferLease | null = null
         for (;;) {
           assertOpen()
           for (const [key, old] of this.sessions) {
-            if (this.allocatedBytes + bytes <= (performanceSettings().motif_gpu_mib * MIB) && this.allocatedSessions < performanceSettings().motif_gpu_sessions) break
+            const global = this.buffers.snapshot()
+            if (this.allocatedBytes + bytes <= this.textureBudgetBytes() && this.allocatedSessions < performanceSettings().motif_gpu_sessions
+              && global.used_bytes + bytes <= global.limit_bytes) break
             if (old.busy) continue
             this.retireSession(key, old)
           }
-          if (this.allocatedBytes + bytes <= (performanceSettings().motif_gpu_mib * MIB) && this.allocatedSessions < performanceSettings().motif_gpu_sessions) break
+          if (this.allocatedBytes + bytes <= this.textureBudgetBytes() && this.allocatedSessions < performanceSettings().motif_gpu_sessions) {
+            bufferLease = this.buffers.reserve('motif', bytes)
+            if (bufferLease) break
+          }
           // Retired imports can outlive their document. Keep their pools alive,
           // but let the caller read on CPU instead of wedging every GPU lane.
           // Once stalled, new allocations fail promptly until references free.
@@ -155,6 +169,7 @@ export class MotifGpuTransport {
         this.allocatedBytes += bytes
         this.allocatedSessions++
         const releaseBudget = (): void => {
+          this.buffers.release(bufferLease)
           this.allocatedBytes -= bytes
           this.allocatedSessions--
           this.budgetStalled = false

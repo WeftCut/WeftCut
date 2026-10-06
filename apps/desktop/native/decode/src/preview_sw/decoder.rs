@@ -27,14 +27,44 @@ use crate::media_time::{source_us_to_ticks_floor, ticks_to_source_us, ticks_to_u
 const FF_THREAD_FRAME: i32 = 1;
 const FF_THREAD_SLICE: i32 = 2;
 
-/// Threads to request for software decode: one per logical core, clamped to
-/// [1, 16]. Parallel decode is the biggest lever for 4K SW throughput; libavcodec
-/// sees diminishing returns past ~16 threads and each costs frame-buffer memory.
+/// Snapshot the shared processing policy when opening a session. Later changes
+/// apply to new sessions without mutating running codecs.
 fn decode_thread_count() -> i32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .clamp(1, 16) as i32
+    SESSION_THREADS.with(|value| value.get().unwrap_or_else(configured_decode_threads)) as i32
+}
+thread_local! { static SESSION_THREADS: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) }; }
+pub(crate) fn configured_decode_threads() -> u32 {
+    DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub(crate) fn set_session_threads(threads: u32) {
+    SESSION_THREADS.with(|value| value.set(Some(threads)));
+}
+static DECODE_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+#[napi_derive::napi]
+pub fn configure_decode_threads(threads: u32) {
+    DECODE_THREADS.store(threads.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
+}
+/// Metadata-only admission estimate. Codec-private surfaces cannot be measured
+/// exactly here; allow sixteen full RGBA-equivalent frames plus context overhead.
+#[napi_derive::napi]
+pub fn decode_memory_mib(path: String) -> napi::Result<u32> {
+    ffmpeg_next::init().ok();
+    let context = input(&path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let stream = context
+        .streams()
+        .best(Type::Video)
+        .ok_or_else(|| napi::Error::from_reason("No video stream"))?;
+    let parameters = stream.parameters();
+    let (width, height) = unsafe { ((*parameters.as_ptr()).width, (*parameters.as_ptr()).height) };
+    if width <= 0 || height <= 0 {
+        return Err(napi::Error::from_reason("Invalid video dimensions"));
+    }
+    Ok((64
+        + (width as u64)
+            .saturating_mul(height as u64)
+            .saturating_mul(64)
+            .div_ceil(1024 * 1024))
+    .min(u32::MAX as u64) as u32)
 }
 
 /// Threading mode per codec family. Frame-threading (FF_THREAD_FRAME) parallelises

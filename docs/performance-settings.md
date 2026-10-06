@@ -1,148 +1,130 @@
-# Machine performance settings
+# Application resource management
 
-Open **Settings → Performance** to edit this machine's resource policy.
-Changes persist in `<userData>/app_settings.json` under `performance`, across
-projects and restarts. Edits save automatically. Restore defaults resets only
-performance settings and clears accepted test presets. Windows installations
-also include an explicitly experimental playback test.
+Settings → Performance exposes four controls. Internal pool sizes, decoder
+counts and texture slots are not independently editable UI settings.
 
-## Simple settings and presets
+| Control | Meaning |
+| --- | --- |
+| Memory target (1–256 GiB) | Cooperative app target; limits retention and expensive allocations. Brief overshoot is possible. |
+| Processing effort | Low resource use / Balanced / High performance (低占用 / 均衡 / 高性能). Derives background concurrency and codec thread requests from available CPUs. Not a CPU-percentage hard cap. |
+| Temporary cache space (0.25–1024 GiB) | Combined allowance for replaceable thumbnails, filmstrip, waveforms, animation frames and audio effects in cache roots visited this session. |
+| Continue background processing during playback | When disabled, new background jobs wait for playback to stop. Running tasks drain safely. |
 
-The Performance pane opens with **Less / Standard / Maximum**, an experimental
-test action, then a collapsed **Advanced settings** section. Advanced exposes
-all nine numeric fields and Restore defaults. Separate cache/parallel controls
-have been removed.
-Expanding or collapsing Advanced does not change any setting.
+Defaults use detected RAM and available CPUs on Windows, macOS and Linux.
+Automatic memory uses 35% of RAM, rounded to 256 MiB and bounded to 1–32 GiB.
+Explicit values persist unchanged. Restore defaults re-enables automatic intent
+and resets legacy preview preferences while keeping saved test evidence, decode
+engine and playback resolution. Failed edits provide Retry; telemetry failure
+never prevents editing.
 
-Maximum deliberately uses the existing shipping budgets. Standard and Less
-reduce these fixed budgets; they are resource preferences, not measured machine
-tiers. Maximum does not claim to exhaust available hardware or guarantee smoother
-playback. Smaller hardware admission limits can shift decoding to the CPU, so
-Less does not promise lower total CPU use.
+Processing effort derives a controlled-job CPU budget from 25%, 50% or 85%
+of available logical processors respectively, rounded down with a minimum of
+one. Each task requests half that budget, bounded to 1–4 threads; the background
+job-count ceiling is half the budget, bounded to 1–8. These are simultaneous
+constraints, not promises of that many concurrent jobs: memory admission,
+aggregate thread reservations, playback and pressure can reduce concurrency.
+Changing effort applies to new work and newly opened decoder sessions; it does
+not change memory/cache targets, media quality or existing worker thread counts.
 
-`shared/performance-presets.ts` owns the complete mapping:
+## Authority and lifecycle
 
-| Setting | Less | Standard | Maximum |
-| --- | ---: | ---: | ---: |
-| Accelerated videos | 2 | 3 | 5 |
-| Combined original pixel area | 8,294,400 | 16,588,800 | 24,883,200 |
-| Frames buffered per accelerated video | 3 | 3 | 3 |
-| Video frame cache (MiB) | 512 | 768 | 1024 |
-| Animation frame cache (MiB) | 256 | 384 | 512 |
-| Animation graphics memory (MiB) | 64 | 96 | 128 |
-| Animation buffer sets | 4 | 6 | 8 |
-| Thumbnail cache (MiB) | 80 | 120 | 160 |
-| Waveform cache (MiB) | 16 | 24 | 32 |
+shared/resource-policy.ts validates intent and derives allocation. Main supplies
+host facts, merges partial edits against the latest settings, atomically persists
+them and publishes the effective allocation. Live telemetry never rewrites intent.
 
-- Selecting a full preset replaces **all nine** performance values in one atomic
-  settings patch, including previous Advanced edits.
-- Built-in selection requires all nine fields to match; manual edits can show
-  Custom. With accepted test presets, selection compares the two calibrated
-  fields. The chosen tier is retained when small capacities make tiers equal.
-- Resolved values are persisted. Opening the panel, upgrading a
-  preset table or recognizing a selection does not rewrite existing values.
-  Existing budgets stay unchanged; the previous default now displays Maximum.
-  Reselecting a preset explicitly applies its current mapping.
-- These controls do not change preview resolution, decode-engine preference,
-  export quality or other settings. Saving still uses the shared runtime interface.
+The native resources::Governor is the single working-memory/processing admission
+authority. Native jobs and Electron-held leases use the same ledger. Admission
+precedes managed expensive allocation; release follows teardown, including
+cancellation and errors. IPC owners cannot release other windows' leases. Full
+navigation and renderer death return allocations and remove listeners.
 
-## Experimental test
+Memory projection sets 25% aside for picture retention and 40% for admitted work.
+Remaining headroom covers runtime/DOM, demuxers, code, driver overhead and
+estimation error. Export stream capacity is charged within working memory, not
+an additional independent pool. Picture targets are divided across registered
+windows; each cannot claim a full app target. Legacy preview values remain
+additional upper bounds, so raising the app target need not expand every cache.
 
-**Test this computer (experimental)** pauses editor playback and launches an
-isolated app process with a visible test window. Progress and Cancel remain in
-Settings. Closing Settings does not abandon the process; reopening it restores
-progress. Closing the app cancels its owned test. Other applications and retained
-editor resources can still affect results.
+Background jobs leave an interactive processing slot when more than one exists.
+Native queues admit at most 256 waiters; cancellation removes a waiter. Oversized
+jobs fail with an actionable error. Interactive waits time out after 15 seconds;
+renderer allocation requests fail promptly when unavailable. Resident decoders
+retain memory leases and per-session thread caps, but not an exclusive job slot
+while idle, so a single-core allocation can still start export.
 
-The fixed H.264 4K/60 fps test takes about two minutes on the development machine.
-No history or hardware model chooses stages. Completion never changes settings.
-**Use test presets** atomically stores the candidate family under
-`performance_calibration`, selects Standard, and patches only video count and
-combined picture size. Subsequent Less/Standard/Maximum choices preserve the
-other seven values. Invalid or cancelled runs cannot be applied; an all-slow
-result explicitly offers conservative presets rather than a claimed pass.
+Process-tree resident memory (Electron and native children) is sampled once per
+second through sysinfo on all three OSes. Shared mappings may be counted twice;
+this is a conservative pressure signal, not unique physical RAM or dedicated
+VRAM usage. Sample failures preserve known pressure. Usage above target or free
+system memory below 256 MiB closes new admission and halves picture retention.
+Recovery requires usage below 80% of target and free memory above 512 MiB.
 
-The UI warns that results are experimental and may differ from real projects.
-See [the measurement protocol](controlled-playback-calibration.md) for the known
-editor/test-host discrepancy and thresholds. Accepted presets survive restarts
-but are never consulted when a new test selects its plan.
+Lowering a setting governs new work and safe eviction. Existing resources remain
+charged until released. The app never kills an export or closes a displayed
+picture to force the target. Chromium and GPU drivers own opaque allocations;
+thread requests, bounded queues, estimates and pressure feedback do not create
+an OS-enforced whole-process RAM, CPU-percentage or dedicated-VRAM hard cap.
 
-## Numeric settings
+## Coverage
 
-`apps/desktop/src/shared/performance-settings.ts` owns the defaults, units,
-integer ranges, disk recovery and runtime validation. Existing shipping values
-are defaults, not a claim that every machine supports that workload.
+| Owner | Enforcement |
+| --- | --- |
+| Native thumbnails, waveform, conform, proxies, scene analysis, speech extraction | Shared background admission and FFmpeg thread requests. |
+| On-demand frame/filmstrip extraction, audio effects, audio export and mux | Interactive admission, bounded waits and child-lifetime permits. |
+| Native export video sink | Dimension-based working reservation through finish/cancel; encoder thread caps. |
+| Native preview/export decode on all platforms | Metadata-based reservation before session open; thread cap captured at worker creation. Software and hardware copy-back share the gate. |
+| Renderer/worker WebCodecs decode | Resolution-based reservation before decoder creation; worker requests relay to main. Export pending packets, decoded frames and 10-bit copies share accounting, requesting capacity before long-GOP dispatch and returning it after consumption. Chromium controls internal threads. |
+| Windows shared-texture transport | Video/animation byte ledger charged to global working memory; retired imports retain charges until final release. An additional platform adapter, not the portable authority. |
+| Preview pictures | Video rings, animation including gesture overlays, filmstrip and waveform share retention. Safe trimming keeps pinned pictures accounted. |
+| Renderer export | Composition/encoder working frames and streamed animation reserve before canvas/worker creation. Byte backpressure rejects oversized animation packets before allocation. |
+| Playback audio | Per-source bounded PCM lookahead reserved before open and released on disposal. |
+| Local speech/video models | Weight/workspace estimate before spawn; thread arguments capped again after admission; CPU fallback reacquires through the same gate. |
+| File import/archive extraction | Copy/hash/extract holds a shared permit; queued import respects cancellation. |
+| Replaceable disk derivatives | Global LRU across registered roots, including renderer animation stores; writes and settings changes trigger maintenance. |
 
-| Field | Default | Allowed range | When a change takes effect |
-| --- | ---: | ---: | --- |
-| `preview_gpu_sessions` | 5 | 0–32 | Next preview hardware admission; 0 stops new admissions |
-| `preview_gpu_pixel_area` | 24,883,200 pixels | 1–530,841,600 | Next preview hardware admission |
-| `preview_gpu_pool_slots` | 3 | 1–16 | Next GPU decoder session open |
-| `frame_ring_mib` | 1024 MiB | 128–8192 | Next frame-ring backpressure check, shared across live rings |
-| `motif_cache_mib` | 512 MiB | 16–4096 | Next new frame insertion in existing default Motif caches |
-| `motif_gpu_mib` | 128 MiB | 16–2048 | Next Motif GPU allocation |
-| `motif_gpu_sessions` | 8 | 1–32 | Next Motif GPU allocation |
-| `filmstrip_cache_mib` | 160 MiB | 16–2048 | Next thumbnail tile insertion |
-| `waveform_cache_mib` | 32 MiB | 4–512 | Next waveform tile insertion |
+Browser composition, DOM/JS heaps, codec-private surfaces and driver allocations
+are covered by aggregate pressure feedback and headroom, not exact accounting.
+Processing effort bounds controlled jobs/thread requests, not the sum of CPU
+utilization across every browser/native thread. Network transfers retain their
+existing bounded/streaming behavior; this setting is not a bandwidth limiter.
 
-MiB means 1,048,576 bytes. Pixel area is the sum of coded width × height,
-displayed in the settings pane as megapixels (one million pixels per unit),
-calibrated at 30 fps; it is neither a pixel rate nor detected GPU capacity.
-Changing it does not change image resolution. Raising the session count alone
-does not bypass the independent pixel-area limit. Preview pool VRAM grows with
-both admitted area and texture slots; the performance HUD reports live usage
-and current admission limits.
+## Disk safety
 
-Lowering a limit does not revoke existing decoder leases or tear down textures
-still being read. Usage can temporarily exceed a new limit. New admissions wait
-for capacity or follow the existing software/CPU fallback. Increasing a limit
-makes it available to subsequent admission attempts; it does not forcibly reopen
-current software sessions. Existing decoder sessions keep their texture pool.
-Diagnostic callers that explicitly supply a pool size keep that override.
+The disk setting covers replaceable temporary derivatives, not all installation
+or workspace bytes. Source media, project files, models, canonical audio conforms,
+proxies and paid/generated assets remain protected. Unvisited or disconnected
+workspace roots are not searched or deleted. Export output size follows format
+and duration, not a cache preference.
 
-Cache sizes are targets, not total-process memory caps. Frame rings preserve
-their forward-frame floor and time-based lookbehind, Motif caches defer disposal
-of pinned pictures, and tile caches protect the tile just delivered. Smaller
-decoded-frame budgets can increase long-GOP re-seek cost. Idle caches may retain
-their old contents until another insertion or normal eviction. Explicit
-constructor budgets used by isolated caches and tests remain fixed.
+Sweeps may temporarily exceed target while writes complete and evict to 90% of
+target. Fresh empty temp directories survive before a writer opens its first
+file. Filmstrip destination directories are retained because a writer may be
+about to use them. Cache readers regenerate evicted derivatives; source assets
+are never sacrificed to satisfy a quota.
 
-## Runtime interface
+## Compatibility and optional measurements
 
-Use the existing app-settings interface, so UI and future machine detection
-share validation, persistence and notifications:
+resource_policy is independent of legacy performance_policy. Old preview cache
+numbers never become total application memory. Existing APIs and test profiles
+remain compatibility inputs beneath the global ceiling. Opening Settings writes
+nothing; resource edits do not alter decode quality, export format or models.
 
-```ts
-// Renderer: reads the saved profile through the existing appSettingsGet().
-// setAppSettings also hydrates this renderer after the successful IPC reply.
-await setAppSettings({
-  performance: { preview_gpu_sessions: 3, frame_ring_mib: 512 },
-});
-await setAppSettings({ performance: null }); // restore performance defaults
-```
+Windows adapter diagnostics and the optional H.264 4K/60 benchmark retain their
+narrow scope. Saving evidence is separate from applying it; reset retains it.
+The isolated benchmark reserves its full fixed workload in the parent authority
+before launch and releases it on exit/cancel; it cannot bypass the app target.
+Applying a test cannot bypass global admission or certify macOS/Linux, other
+codecs or whole-app memory. See [calibration protocol](controlled-playback-calibration.md).
 
-IPC equivalents are `app_settings_get` and
-`app_settings_set({ patch: { performance: { ... } } })`. Main-side detection
-should use the same app-settings command path to broadcast to all windows;
-calling a store directly does not send the `app_settings:changed` event.
+## Verification
 
-Patches merge per field against persisted state, so independent edits from
-different windows are retained. Runtime writes reject unknown keys, non-integers,
-non-finite numbers and out-of-range values before writing anything. Old or
-malformed disk fields recover individually to defaults. A failed disk write
-does not publish a new runtime snapshot. The main process seeds its snapshot
-before setting up consumers; renderers hydrate theirs on initial settings load
-and every settings event. Consumers read `performanceSettings()` at the point
-where policy is needed; they must not capture shipping defaults as live limits.
+Policy/persistence tests cover machine scaling, migration, restart, invalid edits
+and resets. Native tests cover combined memory, single-core mixed workloads,
+pressure recovery, limit reduction and cancellation. IPC tests cover ownership,
+reload and crashes. Cache tests cover retained references, multiple disk roots
+and concurrent writers. Electron E2E checks controls, persistence, real native
+admission, process-tree telemetry and reload cleanup without platform skips.
+These tests join the existing Windows/macOS/Linux CI matrix. Local Windows
+results do not constitute macOS/Linux execution evidence.
 
-## Scope
-
-This interface covers preview GPU admission/pools, decoded-picture retention,
-Motif memory/transport pools and timeline caches. Native disk-cache limits,
-background-job concurrency, audio scheduling and readback lane counts remain
-separate. Extending them needs the same lifecycle treatment, including native
-configuration plumbing where applicable. Protocol sizes, frame-retention floors,
-color conversion, texture acknowledgments and synchronization barriers are
-correctness constraints and are not exposed as machine tuning options.
-
-See [ADR 0099](adr/0099-machine-performance-budgets-are-runtime-settings.md).
+See [ADR 0101](adr/0101-cross-platform-application-resource-authority.md).

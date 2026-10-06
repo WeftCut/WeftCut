@@ -15,6 +15,7 @@ vi.mock("./transports/GpuTransport", () => ({
 import { FfmpegSource } from "./FfmpegSource";
 import { pickInitialLane, resetFfmpegCapabilitySession } from "./ffmpegCapability";
 import { resetFfmpegLaneTrail } from "./ffmpegLaneTrail";
+import { RESOURCE_CAPACITY_EXCEEDED } from '../../../shared/resource-policy';
 import {
   HW_BUDGET_EXCEEDED,
   HW_BUDGET_RESERVATION_MISMATCH,
@@ -38,7 +39,7 @@ function fakeTransport(opts?: { openRejects?: string; disposeRejects?: string })
         ? vi.fn(async () => { throw new Error(opts.disposeRejects); })
         : vi.fn(),
     } as DecodeTransport,
-    emitFrame: (p: number) => frameCb?.({ close() {} } as unknown as ImageBitmap, p, 33),
+    emitFrame: (p: number) => frameCb?.({ width: 16, height: 16, close() {} } as unknown as ImageBitmap, p, 33),
     fail: (r: string) => errorCb?.(r),
     finishEof: () => eofCb?.(),
   };
@@ -616,6 +617,30 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
   };
 
   beforeEach(() => resetFfmpegCapabilitySession());
+
+  it.each(['d3d11va', 'nvdec', 'vaapi', 'videotoolbox', 'software'] as const)(
+    'recovers %s after global pressure without changing quality or poisoning capability', async lane => {
+      const transport = fakeTransport({ openRejects: RESOURCE_CAPACITY_EXCEEDED });
+      const time = vi.spyOn(performance, 'now').mockReturnValue(0);
+      const fatal = vi.fn();
+      const src = new FfmpegSource({ layerId: 'pressure', mediaId: 'm-cap', sourcePath: 'fixture', componentAvailable: true }, {
+        makeGpu: () => transport.t, makeSw: () => transport.t,
+        pickLane: async () => lane === 'software' ? { lane: 'software', hwLane: null, device: null }
+          : { lane: 'hardware', hwLane: lane, device: null },
+      });
+      src.onFatalError(fatal);
+      try {
+        await expect(src.ensureReady()).rejects.toThrow(RESOURCE_CAPACITY_EXCEEDED);
+        expect(fatal).not.toHaveBeenCalled();
+        expect(await nextOpenLane('m-cap')).toEqual({ lane: 'hardware', probed: true });
+        vi.mocked(transport.t.open).mockResolvedValue(undefined);
+        time.mockReturnValue(1001);
+        await src.ensureReady();
+        expect(transport.t.open).toHaveBeenCalledTimes(2);
+        expect(src.currentLane()).toBe(lane === 'software' ? 'software' : 'hardware');
+      } finally { await src.disposeAndWait(); time.mockRestore(); }
+    },
+  );
 
   it("falls back to software for a budget failure WITHOUT marking the media", async () => {
     const { src, sw, makeSw } = openFails(HW_BUDGET_EXCEEDED);

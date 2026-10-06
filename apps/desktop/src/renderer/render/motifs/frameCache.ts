@@ -1,4 +1,5 @@
-import { MIB, PERFORMANCE_DEFAULTS, performanceSettings } from "../../../shared/performance-settings";
+import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings";
+import { cacheBudget } from '../cacheBudget';
 // Per-frame raster cache for animated motifs.
 //
 // A motif animates over its duration: each composition frame is a distinct
@@ -97,7 +98,7 @@ export class MotifFrameCache {
   private readonly store = new Map<string, { bmp: Closeable; bytes: number }>();
   private readonly fixedMaxBytes: number | undefined;
   private get maxBytes(): number {
-    return this.fixedMaxBytes ?? performanceSettings().motif_cache_mib * MIB;
+    return this.fixedMaxBytes ?? cacheBudget.ownerAllowance('motif_cache_mib', this);
   }
   /// Sum of the stored entries' `bytes` — the quantity eviction bounds.
   private bytesUsed = 0;
@@ -224,6 +225,13 @@ export class MotifFrameCache {
         this.changeMembership(cacheKeyOf(oldest.value), -1);
       }
     }
+    this.reportUsage();
+  }
+
+  private reportUsage(): void {
+    if (this.fixedMaxBytes !== undefined) return;
+    cacheBudget.update(this, 'motif_cache_mib', this.bytesUsed + [...this.retired].reduce((sum, bmp) =>
+      sum + frameCostBytes(bmp as ImageBitmap), 0), () => this.evictToCapacity());
   }
 
   /// A frame leaving the store: closed now, or — while a sprite still has it
@@ -253,6 +261,7 @@ export class MotifFrameCache {
     this.pins.delete(bmp);
     const parked = bmp as Closeable;
     if (this.retired.delete(parked)) parked.close();
+    this.reportUsage();
   }
 
   /// True when (cacheKey, frameIndex) is held, WITHOUT touching recency (unlike
@@ -286,6 +295,7 @@ export class MotifFrameCache {
         }
       }
     }
+    this.reportUsage();
   }
 
   /// Drop EVERY frame, closing each (deferred while pinned — same retire
@@ -298,6 +308,7 @@ export class MotifFrameCache {
     this.store.clear();
     this.bytesUsed = 0;
     this.frameCounts.clear();
+    this.reportUsage();
   }
 
   /// Close every held bitmap — parked ones included — and empty the store.
@@ -310,6 +321,7 @@ export class MotifFrameCache {
     this.retired.clear();
     this.pins.clear();
     this.frameCounts.clear();
+    cacheBudget.release(this);
   }
 
   /// Frames currently held across all keys, for diagnostics.

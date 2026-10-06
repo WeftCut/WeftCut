@@ -10,9 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{Context, Result};
-use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
@@ -82,7 +81,10 @@ pub async fn extract_tile(
 
     // scale=-2:256 keeps aspect at the canonical tile height. Same ffmpeg
     // single-frame-extract incantation as jobs/frame.rs.
-    let output = Command::new(ffmpeg_path())
+    let _resources = crate::resources::interactive(128)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let output = crate::ffmpeg::command()
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the tile temp; see
         // hwaccel.rs.
@@ -144,6 +146,7 @@ mod tests {
     use super::*;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
+    use tokio::process::Command;
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")

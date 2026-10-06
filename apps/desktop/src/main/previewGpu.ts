@@ -22,6 +22,9 @@ import {
 } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
 import { withSharedTextureQueue } from './sharedTextureQueue.js'
+import { gpuBufferBudget, retainGpuBufferLease } from './gpuBufferBudget.js'
+import { performanceSettings } from '../shared/performance-settings.js'
+import { reserveResources } from './resources.js'
 import {
   createPreviewGpuBudget,
   type PreviewGpuBudgetLease,
@@ -36,6 +39,8 @@ interface GpuSession {
   width: number
   height: number
   budgetLease: PreviewGpuBudgetLease
+  bufferLifetime: ReturnType<typeof retainGpuBufferLease>
+  releaseDecoder: () => void
   adapter: PreviewGpuAdapter | null
 }
 
@@ -59,10 +64,10 @@ const SRGB_PASSTHROUGH: ColorSpace = {
 }
 
 /// One admission authority for every open/close. It greedily reserves coded
-/// pixel AREA (30fps-calibrated, not pixel-rate) plus a hard session slot before
-/// native allocation. The module owns validation, rollback and idempotent lease
+/// pixel AREA (not pixel-rate), a hard session slot and shared-buffer bytes
+/// before native allocation. The module owns validation, rollback and idempotent lease
 /// release; callers never recompute policy.
-const previewGpuBudget = createPreviewGpuBudget()
+const previewGpuBudget = createPreviewGpuBudget(performanceSettings, gpuBufferBudget)
 
 /// Best-effort GPU-reference teardown: one broken Electron import must not
 /// prevent the remaining imports from releasing. Admission release is owned by
@@ -112,16 +117,16 @@ export function hwSessionCount(): number {
 
 /// The budget as the renderer sees it (`previewGpu:budget`). Both admission
 /// constraints travel together: the hard session cap and the coded-pixel-area
-/// currency calibrated on the 30fps fixtures. Either constraint can refuse an
-/// open.
+/// currency, whose reference is 30fps by default or 60fps after an accepted
+/// benchmark. Shared-buffer bytes also constrain admission.
 ///
 /// A sample is a point in time, not a promise: the count falls asynchronously
 /// (a renderer teardown fires `previewGpu:close` without awaiting it), so
 /// `used < max` at read time does not guarantee the next open succeeds.
 ///
 /// `slotVram` is computed HERE from the live session records (the admission
-/// lease knows coded area but not pool size): Σ w×h×4×slots over open
-/// sessions — the measured pool VRAM, not an estimate.
+/// snapshot covers active imports): Σ w×h×4×slots over open sessions. The shared
+/// buffer budget separately retains credits for retired imports and Motif pools.
 export function hwBudget(): PreviewGpuBudgetSnapshot {
   let usedBytes = 0
   for (const s of sessions.values()) usedBytes += s.width * s.height * 4 * s.imported.length
@@ -184,11 +189,14 @@ async function doOpenPreviewGpu(
   const budgetLease = previewGpuBudget.reserve(streamId, {
     width: codedWidth,
     height: codedHeight,
-  })
+  }, poolSize)
   if (!budgetLease) throw new Error(HW_BUDGET_EXCEEDED)
+  const bufferLifetime = retainGpuBufferLease(gpuBufferBudget, budgetLease.bufferLease)
+  let releaseDecoder = () => {}
   const imported: SharedTextureImported[] = []
   let nativeOpened = false
   try {
+    releaseDecoder = reserveResources(0, 64 + codedWidth * codedHeight * 24 / 1048576)
     // Latch the barrier mode in the preload. WHERE THIS SITS IS THE CONTRACT:
     // after the budget gate (a refused open must not latch a stream that will
     // never produce a frame) and before `previewGpuOpen` (which starts the decode
@@ -227,25 +235,30 @@ async function doOpenPreviewGpu(
       // Slot-correlation announce FIRST (see fn doc): the preload pushes this onto
       // its announce queue and pairs the NEXT receiver callback to slot k.
       win.webContents.send('evt:previewGpu:slot', { streamId, slot: k })
-      const imp = sharedTexture.importSharedTexture({
-        textureInfo: {
-          codedSize: { width: info.width, height: info.height },
-          visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
-          // The slots are native-converted RGBA (A′): import as 'rgba' tagged
-          // sRGB passthrough, NOT the source's colorSpace — the color math
-          // already happened in the native shader, and this tag is what makes
-          // the preload's createImageBitmap a pure byte copy (byte-exact on
-          // both geometries). Chromium gets no YUV to convert.
-          pixelFormat: 'rgba',
-          colorSpace: SRGB_PASSTHROUGH,
-          timestamp: 0,
-          // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
-          handle: { ntHandle: info.slots[k].handle },
-        },
-        // Persistent import: keep the texture importable for every frame. We never
-        // call .release() until closePreviewGpu, so this callback stays a no-op.
-        allReferencesReleased: () => {},
-      })
+      const releaseReference = bufferLifetime.reference()
+      let imp: SharedTextureImported
+      try {
+        imp = sharedTexture.importSharedTexture({
+          textureInfo: {
+            codedSize: { width: info.width, height: info.height },
+            visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
+            // The slots are native-converted RGBA (A′): import as 'rgba' tagged
+            // sRGB passthrough, NOT the source's colorSpace — the color math
+            // already happened in the native shader, and this tag is what makes
+            // the preload's createImageBitmap a pure byte copy (byte-exact on
+            // both geometries). Chromium gets no YUV to convert.
+            pixelFormat: 'rgba',
+            colorSpace: SRGB_PASSTHROUGH,
+            timestamp: 0,
+            // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
+            handle: { ntHandle: info.slots[k].handle },
+          },
+          allReferencesReleased: releaseReference,
+        })
+      } catch (error) {
+        releaseReference()
+        throw error
+      }
       // Track the import the instant it exists (importSharedTexture holds a GPU
       // reference from the moment it returns, per Electron docs) — BEFORE the
       // fallible send below, so the catch's release loop covers this slot too
@@ -259,6 +272,8 @@ async function doOpenPreviewGpu(
       width: info.width,
       height: info.height,
       budgetLease,
+      bufferLifetime,
+      releaseDecoder,
       adapter: info.adapter ?? null,
     })
     return {
@@ -285,7 +300,9 @@ async function doOpenPreviewGpu(
     } finally {
       // A texture release may itself fail. Admission must still roll back or a
       // single partial open can permanently leak capacity.
-      previewGpuBudget.release(budgetLease)
+      previewGpuBudget.release(budgetLease, true)
+      bufferLifetime.retire()
+      releaseDecoder()
     }
     throw err
   }
@@ -336,7 +353,9 @@ export function closePreviewGpu(backend: NativeDecode, streamId: string): void {
     try {
       releaseImports(session.imported, streamId, 'close')
     } finally {
-      previewGpuBudget.release(session.budgetLease)
+      previewGpuBudget.release(session.budgetLease, true)
+      session.bufferLifetime.retire()
+      session.releaseDecoder()
     }
   }
 }

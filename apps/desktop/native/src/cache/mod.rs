@@ -16,6 +16,27 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 
+fn known_layouts() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, CacheLayout>> {
+    static ROOTS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, CacheLayout>>,
+    > = std::sync::OnceLock::new();
+    ROOTS.get_or_init(Default::default)
+}
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn sweep_all_soon() {
+    let layout = known_layouts().lock().unwrap().values().next().cloned();
+    if let Some(layout) = layout {
+        layout.sweep_soon();
+    }
+}
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn notify_resource_cache_write() {
+    let layout = known_layouts().lock().unwrap().values().next().cloned();
+    if let Some(layout) = layout {
+        layout.notify_write();
+    }
+}
+
 /// Which decode source produced a filmstrip tile's pixels. Part of the tile's
 /// disk key: when a media's decode route changes (e.g. Bypass ->
 /// route-corrected Proxied), tiles from the old source stop matching and
@@ -113,11 +134,11 @@ impl CacheLayout {
             // schedule the next one. The walk re-reads the CURRENT root, so a
             // workspace swap mid-schedule just sweeps the new root.
             layout.sweeper.finish();
-            let l2 = layout.clone();
+            let layouts: Vec<_> = known_layouts().lock().unwrap().values().cloned().collect();
             let report = tokio::task::spawn_blocking(move || {
-                disk_lru::sweep(
-                    &l2,
-                    disk_lru::DISK_CACHE_BUDGET_BYTES,
+                disk_lru::sweep_all(
+                    &layouts,
+                    crate::resources::disk_cache_bytes(),
                     std::time::SystemTime::now(),
                 )
             })
@@ -353,6 +374,14 @@ impl CacheLayout {
     /// to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
         let root = self.current_root();
+        known_layouts()
+            .lock()
+            .unwrap()
+            .entry(root.clone())
+            .or_insert_with(|| CacheLayout {
+                root: Arc::new(RwLock::new(root.clone())),
+                sweeper: self.sweeper.clone(),
+            });
         for p in [
             root.clone(),
             self.proxies_dir(),

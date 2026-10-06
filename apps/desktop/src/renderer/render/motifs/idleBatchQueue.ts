@@ -40,6 +40,7 @@ export class IdleBatchQueue<T, I> {
   isDisposed(): boolean {
     return this.disposed;
   }
+  wake(): void { this.arm(); }
 
   /// Replace the queued targets, then (re)arm the loop. No-op once disposed.
   setQueue(targets: T[]): void {

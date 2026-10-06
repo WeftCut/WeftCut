@@ -6,10 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{anyhow, Context, Result};
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
@@ -292,7 +291,7 @@ pub async fn run_from_input(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut cmd = Command::new(ffmpeg_path());
+    let mut cmd = crate::ffmpeg::command();
     cmd.no_console_window()
         // Reap on future-drop so no orphan keeps writing the shared temp; see
         // hwaccel.rs.
@@ -640,6 +639,7 @@ mod tests {
     use chrono::Utc;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
+    use tokio::process::Command;
 
     use crate::state::{new_id, AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata};
 

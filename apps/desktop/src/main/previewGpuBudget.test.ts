@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { createPreviewGpuBudget } from "./previewGpuBudget";
 import { PERFORMANCE_DEFAULTS } from "../shared/performance-settings";
+import { DEFAULT_PERFORMANCE_POLICY, resolvePerformancePolicy } from "../shared/performance-policy";
 
 describe("preview GPU budget", () => {
+  it("admits twelve 4K decoders with an explicit policy and charges all six buffers per video", () => {
+    const { performance } = resolvePerformancePolicy({ ...DEFAULT_PERFORMANCE_POLICY,
+      gpu_buffer_mib: 4096, decoder_limit: 12, buffer_frames: 6 });
+    const budget = createPreviewGpuBudget(() => performance);
+    for (let i = 0; i < 12; i++) {
+      const lease = budget.reserve(`manual-${i}`, { width: 3840, height: 2160 });
+      expect(lease?.bufferLease.bytes).toBe(3840 * 2160 * 4 * 6);
+    }
+    expect(budget.reserve("overflow", { width: 1, height: 1 })).toBeNull();
+    expect(budget.snapshot().sessions).toEqual({ used: 12, max: 12 });
+    const single8k = resolvePerformancePolicy({ ...DEFAULT_PERFORMANCE_POLICY,
+      gpu_buffer_mib: 1024, decoder_limit: 1 }).performance;
+    expect(createPreviewGpuBudget(() => single8k).reserve("8k", { width: 7680, height: 4320 })).not.toBeNull();
+  });
   it("changes admission live without revoking leases, then admits again after release or an increase", () => {
     let settings = { ...PERFORMANCE_DEFAULTS, preview_gpu_sessions: 2, preview_gpu_pixel_area: 100 };
     const budget = createPreviewGpuBudget(() => settings);

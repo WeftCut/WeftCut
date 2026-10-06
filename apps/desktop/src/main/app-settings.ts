@@ -9,8 +9,12 @@
 // all-defaults so a hand-edit mishap can't brick the editor.
 
 import { changePausePresets, readPausePresets } from '../shared/pause-presets'
+import { readResourcePolicy, patchResourcePolicy, resolveResourcePolicy, DEFAULT_RESOURCE_POLICY } from '../shared/resource-policy'
 import { patchPerformanceSettings, readPerformanceSettings } from '../shared/performance-settings'
 import { readCalibrationRecommendation } from '../shared/playback-calibration'
+import { budgetsFromPerformance, readPerformanceBudgets, resolvePerformanceBudgets } from '../shared/performance-budgets'
+import { DEFAULT_PERFORMANCE_POLICY, readPerformancePolicy, patchPerformancePolicy, resolvePerformancePolicy,
+  readPerformanceTestProfile, performanceTestMatches, savePerformanceTestProfile, type PerformanceEnvironment } from '../shared/performance-policy'
 import {
   APP_SETTINGS_DEFAULTS,
   DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US,
@@ -36,23 +40,56 @@ export interface AppSettingsStore {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi)
 
-export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; dir: string; onCommitted?: (settings: AppSettings) => void }): AppSettingsStore {
+export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: number; fs: AppSettingsFs; path: string; dir: string; onCommitted?: (settings: AppSettings) => void }): AppSettingsStore {
+  const baseline = resolvePerformancePolicy(DEFAULT_PERFORMANCE_POLICY, deps.totalMemoryMiB, null, deps.gpuMemoryMiB)
+  const defaults: AppSettings = { ...APP_SETTINGS_DEFAULTS, resource_policy: { ...DEFAULT_RESOURCE_POLICY },
+    resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY, deps.totalMemoryMiB, deps.cores), performance_budget: baseline.budgets,
+    performance_automatic_budget: baseline.automatic, performance: baseline.performance }
+
+  function project(settings: AppSettings): AppSettings {
+    settings.resource_policy = readResourcePolicy(settings.resource_policy)
+    settings.resource_allocation = resolveResourcePolicy(settings.resource_policy, deps.totalMemoryMiB, deps.cores)
+    const profile = settings.performance_test_profile
+    settings.performance_test_compatible = !!profile && performanceTestMatches(profile, deps)
+    settings.performance_automatic_budget = baseline.automatic
+    if (settings.performance_policy) {
+      // A saved result from another machine/build remains visible, but cannot
+      // silently impose that machine's throughput guard here.
+      const calibration = settings.performance_test_compatible ? settings.performance_calibration : null
+      const resolved = resolvePerformancePolicy(settings.performance_policy, deps.totalMemoryMiB, calibration, deps.gpuMemoryMiB)
+      settings.performance_budget = resolved.budgets
+      settings.performance = resolved.performance
+      settings.performance_automatic_budget = resolved.automatic
+    }
+    return settings
+  }
   function read(): AppSettings {
-    if (!deps.fs.exists(deps.path)) return { ...APP_SETTINGS_DEFAULTS }
+    if (!deps.fs.exists(deps.path)) return { ...defaults }
     let body: string
     try { body = deps.fs.readFile(deps.path) }
-    catch (e) { console.warn(`[app-settings] read ${deps.path}:`, e); return { ...APP_SETTINGS_DEFAULTS } }
-    if (body.trim() === '') return { ...APP_SETTINGS_DEFAULTS }
+    catch (e) { console.warn(`[app-settings] read ${deps.path}:`, e); return { ...defaults } }
+    if (body.trim() === '') return { ...defaults }
     let parsed: Record<string, unknown>
     try { parsed = JSON.parse(body) as Record<string, unknown> }
-    catch (e) { console.warn(`[app-settings] parse ${deps.path}:`, e); return { ...APP_SETTINGS_DEFAULTS } }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...APP_SETTINGS_DEFAULTS }
+    catch (e) { console.warn(`[app-settings] parse ${deps.path}:`, e); return { ...defaults } }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...defaults }
     // Per-field defaulting (parity with serde #[serde(default = ...)]): a missing
     // or wrong-typed field falls back to its default; unknown keys are ignored.
     const d = APP_SETTINGS_DEFAULTS
-    return {
-      performance: readPerformanceSettings(parsed.performance),
-      performance_calibration: readCalibrationRecommendation(parsed.performance_calibration),
+    const calibration = readCalibrationRecommendation(parsed.performance_calibration)
+    const budgets = readPerformanceBudgets(parsed.performance_budget)
+    const testProfile = readPerformanceTestProfile(parsed.performance_test_profile)
+    // Raw legacy settings retain their exact allocation until explicit adoption.
+    // Old aggregate budgets remain manual; adoption is an explicit UI edit.
+    const policy = readPerformancePolicy(parsed.performance_policy)
+      ?? (parsed.performance_policy === null || budgets || parsed.performance ? null : DEFAULT_PERFORMANCE_POLICY)
+    return project({
+      resource_policy: readResourcePolicy(parsed.resource_policy),
+      performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
+      performance_budget: budgets,
+      performance_policy: policy,
+      performance_test_profile: testProfile,
+      performance_calibration: calibration,
       performance_calibration_tier: parsed.performance_calibration_tier === 'less' || parsed.performance_calibration_tier === 'maximum'
         ? parsed.performance_calibration_tier : 'standard',
       pause_presets: parsed.pause_presets === undefined ? undefined : readPausePresets(parsed.pause_presets),
@@ -140,7 +177,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
           : d.language,
       default_text_font: typeof parsed.default_text_font === 'string'
         ? parsed.default_text_font.trim() || undefined : d.default_text_font,
-    }
+    })
   }
 
   function write(settings: AppSettings): void {
@@ -154,6 +191,22 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     get: read,
     apply(patch) {
       const current = read()
+      if (patch.resource_policy !== undefined) current.resource_policy = patchResourcePolicy(readResourcePolicy(current.resource_policy), patch.resource_policy)
+      if (patch.performance_test_recommendation !== undefined && patch.performance_calibration !== undefined) {
+        throw new Error('Choose one performance test operation')
+      }
+      if (patch.performance_test_recommendation !== undefined) {
+        const recommendation = readCalibrationRecommendation(patch.performance_test_recommendation)
+        if (!recommendation) throw new Error('Invalid performance test recommendation')
+        if (current.performance_policy?.decode === 'tested' && !current.performance_test_compatible) {
+          current.performance_policy = { ...current.performance_policy, decode: 'baseline' }
+        }
+        current.performance_test_profile = savePerformanceTestProfile(recommendation,
+          (current.performance_budget ?? budgetsFromPerformance(current.performance)).cache_mib, deps)
+      }
+      const controls = [patch.performance, patch.performance_budget, patch.performance_policy, patch.performance_action]
+        .filter(value => value !== undefined)
+      if (controls.length > 1) throw new Error('Choose one performance configuration operation')
       if (patch.performance_calibration_tier !== undefined) {
         if (!['less', 'standard', 'maximum'].includes(patch.performance_calibration_tier)) throw new Error('Invalid calibration tier')
         current.performance_calibration_tier = patch.performance_calibration_tier
@@ -162,8 +215,56 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         const profile = readCalibrationRecommendation(patch.performance_calibration)
         if (patch.performance_calibration !== null && !profile) throw new Error('Invalid calibration profile')
         current.performance_calibration = profile
+        current.performance_test_profile = profile ? savePerformanceTestProfile(profile,
+          (current.performance_budget ?? budgetsFromPerformance(current.performance)).cache_mib, deps) : null
       }
-      if (patch.performance !== undefined) current.performance = patchPerformanceSettings(current.performance, patch.performance)
+      if (patch.performance !== undefined) {
+        current.performance_policy = null
+        current.performance_budget = null
+        current.performance = patchPerformanceSettings(current.performance, patch.performance)
+      }
+      if (patch.performance_budget !== undefined) {
+        current.performance_policy = null
+        const input = patch.performance_budget
+        if (input === null) current.performance_budget = null
+        else {
+          if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid performance budgets')
+          const budgets = readPerformanceBudgets({ ...(current.performance_budget ?? budgetsFromPerformance(current.performance)), ...input })
+          if (!budgets) throw new Error('Invalid performance budgets')
+          current.performance_budget = budgets
+        }
+      }
+      if (current.performance_budget) current.performance = resolvePerformanceBudgets(current.performance_budget, current.performance_calibration ?? null)
+      if (patch.performance_policy !== undefined) {
+        const policy = current.performance_policy ?? { ...DEFAULT_PERFORMANCE_POLICY,
+          ...(current.performance_budget ?? budgetsFromPerformance(current.performance)) }
+        current.performance_policy = patchPerformancePolicy(policy, patch.performance_policy)
+        if (patch.performance_policy.decode === 'tested' && (!current.performance_test_profile
+          || !performanceTestMatches(current.performance_test_profile, deps))) throw new Error('No compatible performance test')
+        if (patch.performance_policy.decode === 'tested') current.performance_calibration = current.performance_test_profile!.calibration
+      }
+      if (patch.performance_action !== undefined) {
+        switch (patch.performance_action) {
+          case 'restore_defaults':
+            current.performance_policy = { ...DEFAULT_PERFORMANCE_POLICY, ...baseline.budgets }
+            break
+          case 'restore_auto': current.performance_policy = { ...DEFAULT_PERFORMANCE_POLICY }; break
+          case 'restore_tested': {
+            const profile = current.performance_test_profile
+            if (!profile || !performanceTestMatches(profile, deps)) throw new Error('No compatible performance test')
+            current.performance_policy = { ...DEFAULT_PERFORMANCE_POLICY, ...profile.budgets, decode: 'tested' }
+            current.performance_calibration = profile.calibration
+            break
+          }
+          case 'clear_test':
+            current.performance_test_profile = null
+            current.performance_calibration = null
+            if (current.performance_policy) current.performance_policy = { ...current.performance_policy, decode: 'baseline' }
+            break
+          default: throw new Error('Invalid performance action')
+        }
+      }
+      project(current)
       if (patch.pause_preset_change !== undefined) {
         current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)
       }

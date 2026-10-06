@@ -31,8 +31,6 @@ use std::time::{Duration, SystemTime};
 
 use super::{CacheLayout, FilmstripSrc};
 
-/// Shared budget across everything the sweep collects.
-pub const DISK_CACHE_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Eviction target once over budget (90% of it), so the next few writes
 /// don't immediately re-trigger a sweep.
 const LOW_WATER_NUM: u64 = 9;
@@ -80,14 +78,26 @@ struct Unit {
 
 /// Full sweep: hygiene rules first (they delete regardless of budget), then
 /// LRU eviction of the oldest units until under the low-water mark.
+#[cfg(test)]
 pub fn sweep(layout: &CacheLayout, budget_bytes: u64, now: SystemTime) -> SweepReport {
+    sweep_all(std::slice::from_ref(layout), budget_bytes, now)
+}
+pub fn sweep_all(layouts: &[CacheLayout], budget_bytes: u64, now: SystemTime) -> SweepReport {
     let mut report = SweepReport::default();
     let mut units: Vec<Unit> = Vec::new();
 
-    collect_waveforms(&layout.waveforms_dir(), now, &mut report, &mut units);
-    collect_audio_fx(&layout.audio_conform_dir(), now, &mut report, &mut units);
-    collect_filmstrip(&layout.filmstrip_root(), now, &mut report, &mut units);
-    collect_thumbnails(&layout.thumbnails_root(), now, &mut report, &mut units);
+    for layout in layouts {
+        collect_waveforms(&layout.waveforms_dir(), now, &mut report, &mut units);
+        collect_audio_fx(&layout.audio_conform_dir(), now, &mut report, &mut units);
+        collect_filmstrip(&layout.filmstrip_root(), now, &mut report, &mut units);
+        collect_thumbnails(&layout.thumbnails_root(), now, &mut report, &mut units);
+        collect_raster(
+            &layout.current_root().join("raster"),
+            now,
+            &mut report,
+            &mut units,
+        );
+    }
 
     let mut total: u64 = units.iter().map(|u| u.bytes).sum();
     if total > budget_bytes {
@@ -109,8 +119,30 @@ pub fn sweep(layout: &CacheLayout, budget_bytes: u64, now: SystemTime) -> SweepR
             }
         }
     }
-    prune_empty_dirs(&layout.filmstrip_root());
+    // Keep empty directories: a writer may have created its destination but
+    // not opened the temp file yet. Pruning that directory races the writer.
     report
+}
+
+fn collect_raster(root: &Path, now: SystemTime, report: &mut SweepReport, units: &mut Vec<Unit>) {
+    for directory in read_dir_entries(root) {
+        // Never follow links outside an app-owned cache root.
+        if !directory.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        for entry in read_dir_entries(&directory.path()) {
+            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "wfrm") {
+                units.push(file_unit(path, &meta));
+            } else if path.extension().is_some_and(|ext| ext == "tmp") {
+                delete_if_aged_tmp(&path, &meta, now, report);
+            }
+        }
+    }
 }
 
 /// Missing/unreadable dirs iterate as empty — the sweep never errors.
@@ -284,8 +316,8 @@ fn delete_if_aged_tmp(path: &Path, meta: &fs::Metadata, now: SystemTime, report:
     }
 }
 
-/// Recursive (total file bytes, max file mtime). An empty dir reports
-/// UNIX_EPOCH — sorts oldest, which is right for an empty leftover.
+/// Include the directory timestamp: a newly created, still-empty temp
+/// directory belongs to a writer and must not look like an ancient orphan.
 fn dir_stats(dir: &Path) -> (u64, SystemTime) {
     let mut bytes = 0u64;
     let mut mtime = SystemTime::UNIX_EPOCH;
@@ -305,6 +337,11 @@ fn dir_stats(dir: &Path) -> (u64, SystemTime) {
             }
         }
     }
+    if mtime == SystemTime::UNIX_EPOCH {
+        mtime = fs::metadata(dir)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+    }
     (bytes, mtime)
 }
 
@@ -313,28 +350,6 @@ fn entry_size(path: &Path) -> u64 {
         dir_stats(path).0
     } else {
         fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-    }
-}
-
-/// Remove now-empty `{lod}`/`{tag}`/`{hash}` dirs left behind by tile
-/// eviction. `fs::remove_dir` refuses non-empty dirs, so blunt is safe.
-fn prune_empty_dirs(root: &Path) {
-    for hash_entry in read_dir_entries(root) {
-        let hash_path = hash_entry.path();
-        if !hash_path.is_dir() {
-            continue;
-        }
-        for tag_entry in read_dir_entries(&hash_path) {
-            let tag_path = tag_entry.path();
-            if !tag_path.is_dir() {
-                continue;
-            }
-            for lod_entry in read_dir_entries(&tag_path) {
-                let _ = fs::remove_dir(lod_entry.path());
-            }
-            let _ = fs::remove_dir(tag_path);
-        }
-        let _ = fs::remove_dir(hash_path);
     }
 }
 
@@ -387,6 +402,34 @@ mod tests {
         assert!(t.exists());
         assert_eq!(report.units_deleted, 0);
         assert_eq!(report.bytes_deleted, 0);
+    }
+
+    #[test]
+    fn windows_and_projects_share_one_disposable_cache_budget() {
+        let (_a, first) = layout();
+        let (_b, second) = layout();
+        let now = SystemTime::now();
+        let old = put_tile(&first, "old", 0, 0, 600, hours_ago(now, 8));
+        let recent = put_tile(&second, "recent", 0, 0, 600, hours_ago(now, 1));
+        let report = sweep_all(&[first, second], 1000, now);
+        assert_eq!(report.bytes_deleted, 600);
+        assert!(!old.exists());
+        assert!(recent.exists());
+    }
+
+    #[test]
+    fn raster_frames_join_lru_but_models_and_canonical_audio_are_protected() {
+        let (_dir, layout) = layout();
+        let now = SystemTime::now();
+        let raster = layout.current_root().join("raster").join("hash");
+        fs::create_dir_all(&raster).unwrap();
+        let frame = raster.join("0.wfrm");
+        fs::write(&frame, [0u8; 600]).unwrap();
+        let audio = layout.audio_conform_dir().join("original.conform");
+        fs::write(&audio, [0u8; 600]).unwrap();
+        sweep(&layout, 500, now);
+        assert!(!frame.exists());
+        assert!(audio.exists());
     }
 
     #[test]
@@ -550,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn eviction_prunes_empty_filmstrip_dirs() {
+    fn eviction_preserves_directories_for_concurrent_writers() {
         let (_tmp, l) = layout();
         let now = SystemTime::now();
         let t = put_tile(&l, "gone", 0, 0, 400, hours_ago(now, 9));
@@ -558,9 +601,18 @@ mod tests {
         sweep(&l, 200, now);
         assert!(!t.exists());
         assert!(
-            !l.filmstrip_root().join("gone").exists(),
-            "empty hash/tag/lod dirs pruned after eviction"
+            l.filmstrip_root().join("gone").exists(),
+            "empty destination directories remain usable by concurrent writers"
         );
+    }
+
+    #[test]
+    fn fresh_empty_thumbnail_temp_survives_a_global_sweep() {
+        let (_tmp, layout) = layout();
+        let temp = layout.thumbnails_root().join("writer.tmp");
+        fs::create_dir_all(&temp).unwrap();
+        sweep(&layout, 0, SystemTime::now());
+        assert!(temp.exists(), "writer has not opened its first output yet");
     }
 
     #[test]

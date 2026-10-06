@@ -10,7 +10,7 @@ import { PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
 
 const cleanups: Array<() => void> = []
 afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()) })
-function setup(supported = true) {
+function setup(supported = true, reserve?: () => () => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-calibration-test-'))
   fs.writeFileSync(path.join(dir, 'h264-4k60.mp4'), 'fixture')
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ codec: 'h264', fps: 60,
@@ -19,11 +19,26 @@ function setup(supported = true) {
   const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => { child.emit('exit', null); return true }) })
   let run = ''
   const launch = vi.fn((_input: string, directory: string) => { run = directory; return child as unknown as ChildProcess })
-  const service = new CalibrationService({ supported, fixtureDirectory: dir, runsDirectory: path.join(dir, 'runs'), launch })
+  const service = new CalibrationService({ supported, fixtureDirectory: dir, runsDirectory: path.join(dir, 'runs'), launch,
+    ...(reserve ? { reserve } : {}) })
   cleanups.push(() => { service.cancel(); fs.rmSync(dir, { recursive: true, force: true }) })
   return { service, launch, child, write: (report: unknown) => fs.writeFileSync(path.join(run, 'report.json'), JSON.stringify(report)) }
 }
 describe('isolated calibration lifecycle', () => {
+  it('holds parent resource capacity until the child exits and returns it once', () => {
+    const release = vi.fn(), reserve = vi.fn(() => release)
+    const { service, child } = setup(true, reserve)
+    service.start(); service.start()
+    expect(reserve).toHaveBeenCalledOnce(); expect(release).not.toHaveBeenCalled()
+    service.cancel(); child.emit('exit', 0)
+    expect(release).toHaveBeenCalledOnce()
+  })
+  it('does not spawn when the full fixed workload cannot be admitted', () => {
+    const { service, launch } = setup(true, () => { throw new Error('resource-capacity-exceeded') })
+    expect(() => service.start()).toThrow('resource-capacity-exceeded')
+    expect(launch).not.toHaveBeenCalled()
+    expect(service.status().running).toBe(false)
+  })
   it('starts one fixed plan and preserves a completed result after the process exits', () => {
     const { service, launch, child, write } = setup()
     expect(service.start().running).toBe(true)

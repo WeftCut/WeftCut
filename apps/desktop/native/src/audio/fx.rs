@@ -16,13 +16,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::audio::conform_reader::ConformReader;
 use crate::cache::{claim_temp, discard_temp, promote_temp};
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use crate::jobs::conform::{read_header, CONFORM_FORMAT_VERSION, HEADER_LEN, MAGIC};
 use crate::process::NoConsoleWindow;
 
@@ -215,7 +214,10 @@ pub(super) async fn render(
     let mut temp = TempGuard::arm(dest);
     let tmp = claim_temp(dest)?;
 
-    let mut child = Command::new(ffmpeg_path())
+    let _resources = crate::resources::interactive(128)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let mut child = crate::ffmpeg::command()
         .no_console_window()
         // Reap on future-drop so a cancelled bake takes its ffmpeg with it;
         // see hwaccel.rs.

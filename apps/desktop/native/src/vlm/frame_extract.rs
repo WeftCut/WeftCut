@@ -14,8 +14,7 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
-use tokio::process::Command;
+use crate::ffmpeg::ffmpeg_is_installed;
 
 use crate::process::NoConsoleWindow;
 
@@ -84,7 +83,7 @@ pub async fn sample_frames(
 
         // -ss BEFORE -i = fast keyframe seek (matches spike.mjs + jobs/frame.rs);
         // description is robust to thumbnail-grade seek accuracy.
-        let output = Command::new(ffmpeg_path())
+        let output = crate::ffmpeg::command()
             .no_console_window()
             .kill_on_drop(true)
             .args([

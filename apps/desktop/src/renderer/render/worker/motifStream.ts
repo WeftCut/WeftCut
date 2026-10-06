@@ -58,9 +58,9 @@ export class MotifFrameProducer {
         const tasks = this.deps.plan(index);
         // Reserve a second pixel surface for readback / cache persistence too.
         const bytes = tasks.reduce((n, task) => n + task.bytes * 2, 0);
-        // A single unusually large active frame must still make progress.
-        // It is admitted alone; never enlarge the prefetch window for it.
-        if (this.outstanding.size && this.bytes + bytes > (this.deps.maxBytes ?? 128 * 1024 * 1024)) break;
+        const limit = this.deps.maxBytes ?? 128 * 1024 * 1024;
+        if (bytes > limit) throw new Error('This frame needs more memory. Increase the memory target in Settings and retry export.');
+        if (this.bytes + bytes > limit) break;
         this.next++;
         this.bytes += bytes;
         this.stats.peakBytes = Math.max(this.stats.peakBytes, this.bytes);

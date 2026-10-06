@@ -15,6 +15,9 @@ import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
 import { APP_SETTINGS_DEFAULTS } from "../../shared/app-settings";
 import { hydratePerformanceSettings } from "../../shared/performance-settings";
+import { cacheBudget } from '../render/cacheBudget';
+import { hydrateResourceAllocation } from '../../shared/resource-policy';
+import { updateRendererResources, notifyResourceSettingsChanged } from '../render/resourceClient';
 
 import i18n, { SUPPORTED_LOCALES, type Locale } from "../i18n";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
@@ -46,7 +49,12 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
     settings: APP_SETTINGS_DEFAULTS,
     loaded: false,
     hydrate: (next) => {
-      hydratePerformanceSettings(next.performance);
+      hydrateResourceAllocation(next.resource_allocation);
+      notifyResourceSettingsChanged();
+      hydratePerformanceSettings(next.performance,
+        !next.performance_policy || next.performance_policy.decode === 'tested' && next.performance_test_compatible
+          ? next.performance_calibration : null, !!next.performance_policy);
+      cacheBudget.maintain();
       set({ settings: next, loaded: true });
     },
   }),
@@ -308,6 +316,10 @@ function pinDetectedLocale(): void {
 /// Wire-up: fetch the current settings, subscribe to backend changes.
 /// Returns an unlisten function — `App.tsx` calls this once on mount.
 export async function wireAppSettingsStream(): Promise<UnlistenFn> {
+  const offResources = await listen<{ renderers: number; pressure: string }>('resources:changed', e => {
+    updateRendererResources(e.payload); cacheBudget.maintain();
+  });
+  void window.api?.resources?.status().catch(() => {});
   // Subscribe BEFORE the seed read: a change emitted between the seed
   // resolving and the listener registering would be lost, and this store
   // carries preview-critical fields (playback_resolution, decode_engine) that
@@ -339,5 +351,5 @@ export async function wireAppSettingsStream(): Promise<UnlistenFn> {
     // IPC unavailable during early boot or in tests; keep defaults.
     console.warn("appSettingsGet failed:", e);
   }
-  return unlisten;
+  return () => { unlisten(); offResources(); };
 }

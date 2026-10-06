@@ -51,6 +51,7 @@ pub struct SinkShared {
 
 pub struct ActiveSink {
     pub shared: Arc<SinkShared>,
+    pub resources: Option<crate::resources::Permit>,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -212,6 +213,12 @@ pub(crate) fn sink_cmd_args(
         "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv".into(),
     ];
     a.extend(plan.ffmpeg_args.iter().cloned());
+    a.extend([
+        "-threads".into(),
+        crate::resources::task_threads().to_string().into(),
+        "-filter_threads".into(),
+        crate::resources::task_threads().to_string().into(),
+    ]);
     a.push(OsString::from(&args.output_path));
     a
 }
@@ -224,6 +231,16 @@ pub async fn export_video_sink_start(
 ) -> Result<(), String> {
     // An active sink here is always stale (single-export invariant); reclaim it.
     reclaim_stale_sink(&state.0);
+    let resources = if args.output_path.is_empty() {
+        None
+    } else {
+        Some(
+            crate::resources::interactive(
+                128 + (u64::from(args.width) * u64::from(args.height) * 32).div_ceil(1024 * 1024),
+            )
+            .await?,
+        )
+    };
 
     let mut child_opt: Option<Child> = None;
     let mut stdin_opt: Option<ChildStdin> = None;
@@ -339,7 +356,7 @@ pub async fn export_video_sink_start(
         drop(shared.stdin.lock().unwrap().take());
         return Err("video sink already active".into());
     }
-    *guard = Some(ActiveSink { shared });
+    *guard = Some(ActiveSink { shared, resources });
     info!(
         "video sink started (ipc, output={})",
         !args.output_path.is_empty()
@@ -387,10 +404,12 @@ pub async fn video_sink_write(
 /// Finalize: drop stdin (EOF → ffmpeg finalizes), reap the child directly, and
 /// return the IPC counters.
 pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStats, String> {
-    let shared = {
+    let sink = {
         let mut guard = state.0.lock().unwrap();
-        guard.take().ok_or("no active video sink")?.shared
+        guard.take().ok_or("no active video sink")?
     };
+    let shared = sink.shared;
+    let _resources = sink.resources;
     drop(shared.stdin.lock().unwrap().take());
     let shared_for_wait = shared.clone();
     let status = tokio::task::spawn_blocking(
@@ -459,7 +478,10 @@ mod tests {
     #[test]
     fn reclaim_clears_orphaned_sink() {
         let shared = dummy_shared();
-        let state = Mutex::new(Some(ActiveSink { shared }));
+        let state = Mutex::new(Some(ActiveSink {
+            shared,
+            resources: None,
+        }));
         reclaim_stale_sink(&state);
         assert!(
             state.lock().unwrap().is_none(),

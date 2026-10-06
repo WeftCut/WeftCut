@@ -107,7 +107,16 @@ impl Transcriber for FunAsr {
         let model = files.speech_model(&self.model, "model.onnx").await?;
         let tokens = files.speech_model(&self.tokens, "tokens.txt").await?;
         let audio = files.input(&req.audio_path, "audio.wav").await?;
-        let mut args = build_args(&model, &tokens, &audio, self.threads);
+        let mut args = build_args(
+            &model,
+            &tokens,
+            &audio,
+            Some(
+                self.threads
+                    .unwrap_or(crate::resources::task_threads())
+                    .min(crate::resources::task_threads()),
+            ),
+        );
         if let Some(provider) = &self.device {
             args.insert(0, format!("--provider={provider}").into());
         }

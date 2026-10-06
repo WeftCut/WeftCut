@@ -37,7 +37,6 @@ use serde::Serialize;
 use std::sync::Arc;
 
 use crate::events::EventSink;
-use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::cache::CacheLayout;
@@ -98,16 +97,10 @@ pub const EVENT_STARTED: &str = "media:job_started";
 pub const EVENT_COMPLETE: &str = "media:job_complete";
 pub const EVENT_ERROR: &str = "media:job_error";
 
-/// Concurrent ffmpeg children allowed across every background job. Deliberately
-/// low: importing ten files at once must not fork-bomb the host.
-const MAX_PARALLEL_FFMPEG: usize = 2;
-
-/// Global ffmpeg-child semaphore. Shared with `speech::audio_extract` so cloud
-/// transcription slices compete fairly with background derivative jobs
-/// (thumbnails/proxy/waveform) rather than spawning unbounded extra ffmpegs.
-pub(crate) fn ffmpeg_sem() -> &'static Semaphore {
-    static S: OnceLock<Semaphore> = OnceLock::new();
-    S.get_or_init(|| Semaphore::new(MAX_PARALLEL_FFMPEG))
+/// Background admission shared with native/renderer work and inference.
+/// The authority owns thread, memory, playback and pressure checks.
+pub(crate) fn ffmpeg_sem() -> &'static crate::resources::BackgroundGate {
+    &crate::resources::BackgroundGate
 }
 
 /// Per-media in-flight set for conform jobs. The export gate re-kicks any
@@ -458,13 +451,10 @@ fn spawn_conform(
             },
         );
 
-        let permit = ffmpeg_sem().acquire().await;
-        if permit.is_err() {
-            warn!("conform job: semaphore closed; skipping {media_id}");
-            return;
-        }
-        let result = conform::run(&cache, &media).await;
-        drop(permit);
+        let result = match ffmpeg_sem().acquire().await {
+            Ok(_permit) => conform::run(&cache, &media).await,
+            Err(error) => Err(error),
+        };
 
         match result {
             Ok(conform_path) => {
@@ -675,13 +665,10 @@ fn spawn_thumbnails(
             },
         );
 
-        let permit = ffmpeg_sem().acquire().await;
-        if permit.is_err() {
-            warn!("thumbnail job: semaphore closed; skipping {media_id}");
-            return;
-        }
-        let result = thumbnails::run(&cache, &media).await;
-        drop(permit);
+        let result = match ffmpeg_sem().acquire().await {
+            Ok(_permit) => thumbnails::run(&cache, &media).await,
+            Err(error) => Err(error),
+        };
 
         match result {
             Ok(thumbs_dir) => {
@@ -754,13 +741,10 @@ fn spawn_quick_proxy(
             },
         );
 
-        let permit = ffmpeg_sem().acquire().await;
-        if permit.is_err() {
-            warn!("quick proxy job: semaphore closed; skipping {media_id}");
-            return;
-        }
-        let result = quick_proxy::run(&cache, &media, source_gop_secs).await;
-        drop(permit);
+        let result = match ffmpeg_sem().acquire().await {
+            Ok(_permit) => quick_proxy::run(&cache, &media, source_gop_secs).await,
+            Err(error) => Err(error),
+        };
 
         match result {
             Ok(quick_proxy_path) => {
@@ -837,13 +821,10 @@ fn spawn_proxy(
             },
         );
 
-        let permit = ffmpeg_sem().acquire().await;
-        if permit.is_err() {
-            warn!("proxy job: semaphore closed; skipping {media_id}");
-            return;
-        }
-        let result = proxy::run(&cache, &media).await;
-        drop(permit);
+        let result = match ffmpeg_sem().acquire().await {
+            Ok(_permit) => proxy::run(&cache, &media).await,
+            Err(error) => Err(error),
+        };
 
         match result {
             Ok(proxy_path) => {
@@ -911,13 +892,10 @@ fn spawn_waveform(
             },
         );
 
-        let permit = ffmpeg_sem().acquire().await;
-        if permit.is_err() {
-            warn!("waveform job: semaphore closed; skipping {media_id}");
-            return;
-        }
-        let result = waveform::run(&cache, &media).await;
-        drop(permit);
+        let result = match ffmpeg_sem().acquire().await {
+            Ok(_permit) => waveform::run(&cache, &media).await,
+            Err(error) => Err(error),
+        };
 
         match result {
             Ok(waveform_path) => {
@@ -1020,15 +998,11 @@ pub async fn spawn_audio_fx(
         // The permit is acquired INSIDE the cancellable task so a cancel
         // while the bake is still queued behind import derivatives aborts the
         // wait too, rather than starting a doomed ffmpeg once a slot frees.
-        let outcome = match ffmpeg_sem().acquire().await {
-            Ok(permit) => {
-                let baked =
-                    crate::audio::fx::bake(&conform_path, &filter_complex, &bake_dest).await;
-                drop(permit);
-                baked.map_err(|e| format!("{e:#}"))
-            }
-            Err(_) => Err("ffmpeg semaphore closed".to_string()),
-        };
+        // The bake's render entry owns admission, including export callers.
+        // Holding another permit here would deadlock a one-thread machine.
+        let outcome = crate::audio::fx::bake(&conform_path, &filter_complex, &bake_dest)
+            .await
+            .map_err(|e| format!("{e:#}"));
         let _ = tx.send(outcome);
     });
     let _slot = crate::audio::fx::register_job(job_key, handle);

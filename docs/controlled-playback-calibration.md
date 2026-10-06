@@ -2,8 +2,8 @@
 
 This experimental Windows test measures the production playback pipeline in an
 isolated Electron process. Settings → Performance can start/cancel it and
-explicitly accept its presets. Test media ships with Windows builds; accepted
-presets persist across restarts. The older
+save its recommendation, then apply it separately. Test media ships with Windows
+builds; saved recommendations persist across restarts. The older
 [project-based timing prototype](performance-calibration-prototype.md) remains
 available for comparison.
 
@@ -16,17 +16,20 @@ available for comparison.
 | Per-video GPU buffer slots | Fixed at the shipping default during measurement; never recommended or overwritten |
 | Frame, animation, filmstrip and waveform caches; animation GPU memory and sessions | Fixed baseline; not calibrated or overwritten |
 
-Only `preview_gpu_sessions` and `preview_gpu_pixel_area` appear in a candidate
-settings patch. A passing count of N does **not** imply 4N simultaneous 1080p
-decoders. H.264 4K/60 fps is a common reference, not certification of other
-codecs, resolutions, effects or projects. The seven other performance settings
-retain their existing values when a candidate patch is applied.
+Only `preview_gpu_sessions` and `preview_gpu_pixel_area` are measured in the
+candidate family. A passing count of N does **not** imply 4N simultaneous 1080p
+decoders. H.264 4K/60 fps is a reference, not certification of other workloads.
+The current settings policy derives a shared-texture recommendation from that
+load and copies the user's cache budget into the saved profile; these are not
+additional measurements. See [performance settings](performance-settings.md).
 
 ## Run
 
 In the app, open **Settings → Performance → Test this computer (experimental)**.
-The editor pauses playback. Results require **Use test presets**, which selects
-Standard and stores the tested mappings without changing the other seven fields.
+The editor pauses playback. **Save recommendation** records a result without
+changing runtime settings. **Restore computer test profile** applies its budgets
+and throughput guards. **Restore automatic** returns to product defaults without
+deleting the saved result. Machine/build/protocol mismatches disable restoration.
 Cancel, a closed test window or a failed run never applies settings. The owner
 process also cancels testing on application exit. Test reports and the child's
 isolated profile are retained beneath the OS temporary directory in
@@ -65,6 +68,10 @@ a six-minute watchdog bounds an unresponsive run.
 - Always run the fixed 1–8 sequence. Neither hardware identity, historical
   results, user budgets nor earlier cells select the starting point or skip
   later cells. Reproducible inputs do not imply identical measurements.
+- The parent process first reserves the fixed run's estimated working memory in
+  the app-wide resource authority. Insufficient capacity rejects the entire run
+  before launch; it never changes the test scene or silently skips cells. The
+  reservation lasts until the child exits, including cancellation and failure.
 - Build scenes in memory. Do not create projects, import media, generate proxies,
   thumbnails or waveforms, or bootstrap the normal editor stores and jobs.
 - Reuse native decoding, production GPU IPC, `FfmpegSource`, `FrameRing`, decoder

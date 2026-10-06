@@ -14,6 +14,7 @@ export function PerformanceCalibrationControl({ disabled, accepted, onRunning, o
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<CalibrationSnapshot | null>(null);
   const [pending, setPending] = useState(false);
+  const [savedReport, setSavedReport] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const refresh = async () => {
@@ -29,7 +30,7 @@ export function PerformanceCalibrationControl({ disabled, accepted, onRunning, o
   const run = async (cancel: boolean) => {
     setPending(true); onError('');
     try {
-      if (!cancel) transportPause();
+      if (!cancel) { transportPause(); setSavedReport(null); }
       const next = await window.api.performanceCalibration[cancel ? 'cancel' : 'start']();
       setSnapshot(next); onRunning(next.running);
     } catch (error) { onError(String(error)); }
@@ -37,7 +38,8 @@ export function PerformanceCalibrationControl({ disabled, accepted, onRunning, o
   };
   const report = snapshot?.report;
   const recommendation = report?.state === 'complete' && !snapshot?.running ? report.recommendation : null;
-  const applied = !!accepted && JSON.stringify(accepted) === JSON.stringify(recommendation);
+  const reportKey = JSON.stringify(report ?? null);
+  const applied = savedReport === reportKey && !!accepted && JSON.stringify(accepted) === JSON.stringify(recommendation);
   const progress = report?.cells.filter(cell => cell.status !== 'not-run').length ?? 0;
   const status = snapshot?.running ? t('performance.test_progress', { count: progress })
     : report?.state === 'cancelled' ? t('performance.test_cancelled')
@@ -45,14 +47,18 @@ export function PerformanceCalibrationControl({ disabled, accepted, onRunning, o
     : recommendation ? t(recommendation.conservative ? 'performance.test_conservative' : 'performance.test_complete',
       { count: recommendation.maximum.preview_gpu_sessions }) : '';
   return <div className="settings-performance-calibration">
-    <p className="settings-toggle-hint">{t('performance.test_hint')}</p>
     <div className="settings-control-row">
       <Button variant="secondary" disabled={pending || (!snapshot?.running && (disabled || !snapshot?.available))}
         onClick={() => void run(!!snapshot?.running)}>
         {t(snapshot?.running ? 'performance.test_cancel' : 'performance.test_start')}
       </Button>
       {recommendation && <Button variant="secondary" disabled={disabled || pending || applied}
-        onClick={async () => { setPending(true); try { await onApply(recommendation); } finally { setPending(false); } }}>
+        onClick={async () => {
+          setPending(true);
+          try { if (await onApply(recommendation)) setSavedReport(reportKey); }
+          catch (error) { onError(String(error)); }
+          finally { setPending(false); }
+        }}>
         {t(applied ? 'performance.test_applied' : 'performance.test_apply')}
       </Button>}
     </div>

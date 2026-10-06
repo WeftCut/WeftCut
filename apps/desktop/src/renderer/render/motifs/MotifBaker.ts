@@ -1,6 +1,8 @@
 import { planBakeTargets, type BakeContent, type BakeTarget } from "./bakePlan";
 import { IdleBatchQueue } from "./idleBatchQueue";
 import type { CapturedFrame } from './frameTransport';
+import { backgroundResourcesAvailable, onResourceChange } from '../resourceClient';
+import { resourceAllocation } from '../../../shared/resource-policy';
 
 export type BakePhase = "baking" | "ready" | "error";
 export interface BakeStatus { phase: BakePhase; done: number; total: number; }
@@ -62,12 +64,13 @@ export class MotifBaker {
   /// the loop's onBatchDone into one onStatus emit per touched key per batch.
   private readonly touched = new Set<string>();
   private readonly loop: IdleBatchQueue<BakeTarget, BakeBatchItem>;
+  private readonly offResources: () => void;
 
   constructor(private readonly deps: MotifBakerDeps) {
     this.loop = new IdleBatchQueue<BakeTarget, BakeBatchItem>({
       schedule: deps.schedule,
       cancel: deps.cancel,
-      batchSize: deps.batchSize ?? 2,
+      batchSize: () => backgroundResourcesAvailable() ? Math.min(deps.batchSize ?? 2, resourceAllocation().background_jobs) : 0,
       take: (target) => {
         if (this.completed.get(target.cacheKey)?.has(target.frame)) return null;
         const spec = this.specsByKey.get(target.cacheKey);
@@ -111,6 +114,7 @@ export class MotifBaker {
         this.touched.clear();
       },
     });
+    this.offResources = onResourceChange(() => this.loop.wake());
   }
 
   /// Replace the active bake set, plan the whole content (playhead-first), and
@@ -195,6 +199,7 @@ export class MotifBaker {
   }
 
   dispose(): void {
+    this.offResources();
     this.loop.dispose();
     this.specsByKey.clear();
     this.status.clear();

@@ -1,6 +1,7 @@
 import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings";
 import { listen } from "@/bridge/events";
 import { MEDIA_JOB_EVENTS } from "../../ipc";
+import { cacheBudget, type CacheKind } from '../../render/cacheBudget';
 
 export interface TileKey {
   /// The media the tile belongs TO. Subscription and invalidation identity: a
@@ -43,6 +44,7 @@ export interface TileProducer<T> {
   /// the engine-wide default. Eviction is per kind: one producer's byte
   /// pressure never evicts another's tiles.
   budgetBytes?: number;
+  cacheKind?: CacheKind;
 }
 
 export const DEFAULT_TILE_BUDGET_BYTES = (PERFORMANCE_DEFAULTS.filmstrip_cache_mib + PERFORMANCE_DEFAULTS.waveform_cache_mib) * MIB;
@@ -73,12 +75,17 @@ export class TileEngine {
   private bytesByKind = new Map<string, number>();
   private clock = 0;
   private jobListenerInstalled = false;
+  private cacheOwners = new Map<string, object>();
 
   constructor(private budgetBytes = DEFAULT_TILE_BUDGET_BYTES) {
     void this.installJobListenerOnce();
   }
 
   register<T>(producer: TileProducer<T>): void {
+    const oldOwner = this.cacheOwners.get(producer.kind);
+    if (oldOwner) cacheBudget.release(oldOwner);
+    this.cacheOwners.delete(producer.kind);
+    if (producer.cacheKind) this.cacheOwners.set(producer.kind, {});
     this.producers.set(producer.kind, producer as TileProducer<unknown>);
   }
 
@@ -127,6 +134,7 @@ export class TileEngine {
         slot.entry = { state: "ready", value };
         slot.bytes = bytes;
         this.bytesByKind.set(key.kind, (this.bytesByKind.get(key.kind) ?? 0) + bytes);
+        this.reportUsage(key.kind);
         this.evictToBudget(ks, key.kind);
         this.notify(key.mediaId);
       })
@@ -170,10 +178,29 @@ export class TileEngine {
       this.bytesByKind.set(slot.key.kind, (this.bytesByKind.get(slot.key.kind) ?? 0) - slot.bytes);
     }
     this.slots.delete(ks);
+    this.reportUsage(slot.key.kind);
+  }
+
+  private reportUsage(kind: string): void {
+    const owner = this.cacheOwners.get(kind);
+    const cacheKind = this.producers.get(kind)?.cacheKind;
+    if (!owner || !cacheKind) return;
+    cacheBudget.update(owner, cacheKind, this.bytesByKind.get(kind) ?? 0, () => {
+      // Keep the newest tile alive, as on ordinary insertion. This callback
+      // only reclaims older cached pictures, never a pending fetch.
+      let newest = '', version = -1;
+      for (const [key, slot] of this.slots) if (slot.key.kind === kind && slot.entry.state === 'ready' && slot.version > version) {
+        newest = key; version = slot.version;
+      }
+      this.evictToBudget(newest, kind);
+    });
   }
 
   private evictToBudget(protectKs: string, kind: string): void {
-    const budget = this.producers.get(kind)?.budgetBytes ?? this.budgetBytes;
+    const producer = this.producers.get(kind);
+    const owner = this.cacheOwners.get(kind);
+    const budget = owner && producer?.cacheKind ? cacheBudget.ownerAllowance(producer.cacheKind, owner)
+      : producer?.budgetBytes ?? this.budgetBytes;
     const kindBytes = () => this.bytesByKind.get(kind) ?? 0;
     if (kindBytes() <= budget) return;
     const ready = [...this.slots.entries()]

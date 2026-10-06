@@ -19,9 +19,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{Context, Result};
-use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
@@ -76,7 +75,7 @@ pub async fn extract_audio_window(
 
     // -ss AFTER -i for sample-accurate seek (input-side -ss is faster but
     // keyframe-aligned; transcription wants the actual requested window).
-    let child = Command::new(ffmpeg_path())
+    let child = crate::ffmpeg::command()
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the slice temp; see
         // jobs/hwaccel.rs.
@@ -147,6 +146,7 @@ mod tests {
     use super::*;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
+    use tokio::process::Command;
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
