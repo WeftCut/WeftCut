@@ -100,19 +100,53 @@ data         interleaved f32 samples
 ```
 
 Frame addressing is arithmetic: `offset = 28 + frame * channels * 4`.
+A reusable conform must have the current format version, the canonical sample
+rate, one or two channels, a nonzero frame count, and an exact file length of
+`28 + frame_count * channels * 4`. Length arithmetic is checked for overflow.
+A readable header alone does not establish readiness; truncated bodies and
+trailing partial frames invalidate the artifact and trigger regeneration.
 
 **Producer:** `jobs/conform.rs`, one ffmpeg invocation
 (`-i src -vn -ac {1|2} -ar 48000 -f f32le -`) streamed to
-`Cache/audio/{blake3}.conform` through the standard job FIFO, with the
-same pending-hash migration and skip-if-cached behavior as the
-waveform job. Triggered at import for audio-bearing media; an
+`Cache/audio/{blake3}.conform` through native resource admission. Jobs capture
+the workspace and project session before queueing; duplicate consumers share
+one artifact build. Valid cached artifacts restore before resource admission,
+independently of video proxy readiness. Triggered at import for audio-bearing media; an
 `ensure_conform` path covers media imported before the format existed
 (and `CONFORM_FORMAT_VERSION` bumps). Job completion logs the file
 size — conform costs ~1.4 GB per stereo source-hour (half for mono),
 and that cost is deliberate; see the trade-off in ADR 0019.
 
-The waveform job stays independent (22 050 Hz mono peaks); collapsing
-it onto conform output is a possible later simplification, not a goal.
+**Waveforms:** `jobs/waveform.rs` produces stereo min/max/RMS peaks from
+22 050 Hz PCM in the existing V4 format. The finest window contains exactly
+22 PCM frames; coarser levels double that frame count, preserving the rational
+timebase rather than rounding each level to a nominal peaks-per-second rate.
+For 48 kHz mono/stereo sources, cold waveform generation follows conform and
+reuses its decoded PCM when valid. This retains the original single resample
+and mono/stereo channel policy. Other sample rates and multichannel sources
+continue decoding the original directly, avoiding a second resample or a
+changed downmix order. A cached waveform never waits for conform generation.
+
+Peak generation streams the finest windows into temporary per-channel files,
+then constructs each coarser level with bounded read/write buffers. The final
+file streams the existing finest-first, channel-planar V4 layout. Memory for
+peaks no longer grows with source duration or duplicates the whole file during
+serialization; the background task reservation still covers FFmpeg and fixed
+buffers. This trades additional temporary disk I/O for bounded memory. Anonymous
+temporary files use operating-system unlink/delete-on-close semantics, so
+completion, failure, cancellation and process termination release intermediates.
+Min/max, RMS quantization and odd-tail
+self-pairing are unchanged, checked by byte-for-byte reference tests.
+
+Peaks reuse validates the version, sample rate, channel count, bounded level
+table, each level's timebase/count relationship, contiguous data offsets and
+exact final file length. Missing or invalid ordinary waveform artifacts are
+re-enqueued when read; consumers retry after the completion event. Conform
+and waveform generation drain FFmpeg diagnostics concurrently into a bounded
+buffer. Session cancellation kills and awaits the child before the job returns
+and releases its resource reservation; a completed stale task cannot publish
+into the newly opened project.
+
 An effect chain adds a **sibling** pair beside both files —
 `{hash}.fx-{sig16}.conform` and `waveforms/{hash}.fx-{sig16}.v4.peaks`, one
 per distinct chain (see § Clip effects).

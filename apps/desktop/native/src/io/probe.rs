@@ -39,13 +39,23 @@ pub fn stat_file(path: &Path) -> Result<(u64, u64)> {
     Ok((size, mtime_secs))
 }
 
+#[cfg(test)]
 pub fn hash_and_stat(path: &Path) -> Result<FileFacts> {
+    hash_and_stat_scoped(path, None)
+}
+pub fn hash_and_stat_scoped(
+    path: &Path,
+    cache: Option<&crate::cache::CacheLayout>,
+) -> Result<FileFacts> {
     let (size, mtime_secs) = stat_file(path)?;
 
     let mut hasher = blake3::Hasher::new();
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut buf = [0u8; 64 * 1024];
     loop {
+        if let Some(cache) = cache {
+            cache.check_active()?;
+        }
         let n = file.read(&mut buf).context("read for hash")?;
         if n == 0 {
             break;
@@ -109,6 +119,39 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
     }
 }
 
+pub async fn probe_metadata_scoped(
+    path: &Path,
+    cache: &crate::cache::CacheLayout,
+) -> Result<MediaMetadata> {
+    if !ffprobe_is_installed() {
+        return Ok(MediaMetadata::default());
+    }
+    let mut command = tokio::process::Command::new(ffprobe_path());
+    command
+        .no_console_window()
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = cache
+        .command_output_timeout(&mut command, Some(std::time::Duration::from_secs(30)))
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "ffprobe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice::<RawProbe>(&output.stdout)?.into_metadata())
+}
+
 /// Seconds of source scanned to estimate the keyframe interval. A few
 /// seconds is enough to see several keyframes at any normal GOP; long-GOP
 /// sources (the ones we care about demoting) show 0–1 keyframes in this
@@ -122,11 +165,15 @@ const KEYFRAME_SCAN_SECONDS: f64 = 12.0;
 /// `None` as "unknown" and do NOT demote on it. Used by `proxy_decision`: a
 /// long-GOP source scrubs badly when decoded directly, so it gets a short-GOP
 /// scrub proxy instead of being bypassed.
-pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
+pub async fn probe_max_keyframe_gap_secs_scoped(
+    path: &Path,
+    cache: &crate::cache::CacheLayout,
+) -> Option<f64> {
     if !ffprobe_is_installed() {
         return None;
     }
-    let output = Command::new(ffprobe_path())
+    let mut command = tokio::process::Command::new(ffprobe_path());
+    let command = command
         .no_console_window()
         .args([
             "-v",
@@ -144,8 +191,10 @@ pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
         ])
         .arg(path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+        .stderr(Stdio::piped());
+    let output = cache
+        .command_output_timeout(command, Some(std::time::Duration::from_secs(30)))
+        .await
         .ok()?;
     if !output.status.success() {
         return None;

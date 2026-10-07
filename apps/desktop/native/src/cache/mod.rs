@@ -2,12 +2,15 @@
 //! thumbnails, waveforms, on-demand extracted frames.
 //!
 //! Per `docs/data-model.md`, the cache is rooted at `<workspace>/Cache/`; the
-//! root moves under a shared `CacheLayout` via `set_workspace` (see the `root`
-//! field). The write-then-rename protocol every writer must follow is owned by
+//! owner root moves via `set_workspace`; cloned layouts freeze the root and
+//! cancellation scope for their queued/running work. The write-then-rename protocol every writer must follow is owned by
 //! the atomicity helpers at the bottom of this file (`cached_ok`,
 //! `claim_temp`, `promote_temp`).
 
+pub const FULL_PROXY_FORMAT_VERSION: u32 = 7;
 pub mod disk_lru;
+mod session;
+pub use session::Session;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,7 +67,7 @@ impl FilmstripSrc {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct CacheLayout {
     /// Current cache root. Swapped by `set_workspace` when the user opens or
     /// saves a project to a folder. Reads clone-by-value; never hand out a
@@ -73,6 +76,14 @@ pub struct CacheLayout {
     root: Arc<RwLock<PathBuf>>,
     /// Debounce latch for background disk-LRU sweeps (`cache::disk_lru`).
     sweeper: Arc<disk_lru::SweepState>,
+    session: Arc<RwLock<Arc<Session>>>,
+    lifecycle: Arc<std::sync::Mutex<()>>,
+}
+
+impl Clone for CacheLayout {
+    fn clone(&self) -> Self {
+        self.snapshot()
+    }
 }
 
 impl CacheLayout {
@@ -83,25 +94,129 @@ impl CacheLayout {
         Self {
             root: Arc::new(RwLock::new(root)),
             sweeper: Arc::new(disk_lru::SweepState::default()),
+            session: Arc::new(RwLock::new(Arc::new(Session::new(0)))),
+            lifecycle: Arc::new(std::sync::Mutex::new(())),
         }
     }
 
-    /// Swap the cache root to `<workspace>/Cache/` and create the dir tree
-    /// at the new location. Idempotent: calling with the same workspace
-    /// twice does nothing extra. Fires on every workspace switch: project
-    /// open, save-as, and new-workspace.
-    pub fn set_workspace(&self, workspace_root: &Path) -> Result<()> {
-        let new_root = workspace_root.join("Cache");
-        {
-            let mut guard = self.root.write().expect("cache root lock poisoned");
-            if *guard == new_root {
-                return Ok(());
-            }
-            *guard = new_root;
+    /// Freeze both identity and cancellation scope before a task is queued.
+    pub fn snapshot(&self) -> Self {
+        let _lifecycle = self.lifecycle.lock().unwrap();
+        self.snapshot_locked()
+    }
+    pub fn snapshot_expected(&self, expected: Option<u32>) -> Result<Self> {
+        let _lifecycle = self.lifecycle.lock().unwrap();
+        self.check_active()?;
+        anyhow::ensure!(
+            expected.is_none_or(|generation| generation == self.generation()),
+            "workspace cancelled"
+        );
+        Ok(self.snapshot_locked())
+    }
+    fn snapshot_locked(&self) -> Self {
+        Self {
+            root: Arc::new(RwLock::new(self.current_root())),
+            sweeper: self.sweeper.clone(),
+            session: Arc::new(RwLock::new(self.session.read().unwrap().clone())),
+            lifecycle: Arc::new(std::sync::Mutex::new(())),
         }
-        self.ensure_dirs()?;
-        // Workspace open is the prompt-sweep trigger: hygiene + budget
-        // eviction run once in the background.
+    }
+    pub fn generation(&self) -> u32 {
+        self.session.read().unwrap().generation
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.session.read().unwrap().is_cancelled()
+    }
+    pub async fn cancelled(&self) {
+        let session = self.session.read().unwrap().clone();
+        session.cancelled().await;
+    }
+    pub fn check_active(&self) -> Result<()> {
+        anyhow::ensure!(!self.is_cancelled(), "workspace cancelled");
+        Ok(())
+    }
+    pub fn end_session(&self) -> u32 {
+        let _lifecycle = self.lifecycle.lock().unwrap();
+        let generation = self.rotate_session();
+        self.session.read().unwrap().cancel();
+        generation
+    }
+    fn rotate_session(&self) -> u32 {
+        let mut current = self.session.write().unwrap();
+        current.cancel();
+        let generation = current.generation.wrapping_add(1);
+        *current = Arc::new(Session::new(generation));
+        generation
+    }
+    pub fn scoped_events(
+        &self,
+        events: Arc<dyn crate::events::EventSink>,
+    ) -> Arc<dyn crate::events::EventSink> {
+        Arc::new(session::ScopedEvents {
+            cache: self.snapshot(),
+            events,
+        })
+    }
+
+    /// Keep the caller's resource permit alive until cancellation has killed
+    /// and reaped the child, not merely until its output future is dropped.
+    pub async fn command_output(
+        &self,
+        command: &mut tokio::process::Command,
+    ) -> Result<std::process::Output> {
+        self.command_output_timeout(command, None).await
+    }
+    pub async fn command_output_timeout(
+        &self,
+        command: &mut tokio::process::Command,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<std::process::Output> {
+        self.check_active()?;
+        let mut child = command.kill_on_drop(true).spawn()?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let output = drain_bounded(stdout, 8 * 1024 * 1024);
+        let errors = drain_bounded(stderr, 64 * 1024);
+        let deadline = async {
+            match timeout {
+                Some(duration) => tokio::time::sleep(duration).await,
+                None => std::future::pending().await,
+            }
+        };
+        let wait = async {
+            tokio::select! {
+                _ = deadline => {
+                    child.kill().await?;
+                    child.wait().await?;
+                    anyhow::bail!("media probe timed out")
+                },
+                status = child.wait() => Ok(status?),
+                _ = self.cancelled() => {
+                    child.kill().await?;
+                    child.wait().await?;
+                    anyhow::bail!("workspace cancelled")
+                }
+            }
+        };
+        let (status, stdout, stderr) = tokio::join!(wait, output, errors);
+        Ok(std::process::Output {
+            status: status?,
+            stdout: stdout?,
+            stderr: stderr?,
+        })
+    }
+
+    /// Prepare all directories before atomically replacing the workspace.
+    /// Reopening the same path still starts a fresh cancellation generation.
+    pub fn set_workspace(&self, workspace_root: &Path) -> Result<()> {
+        let prepared = Self::new(workspace_root.join("Cache"));
+        prepared.create_dirs()?;
+        {
+            let _lifecycle = self.lifecycle.lock().unwrap();
+            *self.root.write().unwrap() = prepared.current_root();
+            self.rotate_session();
+        }
+        self.register_layout();
         self.sweep_soon();
         Ok(())
     }
@@ -154,7 +269,7 @@ impl CacheLayout {
         });
     }
 
-    fn current_root(&self) -> PathBuf {
+    pub(crate) fn current_root(&self) -> PathBuf {
         self.root.read().expect("cache root lock poisoned").clone()
     }
 
@@ -203,7 +318,8 @@ impl CacheLayout {
 
     /// MP4 proxy for a hashed media file.
     pub fn proxy(&self, hash: &str) -> PathBuf {
-        self.proxies_dir().join(format!("{hash}.mp4"))
+        self.proxies_dir()
+            .join(format!("{hash}.full-p{FULL_PROXY_FORMAT_VERSION}.mp4"))
     }
 
     /// Fast preview-first proxy for a hashed media file. The `q4` segment is
@@ -373,15 +489,20 @@ impl CacheLayout {
     /// orphan tree, left in place rather than auto-deleted so a user reverting
     /// to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
-        let root = self.current_root();
+        self.create_dirs()?;
+        self.register_layout();
+        Ok(())
+    }
+    fn register_layout(&self) {
+        let snapshot = self.snapshot();
         known_layouts()
             .lock()
             .unwrap()
-            .entry(root.clone())
-            .or_insert_with(|| CacheLayout {
-                root: Arc::new(RwLock::new(root.clone())),
-                sweeper: self.sweeper.clone(),
-            });
+            .entry(snapshot.current_root())
+            .or_insert(snapshot);
+    }
+    fn create_dirs(&self) -> Result<()> {
+        let root = self.current_root();
         for p in [
             root.clone(),
             self.proxies_dir(),
@@ -403,9 +524,92 @@ impl CacheLayout {
     }
 }
 
+/// Keep draining after the retained diagnostic/probe bound so a verbose child
+/// cannot deadlock on a full pipe or grow the process heap without a bound.
+async fn drain_bounded<R: tokio::io::AsyncRead + Unpin>(
+    pipe: Option<R>,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = pipe.read(&mut buffer).await?;
+            if count == 0 {
+                break;
+            }
+            let keep = count.min(limit.saturating_sub(bytes.len()));
+            bytes.extend_from_slice(&buffer[..keep]);
+        }
+    }
+    Ok(bytes)
+}
+
 /// True when the path exists and is non-zero size — the right "skip if cached"
 /// predicate. Naive `exists()` will return true for an interrupted-ffmpeg
 /// zero-byte file, which a worker would then skip and leave broken.
+/// Validate container framing without decoding or reading the media payload.
+/// A truncated mdat/moov must never be adopted as a completed derivative.
+pub fn valid_mp4(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let Ok(meta) = file.metadata() else {
+        return false;
+    };
+    let length = meta.len();
+    let (mut position, mut ftyp, mut moov, mut mdat) = (0u64, false, false, false);
+    while position < length {
+        let mut header = [0u8; 8];
+        if file.read_exact(&mut header).is_err() {
+            return false;
+        }
+        let mut size = u32::from_be_bytes(header[..4].try_into().unwrap()) as u64;
+        let mut header_size = 8;
+        if size == 1 {
+            let mut extended = [0u8; 8];
+            if file.read_exact(&mut extended).is_err() {
+                return false;
+            }
+            size = u64::from_be_bytes(extended);
+            header_size = 16;
+        } else if size == 0 {
+            size = length - position;
+        }
+        if size < header_size || size > length - position {
+            return false;
+        }
+        match &header[4..] {
+            b"ftyp" => ftyp = size >= header_size + 8,
+            b"moov" => moov = size > header_size,
+            b"mdat" => mdat = size > header_size,
+            _ => {}
+        }
+        position += size;
+        if file.seek(SeekFrom::Start(position)).is_err() {
+            return false;
+        }
+    }
+    ftyp && moov && mdat
+}
+
+pub fn valid_jpeg(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut marker = [0u8; 2];
+    if file.read_exact(&mut marker).is_err() || marker != [0xff, 0xd8] {
+        return false;
+    }
+    if file.seek(SeekFrom::End(-2)).is_err() {
+        return false;
+    }
+    file.read_exact(&mut marker).is_ok() && marker == [0xff, 0xd9]
+}
+
 pub fn cached_ok(path: &Path) -> bool {
     fs::metadata(path)
         .map(|m| m.is_file() && m.len() > 0)
@@ -537,12 +741,110 @@ mod tests {
     }
 
     #[test]
+    fn workspace_snapshots_cancel_without_changing_their_paths() {
+        let first = TempDir::new().unwrap();
+        let second = TempDir::new().unwrap();
+        let owner = CacheLayout::new(first.path().join("Cache"));
+        let pending = owner.clone();
+        let old_path = pending.proxy("source");
+        let old_generation = owner.generation();
+        owner.set_workspace(second.path()).unwrap();
+        assert!(pending.is_cancelled());
+        assert_eq!(pending.proxy("source"), old_path);
+        assert_ne!(owner.proxy("source"), old_path);
+        assert!(owner.snapshot_expected(Some(old_generation)).is_err());
+        assert!(!owner
+            .snapshot_expected(Some(owner.generation()))
+            .unwrap()
+            .is_cancelled());
+    }
+
+    #[test]
+    fn failed_workspace_preparation_preserves_the_active_session() {
+        let dir = TempDir::new().unwrap();
+        let owner = CacheLayout::new(dir.path().join("active/Cache"));
+        owner.ensure_dirs().unwrap();
+        let active = owner.clone();
+        let blocked = dir.path().join("blocked");
+        fs::write(&blocked, b"file rather than directory").unwrap();
+        assert!(owner.set_workspace(&blocked).is_err());
+        assert_eq!(owner.current_root(), active.current_root());
+        assert_eq!(owner.generation(), active.generation());
+        assert!(!active.is_cancelled());
+    }
+
+    #[test]
+    fn close_rejects_new_work_until_a_successful_reopen() {
+        let dir = TempDir::new().unwrap();
+        let owner = CacheLayout::new(dir.path().join("Cache"));
+        let first = owner.clone();
+        let closed = owner.end_session();
+        assert!(first.is_cancelled());
+        assert!(owner.snapshot_expected(Some(closed)).is_err());
+        assert!(owner.snapshot_expected(None).is_err());
+        owner.set_workspace(dir.path()).unwrap();
+        assert!(owner.snapshot_expected(Some(owner.generation())).is_ok());
+        let reopened = owner.clone();
+        owner.set_workspace(dir.path()).unwrap();
+        assert!(
+            reopened.is_cancelled(),
+            "same-path reopen rotates generation"
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_events_tag_current_payloads_and_suppress_old_completions() {
+        use crate::events::VecEventSink;
+        let dir = TempDir::new().unwrap();
+        let owner = CacheLayout::new(dir.path().join("Cache"));
+        let sink = Arc::new(VecEventSink::new());
+        let scoped = owner.scoped_events(sink.clone());
+        scoped.emit("media:derivatives", serde_json::json!({"media_id":"m"}));
+        scoped.emit("import:queue", serde_json::json!([]));
+        owner.end_session();
+        scoped.emit("media:derivatives", serde_json::json!({"media_id":"old"}));
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].1["workspace_generation"], 0);
+        assert_eq!(events[1].1["entries"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn command_pipe_drains_beyond_retained_bound() {
+        use tokio::io::AsyncWriteExt;
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let producer = tokio::spawn(async move {
+            writer.write_all(&vec![42; 8192]).await.unwrap();
+        });
+        let retained = drain_bounded(Some(reader), 100).await.unwrap();
+        producer.await.unwrap();
+        assert_eq!(retained, vec![42; 100]);
+    }
+
+    #[test]
+    fn derivative_validation_rejects_truncated_container_and_jpeg() {
+        let dir = TempDir::new().unwrap();
+        let mp4 = dir.path().join("proxy.mp4");
+        let bytes = include_bytes!("../../../fixtures/media/tiny.mp4");
+        fs::write(&mp4, bytes).unwrap();
+        assert!(valid_mp4(&mp4));
+        fs::write(&mp4, &bytes[..bytes.len() - 1]).unwrap();
+        assert!(!valid_mp4(&mp4));
+        let jpg = dir.path().join("thumbnail.jpg");
+        let bytes = include_bytes!("../../../fixtures/media/tiny.jpg");
+        fs::write(&jpg, bytes).unwrap();
+        assert!(valid_jpeg(&jpg));
+        fs::write(&jpg, &bytes[..bytes.len() - 2]).unwrap();
+        assert!(!valid_jpeg(&jpg));
+    }
+
+    #[test]
     fn layout_paths_are_content_addressable() {
         let tmp = TempDir::new().unwrap();
         let layout = CacheLayout::new(tmp.path().to_path_buf());
         assert_eq!(
             layout.proxy("abc"),
-            tmp.path().join("proxies").join("abc.mp4"),
+            tmp.path().join("proxies").join("abc.full-p7.mp4"),
         );
         assert_eq!(
             layout.quick_proxy("abc"),

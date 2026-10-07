@@ -334,60 +334,83 @@ impl Backend {
     /// needs napi's tokio runtime — a sync `#[napi]` runs on the JS thread with
     /// no runtime and would panic.
     #[napi]
-    pub async fn commit_workspace(&self, path: String) -> napi::Result<()> {
+    pub async fn commit_workspace(&self, path: String) -> napi::Result<u32> {
         let path = std::path::PathBuf::from(path);
         self.cache
             .set_workspace(&path)
             .map_err(|e| Error::from_reason(format!("cache set_workspace: {e:#}")))?;
+        #[cfg(feature = "jobs")]
+        self.import_queue.cancel_all();
         self.workspace.set(path.clone());
         let _ = crate::agent_session::end_and_emit(&*self.events, &self.agent_session);
-        self.log_slot
-            .install(crate::logs::LogBus::spawn(&path, self.events.clone()));
-        Ok(())
+        self.log_slot.install(crate::logs::LogBus::spawn(
+            &path,
+            self.cache.scoped_events(self.events.clone()),
+        ));
+        Ok(self.cache.generation())
+    }
+
+    #[napi]
+    pub async fn end_workspace(&self) -> napi::Result<u32> {
+        #[cfg(feature = "jobs")]
+        self.import_queue.cancel_all();
+        self.workspace.clear();
+        Ok(self.cache.end_session())
     }
 
     /// Re-fan-out background derivative jobs for a media list (open-time
     /// regeneration of proxies / thumbnails / waveforms), orchestrated by the
     /// TS host after it loads a project. First invalidates stale-format proxies:
     /// a `Proxied` variant whose `format_version` predates the encoder's current
-    /// version is cleared (through the derivative write-back seam, so the
-    /// authoritative engine's pool drops it) and its cached file best-effort
-    /// deleted, so the enqueue below doesn't see a stale file as "ready".
+    /// version is cleared through the derivative write-back seam. Versioned
+    /// cache names prevent stale adoption without deleting expensive masters.
     /// `media_items_json` is a JSON array of serialized `MediaItem` (the TS
     /// actor's pool values).
     #[napi]
     #[cfg(feature = "jobs")]
-    pub async fn enqueue_jobs_for_media(&self, media_items_json: String) -> napi::Result<()> {
+    pub async fn enqueue_jobs_for_media(
+        &self,
+        media_items_json: String,
+        expected_generation: Option<u32>,
+    ) -> napi::Result<()> {
+        let cache = self
+            .cache
+            .snapshot_expected(expected_generation)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let events = cache.scoped_events(self.events.clone());
         use crate::jobs::proxy::PROXY_FORMAT_VERSION;
         let items: Vec<crate::state::MediaItem> = serde_json::from_str(&media_items_json)
             .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
         for item in items {
+            cache
+                .check_active()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
             // A Proxied source whose full master predates the current encoder
-            // version is stale: delete the cached file and clear the full proxy
-            // through the same seam as job completion, so the TS actor's pool
-            // drops it (the seam emits `media:derivatives`, which Electron main
-            // applies) and the enqueue below re-decides instead of seeing a stale
-            // file as "ready". We're in an async napi → tokio runtime is present.
+            // version is stale: clear the registered path; versioned artifact
+            // keys select the current recipe and leave old masters intact. We're in an async napi → tokio runtime is present.
             if let crate::state::DecodeRoute::Proxied {
-                full_proxy: Some(path),
+                full_proxy: Some(_),
+                format_version,
+                ..
+            }
+            | crate::state::DecodeRoute::NativeSw {
+                full_proxy: Some(_),
                 format_version,
                 ..
             } = &item.decode_route
             {
                 if *format_version < PROXY_FORMAT_VERSION {
-                    let _ = std::fs::remove_file(path); // best-effort; logged-only in prod
                     let patch = crate::state::MediaDerivativesPatch {
                         full_proxy_landed: Some(None),
                         ..Default::default()
                     };
-                    let _ =
-                        crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
+                    let _ = crate::jobs::commit_media_derivatives(&events, item.id, patch).await;
                 }
             }
             crate::jobs::enqueue_for_media(
-                self.events.clone(),
+                events.clone(),
                 self.log_slot.clone(),
-                self.cache.clone(),
+                cache.clone(),
                 item,
             );
         }
@@ -401,13 +424,33 @@ impl Backend {
     /// pooled like any other file, as a `Subtitle` item.
     #[napi]
     #[cfg(feature = "jobs")]
-    pub async fn probe_media(&self, path: String) -> napi::Result<String> {
+    pub async fn probe_media(
+        &self,
+        path: String,
+        expected_generation: Option<u32>,
+    ) -> napi::Result<String> {
+        let cache = self
+            .cache
+            .snapshot_expected(expected_generation)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         let buf = std::path::PathBuf::from(&path);
-        let item =
-            tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf))
-                .await
-                .map_err(|e| Error::from_reason(format!("probe join: {e}")))?
-                .map_err(Error::from_reason)?;
+        let metadata_json = crate::jobs::singleflight::source(&cache, &buf, "probe", async {
+            let _permit = tokio::select! {
+                permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            let metadata = crate::io::probe::probe_metadata_scoped(&buf, &cache).await?;
+            Ok(serde_json::to_string(&metadata)?)
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        let metadata = serde_json::from_str(&metadata_json)
+            .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        cache
+            .check_active()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let item = crate::commands::media::media_item_from_metadata(buf, metadata)
+            .map_err(Error::from_reason)?;
         serde_json::to_string(&item).map_err(|e| Error::from_reason(e.to_string()))
     }
 
@@ -420,13 +463,37 @@ impl Backend {
     /// full read is blocking I/O.
     #[napi]
     #[cfg(feature = "jobs")]
-    pub async fn hash_media_source(&self, path: String) -> napi::Result<String> {
+    pub async fn hash_media_source(
+        &self,
+        path: String,
+        expected_generation: Option<u32>,
+    ) -> napi::Result<String> {
+        let cache = self
+            .cache
+            .snapshot_expected(expected_generation)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         let buf = std::path::PathBuf::from(&path);
-        let facts = tokio::task::spawn_blocking(move || crate::io::probe::hash_and_stat(&buf))
-            .await
-            .map_err(|e| Error::from_reason(format!("hash join: {e}")))?
-            .map_err(|e| Error::from_reason(format!("{e:#}")))?;
-        Ok(facts.blake3_hex)
+        let hash = crate::jobs::singleflight::source(&cache, &buf, "hash", async {
+            let permit = tokio::select! {
+                permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            let worker_cache = cache.clone();
+            let worker_path = buf.clone();
+            let facts = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                crate::io::probe::hash_and_stat_scoped(&worker_path, Some(&worker_cache))
+            })
+            .await??;
+            cache.check_active()?;
+            Ok(facts.blake3_hex)
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        cache
+            .check_active()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(hash)
     }
 
     /// auto_split_by_shot hybrid compute: the WHOLE-source shot report for
@@ -450,7 +517,7 @@ impl Backend {
         let media: crate::state::MediaItem = serde_json::from_str(&media_json)
             .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
         let opts = parse_shot_opts(&opts_json).map_err(Error::from_reason)?;
-        let report = crate::jobs::shot::cached_source_report(&self.cache, &media, &opts)
+        let report = crate::jobs::shot::cached_source_report(&self.cache.snapshot(), &media, &opts)
             .await
             .map_err(|e| Error::from_reason(format!("shot analysis: {e:#}")))?;
         serde_json::to_string(&report).map_err(|e| Error::from_reason(e.to_string()))
@@ -495,7 +562,7 @@ impl Backend {
         let media: crate::state::MediaItem = serde_json::from_str(&media_json)
             .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
         let report = crate::jobs::shot::cached_source_report(
-            &self.cache,
+            &self.cache.snapshot(),
             &media,
             &crate::jobs::shot::floor_opts(),
         )
@@ -515,7 +582,7 @@ impl Backend {
         let media: crate::state::MediaItem = serde_json::from_str(&media_json)
             .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
         Ok(crate::jobs::shot::is_report_cached(
-            &self.cache,
+            &self.cache.snapshot(),
             &media,
             &crate::jobs::shot::floor_opts(),
         ))
@@ -546,9 +613,10 @@ impl Backend {
             .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
         let spans = parse_span_requests(&spans_json, media.metadata.duration_us)
             .map_err(Error::from_reason)?;
-        let stats = crate::jobs::shot::stats::attach_span_stats(&self.cache, &media, &spans)
-            .await
-            .map_err(|e| Error::from_reason(format!("shot span stats: {e:#}")))?;
+        let stats =
+            crate::jobs::shot::stats::attach_span_stats(&self.cache.snapshot(), &media, &spans)
+                .await
+                .map_err(|e| Error::from_reason(format!("shot span stats: {e:#}")))?;
         serde_json::to_string(&stats).map_err(|e| Error::from_reason(e.to_string()))
     }
 
@@ -622,14 +690,24 @@ impl Backend {
         &self,
         media_id: String,
         source_path: String,
+        expected_generation: Option<u32>,
     ) -> napi::Result<()> {
+        let cache = self
+            .cache
+            .snapshot_expected(expected_generation)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         let id = uuid::Uuid::parse_str(&media_id)
             .map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
-        let Some(ws) = self.workspace.current() else {
+        if self.workspace.current().is_none() {
             return Ok(());
-        };
+        }
+        let ws = cache
+            .current_root()
+            .parent()
+            .expect("workspace cache has a parent")
+            .to_path_buf();
         self.import_queue
-            .enqueue(id, std::path::PathBuf::from(source_path), ws);
+            .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache);
         Ok(())
     }
 
@@ -834,25 +912,53 @@ impl Backend {
             "get_media_thumbnail" => {
                 let a: crate::commands::MediaItemArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_media_thumbnail(a.item).await)
+                let cache = self.cache.snapshot();
+                let result = crate::commands::media::get_media_thumbnail(a.item.clone()).await;
+                ser(crate::commands::media::recover_derivative_read(
+                    self, cache, a.item, true, result,
+                ))
             }
             #[cfg(feature = "jobs")]
             "get_waveform_peaks" => {
                 let a: crate::commands::MediaItemArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_waveform_peaks(a.item).await)
+                let cache = self.cache.snapshot();
+                let result = crate::commands::media::get_waveform_peaks(a.item.clone()).await;
+                ser(crate::commands::media::recover_derivative_read(
+                    self, cache, a.item, false, result,
+                ))
             }
             #[cfg(feature = "jobs")]
             "get_waveform_levels" => {
                 let a: crate::commands::media::WaveformLevelsArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_waveform_levels(a).await)
+                let item = a.item.clone();
+                let processed = a.waveform_path.is_some();
+                let cache = self.cache.snapshot();
+                let result = crate::commands::media::get_waveform_levels(a).await;
+                if processed {
+                    ser(result)
+                } else {
+                    ser(crate::commands::media::recover_derivative_read(
+                        self, cache, item, false, result,
+                    ))
+                }
             }
             #[cfg(feature = "jobs")]
             "get_waveform_tile" => {
                 let a: crate::commands::media::WaveformTileArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_waveform_tile(a).await)
+                let item = a.item.clone();
+                let processed = a.waveform_path.is_some();
+                let cache = self.cache.snapshot();
+                let result = crate::commands::media::get_waveform_tile(a).await;
+                if processed {
+                    ser(result)
+                } else {
+                    ser(crate::commands::media::recover_derivative_read(
+                        self, cache, item, false, result,
+                    ))
+                }
             }
             #[cfg(feature = "jobs")]
             "get_filmstrip_tile" => {
@@ -1675,7 +1781,7 @@ mod tests {
         std::fs::write(&f, b"hello weftcut").unwrap();
 
         let got = b
-            .hash_media_source(f.to_string_lossy().to_string())
+            .hash_media_source(f.to_string_lossy().to_string(), None)
             .await
             .unwrap();
         let want = blake3::hash(b"hello weftcut").to_hex().to_string();
@@ -1828,7 +1934,7 @@ mod tests {
             let start = media
                 .find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
-            let body = &media[start..(start + 600).min(media.len())];
+            let body: String = media[start..].chars().take(600).collect();
             assert!(
                 !body.contains("snapshot_for_read"),
                 "{name}: must NOT read the mirror — it takes a MediaItem arg"

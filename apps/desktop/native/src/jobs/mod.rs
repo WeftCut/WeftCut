@@ -26,13 +26,12 @@ pub mod proxy;
 pub mod proxy_decision;
 pub mod quick_proxy;
 pub mod shot;
+pub(crate) mod singleflight;
 mod thumbnails;
 pub mod waveform;
 
 pub use frame::extract as extract_frame;
 pub use waveform::read_peaks_file;
-
-use std::sync::OnceLock;
 
 use serde::Serialize;
 use std::sync::Arc;
@@ -114,27 +113,8 @@ async fn run_derivative(
     kind: JobKind,
     generate: impl std::future::Future<Output = anyhow::Result<std::path::PathBuf>>,
 ) -> anyhow::Result<std::path::PathBuf> {
-    let hash = &media.file_hash_blake3;
-    let cached = match kind {
-        JobKind::Conform => conform::cached_path(cache, media),
-        JobKind::Thumbnails => {
-            thumbnails::all_thumbnails_present(cache, hash).then(|| cache.thumbnails(hash))
-        }
-        JobKind::Waveform => {
-            let path = cache.waveform(hash);
-            crate::cache::cached_ok(&path).then_some(path)
-        }
-        JobKind::QuickProxy => {
-            let path = cache.quick_proxy(hash);
-            crate::cache::cached_ok(&path).then_some(path)
-        }
-        JobKind::Proxy => {
-            let path = cache.proxy(hash);
-            crate::cache::cached_ok(&path).then_some(path)
-        }
-        JobKind::AudioFx | JobKind::ProxyBypass => None,
-    };
-    if let Some(path) = cached {
+    cache.check_active()?;
+    if let Some(path) = cached_derivative(cache, media, kind) {
         return Ok(path);
     }
     emit(
@@ -145,118 +125,44 @@ async fn run_derivative(
             kind,
         },
     );
-    let _permit = ffmpeg_sem().acquire().await?;
-    generate.await
+    singleflight::run(cache, media, kind, async {
+        if let Some(path) = cached_derivative(cache, media, kind) {
+            return Ok(path);
+        }
+        let _permit = tokio::select! {
+            permit = ffmpeg_sem().acquire() => permit?,
+            _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+        };
+        cache.check_active()?;
+        let result = generate.await;
+        cache.check_active()?;
+        result
+    })
+    .await
 }
 
-/// Per-media in-flight set for conform jobs. The export gate re-kicks any
-/// media whose conform cache is invalid; if the import-time job is still
-/// running, a second concurrent run would interleave writes into the SAME
-/// `<dest>.tmp` (the ffmpeg semaphore holds 2 permits, so they genuinely
-/// overlap). Dedupe instead — the running job's completion event serves
-/// every waiter.
-fn conform_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
-    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
-    S.get_or_init(Default::default)
-}
-
-fn try_begin_conform(id: MediaId) -> bool {
-    conform_in_flight()
-        .lock()
-        .expect("conform in-flight set poisoned")
-        .insert(id)
-}
-
-fn end_conform(id: MediaId) {
-    conform_in_flight()
-        .lock()
-        .expect("conform in-flight set poisoned")
-        .remove(&id);
-}
-
-/// Drop guard so `end_conform` runs on every task exit path.
-struct ConformGuard(MediaId);
-impl Drop for ConformGuard {
-    fn drop(&mut self) {
-        end_conform(self.0);
+fn cached_derivative(
+    cache: &CacheLayout,
+    media: &MediaItem,
+    kind: JobKind,
+) -> Option<std::path::PathBuf> {
+    let hash = &media.file_hash_blake3;
+    match kind {
+        JobKind::Conform => conform::cached_path(cache, media),
+        JobKind::Thumbnails => {
+            thumbnails::all_thumbnails_present(cache, hash).then(|| cache.thumbnails(hash))
+        }
+        JobKind::Waveform => waveform::cached_path(cache, media),
+        JobKind::QuickProxy => {
+            let path = cache.quick_proxy(hash);
+            crate::cache::valid_mp4(&path).then_some(path)
+        }
+        JobKind::Proxy => proxy::cached_path(cache, media),
+        JobKind::AudioFx | JobKind::ProxyBypass => None,
     }
 }
 
-/// Per-media in-flight set for quick-proxy builds. `quick_proxy::run` writes a
-/// DETERMINISTIC temp path (`temp_path(&dest)`) then promotes it; two
-/// concurrent builds for the same media (the Unsupported-card "Generate
-/// proxy" button, the media-pool pill, and the import-time fan-out can all
-/// reach `spawn_quick_proxy` for the same id) would interleave writes into
-/// the SAME `<dest>.tmp` and corrupt the promoted proxy. Dedupe instead — the
-/// running job's completion event serves every waiter. Mirrors
-/// `conform_in_flight`, but `try_begin_quick_proxy` returns the guard
-/// directly so a caller can't forget to construct one after a successful
-/// begin.
-fn quick_proxy_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
-    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
-    S.get_or_init(Default::default)
-}
-
-fn try_begin_quick_proxy(id: MediaId) -> Option<QuickProxyGuard> {
-    let inserted = quick_proxy_in_flight()
-        .lock()
-        .expect("quick proxy in-flight set poisoned")
-        .insert(id);
-    inserted.then_some(QuickProxyGuard(id))
-}
-
-fn end_quick_proxy(id: MediaId) {
-    quick_proxy_in_flight()
-        .lock()
-        .expect("quick proxy in-flight set poisoned")
-        .remove(&id);
-}
-
-/// Drop guard so `end_quick_proxy` runs on every task exit path.
-struct QuickProxyGuard(MediaId);
-impl Drop for QuickProxyGuard {
-    fn drop(&mut self) {
-        end_quick_proxy(self.0);
-    }
-}
-
-/// Per-media in-flight set for FULL proxy builds. `proxy::run` writes the same
-/// deterministic `<dest>.tmp` scheme as the quick proxy, and `spawn_proxy` has
-/// two callers (the quick-proxy `then_full` chain and export-recovery
-/// `ensure_full_proxy`) that workspace re-opens / re-decisions can fire for the
-/// same media while a build is still running. Two identical transcodes racing
-/// on one `.tmp` let the second's `-y` truncate the first's output to garbage.
-/// Dedupe like the quick proxy: the running job's completion event serves every
-/// waiter.
-fn full_proxy_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
-    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
-    S.get_or_init(Default::default)
-}
-
-fn try_begin_full_proxy(id: MediaId) -> Option<FullProxyGuard> {
-    let inserted = full_proxy_in_flight()
-        .lock()
-        .expect("full proxy in-flight set poisoned")
-        .insert(id);
-    inserted.then_some(FullProxyGuard(id))
-}
-
-fn end_full_proxy(id: MediaId) {
-    full_proxy_in_flight()
-        .lock()
-        .expect("full proxy in-flight set poisoned")
-        .remove(&id);
-}
-
-/// Drop guard so `end_full_proxy` runs on every task exit path.
-struct FullProxyGuard(MediaId);
-impl Drop for FullProxyGuard {
-    fn drop(&mut self) {
-        end_full_proxy(self.0);
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum JobKind {
     Thumbnails,
@@ -332,6 +238,9 @@ fn emit_job_error(
     kind: JobKind,
     error: String,
 ) {
+    if error.contains("workspace cancelled") {
+        return;
+    }
     emit_job_error_named(
         events,
         log_slot,
@@ -411,30 +320,65 @@ pub fn enqueue_for_media(
     cache: CacheLayout,
     media: MediaItem,
 ) {
-    match media.kind {
-        MediaKind::Video => {
-            // Already-decided sources whose proxy (if any) is on disk only need
-            // their decorations re-fanned; everything else (re-)runs the routing
-            // decision — see `proxy_decision::route_needs_decision`.
-            if proxy_decision::route_needs_decision(&media.decode_route) {
-                spawn_proxy_decision(events, log_slot, cache, media);
-            } else {
-                spawn_decorations(events, log_slot, cache, media);
-            }
-        }
-        MediaKind::Audio => {
-            spawn_waveform(
+    if media.file_hash_blake3.starts_with("pending-") {
+        return;
+    }
+    let cache = cache.snapshot();
+    spawn_decorations(
+        events.clone(),
+        log_slot.clone(),
+        cache.clone(),
+        media.clone(),
+    );
+    if matches!(media.kind, MediaKind::Video) {
+        // Hydrate a preview artifact before a cold master or GOP probe can
+        // encounter playback/pressure admission. Route selection is separate.
+        if proxy_decision::route_needs_decision(&media.decode_route)
+            && cached_derivative(&cache, &media, JobKind::QuickProxy).is_some()
+        {
+            spawn_quick_proxy(
                 events.clone(),
                 log_slot.clone(),
                 cache.clone(),
                 media.clone(),
+                false,
+                None,
             );
-            spawn_conform(events, log_slot, cache, media);
         }
-        MediaKind::Image | MediaKind::Subtitle => {
-            // No derivatives needed.
+        if proxy_decision::route_needs_decision(&media.decode_route) {
+            spawn_proxy_decision(events, log_slot, cache, media);
+        } else if !matches!(media.decode_route, DecodeRoute::Bypass) {
+            if matches!(
+                media.decode_route,
+                DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
+            ) {
+                spawn_proxy(
+                    events.clone(),
+                    log_slot.clone(),
+                    cache.clone(),
+                    media.clone(),
+                );
+            }
+            spawn_quick_proxy(events, log_slot, cache, media, false, None);
         }
     }
+}
+
+pub fn enqueue_waveform(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
+    spawn_waveform(events, log_slot, cache, media);
+}
+pub fn enqueue_thumbnails(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
+    spawn_thumbnails(events, log_slot, cache, media);
 }
 
 fn spawn_decorations(
@@ -452,13 +396,35 @@ fn spawn_decorations(
         );
     }
     if media.metadata.audio.is_some() {
-        spawn_waveform(
-            events.clone(),
-            log_slot.clone(),
-            cache.clone(),
-            media.clone(),
-        );
-        spawn_conform(events, log_slot, cache, media);
+        let reuse_conform = media
+            .metadata
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio.sample_rate == 48_000 && audio.channels <= 2)
+            && waveform::cached_path(&cache, &media).is_none();
+        if reuse_conform {
+            let cache = cache.snapshot();
+            let conform = spawn_conform(
+                events.clone(),
+                log_slot.clone(),
+                cache.clone(),
+                media.clone(),
+            );
+            tokio::spawn(async move {
+                let _ = conform.await;
+                if !cache.is_cancelled() {
+                    spawn_waveform(events, log_slot, cache, media);
+                }
+            });
+        } else {
+            spawn_waveform(
+                events.clone(),
+                log_slot.clone(),
+                cache.clone(),
+                media.clone(),
+            );
+            spawn_conform(events, log_slot, cache, media);
+        }
     }
 }
 
@@ -479,15 +445,15 @@ fn spawn_conform(
     log_slot: LogBusSlot,
     cache: CacheLayout,
     media: MediaItem,
-) {
-    if !try_begin_conform(media.id) {
-        // Already conforming — that job's complete/error event serves this
-        // caller's wait too.
-        return;
-    }
+) -> tokio::task::JoinHandle<()> {
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
-        let _guard = ConformGuard(media_id);
         let result = run_derivative(
             &events,
             &cache,
@@ -496,6 +462,9 @@ fn spawn_conform(
             conform::run(&cache, &media),
         )
         .await;
+        if cache.is_cancelled() {
+            return;
+        }
 
         match result {
             Ok(conform_path) => {
@@ -537,7 +506,7 @@ fn spawn_conform(
                 );
             }
         }
-    });
+    })
 }
 
 fn spawn_proxy_decision(
@@ -546,7 +515,13 @@ fn spawn_proxy_decision(
     cache: CacheLayout,
     media: MediaItem,
 ) {
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
         // Reopen self-heal: the content-addressed full master is already on
         // disk but the route lost track of it (a build landed whose commit
@@ -554,24 +529,14 @@ fn spawn_proxy_decision(
         // and the stored absolute path went stale). Re-running the decision
         // would reset the route and re-enqueue the full build; adopt the master
         // instead — the same trust as `proxy::run`'s cached-ok early return (a
-        // stale-format registered master was already deleted by the open-time
-        // invalidation pass before this enqueue). Proxied/NativeSw only: those
+        // stale-format registered master is excluded by recipe validation). Proxied/NativeSw only: those
         // are the two variants a full master belongs to, and the fold ignores
         // it elsewhere.
         if matches!(
             media.decode_route,
             DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
         ) {
-            let master = cache.proxy(&media.file_hash_blake3);
-            if crate::cache::cached_ok(&master) {
-                emit(
-                    &events,
-                    EVENT_STARTED,
-                    &JobStarted {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Proxy,
-                    },
-                );
+            if let Some(master) = proxy::cached_path(&cache, &media) {
                 let patch = MediaDerivativesPatch {
                     full_proxy_landed: Some(Some(FullProxyLanded {
                         path: master.clone(),
@@ -592,16 +557,9 @@ fn spawn_proxy_decision(
                         path: Some(master.display().to_string()),
                     },
                 );
-                let mut thumbnail_media = media.clone();
-                thumbnail_media.path_abs = master;
-                spawn_decorations(
-                    events.clone(),
-                    log_slot.clone(),
-                    cache.clone(),
-                    thumbnail_media,
-                );
-                // The quick proxy is session-scoped (cleared on open) —
-                // rebuild the preview accelerator without re-chaining the
+
+                // Adopt or rebuild the quick preview accelerator without
+                // re-chaining the
                 // full build. `None` GOP forces the safe transcode path,
                 // matching the on-demand build.
                 spawn_quick_proxy(events, log_slot, cache, media, false, None);
@@ -611,15 +569,23 @@ fn spawn_proxy_decision(
         // Probe the source's keyframe interval (on a blocking worker — it
         // shells out to ffprobe) so the routing policy can demote long-GOP
         // friendly H.264 to a short-GOP scrub proxy instead of a direct decode.
-        let source_gop_secs = {
-            let path = media.path_abs.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::io::probe::probe_max_keyframe_gap_secs(&path)
-            })
-            .await
-            .ok()
-            .flatten()
-        };
+        let source_gop_secs = singleflight::source(&cache, &media.path_abs, "gop", async {
+            let _permit = tokio::select! {
+                permit = ffmpeg_sem().acquire() => permit?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            let gap =
+                crate::io::probe::probe_max_keyframe_gap_secs_scoped(&media.path_abs, &cache).await;
+            cache.check_active()?;
+            Ok(serde_json::to_string(&gap)?)
+        })
+        .await
+        .ok()
+        .and_then(|json| serde_json::from_str::<Option<f64>>(&json).ok())
+        .flatten();
+        if cache.is_cancelled() {
+            return;
+        }
         let route = proxy_decision::decide(&media, source_gop_secs);
         // Commit the authoritative initial route FIRST, then spawn the jobs the
         // route implies.
@@ -651,7 +617,6 @@ fn spawn_proxy_decision(
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                spawn_decorations(events, log_slot, cache, media);
             }
             proxy_decision::ProxyJob::QuickOnly => {
                 emit(
@@ -674,12 +639,7 @@ fn spawn_proxy_decision(
                 );
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
-                spawn_decorations(
-                    events.clone(),
-                    log_slot.clone(),
-                    cache.clone(),
-                    media.clone(),
-                );
+
                 spawn_quick_proxy(events, log_slot, cache, media, false, source_gop_secs);
             }
             proxy_decision::ProxyJob::QuickThenFull => {
@@ -695,7 +655,13 @@ fn spawn_thumbnails(
     cache: CacheLayout,
     media: MediaItem,
 ) {
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
         let result = run_derivative(
             &events,
@@ -705,6 +671,9 @@ fn spawn_thumbnails(
             thumbnails::run(&cache, &media),
         )
         .await;
+        if cache.is_cancelled() {
+            return;
+        }
 
         match result {
             Ok(thumbs_dir) => {
@@ -757,16 +726,13 @@ fn spawn_quick_proxy(
     then_full: bool,
     source_gop_secs: Option<f64>,
 ) {
-    let Some(guard) = try_begin_quick_proxy(media.id) else {
-        // Already building — see `quick_proxy_in_flight`.
-        info!(
-            "quick proxy already in flight for {}; skipping duplicate build",
-            media.id
-        );
-        return;
-    };
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
-        let _guard = guard;
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
         let result = run_derivative(
             &events,
@@ -776,6 +742,9 @@ fn spawn_quick_proxy(
             quick_proxy::run(&cache, &media, source_gop_secs),
         )
         .await;
+        if cache.is_cancelled() {
+            return;
+        }
 
         match result {
             Ok(quick_proxy_path) => {
@@ -832,16 +801,13 @@ fn spawn_proxy(
     cache: CacheLayout,
     media: MediaItem,
 ) {
-    let Some(guard) = try_begin_full_proxy(media.id) else {
-        // Already building — see `full_proxy_in_flight`.
-        info!(
-            "full proxy already in flight for {}; skipping duplicate build",
-            media.id
-        );
-        return;
-    };
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
-        let _guard = guard;
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
         let result = run_derivative(
             &events,
@@ -851,6 +817,9 @@ fn spawn_proxy(
             proxy::run(&cache, &media),
         )
         .await;
+        if cache.is_cancelled() {
+            return;
+        }
 
         match result {
             Ok(proxy_path) => {
@@ -861,8 +830,7 @@ fn spawn_proxy(
                 // once the full proxy lands (the summary nulls a missing quick
                 // proxy and preview keys on it) → blank preview.
                 let path_str = proxy_path.display().to_string();
-                let mut thumbnail_media = media.clone();
-                thumbnail_media.path_abs = proxy_path.clone();
+
                 let patch = MediaDerivativesPatch {
                     full_proxy_landed: Some(Some(FullProxyLanded {
                         path: proxy_path,
@@ -891,7 +859,6 @@ fn spawn_proxy(
                         path: Some(path_str),
                     },
                 );
-                spawn_decorations(events, log_slot, cache, thumbnail_media);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
@@ -907,7 +874,13 @@ fn spawn_waveform(
     cache: CacheLayout,
     media: MediaItem,
 ) {
+    let cache = cache.snapshot();
+    let log_slot = log_slot.snapshot();
+    let events = cache.scoped_events(events);
     tokio::spawn(async move {
+        if cache.is_cancelled() {
+            return;
+        }
         let media_id = media.id;
         let result = run_derivative(
             &events,
@@ -917,6 +890,9 @@ fn spawn_waveform(
             waveform::run(&cache, &media),
         )
         .await;
+        if cache.is_cancelled() {
+            return;
+        }
 
         match result {
             Ok(waveform_path) => {
@@ -1106,48 +1082,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn conform_in_flight_guard_dedups_until_ended() {
-        let id = uuid::Uuid::new_v4();
-        assert!(try_begin_conform(id), "first begin wins");
-        assert!(!try_begin_conform(id), "second begin is deduped");
-        end_conform(id);
-        assert!(try_begin_conform(id), "free again after end");
-        end_conform(id);
-    }
-
-    #[test]
-    fn quick_proxy_in_flight_guard_dedups_until_dropped() {
-        let id = uuid::Uuid::new_v4();
-        let guard = try_begin_quick_proxy(id);
-        assert!(guard.is_some(), "first begin wins");
-        assert!(
-            try_begin_quick_proxy(id).is_none(),
-            "second begin is deduped while the first guard is held"
-        );
-        drop(guard);
-        assert!(
-            try_begin_quick_proxy(id).is_some(),
-            "free again after the guard drops"
-        );
-    }
-
-    #[test]
-    fn full_proxy_in_flight_guard_dedups_until_dropped() {
-        let id = uuid::Uuid::new_v4();
-        let guard = try_begin_full_proxy(id);
-        assert!(guard.is_some(), "first begin wins");
-        assert!(
-            try_begin_full_proxy(id).is_none(),
-            "second begin is deduped while the first guard is held"
-        );
-        drop(guard);
-        assert!(
-            try_begin_full_proxy(id).is_some(),
-            "free again after the guard drops"
-        );
-    }
-
-    #[test]
     fn derivatives_patch_serializes_tristate() {
         use crate::state::{DecodeRoute, FullProxyLanded, MediaDerivativesPatch};
         use serde_json::json;
@@ -1220,7 +1154,11 @@ mod tests {
         cache.ensure_dirs().unwrap();
 
         let hash = "healme";
-        std::fs::write(cache.proxy(hash), b"landed master").unwrap();
+        std::fs::write(
+            cache.proxy(hash),
+            include_bytes!("../../../fixtures/media/tiny.mp4"),
+        )
+        .unwrap();
 
         let media = MediaItem {
             id: crate::state::new_id(),
@@ -1369,10 +1307,22 @@ mod tests {
         let hash = &media.file_hash_blake3;
         std::fs::create_dir_all(cache.thumbnails(hash)).unwrap();
         for i in 0..10 {
-            std::fs::write(cache.thumbnail(hash, i), b"cached thumbnail").unwrap();
+            std::fs::write(
+                cache.thumbnail(hash, i),
+                include_bytes!("../../../fixtures/media/tiny.jpg"),
+            )
+            .unwrap();
         }
-        std::fs::write(cache.quick_proxy(hash), b"cached quick proxy").unwrap();
-        std::fs::write(cache.proxy(hash), b"cached export master").unwrap();
+        std::fs::write(
+            cache.quick_proxy(hash),
+            include_bytes!("../../../fixtures/media/tiny.mp4"),
+        )
+        .unwrap();
+        std::fs::write(
+            cache.proxy(hash),
+            include_bytes!("../../../fixtures/media/tiny.mp4"),
+        )
+        .unwrap();
         let sink = Arc::new(VecEventSink::new());
         let events: Arc<dyn EventSink> = sink.clone();
         for (kind, path) in [
@@ -1419,7 +1369,22 @@ mod tests {
             header.extend_from_slice(&1u64.to_le_bytes());
             header.extend_from_slice(&0f32.to_le_bytes());
             std::fs::write(cache.audio_conform(hash), header).unwrap();
-            std::fs::write(cache.waveform(hash), b"cached peaks").unwrap();
+            waveform::write_peaks(
+                &cache.waveform(hash),
+                1,
+                &[(
+                    waveform::BASE_FRAMES_PER_PEAK,
+                    waveform::LevelData {
+                        channels: 1,
+                        peak_count: 1,
+                        mins: vec![vec![0]],
+                        maxs: vec![vec![0]],
+                        rmss: vec![vec![0]],
+                    },
+                )],
+            )
+            .await
+            .unwrap();
             enqueue_for_media(sink.clone(), LogBusSlot::new(), cache.clone(), media);
         }
         tokio::time::timeout(std::time::Duration::from_secs(1), async {

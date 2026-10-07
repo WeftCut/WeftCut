@@ -12,7 +12,9 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{cached_ok, CacheLayout};
+#[cfg(test)]
+use crate::cache::cached_ok;
+use crate::cache::CacheLayout;
 use crate::state::MediaItem;
 
 const THUMB_COUNT: usize = 10;
@@ -67,41 +69,92 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // per thumbnail. The fps filter rounds, so `-frames:v` is what caps the set
     // at exactly `THUMB_COUNT`; -fps_mode passthrough so the fps filter's
     // output isn't second-guessed.
-    let status = crate::ffmpeg::command()
-        .no_console_window()
-        // Reap on future-drop so no orphan keeps writing the temp dir; see
-        // hwaccel.rs.
-        .kill_on_drop(true)
-        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
-        .arg(&media.path_abs)
-        .args([
-            "-an",
-            "-vf",
-            &format!("fps={fps:.6},scale={THUMB_WIDTH}:-2"),
-            "-frames:v",
-            &THUMB_COUNT.to_string(),
-            "-q:v",
-            "5",
-            "-fps_mode",
-            "passthrough",
-        ])
-        .arg(&pattern)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .context("spawn ffmpeg for thumbnails")?;
+    if duration_s >= 30.0 {
+        // Ten bounded GOP decodes replace scanning the entire long recording.
+        // Short clips retain one invocation to avoid process-start overhead.
+        for index in 0..THUMB_COUNT {
+            cache.check_active()?;
+            let time = duration_s * (index as f64 + 0.5) / THUMB_COUNT as f64;
+            let dest = tmp_dir.join(format!("{:03}.jpg", index + 1));
+            let mut command = crate::ffmpeg::command();
+            command
+                .no_console_window()
+                .args([
+                    "-y",
+                    "-hide_banner",
+                    "-nostats",
+                    "-loglevel",
+                    "error",
+                    "-ss",
+                    &format!("{time:.6}"),
+                    "-i",
+                ])
+                .arg(&media.path_abs)
+                .args([
+                    "-an",
+                    "-vf",
+                    &format!("scale={THUMB_WIDTH}:-2"),
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "5",
+                    "-update",
+                    "1",
+                ])
+                .arg(dest)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            let output = cache
+                .command_output(&mut command)
+                .await
+                .context("seek thumbnail")?;
+            anyhow::ensure!(
+                output.status.success(),
+                "thumbnail seek failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    } else {
+        let mut command = crate::ffmpeg::command();
+        let command = command
+            .no_console_window()
+            // Reap on future-drop so no orphan keeps writing the temp dir; see
+            // hwaccel.rs.
+            .kill_on_drop(true)
+            .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+            .arg(&media.path_abs)
+            .args([
+                "-an",
+                "-vf",
+                &format!("fps={fps:.6},scale={THUMB_WIDTH}:-2"),
+                "-frames:v",
+                &THUMB_COUNT.to_string(),
+                "-q:v",
+                "5",
+                "-fps_mode",
+                "passthrough",
+            ])
+            .arg(&pattern)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let status = cache
+            .command_output(command)
+            .await
+            .context("spawn ffmpeg for thumbnails")?
+            .status;
 
-    if !status.success() {
-        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
-        anyhow::bail!("ffmpeg exited with {status} for thumbnail extraction");
+        if !status.success() {
+            let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+            anyhow::bail!("ffmpeg exited with {status} for thumbnail extraction");
+        }
     }
 
     // Verify ffmpeg actually produced N non-empty thumbnails before promoting.
     for i in 0..THUMB_COUNT {
         let p = tmp_dir.join(format!("{:03}.jpg", i + 1));
-        if !cached_ok(&p) {
+        if !crate::cache::valid_jpeg(&p) {
             let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
             anyhow::bail!(
                 "ffmpeg produced incomplete thumbnail set at {}",
@@ -122,6 +175,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         }
     }
 
+    cache.check_active()?;
     // Promote: dest_dir might exist as a stale partial — wipe + rename.
     let _ = tokio::fs::remove_dir_all(&dest_dir).await;
     tokio::fs::rename(&tmp_dir, &dest_dir)
@@ -133,7 +187,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
 }
 
 pub(super) fn all_thumbnails_present(cache: &CacheLayout, hash: &str) -> bool {
-    (0..THUMB_COUNT).all(|i| cached_ok(&cache.thumbnail(hash, i)))
+    (0..THUMB_COUNT).all(|i| crate::cache::valid_jpeg(&cache.thumbnail(hash, i)))
 }
 
 #[cfg(test)]
@@ -242,9 +296,12 @@ mod tests {
         let dir = cache.thumbnails(hash);
         tokio::fs::create_dir_all(&dir).await.unwrap();
         for i in 0..THUMB_COUNT {
-            tokio::fs::write(dir.join(format!("{:03}.jpg", i)), b"fake")
-                .await
-                .unwrap();
+            tokio::fs::write(
+                dir.join(format!("{:03}.jpg", i)),
+                include_bytes!("../../../fixtures/media/tiny.jpg"),
+            )
+            .await
+            .unwrap();
         }
 
         let media = MediaItem {

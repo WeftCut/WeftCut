@@ -86,6 +86,38 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
 }
 
 describe('runHybrid: import_media', () => {
+  it('does not insert a completed probe into a replacement project', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    let finish!: (value: string) => void
+    deps._probeMedia.mockImplementation(() => new Promise<string>(resolve => { finish = resolve }))
+    const pending = runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    const replacement = blankProject(seededGen(), 'replacement')
+    replacement.project_id = '00000000-0000-0000-0000-000000000099'
+    actor.replaceState(replacement)
+    finish(JSON.stringify(probedItem()))
+    await expect(pending).rejects.toThrow(/cancelled/i)
+    expect(Object.keys(actor.snapshot().media_pool)).toEqual([])
+    expect(deps._hashMediaSource).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back a replacement project row when an old hash fails', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    let fail!: (reason: Error) => void
+    deps._hashMediaSource.mockImplementation(() => new Promise<string>((_, reject) => { fail = reject }))
+    const pending = runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    await vi.waitFor(() => expect(deps._hashMediaSource).toHaveBeenCalled())
+    const replacement = blankProject(seededGen(), 'replacement')
+    replacement.project_id = '00000000-0000-0000-0000-000000000099'
+    replacement.media_pool[MID] = { ...probedItem(), label: 'replacement-owned' }
+    actor.replaceState(replacement)
+    fail(new Error('source disconnected'))
+    await expect(pending).rejects.toThrow(/cancelled/i)
+    expect(actor.snapshot().media_pool[MID].label).toBe('replacement-owned')
+    expect(deps._enqueueDerivatives).not.toHaveBeenCalled()
+  })
+
   it('returns the new media id and inserts the probed item into the pool', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)

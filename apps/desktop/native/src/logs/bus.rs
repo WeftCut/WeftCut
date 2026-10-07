@@ -163,6 +163,12 @@ impl LogBusSlot {
         Self::default()
     }
 
+    pub fn snapshot(&self) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(self.current())),
+        }
+    }
+
     pub fn current(&self) -> Option<LogBus> {
         self.inner.read().clone()
     }

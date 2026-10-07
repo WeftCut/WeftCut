@@ -5,7 +5,7 @@ import { blankProject, SCHEMA_VERSION } from './model'
 import type { MediaItem, Project } from './model'
 import { canonicalString } from './canonical'
 import { serializeProject } from './serialize'
-import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, clearSessionQuickProxies, loadProjectFromJson } from './persistence'
+import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, loadProjectFromJson } from './persistence'
 import { root, withGroup } from './__tests__/fixtures/project'
 
 const MARKER_BLUE = { r: 0, g: 128, b: 255, a: 255 }
@@ -144,34 +144,20 @@ describe('reconcileMediaPaths (mirror io/mod.rs:73 path_abs ← dir.join(path_re
   })
 })
 
-describe('clearSessionQuickProxies', () => {
-  it('nulls the route quick_proxy slot and reports the file to delete', () => {
-    const p = withMedia([mediaItem({ decode_route: { route: 'direct-export', quick_proxy: '/ws/clip.quick.mp4' } })])
-    const { project, quickProxiesToDelete } = clearSessionQuickProxies(p)
-    const r = project.media_pool['00000000-0000-0000-0000-0000000000aa'].decode_route
-    expect(r).toEqual({ route: 'direct-export', quick_proxy: null })
-    expect(quickProxiesToDelete).toEqual(['/ws/clip.quick.mp4'])
-  })
-  it('preserves the full proxy slot while clearing the quick on a Proxied route', () => {
-    const p = withMedia([mediaItem({ decode_route: { route: 'proxied', quick_proxy: '/ws/clip.quick.mp4', full_proxy: '/ws/clip.master.mp4', format_version: 2 } })])
-    const { project, quickProxiesToDelete } = clearSessionQuickProxies(p)
-    expect(project.media_pool['00000000-0000-0000-0000-0000000000aa'].decode_route)
-      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: '/ws/clip.master.mp4', format_version: 2 })
-    expect(quickProxiesToDelete).toEqual(['/ws/clip.quick.mp4'])
-  })
-  it('reports nothing when no quick proxies are set', () => {
-    expect(clearSessionQuickProxies(withMedia([mediaItem({ decode_route: { route: 'bypass' } })])).quickProxiesToDelete).toEqual([])
-  })
-})
-
 describe('loadProjectFromJson', () => {
-  it('parses, reconciles, and clears quick proxies in one pass', () => {
+  it('retains reusable quick proxy references when reopening the same workspace', () => {
+    const quick = '/ws/Cache/proxies/deadbeef.quick-q4.mp4'
+    const p = withMedia([mediaItem({ decode_route: { route: 'direct-export', quick_proxy: quick } })])
+    const { project } = loadProjectFromJson(JSON.stringify(p), { dir: '/ws', join: posixJoin })
+    expect(project.media_pool['00000000-0000-0000-0000-0000000000aa'].decode_route)
+      .toEqual({ route: 'direct-export', quick_proxy: quick })
+  })
+  it('reconciles originals without deleting reusable derivative references', () => {
     const p = withMedia([mediaItem({ path_rel: 'Media/clip.mp4', path_abs: '/old/Media/clip.mp4', decode_route: { route: 'direct-export', quick_proxy: '/old/clip.quick.mp4' } })])
     const text = JSON.stringify(p)
-    const { project, quickProxiesToDelete } = loadProjectFromJson(text, { dir: '/moved.vproj', join: posixJoin })
+    const { project } = loadProjectFromJson(text, { dir: '/moved.vproj', join: posixJoin })
     const m = project.media_pool['00000000-0000-0000-0000-0000000000aa']
     expect(m.path_abs).toBe('/moved.vproj/Media/clip.mp4')
-    expect(m.decode_route).toEqual({ route: 'direct-export', quick_proxy: null })
-    expect(quickProxiesToDelete).toEqual(['/old/clip.quick.mp4'])
+    expect(m.decode_route).toEqual({ route: 'direct-export', quick_proxy: '/old/clip.quick.mp4' })
   })
 })

@@ -887,6 +887,14 @@ _Avoid_: 强制对齐 (the distinct acoustic timing operation), 文稿对齐 (as
 
 ## Performance resources
 
+**Workspace session**:
+One opening of a project, identified by a generation independently of its
+directory or project ID. Reopen, Save As and Close end the previous session.
+Queued/running imports retain that session's cache root; stale completions
+cannot update a later session. Valid content-addressed artifacts can outlive
+the session and be adopted again. See ADR 0102.
+_Avoid_: cache lifetime (artifacts and tasks have different lifetimes)
+
 **Resource policy**:
 Application-wide intent: memory target, processing effort, temporary cache space
 and background processing during playback. Main derives machine-specific

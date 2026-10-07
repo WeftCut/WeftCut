@@ -128,6 +128,16 @@ const levelsCache = new Map<string, Promise<WaveformLevels>>();
 /// findable nor ever evictable. Rebuilt lazily, so dropping a media's set is
 /// always safe.
 const keysByMedia = new Map<string, Set<string>>();
+const MAX_LEVEL_TABLES = 256;
+
+function dropKey(cacheKey: string): void {
+  levelsCache.delete(cacheKey);
+  reverifiedAtMs.delete(cacheKey);
+  for (const [id, keys] of keysByMedia) {
+    keys.delete(cacheKey);
+    if (keys.size === 0) keysByMedia.delete(id);
+  }
+}
 
 function fetchLevels(source: WaveformSource): Promise<WaveformLevels> {
   const cacheKey = source.waveformKey;
@@ -140,11 +150,17 @@ function fetchLevels(source: WaveformSource): Promise<WaveformLevels> {
   let p = levelsCache.get(cacheKey);
   if (!p) {
     p = getWaveformLevels(source.mediaId, fxKeyOf(source)).catch((e) => {
-      levelsCache.delete(cacheKey);
+      if (levelsCache.get(cacheKey) === p) {
+        levelsCache.delete(cacheKey);
+        // A repeated missing-file read must not erase its reverify cooldown.
+        if (!reverifiedAtMs.has(cacheKey)) dropKey(cacheKey);
+      }
       throw e;
     });
-    levelsCache.set(cacheKey, p);
   }
+  levelsCache.delete(cacheKey);
+  levelsCache.set(cacheKey, p);
+  while (levelsCache.size > MAX_LEVEL_TABLES) dropKey(levelsCache.keys().next().value!);
   return p;
 }
 
@@ -185,16 +201,20 @@ function noteFxArtifactMissing(source: WaveformSource): void {
     return;
   }
   reverifiedAtMs.set(key, now);
+  let keys = keysByMedia.get(source.mediaId);
+  if (!keys) keysByMedia.set(source.mediaId, keys = new Set());
+  keys.add(key);
+  while (reverifiedAtMs.size > MAX_LEVEL_TABLES) dropKey(reverifiedAtMs.keys().next().value!);
   void audioFxReverify(layerId).catch(() => {
     // Best effort: the strip is already drawing the raw waveform, and the next
     // pass past the cooldown asks again.
   });
 }
 
-let registered = false;
+const registered = new WeakSet<TileEngine>();
 export function registerWaveformProducer(engine: TileEngine = tileEngine): void {
-  if (registered) return;
-  registered = true;
+  if (registered.has(engine)) return;
+  registered.add(engine);
   engine.register<TileValue>({
     kind: WAVEFORM_KIND,
     cacheKind: 'waveform_cache_mib',
@@ -211,6 +231,10 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
     },
     bytes: (v) => (v.min.length + v.max.length + v.rms.length) * 8,
     invalidate: (mediaId) => { dropMediaLevels(mediaId); },
+    retainMedia: (ids) => {
+      for (const id of keysByMedia.keys()) if (!ids.has(id)) dropMediaLevels(id);
+    },
+    evict: (key) => { dropKey(key.sourceKey ?? key.mediaId); },
   });
 }
 
@@ -265,7 +289,10 @@ async function windowFor(
 ): Promise<WaveformWindow | "pending" | "not_ready"> {
   let levels: WaveformLevels;
   try {
-    levels = await fetchLevels(source);
+    const pending = fetchLevels(source);
+    levels = await pending;
+    // Project removal/invalidation can happen while a header IPC is pending.
+    if (levelsCache.get(source.waveformKey) !== pending) return "pending";
   } catch (e) {
     return isNotReady(e) ? "not_ready" : "pending";
   }

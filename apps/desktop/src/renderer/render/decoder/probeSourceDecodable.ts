@@ -6,6 +6,7 @@
 // docs/render.md#export-source-resolution and docs/data-model.md#mediaitem.
 
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
+import { acquireRenderResources, backgroundResourcesAvailable } from "../resourceClient";
 
 type DecoderLike = Pick<VideoDecoder, "configure" | "decode" | "close" | "flush">;
 
@@ -17,6 +18,7 @@ export interface RaceFirstDecodeArgs {
     error: (e: unknown) => void;
   }) => DecoderLike;
   deadlineMs: number;
+  signal?: AbortSignal;
 }
 
 /// Resolves true iff a frame is produced before the decoder errors or the
@@ -28,7 +30,7 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
   // executor below — TS resets property-access narrowing (`args.keyChunk`)
   // across the closure boundary, but a const local holds.
   const keyChunk = args.keyChunk;
-  if (!keyChunk) return false;
+  if (!keyChunk || args.signal?.aborted) return false;
   return await new Promise<boolean>((resolve) => {
     let settled = false;
     let decoder: DecoderLike | null = null;
@@ -36,6 +38,7 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      args.signal?.removeEventListener("abort", abort);
       try {
         decoder?.close();
       } catch {
@@ -44,6 +47,8 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
       resolve(v);
     };
     const timer = setTimeout(() => finish(false), args.deadlineMs);
+    const abort = () => finish(false);
+    args.signal?.addEventListener("abort", abort, { once: true });
     try {
       decoder = args.makeDecoder({
         output: (frame) => {
@@ -88,17 +93,25 @@ export type WebcodecsDecodeVerdict = "ok" | "unsupported" | "unknown";
 /// Open `assetUrl` via mediabunny, read its decoder config + first key packet,
 /// and race a real decode, distinguishing a DEFINITIVE unsupported-codec
 /// verdict from a transient/unknown failure. See `WebcodecsDecodeVerdict`.
-export async function classifyWebcodecsDecodability(
+async function classifyOnce(
   assetUrl: string,
-  deadlineMs = 2500,
+  deadlineMs: number,
+  signal: AbortSignal,
 ): Promise<WebcodecsDecodeVerdict> {
   let opened: OpenedMedia | null = null;
+  let releaseInput: (() => void) | undefined;
+  let releaseDecoder: (() => void) | undefined;
   try {
-    opened = await openMediaInput(assetUrl);
+    releaseInput = await acquireRenderResources(16);
+    signal.throwIfAborted();
+    opened = await openMediaInput(assetUrl, signal);
     const config = await opened.videoTrack.getDecoderConfig();
+    signal.throwIfAborted();
     // No WebCodecs codec mapping for this track — WebCodecs fundamentally has no
     // decoder for this codec (e.g. ProRes). DEFINITIVE, never a transient stall.
     if (!config) return "unsupported";
+    releaseDecoder = await acquireRenderResources(64 + (config.codedWidth ?? 1920) * (config.codedHeight ?? 1080) * 64 / 1048576);
+    signal.throwIfAborted();
     // First key packet. `getKeyPacket(0)` looks for the keyframe at-or-before
     // t=0s, which is NULL when the first keyframe has a non-zero start timestamp
     // (trimmed clips, edit-list mp4s) — that would wrongly judge an otherwise
@@ -116,6 +129,7 @@ export async function classifyWebcodecsDecodability(
         keyChunk,
         makeDecoder: (handlers) => new VideoDecoder(handlers),
         deadlineMs,
+        signal,
       });
     // First try mediabunny's native config (no `hardwareAcceleration` →
     // Chromium's default, usually hardware). If that fails, retry forcing
@@ -129,8 +143,10 @@ export async function classifyWebcodecsDecodability(
     // here keeps the probe's verdict aligned with what the pipeline can actually
     // decode, instead of route-correcting a WebCodecs-decodable source to a proxy.
     if (await attempt(config)) return "ok";
+    signal.throwIfAborted();
     const swConfig: VideoDecoderConfig = { ...config, hardwareAcceleration: "prefer-software" };
     if (await attempt(swConfig)) return "ok";
+    signal.throwIfAborted();
     // Neither lane produced a frame. Only condemn the codec when the browser
     // ITSELF declines BOTH configs (`isConfigSupported.supported === false`) —
     // that is a DEFINITIVE unsupported-codec verdict. A config the browser
@@ -147,8 +163,60 @@ export async function classifyWebcodecsDecodability(
   } catch {
     return "unknown";
   } finally {
-    opened?.dispose();
+    try { opened?.dispose(); } finally { releaseDecoder?.(); releaseInput?.(); }
   }
+}
+
+interface ProbeTask {
+  abort: AbortController;
+  consumers: number;
+  result: Promise<WebcodecsDecodeVerdict>;
+}
+const probes = new Map<string, ProbeTask>();
+const MAX_PROBES = 2;
+
+/** Coalesce consumers of a source and bound all import/export readiness callers,
+ * including overlapping React effects. A busy authority is never evidence that
+ * a codec is unsupported. The last consumer owns cancellation and teardown. */
+export function classifyWebcodecsDecodability(
+  assetUrl: string,
+  deadlineMs = 2500,
+  signal?: AbortSignal,
+): Promise<WebcodecsDecodeVerdict> {
+  if (signal?.aborted || !backgroundResourcesAvailable()) return Promise.resolve("unknown");
+  const key = `${deadlineMs}:${assetUrl}`;
+  let task = probes.get(key);
+  if (task?.abort.signal.aborted) return Promise.resolve("unknown");
+  if (!task) {
+    if (probes.size >= MAX_PROBES) return Promise.resolve("unknown");
+    const abort = new AbortController();
+    // Covers opening and packet reads as well as both decode attempts.
+    const timer = setTimeout(() => abort.abort(), deadlineMs * 2 + 1000);
+    task = { abort, consumers: 0, result: classifyOnce(assetUrl, deadlineMs, abort.signal) };
+    probes.set(key, task);
+    const cleanup = () => {
+      clearTimeout(timer);
+      probes.delete(key);
+    };
+    void task.result.then(cleanup, cleanup);
+  }
+  const shared = task;
+  shared.consumers++;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (verdict: WebcodecsDecodeVerdict) => {
+      if (done) return;
+      done = true;
+      signal?.removeEventListener("abort", cancel);
+      shared.abort.signal.removeEventListener("abort", cancel);
+      if (--shared.consumers === 0) shared.abort.abort();
+      resolve(verdict);
+    };
+    const cancel = () => finish("unknown");
+    signal?.addEventListener("abort", cancel, { once: true });
+    shared.abort.signal.addEventListener("abort", cancel, { once: true });
+    void shared.result.then(finish, () => finish("unknown"));
+  });
 }
 
 /// Boolean convenience over `classifyWebcodecsDecodability`: true iff a frame

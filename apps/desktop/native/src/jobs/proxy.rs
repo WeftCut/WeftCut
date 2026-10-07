@@ -44,7 +44,7 @@ pub const PROXY_GOP_FRAMES: u32 = 6;
 /// High profile, `-bf 0` (PTS=DTS), short fixed GOP (`PROXY_GOP_FRAMES`), and
 /// source color tags asserted with `+write_colr` so mediabunny reads a `colr`
 /// atom. See ADR 0008, 0011, 0014.
-pub const PROXY_FORMAT_VERSION: u32 = 7;
+pub const PROXY_FORMAT_VERSION: u32 = crate::cache::FULL_PROXY_FORMAT_VERSION;
 
 /// Output-side ffmpeg args asserting the SOURCE's ffprobe color tags on a
 /// proxy re-encode. The transcode preserves the source's actual colorimetry
@@ -74,12 +74,38 @@ pub fn source_color_args(media: &MediaItem) -> Vec<String> {
     args
 }
 
+pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
+    let path = cache.proxy(&media.file_hash_blake3);
+    if crate::cache::valid_mp4(&path) {
+        return Some(path);
+    }
+    // Legacy unversioned masters can be adopted only when the saved route
+    // proves their recipe. New outputs always carry the version in the key.
+    let legacy = cache
+        .proxies_dir()
+        .join(format!("{}.mp4", media.file_hash_blake3));
+    let registered = match &media.decode_route {
+        crate::state::DecodeRoute::Proxied {
+            full_proxy: Some(path),
+            format_version,
+            ..
+        }
+        | crate::state::DecodeRoute::NativeSw {
+            full_proxy: Some(path),
+            format_version,
+            ..
+        } if *format_version == PROXY_FORMAT_VERSION && *path == legacy => path,
+        _ => return None,
+    };
+    crate::cache::valid_mp4(registered).then(|| registered.clone())
+}
+
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // Cache hit before the ffmpeg check: adopting an already-landed master
     // needs no encoder.
     let dest = cache.proxy(&media.file_hash_blake3);
-    if cached_ok(&dest) {
-        return Ok(dest);
+    if let Some(path) = cached_path(cache, media) {
+        return Ok(path);
     }
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot generate proxy");
@@ -100,7 +126,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let color_args = source_color_args(media);
     let tmp = tmp.clone();
 
-    let output = hwaccel::output_with_hw_decode_fallback("full proxy", |hw, cmd| {
+    let output = hwaccel::output_with_hw_decode_fallback_scoped(cache, "full proxy", |hw, cmd| {
         cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
         if hw {
             hwaccel::push_hwaccel_args(cmd);
@@ -163,6 +189,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         );
     }
 
+    cache.check_active()?;
     promote_temp_retry(&dest).await?;
     Ok(dest)
 }
@@ -524,7 +551,9 @@ mod tests {
         tokio::fs::create_dir_all(dest.parent().unwrap())
             .await
             .unwrap();
-        tokio::fs::write(&dest, b"already here").await.unwrap();
+        tokio::fs::write(&dest, include_bytes!("../../../fixtures/media/tiny.mp4"))
+            .await
+            .unwrap();
 
         let media = MediaItem {
             id: new_id(),
@@ -555,7 +584,10 @@ mod tests {
         let returned = run(&cache, &media).await.expect("cache hit");
         assert_eq!(returned, dest);
         // File untouched.
-        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"already here");
+        assert_eq!(
+            tokio::fs::read(&dest).await.unwrap(),
+            include_bytes!("../../../fixtures/media/tiny.mp4")
+        );
     }
 
     async fn make_sized_video(dest: &std::path::Path, size: &str) -> Result<()> {

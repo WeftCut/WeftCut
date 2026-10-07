@@ -41,6 +41,7 @@ import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.
 import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
+import { createWorkspaceEventGate } from './workspaceEvents.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
 import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -553,12 +554,17 @@ app.whenReady().then(async () => {
   console.log(`[main] data root: ${dataRoot.dataRoot} (motifs=${dataRoot.motifsDir}, cache=${dataRoot.cacheDir}, downloads=${dataRoot.downloadsDir})`)
 
   // Construct + init the Backend before creating the window
+  const workspaceEvents = createWorkspaceEventGate()
   backend = new Backend(
     app.getPath('userData'),
     dataRoot.cacheDir,
     (_err: Error | null, msg: string) => {
       if (!msg) return
-      const { event, payload } = JSON.parse(msg)
+      const message = JSON.parse(msg)
+      const { event } = message
+      if (!workspaceEvents.accept(message.payload)) return
+      const payload = event === 'import:queue' && message.payload?.entries
+        ? message.payload.entries : message.payload
       // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
       // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
       if (event === 'mcp:change') {
@@ -706,7 +712,7 @@ app.whenReady().then(async () => {
     commitWorkspace: (p: string) => backend!.commitWorkspace(p),
     pushRecent: (p: string, n: string) => recents.push(p, n),
     setLastNewProjectParent: (p: string) => recents.setLastNewProjectParent(p),
-    enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
+    enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j, workspaceEvents.requireCurrent()),
   }
 
   // Workspace dir cache — seeded once at boot; refreshed after each persistence call
@@ -736,12 +742,27 @@ app.whenReady().then(async () => {
   const napiFacadeWithCache = {
     ...napiFacade,
     commitWorkspace: async (p: string) => {
-      await napiFacade.commitWorkspace(p)
+      const previous = workspaceEvents.current()
+      workspaceEvents.beginTransition()
+      try {
+        const generation = await napiFacade.commitWorkspace(p)
+        workspaceEvents.activate(generation)
+        emitToRenderer('import:queue', [])
+      } catch (error) {
+        if (previous !== null) workspaceEvents.activate(previous)
+        throw error
+      }
       wsCache = p
       // Replay AFTER wsCache is set, so every replayed row takes the direct path
       // and cannot re-queue itself, and after the commit resolves, because that
       // is the call that installs this workspace's LogBus.
       deferredLog.flush(emitLogEntry)
+    },
+    endWorkspace: async () => {
+      workspaceEvents.beginTransition()
+      const generation = await backend!.endWorkspace()
+      workspaceEvents.activate(generation)
+      emitToRenderer('import:queue', [])
     },
   }
 
@@ -766,8 +787,8 @@ app.whenReady().then(async () => {
   // Rust compute facade for the native-compute → TS-write hybrids:
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
   const computeFacade = {
-    probeMedia: (p: string) => backend!.probeMedia(p),
-    hashMediaSource: (p: string) => backend!.hashMediaSource(p),
+    probeMedia: (p: string) => backend!.probeMedia(p, workspaceEvents.requireCurrent()),
+    hashMediaSource: (p: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent()),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
@@ -851,6 +872,8 @@ app.whenReady().then(async () => {
   })
 
   tsHost = createTsActorHost({
+    onWorkspaceChanging: () => audioFxBaker?.suspend(),
+    onWorkspaceOpened: () => audioFxBaker?.reset(),
     send: (event, payload) => emitToRenderer(event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     fileExists: (p) => fs.existsSync(p),
@@ -859,7 +882,7 @@ app.whenReady().then(async () => {
     join: path.join,
     napi: napiFacadeWithCache,
     compute: computeFacade,
-    enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
+    enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p, workspaceEvents.requireCurrent()),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     statPath: (p) => {
       try {
@@ -1596,12 +1619,6 @@ app.whenReady().then(async () => {
       const route = (await import('./state/router.js')).routeChannel(channel)
       if (route.kind !== 'rust') {
         const result = await tsHost.handleInvoke(channel, (args ?? {}) as Record<string, unknown>)
-        // A workspace swap re-keys everything the baker holds (layer ids on
-        // open/new) and re-points the cache root (all three), so its map is
-        // rebuilt from the snapshot that is now current.
-        if (route.kind === 'open' || route.kind === 'newWorkspace' || route.kind === 'saveAs') {
-          audioFxBaker?.reset()
-        }
         return result
       }
     }

@@ -74,7 +74,7 @@ function sigOf(layer: Layer, media: MediaItem): string {
   return signature.sig
 }
 
-const jobKeyOf = (sig: string): string => `audio_fx:${sig}`
+const jobKeyOf = (sig: string): string => `audio_fx:0:${sig}`
 const destOf = (sig: string): string => `${CACHE}/audio/${HASH}.fx-${sig.slice(0, 16)}.conform`
 const peaksOf = (sig: string): string => `${CACHE}/waveforms/${HASH}.fx-${sig.slice(0, 16)}.v4.peaks`
 
@@ -671,6 +671,83 @@ describe('reverify', () => {
 // ── lifecycle ────────────────────────────────────────────────────────────────
 
 describe('reset', () => {
+  it('suspends the subscriber and stops a cancelled measurement before it can start FFmpeg', async () => {
+    const h = oneLayerSetup()
+    const measurement = deferred<{ rms_dbfs: number; frames: number }>()
+    h.rust.backend.measureConformRms = () => measurement.promise
+    h.change(h.project())
+    await h.timers.advance()
+    h.baker.suspend()
+    expect(h.baker.snapshot()).toEqual({})
+    h.edit((p) => { setStrength(p, 'L1', 25) })
+    expect(h.timers.armedCount()).toBe(0)
+    measurement.resolve({ rms_dbfs: -30, frames: 1000 })
+    await flush()
+    expect(h.rust.of('bake_audio_fx')).toHaveLength(0)
+    await expect(h.baker.ensureExportAudioFx()).rejects.toThrow('inactive')
+    h.baker.reset()
+    await h.timers.advance()
+    expect(h.rust.of('bake_audio_fx')).toHaveLength(1)
+  })
+
+  it('ignores old peaks completions after reopening the same layer and signature', async () => {
+    const h = oneLayerSetup()
+    h.disk.addConform(destOf(h.sig))
+    const builds: Deferred<{ path: string }>[] = []
+    h.rust.backend.buildPeaksForVconf = () => {
+      const build = deferred<{ path: string }>(); builds.push(build); return build.promise
+    }
+    h.change(h.project())
+    await h.timers.advance()
+    expect(builds).toHaveLength(1)
+    h.baker.suspend()
+    h.change(h.project())
+    h.baker.reset()
+    await h.timers.advance()
+    expect(builds).toHaveLength(2)
+    builds[0].resolve({ path: '/old-workspace/peaks' })
+    await flush()
+    expect(h.baker.snapshot().L1.ready?.peaks_path).toBeNull()
+    await h.baker.reverify('L1')
+    expect(builds).toHaveLength(2)
+    builds[1].resolve({ path: peaksOf(h.sig) })
+    await flush()
+    expect(h.baker.snapshot().L1.ready?.peaks_path).toBe(peaksOf(h.sig))
+  })
+
+  it('does not launch waveform work when an abandoned bake completes after suspend', async () => {
+    const h = oneLayerSetup()
+    h.change(h.project())
+    await h.timers.advance()
+    h.baker.suspend()
+    await h.rust.finish(h.sig, h.disk)
+    expect(h.rust.of('build_peaks_for_vconf')).toHaveLength(0)
+    expect(h.baker.snapshot()).toEqual({})
+  })
+
+  it('gives a reopened same-signature bake a different cancellation key and ignores the old completion', async () => {
+    const h = oneLayerSetup()
+    const bakes: { key: string; result: Deferred<{ path: string; frame_count: number }> }[] = []
+    h.rust.backend.bakeAudioFx = (args) => {
+      const result = deferred<{ path: string; frame_count: number }>()
+      bakes.push({ key: args.job_key, result })
+      return result.promise
+    }
+    h.change(h.project())
+    await h.timers.advance()
+    h.baker.reset()
+    await h.timers.advance()
+    expect(bakes).toHaveLength(2)
+    expect(bakes[0].key).not.toBe(bakes[1].key)
+    expect(h.rust.of('cancel_audio_fx')[0].args.job_key).toBe(bakes[0].key)
+    bakes[0].result.resolve({ path: destOf(h.sig), frame_count: 1000 })
+    await flush()
+    expect(h.baker.snapshot().L1.ready).toBeNull()
+    expect(h.baker.snapshot().L1.pending).toBe(h.sig)
+    bakes[1].result.resolve({ path: destOf(h.sig), frame_count: 1000 })
+    await flush()
+    expect(h.baker.snapshot().L1.ready?.sig).toBe(h.sig)
+  })
   it('cancels the in-flight bake, clears the armed timers, and rebuilds from the snapshot', async () => {
     const h = oneLayerSetup()
     h.change(h.project())

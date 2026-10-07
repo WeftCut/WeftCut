@@ -24,6 +24,10 @@ export function isWebcodecsUnusable(mediaId: string): boolean {
   return webcodecsUnusable.has(mediaId);
 }
 
+export function forgetWebcodecsCapability(mediaId: string): void {
+  webcodecsUnusable.delete(mediaId);
+}
+
 /// Test/e2e hook: forget session verdicts (used by webcodecsCapability.test.ts).
 export function resetWebcodecsCapabilitySession(): void {
   webcodecsUnusable.clear();

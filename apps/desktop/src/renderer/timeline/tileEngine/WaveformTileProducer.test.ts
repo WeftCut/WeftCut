@@ -103,6 +103,43 @@ describe("waveform tile producer (shared engine)", () => {
   const engine = new TileEngine(1024 * 1024);
   registerWaveformProducer(engine);
 
+  it("prunes headers on project removal while preserving live media reuse", async () => {
+    vi.mocked(getWaveformLevels).mockResolvedValue({ channels: 1, levels: [] });
+    const calls = () => vi.mocked(getWaveformLevels).mock.calls.length;
+    const initial = calls();
+    await getWaveformChannelCount("retained-source");
+    await getWaveformChannelCount("removed-source");
+    engine.retainMedia(new Set(["retained-source"]));
+    await getWaveformChannelCount("retained-source");
+    expect(calls()).toBe(initial + 2);
+    await getWaveformChannelCount("removed-source");
+    expect(calls()).toBe(initial + 3);
+    vi.mocked(getWaveformLevels).mockClear();
+  });
+
+  it("bounds metadata during repeated effect edits and re-reads evicted headers", async () => {
+    vi.mocked(getWaveformLevels).mockResolvedValue({ channels: 1, levels: [] });
+    for (let index = 0; index < 300; index++) await getWaveformChannelCount(`bounded-${index}`);
+    vi.mocked(getWaveformLevels).mockClear();
+    await getWaveformChannelCount("bounded-299");
+    expect(getWaveformLevels).not.toHaveBeenCalled();
+    await getWaveformChannelCount("bounded-0");
+    expect(getWaveformLevels).toHaveBeenCalledTimes(1);
+    vi.mocked(getWaveformLevels).mockClear();
+  });
+
+  it("cannot repopulate tiles from a header read after project removal", async () => {
+    let resolve!: (value: { channels: number; levels: { level: number; peaksPerSecond: number; peakCount: number }[] }) => void;
+    vi.mocked(getWaveformLevels).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    vi.mocked(getWaveformTile).mockClear();
+    const window = ensureWaveformWindow("departed", 0, 0, 1000, 100, engine);
+    engine.retainMedia(new Set());
+    resolve({ channels: 1, levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 1000 }] });
+    expect(await window).toBe("pending");
+    expect(getWaveformTile).not.toHaveBeenCalled();
+    vi.mocked(getWaveformLevels).mockClear();
+  });
+
   it("re-fetches the level table after invalidateMedia (regenerated waveform)", async () => {
     vi.mocked(getWaveformLevels).mockResolvedValue({
       channels: 2,

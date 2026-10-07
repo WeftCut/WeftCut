@@ -43,7 +43,11 @@ pub fn push_hwaccel_args(cmd: &mut Command) {
 
 /// Run an ffmpeg transcode command, trying hardware decode first when
 /// available. `build` receives `use_hw=true` for the first attempt.
-pub async fn output_with_hw_decode_fallback<F>(label: &str, mut build: F) -> Result<Output>
+pub async fn output_with_hw_decode_fallback_scoped<F>(
+    cache: &crate::cache::CacheLayout,
+    label: &str,
+    mut build: F,
+) -> Result<Output>
 where
     F: FnMut(bool, &mut Command),
 {
@@ -56,8 +60,8 @@ where
         // interleaves with it and dies at promote.
         cmd.kill_on_drop(true);
         build(true, &mut cmd);
-        let output = cmd
-            .output()
+        let output = cache
+            .command_output(&mut cmd)
             .await
             .with_context(|| format!("spawn ffmpeg for {label} (hw decode)"))?;
         if output.status.success() {
@@ -80,7 +84,8 @@ where
     } else {
         info!("{label}: software decode (no hwaccel on this platform)");
     }
-    cmd.output()
+    cache
+        .command_output(&mut cmd)
         .await
         .with_context(|| format!("spawn ffmpeg for {label} (sw decode)"))
 }

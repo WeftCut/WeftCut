@@ -61,6 +61,16 @@ describe('openProject', () => {
     await expect(openProject(deps({ fs }), '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: 999, supported: SCHEMA_VERSION }))
   })
 
+  it('validates the loaded project before replacing the current cache session', async () => {
+    const invalid = structuredClone(project)
+    root(invalid).width = 0
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: serializeProjectToJson(invalid) }); fs.dirs.add('/ws')
+    const d = deps({ fs })
+    await expect(openProject(d, '/ws')).rejects.toMatchObject({ err: { error: 'ProjectInvalid' } })
+    expect(d.napi.commitWorkspace).not.toHaveBeenCalled()
+    expect(d.actor.replaceState).not.toHaveBeenCalled()
+  })
+
   it('refuses ProjectFileUnreadable on a corrupt project.json, keeping the parser prose as detail', async () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: '{not json' }); fs.dirs.add('/ws')
     // Only the code is asserted: the prose is V8's, and pinning it here would
@@ -204,7 +214,7 @@ describe('openProject', () => {
     expect(reports).toHaveLength(0)
   })
 
-  it('deletes stale quick proxies returned by the loader', async () => {
+  it('preserves quick proxy files for recipe validation and reuse by hydration', async () => {
     const quickProxyPath = '/ws/Cache/quick/m1.mp4'
     const item: MediaItem = {
       id: 'm1', label: null,
@@ -219,7 +229,7 @@ describe('openProject', () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: json }); fs.dirs.add('/ws')
     const d = deps({ fs })
     await openProject(d, '/ws')
-    expect(fs.rm).toHaveBeenCalledWith(quickProxyPath)
+    expect(fs.rm).not.toHaveBeenCalled()
   })
 })
 

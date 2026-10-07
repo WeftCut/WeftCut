@@ -2,6 +2,7 @@ import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings"
 import { listen } from "@/bridge/events";
 import { MEDIA_JOB_EVENTS } from "../../ipc";
 import { cacheBudget, type CacheKind } from '../../render/cacheBudget';
+import { useProjectStore } from '../../state/projectStore';
 
 export interface TileKey {
   /// The media the tile belongs TO. Subscription and invalidation identity: a
@@ -40,6 +41,8 @@ export interface TileProducer<T> {
   /// Called on invalidateMedia so producers can drop their own per-media state
   /// (e.g. cached level tables) — the engine only owns tile slots.
   invalidate?(mediaId: string): void;
+  retainMedia?(mediaIds: ReadonlySet<string>): void;
+  evict?(key: TileKey): void;
   /// Byte budget for this producer's ready tiles. Producers without one share
   /// the engine-wide default. Eviction is per kind: one producer's byte
   /// pressure never evicts another's tiles.
@@ -172,12 +175,20 @@ export class TileEngine {
     this.notify(mediaId);
   }
 
+  retainMedia(mediaIds: ReadonlySet<string>): void {
+    for (const [ks, slot] of this.slots) {
+      if (!mediaIds.has(slot.key.mediaId)) this.freeSlot(ks, slot);
+    }
+    for (const producer of this.producers.values()) producer.retainMedia?.(mediaIds);
+  }
+
   private freeSlot(ks: string, slot: Slot<unknown>): void {
     if (slot.entry.state === "ready") {
       this.producers.get(slot.key.kind)?.dispose?.(slot.entry.value);
       this.bytesByKind.set(slot.key.kind, (this.bytesByKind.get(slot.key.kind) ?? 0) - slot.bytes);
     }
     this.slots.delete(ks);
+    this.producers.get(slot.key.kind)?.evict?.(slot.key);
     this.reportUsage(slot.key.kind);
   }
 
@@ -248,3 +259,14 @@ export class TileEngine {
 }
 
 export const tileEngine = new TileEngine();
+useProjectStore.subscribe((state, previous) => {
+  for (const [id, old] of previous.mediaById) {
+    const next = state.mediaById.get(id);
+    if (next && (next.path !== old.path || next.size_bytes !== old.size_bytes)) {
+      tileEngine.handleJobComplete(id, "waveform");
+      tileEngine.handleJobComplete(id, "thumbnails");
+      tileEngine.handleJobComplete(id, "proxy");
+    }
+  }
+  tileEngine.retainMedia(new Set(state.mediaById.keys()));
+});

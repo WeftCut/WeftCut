@@ -36,6 +36,15 @@ Already-landed media derivatives are adopted before processing admission. Cache
 hits still publish readiness and restore media paths, but do not reserve a
 background slot or report generation. Playback or memory pressure must not block
 this bookkeeping. Missing/stale artifacts continue through normal admission.
+Hydration of thumbnails, conforms and waveforms is independent of proxy builds.
+Quick proxies survive reopen and are checked against their recipe and file
+format. Artifact producers are shared by cache root, content identity, kind
+and recipe; completion is delivered to each requesting media item.
+
+Every project opening owns a generation and frozen cache root. Switch, reopen,
+Save As and Close cancel old imports; native events and TS continuations are
+checked before state updates. Cancellation retains leases until child teardown.
+Interrupted provisional hashes and workspace copies resume on reopen. See ADR 0102.
 
 The native resources::Governor is the single working-memory/processing admission
 authority. Native jobs and Electron-held leases use the same ledger. Admission
@@ -51,7 +60,8 @@ windows; each cannot claim a full app target. Legacy preview values remain
 additional upper bounds, so raising the app target need not expand every cache.
 
 Background jobs leave an interactive processing slot when more than one exists.
-Native queues admit at most 256 waiters; cancellation removes a waiter. Oversized
+Native queues admit at most 256 waiters; a 32-slot background entry gate keeps
+bulk import fan-out below that limit, with cancellation while waiting. Oversized
 jobs fail with an actionable error. Interactive waits time out after 15 seconds;
 renderer allocation requests fail promptly when unavailable. Resident decoders
 retain memory leases and per-session thread caps, but not an exclusive job slot
@@ -75,12 +85,14 @@ an OS-enforced whole-process RAM, CPU-percentage or dedicated-VRAM hard cap.
 | Owner | Enforcement |
 | --- | --- |
 | Native thumbnails, waveform, conform, proxies, scene analysis, speech extraction | Shared background admission and FFmpeg thread requests. |
+| Import metadata/GOP probes and source hashing | Shared background admission, in-flight source deduplication and session cancellation; metadata probes have a timeout. |
 | On-demand frame/filmstrip extraction, audio effects, audio export and mux | Interactive admission, bounded waits and child-lifetime permits. |
 | Native export video sink | Dimension-based working reservation through finish/cancel; encoder thread caps. |
 | Native preview/export decode on all platforms | Metadata-based reservation before session open; thread cap captured at worker creation. Software and hardware copy-back share the gate. |
 | Renderer/worker WebCodecs decode | Resolution-based reservation before decoder creation; worker requests relay to main. Export pending packets, decoded frames and 10-bit copies share accounting, requesting capacity before long-GOP dispatch and returning it after consumption. Chromium controls internal threads. |
 | Windows shared-texture transport | Video/animation byte ledger charged to global working memory; retired imports retain charges until final release. An additional platform adapter, not the portable authority. |
-| Preview pictures | Video rings, animation including gesture overlays, filmstrip and waveform share retention. Safe trimming keeps pinned pictures accounted. |
+| Preview pictures | Video rings, animation including gesture overlays, filmstrip, media posters and waveform share retention. Safe trimming keeps pinned pictures accounted. Waveform metadata is bounded and project-pruned. |
+| Renderer source capability probes | Coalesced by source identity, at most two active, decoder/input leases and cancellation on project changes. |
 | Renderer export | Composition/encoder working frames and streamed animation reserve before canvas/worker creation. Byte backpressure rejects oversized animation packets before allocation. |
 | Playback audio | Per-source bounded PCM lookahead reserved before open and released on disposal. |
 | Local speech/video models | Weight/workspace estimate before spawn; thread arguments capped again after admission; CPU fallback reacquires through the same gate. |

@@ -8,11 +8,11 @@ use std::process::Stdio;
 
 use crate::ffmpeg::ffmpeg_is_installed;
 use anyhow::{anyhow, Context, Result};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
+use crate::cache::{discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind};
 
 pub const MAGIC: &[u8; 8] = b"VPEAKS\0\0";
@@ -33,6 +33,7 @@ const LEVEL_ENTRY_BYTES: u64 = 4 + 4 + 8; // frames_per_peak + peak_count + data
 
 /// One resolution level's peaks for all channels, planar: `mins[ch]`,
 /// `maxs[ch]`, `rmss[ch]`.
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub struct LevelData {
     pub channels: u32,
@@ -83,6 +84,7 @@ pub fn dequantize_rms(v: u16) -> f32 {
 
 /// Write a peaks file. `levels` is finest-first; each entry pairs a
 /// PCM frames-per-peak with its channel-planar min/max/rms data.
+#[cfg(test)]
 pub async fn write_peaks(
     path: &std::path::Path,
     channels: u32,
@@ -99,7 +101,9 @@ pub async fn write_peaks(
         offset += (channels as u64) * (d.peak_count as u64) * 6; // min i16 + max i16 + rms u16 per window
     }
 
-    let mut buf: Vec<u8> = Vec::with_capacity(offset as usize);
+    let file = tokio::fs::File::create(path).await?;
+    let mut writer = tokio::io::BufWriter::with_capacity(64 * 1024, file);
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
     buf.extend_from_slice(MAGIC);
     buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     buf.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
@@ -116,19 +120,16 @@ pub async fn write_peaks(
                 buf.extend_from_slice(&d.mins[ch][w].to_le_bytes());
                 buf.extend_from_slice(&d.maxs[ch][w].to_le_bytes());
                 buf.extend_from_slice(&d.rmss[ch][w].to_le_bytes());
+                if buf.len() >= 64 * 1024 {
+                    writer.write_all(&buf).await?;
+                    buf.clear();
+                }
             }
         }
     }
 
-    let mut f = tokio::fs::File::create(path)
-        .await
-        .with_context(|| format!("create {}", path.display()))?;
-    f.write_all(&buf)
-        .await
-        .with_context(|| format!("write {}", path.display()))?;
-    f.flush()
-        .await
-        .with_context(|| format!("flush {}", path.display()))?;
+    writer.write_all(&buf).await?;
+    writer.flush().await?;
     Ok(())
 }
 
@@ -145,11 +146,16 @@ pub fn read_header(path: &std::path::Path) -> Result<PeaksHeader> {
         anyhow::bail!("unsupported peaks version {version}");
     }
     let sample_rate = u32::from_le_bytes(fixed[12..16].try_into().unwrap());
-    if sample_rate == 0 {
-        anyhow::bail!("invalid zero sample rate in peaks file");
+    if sample_rate != SAMPLE_RATE {
+        anyhow::bail!("unsupported sample rate in peaks file");
     }
     let channels = u32::from_le_bytes(fixed[16..20].try_into().unwrap());
     let level_count = u32::from_le_bytes(fixed[20..24].try_into().unwrap()) as usize;
+    if channels == 0 || channels > MAX_CHANNELS as u32 || !(1..=32).contains(&level_count) {
+        anyhow::bail!("invalid peaks channels or level count");
+    }
+    let file_len = f.metadata()?.len();
+    let mut expected_offset = HEADER_FIXED_BYTES + level_count as u64 * LEVEL_ENTRY_BYTES;
     let mut table = vec![0u8; level_count * LEVEL_ENTRY_BYTES as usize];
     f.read_exact(&mut table).context("read level table")?;
     let mut levels = Vec::with_capacity(level_count);
@@ -159,13 +165,32 @@ pub fn read_header(path: &std::path::Path) -> Result<PeaksHeader> {
         if frames_per_peak == 0 {
             anyhow::bail!("invalid zero frames_per_peak for level {i}");
         }
+        let peak_count = u32::from_le_bytes(table[base + 4..base + 8].try_into().unwrap());
+        let data_offset = u64::from_le_bytes(table[base + 8..base + 16].try_into().unwrap());
+        if peak_count == 0 || data_offset != expected_offset {
+            anyhow::bail!("invalid peaks data span for level {i}");
+        }
+        if let Some(previous) = levels.last() {
+            let previous: &PeakLevel = previous;
+            if previous.frames_per_peak.checked_mul(2) != Some(frames_per_peak)
+                || peak_count != previous.peak_count.div_ceil(2)
+            {
+                anyhow::bail!("inconsistent peaks pyramid at level {i}");
+            }
+        }
+        expected_offset = expected_offset
+            .checked_add(channels as u64 * peak_count as u64 * 6)
+            .context("peaks file span overflow")?;
+        if expected_offset > file_len {
+            anyhow::bail!("truncated peaks data for level {i}");
+        }
         levels.push(PeakLevel {
             frames_per_peak,
-            peak_count: u32::from_le_bytes(table[base + 4..base + 8].try_into().unwrap()),
+            peak_count,
         });
     }
-    if levels.is_empty() {
-        anyhow::bail!("peaks file has no levels");
+    if expected_offset != file_len {
+        anyhow::bail!("unexpected trailing peaks data");
     }
     Ok(PeaksHeader {
         sample_rate,
@@ -207,7 +232,7 @@ pub fn read_range(
     }
     let ch = channel;
     let start = start_peak.min(level.peak_count);
-    let end = (start + count).min(level.peak_count);
+    let end = start.saturating_add(count).min(level.peak_count);
     let n = (end - start) as usize;
     if n == 0 {
         return Ok(PeaksRange {
@@ -257,8 +282,36 @@ pub enum WaveformInput<'a> {
     Vconf { path: &'a Path, channels: u32 },
 }
 
+pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
+    let path = cache.waveform(&media.file_hash_blake3);
+    read_header(&path).is_ok().then_some(path)
+}
+
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
+    cache.check_active()?;
+    if let Some(path) = cached_path(cache, media) {
+        return Ok(path);
+    }
     let dest = cache.waveform(&media.file_hash_blake3);
+    // At 48 kHz mono/stereo conform is a decode-only operation. Reusing its
+    // PCM retains the original waveform's single resample and channel policy.
+    // Other rates keep decoding the original to avoid double-resample drift.
+    if media.metadata.audio.as_ref().is_some_and(|audio| {
+        audio.sample_rate == super::conform::CONFORM_SAMPLE_RATE && audio.channels <= 2
+    }) {
+        if let Some(path) = super::conform::cached_path(cache, media) {
+            let header = super::conform::read_header(&path)?;
+            return run_from_input(
+                cache,
+                WaveformInput::Vconf {
+                    path: &path,
+                    channels: header.channels,
+                },
+                dest,
+            )
+            .await;
+        }
+    }
     run_from_input(cache, WaveformInput::Media(media), dest).await
 }
 
@@ -270,9 +323,7 @@ pub async fn run_from_input(
     input: WaveformInput<'_>,
     dest: PathBuf,
 ) -> Result<PathBuf> {
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg not installed; cannot generate waveform");
-    }
+    cache.check_active()?;
     if let WaveformInput::Media(media) = input {
         if !matches!(media.kind, MediaKind::Video | MediaKind::Audio) {
             anyhow::bail!("waveform only valid for Video / Audio media");
@@ -284,8 +335,13 @@ pub async fn run_from_input(
         }
     }
 
-    if cached_ok(&dest) {
+    if read_header(&dest).is_ok() {
         return Ok(dest);
+    }
+
+    cache.check_active()?;
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg not installed; cannot generate waveform");
     }
 
     let tmp = temp_path(&dest);
@@ -302,6 +358,11 @@ pub async fn run_from_input(
             cmd.arg("-i").arg(&media.path_abs);
         }
         WaveformInput::Vconf { path, channels } => {
+            let header = super::conform::read_header(path)?;
+            anyhow::ensure!(
+                header.channels == channels,
+                "conform waveform channel mismatch"
+            );
             cmd.args([
                 "-skip_initial_bytes",
                 &super::conform::HEADER_LEN.to_string(),
@@ -336,34 +397,54 @@ pub async fn run_from_input(
         .context("spawn ffmpeg for waveform")?;
 
     let mut stdout = child.stdout.take().expect("stdout was piped");
-    // Downmix target is 2ch; a mono source still decodes to 2 identical channels
-    // under `-ac 2`, so the reader/writer path is uniform.
-    let channels = MAX_CHANNELS;
-    let finest = compute_finest_level(&mut stdout, channels).await?;
+    let mut stderr_task = tokio::spawn(super::conform::drain_stderr(
+        child.stderr.take().expect("stderr was piped"),
+    ));
+    let operation = async {
+        // Downmix target is 2ch; a mono source still decodes to 2 identical channels
+        // under `-ac 2`, so the reader/writer path is uniform.
+        let channels = MAX_CHANNELS;
+        // Anonymous files are unlinked/delete-on-close, including process death.
+        let spool = dest
+            .parent()
+            .context("waveform destination has no parent")?;
+        let finest = compute_finest_level(&mut stdout, channels, spool, cache).await?;
 
-    let output = child
-        .wait_with_output()
-        .await
-        .context("await ffmpeg for waveform")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        discard_temp(&dest);
-        anyhow::bail!(
-            "ffmpeg exited with {} for waveform: {}",
-            output.status,
-            stderr.trim()
-        );
-    }
+        let status = tokio::select! {
+            result = child.wait() => result.context("await ffmpeg for waveform")?,
+            _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+        };
+        let stderr_bytes = (&mut stderr_task)
+            .await
+            .context("read waveform stderr task")??;
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            discard_temp(&dest);
+            anyhow::bail!(
+                "ffmpeg exited with {} for waveform: {}",
+                status,
+                stderr.trim()
+            );
+        }
 
-    let pyramid = build_pyramid(finest);
-    write_peaks(&tmp, channels as u32, &pyramid).await?;
-    if !cached_ok(&tmp) {
+        let pyramid = build_disk_pyramid(finest, spool, cache).await?;
+        write_disk_peaks(&tmp, &pyramid, cache).await?;
+        read_header(&tmp)?;
+        anyhow::ensure!(!cache.is_cancelled(), "workspace cancelled");
+        promote_temp(&dest)?;
+        cache.notify_write();
+        Ok(dest.clone())
+    };
+    // Finish each file operation before observing cancellation, so all file
+    // handles have closed before the spool directory is removed on Windows.
+    let result = operation.await;
+    if result.is_err() {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        stderr_task.abort();
         discard_temp(&dest);
-        anyhow::bail!("waveform peaks file is empty after write");
     }
-    promote_temp(&dest)?;
-    cache.notify_write();
-    Ok(dest)
+    result
 }
 
 /// Decode interleaved stereo f32 PCM from ffmpeg's stdout into the finest
@@ -372,9 +453,19 @@ pub async fn run_from_input(
 /// `build_pyramid` derive every coarser LOD from this level, so it's the
 /// only pass that touches the raw PCM stream.
 async fn compute_finest_level(
-    stdout: &mut tokio::process::ChildStdout,
+    stdout: &mut (impl tokio::io::AsyncRead + Unpin),
     channels: usize,
-) -> Result<LevelData> {
+    spool: &Path,
+    cache: &CacheLayout,
+) -> Result<DiskLevel> {
+    let mut writers = Vec::with_capacity(channels);
+    for _ in 0..channels {
+        writers.push(tokio::io::BufWriter::with_capacity(
+            64 * 1024,
+            tokio::fs::File::from_std(tempfile::tempfile_in(spool)?),
+        ));
+    }
+    let mut peak_count = 0u32;
     let frames_per_peak = BASE_FRAMES_PER_PEAK as usize;
     let mut mins: Vec<Vec<i16>> = vec![Vec::new(); channels];
     let mut maxs: Vec<Vec<i16>> = vec![Vec::new(); channels];
@@ -437,7 +528,10 @@ async fn compute_finest_level(
     }
 
     loop {
-        let n = stdout.read(&mut buf).await.context("read ffmpeg stdout")?;
+        let n = tokio::select! {
+            result = stdout.read(&mut buf) => result.context("read ffmpeg stdout")?,
+            _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+        };
         if n == 0 {
             break;
         }
@@ -450,6 +544,9 @@ async fn compute_finest_level(
             leftover[leftover_len..leftover_len + take].copy_from_slice(&slice[..take]);
             leftover_len += take;
             slice = &slice[take..];
+            if leftover_len < 4 {
+                continue;
+            }
             if leftover_len == 4 {
                 let s = f32::from_le_bytes(leftover);
                 consume(
@@ -484,6 +581,14 @@ async fn compute_finest_level(
                 &mut rmss,
             );
         }
+        peak_count = peak_count
+            .checked_add(mins[0].len() as u32)
+            .context("waveform exceeds VPEAKS peak count limit")?;
+        flush_peak_chunk(&mut writers, &mut mins, &mut maxs, &mut rmss).await?;
+        // Complete any in-flight filesystem writes before a cancellable pipe read.
+        for writer in &mut writers {
+            writer.flush().await?;
+        }
         // Save trailing < 4 bytes for the next iteration.
         let tail = &slice[aligned..];
         leftover_len = tail.len();
@@ -508,18 +613,154 @@ async fn compute_finest_level(
             ));
         }
     }
-    let peak_count = mins[0].len() as u32;
-    Ok(LevelData {
-        channels: channels as u32,
+    if leftover_len != 0 || ch != 0 {
+        anyhow::bail!("waveform PCM ended inside a sample or channel frame");
+    }
+    peak_count = peak_count
+        .checked_add(mins[0].len() as u32)
+        .context("waveform exceeds VPEAKS peak count limit")?;
+    if peak_count == 0 {
+        anyhow::bail!("waveform produced no audio frames");
+    }
+    flush_peak_chunk(&mut writers, &mut mins, &mut maxs, &mut rmss).await?;
+    for writer in &mut writers {
+        writer.flush().await?;
+    }
+    Ok(DiskLevel {
+        frames_per_peak: BASE_FRAMES_PER_PEAK,
         peak_count,
-        mins,
-        maxs,
-        rmss,
+        files: writers
+            .into_iter()
+            .map(|writer| writer.into_inner())
+            .collect(),
     })
+}
+
+struct DiskLevel {
+    frames_per_peak: u32,
+    peak_count: u32,
+    files: Vec<tokio::fs::File>,
+}
+
+async fn flush_peak_chunk(
+    writers: &mut [tokio::io::BufWriter<tokio::fs::File>],
+    mins: &mut [Vec<i16>],
+    maxs: &mut [Vec<i16>],
+    rmss: &mut [Vec<u16>],
+) -> Result<()> {
+    let mut bytes = Vec::with_capacity(mins[0].len() * 6);
+    for (ch, writer) in writers.iter_mut().enumerate() {
+        bytes.clear();
+        for i in 0..mins[ch].len() {
+            bytes.extend_from_slice(&mins[ch][i].to_le_bytes());
+            bytes.extend_from_slice(&maxs[ch][i].to_le_bytes());
+            bytes.extend_from_slice(&rmss[ch][i].to_le_bytes());
+        }
+        writer.write_all(&bytes).await?;
+        mins[ch].clear();
+        maxs[ch].clear();
+        rmss[ch].clear();
+    }
+    Ok(())
+}
+
+/// Disk-backed equivalent of build_pyramid. Only a reader and writer buffer
+/// are resident; quantization and odd-window self-pairing match V4 exactly.
+async fn build_disk_pyramid(
+    finest: DiskLevel,
+    spool: &Path,
+    cache: &CacheLayout,
+) -> Result<Vec<DiskLevel>> {
+    let mut levels = vec![finest];
+    loop {
+        let previous = levels.last().unwrap();
+        if previous.peak_count <= 1 || previous.frames_per_peak >= SAMPLE_RATE {
+            break;
+        }
+        let mut files = Vec::with_capacity(previous.files.len());
+        for input in &previous.files {
+            let mut source = input.try_clone().await?;
+            source.seek(std::io::SeekFrom::Start(0)).await?;
+            let mut reader = tokio::io::BufReader::with_capacity(64 * 1024, source);
+            let mut writer = tokio::io::BufWriter::with_capacity(
+                64 * 1024,
+                tokio::fs::File::from_std(tempfile::tempfile_in(spool)?),
+            );
+            for i in (0..previous.peak_count).step_by(2) {
+                if i % 4096 == 0 {
+                    writer.flush().await?;
+                    cache.check_active()?;
+                }
+                let mut a = [0u8; 6];
+                reader.read_exact(&mut a).await?;
+                let mut b = a;
+                if i + 1 < previous.peak_count {
+                    reader.read_exact(&mut b).await?;
+                }
+                let min = i16::from_le_bytes([a[0], a[1]]).min(i16::from_le_bytes([b[0], b[1]]));
+                let max = i16::from_le_bytes([a[2], a[3]]).max(i16::from_le_bytes([b[2], b[3]]));
+                let ar = dequantize_rms(u16::from_le_bytes([a[4], a[5]])) as f64;
+                let br = dequantize_rms(u16::from_le_bytes([b[4], b[5]])) as f64;
+                let rms = quantize_rms(((ar * ar + br * br) / 2.0).sqrt() as f32);
+                writer.write_all(&min.to_le_bytes()).await?;
+                writer.write_all(&max.to_le_bytes()).await?;
+                writer.write_all(&rms.to_le_bytes()).await?;
+            }
+            writer.flush().await?;
+            files.push(writer.into_inner());
+        }
+        levels.push(DiskLevel {
+            frames_per_peak: previous.frames_per_peak * 2,
+            peak_count: previous.peak_count.div_ceil(2),
+            files,
+        });
+    }
+    Ok(levels)
+}
+
+async fn write_disk_peaks(path: &Path, levels: &[DiskLevel], cache: &CacheLayout) -> Result<()> {
+    let channels = levels[0].files.len() as u32;
+    let mut writer =
+        tokio::io::BufWriter::with_capacity(64 * 1024, tokio::fs::File::create(path).await?);
+    writer.write_all(MAGIC).await?;
+    writer.write_all(&FORMAT_VERSION.to_le_bytes()).await?;
+    writer.write_all(&SAMPLE_RATE.to_le_bytes()).await?;
+    writer.write_all(&channels.to_le_bytes()).await?;
+    writer
+        .write_all(&(levels.len() as u32).to_le_bytes())
+        .await?;
+    let mut offset = HEADER_FIXED_BYTES + LEVEL_ENTRY_BYTES * levels.len() as u64;
+    for level in levels {
+        writer
+            .write_all(&level.frames_per_peak.to_le_bytes())
+            .await?;
+        writer.write_all(&level.peak_count.to_le_bytes()).await?;
+        writer.write_all(&offset.to_le_bytes()).await?;
+        offset += channels as u64 * level.peak_count as u64 * 6;
+    }
+    for level in levels {
+        for channel in &level.files {
+            let mut reader = channel.try_clone().await?;
+            reader.seek(std::io::SeekFrom::Start(0)).await?;
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                writer.flush().await?;
+                cache.check_active()?;
+                let count = reader.read(&mut buffer).await?;
+                if count == 0 {
+                    break;
+                }
+                writer.write_all(&buffer[..count]).await?;
+            }
+        }
+    }
+    writer.flush().await?;
+    Ok(())
 }
 
 /// Halve resolution by pairwise min/max. An odd trailing window is paired
 /// with itself so `out_len == mins.len().div_ceil(2)`.
+#[cfg(test)]
 fn decimate(mins: &[i16], maxs: &[i16]) -> (Vec<i16>, Vec<i16>) {
     let out_len = mins.len().div_ceil(2);
     let mut dmin = Vec::with_capacity(out_len);
@@ -538,6 +779,7 @@ fn decimate(mins: &[i16], maxs: &[i16]) -> (Vec<i16>, Vec<i16>) {
 /// of the two equal-length windows concatenated. An odd trailing window
 /// pairs with itself, which reduces to the identity (`sqrt((a²+a²)/2) = a`),
 /// matching `decimate`'s self-pairing convention.
+#[cfg(test)]
 fn decimate_rms(rmss: &[u16]) -> Vec<u16> {
     let out_len = rmss.len().div_ceil(2);
     let mut out = Vec::with_capacity(out_len);
@@ -556,6 +798,7 @@ fn decimate_rms(rmss: &[u16]) -> Vec<u16> {
 /// number of source PCM frames represented by each peak; each subsequent
 /// level doubles that value while its peak_count is halved via
 /// `decimate`, down to ~1/sec (or a single window, whichever is reached first).
+#[cfg(test)]
 fn build_pyramid(finest: LevelData) -> Vec<(u32, LevelData)> {
     let channels = finest.channels as usize;
     let mut out: Vec<(u32, LevelData)> = vec![(BASE_FRAMES_PER_PEAK, finest)];
@@ -636,6 +879,7 @@ pub fn read_peaks_file(path: &std::path::Path) -> Result<PeaksFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::cached_ok;
     use chrono::Utc;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
@@ -675,6 +919,171 @@ mod tests {
             anyhow::bail!("test fixture ffmpeg failed: {status}");
         }
         Ok(())
+    }
+
+    /// A reader deliberately splitting f32 values at every possible boundary.
+    struct FragmentedPcm {
+        bytes: std::io::Cursor<Vec<u8>>,
+        chunk: usize,
+    }
+    impl tokio::io::AsyncRead for FragmentedPcm {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let mut bytes = [0u8; 8192];
+            let count = self.chunk.min(buf.remaining()).min(bytes.len());
+            let n = std::io::Read::read(&mut self.bytes, &mut bytes[..count])?;
+            buf.put_slice(&bytes[..n]);
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_pyramid_matches_v4_reference_bytes_across_chunks_and_odd_tails() {
+        for chunk in [1, 3, 8191] {
+            let dir = TempDir::new().unwrap();
+            let cache = CacheLayout::new(dir.path().join("cache"));
+            // Several decode chunks, non-power-of-two window count and a partial
+            // final window exercise cross-chunk extrema/RMS and odd self-pairs.
+            let frames = 22 * 513 + 7;
+            let pcm: Vec<[f32; 2]> = (0..frames)
+                .map(|i| {
+                    [
+                        ((i * 13 % 97) as f32 - 48.0) / 64.0,
+                        if i % 71 == 0 { -0.9 } else { 0.125 },
+                    ]
+                })
+                .collect();
+            let bytes = pcm
+                .iter()
+                .flat_map(|frame| frame.iter().flat_map(|v| v.to_le_bytes()))
+                .collect();
+            let mut reader = FragmentedPcm {
+                bytes: std::io::Cursor::new(bytes),
+                chunk,
+            };
+            let fine = compute_finest_level(&mut reader, 2, dir.path(), &cache)
+                .await
+                .unwrap();
+            let levels = build_disk_pyramid(fine, dir.path(), &cache).await.unwrap();
+            let actual = dir.path().join("stream.peaks");
+            write_disk_peaks(&actual, &levels, &cache).await.unwrap();
+            let mut reference = LevelData {
+                channels: 2,
+                peak_count: pcm.len().div_ceil(BASE_FRAMES_PER_PEAK as usize) as u32,
+                mins: vec![vec![], vec![]],
+                maxs: vec![vec![], vec![]],
+                rmss: vec![vec![], vec![]],
+            };
+            for window in pcm.chunks(BASE_FRAMES_PER_PEAK as usize) {
+                for ch in 0..2 {
+                    reference.mins[ch].push(quantize(
+                        window.iter().map(|f| f[ch]).fold(f32::MAX, f32::min),
+                    ));
+                    reference.maxs[ch].push(quantize(
+                        window.iter().map(|f| f[ch]).fold(f32::MIN, f32::max),
+                    ));
+                    let squares: f64 = window.iter().map(|f| (f[ch] as f64).powi(2)).sum();
+                    reference.rmss[ch]
+                        .push(quantize_rms((squares / window.len() as f64).sqrt() as f32));
+                }
+            }
+            let expected = dir.path().join("reference.peaks");
+            write_peaks(&expected, 2, &build_pyramid(reference))
+                .await
+                .unwrap();
+            assert_eq!(
+                std::fs::read(&actual).unwrap(),
+                std::fs::read(&expected).unwrap(),
+                "chunk {chunk}"
+            );
+            assert!(read_header(&actual).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_pcm_read_closes_spool_writers_before_directory_cleanup() {
+        struct CancelAtEnd {
+            bytes: std::io::Cursor<Vec<u8>>,
+            owner: CacheLayout,
+        }
+        impl tokio::io::AsyncRead for CancelAtEnd {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                let mut chunk = [0u8; 8192];
+                let count = chunk.len().min(buf.remaining());
+                let n = std::io::Read::read(&mut self.bytes, &mut chunk[..count])?;
+                if n == 0 {
+                    self.owner.end_session();
+                    return std::task::Poll::Pending;
+                }
+                buf.put_slice(&chunk[..n]);
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        let dir = TempDir::new().unwrap();
+        let owner = CacheLayout::new(dir.path().join("cache"));
+        let snapshot = owner.snapshot();
+        let mut reader = CancelAtEnd {
+            bytes: std::io::Cursor::new(vec![0; 128 * 1024]),
+            owner,
+        };
+        let spool = tempfile::Builder::new()
+            .prefix("waveform-")
+            .tempdir_in(dir.path())
+            .unwrap();
+        let spool_path = spool.path().to_owned();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let _spool = spool;
+            compute_finest_level(&mut reader, 2, &spool_path, &snapshot).await
+        })
+        .await
+        .expect("cancellation must wake a blocked PCM read");
+        assert!(result.is_err());
+        assert!(
+            !spool_path.exists(),
+            "no open writer may prevent Windows temp cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn peaks_validator_rejects_unbounded_tables_truncation_bad_offsets_and_channels() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("file.peaks");
+        let data = LevelData {
+            channels: 1,
+            peak_count: 2,
+            mins: vec![vec![-1; 2]],
+            maxs: vec![vec![1; 2]],
+            rmss: vec![vec![1; 2]],
+        };
+        write_peaks(&path, 1, &[(BASE_FRAMES_PER_PEAK, data)])
+            .await
+            .unwrap();
+        let valid = std::fs::read(&path).unwrap();
+        assert!(read_header(&path).is_ok());
+        for (offset, replacement) in [(20, u32::MAX), (16, 0), (16, 99), (12, 0), (28, 0)] {
+            let mut bad = valid.clone();
+            bad[offset..offset + 4].copy_from_slice(&replacement.to_le_bytes());
+            std::fs::write(&path, bad).unwrap();
+            assert!(
+                read_header(&path).is_err(),
+                "offset {offset}, replacement {replacement}"
+            );
+        }
+        let mut bad = valid.clone();
+        bad[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&path, bad).unwrap();
+        assert!(read_header(&path).is_err());
+        std::fs::write(&path, &valid[..valid.len() - 1]).unwrap();
+        assert!(read_header(&path).is_err());
+        std::fs::write(&path, &valid).unwrap();
+        assert_eq!(read_range(&path, 0, 0, 1, u32::MAX).unwrap().min, vec![-1]);
     }
 
     #[tokio::test]
@@ -757,6 +1166,86 @@ mod tests {
             (ratio - 0.707).abs() < 0.05,
             "rms/peak ratio {ratio} not close to 1/sqrt(2)"
         );
+    }
+
+    #[tokio::test]
+    async fn canonical_48k_conform_reuse_preserves_waveform_bytes_and_channel_policy() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let cache = CacheLayout::new(dir.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        for (ext, channels) in [("wav", 1), ("flac", 2), ("m4a", 2)] {
+            let source = dir.path().join(format!("tone.{ext}"));
+            let status = Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=731:sample_rate=48000:duration=0.137",
+                    "-ac",
+                    &channels.to_string(),
+                ])
+                .arg(&source)
+                .status()
+                .await
+                .unwrap();
+            assert!(status.success());
+            let media = MediaItem {
+                id: new_id(),
+                label: None,
+                path_abs: source.clone(),
+                path_rel: None,
+                kind: MediaKind::Audio,
+                metadata: MediaMetadata {
+                    duration_us: Some(137_000),
+                    audio: Some(AudioStreamMeta {
+                        sample_rate: 48000,
+                        channels,
+                        codec: ext.into(),
+                        start_pts_us: None,
+                    }),
+                    ..Default::default()
+                },
+                decode_route: DecodeRoute::Bypass,
+                waveform_path: None,
+                conform_path: None,
+                thumbnails_dir: None,
+                file_hash_blake3: format!("reuse-{ext}"),
+                file_size: 0,
+                file_mtime: 0,
+                imported_at: Utc::now(),
+            };
+            let direct = run(&cache, &media).await.unwrap();
+            let expected = std::fs::read(&direct).unwrap();
+            super::super::conform::run(&cache, &media).await.unwrap();
+            std::fs::remove_file(&direct).unwrap();
+            // The only usable input is the canonical conform; a fallback to
+            // compressed-source decode now fails this test.
+            std::fs::remove_file(source).unwrap();
+            let reused = run(&cache, &media).await.unwrap();
+            assert_eq!(
+                std::fs::read(&reused).unwrap(),
+                expected,
+                "{ext}/{channels}ch"
+            );
+            std::fs::write(&reused, &expected[..40]).unwrap();
+            assert!(cached_path(&cache, &media).is_none());
+            let repaired = run(&cache, &media).await.unwrap();
+            assert_eq!(std::fs::read(repaired).unwrap(), expected, "repair {ext}");
+            assert!(std::fs::read_dir(reused.parent().unwrap())
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("waveform-")));
+        }
     }
 
     #[tokio::test]

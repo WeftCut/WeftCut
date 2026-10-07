@@ -32,6 +32,10 @@ impl WorkspaceSlot {
         self.inner.read().expect("workspace slot poisoned").clone()
     }
 
+    pub fn clear(&self) {
+        *self.inner.write().expect("workspace slot poisoned") = None;
+    }
+
     pub fn set(&self, workspace: PathBuf) {
         *self.inner.write().expect("workspace slot poisoned") = Some(workspace);
     }

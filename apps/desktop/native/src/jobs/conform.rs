@@ -59,11 +59,21 @@ pub fn read_header(path: &Path) -> Result<ConformHeader> {
         anyhow::bail!("unsupported conform version {version}");
     }
     let sample_rate = u32::from_le_bytes(head[12..16].try_into().unwrap());
+    if sample_rate != CONFORM_SAMPLE_RATE {
+        anyhow::bail!("unsupported conform sample rate {sample_rate}");
+    }
     let channels = u32::from_le_bytes(head[16..20].try_into().unwrap());
     if channels == 0 || channels > 2 {
         anyhow::bail!("conform channels {channels} out of range");
     }
     let frame_count = u64::from_le_bytes(head[20..28].try_into().unwrap());
+    let expected_len = frame_count
+        .checked_mul(channels as u64 * 4)
+        .and_then(|n| n.checked_add(HEADER_LEN))
+        .context("conform frame count overflows its file span")?;
+    if frame_count == 0 || f.metadata()?.len() != expected_len {
+        anyhow::bail!("conform data length does not match its frame count");
+    }
     Ok(ConformHeader {
         version,
         sample_rate,
@@ -72,15 +82,13 @@ pub fn read_header(path: &Path) -> Result<ConformHeader> {
     })
 }
 
-pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
+pub(crate) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
     let dest = cache.audio_conform(&media.file_hash_blake3);
     (cached_ok(&dest) && read_header(&dest).is_ok()).then_some(dest)
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg not installed; cannot conform audio");
-    }
+    cache.check_active()?;
     let Some(audio_meta) = media.metadata.audio.as_ref() else {
         anyhow::bail!("media has no audio stream");
     };
@@ -95,6 +103,11 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             return Ok(path);
         }
         let _ = tokio::fs::remove_file(&dest).await;
+    }
+
+    cache.check_active()?;
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg not installed; cannot conform audio");
     }
 
     let out_channels: u32 = if audio_meta.channels <= 1 { 1 } else { 2 };
@@ -126,74 +139,111 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         .context("spawn ffmpeg for conform")?;
 
     let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stderr_task =
+        tokio::spawn(drain_stderr(child.stderr.take().expect("stderr was piped")));
+    let operation = async {
+        // Stream to the temp file with a placeholder frame_count, then patch
+        // the header once the byte total is known.
+        let mut f = tokio::fs::File::create(&tmp)
+            .await
+            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut head = Vec::with_capacity(HEADER_LEN as usize);
+        head.extend_from_slice(MAGIC);
+        head.extend_from_slice(&CONFORM_FORMAT_VERSION.to_le_bytes());
+        head.extend_from_slice(&CONFORM_SAMPLE_RATE.to_le_bytes());
+        head.extend_from_slice(&out_channels.to_le_bytes());
+        head.extend_from_slice(&0u64.to_le_bytes()); // frame_count patched below
+        f.write_all(&head).await.context("write conform header")?;
 
-    // Stream to the temp file with a placeholder frame_count, then patch
-    // the header once the byte total is known.
-    let mut f = tokio::fs::File::create(&tmp)
-        .await
-        .with_context(|| format!("create {}", tmp.display()))?;
-    let mut head = Vec::with_capacity(HEADER_LEN as usize);
-    head.extend_from_slice(MAGIC);
-    head.extend_from_slice(&CONFORM_FORMAT_VERSION.to_le_bytes());
-    head.extend_from_slice(&CONFORM_SAMPLE_RATE.to_le_bytes());
-    head.extend_from_slice(&out_channels.to_le_bytes());
-    head.extend_from_slice(&0u64.to_le_bytes()); // frame_count patched below
-    f.write_all(&head).await.context("write conform header")?;
-
-    let mut total_bytes: u64 = 0;
-    let mut buf = vec![0u8; 256 * 1024];
-    loop {
-        let n = stdout.read(&mut buf).await.context("read ffmpeg stdout")?;
-        if n == 0 {
-            break;
+        let mut total_bytes: u64 = 0;
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = tokio::select! {
+                result = stdout.read(&mut buf) => result.context("read ffmpeg stdout")?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n]).await.context("write conform data")?;
+            f.flush().await.context("complete conform write")?;
+            total_bytes += n as u64;
         }
-        f.write_all(&buf[..n]).await.context("write conform data")?;
-        total_bytes += n as u64;
-    }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .context("await ffmpeg for conform")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let status = tokio::select! {
+            result = child.wait() => result.context("await ffmpeg for conform")?,
+            _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+        };
+        let stderr_bytes = (&mut stderr_task)
+            .await
+            .context("read conform stderr task")??;
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            drop(f);
+            discard_temp(&dest);
+            anyhow::bail!(
+                "ffmpeg exited with {} for conform: {}",
+                status,
+                stderr.trim()
+            );
+        }
+
+        let bytes_per_frame = out_channels as u64 * 4;
+        if !total_bytes.is_multiple_of(bytes_per_frame) {
+            // Truncate a torn trailing frame rather than fail — ffmpeg's f32le
+            // stream is frame-aligned in practice; this is belt-and-braces.
+            total_bytes -= total_bytes % bytes_per_frame;
+            f.set_len(HEADER_LEN + total_bytes).await?;
+        }
+        let frame_count = total_bytes / bytes_per_frame;
+        if frame_count == 0 {
+            drop(f);
+            discard_temp(&dest);
+            anyhow::bail!(
+                "conform produced zero frames for {}",
+                media.path_abs.display()
+            );
+        }
+
+        use tokio::io::AsyncSeekExt;
+        f.seek(std::io::SeekFrom::Start(20))
+            .await
+            .context("seek to frame_count")?;
+        f.write_all(&frame_count.to_le_bytes())
+            .await
+            .context("patch frame_count")?;
+        f.flush().await.context("flush conform")?;
         drop(f);
+
+        read_header(&tmp)?;
+        anyhow::ensure!(!cache.is_cancelled(), "workspace cancelled");
+        promote_temp(&dest)?;
+        Ok(dest.clone())
+    };
+    // Never drop an in-flight tokio file write: on Windows its blocking task
+    // may retain the file handle and prevent temp cleanup. Cancellation is
+    // observed at child reads/wait and after completed disk writes instead.
+    let result = operation.await;
+    if result.is_err() {
+        // A reservation may be released only after the process has exited.
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        stderr_task.abort();
         discard_temp(&dest);
-        anyhow::bail!(
-            "ffmpeg exited with {} for conform: {}",
-            output.status,
-            stderr.trim()
-        );
     }
+    result
+}
 
-    let bytes_per_frame = out_channels as u64 * 4;
-    if !total_bytes.is_multiple_of(bytes_per_frame) {
-        // Truncate a torn trailing frame rather than fail — ffmpeg's f32le
-        // stream is frame-aligned in practice; this is belt-and-braces.
-        total_bytes -= total_bytes % bytes_per_frame;
-    }
-    let frame_count = total_bytes / bytes_per_frame;
-    if frame_count == 0 {
-        drop(f);
-        discard_temp(&dest);
-        anyhow::bail!(
-            "conform produced zero frames for {}",
-            media.path_abs.display()
-        );
-    }
-
-    use tokio::io::AsyncSeekExt;
-    f.seek(std::io::SeekFrom::Start(20))
-        .await
-        .context("seek to frame_count")?;
-    f.write_all(&frame_count.to_le_bytes())
-        .await
-        .context("patch frame_count")?;
-    f.flush().await.context("flush conform")?;
-    drop(f);
-
-    promote_temp(&dest)?;
-    Ok(dest)
+/// Drain diagnostics concurrently so a full stderr pipe cannot deadlock PCM
+/// output. Keep a bounded diagnostic prefix and discard the remaining bytes.
+pub(super) async fn drain_stderr(mut stderr: tokio::process::ChildStderr) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    (&mut stderr)
+        .take(64 * 1024)
+        .read_to_end(&mut bytes)
+        .await?;
+    tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -291,6 +341,39 @@ mod tests {
         header.extend_from_slice(&0f32.to_le_bytes());
         std::fs::write(&dest, &header).unwrap();
         assert_eq!(cached_path(&cache, &media), Some(dest));
+    }
+
+    #[test]
+    fn conform_validation_rejects_missing_body_invalid_rate_zero_frames_and_overflow() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.conform");
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&CONFORM_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&CONFORM_SAMPLE_RATE.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&48_000u64.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(
+            read_header(&path).is_err(),
+            "header-only conform must not be restored"
+        );
+        bytes[20..28].copy_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_header(&path).is_err(), "frame span overflow");
+        bytes[20..28].copy_from_slice(&0u64.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_header(&path).is_err(), "empty conform");
+        bytes[20..28].copy_from_slice(&1u64.to_le_bytes());
+        bytes.extend_from_slice(&[0; 8]);
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_header(&path).is_ok());
+        bytes[12..16].copy_from_slice(&44_100u32.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_header(&path).is_err(), "canonical sample rate");
+        bytes[12..16].copy_from_slice(&CONFORM_SAMPLE_RATE.to_le_bytes());
+        bytes.push(0);
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_header(&path).is_err(), "torn trailing frame");
     }
 
     #[tokio::test]

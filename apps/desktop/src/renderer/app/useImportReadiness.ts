@@ -19,7 +19,7 @@ import {
   classifyWebcodecsDecodability,
   type WebcodecsDecodeVerdict,
 } from "../render/decoder/probeSourceDecodable";
-import { markWebcodecsUnusable } from "../render/decoder/webcodecsCapability";
+import { forgetWebcodecsCapability, markWebcodecsUnusable, resetWebcodecsCapabilitySession } from "../render/decoder/webcodecsCapability";
 import {
   sourcesNeedingPreviewProbe,
   type ProbeState,
@@ -33,6 +33,7 @@ import {
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
+import { backgroundResourcesAvailable, onResourceChange } from "../render/resourceClient";
 
 /// Owns the import pipeline + per-media preview readiness: the import queue,
 /// the copying/proxy lifecycle maps, the session decodability probe memo, the
@@ -194,6 +195,26 @@ export function useImportReadiness(deps: {
   // reported once per media per session; the pool badge carries the durable
   // truth, so re-emitting on every re-render would only flood the log.
   const notifiedFailureIds = useRef<Set<string>>(new Set());
+  const probeIdentities = useRef(new Map<string, string>());
+
+  const [resourceTick, setResourceTick] = useState(0);
+  useEffect(() => {
+    let available = backgroundResourcesAvailable();
+    return onResourceChange(() => {
+      const next = backgroundResourcesAvailable();
+      // Telemetry publishes repeatedly even when availability is unchanged.
+      // Restarting on every sample would continually abort a slow decoder.
+      if (next !== available) { available = next; setResourceTick((n) => n + 1); }
+    });
+  }, []);
+  useEffect(() => {
+    decodeProbeMemo.current.clear();
+    routeCorrected.current.clear();
+    notifiedFailureIds.current.clear();
+    resetWebcodecsCapabilitySession();
+    setProxyState(new Map());
+    setSweepTick((n) => n + 1);
+  }, [summary?.project_id]);
 
   // Import-time decodability sweep. For every DirectExport video source not yet
   // probed this session, decode one key frame in the background; on failure
@@ -203,8 +224,25 @@ export function useImportReadiness(deps: {
   // the fresh Zustand pool; re-runs when `summary` changes (every project:changed).
   useEffect(() => {
     let cancelled = false;
+    const abort = new AbortController();
+    let pendingId: string | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let retryNeeded = false;
+    const memo = decodeProbeMemo.current;
+    const live = useProjectStore.getState().mediaById;
+    for (const [id, identity] of probeIdentities.current) {
+      const media = live.get(id);
+      if (!media || identity !== `${media.path}:${media.size_bytes}`) {
+        memo.delete(id);
+        routeCorrected.current.delete(id);
+        notifiedFailureIds.current.delete(id);
+        forgetWebcodecsCapability(id);
+      }
+    }
+    probeIdentities.current = new Map([...live].map(([id, media]) => [id, `${media.path}:${media.size_bytes}`]));
+    for (const id of routeCorrected.current) if (!live.has(id)) routeCorrected.current.delete(id);
+    for (const id of notifiedFailureIds.current) if (!live.has(id)) notifiedFailureIds.current.delete(id);
     void (async () => {
-      const memo = decodeProbeMemo.current;
       const pool = useProjectStore.getState().mediaById;
       const candidates = sourcesNeedingPreviewProbe(pool).filter(
         (m) =>
@@ -214,13 +252,17 @@ export function useImportReadiness(deps: {
       );
       for (const m of candidates) {
         if (cancelled) return;
+        pendingId = m.id;
         memo.set(m.id, "pending");
         let verdict: WebcodecsDecodeVerdict = "unknown";
         try {
-          verdict = await classifyWebcodecsDecodability(convertFileSrc(m.path));
+          verdict = await classifyWebcodecsDecodability(convertFileSrc(m.path), 2500, abort.signal);
         } catch {
           verdict = "unknown";
         }
+        if (cancelled) return;
+        pendingId = undefined;
+        if (verdict === "unknown") retryNeeded = true;
         const ok = verdict === "ok";
         // DEFINITIVE WebCodecs-unsupported original (no codec mapping /
         // isConfigSupported declines both lanes — NOT a transient stall): sticky-
@@ -232,15 +274,8 @@ export function useImportReadiness(deps: {
         if (verdict === "unsupported") {
           markWebcodecsUnusable(m.id, "webcodecs cannot decode original");
         }
-        // Land the verdict even if the effect was cancelled mid-probe. A rapid
-        // project:changed during a fast import (quick proxy lands in ~seconds)
-        // re-runs this [summary] effect and flips `cancelled`; bailing here
-        // would strand memo at "pending" forever — the next run filters out
-        // "pending" (and a proxied source leaves `sourcesNeedingPreviewProbe`),
-        // so it's never re-probed and stays stuck on "checking", never bridged.
-        // `classifyWebcodecsDecodability` has no AbortSignal, so the await
-        // completes regardless; recording its result is safe + idempotent. (The loop-top
-        // `if (cancelled) return` still stops STARTING new probes after cancel.)
+        // Cleanup removes this effect's pending memo before the next sweep;
+        // cancelled probes must never publish a result into another project.
         if (ok) {
           memo.set(m.id, "ok");
           // A paused clip already on the timeline won't re-run ensureClip on its
@@ -278,11 +313,17 @@ export function useImportReadiness(deps: {
         // a now-decodable clip would stay stuck on "checking" in the dialog.
         setSweepTick((x) => x + 1);
       }
+      if (!cancelled && retryNeeded) {
+        retry = setTimeout(() => setResourceTick((n) => n + 1), 5000);
+      }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(retry);
+      abort.abort();
+      if (pendingId && memo.get(pendingId) === "pending") memo.delete(pendingId);
     };
-  }, [summary, previewRef]);
+  }, [summary, previewRef, resourceTick]);
 
   // Deps recreated each render; they read `.current` refs so they're always
   // live. `sweepTick` is what forces re-eval when only a ref changed.

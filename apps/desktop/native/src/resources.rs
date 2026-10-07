@@ -187,6 +187,13 @@ pub fn governor() -> &'static Arc<Governor> {
 pub struct BackgroundGate;
 impl BackgroundGate {
     pub async fn acquire(&self) -> anyhow::Result<Permit> {
+        // Bound pressure on the authority. Excess background work waits here;
+        // queue capacity is backpressure, never a permanent task failure.
+        static DISPATCH: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+        let _dispatch = DISPATCH
+            .get_or_init(|| tokio::sync::Semaphore::new(32))
+            .acquire()
+            .await?;
         governor()
             .acquire(true, 128)
             .await

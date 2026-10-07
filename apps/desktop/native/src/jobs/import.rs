@@ -80,12 +80,15 @@ struct ImportQueueInner {
     running: Option<RunningImport>,
     history: Vec<ImportEntry>,
     worker_alive: bool,
+    cache: Option<crate::cache::CacheLayout>,
 }
 
 struct PendingImport {
     media_id: MediaId,
     source: PathBuf,
     workspace_root: PathBuf,
+    cache: Option<crate::cache::CacheLayout>,
+    log_slot: LogBusSlot,
 }
 
 struct RunningImport {
@@ -101,6 +104,7 @@ impl ImportQueue {
                 running: None,
                 history: Vec::new(),
                 worker_alive: false,
+                cache: None,
             })),
             events,
             log_slot,
@@ -109,13 +113,45 @@ impl ImportQueue {
 
     /// Push a copy job. Spawns the worker on first enqueue; subsequent
     /// enqueues just append.
+    #[cfg(test)]
     pub fn enqueue(&self, media_id: MediaId, source: PathBuf, workspace_root: PathBuf) {
+        self.enqueue_inner(media_id, source, workspace_root, None);
+    }
+    pub fn enqueue_scoped(
+        &self,
+        media_id: MediaId,
+        source: PathBuf,
+        workspace_root: PathBuf,
+        cache: crate::cache::CacheLayout,
+    ) {
+        self.enqueue_inner(media_id, source, workspace_root, Some(cache));
+    }
+    fn enqueue_inner(
+        &self,
+        media_id: MediaId,
+        source: PathBuf,
+        workspace_root: PathBuf,
+        cache: Option<crate::cache::CacheLayout>,
+    ) {
         let need_worker = {
+            if cache.as_ref().is_some_and(|cache| cache.is_cancelled()) {
+                return;
+            }
             let mut guard = self.inner.lock().expect("import queue poisoned");
+            if guard.pending.iter().any(|entry| entry.media_id == media_id)
+                || guard.running.as_ref().is_some_and(|entry| {
+                    entry.media_id == media_id && !entry.cancel.load(Ordering::Acquire)
+                })
+            {
+                return;
+            }
+            guard.cache = cache.clone();
             guard.pending.push_back(PendingImport {
                 media_id,
                 source: source.clone(),
                 workspace_root,
+                cache,
+                log_slot: self.log_slot.snapshot(),
             });
             guard.history.push(ImportEntry {
                 media_id: media_id.to_string(),
@@ -133,6 +169,16 @@ impl ImportQueue {
         if need_worker {
             let me = self.clone();
             tokio::spawn(async move { me.worker_loop().await });
+        }
+    }
+
+    pub fn cancel_all(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.pending.clear();
+        inner.history.clear();
+        inner.cache = None;
+        if let Some(running) = &inner.running {
+            running.cancel.store(true, Ordering::Release);
         }
     }
 
@@ -177,7 +223,15 @@ impl ImportQueue {
 
     fn emit_queue(&self) {
         let snapshot = self.list();
-        self.events.emit(
+        let events = self
+            .inner
+            .lock()
+            .unwrap()
+            .cache
+            .as_ref()
+            .map(|cache| cache.scoped_events(self.events.clone()))
+            .unwrap_or_else(|| self.events.clone());
+        events.emit(
             events::QUEUE,
             serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
         );
@@ -196,6 +250,18 @@ impl ImportQueue {
             };
 
             let media_id = next.media_id;
+            let events = next
+                .cache
+                .as_ref()
+                .map(|cache| cache.scoped_events(self.events.clone()))
+                .unwrap_or_else(|| self.events.clone());
+            if next
+                .cache
+                .as_ref()
+                .is_some_and(|cache| cache.is_cancelled())
+            {
+                continue;
+            }
             let cancel = Arc::new(AtomicBool::new(false));
             {
                 let mut guard = self.inner.lock().expect("import queue poisoned");
@@ -212,14 +278,14 @@ impl ImportQueue {
                     entry.status = ImportStatus::Copying;
                 }
             }
-            self.events.emit(
+            events.emit(
                 events::STARTED,
                 serde_json::json!({ "mediaId": media_id.to_string() }),
             );
             // Status-log producer: pair Started/Ok-Err on the same
             // op_id so the console collapses the lifecycle.
             let log_op_id = uuid::Uuid::now_v7();
-            self.log_slot.emit(logs::LogEntryInput {
+            next.log_slot.emit(logs::LogEntryInput {
                 level: logs::LogLevel::Info,
                 category: logs::LogCategory::Import,
                 source: logs::LogSource::User,
@@ -234,8 +300,39 @@ impl ImportQueue {
             });
             self.emit_queue();
 
-            let outcome =
-                copy_to_workspace(&next.source, &next.workspace_root, cancel.clone()).await;
+            let outcome = async {
+                let permit = if let Some(cache) = &next.cache {
+                    tokio::select! {
+                        permit = crate::jobs::ffmpeg_sem().acquire() => Some(permit?),
+                        _ = cache.cancelled() => return Ok(None),
+                    }
+                } else {
+                    None
+                };
+                let _permit = permit;
+                let copy = copy_to_workspace(&next.source, &next.workspace_root, cancel.clone());
+                tokio::pin!(copy);
+                if let Some(cache) = &next.cache {
+                    tokio::select! {
+                        result = &mut copy => result,
+                        _ = cache.cancelled() => {
+                            cancel.store(true, Ordering::Release);
+                            copy.await
+                        }
+                    }
+                } else {
+                    copy.await
+                }
+            }
+            .await;
+            if next
+                .cache
+                .as_ref()
+                .is_some_and(|cache| cache.is_cancelled())
+            {
+                self.inner.lock().unwrap().running = None;
+                continue;
+            }
 
             match outcome {
                 Ok(Some(copy)) => {
@@ -245,7 +342,7 @@ impl ImportQueue {
                     // sole writer). The hash matches the standalone hash pass the
                     // import already ran (same bytes), so this is idempotent.
                     if let Err(e) = crate::jobs::commit_media_workspace_paths(
-                        &self.events,
+                        &events,
                         media_id,
                         dest_abs.clone(),
                         copy.dest_rel.clone(),
@@ -262,14 +359,14 @@ impl ImportQueue {
                                 detail: e.to_string(),
                             },
                         );
-                        self.events.emit(
+                        events.emit(
                             events::ERROR,
                             serde_json::json!({
                                 "mediaId": media_id.to_string(),
                                 "detail": e.to_string(),
                             }),
                         );
-                        self.log_slot.emit(logs::LogEntryInput {
+                        next.log_slot.emit(logs::LogEntryInput {
                             level: logs::LogLevel::Error,
                             category: logs::LogCategory::Import,
                             source: logs::LogSource::User,
@@ -289,14 +386,14 @@ impl ImportQueue {
                             ImportStatus::Completed,
                             Some(copy.dest_rel.to_string_lossy().to_string()),
                         );
-                        self.events.emit(
+                        events.emit(
                             events::COMPLETE,
                             serde_json::json!({
                                 "mediaId": media_id.to_string(),
                                 "pathRel": copy.dest_rel.to_string_lossy(),
                             }),
                         );
-                        self.log_slot.emit(logs::LogEntryInput {
+                        next.log_slot.emit(logs::LogEntryInput {
                             level: logs::LogLevel::Info,
                             category: logs::LogCategory::Import,
                             source: logs::LogSource::User,
@@ -317,7 +414,7 @@ impl ImportQueue {
                     // user cancel closes it as `Ok`, not `Err` (same convention
                     // as the content-download op in `src/main/index.ts`).
                     self.finalize(media_id, ImportStatus::Cancelled);
-                    self.log_slot.emit(logs::LogEntryInput {
+                    next.log_slot.emit(logs::LogEntryInput {
                         level: logs::LogLevel::Info,
                         category: logs::LogCategory::Import,
                         source: logs::LogSource::User,
@@ -335,14 +432,14 @@ impl ImportQueue {
                             detail: format!("{e:#}"),
                         },
                     );
-                    self.events.emit(
+                    events.emit(
                         events::ERROR,
                         serde_json::json!({
                             "mediaId": media_id.to_string(),
                             "detail": format!("{e:#}"),
                         }),
                     );
-                    self.log_slot.emit(logs::LogEntryInput {
+                    next.log_slot.emit(logs::LogEntryInput {
                         level: logs::LogLevel::Error,
                         category: logs::LogCategory::Import,
                         source: logs::LogSource::User,

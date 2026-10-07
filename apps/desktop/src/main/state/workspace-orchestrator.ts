@@ -9,7 +9,8 @@
 // a successful swap/write.
 import { WorkspaceFailure, isWorkspaceFailure } from '../../shared/workspaceErrors'
 import type { ActorHandle } from './actor'
-import { isCommandFailure } from './errors'
+import { isCommandFailure, ValidationFailure } from './errors'
+import { validate } from './validate'
 import type { IdGen } from './ids'
 import type { Project } from './model'
 import { blankProject, rootComposition } from './model'
@@ -21,7 +22,9 @@ import { serializeProject, type GridRepair } from './serialize'
  *  commit_workspace / push_recent / set_last_new_project_parent). */
 export interface WorkspaceNapi {
   /** cache.set_workspace → workspace.set → agent_session end → LogBus rotate. */
-  commitWorkspace(path: string): Promise<void>
+  commitWorkspace(path: string): Promise<number | void>
+  /** Cancel this opening's jobs; implemented by production native backend. */
+  endWorkspace?(): Promise<number | void>
   /** recents.push — after a successful replace_state / write. */
   pushRecent(path: string, displayName: string): Promise<void> | void
   /** recents.set_last_new_project_parent — new-workspace flow only. */
@@ -84,7 +87,7 @@ export interface SchemaUpgradeReport {
 }
 
 /** project_open. Pre-checks → load (schema gate + migration chain) →
- *  delete stale quick proxies → preserve pre-upgrade bytes → relink heal →
+ *  preserve pre-upgrade bytes → relink heal →
  *  commit_workspace (pre-broadcast) → onGridRepair + onSchemaUpgrade reports →
  *  replace_state → onRelink report → push_recent → (deferred) derivative
  *  re-fan-out. All three reports sit after commit_workspace because it rotates
@@ -103,7 +106,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // the doomed pre-open bus (or nowhere at all on a fresh launch) and silently
   // vanishes — the same trap `OrchestratorDeps.onRelink` documents. Object
   // identity cannot carry the report instead: `reconcileMediaPaths` and
-  // `clearSessionQuickProxies` both spread into fresh objects, so a WeakMap keyed on
+  // other load repairs may spread into fresh objects, so a WeakMap keyed on
   // the parsed project is already dead by the time `replaceState` runs.
   let gridRepairs: readonly GridRepair[] = []
   // The schema gate inside already refuses in the workspace vocabulary; what is
@@ -119,9 +122,6 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
     throw new WorkspaceFailure({ error: 'ProjectFileUnreadable', detail: String(e) })
   }
   let project = loaded.project
-  const { quickProxiesToDelete } = loaded
-  // Best-effort: never fail the open on a leftover proxy we couldn't remove.
-  for (const p of quickProxiesToDelete) { try { fs.rm(p) } catch { /* ignore */ } }
 
   // A schema upgrade happened in memory only; project.json still holds the old
   // bytes until the first edit's autosave overwrites it. Preserve them NOW —
@@ -144,6 +144,17 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
     schemaUpgrade = { from: loaded.upgradedFrom, to: project.schema_version, backupFile: kept }
   }
 
+  // Refuse invalid state before cancelling the current workspace's resources.
+  try { validate(project) }
+  catch (e) {
+    throw new WorkspaceFailure({ error: 'ProjectInvalid', detail: e instanceof ValidationFailure
+      ? JSON.stringify({ error: 'ValidationFailed', detail: e.err }) : String(e) })
+  }
+
+  // Re-point cache + workspace BEFORE the state swap, so project:changed
+  // consumers see the workspace, not the boot fallback.
+  await napi.commitWorkspace(dir)
+
   // Relink-by-content self-heal (relink.ts). Best-effort: a heal crash must
   // never block the open — the un-healed project still loads (MissingMedia UI).
   let relinkReport: RelinkReport | null = null
@@ -155,9 +166,6 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
     } catch { /* keep the un-healed project */ }
   }
 
-  // Re-point cache + workspace BEFORE the state swap, so project:changed
-  // consumers see the workspace, not the boot fallback.
-  await napi.commitWorkspace(dir)
   // Emitted BEFORE replace_state deliberately: the repair is what lets an older
   // project satisfy the backstop at all, so if the swap STILL fails validation this
   // row is the diagnostic that says what load already had to move.
@@ -196,6 +204,7 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string): Promis
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
   await napi.commitWorkspace(dir)
   await napi.pushRecent(dir, snap.metadata.name)
+  deps.enqueueDerivatives?.(snap)
 }
 
 export interface NewWorkspaceArgs {
@@ -211,7 +220,15 @@ export interface NewWorkspaceArgs {
 export function makeEnqueueDerivatives(
   napi: Pick<WorkspaceNapi, 'enqueueJobsForMedia'>,
 ): (project: Project) => void {
-  return (project) => { void napi.enqueueJobsForMedia(JSON.stringify(Object.values((serializeProject(project) as { media_pool: Record<string, unknown> }).media_pool))) }
+  return (project) => {
+    const items = Object.values((serializeProject(project) as { media_pool: Record<string, { file_hash_blake3: string }> }).media_pool)
+      .filter(item => !item.file_hash_blake3.startsWith('pending-'))
+    try {
+      void Promise.resolve(napi.enqueueJobsForMedia(JSON.stringify(items))).catch(error => {
+        console.warn('[media] derivative recovery could not start', error)
+      })
+    } catch (error) { console.warn('[media] derivative recovery could not start', error) }
+  }
 }
 
 /** project_new_workspace. Validate → blank project with

@@ -128,6 +128,31 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(root(host.actor.snapshot()).tracks.some((t) => t.id === track)).toBe(false)
   })
 
+  it('serializes opening and closing resources even when close arrives during commit', async () => {
+    const { deps } = makeInMemoryDeps()
+    let release!: () => void
+    const entered = vi.fn()
+    const commit = deps.napi.commitWorkspace
+    deps.napi.commitWorkspace = async p => { entered(); await new Promise<void>(r => { release = r }); await commit(p) }
+    const endWorkspace = vi.fn(async () => {})
+    const onWorkspaceChanging = vi.fn(), onWorkspaceOpened = vi.fn()
+    const host = createTsActorHost({ ...deps, napi: { ...deps.napi, endWorkspace }, onWorkspaceChanging, onWorkspaceOpened })
+    const opening = host.handleInvoke('project_new_workspace', {
+      parentFolder: '/projects', name: 'pending', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1,
+    })
+    await vi.waitFor(() => expect(entered).toHaveBeenCalled())
+    await expect(host.handleInvoke('import_media', { path: '/source/clip.wav' })).rejects.toThrow(/Project is changing/)
+    const closing = host.handleInvoke('project_close', {})
+    expect(host.openedProject()).toBeNull()
+    expect(endWorkspace).not.toHaveBeenCalled()
+    release()
+    await Promise.all([opening, closing])
+    expect(endWorkspace).toHaveBeenCalledOnce()
+    expect(host.openedProject()).toBeNull()
+    expect(onWorkspaceChanging.mock.invocationCallOrder.at(-1)).toBeGreaterThan(onWorkspaceOpened.mock.invocationCallOrder.at(-1)!)
+    host.stop()
+  })
+
   it('project_open flushes pending edits to the current workspace before switching', async () => {
     vi.useFakeTimers()
     const { deps, vfs } = makeInMemoryDeps()

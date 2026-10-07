@@ -107,6 +107,8 @@ export interface AudioFxBaker {
   /** Project open / switch: abort in-flight bakes, clear timers, rebuild from
    *  the current snapshot. */
   reset(): void
+  /** Workspace transition/close: stop scheduling until reset activates it. */
+  suspend(): void
   /** Project close: abort in-flight bakes and stop watching. */
   dispose(): void
 }
@@ -144,6 +146,7 @@ interface Entry {
 interface BakeRun {
   sig: string
   jobKey: string
+  generation: number
   /** Set when we asked Rust to abort: the rejection that follows is ours, not
    *  a failure to report. */
   cancelled: boolean
@@ -192,6 +195,9 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   const clearT = deps.clearTimeout ?? ((handle) => { clearTimeout(handle as ReturnType<typeof setTimeout>) })
 
   const entries = new Map<string, Entry>()
+  let generation = 0
+  let active = true
+  let disposed = false
   /** Live bakes by signature — the index that makes N layers one bake. */
   const bakes = new Map<string, BakeRun>()
   /** Media whose conform we have already asked for, so two layers on one media
@@ -199,7 +205,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   const conformAsked = new Set<string>()
   /** Peaks builds in flight, by destination — a settle that re-runs while one
    *  is running must not launch a second. */
-  const peaksInFlight = new Set<string>()
+  const peaksInFlight = new Map<string, number>()
 
   // ── publishing ────────────────────────────────────────────────────────────
 
@@ -359,7 +365,12 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     patch(layerId, { pending: run.sig, error: null })
   }
 
-  async function runBake(d: Desired, jobKey: string): Promise<AudioFxReady> {
+  function assertRun(run: BakeRun): void {
+    if (!active || run.cancelled || run.generation !== generation) throw new Error('audio fx bake superseded')
+  }
+
+  async function runBake(d: Desired, run: BakeRun): Promise<AudioFxReady> {
+    assertRun(run)
     const conformPath = d.conformPath
     if (conformPath === null) throw new Error('audio fx bake: the media has no conform')
     const measurements: BakeMeasurements = {}
@@ -367,6 +378,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
       const report = await backend.measureConformRms({
         conform_path: conformPath, in_us: req.inUs, out_us: req.outUs,
       })
+      assertRun(run)
       measurements[measurementKey(req)] = report.rms_dbfs
     }
     const filterComplex = buildFilterComplex(d.chain, { measurements })
@@ -379,13 +391,16 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
       filter_complex: filterComplex,
       dest_path: d.destPath,
       media_id: d.mediaId,
-      job_key: jobKey,
+      job_key: run.jobKey,
     })
+    assertRun(run)
     let peaksPath = PEAKS_PENDING
     try {
       peaksPath = (await backend.buildPeaksForVconf({ vconf_path: d.destPath, dest_path: d.peaksPath })).path
+      assertRun(run)
     } catch (e) {
       // A missing waveform costs a picture, not correct audio.
+      assertRun(run)
       console.warn(`[audio-fx] peaks build failed for ${d.destPath}`, e)
     }
     return { sig: d.sig, media_hash: d.mediaHash, audio_path: d.destPath, peaks_path: peaksPath }
@@ -396,7 +411,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   /// longer an answer to its question.
   function finishBake(run: BakeRun, ready: AudioFxReady | null, error: string | null): void {
     if (bakes.get(run.sig) === run) bakes.delete(run.sig)
-    if (run.cancelled) return
+    if (!active || run.cancelled || run.generation !== generation) return
     for (const [layerId, entry] of entries) {
       const d = entry.desired
       if (d === null || d.sig !== run.sig) continue
@@ -416,10 +431,10 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   }
 
   function startBake(layerId: string, d: Desired): void {
-    const run: BakeRun = { sig: d.sig, jobKey: JOB_KEY_PREFIX + d.sig, cancelled: false }
+    const run: BakeRun = { sig: d.sig, jobKey: `${JOB_KEY_PREFIX}${generation}:${d.sig}`, generation, cancelled: false }
     bakes.set(d.sig, run)
     attach(layerId, run)
-    void runBake(d, run.jobKey).then(
+    void runBake(d, run).then(
       (ready) => { finishBake(run, ready, null) },
       (err: unknown) => { finishBake(run, null, messageOf(err)) },
     )
@@ -428,18 +443,22 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   /// Build the waveform sibling for an artifact that is already playable, then
   /// fill its path into every layer that shares the signature.
   function kickPeaks(d: Desired): void {
+    if (!active) return
     if (peaksInFlight.has(d.peaksPath)) return
-    peaksInFlight.add(d.peaksPath)
+    const startedIn = generation
+    peaksInFlight.set(d.peaksPath, startedIn)
     void backend.buildPeaksForVconf({ vconf_path: d.destPath, dest_path: d.peaksPath }).then(
       (built) => {
+        if (!active || startedIn !== generation) return
         peaksInFlight.delete(d.peaksPath)
         for (const [layerId, entry] of entries) {
           const ready = entry.state.ready
-          if (!ready || ready.sig !== d.sig || ready.peaks_path === built.path) continue
+          if (!ready || ready.sig !== d.sig || ready.audio_path !== d.destPath || ready.peaks_path === built.path) continue
           patch(layerId, { ready: { ...ready, peaks_path: built.path } })
         }
       },
       (e: unknown) => {
+        if (!active || startedIn !== generation) return
         peaksInFlight.delete(d.peaksPath)
         console.warn(`[audio-fx] peaks build failed for ${d.destPath}`, e)
       },
@@ -447,6 +466,8 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   }
 
   async function ensureConformOnce(mediaId: string): Promise<void> {
+    if (!active) return
+    const startedIn = generation
     if (conformAsked.has(mediaId)) return
     conformAsked.add(mediaId)
     const item: MediaItem | undefined = actor.snapshot().media_pool[mediaId]
@@ -454,6 +475,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     try {
       await backend.ensureConform(item)
     } catch (e) {
+      if (!active || startedIn !== generation) return
       conformAsked.delete(mediaId)
       console.warn(`[audio-fx] ensure_conform for ${mediaId} failed`, e)
     }
@@ -462,6 +484,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   // ── the pipeline ──────────────────────────────────────────────────────────
 
   async function settle(layerId: string): Promise<void> {
+    if (!active) return
     const entry = entries.get(layerId)
     if (!entry) return
     if (entry.timer !== null) { clearT(entry.timer); entry.timer = null }
@@ -573,7 +596,21 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     }
   }
 
+  function suspend(): void {
+    active = false
+    generation++
+    clearTimers()
+    cancelAllBakes()
+    conformAsked.clear()
+    peaksInFlight.clear()
+    for (const layerId of entries.keys()) {
+      emit(AUDIO_FX_STATUS_EVENT, { layer_id: layerId, state: blankState() } satisfies AudioFxStatusEvent)
+    }
+    entries.clear()
+  }
+
   const unsubscribe = actor.subscribe((e: ChangeEvent) => {
+    if (!active) return
     // The actor already isolates a throwing subscriber; this keeps OUR
     // bookkeeping consistent when one layer's derivation blows up.
     try { recompute(e.diff_hint, e.new_snapshot) }
@@ -600,11 +637,14 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     },
 
     async ensureExportAudioFx(window) {
+      if (!active) throw new Error('audio fx workspace is inactive')
+      const startedIn = generation
       const project = actor.snapshot()
       recomputeAll(project)
       const layers = [...audioLayersInWindow(project, window ?? null)]
         .filter((layer) => entries.get(layer.id)?.desired != null)
       await Promise.all(layers.map((layer) => flushSettle(layer.id)))
+      if (!active || startedIn !== generation) throw new Error('audio fx workspace changed during export readiness')
       const waiting: string[] = []
       const failed: EnsureExportAudioFxResult['failed'] = []
       for (const layer of layers) {
@@ -623,6 +663,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     },
 
     resolveWaveformKey(key) {
+      if (!active) return null
       const parsed = parseFxWaveformKey(key)
       if (parsed === null) return null
       const path = cacheLayout.waveformFx(parsed.mediaHash, parsed.sig16)
@@ -630,6 +671,7 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     },
 
     async reverify(layerId) {
+      if (!active) return
       const entry = entries.get(layerId)
       if (!entry) return
       const ready = entry.state.ready
@@ -652,20 +694,20 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     },
 
     reset() {
-      clearTimers()
-      cancelAllBakes()
-      conformAsked.clear()
-      peaksInFlight.clear()
-      // Entries are KEPT where the layer survives: a signature names a
-      // content-addressed artifact, so a still-valid ready outlives a save-as.
-      // `settle` re-probes the path (the cache root moves with the workspace).
+      if (disposed) return
+      suspend()
+      active = true
+      // Reuse is established from disk under the new workspace's cache root.
       recomputeAll(actor.snapshot())
     },
 
+    suspend,
+
     dispose() {
+      if (disposed) return
+      disposed = true
       unsubscribe()
-      clearTimers()
-      cancelAllBakes()
+      suspend()
     },
   }
 }

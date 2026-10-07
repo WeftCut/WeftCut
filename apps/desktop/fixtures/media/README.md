@@ -9,4 +9,7 @@ Two containers, identical video stream, so tests prove container parity
 ```bash
 ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 -c:v libx264 -pix_fmt yuv420p -g 15 -movflags +faststart tiny.mp4
 ffmpeg -y -i tiny.mp4 -c copy tiny.mkv
+ffmpeg -y -i tiny.mp4 -frames:v 1 -update 1 tiny.jpg
 ```
+
+`tiny.jpg` is the first synthetic video frame, used to verify cached thumbnail adoption and truncation checks.

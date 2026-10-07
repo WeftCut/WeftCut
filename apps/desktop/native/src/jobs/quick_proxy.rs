@@ -28,7 +28,7 @@ pub async fn run(
     // Cache hit before the ffmpeg check: adopting an already-landed proxy
     // needs no encoder.
     let dest = cache.quick_proxy(&media.file_hash_blake3);
-    if cached_ok(&dest) {
+    if crate::cache::valid_mp4(&dest) {
         return Ok(dest);
     }
     if !ffmpeg_is_installed() {
@@ -38,9 +38,9 @@ pub async fn run(
     let tmp = claim_temp(&dest)?;
 
     let result = if can_remux(media, source_gop_secs) {
-        run_remux(media, &tmp).await
+        run_remux(cache, media, &tmp).await
     } else {
-        run_fast_transcode(media, &tmp).await
+        run_fast_transcode(cache, media, &tmp).await
     };
 
     if let Err(e) = result {
@@ -56,6 +56,7 @@ pub async fn run(
         );
     }
 
+    cache.check_active()?;
     promote_temp_retry(&dest).await?;
     Ok(dest)
 }
@@ -72,8 +73,9 @@ fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
         && crate::jobs::proxy_decision::gop_is_scrub_friendly(source_gop_secs)
 }
 
-async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
-    let output = crate::ffmpeg::command()
+async fn run_remux(cache: &CacheLayout, media: &MediaItem, tmp: &PathBuf) -> Result<()> {
+    let mut command = crate::ffmpeg::command();
+    let command = command
         .no_console_window()
         // Reap the child if this future is dropped (runtime shutdown) — an
         // orphan would keep writing the shared `<dest>.tmp`; see hwaccel.rs.
@@ -98,8 +100,9 @@ async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
         .arg(tmp)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
+        .stderr(Stdio::piped());
+    let output = cache
+        .command_output(command)
         .await
         .context("spawn ffmpeg for quick proxy remux")?;
 
@@ -114,7 +117,7 @@ async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn run_fast_transcode(media: &MediaItem, tmp: &Path) -> Result<()> {
+async fn run_fast_transcode(cache: &CacheLayout, media: &MediaItem, tmp: &Path) -> Result<()> {
     let scale_filter = format!("scale=-2:'min(ih,{QUICK_PROXY_HEIGHT_CAP})'");
     // Short GOP so this preview proxy is scrub-friendly (ADR 0008), matching
     // the full proxy. The quick proxy is the scrub source for DirectExport /
@@ -123,7 +126,7 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &Path) -> Result<()> {
     let input = media.path_abs.clone();
 
     let color_args = crate::jobs::proxy::source_color_args(media);
-    let output = hwaccel::output_with_hw_decode_fallback("quick proxy", |hw, cmd| {
+    let output = hwaccel::output_with_hw_decode_fallback_scoped(cache, "quick proxy", |hw, cmd| {
         cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
         if hw {
             hwaccel::push_hwaccel_args(cmd);

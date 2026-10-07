@@ -28,30 +28,6 @@ fn premultiply(pixels: &mut [u8]) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::premultiply;
-
-    #[test]
-    fn premultiplication_preserves_rounding_for_every_alpha_and_channel() {
-        let mut pixels = Vec::new();
-        for alpha in 0..=255u8 {
-            for channel in 0..=255u8 {
-                pixels.extend_from_slice(&[channel, 255 - channel, channel ^ 127, alpha]);
-            }
-        }
-        let mut expected = pixels.clone();
-        for px in expected.as_chunks_mut::<4>().0 {
-            let alpha = u32::from(px[3]);
-            for c in &mut px[..3] {
-                *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
-            }
-        }
-        premultiply(&mut pixels);
-        assert_eq!(pixels, expected);
-    }
-}
-
 enum Command {
     Upload(String, usize, Reply),
     Copy(usize, usize, Reply),
@@ -345,5 +321,29 @@ impl Pool {
         result?;
         release?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::premultiply;
+
+    #[test]
+    fn premultiplication_preserves_rounding_for_every_alpha_and_channel() {
+        let mut pixels = Vec::new();
+        for alpha in 0..=255u8 {
+            for channel in 0..=255u8 {
+                pixels.extend_from_slice(&[channel, 255 - channel, channel ^ 127, alpha]);
+            }
+        }
+        let mut expected = pixels.clone();
+        for px in expected.as_chunks_mut::<4>().0 {
+            let alpha = u32::from(px[3]);
+            for c in &mut px[..3] {
+                *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
+            }
+        }
+        premultiply(&mut pixels);
+        assert_eq!(pixels, expected);
     }
 }

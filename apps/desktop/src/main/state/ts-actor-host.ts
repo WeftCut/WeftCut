@@ -15,6 +15,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
+import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
@@ -30,6 +31,8 @@ import type { RecentsStore } from '../recents'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
+  onWorkspaceChanging?: () => void
+  onWorkspaceOpened?: () => void
   /** mainWindow.webContents.send('evt:'+event, payload) */
   send: (event: string, payload: unknown) => void
   /** mcpHost.notifyChange(payload) — the mcp:change relay. */
@@ -221,7 +224,16 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     serialize: serializeProjectToJson,
   })
 
-  const enqueueDerivatives = makeEnqueueDerivatives(deps.napi)
+  let importGeneration = 0
+  let workspaceTransitions = 0
+  const enqueuePreparedDerivatives = makeEnqueueDerivatives(deps.napi)
+  const enqueueDerivatives = (project: import('./model').Project): void => {
+    enqueuePreparedDerivatives(project)
+    void recoverInterruptedImports(hybridDeps, (mediaId, error) => {
+      deps.emitLog?.({ level: 'error', category: { kind: 'Import' }, source: { kind: 'System' },
+        message: `Import recovery failed: ${String(error)}`, details: { media_id: mediaId } })
+    }).catch(error => { console.warn('[media] import recovery stopped', error) })
+  }
   // Open-time relink self-heal: content identity comes from the same BLAKE3
   // napi the import hash pass uses; the report lands as a status-log row.
   const onRelink = (report: RelinkReport): void => {
@@ -293,16 +305,29 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     enqueueDerivatives: async (items) => { await deps.napi.enqueueJobsForMedia(JSON.stringify(items)) },
     enqueueWorkspaceCopy: deps.enqueueWorkspaceCopy,
     workspaceDir: deps.workspaceDir,
+    importGeneration: () => importGeneration,
+    canImport: () => workspaceTransitions === 0,
     readFile: deps.readFile,
     statPath: deps.statPath,
     snapshotComposition: () => rootComposition(actor.snapshot()),
   }
 
-  // Only state-replacing routes cross this gate. Save As preserves the current
-  // actor snapshot and writes it directly to its new destination.
-  const replaceWorkspace = async <T>(replace: () => Promise<T>): Promise<T> => {
-    await autosave.forceFlush()
-    return replace()
+  // Serialize all cache-root/session changes, including Save As and Close.
+  let persistenceTail: Promise<unknown> = Promise.resolve()
+  const replaceWorkspace = <T>(replace: () => Promise<T>): Promise<T> => {
+    // Invalidate immediately, before a flush or another lifecycle call yields.
+    importGeneration++
+    workspaceTransitions++
+    deps.onWorkspaceChanging?.()
+    const next = persistenceTail.then(async () => {
+      importGeneration++
+      deps.onWorkspaceChanging?.()
+      try { await autosave.forceFlush(); return await replace() }
+      catch (error) { if (opened !== null) deps.onWorkspaceOpened?.(); throw error }
+    })
+    const settled = next.finally(() => { workspaceTransitions-- })
+    persistenceTail = settled.catch(() => {})
+    return settled
   }
 
   let opened: OpenedProject | null = null
@@ -311,11 +336,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // Each record update runs only after its operation resolves, so a failed
   // open leaves the record as it was — and an open still in flight when the
   // quit began does not reopen the gate the quit closed.
-  const opens = (dir: string): void => { if (!quitting) opened = { dir } }
+  const opens = (dir: string): void => {
+    if (!quitting) { opened = { dir }; deps.onWorkspaceOpened?.() }
+  }
   const persistence: PersistenceHandlers = {
-    open: async (dir) => { await replaceWorkspace(() => openProject(orchestratorDeps, dir)); opens(dir) },
-    saveAs: async (dir) => { await saveProjectAs(orchestratorDeps, dir); opens(dir) },
-    newWorkspace: async (a) => { const dir = await replaceWorkspace(() => newWorkspace(orchestratorDeps, a)); opens(dir); return dir },
+    open: (dir) => replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) }),
+    saveAs: (dir) => replaceWorkspace(async () => { await saveProjectAs(orchestratorDeps, dir); opens(dir) }),
+    newWorkspace: (a) => replaceWorkspace(async () => { const dir = await newWorkspace(orchestratorDeps, a); opens(dir); return dir }),
     save: () => autosave.forceFlush(),
     // The record clears BEFORE the flush: the flush is async, and a write the
     // gate still let through during it would reach the closed project's
@@ -323,7 +350,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // and then dropped with the pending timer). The actor keeps the closed
     // project until the next Open / New replaces it, and the workspace slot
     // keeps its folder; what stops an agent writing into it is the MCP gate.
-    close: async () => { opened = null; await autosave.forceFlush() },
+    close: async () => {
+      opened = null
+      await replaceWorkspace(async () => { opened = null; await deps.napi.endWorkspace?.() })
+    },
   }
 
   const agentProjects: TsActorHost['projects'] = {
@@ -632,6 +662,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       refreshMotifCatalog()
     },
     stop() {
+      importGeneration++
       agent.stop()
       autosave.stop()
       if (unsub) { unsub(); unsub = null }

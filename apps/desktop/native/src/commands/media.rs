@@ -15,12 +15,14 @@ use crate::state::{self, MediaItem, MediaKind};
 /// used as a cache key: the TS host runs the standalone `hash_media_source` pass
 /// and sets the real hash via `set_media_hash` BEFORE enqueuing any derivative
 /// (supersedes ADR 0007). Mints the media id
-/// internally. The `probe_media` napi reuses this exact body.
-pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
+/// internally. The `probe_media` napi supplies admitted metadata.
+pub fn media_item_from_metadata(
+    source_buf: PathBuf,
+    metadata: state::MediaMetadata,
+) -> Result<MediaItem, String> {
     let media_id = uuid::Uuid::new_v4();
     let (file_size, file_mtime) =
         io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
-    let metadata = io::probe::probe_metadata(&source_buf);
     let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
     // NFC-normalized: a macOS-origin NFD label renders identically but breaks
     // string matching downstream (search palette, path_rel comparison).
@@ -84,12 +86,54 @@ pub struct AudioMeterState(
     pub std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant, AudioMeterReport)>>>,
 );
 
+/// A disk miss is a readiness transition. Queue one shared producer and let
+/// completion invalidate renderer readers, including stale persisted paths.
+pub fn recover_derivative_read<T>(
+    backend: &Backend,
+    cache: crate::cache::CacheLayout,
+    item: MediaItem,
+    thumbnail: bool,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    cache.check_active().map_err(|e| e.to_string())?;
+    if result.is_ok() {
+        return result;
+    }
+    let invalid = if thumbnail {
+        item.thumbnails_dir
+            .as_ref()
+            .is_none_or(|dir| !crate::cache::valid_jpeg(&dir.join("004.jpg")))
+    } else {
+        item.waveform_path
+            .as_ref()
+            .is_none_or(|path| crate::jobs::waveform::read_header(path).is_err())
+    };
+    if invalid && !item.file_hash_blake3.starts_with("pending-") {
+        let enqueue = if thumbnail {
+            crate::jobs::enqueue_thumbnails
+        } else {
+            crate::jobs::enqueue_waveform
+        };
+        enqueue(
+            backend.events.clone(),
+            backend.log_slot.clone(),
+            cache,
+            item,
+        );
+        return Err("not_ready".into());
+    }
+    result
+}
+
 pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
     let dir = item
         .thumbnails_dir
         .clone()
         .ok_or_else(|| "not_ready".to_string())?;
     let path = dir.join("004.jpg");
+    if !crate::cache::valid_jpeg(&path) {
+        return Err("not_ready".into());
+    }
     crate::cache::touch_if_stale(&path);
     let bytes = tokio::fs::read(&path)
         .await
@@ -307,7 +351,7 @@ pub async fn get_filmstrip_tile(
     let duration_us = args.item.metadata.duration_us;
     let hash = args.item.file_hash_blake3.clone();
     let path = filmstrip::extract_tile(
-        &backend.cache,
+        &backend.cache.snapshot(),
         &src,
         src_tag,
         &hash,
@@ -334,13 +378,13 @@ pub async fn get_filmstrip_tile(
 
 pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
     let id = item.id;
-    if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file())
+    if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if crate::cache::valid_mp4(p))
     {
         return Ok(());
     }
     let corrected = item.decode_route.clone().route_corrected();
     crate::jobs::commit_media_derivatives(
-        &backend.events,
+        &backend.cache.scoped_events(backend.events.clone()),
         id,
         state::MediaDerivativesPatch {
             set_route: Some(corrected),
@@ -369,7 +413,7 @@ pub async fn generate_quick_proxy(backend: &Backend, item: MediaItem) -> Result<
         state::DecodeRoute::NativeSw { quick_proxy, .. } => quick_proxy.clone(),
         state::DecodeRoute::Bypass => return Ok(()),
     };
-    if matches!(existing, Some(ref p) if p.is_file()) {
+    if matches!(existing, Some(ref p) if crate::cache::valid_mp4(p)) {
         return Ok(());
     }
     crate::jobs::enqueue_quick_proxy(
@@ -386,7 +430,7 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
     if item.metadata.audio.is_none() {
         return Ok(());
     }
-    if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
+    if crate::jobs::conform::cached_path(&backend.cache, &item).is_some() {
         return Ok(());
     }
     crate::jobs::enqueue_conform(
@@ -493,7 +537,7 @@ pub async fn build_peaks_for_vconf(
     let header =
         crate::jobs::conform::read_header(&args.vconf_path).map_err(|e| format!("{e:#}"))?;
     let path = crate::jobs::waveform::run_from_input(
-        &backend.cache,
+        &backend.cache.snapshot(),
         crate::jobs::waveform::WaveformInput::Vconf {
             path: &args.vconf_path,
             channels: header.channels,

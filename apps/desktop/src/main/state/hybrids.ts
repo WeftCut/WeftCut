@@ -118,6 +118,9 @@ export type HybridDeps = {
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
   /** Current workspace dir, or null. Gate for the workspace-copy enqueue. */
   workspaceDir: () => string | null
+  /** Changes on close/reopen, even when the same project id and path return. */
+  importGeneration?: () => number
+  canImport?: () => boolean
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
   /** node:fs stat, folded to what `import_media` refuses on: what the path IS,
@@ -783,7 +786,9 @@ export async function removePauses(
 export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown> {
   switch (tool) {
     case 'import_media': {
+      if (deps.canImport?.() === false) throw new Error('Project is changing; retry importing after it opens')
       const path = args.path as string
+      const assertCurrent = captureImportSession(deps)
       // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
       // would pass it, land a pool row with null metadata and a pending hash,
       // and only then die in the hash pass with the OS's own locale text. What
@@ -798,6 +803,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       let item: MediaItem
       try { item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem }
       catch (e) { throw new Error(`import_media: probing ${path} failed: ${errText(e)}. Nothing was imported`) }
+      assertCurrent()
       const r = deps.actor.dispatch('add_media_item', { media: item })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
       // Compute the REAL content hash (a lightweight standalone read pass), set it
@@ -808,6 +814,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       let hash: string
       try { hash = await deps.compute.hashMediaSource(path) }
       catch (e) {
+        assertCurrent()
         // The row is provisional until its hash lands, so a read that fails
         // here leaves nothing behind. `force: false`: were a layer already
         // placed on it, the row stays and the error still names the failure.
@@ -816,6 +823,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
           ? 'The provisional pool row was rolled back; nothing was imported'
           : `The provisional pool row ${item.id} could not be rolled back (${mapCommandError(rollback.error).message}); it stays with a pending hash — delete_media removes it`}`)
       }
+      assertCurrent()
       const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
       // Benign if the media was removed during hashing — nothing left to enqueue.
       if (!hr.ok) return item.id
@@ -824,6 +832,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // content-addressed by the real hash, so source vs the workspace copy is
       // equivalent.
       await deps.enqueueDerivatives([hashedItem])
+      assertCurrent()
       // Workspace copy runs in PARALLEL: copies the source into <workspace>/Media,
       // re-confirms the same hash, and flips path_abs via the media:workspace_paths
       // seam. No-op napi when no workspace.
@@ -975,5 +984,18 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
     }
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)
+  }
+}
+
+/** A project opening owns each asynchronous import continuation. Checking the
+ * generation also covers reopening a copy with the same persisted project id. */
+export function captureImportSession(deps: Pick<HybridDeps, 'actor' | 'workspaceDir' | 'importGeneration'>): () => void {
+  const projectId = deps.actor.snapshot().project_id
+  const dir = deps.workspaceDir()
+  const generation = deps.importGeneration?.()
+  return () => {
+    if (deps.actor.snapshot().project_id !== projectId || deps.workspaceDir() !== dir || deps.importGeneration?.() !== generation) {
+      throw new Error('Import cancelled because the project was closed or replaced')
+    }
   }
 }

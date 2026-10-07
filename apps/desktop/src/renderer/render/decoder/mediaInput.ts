@@ -22,20 +22,28 @@ export interface OpenedMedia {
   dispose: () => void;
 }
 
-export async function openMediaInput(assetUrl: string): Promise<OpenedMedia> {
+export async function openMediaInput(assetUrl: string, signal?: AbortSignal): Promise<OpenedMedia> {
+  signal?.throwIfAborted();
   const mediaSource = new MediaRangeSource(assetUrl);
-  const input = new Input({
-    formats: [MP4, QTFF, MATROSKA, WEBM],
-    source: mediaSource.source,
-  });
-  const videoTrack = await input.getPrimaryVideoTrack();
-  if (!videoTrack) {
-    input.dispose();
-    throw new Error(`openMediaInput: no video track in ${assetUrl}`);
-  }
-  return {
-    videoTrack,
-    packetSink: new EncodedPacketSink(videoTrack),
-    dispose: () => input.dispose(),
+  let input: Input | undefined;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    signal?.removeEventListener("abort", dispose);
+    // Abort even if construction or Input.dispose itself fails.
+    mediaSource.dispose();
+    input?.dispose();
   };
+  signal?.addEventListener("abort", dispose, { once: true });
+  try {
+    input = new Input({ formats: [MP4, QTFF, MATROSKA, WEBM], source: mediaSource.source });
+    const videoTrack = await input.getPrimaryVideoTrack();
+    signal?.throwIfAborted();
+    if (!videoTrack) throw new Error(`openMediaInput: no video track in ${assetUrl}`);
+    return { videoTrack, packetSink: new EncodedPacketSink(videoTrack), dispose };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
 }
