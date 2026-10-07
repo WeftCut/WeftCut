@@ -197,10 +197,11 @@ export interface ExportPerf {
   /// when none routed — the native wedge gates assert ≥ 1 so a silent fallback
   /// to the WebCodecs proxy path cannot pass them vacuously.
   nativeHandles: number;
-  /// Wall-clock spent in `decodeRange` dispatch, awaiting decoder output, and
-  /// the whole export, in ms.
+  /// Wall-clock spent preparing/scheduling sources, awaiting decoder output,
+  /// and the whole export, in ms. Producer execution overlaps consumption.
   decodeMs: number;
   waitMs: number;
+  queueWaitMs?: number;
   totalMs: number;
   /// E2E color diagnostic off the first decoded frame (config vs stamped
   /// colorSpace + format). `ExportColorDiag` from ExportDecoderPool; typed
@@ -208,7 +209,9 @@ export interface ExportPerf {
   colorDiag?: unknown;
   /// Decode target each handle actually opened (original asset URL or proxy
   /// path) — shows when the readiness gate route-corrected onto a lossy proxy.
-  sources?: Array<{ mediaId: string; url: string }>;
+  sources?: Array<{ mediaId: string; url: string; buffer?: {
+    capacityFrames: number; peakFrames: number; waits: number; waitMs: number;
+  } }>;
 }
 
 export type ExportEvent =

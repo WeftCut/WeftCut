@@ -1,9 +1,9 @@
 // Export-only decoder pool. Drops every preview-tuned mechanism the
 // SourceDecoderPool needs (lookahead window, per-frame setAnchor, polling-
-// based catch-up) in favor of two batched primitives: `decodeRange(aUs, bUs)`
-// (seek-and-forward dispatch; NO `decoder.flush()` between ranges — the
-// deadlock landmine lives on the method) and `evictBefore(cutoffUs)`
-// (bounded memory after each encoded chunk).
+// based catch-up) in favor of a batched producer (`decodeRange`) and a
+// consuming frame store. The producer parks at its admitted frame window;
+// consumption releases credits even while a long GOP spans planning blocks.
+// NO decoder.flush() between ranges; only true EOS drains the reorder tail.
 //
 // The store + handle expose `frameAt` / `containsPts` / `ensureReady`
 // / `requestFrameAt` (no-op) / `onFirstFrame` (no-op) so the Compositor
@@ -18,7 +18,7 @@ import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { acquireRenderResources } from '../resourceClient';
 import type { NativeNv12Frame } from "./nv12Frame";
-import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
+import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitFrame";
 
 /// SW decoders hold a reorder/pipelining tail internally and the chunked
 /// model never mid-flushes, so feed a bounded lead-in past the stop key to
@@ -29,24 +29,9 @@ import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } 
 /// freeze: 61 packets fed, 59 emitted, queue 0, no error).
 const REORDER_MARGIN = 16;
 
-/// 10-bit ring cap, derived from coded frame size: a byte target / frame bytes,
-/// clamped to [MIN, MAX]. The MIN floor is the deadlock guard — output is
-/// presentation-ordered, so an unsatisfied waiter implies everything held is
-/// evictable, but the floor keeps headroom over the DPB-16 reorder window.
-/// Each source's ring and pending decoder/copy queue are charged to the global
-/// working-memory authority before dispatch; the ring gate alone is insufficient.
-const TENBIT_RING_TARGET_BYTES = 320 << 20;
-const TENBIT_RING_MIN_ENTRIES = 20;
-const TENBIT_RING_MAX_ENTRIES = 48;
-
-/// Entry high-water for a ring whose frames are `frameBytes` each. Exported
-/// for unit tests; pure.
-export function tenBitHighWaterFor(frameBytes: number): number {
-  return Math.min(
-    TENBIT_RING_MAX_ENTRIES,
-    Math.max(TENBIT_RING_MIN_ENTRIES, Math.floor(TENBIT_RING_TARGET_BYTES / frameBytes)),
-  );
-}
+// Packets awaiting output, live pictures and copies share this window.
+// Keep headroom over the existing DPB-16 assumption.
+const EXPORT_FRAME_WINDOW = 24;
 
 interface RingEntry {
   ptsUs: number;
@@ -72,6 +57,7 @@ export interface ExportColorDiag {
 }
 
 export class ExportFrameStore implements FrameStore {
+  constructor(private readonly onShrink: () => void = () => {}) {}
   private entries: RingEntry[] = [];
   /// EOS drain lifecycle. Once `ended`, no frame will ever arrive again and
   /// `isReadyFor` may clamp any target while a frame is held. `evictBefore`
@@ -90,27 +76,12 @@ export class ExportFrameStore implements FrameStore {
   /// proof, not an eviction or selection hint: `frameAt` still chooses the
   /// greatest held PTS at/before the target.
   private completedRange: { aUs: number; bUs: number } | null = null;
-  /// Pending resolvers parked at the 10-bit high-water backpressure gate.
-  private gateWaiters: Array<() => void> = [];
-  /// Non-null once `fail()` is called; subsequent waitForPts calls reject.
+  /// Non-null after fail(); subsequent waitForPts calls reject.
   private failure: string | null = null;
-  /// Resolution-derived entry cap for the 10-bit gate. Starts at the ceiling
-  /// (plain VideoFrame rings never derive) and is set ONCE from the first
-  /// TenBitFrame's actual plane bytes — exact, no estimate, and constant for
-  /// the ring's lifetime (one source = one coded size). Public read for
-  /// tests/diagnostics.
-  private derivedTenBitHighWater: number | null = null;
-
-  get tenBitHighWater(): number {
-    return this.derivedTenBitHighWater ?? TENBIT_RING_MAX_ENTRIES;
-  }
 
   get residentFrames(): number { return this.entries.length; }
 
   push(frame: VideoFrame | TenBitFrame | NativeNv12Frame, ptsUs = frame.timestamp): void {
-    if (this.derivedTenBitHighWater === null && isTenBitFrame(frame)) {
-      this.derivedTenBitHighWater = tenBitHighWaterFor(frame.data.byteLength);
-    }
     this.entries.push({
       ptsUs,
       durationUs: frame.duration ?? 0,
@@ -356,38 +327,13 @@ export class ExportFrameStore implements FrameStore {
     this.notifyShrink();
   }
 
-  /// Backpressure gate for the 10-bit copy chain. Resolves immediately
-  /// when the ring is below the high-water mark OR the ring has failed (so
-  /// chain links drain and the failure surfaces at `waitForPts`).
-  waitBelowTenBitHighWater(): Promise<void> {
-    if (this.entries.length < this.tenBitHighWater || this.failure !== null) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      this.gateWaiters.push(resolve);
-    });
-  }
+  /// Every eviction path returns capacity, including a parked consumer.
+  private notifyShrink(): void { this.onShrink(); }
 
-  /// Resolve all gateWaiters if the ring has shrunk below the high-water mark.
-  /// Called whenever entries are removed (evictBefore, freeBehindWaiters, flush).
-  private notifyShrink(): void {
-    if (this.gateWaiters.length === 0) return;
-    if (this.entries.length < this.tenBitHighWater) {
-      const waiters = this.gateWaiters.splice(0);
-      for (const r of waiters) r();
-    }
-  }
-
-  /// Mark the ring as failed and reject all pending waiters + gate-waiters.
-  /// Future `waitForPts` calls will reject immediately. Gate-waiters are
-  /// resolved (not rejected) so copy-chain links drain and the failure
-  /// surfaces at the next `waitForPts` call.
+  /// Reject pending and future consumers with the original failure.
   fail(reason: string): void {
     if (this.failure) return; // idempotent
     this.failure = reason;
-    // Drain gate-waiters so any in-flight copy chain links exit cleanly.
-    const gates = this.gateWaiters.splice(0);
-    for (const r of gates) r();
     // Reject pending waitForPts waiters.
     const err = new Error(reason);
     const pending = this.waiters.splice(0);
@@ -399,17 +345,22 @@ export class ExportFrameStore implements FrameStore {
   }
 
   dispose(): void {
+    this.fail('Export decode session disposed');
     this.flush();
   }
 }
 
 export class ExportSourceHandle implements ExportDecodeSession {
   private releaseResources: (() => void) | null = null;
-  private frameBytes = 0;
-  private admittedFrames = 24;
+  private readonly admittedFrames = EXPORT_FRAME_WINDOW;
   private pendingPackets = 0;
   private pendingCopies = 0;
-  private queueLeases: Array<() => void> = [];
+  // Outputs can arrive before the worker starts consuming a dispatched range.
+  // Retain the lower neighbour of its first target, not the whole GOP preroll.
+  private retainFromUs = Number.NEGATIVE_INFINITY;
+  private capacityWaiters = new Set<{ resolve(): void; reject(error: Error): void }>();
+  private capacityFailure: Error | null = null;
+  readonly bufferStats = { capacityFrames: EXPORT_FRAME_WINDOW, peakFrames: 0, waits: 0, waitMs: 0 };
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
   /// Source color tags (ffprobe-mapped), for original AND proxy decode
@@ -505,10 +456,11 @@ export class ExportSourceHandle implements ExportDecodeSession {
     this.knownStartPtsUs = init.sourceStartPtsUs ?? null;
     this.tenBitLane = init.tenBitLane ?? false;
     this.preferSoftware = init.preferSoftware ?? false;
-    this.ring = new ExportFrameStore();
+    this.ring = new ExportFrameStore(() => this.wakeCapacity());
   }
 
   async ensureReady(): Promise<void> {
+    if (this._disposed) return;
     if (this.config && this.decoder) return;
     if (this.readyP) return this.readyP;
     this.readyP = this._doEnsureReady().catch(error => {
@@ -523,14 +475,18 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   private async _doEnsureReady(): Promise<void> {
-    this.opened = await openMediaInput(this.proxyAssetUrl);
-    const config = await this.opened.videoTrack.getDecoderConfig();
+    const opened = await openMediaInput(this.proxyAssetUrl);
+    if (this._disposed) { opened.dispose(); return; }
+    this.opened = opened;
+    const config = await opened.videoTrack.getDecoderConfig();
+    if (this._disposed) return;
     if (!config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
     }
     // Match preview: offset comes from the decode target's first packet, not
     // import-time metadata (re-encoded proxies start at PTS 0).
-    const first = await this.opened.packetSink.getFirstPacket();
+    const first = await opened.packetSink.getFirstPacket();
+    if (this._disposed) return;
     this.clock = DecodeClock.fromFirstPacket(first, this.knownStartPtsUs ?? 0);
     // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
     // decode matches the rest of the toolchain (see colorSpaceDefault).
@@ -540,9 +496,9 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // preserves the source's colorimetry).
     this.config = withDefaultColorSpace(config, this.sourceColor);
     if (!this.releaseResources) {
-      this.frameBytes = (config.codedWidth ?? 1920) * (config.codedHeight ?? 1080) * (this.tenBitLane ? 8 : 4);
+      const frameBytes = (config.codedWidth ?? 1920) * (config.codedHeight ?? 1080) * (this.tenBitLane ? 8 : 4);
       // 24 admitted frames plus codec-private/reorder surfaces and context.
-      const release = await acquireRenderResources(64 + this.frameBytes * 40 / 1048576);
+      const release = await acquireRenderResources(64 + frameBytes * (EXPORT_FRAME_WINDOW + REORDER_MARGIN) / 1048576);
       if (this._disposed) { release(); return; }
       this.releaseResources = release;
     }
@@ -579,6 +535,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
         this.downgraded = true;
       }
     }
+    if (this._disposed) return;
     this.decoder = this.buildDecoder();
     this.decoder.configure(this.buildConfig());
   }
@@ -621,19 +578,16 @@ export class ExportSourceHandle implements ExportDecodeSession {
         if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
           this.pendingCopies++;
           this.copyChain = this.copyChain.then(async () => {
-            // Backpressure: while the ring is at high water (resolution-derived,
-            // see tenBitHighWaterFor), block the copy chain here. Note: SW
-            // decoders don't stall on held frames the way HW decoders do (no
-            // pool slots), so this gate bounds the RING entry count, not the
-            // decoder. Pending copies and packets also retain global working
-            // credits, so a long GOP cannot bypass the application budget.
-            await this.ring.waitBelowTenBitHighWater();
+            // The producer's window includes pending copies and decoded frames.
+            // A second ring-only gate is unnecessary; keeping one gate also
+            // lets stale copies drain promptly after a decoder rebuild.
             if (this.decoder !== dec) { frame.close(); return; }
             const tb = await copyToTenBit(frame);
             const ptsUs = this.clock.sourceUs(tb.timestamp);
             frame.close();
             if (this.decoder !== dec) return;
             this.ring.push(tb, ptsUs);
+            this.ring.evictBefore(this.retainFromUs);
           }).catch((e: unknown) => {
             try { frame.close(); } catch { /* already closed */ }
             if (this.decoder !== dec) return;
@@ -643,10 +597,13 @@ export class ExportSourceHandle implements ExportDecodeSession {
             // A dropped frame is silent corruption and a parked-forever waiter —
             // fail the ring loudly so the worker's waitForPts rejects the export.
             this.ring.fail(msg);
-          }).finally(() => { this.pendingCopies--; });
+            this.wakeCapacity(new Error(msg));
+          }).finally(() => { this.pendingCopies--; this.wakeCapacity(); });
           return;
         }
         this.ring.push(frame, this.clock.sourceUs(frame.timestamp));
+        this.ring.evictBefore(this.retainFromUs);
+        this.wakeCapacity();
       },
       error: (e: unknown) => {
         if (this.decoder !== dec) return;
@@ -666,6 +623,9 @@ export class ExportSourceHandle implements ExportDecodeSession {
           this.rebuildDecoder();
         } else if (action.kind === "inactivity-rebuild") {
           this.rebuildDecoder();
+        } else {
+          this.wakeCapacity(err);
+          this.ring.fail(err.message);
         }
       },
     });
@@ -692,6 +652,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
   private rebuildDecoder(): void {
     this.generation += 1;
     this.pendingPackets = 0;
+    this.capacityFailure = null;
+    this.wakeCapacity();
     try {
       this.decoder?.close();
     } catch {
@@ -708,9 +670,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // frames again — reset the EOS frontier and the ring's finalized state.
     this.eosFrontierUs = null;
     this.ring.clearEosDrain();
-    // Stale copy-chain links are identity-guarded; reset so new copies from the
-    // rebuilt decoder don't chain behind an old settled tail.
-    this.copyChain = Promise.resolve();
+    // Preserve the chain: stale links close their frames via the identity
+    // guard, and disposal must await ALL copies before returning the lease.
     // Between ranges there is no restart loop to notice the new generation —
     // re-drive the last range into the fresh decoder, or the ring never fills
     // and the worker's waitForPts hangs. A failed re-drive fails the ring so
@@ -743,10 +704,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// `bUs` (inclusive) — so every frame with presentation PTS ≤ bUs, incl.
   /// open-GOP B-frames referencing the next key, is fed — plus a bounded
   /// REORDER_MARGIN lead-in past the stop key to push out the decoder's
-  /// withheld tail. No flush (the worker awaits each frame via
-  /// `ring.waitForPts`; flushing would deadlock against the held VideoFrame
-  /// pool slots). Awaiting `getNextPacket` faults in uncached bytes natively
-  /// — no pre-fault needed.
+  /// withheld tail. The returned promise includes capacity waits: the worker
+  /// must consume via `ring.waitForPts` concurrently. Only EOS starts a flush;
+  /// ordinary range boundaries preserve the decoder's reference state.
+  /// Awaiting `getNextPacket` faults in uncached bytes natively.
   decodeRange(aUs: number, bUs: number): Promise<void> {
     const run = this.driveChain.then(() => this.driveRange(aUs, bUs));
     this.driveChain = run.catch(() => {});
@@ -754,6 +715,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   private async driveRange(aUs: number, bUs: number): Promise<void> {
+    if (this._disposed) return;
     this.lastRange = { aUs, bUs };
     this.rangeInFlight = true;
     try {
@@ -764,6 +726,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   private async dispatchRange(aUs: number, bUs: number): Promise<void> {
+    this.retainFromUs = aUs;
+    this.ring.evictBefore(aUs);
     if (!this.config || !this.decoder) await this.ensureReady();
     if (!this.config || !this.decoder) return;
     const packetSink = this.opened?.packetSink;
@@ -778,11 +742,9 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // path and re-feeds the fresh decoder. Same discipline as PacketPump.
     restart: for (;;) {
       // End-of-stream handling. A forward tail range was already fully fed by
-      // the range that hit EOS — return immediately so the worker proceeds to
-      // `waitForPts`, which frees the pool slots the floated flush needs to keep
-      // emitting. Blocking here on the flush deadlocks the export: the final
-      // GOP's drain can span multiple chunks, and nothing frees slots until the
-      // consumer loop runs (the observed freeze at 12660/12731).
+      // the range that hit EOS. The independently running consumer drains the
+      // final GOP across planning chunks; this request needs no more packets
+      // and does not need to wait for the floated flush to finish.
       if (this.eosFrontierUs !== null) {
         if (aUs >= this.eosFrontierUs) return;
         // True backward jump (same-media clip reuse) into a drained/draining
@@ -854,6 +816,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
         if (this.generation !== gen) continue restart;
         const prepared = this.clock.prepare(pkt);
         this.pendingPackets++;
+        this.bufferStats.peakFrames = Math.max(this.bufferStats.peakFrames, this.heldFrames());
         this.decoder.decode(prepared.chunk);
         this.cursor = pkt;
         this.lastDispatchedPtsUs = prepared.sourcePtsUs;
@@ -882,6 +845,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
         if (this.generation !== gen) continue restart;
         const prepared = this.clock.prepare(pkt);
         this.pendingPackets++;
+        this.bufferStats.peakFrames = Math.max(this.bufferStats.peakFrames, this.heldFrames());
         this.decoder.decode(prepared.chunk);
         this.cursor = pkt;
         this.lastDispatchedPtsUs = prepared.sourcePtsUs;
@@ -922,23 +886,11 @@ export class ExportSourceHandle implements ExportDecodeSession {
     return this.clock.containerUs(sourceUs);
   }
 
-  /// Drain the decoder's reorder buffer at true end-of-stream. The chunked
-  /// `decodeRange` is otherwise flush-free by design (flushing mid-export would
-  /// deadlock against the VideoFrame pool slots the worker holds). But the final
-  /// GOP has no "next key" to drain it, so its trailing B-frames never emit —
-  /// the export's `waitForPts` for the last output frames hangs forever (the
-  /// observed "stuck at the last frame" wedge).
-  ///
-  /// Crucially we do NOT await the flush here. The worker's encode loop is the
-  /// only thing that frees pool slots (`waitForPts` → `freeBehindWaiters`), and
-  /// a full pool stalls the decoder mid-flush; awaiting would block that loop →
-  /// the exact circular deadlock the "no flush between ranges" rule avoids.
-  /// Floating it lets the encode loop run concurrently: it parks on each trailing
-  /// frame, frees the pool behind the waiter, the flush makes progress, the
-  /// trailing frames emit, and the waiters resolve. A flushed decoder must resume
-  /// from a keyframe, so reset the cursor; forward ranges across the tail skip
-  /// dispatch entirely (`eosFrontierUs`), and a backward clip-reuse range
-  /// re-seeks through a decoder rebuild.
+  /// True EOS has no further input to drain the codec's trailing pictures.
+  /// Float the drain so later ranges can advance retention while the consumer
+  /// releases frames. Finality is published only after every output/copy lands.
+  /// A flushed decoder requires a keyframe: forward tail ranges skip dispatch;
+  /// a backward reuse rebuilds instead of waiting on the previous drain.
   private issueEosFlush(): void {
     const dec = this.decoder;
     if (!dec) return;
@@ -965,6 +917,9 @@ export class ExportSourceHandle implements ExportDecodeSession {
       })
       .catch((e: unknown) => {
         if (this.decoder !== dec) return; // superseded by rebuild/dispose
+        const error = e instanceof Error ? e : new Error(String(e));
+        this.wakeCapacity(error);
+        this.ring.fail(error.message);
         // eslint-disable-next-line no-console
         console.warn(`[weftcut/export] ${this.mediaId} EOS flush errored:`, e);
       });
@@ -973,26 +928,47 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   evictBefore(cutoffUs: number): void {
+    this.retainFromUs = cutoffUs;
     this.ring.evictBefore(cutoffUs);
-    while (this.queueLeases.length && this.admittedFrames - 32 >= this.heldFrames() + 16) {
-      this.queueLeases.pop()!(); this.admittedFrames -= 32;
-    }
   }
 
   private heldFrames(): number { return this.pendingPackets + this.pendingCopies + this.ring.residentFrames; }
 
+  private wakeCapacity(error?: Error): void {
+    if (error) this.capacityFailure = error;
+    if (this.capacityWaiters.size === 0) return;
+    const waiters = [...this.capacityWaiters];
+    this.capacityWaiters.clear();
+    for (const waiter of waiters) {
+      if (error) waiter.reject(error);
+      else waiter.resolve();
+    }
+  }
+
+  private async waitForCapacity(): Promise<void> {
+    const gen = this.generation;
+    const started = performance.now();
+    this.bufferStats.waits++;
+    try {
+      while (!this._disposed && this.generation === gen && this.heldFrames() + 1 > this.admittedFrames) {
+        if (this.capacityFailure) throw this.capacityFailure;
+        await new Promise<void>((resolve, reject) => this.capacityWaiters.add({ resolve, reject }));
+      }
+    } finally { this.bufferStats.waitMs += performance.now() - started; }
+  }
+
   private reserveDispatchMemory(): Promise<void> | null {
     if (this.heldFrames() + 1 <= this.admittedFrames) return null;
-    // Dispatch precedes consumption in this pipeline: waiting for eviction here
-    // would deadlock. Request more capacity or fail explicitly before decode.
-    return acquireRenderResources(this.frameBytes * 32 / 1048576).then(release => {
-      if (this._disposed) { release(); return; }
-      this.queueLeases.push(release); this.admittedFrames += 32;
-    });
+    // The consumer runs concurrently with this producer, including across
+    // planning blocks. Frame release wakes it; no allocation/IPC on this path.
+    return this.waitForCapacity();
   }
 
   dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
     this.generation += 1;
+    this.wakeCapacity();
     if (this.decoder) {
       try {
         this.decoder.close();
@@ -1003,10 +979,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     }
     this.ring.dispose();
     this.opened?.dispose();
-    const releases = [...this.queueLeases.splice(0), ...(this.releaseResources ? [this.releaseResources] : [])];
+    const releases = this.releaseResources ? [this.releaseResources] : [];
     this.releaseResources = null;
     // The copy chain owns VideoFrames even after the codec closes. Keep its
-    // credits until those frames close; ring disposal wakes a parked copy.
+    // credits until those frames close, including stale links after a rebuild.
     if (this.pendingCopies) void this.copyChain.finally(() => releases.forEach(release => release()));
     else releases.forEach(release => release());
     this.opened = null;
@@ -1020,7 +996,6 @@ export class ExportSourceHandle implements ExportDecodeSession {
     this.downgraded = false;
     this.eosFrontierUs = null;
     this.copyChain = Promise.resolve();
-    this._disposed = true;
   }
 }
 
@@ -1044,11 +1019,50 @@ export function exportHandleKey(
   return rate === 1 ? `${mediaId}#${srcInUs - tStartUs}` : `${mediaId}#${srcInUs - tStartUs * rate}@${rate}`;
 }
 
+interface ExportSourceDiagnostic {
+  mediaId: string;
+  url: string;
+  dispatched: number;
+  native: boolean;
+  color: ExportColorDiag | null;
+  buffer: ExportSourceHandle['bufferStats'] | undefined;
+}
+
 export class ExportDecoderPool implements DecoderPool {
   /// Values are the `ExportDecodeSession` contract — a runtime mix of the
   /// WebCodecs `ExportSourceHandle` and the native `NativeExportSourceHandle`,
   /// chosen per-acquire by `init.nativeExport`.
   readonly handles = new Map<string, ExportDecodeSession>();
+  private completed = new Map<string, ExportSourceDiagnostic>();
+
+  private snapshot(h: ExportDecodeSession, old?: ExportSourceDiagnostic): ExportSourceDiagnostic {
+    const stats = h instanceof ExportSourceHandle ? h.bufferStats : undefined;
+    return { mediaId: h.mediaId, url: h.sourceUrl, dispatched: (old?.dispatched ?? 0) + h.dispatchedTotal,
+      native: h instanceof NativeExportSourceHandle, color: old?.color ?? h.firstFrameDiag,
+      buffer: stats ? { capacityFrames: stats.capacityFrames, peakFrames: Math.max(old?.buffer?.peakFrames ?? 0, stats.peakFrames),
+        waits: (old?.buffer?.waits ?? 0) + stats.waits, waitMs: (old?.buffer?.waitMs ?? 0) + stats.waitMs } : undefined };
+  }
+
+  /** Release previous chunks before new sources compete for working memory.
+   * A later reuse reopens its session; diagnostics retain only small records. */
+  retainOnly(keys: ReadonlySet<string>): void {
+    for (const key of this.handles.keys()) if (!keys.has(key)) this.release(key);
+  }
+
+  diagnostics() {
+    const all = new Map(this.completed);
+    for (const [key, h] of this.handles) {
+      const old = all.get(key);
+      all.set(key, this.snapshot(h, old));
+    }
+    const entries = [...all.values()];
+    return {
+      totalDispatched: entries.reduce((total, h) => total + h.dispatched, 0),
+      nativeHandles: entries.filter(h => h.native).length,
+      colorDiag: entries.find(h => h.color)?.color ?? null,
+      sources: entries.map(h => ({ mediaId: h.mediaId, url: h.url, ...(h.buffer ? { buffer: h.buffer } : {}) })),
+    };
+  }
 
   /// Handles are keyed by `init.handleKey` — the export Worker and the
   /// export-mode Compositor both pass `exportHandleKey(...)`, giving one
@@ -1070,6 +1084,8 @@ export class ExportDecoderPool implements DecoderPool {
   release(key: string): void {
     const h = this.handles.get(key);
     if (!h) return;
+    const old = this.completed.get(key);
+    this.completed.set(key, this.snapshot(h, old));
     h.dispose();
     this.handles.delete(key);
   }
@@ -1077,5 +1093,6 @@ export class ExportDecoderPool implements DecoderPool {
   dispose(): void {
     for (const h of this.handles.values()) h.dispose();
     this.handles.clear();
+    this.completed.clear();
   }
 }

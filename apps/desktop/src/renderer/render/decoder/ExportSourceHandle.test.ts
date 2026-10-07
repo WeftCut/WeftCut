@@ -1,15 +1,13 @@
 // Control-flow half of the export EOS tail-deadlock fix, tested with a fake
 // decoder + scripted packet sink (no WebCodecs in node).
 //
-// The export worker is strictly "6a dispatch (decodeRange) → 6b consume
-// (waitForPts)" per chunk, and only 6b frees VideoFrame pool slots. So
-// `decodeRange` must NEVER block on anything that needs consumer progress to
-// complete — above all a floated EOS `decoder.flush()` stalled on pool
-// exhaustion (the observed export freeze at 12660/12731 with ~71 tail frames
-// spanning the last two chunks).
+// The worker consumes concurrently with bounded dispatch. Tests cover credits
+// across planning blocks, reorder/EOS output, failure and cancellation. A range
+// must never await the EOS drain: it would prevent later ranges from advancing
+// retention while trailing pictures are still being consumed.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceHandleInit } from "./session";
-import { ExportSourceHandle } from "./ExportDecoderPool";
+import { ExportDecoderPool, ExportSourceHandle } from "./ExportDecoderPool";
 import { openMediaInput } from "./mediaInput";
 
 vi.mock("./mediaInput", () => ({ openMediaInput: vi.fn() }));
@@ -113,6 +111,19 @@ function makeHandle(extra?: Partial<SourceHandleInit>): ExportSourceHandle {
   return new ExportSourceHandle(init);
 }
 
+// Control-flow tests below inspect packet coverage/re-seeks, not frame identity.
+// Give their producer a consuming sink so dispatch can exceed its fixed window.
+async function dispatchWithConsumer(h: ExportSourceHandle, aUs: number, bUs: number): Promise<void> {
+  const decode = vi.spyOn(FakeVideoDecoder.prototype, 'decode').mockImplementation(function (this: FakeVideoDecoder, chunk) {
+    this.decoded.push(chunk);
+    const pts = (chunk as EncodedVideoChunk).timestamp;
+    this.output(decodedFrame(pts, 20_000));
+    h.evictBefore(pts);
+  });
+  try { await h.decodeRange(aUs, bUs); }
+  finally { decode.mockRestore(); }
+}
+
 beforeEach(() => {
   FakeVideoDecoder.instances = [];
   vi.stubGlobal("VideoDecoder", FakeVideoDecoder);
@@ -134,7 +145,217 @@ afterEach(() => {
 });
 
 describe("ExportSourceHandle EOS tail", () => {
-  it('rejects queue growth before decoding beyond admitted memory without waiting for the consumer', async () => {
+  it.each([
+    { tenBit: false, reorder: 0 }, { tenBit: true, reorder: 0 },
+    { tenBit: false, reorder: 16 }, { tenBit: true, reorder: 16 },
+  ])('streams across blocks within its allowance (tenBit=$tenBit, reorder=$reorder)', async ({ tenBit, reorder }) => {
+    const resources = await import('../resourceClient');
+    const planes = await import('./tenBitFrame');
+    const copy = vi.spyOn(planes, 'copyToTenBit').mockImplementation(async frame => ({
+      kind: 'p10', width: 1920, height: 1080, data: new Uint8Array(8),
+      yOffset: 0, uOffset: 0, vOffset: 0, colorSpace: null,
+      timestamp: frame.timestamp, duration: frame.duration, close() {},
+    }));
+    let reserved = 0;
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockImplementation(async memory => {
+      if (reserved + memory > (tenBit ? 720 : 400)) throw new Error('resource-capacity-exceeded');
+      reserved += memory;
+      return () => { reserved -= memory; };
+    });
+    sink = makeSink(Array.from({ length: 180 }, (_, i) => pkt(i / 30, i === 0 ? 'key' : 'delta')));
+    const h = makeHandle({ tenBitLane: tenBit });
+    try {
+      await h.ensureReady();
+      const dec = FakeVideoDecoder.instances[0]!;
+      let submitted = 0, consumed = 0, peak = 0;
+      const tail: EncodedVideoChunk[] = [];
+      const emit = () => dec.output(Object.assign(decodedFrame(tail.shift()!.timestamp, 33_333), { format: tenBit ? 'I420P10' : 'I420' }));
+      vi.spyOn(dec, 'decode').mockImplementation(chunk => {
+        submitted++; peak = Math.max(peak, submitted - consumed);
+        tail.push(chunk as EncodedVideoChunk);
+        if (tail.length > reorder) queueMicrotask(emit);
+      });
+      vi.spyOn(dec, 'flush').mockImplementation(async () => { while (tail.length) emit(); });
+      // The producer's GOP extends past the 60-frame planning block. Consumers
+      // must run before that dispatch finishes, including across block edges.
+      const producers: Promise<void>[] = [];
+      for (let i = 0; i < 180; i++) {
+        if (i % 60 === 0) {
+          producers.push(h.decodeRange(Math.trunc(i / 30 * 1e6), Math.trunc((i + 60) / 30 * 1e6) - 1).catch(error => { h.ring.fail(String(error)); }));
+          // A temporarily slower encoder must throttle the producer, not grow
+          // another 32-frame reservation or fail the export.
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        const pts = Math.trunc(i / 30 * 1e6);
+        await h.ring.waitForPts(pts);
+        expect(h.ring.frameAt(pts)?.timestamp).toBe(pts);
+        consumed++;
+        h.evictBefore(Math.trunc((i + 1) / 30 * 1e6));
+      }
+      await Promise.all(producers);
+      expect(h.dispatchedTotal).toBe(180);
+      expect(peak).toBeLessThanOrEqual(24);
+      expect(admission).toHaveBeenCalledOnce();
+    } finally { h.dispose(); await new Promise(resolve => setTimeout(resolve, 0)); admission.mockRestore(); copy.mockRestore(); }
+    expect(reserved).toBe(0);
+  });
+
+  it('wakes both the producer and consumer on a fatal decoder failure', async () => {
+    sink = makeSink(Array.from({ length: 90 }, (_, i) => pkt(i / 30, i === 0 ? 'key' : 'delta')));
+    const h = makeHandle();
+    try {
+      await h.ensureReady();
+      const dec = FakeVideoDecoder.instances[0]!;
+      const producer = h.decodeRange(0, 2_000_000);
+      const production = expect(producer).rejects.toThrow('codec failed');
+      await vi.waitFor(() => expect(dec.decoded).toHaveLength(24), { interval: 1 });
+      dec.output(decodedFrame(0, 33_333)); // an established decoder: failure is terminal
+      const consumption = expect(h.ring.waitForPts(1_000_000)).rejects.toThrow('codec failed');
+      dec.errorCb(new Error('codec failed'));
+      await Promise.all([production, consumption]);
+    } finally { h.dispose(); }
+  });
+
+  it('rejects a tail consumer when EOS draining fails', async () => {
+    sink = makeSink([pkt(0, 'key')]);
+    const h = makeHandle();
+    try {
+      await h.ensureReady();
+      vi.spyOn(FakeVideoDecoder.instances[0]!, 'flush').mockRejectedValue(new Error('EOS drain failed'));
+      const consumer = expect(h.ring.waitForPts(10_000)).rejects.toThrow('EOS drain failed');
+      await h.decodeRange(0, 20_000);
+      await consumer;
+    } finally { h.dispose(); }
+  });
+
+  it('retains a 10-bit lease through an in-flight copy after cancellation', async () => {
+    const resources = await import('../resourceClient');
+    const planes = await import('./tenBitFrame');
+    const release = vi.fn(), close = vi.fn();
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockResolvedValue(release);
+    let finish!: (value: Awaited<ReturnType<typeof planes.copyToTenBit>>) => void;
+    const copy = vi.spyOn(planes, 'copyToTenBit').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    sink = makeSink([pkt(0, 'key')]);
+    const h = makeHandle({ tenBitLane: true });
+    try {
+      await h.decodeRange(0, 1);
+      FakeVideoDecoder.instances[0]!.output(Object.assign(decodedFrame(0, 33_333), { format: 'I420P10', close }));
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce(), { interval: 1 });
+      const waiting = expect(h.ring.waitForPts(0)).rejects.toThrow('disposed');
+      h.dispose();
+      expect(release).not.toHaveBeenCalled();
+      finish({ kind: 'p10', width: 1, height: 1, data: new Uint8Array(6), yOffset: 0, uOffset: 2, vOffset: 4,
+        timestamp: 0, duration: 33_333, colorSpace: null, close() {} });
+      await waiting;
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce(), { interval: 1 });
+      expect(close).toHaveBeenCalledOnce();
+      expect(h.ring.residentFrames).toBe(0);
+    } finally { h.dispose(); admission.mockRestore(); copy.mockRestore(); }
+  });
+
+  it('returns inactive chunk decoders before admitting subsequent clips and preserves export diagnostics', async () => {
+    const resources = await import('../resourceClient');
+    let reserved = 0;
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockImplementation(async memory => {
+      if (reserved + memory > 700) throw new Error('resource-capacity-exceeded');
+      reserved += memory;
+      return () => { reserved -= memory; };
+    });
+    sink = makeSink([pkt(0, 'key')]);
+    const pool = new ExportDecoderPool();
+    try {
+      for (let i = 0; i < 4; i++) {
+        const key = `phase-${i % 2}`;
+        pool.retainOnly(new Set([key]));
+        const handle = pool.acquire({ layerId: `clip-${i}`, mediaId: 'media-1', handleKey: key, proxyAssetUrl: 'weftcut-media://localhost/test.mp4' });
+        await expect(handle.decodeRange(0, 1)).resolves.toBeUndefined();
+        expect(pool.handles.size).toBe(1);
+      }
+      expect(pool.diagnostics().totalDispatched).toBe(4);
+      expect(pool.diagnostics().sources).toHaveLength(2);
+    } finally { pool.dispose(); admission.mockRestore(); }
+    expect(reserved).toBe(0);
+  });
+
+  it.each([
+    { timing: 'immediate', tenBit: false },
+    { timing: 'delayed', tenBit: false },
+    { timing: 'delayed', tenBit: true },
+  ])('exports a trimmed long GOP with $timing output (tenBit=$tenBit)', async ({ timing, tenBit }) => {
+    const resources = await import('../resourceClient');
+    const planes = await import('./tenBitFrame');
+    const copy = vi.spyOn(planes, 'copyToTenBit').mockImplementation(async frame => ({
+      kind: 'p10', width: 1920, height: 1080, data: new Uint8Array(8),
+      yOffset: 0, uOffset: 0, vOffset: 0, colorSpace: null,
+      timestamp: frame.timestamp, duration: frame.duration, close() {},
+    }));
+    let reserved = 0;
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockImplementation(async memory => {
+      if (reserved + memory > (tenBit ? 1400 : 700)) throw new Error('resource-capacity-exceeded: Resource capacity is busy or the memory target is too small');
+      reserved += memory;
+      return () => { reserved -= memory; };
+    });
+    // A trimmed 1080p clip starts well inside a GOP. Decoder output arrives
+    // during dispatch, before the worker enters its consumption phase.
+    sink = makeSink(Array.from({ length: 101 }, (_, i) => pkt(i / 30, i === 0 ? 'key' : 'delta')));
+    const handle = makeHandle({ tenBitLane: tenBit });
+    try {
+      await handle.ensureReady();
+      const decoder = FakeVideoDecoder.instances[0]!;
+      vi.spyOn(decoder, 'decode').mockImplementation(chunk => {
+        const output = () => decoder.output(Object.assign(
+          decodedFrame((chunk as EncodedVideoChunk).timestamp, 33_333),
+          { format: tenBit ? 'I420P10' : 'I420' },
+        ));
+        if (timing === 'delayed') setTimeout(output, 0);
+        else output();
+      });
+      await expect(handle.decodeRange(3_000_000, 3_033_333)).resolves.toBeUndefined();
+      await handle.ring.waitForPts(3_000_000);
+      expect(handle.ring.frameAt(3_000_000)?.timestamp).toBe(3_000_000);
+      expect(handle.ring.residentFrames).toBeLessThanOrEqual(12);
+    } finally { handle.dispose(); admission.mockRestore(); copy.mockRestore(); }
+    // Ten-bit teardown keeps credits until the last copy closes its frame.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(reserved).toBe(0);
+  });
+
+  it('unblocks a bounded preroll dispatch when its decoder is disposed', async () => {
+    const resources = await import('../resourceClient');
+    const release = vi.fn();
+    const admission = vi.spyOn(resources, 'acquireRenderResources').mockResolvedValue(release);
+    sink = makeSink(Array.from({ length: 101 }, (_, i) => pkt(i / 30, i === 0 ? 'key' : 'delta')));
+    const handle = makeHandle();
+    try {
+      const range = handle.decodeRange(3_000_000, 3_033_333);
+      await vi.waitFor(() => expect(FakeVideoDecoder.instances[0]?.decoded).toHaveLength(24), { interval: 1 });
+      handle.dispose();
+      await expect(range).resolves.toBeUndefined();
+      expect(release).toHaveBeenCalledOnce();
+    } finally { handle.dispose(); admission.mockRestore(); }
+  });
+
+  it('fails preroll when a decoder error arrives before its capacity wait', async () => {
+    sink = makeSink(Array.from({ length: 101 }, (_, i) => pkt(i / 30, i === 0 ? 'key' : 'delta')));
+    const handle = makeHandle();
+    try {
+      await handle.ensureReady();
+      const decoder = FakeVideoDecoder.instances[0]!;
+      vi.spyOn(decoder, 'decode').mockImplementation(chunk => {
+        if ((chunk as EncodedVideoChunk).timestamp === 0) decoder.output(decodedFrame(0, 33_333));
+      });
+      const next = sink.getNextPacket.bind(sink);
+      vi.spyOn(sink, 'getNextPacket').mockImplementation(async packet => {
+        if (packet === (await sink.getFirstPacket())) decoder.errorCb(new Error('codec failed'));
+        return next(packet);
+      });
+      const range = handle.decodeRange(3_000_000, 3_033_333);
+      await expect(settledWithin(range)).resolves.toBe('settled');
+      await expect(range).rejects.toThrow('codec failed');
+    } finally { handle.dispose(); }
+  });
+
+  it('parks in-range production at capacity and cancels queued ranges without reopening the decoder', async () => {
     const resources = await import('../resourceClient');
     const release = vi.fn();
     const admission = vi.spyOn(resources, 'acquireRenderResources').mockResolvedValueOnce(release)
@@ -142,13 +363,18 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(Array.from({ length: 40 }, (_, i) => pkt(i * .02, i === 0 ? 'key' : 'delta')));
     const handle = makeHandle();
     try {
-      await expect(handle.decodeRange(0, 800_000)).rejects.toThrow('Memory target too small');
+      const producer = handle.decodeRange(0, 800_000);
+      const queued = handle.decodeRange(800_000, 1_000_000);
+      await vi.waitFor(() => expect(FakeVideoDecoder.instances[0]?.decoded).toHaveLength(24), { interval: 1 });
       expect(FakeVideoDecoder.instances[0]!.decoded).toHaveLength(24);
       handle.dispose(); handle.dispose(); expect(release).toHaveBeenCalledOnce();
+      await Promise.all([producer, queued]);
+      expect(admission).toHaveBeenCalledOnce();
+      expect(FakeVideoDecoder.instances).toHaveLength(1);
     } finally { handle.dispose(); admission.mockRestore(); }
   });
 
-  it('charges long-GOP pending packets, returns extra capacity after consumption and releases the base on disposal', async () => {
+  it('keeps a single reservation while consuming a long GOP and releases it on disposal', async () => {
     const resources = await import('../resourceClient');
     const releases: ReturnType<typeof vi.fn>[] = [];
     const admission = vi.spyOn(resources, 'acquireRenderResources').mockImplementation(async () => {
@@ -157,13 +383,9 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(Array.from({ length: 70 }, (_, i) => pkt(i * .02, i === 0 ? 'key' : 'delta')));
     const handle = makeHandle();
     try {
-      await handle.decodeRange(0, 1_400_000);
-      expect(releases).toHaveLength(3);
-      const decoder = FakeVideoDecoder.instances[0]!;
-      for (let i = 0; i < 70; i++) decoder.output(decodedFrame(i * 20_000, 20_000));
-      handle.evictBefore(1_400_000);
+      await dispatchWithConsumer(handle, 0, 1_400_000);
+      expect(releases).toHaveLength(1);
       expect(releases[0]).not.toHaveBeenCalled();
-      expect(releases[1]).toHaveBeenCalledOnce(); expect(releases[2]).toHaveBeenCalledOnce();
       handle.dispose(); expect(releases[0]).toHaveBeenCalledOnce();
     } finally { handle.dispose(); admission.mockRestore(); }
   });
@@ -220,7 +442,7 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(packets);
     const h = makeHandle();
 
-    await h.decodeRange(0, 500_000);
+    await dispatchWithConsumer(h, 0, 500_000);
     const dec = FakeVideoDecoder.instances[0]!;
     expect(dec.flushCalls).toBe(1);
     expect(dec.decoded.length).toBe(50);
@@ -246,7 +468,7 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(packets);
     const h = makeHandle();
 
-    await h.decodeRange(0, 480_000);
+    await dispatchWithConsumer(h, 0, 480_000);
     await h.decodeRange(500_000, 980_000);
     const dec = FakeVideoDecoder.instances[0]!;
     expect(dec.flushCalls).toBe(1);
@@ -261,15 +483,15 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(packets);
     const h = makeHandle();
 
-    await h.decodeRange(0, 990_000); // ends on the key@1.0 stop-after-key break
-    await h.decodeRange(1_000_000, 1_500_000); // runs to EOS → flush floated
+    await dispatchWithConsumer(h, 0, 990_000); // ends on the key@1.0 stop-after-key break
+    await dispatchWithConsumer(h, 1_000_000, 1_500_000); // runs to EOS → flush floated
     const first = FakeVideoDecoder.instances[0]!;
     expect(first.flushCalls).toBe(1);
 
     // A later clip reuses this media from t=0 while the flush is still in
     // flight. A re-seek needs a fresh keyframe start anyway — rebuild and go;
     // awaiting the (possibly pool-stalled) flush deadlocks the export.
-    await expect(settledWithin(h.decodeRange(0, 200_000))).resolves.toBe("settled");
+    await expect(settledWithin(dispatchWithConsumer(h, 0, 200_000))).resolves.toBe("settled");
     expect(FakeVideoDecoder.instances.length).toBe(2);
     const second = FakeVideoDecoder.instances[1]!;
     expect(second.decoded.length).toBeGreaterThan(0); // re-seeked into the fresh decoder
@@ -296,7 +518,7 @@ describe("ExportSourceHandle EOS tail", () => {
     // Chunk 1 [0..0.4s): stop-after-key dispatches through key@1.0, then the
     // reorder margin adds 16 lead-in packets — coverage is still only
     // "everything ≤ 1.0s" even though dispatch ran ahead to 1.32s.
-    await h.decodeRange(0, 400_000);
+    await dispatchWithConsumer(h, 0, 400_000);
     const dec = FakeVideoDecoder.instances[0]!;
     const fedAfterChunk1 = dec.decoded.length;
     expect(fedAfterChunk1).toBe(51 + 16); // key@0 + 49 deltas + key@1.0 + 16 margin
@@ -308,7 +530,7 @@ describe("ExportSourceHandle EOS tail", () => {
 
     // Chunk 3 [0.8s..1.2s): extends past the parked key — continues from the
     // cursor (packets after key@1.0), still without re-feeding the prefix.
-    await h.decodeRange(800_000, 1_200_000);
+    await dispatchWithConsumer(h, 800_000, 1_200_000);
     expect(dec.decoded.length).toBeGreaterThan(fedAfterChunk1);
     expect(dec.decoded.length).toBeLessThanOrEqual(packets.length);
   });
@@ -354,7 +576,7 @@ describe("ExportSourceHandle reorder margin", () => {
     sink = makeSink(packets);
 
     const h = makeHandle();
-    await h.decodeRange(0, 300_000);
+    await dispatchWithConsumer(h, 0, 300_000);
     const dec = FakeVideoDecoder.instances[0]!;
 
     // key@0 + 9 deltas + key@0.333 = 11 through the stop key, then the margin
@@ -370,7 +592,7 @@ describe("ExportSourceHandle reorder margin", () => {
     sink = makeSink(packets);
 
     const h = makeHandle({ tenBitLane: true });
-    await h.decodeRange(0, 300_000);
+    await dispatchWithConsumer(h, 0, 300_000);
     const dec = FakeVideoDecoder.instances[0]!;
     expect(dec.decoded.length).toBe(11 + 13);
   });
@@ -388,7 +610,7 @@ describe("ExportSourceHandle reorder margin", () => {
     sink = makeSink(packets);
 
     const h = makeHandle();
-    await h.decodeRange(0, 300_000);
+    await dispatchWithConsumer(h, 0, 300_000);
     const dec = FakeVideoDecoder.instances[0]!;
     // 11 through the stop key + exactly 16 margin (not 17 or more).
     expect(dec.decoded.length).toBe(11 + 16);

@@ -5,18 +5,10 @@
 //
 // Plan: docs/render.md
 //
-// Why chunked + dedicated decoder driver:
-//   The preview-tuned SourceDecoderPool gates decoding on a small
-//   lookahead window — far too slow for export, which has no
-//   preview-latency budget to protect.
-//
-//   This Worker drives an `ExportDecoderPool` directly: per
-//   ~2 s chunk we feed every needed sample for every active clip
-//   in one shot, with NO `decoder.flush()` between ranges (the
-//   deadlock landmine lives on `decodeRange`), then pull each frame
-//   from the ring via `ring.waitForPts` as the encode loop reaches
-//   it. After the chunk encodes we evict its consumed frames so
-//   memory stays bounded.
+// Planning remains chunked, but decode production and consumption overlap.
+// The export-only driver fills its admitted window in batches and parks only
+// at capacity. ring.waitForPts + eviction return credits as encoding advances;
+// a long GOP's producer may span multiple planning chunks. No mid-range flush.
 //
 // Limitations:
 //   - Audio is OUT. The Worker has no DOM and audio export rides
@@ -36,7 +28,6 @@ import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { gopFrames } from "../exportSettings";
 import { Compositor } from "../Compositor";
 import { ExportDecoderPool, exportHandleKey } from "../decoder/ExportDecoderPool";
-import { NativeExportSourceHandle } from "./nativeExportSource";
 import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
@@ -59,6 +50,7 @@ function post(ev: ExportEvent, transfer: Transferable[] = []): void {
 }
 
 let cancelled = false;
+let cancelDecode: (() => void) | null = null;
 const motifInbox = new MotifFrameInbox();
 /// Resolver for the in-flight `chunk` write. WritableStream serializes writes,
 /// so at most one is pending at a time.
@@ -101,11 +93,12 @@ self.onmessage = (e: MessageEvent<ExportRequest>) => {
       // eslint-disable-next-line no-console
       console.error("[weftcut/export] worker threw:", err);
       motifInbox.dispose(err instanceof Error ? err : new Error(String(err)));
-      post({ type: "error", message: msg });
+      if (!cancelled) post({ type: "error", message: msg });
     });
   } else if (req.type === "cancel") {
     cancelled = true;
     motifInbox.dispose();
+    cancelDecode?.();
   } else if (req.type === "motif:frame") {
     motifInbox.push(req.packet);
   } else if (req.type === "chunk-ack") {
@@ -119,10 +112,8 @@ self.onmessage = (e: MessageEvent<ExportRequest>) => {
 // message handler is attached.
 post({ type: "ready" });
 
-/// Chunk size — how many output frames we decode + encode before
-/// evicting and moving on. ~2 s at 30 fps. Larger chunks reduce
-/// per-chunk overhead (decoder.flush latency) at the cost of more
-/// resident VideoFrames per active clip.
+/// Planning batch (~2 s at 30 fps). Controls clip grouping and diagnostics,
+/// not buffer capacity; producers and eviction operate across these edges.
 const CHUNK_FRAMES = 60;
 
 async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
@@ -369,350 +360,359 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // resolver slot requires that.
   let inflightAck: Promise<void> | null = null;
 
-  // 6. Chunked decode + encode.
-  for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_FRAMES) {
-    if (cancelled) {
-      // eslint-disable-next-line no-console
-      console.log("[weftcut/export] cancelled");
-      cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
-      return;
-    }
-    const chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
-    const chunkStartUs = frameTimeUs(chunkStart);
-    // End is exclusive in frame-index terms; convert to inclusive PTS by
-    // subtracting one µs so the last frame's interval is covered rather than
-    // the next one.
-    const chunkEndUs = frameTimeUs(chunkEnd) - 1;
-
-    // 6a. Dispatch decode for every active VideoClip in this chunk.
-    // This is non-blocking: decodeRange feeds the decoder and returns
-    // immediately. No flush. The decoder
-    // emits frames asynchronously via its output callback; the
-    // encode loop below pulls them via `ring.waitForPts`.
-    //
-    // Clips are grouped per decode pipeline (`exportHandleKey`: mediaId +
-    // timeline→source phase) and each group dispatches ONE merged range.
-    // Per-clip dispatch on a shared handle let two overlapping clips of one
-    // source interleave `decodeRange` calls — the cursor raced and the
-    // export wedged (frame counter frozen mid-run); same-phase clips also
-    // each paid a full decode for identical ranges.
-    const stagedClips = activeVideoClips(summary, chunkStartUs, chunkEndUs);
-    const stagedGroups = groupStagedClips(stagedClips);
-    const decodeT0 = performance.now();
-    await Promise.all(
-      [...stagedGroups.values()].map(async (g) => {
-        // For 10-bit media, acquire the ORIGINAL asset URL and mark the lane
-        // so the decoder pool uses the software path. preferSoftware is a
-        // correctness requirement for AV1-10 (the HW decoder succeeds but
-        // emits opaque format=null frames with no copyTo); for Hi10P it just
-        // skips a doomed HW attempt (no HW path exists).
-        const tenBitSource = tenBit && req.tenBitMedia?.[g.mediaId] === true;
-        const url = tenBitSource
-          ? req.project.originalAssetUrls[g.mediaId]
-          : req.project.proxyAssetUrls[g.mediaId];
-        // Native export-decode routing: when this media is in the
-        // `nativeDecode` table AND its original path resolved, mark the acquire
-        // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
-        // via the napi session over the frame relay). Membership only — the
-        // resolver on the main thread owns the policy.
-        const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
-        const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
-        // Truthy narrows `nativeOriginalPath` to a non-empty string here.
-        const nativeExport = nativeOriginalPath && req.nativeDecode
-          ? {
-              sourcePath: nativeOriginalPath,
-              outFormat: req.nativeDecode.outFormat,
-              creditWindow: req.nativeDecode.creditWindow ?? 6,
-            }
-          : undefined;
-        // Only the WebCodecs path needs an asset URL. A native-routed
-        // blind-spot source may have NO proxy at all (it skips the pre-export
-        // full-proxy wait); the native handle never reads proxyAssetUrl.
-        if (!url && !nativeExport) return;
-        const handle = exportPool.acquire({
-          layerId: g.clips[0]!.layerId,
-          mediaId: g.mediaId,
-          handleKey: g.key,
-          proxyAssetUrl: url ?? "",
-          // The source's real color tags, for original AND proxy decodes (a
-          // proxy preserves the source colorimetry; its own colr tag outranks
-          // this per-field in withDefaultColorSpace).
-          sourceColor: req.project.mediaColor[g.mediaId],
-          sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
-          ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
-          // The WebCodecs export lane composites each decoded VideoFrame via a
-          // 2D-canvas `drawImage` (VideoClipSprite.bindFromSnapshot). On
-          // Linux/NVIDIA a HARDWARE-decoded VideoFrame is an opaque GPU handle
-          // NO JS import path can read — drawImage / createImageBitmap /
-          // texImage2D / copyTo all return zeros (importProbe.ts) — with no
-          // decoder error to trip the HW→SW fallback, so every exported frame
-          // goes silently black. The lane therefore pins prefer-software
-          // UNLESS the main thread's platform allowlist vouches that HW frames
-          // are readable here (`hwExportDecodeAllowed`; Windows verified,
-          // macOS untested ⇒ software). The error-driven downgrade in
-          // decoderFallback.ts stays as the net for HW combos that DO error.
-          // (Native-routed lanes bind their own textures and are unaffected.)
-          ...(url && !nativeExport && req.allowHwExportDecode !== true
-            ? { preferSoftware: true }
-            : {}),
-          ...(nativeExport ? { nativeExport } : {}),
-        });
-        await handle.decodeRange(g.srcAUs, g.srcBUs);
-      }),
-    );
-    const decodeMs = performance.now() - decodeT0;
-    totals.decodeMs += decodeMs;
-
-    // 6b. Composite + encode every frame in the chunk; the per-frame evict
-    // below is what keeps the decoder pool from saturating.
-    let compositeMs = 0;
-    let captureMs = 0;
-    let encodeMs = 0;
-    let queueWaitMs = 0;
-    let waitMs = 0;
-    for (let i = chunkStart; i < chunkEnd; i++) {
+  // 6. Bounded decode producer + consuming compositor/encoder. Planning chunks
+  // do not join producers: a GOP can extend far beyond the current chunk.
+  cancelDecode = () => exportPool.dispose();
+  try {
+    for (let chunkStart = 0; chunkStart < totalFrames;) {
       if (cancelled) {
-        cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
+        // eslint-disable-next-line no-console
+        console.log("[weftcut/export] cancelled");
         return;
       }
-      const tUs = frameTimeUs(i);
-      const activeNow = stagedClips.filter(
-        (c) => c.tStartUs <= tUs && tUs < c.tEndUs,
-      );
-
-      const waitT0 = performance.now();
-      if (activeNow.length > 0) {
-        await Promise.all(
-          activeNow.map((c) => {
-            const handle = exportPool.handles.get(c.key);
-            if (!handle) return Promise.resolve();
-            return handle.ring.waitForPts(clipSrcPtsAt(c, tUs));
-          }),
-        );
+      let chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
+      const chunkStartUs = frameTimeUs(chunkStart);
+      let stagedClips = activeVideoClips(summary, chunkStartUs, frameTimeUs(chunkEnd - 1));
+      // Sequential clips inside one 60-frame block must not pay for simultaneous
+      // decoder sessions. Split at the next active-set change on the OUTPUT grid.
+      // Use the last sampled time, not the whole last frame's interval: a cut
+      // between grid points must not admit the next source a frame early.
+      for (const clip of stagedClips) {
+        for (const boundary of [clip.tStartUs, clip.tEndUs]) {
+          if (boundary > chunkStartUs) {
+            chunkEnd = Math.min(chunkEnd, exportFrameCount(startUs, boundary, outFpsNum, outFpsDen));
+          }
+        }
       }
-      waitMs += performance.now() - waitT0;
+      stagedClips = activeVideoClips(summary, chunkStartUs, frameTimeUs(chunkEnd - 1));
 
-      const motifWaitT0 = performance.now();
-      const motifPacket = req.motifStream ? await motifInbox.take(i) : null;
-      if (motifPacket) compositor.setMotifFrames(motifPacket.frames);
-      waitMs += performance.now() - motifWaitT0;
-      const compT0 = performance.now();
-      try {
-        compositor.setAnchorTime(tUs);
-        compositor.compositeFrame(tUs);
+      // 6a. Dispatch decode for every active VideoClip in this chunk.
+      // Await readiness only. A range producer can park on frame capacity, so
+      // consumption starts without awaiting its completion. No mid-range flush.
+      //
+      // Clips are grouped per decode pipeline (`exportHandleKey`: mediaId +
+      // timeline→source phase) and each group dispatches ONE merged range.
+      // Per-clip dispatch on a shared handle let two overlapping clips of one
+      // source interleave `decodeRange` calls — the cursor raced and the
+      // export wedged (frame counter frozen mid-run); same-phase clips also
+      // each paid a full decode for identical ranges.
+      const stagedGroups = groupStagedClips(stagedClips);
+      exportPool.retainOnly(new Set(stagedGroups.keys()));
+      const decodeT0 = performance.now();
+      await Promise.all(
+        [...stagedGroups.values()].map(async (g) => {
+          // For 10-bit media, acquire the ORIGINAL asset URL and mark the lane
+          // so the decoder pool uses the software path. preferSoftware is a
+          // correctness requirement for AV1-10 (the HW decoder succeeds but
+          // emits opaque format=null frames with no copyTo); for Hi10P it just
+          // skips a doomed HW attempt (no HW path exists).
+          const tenBitSource = tenBit && req.tenBitMedia?.[g.mediaId] === true;
+          const url = tenBitSource
+            ? req.project.originalAssetUrls[g.mediaId]
+            : req.project.proxyAssetUrls[g.mediaId];
+          // Native export-decode routing: when this media is in the
+          // `nativeDecode` table AND its original path resolved, mark the acquire
+          // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
+          // via the napi session over the frame relay). Membership only — the
+          // resolver on the main thread owns the policy.
+          const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
+          const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
+          // Truthy narrows `nativeOriginalPath` to a non-empty string here.
+          const nativeExport = nativeOriginalPath && req.nativeDecode
+            ? {
+                sourcePath: nativeOriginalPath,
+                outFormat: req.nativeDecode.outFormat,
+                creditWindow: req.nativeDecode.creditWindow ?? 6,
+              }
+            : undefined;
+          // Only the WebCodecs path needs an asset URL. A native-routed
+          // blind-spot source may have NO proxy at all (it skips the pre-export
+          // full-proxy wait); the native handle never reads proxyAssetUrl.
+          if (!url && !nativeExport) return;
+          const handle = exportPool.acquire({
+            layerId: g.clips[0]!.layerId,
+            mediaId: g.mediaId,
+            handleKey: g.key,
+            proxyAssetUrl: url ?? "",
+            // The source's real color tags, for original AND proxy decodes (a
+            // proxy preserves the source colorimetry; its own colr tag outranks
+            // this per-field in withDefaultColorSpace).
+            sourceColor: req.project.mediaColor[g.mediaId],
+            sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
+            ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
+            // The WebCodecs export lane composites each decoded VideoFrame via a
+            // 2D-canvas `drawImage` (VideoClipSprite.bindFromSnapshot). On
+            // Linux/NVIDIA a HARDWARE-decoded VideoFrame is an opaque GPU handle
+            // NO JS import path can read — drawImage / createImageBitmap /
+            // texImage2D / copyTo all return zeros (importProbe.ts) — with no
+            // decoder error to trip the HW→SW fallback, so every exported frame
+            // goes silently black. The lane therefore pins prefer-software
+            // UNLESS the main thread's platform allowlist vouches that HW frames
+            // are readable here (`hwExportDecodeAllowed`; Windows verified,
+            // macOS untested ⇒ software). The error-driven downgrade in
+            // decoderFallback.ts stays as the net for HW combos that DO error.
+            // (Native-routed lanes bind their own textures and are unaffected.)
+            ...(url && !nativeExport && req.allowHwExportDecode !== true
+              ? { preferSoftware: true }
+              : {}),
+            ...(nativeExport ? { nativeExport } : {}),
+          });
+          await handle.ensureReady();
+          // Dispatch can park on its admitted frame window. Consumption must
+          // start now, and may cross a planning-block boundary before dispatch
+          // through a long GOP finishes. The handle serializes subsequent ranges.
+          void handle.decodeRange(g.srcAUs, g.srcBUs).catch(error => {
+            handle.ring.fail(String(error));
+          });
+        }),
+      );
+      const decodeMs = performance.now() - decodeT0;
+      totals.decodeMs += decodeMs;
 
-        if (nativeSink) {
-          // Native-sink path: render into the composite RenderTexture (rgba16float
-          // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
-          // then stream to the Rust sink over the chunk/ack IPC channel.
-          app.renderer.render({ container: app.stage, target: compositeRT! });
-          compositeMs += performance.now() - compT0;
+      // 6b. Composite + encode every frame in the chunk; the per-frame evict
+      // below is what keeps the decoder pool from saturating.
+      let compositeMs = 0;
+      let captureMs = 0;
+      let encodeMs = 0;
+      let queueWaitMs = 0;
+      let waitMs = 0;
+      for (let i = chunkStart; i < chunkEnd; i++) {
+        if (cancelled) {
+          return;
+        }
+        const tUs = frameTimeUs(i);
+        const activeNow = stagedClips.filter(
+          (c) => c.tStartUs <= tUs && tUs < c.tEndUs,
+        );
 
-          // Two-deep readback pipelining: submit frame i's pack passes + async
-          // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
-          // had a full frame of wait/composite/pack behind it, so the retrieve
-          // is normally a straight CPU copy out of the PBO rather than a GPU
-          // sync stall.
-          const capT0 = performance.now();
-          pack!.submit(compositeRT!);
-          const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
-          captureMs += performance.now() - capT0;
+        const waitT0 = performance.now();
+        if (activeNow.length > 0) {
+          await Promise.all(
+            activeNow.map((c) => {
+              const handle = exportPool.handles.get(c.key);
+              if (!handle) return Promise.resolve();
+              return handle.ring.waitForPts(clipSrcPtsAt(c, tUs));
+            }),
+          );
+        }
+        waitMs += performance.now() - waitT0;
 
-          if (bytes) {
+        const motifWaitT0 = performance.now();
+        const motifPacket = req.motifStream ? await motifInbox.take(i) : null;
+        if (motifPacket) compositor.setMotifFrames(motifPacket.frames);
+        waitMs += performance.now() - motifWaitT0;
+        const compT0 = performance.now();
+        try {
+          compositor.setAnchorTime(tUs);
+          compositor.compositeFrame(tUs);
+
+          if (nativeSink) {
+            // Native-sink path: render into the composite RenderTexture (rgba16float
+            // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
+            // then stream to the Rust sink over the chunk/ack IPC channel.
+            app.renderer.render({ container: app.stage, target: compositeRT! });
+            compositeMs += performance.now() - compT0;
+
+            // Two-deep readback pipelining: submit frame i's pack passes + async
+            // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
+            // had a full frame of wait/composite/pack behind it, so the retrieve
+            // is normally a straight CPU copy out of the PBO rather than a GPU
+            // sync stall.
+            const capT0 = performance.now();
+            pack!.submit(compositeRT!);
+            const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
+            captureMs += performance.now() - capT0;
+
+            if (bytes) {
+              const encT0 = performance.now();
+              // Native-sink frames go to the main thread over the chunk/ack
+              // channel, which forwards them to export_video_sink_write.
+              // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
+              // transport round-trip then overlaps the next frame's composite+pack
+              // instead of serializing after it. `encodeMs` therefore measures the
+              // stall blocked on transport, not the transport itself. retrieve()
+              // hands over a frame-owned buffer, so postChunk transfers it as-is.
+              if (inflightAck) await inflightAck;
+              inflightAck = postChunk(bytes);
+              encodeMs += performance.now() - encT0;
+            }
+          } else {
+            // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
+            // push to the WebCodecs EncoderSink.
+            app.render();
+            compositeMs += performance.now() - compT0;
+
+            const capT0 = performance.now();
+            let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
+            if (scaleCtx && scaleCanvas) {
+              scaleCtx.drawImage(
+                req.canvas as unknown as CanvasImageSource,
+                0,
+                0,
+                outWidth,
+                outHeight,
+              );
+              source = scaleCanvas as unknown as CanvasImageSource;
+            }
+            const captured = new VideoFrame(source, {
+              timestamp: tUs - startUs,
+              duration: frameDurUs,
+            });
+            captureMs += performance.now() - capT0;
+
+            const isKey = i % gop === 0;
             const encT0 = performance.now();
-            // Native-sink frames go to the main thread over the chunk/ack
-            // channel, which forwards them to export_video_sink_write.
-            // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
-            // transport round-trip then overlaps the next frame's composite+pack
-            // instead of serializing after it. `encodeMs` therefore measures the
-            // stall blocked on transport, not the transport itself. retrieve()
-            // hands over a frame-owned buffer, so postChunk transfers it as-is.
-            if (inflightAck) await inflightAck;
-            inflightAck = postChunk(bytes);
+            encoder!.encodeFrame(captured, isKey);
             encodeMs += performance.now() - encT0;
           }
-        } else {
-          // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
-          // push to the WebCodecs EncoderSink.
-          app.render();
-          compositeMs += performance.now() - compT0;
 
-          const capT0 = performance.now();
-          let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
-          if (scaleCtx && scaleCanvas) {
-            scaleCtx.drawImage(
-              req.canvas as unknown as CanvasImageSource,
-              0,
-              0,
-              outWidth,
-              outHeight,
-            );
-            source = scaleCanvas as unknown as CanvasImageSource;
+        } finally {
+          if (motifPacket) {
+            compositor.setMotifFrames({});
+            closeMotifPacket(motifPacket);
+            post({ type: "motif:consumed", index: i });
           }
-          const captured = new VideoFrame(source, {
-            timestamp: tUs - startUs,
-            duration: frameDurUs,
-          });
-          captureMs += performance.now() - capT0;
-
-          const isKey = i % gop === 0;
-          const encT0 = performance.now();
-          encoder!.encodeFrame(captured, isKey);
-          encodeMs += performance.now() - encT0;
         }
 
-      } finally {
-        if (motifPacket) {
-          compositor.setMotifFrames({});
-          closeMotifPacket(motifPacket);
-          post({ type: "motif:consumed", index: i });
+        // Per-frame evict — drop source frames whose intervals end at
+        // or before the NEXT output frame's source PTS. For the last
+        // output frame in the chunk, drop everything through srcBUs.
+        // This is what keeps the WebCodecs decoder pool from
+        // saturating. The cutoff is aggregated per GROUP (min across the
+        // group's active clips): a per-clip evict on a shared ring would
+        // let one clip drop frames a sibling still needs next frame.
+        const nextTUs = i + 1 < chunkEnd ? frameTimeUs(i + 1) : null;
+        const cutoffByKey = new Map<string, number>();
+        for (const c of activeNow) {
+          const cutoff =
+            nextTUs !== null && c.tStartUs <= nextTUs && nextTUs < c.tEndUs
+              ? clipSrcPtsAt(c, nextTUs)
+              : c.srcBUs + 1;
+          const prev = cutoffByKey.get(c.key);
+          cutoffByKey.set(c.key, prev === undefined ? cutoff : Math.min(prev, cutoff));
         }
-      }
+        for (const [key, cutoff] of cutoffByKey) {
+          exportPool.handles.get(key)?.evictBefore(cutoff);
+        }
 
-      // Per-frame evict — drop source frames whose intervals end at
-      // or before the NEXT output frame's source PTS. For the last
-      // output frame in the chunk, drop everything through srcBUs.
-      // This is what keeps the WebCodecs decoder pool from
-      // saturating. The cutoff is aggregated per GROUP (min across the
-      // group's active clips): a per-clip evict on a shared ring would
-      // let one clip drop frames a sibling still needs next frame.
-      const nextTUs = i + 1 < chunkEnd ? frameTimeUs(i + 1) : null;
-      const cutoffByKey = new Map<string, number>();
-      for (const c of activeNow) {
-        const cutoff =
-          nextTUs !== null && c.tStartUs <= nextTUs && nextTUs < c.tEndUs
-            ? clipSrcPtsAt(c, nextTUs)
-            : c.srcBUs + 1;
-        const prev = cutoffByKey.get(c.key);
-        cutoffByKey.set(c.key, prev === undefined ? cutoff : Math.min(prev, cutoff));
+        if (i % 5 === 0) {
+          post({ type: "progress", framesEncoded: i + 1, totalFrames });
+        }
+        const qT0 = performance.now();
+        if (!nativeSink) {
+          await encoder!.awaitQueueBelow(8);
+        }
+        queueWaitMs += performance.now() - qT0;
       }
-      for (const [key, cutoff] of cutoffByKey) {
-        exportPool.handles.get(key)?.evictBefore(cutoff);
-      }
+      totals.compositeMs += compositeMs;
+      totals.captureMs += captureMs;
+      totals.encodeMs += encodeMs;
+      totals.queueWaitMs += queueWaitMs;
+      totals.waitMs += waitMs;
 
-      if (i % 5 === 0) {
-        post({ type: "progress", framesEncoded: i + 1, totalFrames });
+      // 6c. Defensive end-of-chunk evict: anything still sitting in
+      // any handle's ring beyond the encoder's last consumed PTS.
+      // After the per-frame evict above this should be a no-op for
+      // single-clip projects, but multi-clip projects can leave
+      // stale frames in handles that weren't active at the last
+      // output frame.
+      const evictT0 = performance.now();
+      for (const g of stagedGroups.values()) {
+        exportPool.handles.get(g.key)?.evictBefore(g.srcBUs + 1);
       }
-      const qT0 = performance.now();
-      if (!nativeSink) {
-        await encoder!.awaitQueueBelow(8);
-      }
-      queueWaitMs += performance.now() - qT0;
+      const evictMs = performance.now() - evictT0;
+      totals.evictMs += evictMs;
+
+      const elapsedMs = performance.now() - startedAtMs;
+      const fps = elapsedMs > 0 ? Math.round((chunkEnd * 1000) / elapsedMs) : 0;
+      const nFrames = chunkEnd - chunkStart;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/export] chunk [${chunkStart}..${chunkEnd}) done — ` +
+          `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock) | ` +
+          `setup=${decodeMs.toFixed(0)}ms ` +
+          `wait=${waitMs.toFixed(0)}ms ` +
+          `(${(waitMs / nFrames).toFixed(1)}ms/f) ` +
+          `composite=${compositeMs.toFixed(0)}ms ` +
+          `(${(compositeMs / nFrames).toFixed(1)}ms/f) ` +
+          `capture=${captureMs.toFixed(0)}ms ` +
+          `(${(captureMs / nFrames).toFixed(1)}ms/f) ` +
+          `encode=${encodeMs.toFixed(0)}ms ` +
+          `queueWait=${queueWaitMs.toFixed(0)}ms ` +
+          `evict=${evictMs.toFixed(0)}ms`,
+      );
+      chunkStart = chunkEnd;
     }
-    totals.compositeMs += compositeMs;
-    totals.captureMs += captureMs;
-    totals.encodeMs += encodeMs;
-    totals.queueWaitMs += queueWaitMs;
-    totals.waitMs += waitMs;
 
-    // 6c. Defensive end-of-chunk evict: anything still sitting in
-    // any handle's ring beyond the encoder's last consumed PTS.
-    // After the per-frame evict above this should be a no-op for
-    // single-clip projects, but multi-clip projects can leave
-    // stale frames in handles that weren't active at the last
-    // output frame.
-    const evictT0 = performance.now();
-    for (const g of stagedGroups.values()) {
-      exportPool.handles.get(g.key)?.evictBefore(g.srcBUs + 1);
+    // Drain the native-sink pipeline tails BEFORE posting `done` — the last
+    // frame's readback was submitted but never retrieved (the loop retrieves
+    // one frame behind), and the main thread calls exportVideoSinkFinish on
+    // `done`, so an unsent/unacked final frame would race the sink's finish.
+    while (pack && pack.pending > 0) {
+      const bytes = await pack.retrieve();
+      if (inflightAck) await inflightAck;
+      inflightAck = postChunk(bytes);
     }
-    const evictMs = performance.now() - evictT0;
-    totals.evictMs += evictMs;
+    if (inflightAck) {
+      await inflightAck;
+      inflightAck = null;
+    }
 
-    const elapsedMs = performance.now() - startedAtMs;
-    const fps = elapsedMs > 0 ? Math.round((chunkEnd * 1000) / elapsedMs) : 0;
-    const nFrames = chunkEnd - chunkStart;
+    const totalMs = performance.now() - startedAtMs;
+    const overallFps = totalMs > 0 ? (totalFrames * 1000) / totalMs : 0;
+    const pct = (ms: number) => ((ms / totalMs) * 100).toFixed(1);
     // eslint-disable-next-line no-console
     console.log(
-      `[weftcut/export] chunk [${chunkStart}..${chunkEnd}) done — ` +
-        `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock) | ` +
-        `dispatch=${decodeMs.toFixed(0)}ms ` +
-        `wait=${waitMs.toFixed(0)}ms ` +
-        `(${(waitMs / nFrames).toFixed(1)}ms/f) ` +
-        `composite=${compositeMs.toFixed(0)}ms ` +
-        `(${(compositeMs / nFrames).toFixed(1)}ms/f) ` +
-        `capture=${captureMs.toFixed(0)}ms ` +
-        `(${(captureMs / nFrames).toFixed(1)}ms/f) ` +
-        `encode=${encodeMs.toFixed(0)}ms ` +
-        `queueWait=${queueWaitMs.toFixed(0)}ms ` +
-        `evict=${evictMs.toFixed(0)}ms`,
+      `[weftcut/export] PERF SUMMARY: ${totalFrames} frames in ${totalMs.toFixed(0)}ms ` +
+        `(${overallFps.toFixed(1)} fps wall-clock)\n` +
+        `  setup       ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)  ` +
+        `← source readiness + scheduling\n` +
+        `  wait        ${totals.waitMs.toFixed(0).padStart(7)}ms  (${pct(totals.waitMs)}%)  ` +
+        `${(totals.waitMs / totalFrames).toFixed(2)} ms/frame  ← awaiting decoder output\n` +
+        `  composite   ${totals.compositeMs.toFixed(0).padStart(7)}ms  (${pct(totals.compositeMs)}%)  ` +
+        `${(totals.compositeMs / totalFrames).toFixed(2)} ms/frame\n` +
+        `  capture     ${totals.captureMs.toFixed(0).padStart(7)}ms  (${pct(totals.captureMs)}%)  ` +
+        `${(totals.captureMs / totalFrames).toFixed(2)} ms/frame  ← GPU readback\n` +
+        `  encode      ${totals.encodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.encodeMs)}%)  ` +
+        `${(totals.encodeMs / totalFrames).toFixed(2)} ms/frame\n` +
+        `  queueWait   ${totals.queueWaitMs.toFixed(0).padStart(7)}ms  (${pct(totals.queueWaitMs)}%)  ` +
+        `← awaiting encoder backpressure\n` +
+        `  evict       ${totals.evictMs.toFixed(0).padStart(7)}ms  (${pct(totals.evictMs)}%)`,
     );
-  }
 
-  // Drain the native-sink pipeline tails BEFORE posting `done` — the last
-  // frame's readback was submitted but never retrieved (the loop retrieves
-  // one frame behind), and the main thread calls exportVideoSinkFinish on
-  // `done`, so an unsent/unacked final frame would race the sink's finish.
-  while (pack && pack.pending > 0) {
-    const bytes = await pack.retrieve();
-    if (inflightAck) await inflightAck;
-    inflightAck = postChunk(bytes);
-  }
-  if (inflightAck) {
-    await inflightAck;
-    inflightAck = null;
-  }
+    // 7. Finalize.
+    // Native sink: all frames already streamed via the chunk/ack channel; the
+    // main thread calls exportVideoSinkFinish after receiving `done`.
+    // WebCodecs: flush the encoder and finalize the mediabunny mux (flushes
+    // trailing fMP4 fragments through the same onChunk path).
+    if (!nativeSink) {
+      await encoder!.finalize();
+    }
+    post({ type: "progress", framesEncoded: totalFrames, totalFrames });
 
-  const totalMs = performance.now() - startedAtMs;
-  const overallFps = totalMs > 0 ? (totalFrames * 1000) / totalMs : 0;
-  const pct = (ms: number) => ((ms / totalMs) * 100).toFixed(1);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[weftcut/export] PERF SUMMARY: ${totalFrames} frames in ${totalMs.toFixed(0)}ms ` +
-      `(${overallFps.toFixed(1)} fps wall-clock)\n` +
-      `  dispatch    ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)  ` +
-      `← decoder feed (no flush)\n` +
-      `  wait        ${totals.waitMs.toFixed(0).padStart(7)}ms  (${pct(totals.waitMs)}%)  ` +
-      `${(totals.waitMs / totalFrames).toFixed(2)} ms/frame  ← awaiting decoder output\n` +
-      `  composite   ${totals.compositeMs.toFixed(0).padStart(7)}ms  (${pct(totals.compositeMs)}%)  ` +
-      `${(totals.compositeMs / totalFrames).toFixed(2)} ms/frame\n` +
-      `  capture     ${totals.captureMs.toFixed(0).padStart(7)}ms  (${pct(totals.captureMs)}%)  ` +
-      `${(totals.captureMs / totalFrames).toFixed(2)} ms/frame  ← GPU readback\n` +
-      `  encode      ${totals.encodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.encodeMs)}%)  ` +
-      `${(totals.encodeMs / totalFrames).toFixed(2)} ms/frame\n` +
-      `  queueWait   ${totals.queueWaitMs.toFixed(0).padStart(7)}ms  (${pct(totals.queueWaitMs)}%)  ` +
-      `← awaiting encoder backpressure\n` +
-      `  evict       ${totals.evictMs.toFixed(0).padStart(7)}ms  (${pct(totals.evictMs)}%)`,
-  );
+    // Perf counters for the E2E harness (decode efficiency / re-seek redundancy;
+    // `nativeHandles` rationale on `ExportPerf.nativeHandles`).
+    const { totalDispatched, nativeHandles, colorDiag, sources } = exportPool.diagnostics();
+    post({
+      type: "done",
+      perf: {
+        totalFrames,
+        totalDispatched,
+        nativeHandles,
+        decodeMs: Math.round(totals.decodeMs),
+        waitMs: Math.round(totals.waitMs),
+        queueWaitMs: Math.round(totals.queueWaitMs),
+        totalMs: Math.round(totalMs),
+        colorDiag,
+        sources,
+      },
+    });
 
-  // 7. Finalize.
-  // Native sink: all frames already streamed via the chunk/ack channel; the
-  // main thread calls exportVideoSinkFinish after receiving `done`.
-  // WebCodecs: flush the encoder and finalize the mediabunny mux (flushes
-  // trailing fMP4 fragments through the same onChunk path).
-  if (!nativeSink) {
-    await encoder!.finalize();
+  } finally {
+    cancelDecode = null;
+    motifInbox.dispose();
+    cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
   }
-  post({ type: "progress", framesEncoded: totalFrames, totalFrames });
-
-  // Perf counters for the E2E harness (decode efficiency / re-seek redundancy;
-  // `nativeHandles` rationale on `ExportPerf.nativeHandles`).
-  let totalDispatched = 0;
-  let nativeHandles = 0;
-  let colorDiag: unknown = null;
-  const sources: Array<{ mediaId: string; url: string }> = [];
-  for (const h of exportPool.handles.values()) {
-    totalDispatched += h.dispatchedTotal;
-    if (h instanceof NativeExportSourceHandle) nativeHandles++;
-    if (!colorDiag && h.firstFrameDiag) colorDiag = h.firstFrameDiag;
-    sources.push({ mediaId: h.mediaId, url: h.sourceUrl });
-  }
-  post({
-    type: "done",
-    perf: {
-      totalFrames,
-      totalDispatched,
-      nativeHandles,
-      decodeMs: Math.round(totals.decodeMs),
-      waitMs: Math.round(totals.waitMs),
-      totalMs: Math.round(totalMs),
-      colorDiag,
-      sources,
-    },
-  });
-
-  // 8. Cleanup.
-  motifInbox.dispose();
-  cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
 }
 
 interface CleanupArgs {

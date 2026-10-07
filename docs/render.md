@@ -731,10 +731,17 @@ chosen output; see [`export.md`](export.md).
 
 ### Export decode pipelines (one per media × phase)
 
-The Worker drives an `ExportDecoderPool` in ~2 s chunks: per chunk it
-dispatches every needed range per pipeline in one `decodeRange(aUs, bUs)`
-call, then the encode loop awaits each output frame via `ring.waitForPts`
-and evicts consumed frames. A pipeline is one of two handles behind the same
+The Worker plans `ExportDecoderPool` ranges in 60-frame chunks, starts their
+producers, and immediately consumes via `ring.waitForPts` and frame eviction.
+It awaits source readiness, not dispatch completion: WebCodecs production may
+park on its fixed 24-frame window, and a long GOP may span several planning
+chunks. Blocks split earlier at source activation/deactivation on the output
+grid, so rapid sequential cuts do not open all their decoders simultaneously.
+Ranges on one handle remain serialized. Frame release wakes the
+producer locally; there is no per-frame global admission or polling. The
+window counts pending decode packets, resident pictures and 10-bit copies
+together. See [resource accounting](performance-settings.md).
+A pipeline is one of two handles behind the same
 `ExportDecodeSession` contract, chosen per-acquire by the routing table
 (see §Export source resolution):
 
@@ -882,10 +889,12 @@ and AV1 10-bit originals, detected by ffprobe metadata via `tenBitExportCapable`
 decode through a CPU-plane lane forced to software — for AV1 this is a
 correctness requirement, since the hardware decoder "succeeds" but emits opaque
 frames that can't `copyTo`. `TenBitIngest` uploads the extracted planes as RG8
-textures and unpacks them into the f16 target via a GLSL pass; a reorder-margin
-+ ring-high-water pair (`REORDER_MARGIN`, sized from resolution) keeps
-the decoder fed ahead of the serialized copy chain without deadlocking, and
-each simultaneous 10-bit source carries its own ring. The same reorder-margin
+textures and unpacks them into the f16 target via a GLSL pass. A serialized
+copy chain shares the producer's 24-frame window with pending decode packets
+and resident pictures, replacing the older ring-only high-water gate. Copies
+keep their reservation until their input frames close, including after a
+decoder rebuild or cancellation. Each simultaneous 10-bit source carries its
+own ring. The same reorder-margin
 lead-in now applies to every export decode lane: software decoders hold the
 trailing frames of a fed window until more input arrives (Chromium's macOS
 prefer-software H.264 decoder withholds 2, 4 with B-frames), which otherwise

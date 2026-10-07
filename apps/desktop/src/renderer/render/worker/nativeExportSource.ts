@@ -116,8 +116,8 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   /// Dispatch a decode range, then RESOLVE IMMEDIATELY. Awaiting frames or
   /// rangeEnd here would deadlock the credit window: the producer parks after
   /// `creditWindow` frames, and credits are only returned by the 6b consume
-  /// loop, which runs AFTER 6a's decodeRange returns. Mirrors the WebCodecs
-  /// `ExportSourceHandle.decodeRange` dispatch-then-return shape.
+  /// loop. WebCodecs production can remain pending; the Worker starts both
+  /// adapters without awaiting range completion, then consumes their rings.
   async decodeRange(aUs: number, bUs: number): Promise<void> {
     await this.ensureReady();
     if (this._disposed) return;

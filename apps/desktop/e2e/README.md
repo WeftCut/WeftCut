@@ -440,6 +440,16 @@ no observed progress, an import blocked at IPC, and a failed renderer diagnostic
 Resource-specific tests pin their own budgets; ordinary export tests keep the
 application defaults so an incompatible automatic budget remains visible.
 
+`export-resource-admission.spec.ts` checks a 2304 MiB 1080p export, long-GOP
+preroll, rapid sequential cuts inside one planning block, session release,
+10-bit gradient precision, and cancellation followed by another export. Source
+diagnostics include `buffer.capacityFrames`, `peakFrames`, `waits`, and `waitMs`.
+These count the WebCodecs producer's pending packets, live pictures and copies;
+they do not measure whole-process memory. Capacity-wait time overlaps encoding
+and must not be added to the export wall time. `perf.decodeMs` now measures
+source preparation/scheduling; `waitMs` measures consumer waits, and
+`queueWaitMs` records encoder backpressure.
+
 The Motif partial-bake gate asserts displayed-frame coverage, monotonic progress,
 maximum hold, concurrent reads and continued baking. Total read count is attached
 as diagnostic evidence, not a throughput floor: prefetch/cache retention can

@@ -67,6 +67,26 @@ renderer allocation requests fail promptly when unavailable. Resident decoders
 retain memory leases and per-session thread caps, but not an exclusive job slot
 while idle, so a single-core allocation can still start export.
 
+WebCodecs export reserves a fixed per-source window before opening the decoder:
+24 frames in flight plus 16 estimated codec-private/reorder surfaces and 64 MiB
+of context overhead. Frame estimates use coded dimensions and 4 bytes/pixel
+(8 for the 10-bit lane). Pending packets, live pictures and asynchronous copies
+share the 24 credits; dispatch does not acquire additional memory. Consumption
+returns credits locally and wakes a parked producer, including across 60-frame
+planning blocks. Long GOPs therefore do not need to be retained in full. The
+window is internal and fixed for a session; the first version has no adaptive
+sizing or global scheduling in the per-frame path. Targets below the combined
+base working set can still fail admission.
+
+GOP preroll is discarded behind the requested source time, retaining its lower
+PTS neighbour. Planning blocks split at source activation/deactivation on the
+output frame grid, so sequential short clips never reserve simultaneous decoder
+windows just because they fall in the same 60-frame block. Inactive sessions
+close before later sources open. Cancellation and terminal errors wake pending
+consumers/producers, and asynchronous copies
+retain their lease until their frames close. Small diagnostic records preserve
+packet counts, per-source peak credits and capacity-wait time across reuse.
+
 Process-tree resident memory (Electron and native children) is sampled once per
 second through sysinfo on all three OSes. Shared mappings may be counted twice;
 this is a conservative pressure signal, not unique physical RAM or dedicated
