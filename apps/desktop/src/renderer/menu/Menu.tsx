@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import type { ReactNode } from "react";
 import { Menubar } from "@base-ui/react/menubar";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
@@ -40,7 +41,7 @@ export function Menu({ label, hint, children }: MenuProps) {
         </span>
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           align="start"
           sideOffset={4}
           className="app-popup-positioner"
@@ -48,7 +49,7 @@ export function Menu({ label, hint, children }: MenuProps) {
           <MenuPrimitive.Popup className="app-menu-list">
             {children}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );
@@ -229,11 +230,11 @@ export function SubMenu({ label, hint, disabled, children }: SubMenuProps) {
         </span>
       </MenuPrimitive.SubmenuTrigger>
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner className="app-popup-positioner">
+        <AppMenuPositioner className="app-popup-positioner">
           <MenuPrimitive.Popup className="app-menu-list">
             {children}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.SubmenuRoot>
   );

@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { useSyncExternalStore } from "react";
 import { CROP_MENU_COMMAND_IDS } from '../commands/cropCommands';
 import { useTranslation } from "react-i18next";
@@ -473,7 +474,7 @@ export function LayerContextMenu({
       onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -693,7 +694,7 @@ export function LayerContextMenu({
               </>
             )}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

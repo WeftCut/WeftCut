@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
@@ -82,7 +83,7 @@ export function PoolContextMenu({
       }}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -105,7 +106,7 @@ export function PoolContextMenu({
               <GroupItems target={target} />
             )}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

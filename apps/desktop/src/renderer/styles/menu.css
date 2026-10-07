@@ -54,7 +54,15 @@
 }
 
 .app-menu-list {
-  min-width: calc(220 * var(--ui-px));
+  /* Positioner recomputes the room on the chosen side on open/resize.
+   * Flipping alone cannot fit a long menu: constrain the popup itself so
+   * menu, submenu, select and popover contents stay reachable by scrolling. */
+  box-sizing: border-box;
+  min-width: min(calc(220 * var(--ui-px)), var(--available-width));
+  max-width: var(--available-width);
+  max-height: var(--available-height);
+  overflow: auto;
+  overscroll-behavior: contain;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -121,6 +129,8 @@
 
 .app-menu-item-label {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .app-menu-item-accelerator {

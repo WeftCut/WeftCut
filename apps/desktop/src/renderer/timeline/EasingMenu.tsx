@@ -1,3 +1,4 @@
+import { AppMenuPositioner, AppPopoverPositioner } from "../components/PopupPositioner";
 // Two-tier easing UI for the selected keyframes' outgoing segments, anchored at
 // the right-click point. Tier 1 is a Base UI Menu mirroring the mainstream-NLE
 // keyframe menu (Premiere ships seven items, Resolve four): the five everyday
@@ -483,7 +484,7 @@ export function EasingMenu({
         onOpenChange={closeContextMenuOn(onClose)}
       >
         <MenuPrimitive.Portal>
-          <MenuPrimitive.Positioner
+          <AppMenuPositioner
             anchor={anchor}
             side="bottom"
             align="start"
@@ -542,7 +543,7 @@ export function EasingMenu({
                 onSelect={() => setView("gallery")}
               />
             </MenuPrimitive.Popup>
-          </MenuPrimitive.Positioner>
+          </AppMenuPositioner>
         </MenuPrimitive.Portal>
       </MenuPrimitive.Root>
     );
@@ -551,7 +552,7 @@ export function EasingMenu({
   return (
     <PopoverPrimitive.Root open modal={false} onOpenChange={(o) => { if (!o) onClose(); }}>
       <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Positioner
+        <AppPopoverPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -610,7 +611,7 @@ export function EasingMenu({
               ))}
             </div>
           </PopoverPrimitive.Popup>
-        </PopoverPrimitive.Positioner>
+        </AppPopoverPositioner>
       </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>
   );

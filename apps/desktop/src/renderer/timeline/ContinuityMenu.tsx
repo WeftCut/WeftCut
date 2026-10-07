@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 // Right-click menu of a tangent handle: the owning key's continuity, Smooth or
 // Broken, checkmarked at the current one. Two rows and nothing else — the
 // easing menu on the key itself owns everything about the segments; this menu
@@ -25,7 +26,7 @@ export function ContinuityMenu({
   return (
     <MenuPrimitive.Root open modal={false} onOpenChange={closeContextMenuOn(onClose)}>
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -50,7 +51,7 @@ export function ContinuityMenu({
               />
             ))}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

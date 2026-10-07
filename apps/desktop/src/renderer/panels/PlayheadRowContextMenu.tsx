@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
@@ -67,7 +68,7 @@ export function PlayheadRowContextMenu({
       }}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -105,7 +106,7 @@ export function PlayheadRowContextMenu({
               />
             )}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

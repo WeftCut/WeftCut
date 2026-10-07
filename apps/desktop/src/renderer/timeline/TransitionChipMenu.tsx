@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 // The transition chip's context menu (#16): kind / direction / duration
 // without a round trip to the inspector, plus delete. Same cursor-anchored
 // Base UI shell as LayerContextMenu, but the first timeline menu with
@@ -72,7 +73,7 @@ export function TransitionChipMenu({
       onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -144,7 +145,7 @@ export function TransitionChipMenu({
               onSelect={() => onDelete(transition.id)}
             />
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

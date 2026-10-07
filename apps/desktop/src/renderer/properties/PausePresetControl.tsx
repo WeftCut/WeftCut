@@ -1,3 +1,4 @@
+import { AppMenuPositioner, AppPopoverPositioner } from "../components/PopupPositioner";
 import { useRef, useState } from "react";
 import { Menu } from "@base-ui/react/menu";
 import { Popover } from "@base-ui/react/popover";
@@ -110,7 +111,7 @@ export function PausePresetControl({ values, source, onSourceChange, onApply, di
           <span>{caption}</span><ChevronDown size={11} aria-hidden />
         </Menu.Trigger>
         <Menu.Portal>
-          <Menu.Positioner align="start" sideOffset={4} className="app-popup-positioner">
+          <AppMenuPositioner align="start" sideOffset={4} className="app-popup-positioner">
             <Menu.Popup className="app-menu-list pauses-preset-menu" finalFocus={editor === null}>
               <Menu.Group>
                 <Menu.GroupLabel className="menu-heading">{t("pauses.presets_builtin")}</Menu.GroupLabel>
@@ -146,14 +147,14 @@ export function PausePresetControl({ values, source, onSourceChange, onApply, di
               }}>{t("pauses.preset_update", { name: personal.name })}</Menu.Item>}
               <Menu.Item className="app-menu-item" disabled={!loaded} onClick={() => beginEditor("manage")}>{t("pauses.presets_manage")}</Menu.Item>
             </Menu.Popup>
-          </Menu.Positioner>
+          </AppMenuPositioner>
         </Menu.Portal>
       </Menu.Root>
     </InspectorRow>
     {editor === null && (error || notice) && <p className={error ? "settings-error" : "sr-only"} role={error ? "alert" : "status"}>{error || notice}</p>}
     <Popover.Root open={editor !== null} onOpenChange={open => { if (!open && !saving) setEditor(null); }}>
       <Popover.Portal>
-        <Popover.Positioner anchor={trigger} align="start" sideOffset={4} className="app-popup-positioner">
+        <AppPopoverPositioner anchor={trigger} align="start" sideOffset={4} className="app-popup-positioner">
           <Popover.Popup className="app-menu-list pauses-preset-editor" initialFocus={editor === "save" ? nameInput : undefined} finalFocus={trigger}>
             <Popover.Title className="pauses-editor-title">{t(editor === "save" ? "pauses.preset_save_as" : "pauses.presets_manage")}</Popover.Title>
             <Popover.Description className="pauses-editor-hint">{t("pauses.presets_scope")}</Popover.Description>
@@ -188,7 +189,7 @@ export function PausePresetControl({ values, source, onSourceChange, onApply, di
             {notice && <p className="pauses-editor-hint" role="status">{notice}</p>}
             {editor === "manage" && renameId === null && <div className="pauses-editor-actions"><Button size="sm" variant="ghost" disabled={saving} onClick={() => setEditor(null)}>{t("pauses.preset_done")}</Button></div>}
           </Popover.Popup>
-        </Popover.Positioner>
+        </AppPopoverPositioner>
       </Popover.Portal>
     </Popover.Root>
   </>;

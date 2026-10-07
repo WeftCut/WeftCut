@@ -1,3 +1,4 @@
+import { AppPopoverPositioner } from "../components/PopupPositioner";
 // Add-effect picker: one trigger button opening a searchable, category-grouped
 // popup over the effect catalog.
 //
@@ -176,7 +177,7 @@ export function EffectPicker({
         {t("effects.add")}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner
+        <AppPopoverPositioner
           side="bottom"
           align="start"
           sideOffset={4}
@@ -194,7 +195,7 @@ export function EffectPicker({
               }}
             />
           </Popover.Popup>
-        </Popover.Positioner>
+        </AppPopoverPositioner>
       </Popover.Portal>
     </Popover.Root>
   );

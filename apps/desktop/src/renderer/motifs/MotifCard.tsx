@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOutputIcon } from 'lucide-react';
@@ -55,13 +56,13 @@ function MotifCardMenu({ motif, x, y, onClose, onExport, onDelete }: {
   const anchor = useCursorAnchor(x, y);
   return <MenuPrimitive.Root open modal={false} onOpenChange={open => { if (!open) onClose(); }}>
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Positioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
+      <AppMenuPositioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
         <MenuPrimitive.Popup className="app-menu-list" finalFocus={contextMenuFinalFocus} aria-label={motif.name}>
           <MenuItem label={t('motif_picker.export_button')} onSelect={onExport} />
           {(motif.status === 'draft' || motif.status === 'installed') &&
             <MenuItem label={t('motif_picker.delete_button')} onSelect={onDelete} />}
         </MenuPrimitive.Popup>
-      </MenuPrimitive.Positioner>
+      </AppMenuPositioner>
     </MenuPrimitive.Portal>
   </MenuPrimitive.Root>;
 }

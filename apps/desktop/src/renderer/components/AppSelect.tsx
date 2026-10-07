@@ -1,3 +1,4 @@
+import { AppSelectPositioner } from "./PopupPositioner";
 import type { ReactNode } from "react";
 import { Select } from "@base-ui/react/select";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
@@ -57,7 +58,7 @@ export function AppSelect({
         {/* alignItemWithTrigger=false: drop below the trigger like the
             menubar dropdowns (and native Windows selects) instead of
             overlaying the trigger mac-style. */}
-        <Select.Positioner
+        <AppSelectPositioner
           align="start"
           sideOffset={4}
           alignItemWithTrigger={false}
@@ -82,7 +83,7 @@ export function AppSelect({
               </Select.Item>
             ))}
           </Select.Popup>
-        </Select.Positioner>
+        </AppSelectPositioner>
       </Select.Portal>
     </Select.Root>
   );

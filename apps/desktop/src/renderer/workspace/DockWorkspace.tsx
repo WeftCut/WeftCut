@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import {
   createContext,
   useCallback,
@@ -931,7 +932,7 @@ function PanelTabContextMenu({
       onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -944,7 +945,7 @@ function PanelTabContextMenu({
               onSelect={onClosePanel}
             />
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );
@@ -1128,7 +1129,7 @@ function TimelineTabContextMenu({
       onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -1159,7 +1160,7 @@ function TimelineTabContextMenu({
               onSelect={onClosePanel}
             />
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

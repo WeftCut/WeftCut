@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import {
   useLayoutEffect,
   useRef,
@@ -330,7 +331,7 @@ function EffectRow({
             <MoreHorizontal size={14} />
           </Menu.Trigger>
           <Menu.Portal>
-            <Menu.Positioner side="bottom" align="end" sideOffset={4} className="app-popup-positioner">
+            <AppMenuPositioner side="bottom" align="end" sideOffset={4} className="app-popup-positioner">
               <Menu.Popup className="app-menu-list">
                 <Menu.Item
                   className="app-menu-item"
@@ -365,7 +366,7 @@ function EffectRow({
                   <span className="app-menu-item-label">{t("effects.remove", { name })}</span>
                 </Menu.Item>
               </Menu.Popup>
-            </Menu.Positioner>
+            </AppMenuPositioner>
           </Menu.Portal>
         </Menu.Root>
       </div>

@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { useSyncExternalStore } from "react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
@@ -80,7 +81,7 @@ export function RulerContextMenu({
       }}
     >
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
+        <AppMenuPositioner
           anchor={anchor}
           side="bottom"
           align="start"
@@ -98,7 +99,7 @@ export function RulerContextMenu({
               ),
             )}
           </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
+        </AppMenuPositioner>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
   );

@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu } from "@base-ui/react/menu";
@@ -225,7 +226,7 @@ function PreviewZoomControl() {
         <ChevronDownIcon size={11} aria-hidden="true" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner align="start" sideOffset={4} className="app-popup-positioner">
+        <AppMenuPositioner align="start" sideOffset={4} className="app-popup-positioner">
           <Menu.Popup className="app-menu-list">
             <Menu.RadioGroup value={zoom === "fit" ? "fit" : String(zoom)}>
               {rungs.map((rung) => (
@@ -247,7 +248,7 @@ function PreviewZoomControl() {
               ))}
             </Menu.RadioGroup>
           </Menu.Popup>
-        </Menu.Positioner>
+        </AppMenuPositioner>
       </Menu.Portal>
     </Menu.Root>
   );

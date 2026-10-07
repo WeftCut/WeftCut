@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { Menu } from "@base-ui/react/menu";
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -32,7 +33,7 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
       <ChevronDown size={11} aria-hidden="true" />
     </Menu.Trigger>
     <Menu.Portal>
-      <Menu.Positioner align="start" sideOffset={4} className="app-popup-positioner">
+      <AppMenuPositioner align="start" sideOffset={4} className="app-popup-positioner">
         <Menu.Popup className="app-menu-list settings-model-menu">
           <div className="settings-model-menu-options">
             <Menu.RadioGroup value={activeId ?? ""}>
@@ -53,7 +54,7 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
           <Menu.Separator className="menu-separator" />
           <Menu.Item className="app-menu-item" disabled={preparing} onClick={onAdd}><Plus size={12} />{t("models.add_model")}</Menu.Item>
         </Menu.Popup>
-      </Menu.Positioner>
+      </AppMenuPositioner>
     </Menu.Portal>
   </Menu.Root>;
 }

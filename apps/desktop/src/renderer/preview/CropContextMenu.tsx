@@ -1,3 +1,4 @@
+import { AppMenuPositioner } from "../components/PopupPositioner";
 import { Menu } from '@base-ui/react/menu';
 import { useTranslation } from 'react-i18next';
 import { useEffect } from 'react';
@@ -13,11 +14,11 @@ export function CropContextMenu({ x, y, onClose }: { x: number; y: number; onClo
   useEffect(() => { if (!available) onClose(); }, [available, onClose]);
   return <Menu.Root open modal={false} onOpenChange={open => { if (!open) onClose(); }}>
     <Menu.Portal>
-      <Menu.Positioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
+      <AppMenuPositioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
         <Menu.Popup className="app-menu-list" aria-label={t('crop.title')} finalFocus={contextMenuFinalFocus}>
           {CROP_MENU_COMMAND_IDS.map(id => <CommandContextItem key={id} id={id} onRun={onClose} />)}
         </Menu.Popup>
-      </Menu.Positioner>
+      </AppMenuPositioner>
     </Menu.Portal>
   </Menu.Root>;
 }

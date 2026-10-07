@@ -56,8 +56,7 @@
 .font-select small { display: block; color: var(--muted-foreground); }
 .font-select-popup {
   max-height: min(calc(360 * var(--ui-px)), var(--available-height));
-  max-width: min(calc(480 * var(--ui-px)), calc(100vw - calc(32 * var(--ui-px))));
-  overflow-y: auto;
+  max-width: min(calc(480 * var(--ui-px)), var(--available-width), calc(100vw - calc(32 * var(--ui-px))));
 }
 
 /* AppSlider — track/thumb skin replacing the native range input. */
