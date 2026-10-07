@@ -12,3 +12,4 @@ Re-verify an entry before relying on it when the engine major version changes (a
 - `napi-rs-multiplatform-testing.md` — how the two napi-rs addons are tested on all three OSes (`test-noop`, `dyn-symbols`, per-OS loader variables), with the macOS checklist.
 - `mcp-2026-07-28-spec-upgrade-assessment.md` — assessment of moving the MCP server to the 2026-07-28 protocol revision.
 - `react-electron-docking-layout-research.md` — docking-layout library research for the React/Electron renderer (why dockview).
+- `macos-resource-verification-2026-10-07.md` — physical M1 resource/settings and codec verification, cache-link and numeric-admission fixes, and portable graphics identity.

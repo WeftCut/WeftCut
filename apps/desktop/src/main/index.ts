@@ -10,6 +10,7 @@ import { hydrateResourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
 import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
+import { describePerformanceGraphics } from './performanceHardware.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
@@ -1640,11 +1641,19 @@ app.whenReady().then(async () => {
   // than hanging, but the ack ordering still exists to avoid paying that cost.
   installPreviewGpuIpc(ndBackend, () => mainWindow)
   installPerformanceCalibration(dataRoot.cacheDir)
-  ipcMain.handle('performanceResources:info', () => ({
-    total_memory_mib: Math.floor(os.totalmem() / MIB),
-    gpu: performanceGpu,
-    gpu_buffers: gpuBufferBudget.snapshot(),
-  }))
+  // Complete GPU identity initializes lazily when diagnostics are requested;
+  // basic info on macOS can contain only a vendor ID before GPU startup.
+  let graphicsInfo: Promise<ReturnType<typeof describePerformanceGraphics> | null> | undefined
+  ipcMain.handle('performanceResources:info', async () => {
+    graphicsInfo ??= app.getGPUInfo('complete')
+      .then(info => describePerformanceGraphics(info, process.platform, process.arch)).catch(() => null)
+    return {
+      total_memory_mib: Math.floor(os.totalmem() / MIB),
+      gpu: performanceGpu,
+      graphics: await graphicsInfo,
+      gpu_buffers: gpuBufferBudget.snapshot(),
+    }
+  })
 
   // Availability of the optional native-decode component (level-0 gate). The
   // renderer pulls this once on mount to gray out the Native-engine setting +

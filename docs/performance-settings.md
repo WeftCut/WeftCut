@@ -67,6 +67,10 @@ renderer allocation requests fail promptly when unavailable. Resident decoders
 retain memory leases and per-session thread caps, but not an exclusive job slot
 while idle, so a single-core allocation can still start export.
 
+IPC and the native entry validate integer thread/memory claims before NAPI
+conversion. Out-of-range, fractional and non-finite native claims are rejected;
+large JavaScript numbers cannot wrap into a smaller working-memory reservation.
+
 WebCodecs export reserves a fixed per-source window before opening the decoder:
 24 frames in flight plus 16 estimated codec-private/reorder surfaces and 64 MiB
 of context overhead. Frame estimates use coded dimensions and 4 bytes/pixel
@@ -150,6 +154,11 @@ file. Filmstrip destination directories are retained because a writer may be
 about to use them. Cache readers regenerate evicted derivatives; source assets
 are never sacrificed to satisfy a quota.
 
+Cache sweeps skip symbolic links at the cache root, category roots and nested
+entries. Linked external files are neither charged to the quota nor traversed
+for eviction. This protects existing links; it is not a filesystem sandbox
+against another process concurrently replacing directories during a sweep.
+
 ## Compatibility and optional measurements
 
 resource_policy is independent of legacy performance_policy. Old preview cache
@@ -159,6 +168,9 @@ nothing; resource edits do not alter decode quality, export format or models.
 
 Windows adapter diagnostics and the optional H.264 4K/60 benchmark retain their
 narrow scope. Saving evidence is separate from applying it; reset retains it.
+Settings also reports Electron's active graphics-adapter identity independently
+of native capacity measurements. Apple Silicon adapters show shared graphics
+memory; this does not invent dedicated VRAM or increase the application budget.
 The isolated benchmark reserves its full fixed workload in the parent authority
 before launch and releases it on exit/cancel; it cannot bypass the app target.
 Applying a test cannot bypass global admission or certify macOS/Linux, other

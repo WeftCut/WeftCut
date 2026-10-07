@@ -57,6 +57,13 @@ it('rejects duplicate or malformed requests before allocating again', () => {
   expect(() => mocks.handles.get('resources:acquire')!({ sender: owner }, { id: 'bad', memoryMiB: Infinity, threads: 0 })).toThrow();
   expect(mocks.reserve).toHaveBeenCalledOnce(); owner.emit('destroyed');
 });
+it('rejects memory values that would wrap at the native uint32 boundary', () => {
+  const owner = sender(9);
+  for (const memoryMiB of [2 ** 32, 2 ** 32 + 64, Number.MAX_SAFE_INTEGER]) {
+    expect(() => mocks.handles.get('resources:acquire')!({ sender: owner }, { id: 'overflow', memoryMiB, threads: 0 })).toThrow('Invalid resource request');
+  }
+  expect(mocks.reserve).not.toHaveBeenCalled(); owner.emit('destroyed');
+});
 it('combines playback across windows and drops playback state when the owner dies', () => {
   const a = sender(5), b = sender(6), playing = mocks.listeners.get('resources:playing')!;
   playing({ sender: a }, true); playing({ sender: b }, false);

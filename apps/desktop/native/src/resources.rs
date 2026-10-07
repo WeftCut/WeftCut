@@ -272,11 +272,23 @@ pub async fn resources_cache_written(immediate: bool) {
 }
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
-pub fn resources_reserve(threads: u32, memory_mib: u32) -> napi::Result<u32> {
+pub fn resources_reserve(threads: f64, memory_mib: f64) -> napi::Result<u32> {
+    // NAPI's uint32 conversion silently wraps large JS numbers and truncates
+    // fractions. Validate doubles before conversion so every entry into the
+    // authority rejects invalid claims instead of admitting fewer resources.
+    if !threads.is_finite()
+        || threads.fract() != 0.0
+        || !(0.0..=1024.0).contains(&threads)
+        || !memory_mib.is_finite()
+        || memory_mib.fract() != 0.0
+        || !(1.0..=f64::from(u32::MAX)).contains(&memory_mib)
+    {
+        return Err(napi::Error::from_reason("Invalid resource request"));
+    }
     governor()
         .reserve(Claim {
-            threads,
-            mib: u64::from(memory_mib),
+            threads: threads as u32,
+            mib: memory_mib as u64,
             background: false,
         })
         .ok_or_else(|| {
@@ -367,6 +379,23 @@ fn process_memory_refresh() -> sysinfo::ProcessRefreshKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_reservations_reject_wrapping_truncation_and_nonfinite_values() {
+        for memory in [
+            0.0,
+            -1.0,
+            1.5,
+            f64::from(u32::MAX) + 1.0,
+            f64::from(u32::MAX) + 65.0,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
+            assert!(resources_reserve(0.0, memory).is_err());
+        }
+        for threads in [-1.0, 1.5, 1025.0, 4294967296.0, f64::NAN, f64::INFINITY] {
+            assert!(resources_reserve(threads, 64.0).is_err());
+        }
+    }
     #[test]
     fn memory_sampling_excludes_thread_entries() {
         // sysinfo enables Linux tasks even in ProcessRefreshKind::nothing().

@@ -45,7 +45,7 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
   ipcMain.handle('resources:acquire', (event, request: { id: string; memoryMiB: number; threads: number }) => {
     const owner = ownerFor(event.sender);
     if (!request || typeof request.id !== 'string' || request.id.length > 128 || owner.releases.has(request.id)
-      || !Number.isSafeInteger(request.memoryMiB) || request.memoryMiB < 1
+      || !Number.isSafeInteger(request.memoryMiB) || request.memoryMiB < 1 || request.memoryMiB > 0xffff_ffff
       || !Number.isSafeInteger(request.threads) || request.threads < 0 || request.threads > 1024) throw new Error('Invalid resource request');
     owner.releases.set(request.id, reserveResources(request.threads, request.memoryMiB));
   });

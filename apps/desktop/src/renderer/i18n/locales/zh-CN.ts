@@ -22,6 +22,7 @@ const zhCN: Resources = {
       "shared_gpu_memory": "使用共享内存",
       "unknown": "未识别",
       "hardware_vram": "独立显存",
+      "hardware_graphics_memory": "图形内存",
       "hardware_gpu": "默认显卡",
       "hardware_ram": "内存",
       "hardware_heading": "此计算机",

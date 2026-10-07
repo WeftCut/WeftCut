@@ -52,10 +52,11 @@ export function PerformanceSection({ onError }: { onError: (message: string) => 
       <dl className="settings-performance-allocation">
         <div><dt>{t('performance.hardware_ram')}</dt><dd>{resources && !resourceFailed
           ? `${(resources.total_memory_mib / 1024).toFixed(1)} GiB` : t('performance.unknown')}</dd></div>
-        <div><dt>{t('performance.hardware_gpu')}</dt><dd>{resources?.gpu?.name ?? t('performance.unknown')}</dd></div>
-        <div><dt>{t('performance.hardware_vram')}</dt><dd>{resources?.gpu
+        <div><dt>{t('performance.hardware_gpu')}</dt><dd>{resources?.gpu?.name ?? resources?.graphics?.name ?? t('performance.unknown')}</dd></div>
+        <div><dt>{t(resources?.graphics?.memory_kind === 'unified' ? 'performance.hardware_graphics_memory' : 'performance.hardware_vram')}</dt><dd>{resources?.gpu
           ? resources.gpu.dedicatedMemoryMib > 512 ? `${(resources.gpu.dedicatedMemoryMib / 1024).toFixed(1)} GiB`
-            : t('performance.shared_gpu_memory') : t('performance.unknown')}</dd></div>
+            : t('performance.shared_gpu_memory') : resources?.graphics?.memory_kind === 'unified'
+              ? t('performance.shared_gpu_memory') : t('performance.unknown')}</dd></div>
       </dl>
     </section>
     <section className="settings-section">

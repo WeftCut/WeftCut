@@ -87,6 +87,11 @@ pub fn sweep_all(layouts: &[CacheLayout], budget_bytes: u64, now: SystemTime) ->
     let mut units: Vec<Unit> = Vec::new();
 
     for layout in layouts {
+        // A workspace can replace Cache itself with a link as well as any
+        // category or nested directory. Only sweep the visited real root.
+        if !fs::symlink_metadata(layout.current_root()).is_ok_and(|meta| meta.is_dir()) {
+            continue;
+        }
         collect_waveforms(&layout.waveforms_dir(), now, &mut report, &mut units);
         collect_audio_fx(&layout.audio_conform_dir(), now, &mut report, &mut units);
         collect_filmstrip(&layout.filmstrip_root(), now, &mut report, &mut units);
@@ -145,9 +150,17 @@ fn collect_raster(root: &Path, now: SystemTime, report: &mut SweepReport, units:
     }
 }
 
-/// Missing/unreadable dirs iterate as empty — the sweep never errors.
+/// Missing/unreadable dirs and links iterate as empty. Never traverse directory
+/// links or account linked files, including links at a cache category's root.
 fn read_dir_entries(dir: &Path) -> impl Iterator<Item = fs::DirEntry> {
-    fs::read_dir(dir).into_iter().flatten().flatten()
+    fs::symlink_metadata(dir)
+        .ok()
+        .filter(|meta| meta.is_dir())
+        .and_then(|_| fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_symlink()))
 }
 
 /// `waveforms/`: `{hash}.v4.peaks` files are LRU units. Any other `.peaks`
@@ -401,6 +414,76 @@ mod tests {
         let report = sweep(&l, 1000, now);
         assert!(t.exists());
         assert_eq!(report.units_deleted, 0);
+        assert_eq!(report.bytes_deleted, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sweep_never_follows_directory_links_outside_the_cache() {
+        use std::os::unix::fs::symlink;
+
+        let (_tmp, l) = layout();
+        let outside = TempDir::new().unwrap();
+        let tile = outside.path().join("quick/0/000000.jpg");
+        fs::create_dir_all(tile.parent().unwrap()).unwrap();
+        fs::write(&tile, b"protected external file").unwrap();
+        symlink(outside.path(), l.filmstrip_root().join("linked")).unwrap();
+
+        let report = sweep(&l, 0, SystemTime::now());
+        assert!(
+            tile.exists(),
+            "a linked hash directory must not expose external tiles to eviction"
+        );
+        assert_eq!(report.bytes_deleted, 0);
+
+        // Category roots themselves can be replaced by symlinks as well.
+        fs::remove_dir(l.waveforms_dir()).unwrap();
+        let peaks = outside.path().join("source.v4.peaks");
+        fs::write(&peaks, b"protected external peaks").unwrap();
+        symlink(outside.path(), l.waveforms_dir()).unwrap();
+        let report = sweep(&l, 0, SystemTime::now());
+        assert!(
+            peaks.exists(),
+            "a linked cache category must not be traversed"
+        );
+        assert_eq!(report.bytes_deleted, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_stats_ignore_links_and_cycles() {
+        use std::os::unix::fs::symlink;
+
+        let (_tmp, l) = layout();
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("original"), [0u8; 400]).unwrap();
+        let thumbnails = l.thumbnails("linked");
+        fs::create_dir_all(&thumbnails).unwrap();
+        fs::write(thumbnails.join("0.jpg"), [0u8; 20]).unwrap();
+        symlink(outside.path(), thumbnails.join("external")).unwrap();
+        assert_eq!(
+            dir_stats(&thumbnails).0,
+            20,
+            "external bytes cannot charge the cache quota"
+        );
+        symlink(&thumbnails, thumbnails.join("cycle")).unwrap();
+        assert_eq!(dir_stats(&thumbnails).0, 20, "a link cycle must terminate");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sweep_never_follows_a_linked_cache_root() {
+        use std::os::unix::fs::symlink;
+
+        let (_outside, external) = layout();
+        let peaks = external.waveform("protected");
+        fs::write(&peaks, b"protected external peaks").unwrap();
+        let workspace = TempDir::new().unwrap();
+        let linked_root = workspace.path().join("Cache");
+        symlink(external.current_root(), &linked_root).unwrap();
+        let linked = CacheLayout::new(linked_root);
+        let report = sweep(&linked, 0, SystemTime::now());
+        assert!(peaks.exists());
         assert_eq!(report.bytes_deleted, 0);
     }
 

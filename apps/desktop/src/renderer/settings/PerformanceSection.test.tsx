@@ -37,6 +37,16 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 
+it('shows portable GPU identity and shared system memory without a dedicated VRAM claim', async () => {
+  info.mockResolvedValue({ total_memory_mib: 8192, graphics: { name: 'Apple M-test', memory_kind: 'unified' },
+    gpu: null, gpu_buffers: { used_bytes: 0, limit_bytes: 416 * 1024 * 1024, preview_bytes: 0, motif_bytes: 0 } });
+  render(<PerformanceSection onError={onError} />);
+  expect(await screen.findByText('Apple M-test')).toBeDefined();
+  expect(screen.getByText('Graphics memory')).toBeDefined();
+  expect(screen.getByText('Uses shared memory')).toBeDefined();
+  expect(screen.queryByText('Dedicated graphics memory')).toBeNull();
+});
+
 it('edits a budget while resource telemetry is unavailable and preserves the other budget', async () => {
   info.mockRejectedValue(new Error('unavailable'));
   const user = userEvent.setup();

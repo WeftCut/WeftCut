@@ -20,6 +20,7 @@ const enUS = {
       "shared_gpu_memory": "Uses shared memory",
       "unknown": "Unknown",
       "hardware_vram": "Dedicated graphics memory",
+      "hardware_graphics_memory": "Graphics memory",
       "hardware_gpu": "Default graphics adapter",
       "hardware_ram": "Memory",
       "hardware_heading": "This computer",

@@ -10,7 +10,12 @@ export const PERFORMANCE_BUDGET_FIELDS = {
 export interface PerformanceResourceInfo {
   total_memory_mib: number;
   gpu?: PerformanceGpuHardware | null;
+  graphics?: PerformanceGraphicsHardware | null;
   gpu_buffers: { used_bytes: number; limit_bytes: number; preview_bytes: number; motif_bytes: number };
+}
+export interface PerformanceGraphicsHardware {
+  name: string | null;
+  memory_kind: 'unified' | 'unknown';
 }
 export interface PerformanceGpuHardware {
   name: string;
