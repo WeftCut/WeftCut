@@ -45,6 +45,7 @@ import {
   useAutoDeleteEmptyTracks,
   useDefaultTextFont,
   useLayoutTheme,
+  useAutoInstallUpdatesOnQuit,
 } from "./appSettingsStore";
 import { FontSelect } from "../components/FontSelect";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
@@ -160,6 +161,7 @@ export function SettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const defaultTextFont = useDefaultTextFont();
   const layoutTheme = useLayoutTheme();
+  const autoInstallUpdatesOnQuit = useAutoInstallUpdatesOnQuit();
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
   // Project-scoped sections (composition pin, per-project toggles) talk to
   // workspace IPC, so the whole category unmounts — not just hides — when
@@ -282,6 +284,12 @@ export function SettingsPanel({
                     {t("settings.reopen_on_launch_hint")}
                   </span>
                 </span>
+              </label>
+              <label className="settings-toggle-row">
+                <AppSwitch checked={autoInstallUpdatesOnQuit} onCheckedChange={next => {
+                  void setAppSettings({ auto_install_updates_on_quit: next }).catch(err => setError(String(err)));
+                }} />
+                <span className="settings-toggle-label">{t("settings.auto_install_updates_on_quit")}</span>
               </label>
               <div className="settings-control-row">
                 <span className="settings-toggle-label">{t("settings.layout_theme")}</span>

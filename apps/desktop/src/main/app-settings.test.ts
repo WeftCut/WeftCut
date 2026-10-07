@@ -45,6 +45,15 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('defaults update-on-quit on for old files and persists an explicit opt-out', () => {
+    const { fs } = memFs({ [PATH]: JSON.stringify({ language: 'zh-CN' }) })
+    const deps = { fs, path: PATH, dir: DIR }
+    expect(createAppSettingsStore(deps).get().auto_install_updates_on_quit).toBe(true)
+    createAppSettingsStore(deps).apply({ auto_install_updates_on_quit: false })
+    expect(createAppSettingsStore(deps).get()).toMatchObject({ language: 'zh-CN', auto_install_updates_on_quit: false })
+    createAppSettingsStore(deps).apply({ auto_install_updates_on_quit: true })
+    expect(createAppSettingsStore(deps).get().auto_install_updates_on_quit).toBe(true)
+  })
   it('merges resource intent across windows, reprojects on restart and never reinterprets legacy caches', () => {
     const { fs, files } = memFs();
     const a = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 8192, cores: 4 });

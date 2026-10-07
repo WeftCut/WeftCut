@@ -1,9 +1,11 @@
-import { useEffect, useId, useState } from 'react'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { UpdateStatus } from '../../shared/updates'
 import { AppDialog } from '../components/AppDialog'
 import { Button } from '@/components/ui/button'
 import { openExternal, RELEASES_URL } from './links'
+import { useUpdateStatus } from './updateStatus'
+import { UpdateActions } from './UpdateActions'
+import { useAutoInstallUpdatesOnQuit } from '../settings/appSettingsStore'
 
 /// Help → Check for Updates. Opening it IS the check (the same IPC the 30 s
 /// startup timer fires), and it then mirrors the main-process status machine
@@ -13,27 +15,21 @@ import { openExternal, RELEASES_URL } from './links'
 export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const statusId = useId()
-  const [status, setStatus] = useState<UpdateStatus>({ phase: 'checking' })
-  useEffect(() => {
-    let alive = true
-    const receive = (next: UpdateStatus) => { if (alive) setStatus(next) }
-    const failed = () => receive({ phase: 'error' })
-    void window.api.updates.check().then(receive).catch(failed)
-    const timer = setInterval(() => {
-      void window.api.updates.status().then(receive).catch(failed)
-    }, 1000)
-    return () => { alive = false; clearInterval(timer) }
-  }, [])
+  const status = useUpdateStatus(true)
+  const autoInstall = useAutoInstallUpdatesOnQuit()
+  const available = ['downloading', 'ready', 'restarting'].includes(status.phase)
 
   const percent = status.percent ?? 0
   return (
-    <AppDialog title={t('help.check_updates')} onClose={onClose} panelClassName="settings-panel update-dialog">
+    <AppDialog title={t(available ? 'updates.available' : 'help.check_updates')} onClose={status.phase === 'restarting' ? undefined : onClose} panelClassName="settings-panel update-dialog">
       <div className="settings-body">
         <div className="settings-card">
           {/* The error copy takes the warn callout the other dialogs use for
               "read this before you continue"; every other phase is plain blurb. */}
           <p id={statusId} role="status" className={status.phase === 'error' ? 'settings-warn' : 'settings-blurb'}>
-            {t(`updates.${status.phase}`, { version: status.version, percent })}
+            {status.phase === 'ready'
+              ? <>{t('updates.version', { version: status.version })} {t(autoInstall ? 'updates.ready_auto' : 'updates.ready_manual')}</>
+              : t(`updates.${status.phase}`, { version: status.version, percent })}
           </p>
           {status.phase === 'downloading' && (
             <div
@@ -47,14 +43,14 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
               <div className="progress-fill" style={{ width: `${percent}%` }} />
             </div>
           )}
+          {available && <UpdateActions status={status} onLater={onClose} />}
           <div className="export-actions">
             <Button size="lg" onClick={() => openExternal(RELEASES_URL)}>
               {t('updates.releases')}
             </Button>
             {status.phase === 'error' && (
               <Button variant="default" size="lg" onClick={() => {
-                setStatus({ phase: 'checking' })
-                void window.api.updates.check().then(setStatus).catch(() => setStatus({ phase: 'error' }))
+                void window.api.updates.check().catch(() => {})
               }}>{t('help.check_updates')}</Button>
             )}
           </div>

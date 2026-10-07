@@ -10,6 +10,7 @@ import { listen } from "@/bridge/events";
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { PreviousSessionReport } from './app/DiagnosticReport';
+import { UpdateNotification } from './app/UpdateNotification';
 import { useFocusRegions } from "./focus/useFocusRegions";
 import { StartupScreen } from "./startup/StartupScreen";
 import { SplashScreen } from "./startup/SplashScreen";
@@ -195,6 +196,20 @@ function Root() {
     let cancelled = false;
     (async () => {
       try {
+        const resume = await window.api.updates.resume();
+        if (cancelled) return;
+        if (resume) {
+          if (resume.path) {
+            try {
+              await projectOpen(resume.path);
+              if (!cancelled) setStage("editor");
+            } catch (error) {
+              console.warn("Update project restore failed", error);
+              if (!cancelled) setStage("startup");
+            }
+          } else if (!cancelled) setStage("startup");
+          return;
+        }
         const enabled = await recentsGetReopenOnLaunch();
         if (!enabled) {
           if (!cancelled) setStage("startup");
@@ -313,6 +328,7 @@ function Root() {
       )}
       {editorMounted && <App key={projectEpoch} onCloseProject={onCloseProject} />}
       {launchReady && !splashVisible && <PreviousSessionReport />}
+      {launchReady && !splashVisible && <UpdateNotification />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

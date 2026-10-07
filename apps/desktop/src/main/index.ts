@@ -22,6 +22,7 @@ import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
+import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
@@ -1181,13 +1182,41 @@ app.whenReady().then(async () => {
   // app's designated requirement — for ad-hoc that is this build's own code
   // hash, so no later build can. The Help dialog says so and links the releases
   // page.
+  const resumePath = path.join(app.getPath('userData'), 'update-resume.json')
+  const updateResume = createUpdateResume({
+    version: app.getVersion(),
+    read: () => fs.existsSync(resumePath) ? fs.readFileSync(resumePath, 'utf8') : null,
+    write: body => { fs.writeFileSync(resumePath + '.tmp', body); fs.renameSync(resumePath + '.tmp', resumePath) },
+    clear: () => fs.rmSync(resumePath, { force: true }),
+  })
+  const resumeAfterUpdate = updateResume.take()
   const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
-    ? electronUpdater.autoUpdater : null)
+    ? electronUpdater.autoUpdater : null, {
+    installOnQuit: () => appSettings.get().auto_install_updates_on_quit !== false,
+    prepareRestart: async version => {
+      try {
+        // Persist the exact current project, including an intentionally empty
+        // start screen. Do not change recents' reopen-on-launch preference.
+        updateResume.save(version, tsHost?.openedProject()?.dir ?? null)
+        workspaceStore?.flush()
+        windowGeometryStore?.flush()
+        await tsHost?.shutdown()
+        quitFlushed = true
+      } catch (error) {
+        updateResume.clear()
+        throw error
+      }
+    },
+    quit: () => app.quit(),
+  })
   ipcMain.handle('updates:status', () => updates.status())
   ipcMain.handle('updates:check', () => {
     void updates.check()
     return updates.status()
   })
+  ipcMain.handle('updates:restart', () => updates.restart())
+  ipcMain.handle('updates:resume', () => resumeAfterUpdate)
+  app.once('quit', (_event, exitCode) => updates.installOnQuit(exitCode))
   app.once('before-quit', () => updates.stop())
 
   // Clip compute for the renderer: the MCP host's own tool function plus the

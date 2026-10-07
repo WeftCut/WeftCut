@@ -644,7 +644,18 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     agent,
     openedProject: () => opened,
     projects: agentProjects,
-    shutdown: () => { quitting = true; return persistence.close() },
+    shutdown: async () => {
+      const previous = opened
+      quitting = true
+      try { await persistence.close() }
+      catch (error) {
+        // An explicit update must leave the project usable if saving fails.
+        opened = previous
+        quitting = false
+        if (opened) deps.onWorkspaceOpened?.()
+        throw error
+      }
+    },
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

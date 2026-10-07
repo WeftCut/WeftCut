@@ -1,24 +1,31 @@
 import type { AppUpdater } from 'electron-updater'
-import type { UpdateStatus } from '../shared/updates.js'
+import type { UpdateRestartResult, UpdateStatus } from '../shared/updates.js'
 
 // No Electron runtime import: exercise the update lifecycle without launching
 // the editor. The actual provider comes from the packaged app-update.yml.
 type Updater = Pick<AppUpdater,
   'on' | 'checkForUpdates' | 'autoDownload' | 'autoInstallOnAppQuit' | 'disableWebInstaller' |
-  'allowPrerelease' | 'allowDowngrade' | 'logger'>
+  'allowPrerelease' | 'allowDowngrade' | 'logger' | 'quitAndInstall'>
 
-export function createUpdates(updater: Updater | null) {
+export function createUpdates(updater: Updater | null, lifecycle?: {
+  installOnQuit: () => boolean
+  prepareRestart: (version: string) => Promise<void>
+  quit: () => void
+}) {
   let status: UpdateStatus = { phase: updater ? 'idle' : 'disabled' }
   let pending: Promise<void> | null = null
   let startup: ReturnType<typeof setTimeout> | undefined
   let interval: ReturnType<typeof setInterval> | undefined
+  let restartPending: Promise<UpdateRestartResult> | null = null
+  let installing = false
 
   if (updater) {
     updater.logger = console
     updater.autoDownload = true
-    // Uses Electron's quit event, AFTER the existing async before-quit autosave.
-    // Never call quitAndInstall: that bypasses the editor's normal exit flow.
-    updater.autoInstallOnAppQuit = true
+    // Our quit-event hook owns installation, after normal shutdown has flushed.
+    // The library's hook cannot express the per-exit restart intent and is only
+    // registered at download time, so toggling its flag later is unreliable.
+    updater.autoInstallOnAppQuit = false
     // Releases ship the full NSIS installer, never electron-builder's web
     // installer stub; saying so keeps electron-updater from warning about it and
     // from changing behaviour when its default flips.
@@ -43,7 +50,7 @@ export function createUpdates(updater: Updater | null) {
   }
 
   function check(): Promise<void> {
-    if (!updater || status.phase === 'ready') return Promise.resolve()
+    if (!updater || status.phase === 'ready' || status.phase === 'restarting') return Promise.resolve()
     if (pending) return pending
     status = { phase: 'checking' }
     pending = (async () => {
@@ -63,6 +70,34 @@ export function createUpdates(updater: Updater | null) {
   return {
     status: (): UpdateStatus => ({ ...status }),
     check,
+    restart(): Promise<UpdateRestartResult> {
+      if (restartPending) return restartPending
+      if (!updater || !lifecycle || status.phase !== 'ready' || !status.version) return Promise.resolve('not-ready')
+      const ready = status
+      status = { ...ready, phase: 'restarting' }
+      restartPending = (async (): Promise<UpdateRestartResult> => {
+        try {
+          await lifecycle.prepareRestart(ready.version!)
+          lifecycle.quit()
+          return 'restarting'
+        } catch (error) {
+          console.warn('[updates] restart preparation failed', error)
+          status = ready
+          return 'save-failed'
+        } finally {
+          restartPending = null
+        }
+      })()
+      return restartPending
+    },
+    /** Only call from Electron's final quit event, never from a UI button. */
+    installOnQuit(exitCode: number) {
+      if (!updater || installing || exitCode !== 0) return
+      const restart = status.phase === 'restarting'
+      if (!restart && (status.phase !== 'ready' || lifecycle?.installOnQuit() === false)) return
+      installing = true
+      updater.quitAndInstall(true, restart)
+    },
     start() {
       if (!updater || startup || interval) return
       startup = setTimeout(() => { void check() }, 30_000)

@@ -68,6 +68,8 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
 // infinite-loops (`feedback_zustand_composite_selector`).
 export const useLayoutTheme = () =>
   useAppSettingsStore((s) => readLayoutTheme(s.settings.layout_theme));
+export const useAutoInstallUpdatesOnQuit = () =>
+  useAppSettingsStore((s) => s.settings.auto_install_updates_on_quit !== false);
 export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>

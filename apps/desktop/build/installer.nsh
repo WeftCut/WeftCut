@@ -3,9 +3,9 @@
 ; electron-builder auto-detects ${buildResources}/installer.nsh (here build/) and
 ; !includes it into the generated installer — no `nsis.include` key is needed
 ; (see app-builder-lib NsisTarget.getResource(undefined, "installer.nsh")). It
-; contributes two macros: customInstall (taskbar AUMID re-stamp, below) and
-; customHeader (a per-user install guard against protected system folders, at the
-; end of this file). This file MUST begin with a UTF-8 BOM so makensis reads the
+; contributes update-progress/relaunch hooks, customInstall (taskbar AUMID
+; re-stamp), and customHeader (the protected-system-folder guard below).
+; This file MUST begin with a UTF-8 BOM so makensis reads the
 ; guard's Chinese message as UTF-8: electron-builder's bundled NSIS (3.0.4.1) is
 ; too old for the `!encoding` directive (it aborts with `Invalid command:
 ; "!encoding"`), and an !included file inherits nothing from the UTF-8 stdin
@@ -35,6 +35,55 @@
 ; runtime keeps the same value in src/main/appIdentity.ts (asserted equal by
 ; appIdentity.test.ts). The WinShell::SetLnkAUMI call shape mirrors the stock
 ; macros in app-builder-lib templates/nsis/include/installer.nsh (no stack Pop).
+
+; Automatic updates use a visible progress page. The app has already saved
+; and exited; this installer owns feedback until file replacement completes.
+; Keep the updater's --force-run as a PER-INSTALL intent. A normal exit must
+; never reopen the app, regardless of the first-install checkbox default.
+!macro customInit
+  ${If} ${isUpdated}
+    SetSilent normal
+  ${EndIf}
+!macroend
+
+; Skip choosing an installation mode during an update, while retaining the
+; stock template's elevation path for an existing all-users installation.
+!macro customInstallMode
+  ${If} ${isUpdated}
+    ${If} $installMode == "all"
+      StrCpy $isForceMachineInstall "1"
+    ${Else}
+      StrCpy $isForceCurrentInstall "1"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro customFinishPage
+  Function WeftCutStartApp
+    ${If} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${Else}
+      StrCpy $1 ""
+    ${EndIf}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  Function WeftCutFinishPre
+    ${If} ${isUpdated}
+      ${If} ${isForceRun}
+        Call WeftCutStartApp
+      ${EndIf}
+      SetErrorLevel 0
+      Quit
+    ${EndIf}
+  FunctionEnd
+
+  ; Preserve the ordinary first-install finish page and its launch checkbox.
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION "WeftCutStartApp"
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE WeftCutFinishPre
+  !insertmacro MUI_PAGE_FINISH
+!macroend
 
 !macro customInstall
   ${if} ${FileExists} "$newStartMenuLink"

@@ -54,9 +54,28 @@ fix; do not replace installers under an already published version.
 
 Packaged Windows/Linux applications use electron-updater against the public
 GitHub Release feed. They check 30 seconds after startup and every six hours,
-download in the background, and install on normal exit after the editor's
-existing autosave flush. They never force a restart. Help → Check for Updates
-shows progress/readiness, retries errors and links to manual downloads. Dev,
+download in the background, and show a non-modal notice when ready. General
+settings' second item, "Automatically install available updates when closing
+the app", defaults on (including older settings files). With it enabled, a
+normal exit installs the downloaded update after the editor's autosave flush
+and leaves the app closed. Turning it off retains the download until requested.
+"Later" only dismisses the notice; it does not change this preference.
+
+"Update and restart app" is a one-time action independent of that preference.
+It blocks further UI operations while saving, then exits normally; the final
+quit event starts installation with relaunch enabled. A failed save leaves the
+project open and the update available to retry. A version-bound, one-use
+`update-resume.json` handoff restores the exact current project (or start
+screen) without changing the separate reopen-on-launch preference. Workspace
+layout and window geometry use their existing persistence.
+
+Windows updates show the NSIS installation progress page, skip install-location
+and install-mode choices, and close automatically on success. Only an explicit
+update-and-restart requests relaunch; ordinary exit updates do not reopen.
+This makes the file-replacement interval visible; it is not an atomic switch
+between executable versions, and shortcuts still target the installed exe.
+Help → Check for Updates shows progress/readiness, offers the same restart and
+later actions, retries errors and links to manual downloads. Dev,
 E2E and macOS builds disable update checks. macOS cannot self-update without a
 Developer ID: Squirrel.Mac installs only a build whose signature satisfies the
 running app's designated requirement, and an ad-hoc signature pins that to the

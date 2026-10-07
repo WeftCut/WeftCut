@@ -85,6 +85,8 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
     const policy = readPerformancePolicy(parsed.performance_policy)
       ?? (parsed.performance_policy === null || budgets || parsed.performance ? null : DEFAULT_PERFORMANCE_POLICY)
     return project({
+      auto_install_updates_on_quit: typeof parsed.auto_install_updates_on_quit === 'boolean'
+        ? parsed.auto_install_updates_on_quit : true,
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
@@ -267,6 +269,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         }
       }
       project(current)
+      if (patch.auto_install_updates_on_quit !== undefined) {
+        if (typeof patch.auto_install_updates_on_quit !== 'boolean') throw new Error('Invalid update preference')
+        current.auto_install_updates_on_quit = patch.auto_install_updates_on_quit
+      }
       if (patch.pause_preset_change !== undefined) {
         current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)
       }

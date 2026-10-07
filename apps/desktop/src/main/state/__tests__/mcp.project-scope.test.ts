@@ -54,6 +54,7 @@ function host(recents: { parent?: string | null } = {}) {
     list: () => [{ path: '/work/Old', name: 'Old', last_opened: '2026-01-01T00:00:00.000Z' }],
     lastNewProjectParent: () => (recents.parent === undefined ? null : recents.parent),
   }
+  const workspaceDir = vi.fn((): string | null => null)
   const ts = createTsActorHost({
     send: (event: string, payload: unknown) => { sent.push([event, payload]) },
     mcpNotify: () => {},
@@ -65,11 +66,11 @@ function host(recents: { parent?: string | null } = {}) {
     enqueueWorkspaceCopy: async () => {},
     readFile: (p: string) => fs.readFile(p),
     statPath: () => ({ kind: 'file' as const, readable: true }),
-    workspaceDir: () => null,
+    workspaceDir,
     recents: recentsStore,
   } as any)
   ts.start()
-  return { ts, sent, fs }
+  return { ts, sent, fs, workspaceDir }
 }
 const call = (ts: unknown, name: string, args: Record<string, unknown> = {}) => handleCallTool(backend, () => ts as any, name, args) as Promise<any>
 
@@ -199,6 +200,20 @@ describe('open_project / create_project', () => {
 })
 
 describe('closing and quitting shut the gate before the flush', () => {
+  it('keeps the project writable when an update shutdown cannot save', async () => {
+    const { ts, fs, workspaceDir } = host({ parent: '/work' })
+    await call(ts, 'create_project', { name: 'Example' })
+    workspaceDir.mockReturnValue('/work/Example')
+    const failingWrite = vi.spyOn(fs, 'writeFile').mockImplementation(() => { throw new Error('disk full') })
+    await expect(ts.shutdown()).rejects.toThrow('disk full')
+    expect(ts.projects.shuttingDown()).toBe(false)
+    expect(ts.openedProject()).toEqual({ dir: '/work/Example' })
+    failingWrite.mockRestore()
+    const write = await call(ts, 'add_track', { label: 'After failed update' })
+    expect(write.isError).not.toBe(true)
+    await ts.shutdown()
+    expect(ts.projects.shuttingDown()).toBe(true)
+  })
   it('a write racing Close is refused, not saved into the closed project', async () => {
     const { ts } = host({ parent: '/work' })
     await call(ts, 'create_project', { name: 'Race' })

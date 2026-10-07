@@ -985,3 +985,21 @@
 .settings-model-inline-editor { border-top: 1px solid var(--border); padding-top: calc(16 * var(--ui-px)); }
 .settings-model-candidate > strong { font-size: var(--font-size-label); }
 .settings-model-swap { display: flex; justify-content: center; color: var(--muted-foreground); }
+.update-notification {
+  position: fixed;
+  right: calc(20 * var(--ui-px));
+  bottom: calc(20 * var(--ui-px));
+  z-index: var(--layer-status-panel);
+  width: min(calc(380 * var(--ui-px)), calc(100vw - 40px));
+  padding: calc(16 * var(--ui-px));
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-popover);
+}
+.update-notification strong { font-size: var(--font-size-label); }
+.update-notification [role="status"] p { margin: calc(8 * var(--ui-px)) 0; color: var(--muted-foreground); }
+.update-notification .export-actions { margin-top: calc(12 * var(--ui-px)); }

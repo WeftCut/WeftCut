@@ -31,6 +31,8 @@ export type MediaPoolLayout = "large" | "grid" | "list";
 export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
+  /** Install a downloaded application update on normal exit. Defaults on. */
+  auto_install_updates_on_quit?: boolean;
   /** One app-wide typography and dialog sizing preset; absent in old files. */
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
@@ -142,6 +144,7 @@ export interface AppSettings {
 /// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
+  auto_install_updates_on_quit?: boolean;
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */
@@ -180,6 +183,7 @@ export interface AppSettingsPatch {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
+  auto_install_updates_on_quit: true,
   layout_theme: DEFAULT_LAYOUT_THEME,
   resource_policy: { ...DEFAULT_RESOURCE_POLICY },
   resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY),
