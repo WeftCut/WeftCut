@@ -6,6 +6,7 @@ import { hashCacheKey } from '../../src/renderer/render/motifs/frameCache'
 import type { E2EHook } from '../../src/renderer/testhook/e2eHook'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import { resourceDiagnostics } from './helpers/resourceDiagnostics'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 const TOTAL = 1_800
@@ -110,15 +111,22 @@ for (const complete of [false, true]) {
         } finally { hook.transportPause() }
         return rows
       })
+      const stats = await running.app.evaluate(() => (globalThis as any).__partialBakeStats as {
+        reads: number; maxActive: number; captures: number[];
+      })
+      // Attach before assertions so a playback failure retains the evidence.
+      await testInfo.attach('partial-bake-playback.json', {
+        body: JSON.stringify({ complete, stats, rows, resources: await resourceDiagnostics(running.page) }),
+        contentType: 'application/json',
+      })
       const frames = rows.map(row => row?.boundFrame).filter((frame): frame is number => frame != null)
+      expect(rows.every(row => row?.boundFrame != null), 'every sample must have a displayed frame').toBe(true)
       expect(new Set(frames).size).toBeGreaterThan(20)
       expect(frames.at(-1)!).toBeGreaterThan(120)
       expect(frames.every((frame, i) => i === 0 || frame >= frames[i - 1]!)).toBe(true)
       expect(Math.max(...rows.map(row => row?.heldMs ?? 0))).toBeLessThan(500)
-      const stats = await running.app.evaluate(() => (globalThis as any).__partialBakeStats as {
-        reads: number; maxActive: number; captures: number[];
-      })
-      expect(stats.reads).toBeGreaterThan(100)
+      // Read count depends on prefetch/cache retention. Visible frame coverage,
+      // monotonicity and maximum hold above are the playback contract.
       expect(stats.captures.every(time => time >= SAVED / 60)).toBe(true)
       if (complete) expect(stats.captures).toHaveLength(0)
       else {
@@ -126,9 +134,6 @@ for (const complete of [false, true]) {
           { timeout: 15_000 }).toBeGreaterThan(SAVED)
         expect((await fs.readdir(directory)).filter(name => name.endsWith('.wfrm')).length).toBeLessThan(TOTAL)
       }
-      await testInfo.attach('partial-bake-playback.json', {
-        body: JSON.stringify({ complete, stats, rows }), contentType: 'application/json',
-      })
     } finally { await running.app.close() }
   })
 }

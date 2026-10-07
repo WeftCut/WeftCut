@@ -410,14 +410,41 @@ caught:
 
 ```
 export STALLED in preparing for 124s (budget 120s) with its cursor frozen at
-"proxy: bbb-1080p.mp4", 190s into the export. diag={"state":…,"perf":…}
+"proxy: bbb-1080p.mp4", 190s into the export. diag={"export":{"state":…,"perf":…},"resources":…}
 ```
 
-Three distinct failures come out of it, because they want three different fixes:
-*stalled* (a phase quit ticking), *renderer wedged* (no liveness sample answered
-for 30 s — the main thread is blocked, not the pipeline slow), and *slow but
-still ticking* (the hard deadline expired while the cursor was moving — raise
-that call's `timeout`, there is no hang to hunt).
+Three distinct failures come out of it: *stalled* (a phase quit ticking),
+*renderer wedged* (no liveness sample answered for 30 s), and *deadline exceeded*.
+The last reports whether any cursor progress was observed, how long ago the
+last change was, and whether the renderer answered. An unchanged `pending`
+cursor is not evidence that the pipeline is still ticking; a deadline alone
+does not justify increasing a timeout.
+
+`launchApp` installs a bounded, test-only admission recorder. Export errors and
+timeouts include the current resource allocation, sampled pressure, host facts,
+current native ledger and the last 16 resource rejections. Each rejection stores
+the request/command, owner, timestamp and native ledger **before error cleanup**.
+The pressure sample and current allocation are read afterward and must not be
+mistaken for an exact snapshot at rejection. Main and renderer diagnostics have
+independent answer deadlines, so a broken renderer does not hide the main ledger.
+This recorder does not change resource limits, admission results or errors.
+
+Use `importAndPlaceMedia` from the driver for imports before export. Its default
+120-second deadline follows `WEFTCUT_E2E_STALL_SCALE`; an explicit `timeout`
+overrides it. Import failures include resource diagnostics instead of running
+silently into the enclosing test timeout. A timed-out operation is not cancelled
+by this helper: keep the app's `finally { await app.close() }` teardown.
+
+`driver-diagnostics.spec.ts` exercises real admission rejection, an export with
+no observed progress, an import blocked at IPC, and a failed renderer diagnostic.
+Resource-specific tests pin their own budgets; ordinary export tests keep the
+application defaults so an incompatible automatic budget remains visible.
+
+The Motif partial-bake gate asserts displayed-frame coverage, monotonic progress,
+maximum hold, concurrent reads and continued baking. Total read count is attached
+as diagnostic evidence, not a throughput floor: prefetch/cache retention can
+change that count without changing displayed frames. Its playback samples and
+resource diagnostics are attached before assertions so failures retain evidence.
 
 **`test.setTimeout(...)` is only a cost bound**, sized by two terms and set to
 clear the larger:

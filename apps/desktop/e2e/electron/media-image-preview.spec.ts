@@ -29,9 +29,10 @@ test.describe('still image media preview', () => {
       const layer = summary.tracks.flatMap((t) => t.layers).find((l) => l.id === placed.layerId)
       expect(layer?.params.kind).toBe('ImageOverlay')
 
-      const thumb = page.locator('.media-item-thumb img.media-thumbnail')
+      const thumb = page.locator('.media-item-thumb .media-thumbnail img')
       await expect(thumb).toBeVisible()
       await expect(thumb).toHaveAttribute('src', /^weftcut-media:\/\//)
+      await expect.poll(() => thumb.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
 
       let sample: { r: number; g: number; b: number; a: number; nonTransparent: number; maxA: number } | null = null
       const deadline = Date.now() + 30000

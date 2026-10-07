@@ -3,7 +3,7 @@ import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, tmpDir, waitForHook, driveExport, exportSsimFloor } from './helpers/driver'
+import { launchApp, newProject, tmpDir, waitForHook, driveExport, exportSsimFloor, importAndPlaceMedia, placeMediaLayer } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -24,22 +24,9 @@ async function bootProject(page: Page, parentFolder: string, name: string): Prom
 // Import SOURCE once at t=0, then place `extras` more copies of the SAME
 // mediaId (one fresh track each), and wait for export readiness.
 async function placeSameSourceClips(page: Page, extras: number[]): Promise<void> {
-  const r = (await page.evaluate(
-    async ({ media, exs }) => {
-      try {
-        const first = await (window as any).__weftcutTest.importAndPlaceMedia({ mediaAbsPath: media, tStartUs: 0 })
-        for (const tStartUs of exs) {
-          await (window as any).__weftcutTest.placeMediaLayer({ mediaId: first.mediaId, tStartUs })
-        }
-        await (window as any).__weftcutTest.waitMediaExportReady({ mediaId: first.mediaId })
-        return { ok: true }
-      } catch (e) {
-        return { ok: false, error: String(e) }
-      }
-    },
-    { media: SOURCE, exs: extras },
-  )) as { ok: boolean; error?: string }
-  if (!r.ok) throw new Error('placing clips failed: ' + r.error)
+  const first = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE, tStartUs: 0 })
+  for (const tStartUs of extras) await placeMediaLayer(page, { mediaId: first.mediaId, tStartUs })
+  await page.evaluate(mediaId => (window as any).__weftcutTest.waitMediaExportReady({ mediaId }), first.mediaId)
 }
 
 async function runTimelineExport(page: Page, output: string): Promise<{ totalFrames: number; totalDispatched: number; sources: unknown[] }> {

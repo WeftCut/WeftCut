@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installResourceDiagnostics, resourceDiagnostics } from './resourceDiagnostics'
 
 /// Type-only, so Playwright's transform erases it: the stall probe reads the
 /// renderer's `ExportState` mirror field by field (labels, progress.frame,
@@ -344,6 +345,7 @@ export async function launchApp(
       page.on('pageerror', (err) => console.log(`[renderer:pageerror] ${err.message}`))
     }
     await page.waitForLoadState('domcontentloaded')
+    await installResourceDiagnostics(app, page)
     return { app, page }
   } catch (e) {
     // Boot failed before the caller got a page: close via the wrapper so the
@@ -476,18 +478,28 @@ export async function textBoxProbe(page: Page, layerId: string): Promise<TextBox
 export async function importAndPlaceMedia(
   page: Page,
   args: { mediaAbsPath: string; tStartUs?: number },
+  opts: { timeout?: number } = {},
 ): Promise<{ mediaId: string; layerId: string; kind: string }> {
   await waitForHook(page, 'importAndPlaceMedia')
-  const r = (await page.evaluate(
-    (a) =>
-      (window as any).__weftcutTest
-        .importAndPlaceMedia(a)
-        .then((x: unknown) => ({ ok: true, ...(x as object) }))
-        .catch((e: unknown) => ({ ok: false, error: String(e) })),
-    args,
-  )) as { ok: boolean; error?: string; mediaId: string; layerId: string; kind: string }
-  if (!r.ok) throw new Error('importAndPlaceMedia failed: ' + r.error)
-  return r
+  const timeout = opts.timeout ?? Math.round(READY_MS * stallScale())
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const r = (await Promise.race([
+      page.evaluate(
+        (a) => (window as any).__weftcutTest.importAndPlaceMedia(a)
+          .then((x: unknown) => ({ ok: true, ...(x as object) }))
+          .catch((e: unknown) => ({ ok: false, error: String(e) })),
+        args,
+      ),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`importAndPlaceMedia did not complete within ${timeout}ms`)), timeout)
+      }),
+    ])) as { ok: boolean; error?: string; mediaId: string; layerId: string; kind: string }
+    if (!r.ok) throw new Error('importAndPlaceMedia failed: ' + r.error)
+    return r
+  } catch (error) {
+    throw new Error(`${String(error)}; resources=${JSON.stringify(await resourceDiagnostics(page))}`, { cause: error })
+  } finally { if (timer) clearTimeout(timer) }
 }
 
 /// Place an ALREADY-imported media 1:1 at `tStartUs` (default 0) on a fresh
@@ -643,22 +655,23 @@ async function sampleExport(page: Page): Promise<ExportCursor | 'no-answer'> {
 /// Best-effort "where did it stop" blob for a failure message. Races its own
 /// evaluate so a wedged renderer degrades the diagnostic instead of hanging it.
 async function exportDiagnostic(page: Page): Promise<string> {
-  const blob = await Promise.race([
-    page
-      .evaluate(() => {
-        const w = window as unknown as {
-          __weftcutExportState?: { kind?: string; detail?: string }
-          __weftcutExportPerf?: unknown
-        }
-        return JSON.stringify({
-          state: w.__weftcutExportState ?? null,
-          perf: w.__weftcutExportPerf ?? null,
-        })
-      })
-      .catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
-  ])
-  return blob ?? '(renderer did not answer the diagnostic within 5s)'
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const [blob, resources] = await Promise.all([
+      Promise.race([
+        page.evaluate(() => {
+          const w = window as unknown as {
+            __weftcutExportState?: { kind?: string; detail?: string }
+            __weftcutExportPerf?: unknown
+          }
+          return { state: w.__weftcutExportState ?? null, perf: w.__weftcutExportPerf ?? null }
+        }).catch(() => null),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 5_000) }),
+      ]),
+      resourceDiagnostics(page),
+    ])
+    return JSON.stringify({ export: blob ?? { unavailable: 'renderer did not answer within 5s' }, resources })
+  } finally { if (timer) clearTimeout(timer) }
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -700,6 +713,7 @@ export async function driveExport(
     process.env.WEFTCUT_E2E_NO_STALL_PROBE === '1'
       ? await awaitExportByDeadline(page, timeout)
       : await awaitExportByLiveness(page, timeout)
+  if (!done.ok) done.error = `${done.error ?? 'export failed'}; diag=${await exportDiagnostic(page)}`
   const st = (await page.evaluate(() => {
     const s = (window as any).__weftcutExportState
     return { kind: s?.kind ?? null, detail: s?.detail ?? null }
@@ -727,6 +741,7 @@ async function awaitExportByLiveness(
   let phase: ExportPhase = 'pending'
   let cursor = 'pending'
   let tickAt = startedAt
+  let observedProgress = false
   let unresponsiveSince: number | null = null
 
   for (;;) {
@@ -740,7 +755,8 @@ async function awaitExportByLiveness(
           `export wedged the RENDERER: no liveness sample answered for ` +
             `${secs(now - unresponsiveSince)}s — the main thread is blocked, not ` +
             `the pipeline slow. Last seen in ${phase} at cursor="${cursor}", ` +
-            `${secs(now - startedAt)}s into the export.`,
+            `${secs(now - startedAt)}s into the export. ` +
+            `diag=${await exportDiagnostic(page)}`,
         )
       }
     } else {
@@ -760,6 +776,7 @@ async function awaitExportByLiveness(
         phase = sample.phase
         cursor = sample.cursor
         tickAt = now
+        observedProgress = true
       }
       const budget = Math.round(STALL_MS[phase] * scale)
       if (now - tickAt >= budget) {
@@ -774,9 +791,10 @@ async function awaitExportByLiveness(
 
     if (now >= hardDeadline) {
       throw new Error(
-        `export did not complete within ${timeout}ms while STILL TICKING ` +
-          `(${phase} at cursor="${cursor}") — slow, not wedged, so raise this ` +
-          `call's timeout rather than hunting a hang. ` +
+        `export did not complete within ${timeout}ms ` +
+          `(${phase} at cursor="${cursor}"); ` +
+          `${observedProgress ? `last observed progress ${secs(now - tickAt)}s ago` : 'no progress observed'}. ` +
+          `renderer=${sample === 'no-answer' ? 'unresponsive' : 'responsive'}. ` +
           `diag=${await exportDiagnostic(page)}`,
       )
     }
