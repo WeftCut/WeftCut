@@ -7,6 +7,40 @@ import { launchApp, newProject, driveExport, importAndPlaceMedia, invokeCmd, tmp
 
 const MEDIA = process.env.WEFTCUT_TEST_MEDIA || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/media')
 
+test('resource rejection explains recovery and opens performance settings without changing the budget', async ({}, testInfo) => {
+  const { app, page } = await launchApp({ locale: 'zh-CN' })
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-budget-help-'), name: 'Budget help', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
+    const media = await importAndPlaceMedia(page, { mediaAbsPath: path.join(MEDIA, 'test_1080p_30fps_6s.mp4') })
+    await page.evaluate(mediaId => (window as any).__weftcutTest.waitMediaExportReady({ mediaId }), media.mediaId)
+    const before = await invokeCmd<any>(page, 'app_settings_get')
+    // Exercise the real authority and Electron's wrapped rejection, independently
+    // of the machine's memory size or other active resource leases.
+    await app.evaluate(({ ipcMain }, memoryMiB) => {
+      const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
+      ipcMain._invokeHandlers.set('resources:acquire', (event: any, request: any) =>
+        acquire(event, { ...request, memoryMiB }))
+    }, before.resource_allocation.work_mib + 1)
+    const result = await driveExport(page, {
+      outputAbsPath: path.join(tmpDir('weftcut-budget-help-out-'), 'out.mp4'),
+      settings: { audio: { include: false }, decodeEngine: 'webcodecs' },
+    }, { hook: 'exportTimeline' })
+    expect(result.done.ok).toBe(false)
+    const panel = page.locator('.export-progress-panel')
+    await expect(panel.locator('.export-progress-status')).toContainText('请等待其他处理任务结束后重试')
+    await expect(panel.locator('.export-progress-status')).toContainText('内存使用目标')
+    await expect(panel.locator('.export-progress-status')).not.toContainText('resources:acquire')
+    await expect(panel.locator('details')).not.toHaveAttribute('open', '')
+    await panel.getByText('技术详情', { exact: true }).click()
+    await expect(panel.locator('pre')).toContainText('resource-capacity-exceeded')
+    await page.screenshot({ path: testInfo.outputPath('resource-recovery.png') })
+    await panel.getByRole('button', { name: '打开设置', exact: true }).click()
+    await expect(panel).toHaveCount(0)
+    await expect(page.locator('#settings-panel-performance').getByLabel('内存使用目标', { exact: true })).toBeVisible()
+    expect((await invokeCmd<any>(page, 'app_settings_get')).resource_policy).toEqual(before.resource_policy)
+  } finally { await app.close() }
+})
+
 test('bounded WebCodecs 10-bit export drains EOS and preserves gradient precision', async () => {
   test.setTimeout(300_000)
   const { app, page } = await launchApp()

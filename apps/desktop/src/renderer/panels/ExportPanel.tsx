@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { rendererOS, type RendererOS } from "@/platform";
+import { isResourceCapacityError } from "../../shared/resource-policy";
 
 export interface ExportProgress {
   progress: number;
@@ -58,6 +59,7 @@ export function ExportPanel({
   onClose,
   onPlay,
   onReveal,
+  onOpenSettings,
 }: {
   state: ExportState;
   onClose: () => void;
@@ -68,6 +70,7 @@ export function ExportPanel({
   /// When set, the complete state also offers to reveal the exported file
   /// in the OS file manager (label per OS, see REVEAL_KEY).
   onReveal?: (path: string) => void;
+  onOpenSettings?: () => void;
 }) {
   const { t } = useTranslation();
   // Modal during work: no dismiss/close affordance until complete/error (the
@@ -75,6 +78,7 @@ export function ExportPanel({
   // Stated as the terminal set, not as "not running": a new running phase then
   // stays modal by default instead of silently becoming dismissable.
   const dismissable = state.kind === "complete" || state.kind === "error";
+  const resourceError = state.kind === "error" && isResourceCapacityError(state.detail);
 
   let body: React.ReactNode;
   let percent = 0;
@@ -132,9 +136,17 @@ export function ExportPanel({
       break;
     case "error":
       body = (
-        <p className="export-progress-status error">
-          {t("export.failed", { detail: state.detail })}
-        </p>
+        <>
+          <p className="export-progress-status error">
+            {resourceError ? t("export.resource_unavailable") : t("export.failed", { detail: state.detail })}
+          </p>
+          {resourceError && (
+            <details className="export-error-details">
+              <summary>{t("export.technical_details")}</summary>
+              <pre>{state.detail}</pre>
+            </details>
+          )}
+        </>
       );
       break;
   }
@@ -160,6 +172,11 @@ export function ExportPanel({
             </div>
             {(((state.kind === "preparing" || state.kind === "progress") && state.onCancel) || dismissable) && (
               <div className="export-actions">
+                {resourceError && onOpenSettings && (
+                  <Button size="lg" onClick={onOpenSettings}>
+                    {t("export.open_settings")}
+                  </Button>
+                )}
                 {(state.kind === "preparing" || state.kind === "progress") && state.onCancel && (
                   <Button size="lg" onClick={state.onCancel}>
                     {t("export.preparing_cancel")}

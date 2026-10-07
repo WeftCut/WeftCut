@@ -182,6 +182,23 @@
   color: var(--destructive);
 }
 
+.export-error-details {
+  margin-top: 12px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-label);
+}
+
+.export-error-details summary {
+  cursor: pointer;
+}
+
+.export-error-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
 .export-progress-panel .progress-track {
   height: 8px;
   border-radius: var(--radius-control);

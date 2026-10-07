@@ -71,6 +71,7 @@ import { type ExportState } from "../panels/ExportPanel";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
+import { isResourceCapacityError } from "../../shared/resource-policy";
 
 /// The status-bar detail for an exception out of a readiness gate. A proxy or
 /// conform failure names its media through `prepareDetail`; any other
@@ -237,7 +238,9 @@ export function useExportFlow(deps: {
         } else {
           sendNotification({
             title: t("export.notify_failed_title"),
-            body: t("export.notify_failed_body", { detail: state.detail }),
+            body: isResourceCapacityError(state.detail)
+              ? t("export.resource_unavailable")
+              : t("export.notify_failed_body", { detail: state.detail }),
           });
         }
       } catch {

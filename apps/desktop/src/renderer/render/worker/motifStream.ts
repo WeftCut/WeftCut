@@ -1,5 +1,6 @@
 // Ownership spans the reader, postMessage transfer and worker consumption.
 // Credits return only after the worker closes a packet's bitmaps.
+import { RESOURCE_CAPACITY_EXCEEDED } from "../../../shared/resource-policy";
 export interface InjectedMotifFrame { frame: number; bitmap: ImageBitmap }
 export type InjectedMotifFrames = readonly ImageBitmap[] | InjectedMotifFrame;
 export interface MotifFramePacket {
@@ -59,7 +60,7 @@ export class MotifFrameProducer {
         // Reserve a second pixel surface for readback / cache persistence too.
         const bytes = tasks.reduce((n, task) => n + task.bytes * 2, 0);
         const limit = this.deps.maxBytes ?? 128 * 1024 * 1024;
-        if (bytes > limit) throw new Error('This frame needs more memory. Increase the memory target in Settings and retry export.');
+        if (bytes > limit) throw new Error(`${RESOURCE_CAPACITY_EXCEEDED}: This frame exceeds the memory target (${bytes} bytes required, ${limit} bytes available).`);
         if (this.bytes + bytes > limit) break;
         this.next++;
         this.bytes += bytes;

@@ -1263,6 +1263,11 @@ export function App({ onCloseProject }: AppProps) {
           }}
           onPlay={openRenderPlayPopup}
           onReveal={revealExportedFile}
+          onOpenSettings={() => {
+            setExportState(null);
+            setExportDialogOpen(false);
+            openSettings("performance");
+          }}
         />
       )}
       {closeConfirmOpen && (
