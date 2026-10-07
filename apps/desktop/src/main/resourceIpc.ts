@@ -5,7 +5,7 @@ import { reserveResources, createMemoryPressure, resourceSnapshot, setResourceAc
 
 /** Owner-scoped renderer leases. Reload/renderer death returns every outstanding
  * lease. A sender cannot release another window's allocation. */
-export function installResourceIpc() {
+export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceStatus; allocation: ReturnType<typeof resourceAllocation> }) => void) {
   const owners = new Map<number, { releases: Map<string, () => void>; playing: boolean }>();
   const pressure = createMemoryPressure();
   let quitting = false;
@@ -58,6 +58,7 @@ export function installResourceIpc() {
   });
   ipcMain.handle('resources:status', event => { ownerFor(event.sender); return status; });
   let sampling = false;
+  let lastDiagnostic = 0;
   const sample = async () => {
     if (sampling || quitting) return;
     sampling = true;
@@ -66,6 +67,10 @@ export function installResourceIpc() {
       if (quitting) return;
       status = { ...resourceSnapshot(), memory_mib: memory.processMib, available_memory_mib: memory.availableMib, memory_scope: 'process-tree',
         pressure: pressure.update(memory.processMib, resourceAllocation().memory_mib, memory.availableMib) ? 'constrained' : 'normal' };
+      if (Date.now() - lastDiagnostic >= 10_000) {
+        lastDiagnostic = Date.now();
+        onDiagnostic?.({ status, allocation: resourceAllocation() });
+      }
       publish();
     } catch { /* Preserve pressure on a failed sample. */ }
     finally { sampling = false; }

@@ -23,9 +23,11 @@ import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
+import { DiagnosticReport } from '../app/DiagnosticReport';
 import { Button } from "@/components/ui/button";
 import {
   ChevronDownIcon,
+  BugIcon,
   ChevronUpIcon,
   FolderOpenIcon,
   GlobeIcon,
@@ -76,6 +78,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   const [busy, setBusy] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
   // Recents collapses to the most-recent COLLAPSED_RECENT_COUNT entries on
   // mount. After Save-and-Close lands the user back here, the just-closed
@@ -235,6 +238,10 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           aria-label={t("settings.heading")}
         >
           <SettingsIcon size={16} strokeWidth={1.5} aria-hidden />
+        </button>
+        <button type="button" className="startup-settings-toggle"
+          onClick={() => setReportOpen(true)} title={t('help.report_issue')} aria-label={t('help.report_issue')}>
+          <BugIcon size={16} strokeWidth={1.5} aria-hidden />
         </button>
         <button
           type="button"
@@ -397,6 +404,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           onKeybindingsChanged={setKeybindings}
         />
       )}
+      {reportOpen && <DiagnosticReport onClose={() => setReportOpen(false)} />}
     </div>
   );
 }

@@ -43,7 +43,8 @@ A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
 
 - **Pre-workspace: strict refuse.** Neither the ring buffer nor the
   JSONL writer exist before a workspace is opened. Startup-screen
-  errors are visible only via `tracing` stderr. The `LogBus` is built
+  Rust startup errors are visible via `tracing` stderr; the separate application
+  diagnostic recorder below captures main/renderer startup messages. The `LogBus` is built
   by the workspace-open path and torn down by the workspace-close
   path, mirroring the rest of the workspace-scoped state.
 - **MCP is the exception, on the producer side.** The MCP host binds at
@@ -53,7 +54,44 @@ A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
   replay in order, exactly once, when `commitWorkspace` installs the bus.
   This is a *producer* buffer: `LogBus`, `Clear` and `log_list` semantics
   are unchanged, and an app that never opens a workspace still never
-  grows a log.
+  grows a project log. Application diagnostic logs are independent of this bus.
+
+### Application diagnostics and GitHub reports
+
+The startup screen's Report an Issue button and Help → Report an Issue open
+the same report dialog. Export Diagnostic Bundle saves a local ZIP. Open
+GitHub Issue prepares a draft with current version/build/system information
+and, when applicable, the previous session's version and exit status. The user
+reviews the ZIP, attaches it manually and submits the issue; the app never
+uploads it, and needs neither a GitHub token nor a reporting service.
+
+`main/entry.ts` starts diagnostics before loading the editor/native backend.
+`<userData>/diagnostics` (`diagnostics-dev` for unpackaged runs) retains eight
+inactive/current sessions; live concurrent instances are excluded from cleanup
+and abnormal-exit detection. Each session has a marker, a hardware/version
+snapshot, and at most two 512 KiB JSONL log segments. Pending logs are capped at
+32 KiB and flushed every two seconds; excess chatter is dropped. Fatal errors
+flush immediately; a hard kill can lose the last batch.
+
+Collected evidence includes main/renderer console messages, renderer JS errors,
+observed renderer/child-process failures, project log messages (excluding tool
+arguments, details and i18n arguments), and resource status/effective allocations
+every ten seconds. A ZIP contains the current session and the most recent
+abnormal session (retained even after dismissal for later reporting), plus
+environment information and a README.
+Common credentials, paths, URLs and email addresses are redacted before disk.
+No project/media/config files or memory dumps are read. Free-form errors can
+still contain private text: the dialog asks users to review before attaching
+anything to a public issue.
+
+Only the actual successful `quit` event marks a session closed, after autosave;
+`before-quit` can be cancelled and must not clear the marker. An unfinished
+session or a recorded process failure prompts after the next launch's splash,
+without blocking project recovery. It says “did not exit normally”, since a
+power loss/forced quit is not proof of a crash. Dismissal (or successfully opening
+the GitHub draft) is persisted and does
+not erase the logs. Storage failures never prevent startup and disable export
+with an explanatory message. There is no native crash dump or automatic upload.
 
 ### Backend surface
 

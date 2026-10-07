@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@/bridge/window";
 import { listen } from "@/bridge/events";
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
+import { PreviousSessionReport } from './app/DiagnosticReport';
 import { useFocusRegions } from "./focus/useFocusRegions";
 import { StartupScreen } from "./startup/StartupScreen";
 import { SplashScreen } from "./startup/SplashScreen";
@@ -31,6 +32,15 @@ import "./app.css";
 import "./styles.css";
 
 const isPerfHudWindow = new URLSearchParams(window.location.search).get("perfHud") === "1";
+if (!isPerfHudWindow) {
+  window.addEventListener('error', event => {
+    window.api.diagnostics.recordError(event.error instanceof Error ? event.error.stack ?? event.message : event.message);
+  });
+  window.addEventListener('unhandledrejection', event => {
+    const reason: unknown = event.reason;
+    window.api.diagnostics.recordError(reason instanceof Error ? reason.stack ?? reason.message : String(reason));
+  });
+}
 const showSplashDebugControl =
   import.meta.env.DEV || import.meta.env.VITE_WEFTCUT_E2E === "1";
 
@@ -301,6 +311,7 @@ function Root() {
         <StartupScreen onWorkspaceReady={onWorkspaceReady} />
       )}
       {editorMounted && <App key={projectEpoch} onCloseProject={onCloseProject} />}
+      {launchReady && !splashVisible && <PreviousSessionReport />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

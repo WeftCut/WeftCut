@@ -1,11 +1,17 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'electron-vite'
 import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+const buildVersion = JSON.parse(readFileSync(path.join(HERE, 'package.json'), 'utf8')).version as string
+let buildCommit = process.env.GITHUB_SHA ?? 'unknown'
+try { buildCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: HERE, encoding: 'utf8', windowsHide: true }).trim() }
+catch { /* Source archives have no .git directory. */ }
 
 // Content-Security-Policy for the PACKAGED renderer. Injected at build time
 // only (`apply: 'build'`) so the Vite dev server / HMR (which needs inline +
@@ -61,6 +67,10 @@ function cspMeta(): Plugin {
 
 export default defineConfig({
   main: {
+    define: {
+      'process.env.WEFTCUT_BUILD_COMMIT': JSON.stringify(buildCommit),
+      'process.env.WEFTCUT_BUILD_VERSION': JSON.stringify(buildVersion),
+    },
     build: {
       outDir: 'out/main',
       lib: { entry: process.env.VITE_WEFTCUT_E2E === '1'

@@ -60,8 +60,9 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Log excerpt
+      label: Diagnostics and logs
       description: >
-        A session log is written to `<your workspace>/Logs/session-<timestamp>.jsonl`.
-        The lines around the failure are usually enough — no need for the whole file.
-      render: text
+        In the app, open Help → Report an Issue → Export Diagnostic Bundle
+        (also available on the startup screen). Review the ZIP, then drag it here
+        to attach it. Issues and attachments are public; remove private details first.
+        You can also paste relevant lines from `<your workspace>/Logs/session-<timestamp>.jsonl`.

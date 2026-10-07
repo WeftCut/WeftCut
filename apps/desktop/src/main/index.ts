@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
 import { sourceSignature } from './state/mutations/textCorrection.js'
 import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
@@ -326,6 +327,7 @@ async function createWindow(): Promise<BrowserWindow> {
   win.on('leave-full-screen', sendFullscreenState)
 
   // Capture renderer console messages to stdout for diagnostics
+  diagnosticOwner(win.webContents.id)
   win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
     console.log(`[renderer:${level}] ${message} (${sourceId}:${lineNumber})`)
   })
@@ -488,7 +490,7 @@ app.whenReady().then(async () => {
   const initialAppSettings = appSettings.get()
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
-  installResourceIpc()
+  installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)))
   hydratePerformanceSettings(initialAppSettings.performance,
     !initialAppSettings.performance_policy || initialAppSettings.performance_policy.decode === 'tested' && initialAppSettings.performance_test_compatible
       ? initialAppSettings.performance_calibration : null, !!initialAppSettings.performance_policy)
@@ -565,6 +567,7 @@ app.whenReady().then(async () => {
       if (!workspaceEvents.accept(message.payload)) return
       const payload = event === 'import:queue' && message.payload?.entries
         ? message.payload.entries : message.payload
+      if (event === 'log:entry') recordProjectDiagnostic(payload)
       // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
       // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
       if (event === 'mcp:change') {

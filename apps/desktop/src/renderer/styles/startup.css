@@ -374,6 +374,12 @@
   color: var(--foreground);
 }
 
+/* Settings and reporting form one left-aligned group. Only the last button
+   supplies the flexible gap before the locale picker. */
+.startup-settings-toggle:has(+ .startup-settings-toggle) {
+  margin-right: 0;
+}
+
 .startup-locale-toggle {
   align-self: center;
   display: inline-flex;
@@ -919,4 +925,3 @@
   justify-content: flex-end;
   gap: 8px;
 }
-

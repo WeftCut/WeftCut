@@ -30,6 +30,9 @@ function stubApi() {
   (window as unknown as { api: unknown }).api = {
     shell: { open },
     app: { versions },
+    diagnostics: {
+      summary: vi.fn().mockResolvedValue({ available: true, environment: 'WeftCut 1.2.3 | linux x64', previousSession: null }),
+    },
     updates: { check, status: vi.fn().mockResolvedValue({ phase: "current" }) },
   };
   return { open, versions, check };
@@ -65,12 +68,20 @@ describe("HelpMenu", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("42");
   });
 
-  it("sends the issue reporter to the repo's page", async () => {
+  it("prepares a GitHub draft only after the user opens the report dialog and chooses GitHub", async () => {
     const { open } = stubApi();
     render(<HelpMenu />);
     fireEvent.click(screen.getByRole("button", { name: /Help/ }));
     fireEvent.click(await screen.findByText("Report an Issue…"));
-    expect(open).toHaveBeenCalledWith(ISSUES_URL);
+    expect(open).not.toHaveBeenCalled();
+    const button = await screen.findByRole('button', { name: 'Open GitHub Issue' });
+    await screen.findByText('WeftCut 1.2.3 | linux x64');
+    fireEvent.click(button);
+    expect(open).toHaveBeenCalledOnce();
+    const url = new URL(open.mock.calls[0]![0]);
+    expect(url.origin + url.pathname).toBe(`${ISSUES_URL}/new`);
+    expect(url.searchParams.get('template')).toBe('bug_report.yml');
+    expect(url.searchParams.get('version')).toContain('WeftCut 1.2.3');
   });
 
   it("shows the main-process version identity in the About dialog", async () => {

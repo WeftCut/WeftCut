@@ -3,16 +3,17 @@ import { useTranslation } from "react-i18next";
 
 import { Menu, MenuItem, MenuSeparator } from "../menu/Menu";
 import { AboutDialog } from "./AboutDialog";
-import { ISSUES_URL, openExternal } from "./links";
+import { DiagnosticReport } from "./DiagnosticReport";
 import { UpdateDialog } from "./UpdateDialog";
 
 /// The Help menu — the in-app update check (UpdateDialog), issue reporting
-/// (an external link) and the About box. Self-contained: the dialog open
+/// (diagnostic export + a GitHub draft) and the About box. Self-contained: the dialog open
 /// state lives here, so AppMenuBar stays prop-driven chrome.
 export function HelpMenu() {
   const { t } = useTranslation();
   const [aboutOpen, setAboutOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   return (
     <>
       <Menu label={t("menu.help")}>
@@ -22,7 +23,7 @@ export function HelpMenu() {
         />
         <MenuItem
           label={t("help.report_issue")}
-          onSelect={() => openExternal(ISSUES_URL)}
+          onSelect={() => setReportOpen(true)}
         />
         <MenuSeparator />
         <MenuItem
@@ -32,6 +33,7 @@ export function HelpMenu() {
       </Menu>
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
       {updatesOpen && <UpdateDialog onClose={() => setUpdatesOpen(false)} />}
+      {reportOpen && <DiagnosticReport onClose={() => setReportOpen(false)} />}
     </>
   );
 }
