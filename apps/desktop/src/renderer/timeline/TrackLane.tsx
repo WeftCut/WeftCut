@@ -690,9 +690,11 @@ export function TrackLane({
         return blocks;
       })()}
       </div>
+      {/* Absolute positioning ends inside the 1px lane border. Anchor at its
+          center, then translate by half the handle's theme-scaled height. */}
       <div
         data-testid="track-height-handle"
-        className={`absolute inset-x-0 -bottom-[3px] z-[3] h-1.5 cursor-ns-resize transition-colors duration-75 hover:bg-blue-400/35 ${isResizing ? "bg-blue-400/35" : "bg-transparent"}`}
+        className={`absolute inset-x-0 -bottom-[0.5px] z-[3] h-1.5 translate-y-1/2 cursor-ns-resize transition-colors duration-75 hover:bg-blue-400/35 ${isResizing ? "bg-blue-400/35" : "bg-transparent"}`}
         title={t("timeline.resize_track_hint", {
           defaultValue: "Drag to resize this track",
         })}
