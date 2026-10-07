@@ -1,5 +1,5 @@
 import { AppMenuPositioner } from "../components/PopupPositioner";
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { Menubar } from "@base-ui/react/menubar";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
@@ -14,8 +14,14 @@ import type { ActionId } from "../shortcuts/defs";
 /// click opens, hovering an adjacent trigger while any menu is open
 /// switches to it, ArrowLeft/Right move between menus, and opening one
 /// menu closes the previous (only one dropdown open at a time).
+const MenuBarContext = createContext(false);
+
 export function MenuBar({ children }: { children: ReactNode }) {
-  return <Menubar className="menu-bar">{children}</Menubar>;
+  return (
+    <MenuBarContext.Provider value={true}>
+      <Menubar className="menu-bar">{children}</Menubar>
+    </MenuBarContext.Provider>
+  );
 }
 
 interface MenuProps {
@@ -32,6 +38,7 @@ interface MenuProps {
 /// .menu-* classes carry the visual identity; placement is via the
 /// Positioner (align start, 4px below the trigger).
 export function Menu({ label, hint, children }: MenuProps) {
+  const inMenuBar = useContext(MenuBarContext);
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger className="menu-trigger" title={hint}>
@@ -42,6 +49,9 @@ export function Menu({ label, hint, children }: MenuProps) {
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
         <AppMenuPositioner
+          // Only the app bar keeps a fixed side-axis anchor. Standalone
+          // launchers (e.g. empty workspace recovery) may sit near the bottom.
+          sticky={!inMenuBar}
           align="start"
           sideOffset={4}
           className="app-popup-positioner"

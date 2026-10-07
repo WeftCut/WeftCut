@@ -72,6 +72,12 @@ test('long menus fit the window, scroll to the last item and resize while open',
     await expect(page.getByRole('menu')).toHaveCount(1);
     await page.keyboard.press('Escape');
     await expect(popup).toHaveCount(0);
+    // Exercise the real context-menu handler with a cursor anchor inside the
+    // reserved bottom strip, independent of the user's dock arrangement.
+    const cursor = await page.evaluate(() => ({ clientX: 120, clientY: innerHeight - 8 }));
+    await page.getByTestId('track-header').first().dispatchEvent('contextmenu', cursor);
+    await expectContained(page.getByRole('menu'));
+    await page.keyboard.press('Escape');
   } finally { await app.close(); }
 });
 
@@ -84,7 +90,6 @@ test('form dropdowns constrain long option lists and keep keyboard selection usa
     const select = page.getByRole('combobox', { name: 'Layout theme', exact: true });
     await select.click();
     const popup = page.getByRole('listbox');
-    await expectOutsideTrigger(popup, select);
     await expectContained(popup);
     expect(await popup.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
     await page.keyboard.press('Home');
@@ -97,7 +102,6 @@ test('form dropdowns constrain long option lists and keep keyboard selection usa
     // FontSelect has its own preferred size; it still honors the same bounds.
     const fontTrigger = page.getByRole('combobox', { name: 'Default text font', exact: true });
     await fontTrigger.click();
-    await expectOutsideTrigger(popup, fontTrigger);
     await expectContained(popup);
     await page.keyboard.press('End');
     await expect(page.getByRole('option').last()).toBeInViewport({ ratio: 0.99 });

@@ -17,17 +17,16 @@ function usePopupPadding() {
 }
 
 // Reserve the bottom 10% of the window in the positioning boundary itself.
-// Keep the side-axis anchor: the popup can flip to the opposite side and
-// shrink to the available height, but must never slide over its trigger.
-// Sticky positioning would shift it across the trigger to fill the safe area.
+// Internal controls may shift into the safe area when opened near the bottom.
+// The top-level app bar opts out to keep its dropdowns below their triggers.
 export function AppMenuPositioner(props: ComponentProps<typeof Menu.Positioner>) {
-  return <Menu.Positioner {...props} collisionPadding={usePopupPadding()} sticky={false} />;
+  return <Menu.Positioner sticky {...props} collisionPadding={usePopupPadding()} />;
 }
 
 export function AppSelectPositioner(props: ComponentProps<typeof Select.Positioner>) {
-  return <Select.Positioner {...props} collisionPadding={usePopupPadding()} sticky={false} />;
+  return <Select.Positioner sticky {...props} collisionPadding={usePopupPadding()} />;
 }
 
 export function AppPopoverPositioner(props: ComponentProps<typeof Popover.Positioner>) {
-  return <Popover.Positioner {...props} collisionPadding={usePopupPadding()} sticky={false} />;
+  return <Popover.Positioner sticky {...props} collisionPadding={usePopupPadding()} />;
 }
