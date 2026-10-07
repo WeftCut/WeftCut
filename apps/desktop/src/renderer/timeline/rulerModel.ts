@@ -125,6 +125,8 @@ export interface RulerModelInput {
   scrollLeftPx: number;
   viewportWidthPx: number;
   overscanPx?: number;
+  /// UI text density changes label spacing, never the time-to-pixel mapping.
+  uiScale?: number;
 }
 
 const EMPTY: RulerModel = {
@@ -170,7 +172,7 @@ export function computeRulerModel(input: RulerModelInput): RulerModel {
     // assign any element of NICE_STEPS_FRAMES below.
     let stride: number = NICE_STEPS_FRAMES[0]!;
     for (let i = NICE_STEPS_FRAMES.length - 1; i >= 0; i--) {
-      if (NICE_STEPS_FRAMES[i]! * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE) {
+      if (NICE_STEPS_FRAMES[i]! * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE * (input.uiScale ?? 1)) {
         stride = NICE_STEPS_FRAMES[i]!;
       }
     }
@@ -206,7 +208,7 @@ export function computeRulerModel(input: RulerModelInput): RulerModel {
     return { mode: "frame", ticks, majorSec: 0, strideFrames: stride };
   }
 
-  const targetSec = TARGET_MAJOR_PX / pxPerSec;
+  const targetSec = TARGET_MAJOR_PX * (input.uiScale ?? 1) / pxPerSec;
   let major = NICE_STEPS_SEC[NICE_STEPS_SEC.length - 1] ?? 1;
   for (const s of NICE_STEPS_SEC) {
     if (s >= targetSec) {

@@ -17,7 +17,6 @@ import { wireSearchIndex } from "../search/searchIndexStore";
 import { bootAudioFxStore } from "../state/audioFxStore";
 import { useProjectStore, wireProjectStore } from "../state/projectStore";
 import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
-import { wireAppSettingsStream } from "../settings/appSettingsStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
@@ -127,27 +126,6 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
       cancelled = true;
       if (unlisten) unlisten();
       if (unwireSearch) unwireSearch();
-    };
-  }, []);
-
-  // App-level settings stream (`docs/data-model.md`). Seeds the store
-  // from the current value, then subscribes to `app_settings:changed`
-  // so any pill/menu/shortcut flip propagates to every consumer (the
-  // timeline filter, the Playhead Panel's window width, and settings UI).
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await wireAppSettingsStream();
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
     };
   }, []);
 

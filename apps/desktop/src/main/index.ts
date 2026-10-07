@@ -14,7 +14,7 @@ import { describePerformanceGraphics } from './performanceHardware.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authoring.js'
@@ -59,7 +59,8 @@ import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
-import { MAIN_WINDOW_MINIMUM_SIZE, MAIN_WINDOW_GEOMETRY_DEFAULTS, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
+import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
+import { DEFAULT_LAYOUT_THEME, readLayoutTheme } from '../shared/layout-theme.js'
 import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -82,6 +83,7 @@ const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
 let mainWindow: BrowserWindow | null = null
+let layoutTheme = DEFAULT_LAYOUT_THEME
 
 /// Forward an `evt:*` event to the renderer, guarding against a native/backend
 /// callback firing during teardown. `mainWindow?.` only catches null — a window
@@ -200,13 +202,41 @@ function enumerateDrmRenderNodes(): string[] {
   }
 }
 
+function syncMainWindowMinimumSize(): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  const bounds = win.getBounds()
+  const area = screen.getDisplayMatching(bounds).workArea
+  const { minWidth, minHeight } = mainWindowGeometryDefaults(layoutTheme, area)
+  const [oldWidth, oldHeight] = win.getMinimumSize()
+  if (oldWidth !== minWidth || oldHeight !== minHeight) {
+    win.setMinimumSize(minWidth, minHeight)
+  }
+  // Larger presets may require growth; smaller presets only release the floor.
+  // Maximized/fullscreen windows keep their state and are checked on restore.
+  if (win.isMaximized() || win.isFullScreen() || win.isMinimized()) return
+  const current = win.getBounds()
+  if (bounds.width >= minWidth && bounds.height >= minHeight
+    && current.width >= minWidth && current.height >= minHeight) return
+  const width = Math.max(current.width, minWidth)
+  const height = Math.max(current.height, minHeight)
+  win.setBounds({
+    x: Math.max(area.x, Math.min(current.x, area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(current.y, area.y + area.height - height)),
+    width, height,
+  })
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   // Last session's position/size, validated against the monitors attached RIGHT
   // NOW (windowGeometry.ts). Spread into the constructor rather than applied
   // after — `show: true` below means a post-construction setBounds() would be a
-  // visible jump. Falls back to a centered 1440×900 whenever the saved rect is
-  // missing, stale, or unreachable.
-  const geometry = restoreGeometry(windowGeometryStore, MAIN_WINDOW_LABEL, MAIN_WINDOW_GEOMETRY_DEFAULTS)
+  // visible jump. Unusable saved geometry falls back to the selected preset,
+  // bounded by the primary display's logical work area.
+  const savedBounds = windowGeometryStore?.get(MAIN_WINDOW_LABEL)?.bounds
+  const display = savedBounds ? screen.getDisplayMatching(savedBounds) : screen.getPrimaryDisplay()
+  const defaults = mainWindowGeometryDefaults(layoutTheme, display.workArea)
+  const geometry = restoreGeometry(windowGeometryStore, MAIN_WINDOW_LABEL, defaults)
   const win = new BrowserWindow({
     x: geometry.x,
     y: geometry.y,
@@ -224,7 +254,8 @@ async function createWindow(): Promise<BrowserWindow> {
     // Restates the default, so the trap above can't creep back in via another
     // option; the e2e window-chrome spec guards the resulting capability.
     fullscreenable: true,
-    ...MAIN_WINDOW_MINIMUM_SIZE,
+    minWidth: defaults.minWidth,
+    minHeight: defaults.minHeight,
     // Every UNPACKAGED run — `electron-vite dev`, `npm run preview`, Playwright
     // e2e and the perf scripts launching out/main/index.js — executes the bare
     // electron.exe, whose window/Alt-Tab icon is Electron's default. The PACKAGED
@@ -299,6 +330,18 @@ async function createWindow(): Promise<BrowserWindow> {
   // back in as the deadband baseline — without it the window grows a few pixels
   // on every launch (windowGeometry.ts, BOUNDS_DEADBAND_PX).
   rememberGeometry(win, MAIN_WINDOW_LABEL, windowGeometryStore, geometry)
+  win.on('move', syncMainWindowMinimumSize)
+  win.on('unmaximize', syncMainWindowMinimumSize)
+  win.on('leave-full-screen', syncMainWindowMinimumSize)
+  win.on('restore', syncMainWindowMinimumSize)
+  screen.on('display-metrics-changed', syncMainWindowMinimumSize)
+  screen.on('display-added', syncMainWindowMinimumSize)
+  screen.on('display-removed', syncMainWindowMinimumSize)
+  win.on('closed', () => {
+    screen.removeListener('display-metrics-changed', syncMainWindowMinimumSize)
+    screen.removeListener('display-added', syncMainWindowMinimumSize)
+    screen.removeListener('display-removed', syncMainWindowMinimumSize)
+  })
 
   // The renderer draws its own caption buttons (frameless window); their
   // maximize/restore glyph cares only about maximize-STATE transitions, not
@@ -481,6 +524,8 @@ app.whenReady().then(async () => {
     gpuMemoryMiB: performanceGpu?.dedicatedMemoryMib,
     machineId: performanceMachineId, appVersion: app.getVersion(),
     onCommitted: settings => {
+      layoutTheme = readLayoutTheme(settings.layout_theme)
+      syncMainWindowMinimumSize()
       hydrateResourceAllocation(settings.resource_allocation)
       configureResources(settings.resource_allocation!)
       hydratePerformanceSettings(settings.performance,
@@ -489,6 +534,7 @@ app.whenReady().then(async () => {
     },
   })
   const initialAppSettings = appSettings.get()
+  layoutTheme = readLayoutTheme(initialAppSettings.layout_theme)
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
   installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)))
@@ -1836,7 +1882,7 @@ app.whenReady().then(async () => {
     const img = await e.sender.capturePage()
     return img.toPNG()
   })
-  registerScreenPick()
+  registerScreenPick(() => layoutTheme)
   // Explicit focus requests act on the caller's own window.
   ipcMain.handle('window:focus', (e) => ctlWin(e)?.focus())
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))

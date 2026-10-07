@@ -1679,6 +1679,16 @@ const zhCN: Resources = {
     },
   },
   settings: {
+    layout_theme: '布局主题',
+    layout_theme_hint: '统一应用预设字号和对话框尺寸。宽松主题提供更多横向空间，文字略大。',
+    layout_themes: {
+      '1080p-standard': '1080p · 标准',
+      '1080p-wide': '1080p · 宽松',
+      '2k-standard': '2K（1440p）· 标准',
+      '2k-wide': '2K（1440p）· 宽松',
+      '4k-standard': '4K · 标准',
+      '4k-wide': '4K · 宽松',
+    },
     default_text_font: "默认文字字体",
     default_text_font_hint: "用于新建文字片段。请通过操作系统安装字体，然后重启 WeftCut 更新字体列表。",
     heading: "设置",

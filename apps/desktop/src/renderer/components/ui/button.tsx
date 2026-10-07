@@ -28,13 +28,13 @@ const buttonVariants = cva(
       },
       size: {
         // 4px 10px / 12px / r4 — the dominant legacy box.
-        default: "rounded-[4px] px-2.5 py-1 text-xs",
+        default: "rounded-[4px] px-2.5 py-1 text-[length:var(--font-size-body)] leading-[1.333333]",
         // Same box, 11px / r3 (copy rows, key chips toolbars).
-        sm: "rounded-[3px] px-2.5 py-1 text-[11px]",
+        sm: "rounded-[3px] px-2.5 py-1 text-[length:var(--font-size-caption)]",
         // 2px 8px / 11px / r3 — small panel-header buttons.
-        xs: "rounded-[3px] px-2 py-px text-[11px]",
+        xs: "rounded-[3px] px-2 py-px text-[length:var(--font-size-caption)]",
         // 6px 14px / 12px — dialog CTAs.
-        lg: "rounded-[4px] px-3.5 py-1.5 text-xs",
+        lg: "rounded-[4px] px-3.5 py-1.5 text-[length:var(--font-size-body)] leading-[1.333333]",
         icon: "size-8 rounded-[4px]",
         "icon-sm": "size-7 rounded-[4px]",
         "icon-xs": "size-6 rounded-[3px]",
@@ -56,6 +56,7 @@ function Button({
   return (
     <ButtonPrimitive
       data-slot="button"
+      data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />

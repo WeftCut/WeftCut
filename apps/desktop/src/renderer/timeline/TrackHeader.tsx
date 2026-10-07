@@ -34,7 +34,7 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
       aria-label={label}
       aria-pressed={active}
       onClick={onToggle}
-      className={`inline-flex size-[18px] items-center justify-center rounded-[4px] text-[9px] font-semibold transition-colors ${
+      className={`inline-flex size-[18px] items-center justify-center rounded-[4px] text-[length:var(--font-size-fine)] font-semibold transition-colors ${
         active ? activeClass : "text-muted-foreground/60 hover:bg-secondary hover:text-foreground"
       }`}
     >
@@ -184,7 +184,7 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isExpand
       ) : (
         <span
           data-testid="track-header-name"
-          className="min-w-0 flex-1 truncate text-[10.5px] font-medium text-muted-foreground"
+          className="min-w-0 flex-1 truncate text-[length:var(--font-size-caption)] font-medium text-muted-foreground"
           title={name}
           onDoubleClick={() => beginTrackRename(track.id)}
         >

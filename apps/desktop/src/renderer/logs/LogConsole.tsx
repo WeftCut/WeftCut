@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { XIcon } from "lucide-react";
 import { open as openInShell } from "@/bridge/shell";
+import { useUiScale } from "../settings/layoutTheme";
 import { AppInput } from "../components/AppInput";
 import {
   logClear,
@@ -66,19 +67,20 @@ type SourceKind = (typeof SOURCE_KINDS)[number];
 /// max-height in log.css) so the pre-drag default — `null`, i.e. the
 /// stylesheet's 40vh — stays in range without JS.
 const CONSOLE_HEIGHT_MIN = 200;
-function clampConsoleHeight(height: number, viewportHeight: number): number {
-  const max = Math.max(CONSOLE_HEIGHT_MIN, Math.round(viewportHeight * 0.8));
-  return Math.round(Math.min(max, Math.max(CONSOLE_HEIGHT_MIN, height)));
+function clampConsoleHeight(height: number, viewportHeight: number, scale: number): number {
+  const max = Math.round(viewportHeight * 0.8);
+  const min = Math.min(CONSOLE_HEIGHT_MIN * scale, max);
+  return Math.round(Math.min(max, Math.max(min, height)));
 }
 
 // Session-scoped height memory (the PropSection precedent): a dragged
 // height survives close/reopen within the run; a fresh launch returns to
 // the CSS default. Nothing persists across app restart (no localStorage).
-let sessionHeightPx: number | null = null;
+let sessionHeightBase: number | null = null;
 
 /// Wipe the session memory. Exported for tests.
 export function clearLogConsoleHeightMemory(): void {
-  sessionHeightPx = null;
+  sessionHeightBase = null;
 }
 
 export interface LogConsoleHandle {
@@ -126,11 +128,13 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
   const listRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  const [heightPx, setHeightPx] = useState<number | null>(sessionHeightPx);
+  const scale = useUiScale();
+  const [heightBase, setHeightBase] = useState<number | null>(sessionHeightBase);
+  const heightPx = heightBase == null ? null : clampConsoleHeight(heightBase * scale, window.innerHeight, scale);
   const applyHeight = (px: number) => {
-    const next = clampConsoleHeight(px, window.innerHeight);
-    sessionHeightPx = next;
-    setHeightPx(next);
+    const next = clampConsoleHeight(px, window.innerHeight, scale) / scale;
+    sessionHeightBase = next;
+    setHeightBase(next);
   };
 
   /* Height sash on the console's top edge (the AgentMode width-sash
@@ -158,7 +162,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
   };
 
   const onSashKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 64 : 16;
+    const step = (event.shiftKey ? 64 : 16) * scale;
     const current = heightPx ?? rootRef.current?.offsetHeight;
     if (current == null) return;
     if (event.key === "ArrowUp") {
@@ -363,7 +367,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
         aria-orientation="horizontal"
         aria-label={t("log.resize")}
         aria-valuenow={heightPx ?? undefined}
-        aria-valuemin={CONSOLE_HEIGHT_MIN}
+        aria-valuemin={Math.min(CONSOLE_HEIGHT_MIN * scale, window.innerHeight * 0.8)}
         tabIndex={0}
         onPointerDown={onSashPointerDown}
         onKeyDown={onSashKeyDown}

@@ -155,7 +155,7 @@
 
 .splash-wordmark {
   color: #dce8fb;
-  font-size: 22px;
+  font-size: var(--font-size-display);
   font-weight: 600;
   letter-spacing: 0.22em;
   text-indent: 0.22em;
@@ -387,7 +387,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  padding: calc(4 * var(--ui-px)) calc(10 * var(--ui-px));
   background: transparent;
   border: 1px solid var(--border-soft);
   color: var(--muted-foreground);
@@ -408,16 +408,16 @@
 }
 
 .startup-panel {
-  width: min(640px, 100%);
+  width: min(var(--dialog-width-text), 100%);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: calc(24 * var(--ui-px));
 }
 
 .startup-header {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: calc(14 * var(--ui-px));
 }
 
 .startup-heading-text {
@@ -428,8 +428,8 @@
 .startup-logo-mark {
   position: relative;
   display: block;
-  width: 44px;
-  height: 44px;
+  width: calc(44 * var(--ui-px));
+  height: calc(44 * var(--ui-px));
   flex-shrink: 0;
 }
 
@@ -502,8 +502,8 @@
 }
 
 .startup-header h1 {
-  margin: 0 0 4px;
-  font-size: 28px;
+  margin: 0 0 calc(4 * var(--ui-px));
+  font-size: var(--font-size-hero);
   font-weight: 600;
 }
 
@@ -516,7 +516,7 @@
 .startup-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
 }
 
 .startup-action {
@@ -524,8 +524,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 24px 16px;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(24 * var(--ui-px)) calc(16 * var(--ui-px));
   border-radius: var(--radius-panel);
   border: 1px solid var(--border-soft);
   background: var(--card);
@@ -576,7 +576,7 @@
 
 .startup-error {
   margin: 0;
-  padding: 10px 12px;
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
   border-radius: var(--radius-card);
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid rgba(248, 113, 113, 0.35);
@@ -591,15 +591,15 @@
  * heading row (~26px including margin-bottom) plus the fixed list height
  * + a small breathing margin. */
 .startup-recent {
-  min-height: 170px;
+  min-height: calc(170 * var(--ui-px));
 }
 
 .startup-recent-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: calc(12 * var(--ui-px));
+  margin-bottom: calc(8 * var(--ui-px));
 }
 
 .startup-recent-header h2 {
@@ -620,10 +620,10 @@
 .startup-recent-list {
   list-style: none;
   margin: 0;
-  padding: 0 4px 0 0;
+  padding: 0 calc(4 * var(--ui-px)) 0 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   /* Fixed height (not max-height) so the list region reserves the same
    * footprint whether the user has collapsed it to 3 items or expanded it
    * to MAX_RECENTS (10). Without this, the panel total height shifts when
@@ -635,7 +635,7 @@
    * scrollbar. Expanded: list scrolls internally. Sized to keep the whole
    * panel under typical laptop viewport heights so the page never grows
    * a scrollbar. */
-  height: 144px;
+  height: calc(144 * var(--ui-px));
   overflow-y: auto;
 }
 
@@ -662,8 +662,8 @@
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
   align-items: baseline;
-  gap: 1px 12px;
-  padding: 6px 12px;
+  gap: calc(1 * var(--ui-px)) calc(12 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   background: transparent;
   border: none;
   color: inherit;
@@ -709,14 +709,14 @@
 
 .startup-recent-remove {
   align-self: center;
-  margin-right: 6px;
+  margin-right: calc(6 * var(--ui-px));
   background: transparent;
   border: none;
   color: var(--muted-foreground);
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: var(--radius-control);
   opacity: 0;
   transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
@@ -765,7 +765,7 @@
 
 @media (max-width: 560px) {
   .startup-screen {
-    padding-inline: 20px;
+    padding-inline: calc(20 * var(--ui-px));
   }
 
   .startup-actions {
@@ -774,7 +774,7 @@
 
   .startup-action {
     flex-direction: row;
-    padding: 18px 16px;
+    padding: calc(18 * var(--ui-px)) calc(16 * var(--ui-px));
   }
 }
 
@@ -785,21 +785,22 @@
 .startup-recent-toggle-chevron {
   display: inline-flex;
   align-items: center;
-  margin-right: 4px;
+  margin-right: calc(4 * var(--ui-px));
 }
 
 /* --- Compact form dialog (new project, workspace name, rename, checkpoint) --- */
 
 .new-project-panel {
-  width: min(440px, calc(100vw - 32px));
-  padding: 20px;
+  width: min(var(--dialog-width-prompt), calc(100vw - calc(32 * var(--ui-px))));
+  overflow-y: auto;
+  padding: calc(20 * var(--ui-px));
   background: var(--card);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: calc(14 * var(--ui-px));
 }
 
 /* AppDialog's header holds the title plus an optional ✕, and `.settings-close`
@@ -808,7 +809,7 @@
 .new-project-panel header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 /* The panel-title slot of the type scale (docs/ui-tokens.md); 16px+ is
@@ -823,7 +824,7 @@
 .new-project-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
@@ -839,7 +840,7 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   color: var(--foreground);
-  padding: 6px 8px;
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-label);
   outline: none;
 }
@@ -851,13 +852,13 @@
 
 .new-project-folder {
   display: flex;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   align-items: center;
 }
 
 .new-project-folder-path {
   flex: 1;
-  padding: 6px 8px;
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   background: var(--background);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
@@ -877,17 +878,17 @@
 .new-project-size-fields {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   flex-wrap: wrap;
 }
 
 .new-project-size-fields .app-number-field {
-  width: 88px;
+  width: calc(88 * var(--ui-px));
 }
 
 .new-project-error {
   margin: 0;
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: var(--radius-control);
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid rgba(248, 113, 113, 0.35);
@@ -899,7 +900,7 @@
  * the .new-project-row label so it sits flush with the field. */
 .new-project-validation {
   display: block;
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
   color: var(--color-red-300);
   font-size: var(--font-size-caption);
 }
@@ -908,8 +909,8 @@
  * left-truncated with ellipsis when too wide — the end of the path is
  * what matters (it carries the project name). */
 .new-project-preview {
-  margin: -6px 0 4px;
-  padding: 4px 8px;
+  margin: calc(-6 * var(--ui-px)) 0 calc(4 * var(--ui-px));
+  padding: calc(4 * var(--ui-px)) calc(8 * var(--ui-px));
   background: var(--surface-tint);
   border-radius: var(--radius-control);
   color: var(--muted-foreground);
@@ -926,5 +927,5 @@
 .new-project-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }

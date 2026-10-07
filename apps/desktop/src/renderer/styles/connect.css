@@ -25,9 +25,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 12px;
-  padding: 8px 10px;
+  gap: calc(12 * var(--ui-px));
+  margin: 0 0 calc(12 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   background: var(--popover);
@@ -48,7 +48,7 @@
 
 .connect-tabs {
   display: flex;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
   margin: 0;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -57,8 +57,8 @@
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  padding: 4px 10px;
+  margin-bottom: calc(-1 * var(--ui-px));
+  padding: calc(4 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
   cursor: pointer;
@@ -78,22 +78,22 @@
 .connect-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .connect-snippet-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
-  margin-bottom: 4px;
+  margin-bottom: calc(4 * var(--ui-px));
 }
 
 .connect-snippet-actions {
   display: flex;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 
 .connect-snippet pre {
@@ -101,11 +101,11 @@
   background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--foreground);
   overflow-x: auto;
-  max-height: 180px;
+  max-height: calc(180 * var(--ui-px));
 }
 
 .connect-snippet code {
@@ -124,7 +124,7 @@
 .connect-path {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 /* The field takes the width; Browse keeps its label's. Unlike the export
@@ -148,7 +148,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .connect-skill-fault p {

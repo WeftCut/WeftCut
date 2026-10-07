@@ -17,6 +17,7 @@ import {
   ZapIcon,
   type LucideIcon,
 } from "lucide-react";
+import { useUiScale } from "../settings/layoutTheme";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
 import { tryMutate } from "../errors/tryMutate";
@@ -109,7 +110,7 @@ function MixerFlagButton({ active, activeClass, label, onToggle, children }: {
       aria-label={label}
       aria-pressed={active}
       onClick={onToggle}
-      className={`inline-flex size-[18px] items-center justify-center rounded-[4px] text-[9px] font-semibold transition-colors ${
+      className={`inline-flex size-[18px] items-center justify-center rounded-[4px] text-[length:var(--font-size-fine)] font-semibold transition-colors ${
         active ? activeClass : "text-muted-foreground/60 hover:bg-secondary hover:text-foreground"
       }`}
     >
@@ -709,6 +710,7 @@ export interface RoleMixerPanelProps {
 }
 
 export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProps) {
+  const scale = useUiScale();
   const { t } = useTranslation();
   const roles = useAudioRoles();
   const byRole = new Map(roles.map((r) => [r.role, r]));
@@ -735,7 +737,7 @@ export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProp
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const layout: MixerLayout = width >= CONSOLE_LAYOUT_MIN_WIDTH ? "console" : "cards";
+  const layout: MixerLayout = width >= CONSOLE_LAYOUT_MIN_WIDTH * scale ? "console" : "cards";
 
   // The per-Role tap samples fast enough to read as a meter, so it runs only
   // while someone is looking at it: a Panel nobody has open spends no frame

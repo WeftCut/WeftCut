@@ -2,10 +2,10 @@
 
 .separator {
   display: inline-block;
-  width: 1px;
-  height: 18px;
+  width: calc(1 * var(--ui-px));
+  height: calc(18 * var(--ui-px));
   background: var(--accent);
-  margin: 0 4px;
+  margin: 0 calc(4 * var(--ui-px));
 }
 
 .error {
@@ -22,7 +22,7 @@
 .header-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: calc(16 * var(--ui-px));
 }
 
 .header-right {
@@ -45,10 +45,10 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
-  width: 140px;
+  gap: calc(7 * var(--ui-px));
+  width: var(--header-search-width);
   max-width: 100%;
-  padding: 4px 10px;
+  padding: calc(4 * var(--ui-px)) calc(10 * var(--ui-px));
   font-family: inherit;
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
@@ -84,7 +84,7 @@
   opacity: 0.6;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  padding: 1px 5px;
+  padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px));
 }
 
 .standalone-row.level-error .row-body {
@@ -133,10 +133,10 @@
    elsewhere in styles.css. */
 .sr-only {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  width: calc(1 * var(--ui-px));
+  height: calc(1 * var(--ui-px));
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--ui-px));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -159,22 +159,22 @@
 
 /* Hero: logo + name + version read as ONE unit (tight internal gap). */
 .about-hero {
-  padding: 24px 24px 18px;
+  padding: calc(24 * var(--ui-px)) calc(24 * var(--ui-px)) calc(18 * var(--ui-px));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 
 .about-logo {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 8px;
+  width: calc(56 * var(--ui-px));
+  height: calc(56 * var(--ui-px));
+  margin-bottom: calc(8 * var(--ui-px));
 }
 
 .about-name {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-heading);
   font-weight: 600;
 }
 
@@ -186,11 +186,11 @@
 /* Info tier: author / license / notices / repo link as one full-width band. */
 .about-info {
   background: var(--card);
-  padding: 12px 24px;
+  padding: calc(12 * var(--ui-px)) calc(24 * var(--ui-px));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .about-meta {
@@ -217,7 +217,7 @@
 }
 
 .about-actions {
-  padding: 12px 24px 16px;
+  padding: calc(12 * var(--ui-px)) calc(24 * var(--ui-px)) calc(16 * var(--ui-px));
   display: flex;
   justify-content: center;
 }
@@ -226,5 +226,5 @@
    small confirm dialogs use. Compound selector: misc.css is imported before
    settings.css, so a lone .update-dialog would lose to .settings-panel. */
 .settings-panel.update-dialog {
-  width: min(440px, calc(100vw - 32px));
+  width: min(var(--dialog-width-prompt), calc(100vw - calc(32 * var(--ui-px))));
 }

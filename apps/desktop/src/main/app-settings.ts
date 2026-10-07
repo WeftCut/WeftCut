@@ -9,6 +9,7 @@
 // all-defaults so a hand-edit mishap can't brick the editor.
 
 import { changePausePresets, readPausePresets } from '../shared/pause-presets'
+import { isLayoutTheme, readLayoutTheme } from '../shared/layout-theme'
 import { readResourcePolicy, patchResourcePolicy, resolveResourcePolicy, DEFAULT_RESOURCE_POLICY } from '../shared/resource-policy'
 import { patchPerformanceSettings, readPerformanceSettings } from '../shared/performance-settings'
 import { readCalibrationRecommendation } from '../shared/playback-calibration'
@@ -84,6 +85,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
     const policy = readPerformancePolicy(parsed.performance_policy)
       ?? (parsed.performance_policy === null || budgets || parsed.performance ? null : DEFAULT_PERFORMANCE_POLICY)
     return project({
+      layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
       performance_budget: budgets,
@@ -267,6 +269,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       project(current)
       if (patch.pause_preset_change !== undefined) {
         current.pause_presets = changePausePresets(current.pause_presets ?? [], patch.pause_preset_change)
+      }
+      if (patch.layout_theme !== undefined) {
+        if (!isLayoutTheme(patch.layout_theme)) throw new Error('Invalid layout theme')
+        current.layout_theme = patch.layout_theme
       }
       if (patch.display_mode !== undefined) current.display_mode = patch.display_mode
       if (patch.delta_window_us !== undefined) current.delta_window_us = clamp(patch.delta_window_us, DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US)

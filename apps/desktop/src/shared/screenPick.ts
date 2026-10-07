@@ -1,3 +1,5 @@
+import type { LayoutTheme } from './layout-theme';
+
 /** Ephemeral desktop sampling; no screenshots or sessions are persisted. */
 export type ScreenPickError = 'unsupported' | 'permission' | 'capture' | 'timeout';
 export type ScreenPickReply =
@@ -12,6 +14,7 @@ export interface ScreenPickSnapshot {
   height: number;
   scaleFactor: number;
   hint: string;
+  layoutTheme?: LayoutTheme;
 }
 export interface ScreenPickApi {
   start(request: ScreenPickRequest): Promise<ScreenPickReply>;

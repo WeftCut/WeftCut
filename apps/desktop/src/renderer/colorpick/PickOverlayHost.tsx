@@ -32,7 +32,7 @@ const HINT_STYLE: CSSProperties = {
   bottom: 24,
   left: "50%",
   transform: "translateX(-50%)",
-  font: "12px system-ui",
+  font: "var(--font-size-body) system-ui",
   color: "#e5e7eb",
   background: "rgba(0,0,0,0.7)",
   padding: "4px 10px",
@@ -196,7 +196,7 @@ function PickOverlay({ session }: { session: PickSession }) {
           // the hover recorded NOTHING in the project.
           data-testid="colorpick-hex"
           style={{
-            font: "12px ui-monospace, monospace",
+            font: "var(--font-size-body) ui-monospace, monospace",
             color: "#e5e7eb",
             background: "rgba(0,0,0,0.7)",
             padding: "1px 6px",

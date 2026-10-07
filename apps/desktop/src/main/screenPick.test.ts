@@ -74,6 +74,14 @@ afterEach(() => { app.emit('before-quit', {}); vi.useRealTimers(); });
 const start = (id = 'one'): Promise<ScreenPickReply> => invoke('colorpick:start',owner,{id,hint:'localized hint'});
 
 describe('desktop pick session', () => {
+  it('passes the selected layout theme to the isolated overlay', async () => {
+    registerScreenPick(() => '4k-wide');
+    const result = start();
+    await vi.waitFor(() => expect(overlays()).toHaveLength(2));
+    expect(invoke('colorpick:snapshot', overlays()[0]).layoutTheme).toBe('4k-wide');
+    invoke('colorpick:cancel', owner, 'one');
+    expect(await result).toEqual({ kind: 'cancelled' });
+  });
   it('captures both physical resolutions before showing, marks internal, and commits once', async () => {
     const result = start();
     await vi.waitFor(() => expect(overlays()).toHaveLength(2));

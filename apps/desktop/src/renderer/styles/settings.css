@@ -9,8 +9,8 @@
    colour that would claim it holds one (docs/features.md). */
 
 .settings-panel {
-  width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
+  width: min(var(--dialog-width-standard), calc(100vw - calc(32 * var(--ui-px))));
+  max-height: calc(100vh - calc(64 * var(--ui-px)));
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
@@ -23,7 +23,7 @@
 .settings-panel header {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -53,7 +53,7 @@
  * so a heading reads as the parent of the 13px/500 `.settings-toggle-label`
  * rows beneath it instead of fading into them. */
 .settings-panel h3 {
-  margin: 16px 0 8px;
+  margin: calc(16 * var(--ui-px)) 0 calc(8 * var(--ui-px));
   font-size: var(--font-size-label);
   font-weight: 600;
   color: var(--foreground);
@@ -61,37 +61,37 @@
 
 .settings-blurb,
 .settings-status {
-  margin: 0 0 12px;
+  margin: 0 0 calc(12 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
 
 .settings-error {
-  margin: 8px 0;
+  margin: calc(8 * var(--ui-px)) 0;
   font-size: var(--font-size-body);
   color: var(--destructive);
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.3);
   border-radius: var(--radius-control);
-  padding: 6px 10px;
+  padding: calc(6 * var(--ui-px)) calc(10 * var(--ui-px));
 }
 
 /* Inline warning callout (amber, boxed) — louder than .settings-blurb but not
    an error. Used for the experimental 10-bit export notice. */
 .settings-warn {
-  margin: 8px 0 12px;
+  margin: calc(8 * var(--ui-px)) 0 calc(12 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--foreground);
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.35);
   border-radius: var(--radius-control);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   line-height: 1.45;
 }
 
 .settings-key-row {
-  margin: 8px 0 16px;
-  padding: 10px;
+  margin: calc(8 * var(--ui-px)) 0 calc(16 * var(--ui-px));
+  padding: calc(10 * var(--ui-px));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   background: var(--popover);
@@ -103,14 +103,14 @@
 .settings-pin-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 0 4px;
+  gap: calc(12 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) 0 calc(4 * var(--ui-px));
 }
 
 .settings-pin-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   cursor: pointer;
   /* Push the timecode input to the right edge of the row. */
   flex: 1 1 auto;
@@ -121,11 +121,11 @@
 }
 
 .settings-input {
-  width: 132px;
+  width: calc(132 * var(--ui-px));
 }
 
 .settings-input-narrow {
-  width: 64px;
+  width: calc(64 * var(--ui-px));
 }
 
 /* Label on the left, control pushed to the right edge — the same shape as
@@ -133,8 +133,8 @@
 .settings-control-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 0 4px;
+  gap: calc(12 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) 0 calc(4 * var(--ui-px));
 }
 
 .settings-control-row > .settings-toggle-label {
@@ -149,7 +149,7 @@
 }
 
 .settings-performance-copy {
-  flex: 1 1 230px;
+  flex: 1 1 calc(230 * var(--ui-px));
   min-width: 0;
 }
 
@@ -160,16 +160,16 @@
 .settings-performance-value {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   flex: 0 0 auto;
 }
 
-.settings-performance-budget { margin-bottom: 20px; }
-.settings-performance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-performance-budget { margin-bottom: calc(20 * var(--ui-px)); }
+.settings-performance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: calc(8 * var(--ui-px)); }
 
 .settings-performance-value .settings-input {
-  width: 100px;
-  flex: 0 0 100px;
+  width: calc(100 * var(--ui-px));
+  flex: 0 0 calc(100 * var(--ui-px));
 }
 
 .settings-performance-value .settings-slider-unit {
@@ -180,7 +180,7 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
   flex-wrap: wrap;
 }
 
@@ -190,19 +190,19 @@
 }
 
 .settings-performance-advanced {
-  margin-top: 16px;
+  margin-top: calc(16 * var(--ui-px));
 }
 
 .settings-performance-allocation {
   display: grid;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
 }
 
 .settings-performance-allocation > div {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: calc(16 * var(--ui-px));
 }
 
 .settings-performance-allocation dt { color: var(--muted-foreground); }
@@ -215,13 +215,13 @@
 }
 
 .settings-select {
-  min-width: 168px;
+  min-width: calc(168 * var(--ui-px));
 }
 
 .settings-performance-processing {
   min-width: 0;
-  width: 126px;
-  flex: 0 0 126px;
+  width: calc(126 * var(--ui-px));
+  flex: 0 0 calc(126 * var(--ui-px));
 }
 
 /* width × height + Apply. Wraps as a unit so a narrow panel breaks the group
@@ -229,30 +229,30 @@
 .settings-size-fields {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   flex-wrap: wrap;
 }
 
 .settings-size-fields .app-number-field {
-  width: 88px;
+  width: calc(88 * var(--ui-px));
 }
 
 .settings-slider-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 0 6px;
+  gap: calc(10 * var(--ui-px));
+  padding: 0 0 calc(6 * var(--ui-px));
 }
 
 .settings-slider-row .app-slider {
   flex: 1 1 auto;
-  min-width: 120px;
+  min-width: calc(120 * var(--ui-px));
 }
 
 /* Same role as `.settings-toggle-label` — the primary label of a control
  * row — so it shares that type slot instead of reading as secondary text. */
 .settings-slider-label {
-  min-width: 92px;
+  min-width: calc(92 * var(--ui-px));
   font-size: var(--font-size-label);
   font-weight: 500;
   color: var(--foreground);
@@ -266,7 +266,7 @@
 .settings-key-header {
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: calc(8 * var(--ui-px));
 }
 
 .settings-key-label {
@@ -278,7 +278,7 @@
 .settings-badge {
   margin-left: auto;
   font-size: var(--font-size-micro);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -299,7 +299,7 @@
 .settings-badge-beta {
   flex-shrink: 0;
   margin-left: auto;
-  padding: 1px 5px;
+  padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px));
   color: var(--color-amber-300);
   background: rgba(251, 191, 36, 0.12);
   border: 1px solid rgba(251, 191, 36, 0.4);
@@ -312,17 +312,17 @@
    after the availability badge): only the first takes the auto push-right
    margin, siblings just get a small gap. */
 .settings-badge + .settings-badge {
-  margin-left: 6px;
+  margin-left: calc(6 * var(--ui-px));
 }
 
 .settings-test-ok {
-  margin: 6px 0 0;
+  margin: calc(6 * var(--ui-px)) 0 0;
   font-size: var(--font-size-caption);
   color: var(--color-emerald-400);
 }
 
 .settings-test-err {
-  margin: 6px 0 0;
+  margin: calc(6 * var(--ui-px)) 0 0;
   font-size: var(--font-size-caption);
   color: var(--destructive);
   word-break: break-word;
@@ -331,7 +331,7 @@
 .settings-key-input-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .settings-key-input-row input {
@@ -346,7 +346,7 @@
 .settings-data-location {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
 }
 
 .settings-data-location .settings-key-header {
@@ -355,7 +355,7 @@
 
 .settings-data-path {
   margin: 0;
-  padding: 6px 8px;
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   font-family: ui-monospace, Menlo, monospace;
   font-size: var(--font-size-caption);
   color: var(--foreground);
@@ -367,7 +367,7 @@
 .settings-data-migrate {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .settings-data-migrate .settings-toggle-hint {
@@ -379,13 +379,13 @@
 .settings-toggle-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 0 16px;
+  gap: calc(10 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) 0 calc(16 * var(--ui-px));
   cursor: pointer;
 }
 
 .settings-toggle-row input[type="checkbox"] {
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
 }
 
 .settings-toggle-label {
@@ -399,8 +399,8 @@
   display: block;
   font-size: var(--font-size-caption);
   color: var(--color-gray-500);
-  margin-top: 2px;
-  max-width: 460px;
+  margin-top: calc(2 * var(--ui-px));
+  max-width: calc(460 * var(--ui-px));
   line-height: 1.45;
 }
 
@@ -428,7 +428,7 @@
 
 .settings-card {
   background: var(--card);
-  padding: 16px;
+  padding: calc(16 * var(--ui-px));
 }
 
 .settings-card > :first-child {
@@ -446,11 +446,11 @@
  * keeps its 560px width + single-column body untouched.
  */
 .settings-panel--nav {
-  width: min(720px, calc(100vw - 32px));
+  width: min(var(--dialog-width-settings), calc(100vw - calc(32 * var(--ui-px))));
   /* Fixed vertical share so tab switches don't resize the dialog: every
      pane's content fits the same box, with per-pane overflow scrolling
      inside `.settings-content` instead. */
-  height: min(80vh, calc(100vh - 64px));
+  height: min(var(--dialog-height-settings), calc(100vh - calc(64 * var(--ui-px))));
 }
 
 .settings-layout {
@@ -460,25 +460,25 @@
 }
 
 .settings-nav {
-  flex: 0 0 152px;
+  flex: 0 0 var(--settings-nav-width);
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: calc(8 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
   border-right: 1px solid var(--border-soft);
 }
 
 .settings-nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   appearance: none;
   border: none;
   background: transparent;
   border-radius: var(--radius-card);
-  padding: 7px 10px;
+  padding: calc(7 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-label);
   font-weight: 500;
   text-align: left;
@@ -508,9 +508,10 @@
 
 .settings-content {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: calc(16 * var(--ui-px));
   background: var(--card);
 }
 
@@ -519,8 +520,8 @@
 }
 
 .settings-pane-title {
-  margin: 0 0 14px;
-  padding-bottom: 8px;
+  margin: 0 0 calc(14 * var(--ui-px));
+  padding-bottom: calc(8 * var(--ui-px));
   font-size: var(--font-size-title);
   font-weight: 600;
   color: var(--foreground);
@@ -538,12 +539,12 @@
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
 }
 
 .settings-section + .settings-section {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: calc(16 * var(--ui-px));
+  padding-top: calc(16 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
 }
 
@@ -562,19 +563,19 @@
 }
 
 .keybindings {
-  margin: 0 0 16px;
+  margin: 0 0 calc(16 * var(--ui-px));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
-  padding: 8px;
+  padding: calc(8 * var(--ui-px));
   background: var(--popover);
 }
 
 .keybindings-toolbar {
   display: flex;
-  gap: 8px;
-  padding: 0 4px 8px;
+  gap: calc(8 * var(--ui-px));
+  padding: 0 calc(4 * var(--ui-px)) calc(8 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 8px;
+  margin-bottom: calc(8 * var(--ui-px));
 }
 
 
@@ -586,14 +587,14 @@
 }
 
 .keybindings-row > td {
-  padding: 4px 4px;
+  padding: calc(4 * var(--ui-px)) calc(4 * var(--ui-px));
   vertical-align: middle;
 }
 
 .keybindings-label {
   color: var(--color-gray-300);
   white-space: nowrap;
-  padding-right: 12px !important;
+  padding-right: calc(12 * var(--ui-px)) !important;
   width: 1%;
 }
 
@@ -601,7 +602,7 @@
    the label above it: the column is shrink-to-fit and nowrap, so a sentence
    left to inherit that would push the chord chips off the panel. */
 .keybindings-hint {
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
   max-width: 34ch;
   white-space: normal;
   color: var(--muted-foreground);
@@ -612,7 +613,7 @@
 .keybindings-chords {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   align-items: center;
 }
 
@@ -624,11 +625,11 @@
 .keybindings-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   background: var(--secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  padding: 2px 4px 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(4 * var(--ui-px)) calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-variant-numeric: tabular-nums;
 }
 
@@ -644,7 +645,7 @@
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  padding: 0 2px;
+  padding: 0 calc(2 * var(--ui-px));
 }
 
 .keybindings-chip-remove:hover {
@@ -656,7 +657,7 @@
   border: 1px dashed var(--border);
   color: var(--muted-foreground);
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   cursor: pointer;
 }
@@ -678,7 +679,7 @@
   color: var(--color-blue-300);
   font-size: var(--font-size-caption);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: calc(2 * var(--ui-px)) calc(4 * var(--ui-px));
 }
 
 .keybindings-reset:hover {
@@ -689,7 +690,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   outline: none;
 }
@@ -716,48 +717,48 @@
 .settings-preview-engine {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
 }
 
 .settings-preview-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .settings-preview-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   cursor: pointer;
-  padding: 4px 0;
+  padding: calc(4 * var(--ui-px)) 0;
 }
 
 .settings-preview-option input[type="radio"] {
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
 }
 
 .settings-preview-status {
   background: rgba(0, 0, 0, 0.2);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: var(--radius-card);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   font-size: var(--font-size-body);
 }
 
 .settings-preview-status code {
   background: rgba(0, 0, 0, 0.3);
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
 .field-editor {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
@@ -775,7 +776,7 @@
   background: var(--card);
   border: 1px solid var(--border-soft);
   color: var(--foreground);
-  padding: 2px 6px;
+  padding: calc(2 * var(--ui-px)) calc(6 * var(--ui-px));
   font-size: var(--font-size-body);
   border-radius: var(--radius-control);
   font-family: inherit;
@@ -789,7 +790,7 @@
 .settings-choice-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 /* Decode engine radio cards — every option visible with its trade-off
@@ -797,14 +798,14 @@
 .settings-radio-cards {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .settings-radio-card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: calc(10 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   background: var(--popover);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
@@ -831,9 +832,9 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
+  width: calc(14 * var(--ui-px));
+  height: calc(14 * var(--ui-px));
+  margin-top: calc(2 * var(--ui-px));
   background: var(--secondary);
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -845,8 +846,8 @@
 
 .settings-radio-card-indicator {
   display: block;
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--ui-px));
+  height: calc(6 * var(--ui-px));
   border-radius: 50%;
   background: var(--primary);
 }
@@ -854,7 +855,7 @@
 .settings-radio-card-text {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: calc(1 * var(--ui-px));
   min-width: 0;
 }
 
@@ -877,7 +878,7 @@
 .settings-resolution-slider {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
 }
 
 .settings-resolution-end {
@@ -902,8 +903,8 @@
 .settings-resolution-stop {
   position: absolute;
   top: 50%;
-  width: 5px;
-  height: 5px;
+  width: calc(5 * var(--ui-px));
+  height: calc(5 * var(--ui-px));
   border-radius: 50%;
   background: var(--foreground);
   opacity: 0.35;
@@ -916,7 +917,7 @@
 .settings-resolution-ticks {
   display: flex;
   justify-content: space-between;
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--color-gray-500);
 }
@@ -939,48 +940,48 @@
   font-weight: 500;
 }
 
-.settings-model-section { display: flex; flex-direction: column; gap: 12px; }
-.settings-model-selector { display: flex; align-items: center; gap: 12px; }
+.settings-model-section { display: flex; flex-direction: column; gap: calc(12 * var(--ui-px)); }
+.settings-model-selector { display: flex; align-items: center; gap: calc(12 * var(--ui-px)); }
 .settings-model-selector .app-select { flex: 1; min-width: 0; }
-.settings-model-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.settings-model-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-model-card { border: 1px solid var(--border); border-radius: 8px; padding: calc(16 * var(--ui-px)); display: flex; flex-direction: column; gap: calc(12 * var(--ui-px)); }
+.settings-model-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: calc(8 * var(--ui-px)); }
 .settings-model-card-header strong { font-size: var(--font-size-body); margin-right: auto; }
 .settings-model-state { margin: 0; font-size: var(--font-size-caption); color: var(--muted-foreground); }
-.settings-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.settings-model-advanced { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.settings-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(8 * var(--ui-px)); }
+.settings-model-advanced { border-top: 1px solid var(--border); padding-top: calc(14 * var(--ui-px)); display: flex; flex-direction: column; gap: calc(12 * var(--ui-px)); }
 .settings-model-advanced[hidden] { display: none; }
-.settings-model-card .settings-slider-label { min-width: 90px; }
+.settings-model-card .settings-slider-label { min-width: calc(90 * var(--ui-px)); }
 .settings-model-card .settings-key-input-row { min-width: 0; }
 .settings-model-card .settings-key-input-row > input { min-width: 0; flex: 1; }
-.settings-model-card .settings-test-err { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+.settings-model-card .settings-test-err { white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(160 * var(--ui-px)); overflow: auto; }
 .settings-model-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-model-trigger > svg { flex-shrink: 0; margin-left: auto; }
-.settings-model-menu { min-width: var(--anchor-width); max-width: min(480px, calc(100vw - 32px)); }
-.settings-model-menu .app-menu-item { gap: 8px; }
-.settings-model-menu-options { max-height: min(360px, calc(var(--available-height, 500px) - 90px)); overflow-y: auto; }
+.settings-model-menu { min-width: var(--anchor-width); max-width: min(calc(480 * var(--ui-px)), calc(100vw - calc(32 * var(--ui-px)))); }
+.settings-model-menu .app-menu-item { gap: calc(8 * var(--ui-px)); }
+.settings-model-menu-options { max-height: min(calc(360 * var(--ui-px)), calc(var(--available-height, calc(500 * var(--ui-px))) - calc(90 * var(--ui-px)))); overflow-y: auto; }
 .settings-model-option-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .settings-model-option-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-model-option-detail, .settings-model-option-state { font-size: var(--font-size-caption); color: var(--muted-foreground); }
 .settings-model-option-state { margin-left: auto; flex-shrink: 0; }
 .settings-model-section > .settings-blurb, .settings-model-section > .settings-toggle-hint { margin: 0; }
-.settings-model-dialog { width: min(620px, calc(100vw - 40px)); max-width: 620px; max-height: min(780px, calc(100vh - 64px)); overflow: hidden; }
-.settings-model-dialog-body { overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 18px; font-size: var(--font-size-body); }
+.settings-model-dialog { width: min(var(--dialog-width-model), calc(100vw - calc(40 * var(--ui-px)))); max-width: calc(100vw - calc(40 * var(--ui-px))); max-height: min(var(--dialog-height-model), calc(100vh - calc(64 * var(--ui-px)))); overflow: hidden; }
+.settings-model-dialog-body { overflow-y: auto; display: flex; flex-direction: column; gap: calc(16 * var(--ui-px)); padding: calc(18 * var(--ui-px)); font-size: var(--font-size-body); }
 .settings-model-summary > strong, .settings-analysis-options > strong { font-size: var(--font-size-label); }
-.settings-model-editor, .settings-model-fields { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.settings-model-editor .settings-slider-label { min-width: 100px; }
+.settings-model-editor, .settings-model-fields { display: flex; flex-direction: column; gap: calc(14 * var(--ui-px)); min-width: 0; }
+.settings-model-editor .settings-slider-label { min-width: calc(100 * var(--ui-px)); }
 .settings-model-editor .settings-key-input-row > input { min-width: 0; flex: 1; }
 .settings-model-editor .settings-key-input-row { min-width: 0; }
-.settings-model-fields > summary { cursor: pointer; font-size: var(--font-size-label); margin-bottom: 12px; }
-.settings-model-adapters { display: flex; flex-direction: column; gap: 10px; }
-.settings-model-adapters > button { justify-content: space-between; height: auto; min-height: 44px; }
+.settings-model-fields > summary { cursor: pointer; font-size: var(--font-size-label); margin-bottom: calc(12 * var(--ui-px)); }
+.settings-model-adapters { display: flex; flex-direction: column; gap: calc(10 * var(--ui-px)); }
+.settings-model-adapters > button { justify-content: space-between; height: auto; min-height: calc(44 * var(--ui-px)); }
 .settings-model-adapters > button > span { color: var(--muted-foreground); }
-.settings-model-confirm { border: 1px solid var(--border); border-radius: 6px; padding: 14px; font-size: var(--font-size-label); }
-.settings-model-confirm p { margin: 10px 0; }
+.settings-model-confirm { border: 1px solid var(--border); border-radius: 6px; padding: calc(14 * var(--ui-px)); font-size: var(--font-size-label); }
+.settings-model-confirm p { margin: calc(10 * var(--ui-px)) 0; }
 .settings-model-address { margin: 0; font-size: var(--font-size-caption); color: var(--muted-foreground); overflow-wrap: anywhere; }
 .settings-model-summary .settings-toggle-hint { margin: 0; }
-.settings-analysis-options { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.settings-analysis-options { margin-top: calc(24 * var(--ui-px)); padding-top: calc(20 * var(--ui-px)); border-top: 1px solid var(--border); }
 .settings-model-dialog .settings-test-err { overflow-wrap: anywhere; white-space: pre-wrap; }
 
-.settings-model-inline-editor { border-top: 1px solid var(--border); padding-top: 16px; }
+.settings-model-inline-editor { border-top: 1px solid var(--border); padding-top: calc(16 * var(--ui-px)); }
 .settings-model-candidate > strong { font-size: var(--font-size-label); }
 .settings-model-swap { display: flex; justify-content: center; color: var(--muted-foreground); }

@@ -1,4 +1,5 @@
 import i18n from "../i18n";
+import { uiPixels } from '../settings/layoutTheme';
 
 /** Dockview component ids for the single WeftCut Panel + tab renderers. Kept
  *  here (not in the adapter) so the persistence layer can synthesize Panel
@@ -48,6 +49,14 @@ const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
  * thickness is not below the floor.
  */
 export const STRIP_THICKNESS = 44;
+export const stripThickness = () => uiPixels(STRIP_THICKNESS);
+
+/** Registry values stay baseline measurements; resolve at use time so old
+ * persisted layouts and newly opened panels pick up the current theme. */
+export function panelMinimum(kind: PanelKind) {
+  const baseline = PANEL_REGISTRY[kind];
+  return { minimumWidth: uiPixels(baseline.minimumWidth), minimumHeight: uiPixels(baseline.minimumHeight) };
+}
 
 const STRIP_MINIMUM = {
   minimumWidth: STRIP_THICKNESS,

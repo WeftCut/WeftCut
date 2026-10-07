@@ -18,6 +18,7 @@ import {
   type StartupProgress,
 } from "./startup/initializeRenderer";
 import { PerformanceMonitorWindow } from "./render/PerfHUD";
+import { wireAppSettingsStream } from './settings/appSettingsStore';
 import {
   projectOpen,
   recentsGetReopenOnLaunch,
@@ -340,10 +341,28 @@ function Root() {
   );
 }
 
+// App preferences belong to the renderer lifetime, including startup, splash
+// and the standalone monitor. Opening Settings must not be needed to apply a
+// saved layout theme, and project switches must not tear down its subscription.
+function AppPreferences({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void wireAppSettingsStream().then(unlisten => {
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    }).catch(error => console.warn('App preferences unavailable:', error));
+    return () => { cancelled = true; stop?.(); };
+  }, []);
+  return children;
+}
+
 function mount() {
   ReactDOM.createRoot(root!).render(
     <React.StrictMode>
-      {isPerfHudWindow ? <PerformanceMonitorWindow /> : <Root />}
+      <AppPreferences>
+        {isPerfHudWindow ? <PerformanceMonitorWindow /> : <Root />}
+      </AppPreferences>
     </React.StrictMode>,
   );
 }

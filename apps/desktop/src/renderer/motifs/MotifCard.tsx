@@ -93,7 +93,7 @@ function MotifCover({ motif }: { motif: MotifSummary }) {
     }).catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; if (imageUrl) URL.revokeObjectURL(imageUrl); };
   }, [visible, motif.id, motif.content_hash]);
-  return <div ref={host} className="motif-preview-host" style={{ maxWidth: 240 }}>
+  return <div ref={host} className="motif-preview-host" style={{ maxWidth: "calc(240 * var(--ui-px))" }}>
     {url && <img src={url} alt={`preview-${motif.id}`} />}
     {!url && !error && <span className="motif-preview-loading" role="status" aria-label={t('motif_picker.preview_loading')} />}
     {error && <span className="settings-status">{t('motif_picker.cover_unavailable')}</span>}

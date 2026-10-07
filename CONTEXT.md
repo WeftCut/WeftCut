@@ -937,6 +937,16 @@ protocol provenance. Saving does not apply it; restoring defaults retains it.
 Its cache value is copied from the user's settings, not measured by the test.
 _Avoid_: hardware capacity, optimal configuration, certification
 
+## Layout themes
+
+**Layout theme**:
+An application-wide preset combining UI typography, dialog dimensions and
+initial window size. Six presets pair 1080p, 2K (1440p) and 4K with Standard or
+Relaxed (宽松); Relaxed adds horizontal room and 10% larger text. Separate from the dark
+color palette, Workspace Dock arrangement and authored Text-layer font size.
+UI word: Layout theme / 布局主题. See [UI tokens](docs/ui-tokens.md).
+_Avoid_: zoom level, font-size setting, color theme, workspace preset
+
 ## Agent activity
 
 **Agent view**:

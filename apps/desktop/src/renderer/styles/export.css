@@ -4,13 +4,13 @@
 .export-content-checks {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: calc(18 * var(--ui-px));
 }
 
 .export-check {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   cursor: pointer;
   font-size: var(--font-size-label);
   color: var(--foreground);
@@ -27,7 +27,7 @@
   position: fixed;
   left: 16px;
   bottom: 16px;
-  width: min(520px, calc(100vw - 32px));
+  width: min(var(--dialog-width-confirm), calc(100vw - calc(32 * var(--ui-px))));
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -39,8 +39,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: calc(12 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--foreground);
 }
@@ -49,7 +49,7 @@
   background: var(--card);
   border: 1px solid var(--border);
   color: var(--foreground);
-  padding: 3px 8px;
+  padding: calc(3 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   border-radius: var(--radius-control);
   font-family: inherit;
@@ -59,19 +59,19 @@
    selector on purpose: export.css is imported before settings.css, so a lone
    .export-experimental-confirm loses the width to .settings-panel. */
 .settings-panel.export-experimental-confirm {
-  width: min(440px, calc(100vw - 32px));
+  width: min(var(--dialog-width-prompt), calc(100vw - calc(32 * var(--ui-px))));
 }
 
 .export-experimental-points {
-  margin: 0 0 12px;
-  padding-left: 18px;
+  margin: 0 0 calc(12 * var(--ui-px));
+  padding-left: calc(18 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
   line-height: 1.5;
 }
 
 .export-experimental-points li {
-  margin: 4px 0;
+  margin: calc(4 * var(--ui-px)) 0;
 }
 
 /* Export settings dialog — reuses the settings popup chrome
@@ -81,24 +81,24 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 7px 0;
+  gap: calc(12 * var(--ui-px));
+  padding: calc(7 * var(--ui-px)) 0;
 }
 
 /* Export-dialog context: AppSelect triggers here keep the wide field
  * footprint native selects had (.app-select carries the shared skin). */
 .export-select {
-  min-width: 180px;
+  min-width: calc(180 * var(--ui-px));
 }
 
 .export-bitrate {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .export-estimate {
-  margin: 14px 0 0;
+  margin: calc(14 * var(--ui-px)) 0 0;
   font-size: var(--font-size-label);
   font-weight: 500;
   color: var(--color-gray-300);
@@ -111,11 +111,11 @@
 .export-path {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .export-path-input {
-  width: 220px;
+  width: calc(220 * var(--ui-px));
   text-align: left;
   font-size: var(--font-size-caption);
 }
@@ -123,11 +123,11 @@
 .export-filename {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .export-filename-input {
-  width: 180px;
+  width: calc(180 * var(--ui-px));
   text-align: left;
 }
 
@@ -136,9 +136,9 @@
 .export-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
-  padding-top: 14px;
+  gap: calc(8 * var(--ui-px));
+  margin-top: calc(18 * var(--ui-px));
+  padding-top: calc(14 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
 }
 
@@ -149,8 +149,8 @@
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
 }
 
@@ -163,7 +163,7 @@
   margin: 0;
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
   font-size: var(--font-size-label);
   color: var(--foreground);
   word-break: break-word;
@@ -183,7 +183,7 @@
 }
 
 .export-error-details {
-  margin-top: 12px;
+  margin-top: calc(12 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-label);
 }
@@ -195,14 +195,14 @@
 .export-error-details pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 160px;
+  max-height: calc(160 * var(--ui-px));
   overflow-y: auto;
 }
 
 .export-progress-panel .progress-track {
-  height: 8px;
+  height: calc(8 * var(--ui-px));
   border-radius: var(--radius-control);
-  margin-top: 14px;
+  margin-top: calc(14 * var(--ui-px));
   overflow: hidden;
 }
 

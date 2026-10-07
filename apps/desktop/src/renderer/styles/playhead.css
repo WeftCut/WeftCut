@@ -22,8 +22,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -33,8 +33,8 @@
    enough to win. */
 .playhead-window-select {
   flex: 0 0 auto;
-  height: 22px;
-  gap: 4px;
+  height: calc(22 * var(--ui-px));
+  gap: calc(4 * var(--ui-px));
   padding-block: 0;
   font-size: var(--font-size-caption);
   /* Tabular digits so changing the window doesn't jiggle the trigger width. */
@@ -50,7 +50,7 @@
 .right-panel-playhead-list {
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: calc(4 * var(--ui-px)) 0;
   transition: padding-bottom var(--transition-base);
 }
 
@@ -78,9 +78,9 @@
 .playhead-reference-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 6px 12px;
+  gap: calc(8 * var(--ui-px));
+  min-height: calc(36 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   background: var(--surface-raised);
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
@@ -99,7 +99,7 @@
 
 .playhead-reference-info {
   min-width: 0;
-  padding-left: 8px;
+  padding-left: calc(8 * var(--ui-px));
   border-left: 1px solid var(--border-soft);
   white-space: nowrap;
   overflow: hidden;
@@ -107,10 +107,10 @@
 }
 
 .playhead-drop-hint {
-  min-height: 18px;
-  margin: 4px 10px 0;
+  min-height: calc(18 * var(--ui-px));
+  margin: calc(4 * var(--ui-px)) calc(10 * var(--ui-px)) 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .playhead-item-row:hover {
@@ -147,22 +147,22 @@
 
 .playhead-item {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: calc(32 * var(--ui-px)) 1fr auto;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   width: 100%;
   border: none;
   background: transparent;
   color: var(--foreground);
   text-align: left;
-  padding: 6px 12px;
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   cursor: pointer;
   font: inherit;
 }
 
 .playhead-thumb {
-  width: 32px;
-  height: 24px;
+  width: calc(32 * var(--ui-px));
+  height: calc(24 * var(--ui-px));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -197,7 +197,7 @@
 .playhead-name-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -262,10 +262,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 24px;
+  width: calc(26 * var(--ui-px));
+  height: calc(24 * var(--ui-px));
   align-self: center;
-  margin-right: 4px;
+  margin-right: calc(4 * var(--ui-px));
   border: none;
   border-radius: var(--radius-control);
   background: transparent;
@@ -299,7 +299,7 @@
 .playhead-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   min-width: 0;
 }
 
@@ -309,7 +309,7 @@
 .playhead-filter-chip {
   font-size: var(--font-size-caption);
   font-weight: 600;
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: 999px;
   border: 1px solid var(--border-soft);
   background: transparent;
@@ -360,8 +360,8 @@
 .playhead-section-header {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 5px 12px 1px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(5 * var(--ui-px)) calc(12 * var(--ui-px)) calc(1 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 700;
   text-transform: uppercase;
@@ -381,7 +381,7 @@
 .playhead-filter-empty,
 .playhead-stack-empty {
   margin: 0;
-  padding: 10px 12px;
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
 }
@@ -389,7 +389,7 @@
 /* Self-explaining empty / Show All state. */
 .playhead-empty {
   margin: 0;
-  padding: 12px;
+  padding: calc(12 * var(--ui-px));
   font-size: var(--font-size-body);
   line-height: 1.5;
   color: var(--muted-foreground);
@@ -399,21 +399,21 @@
    in a bar of its own: it names the situation, not the Panel. */
 .playhead-empty-title {
   margin: 0;
-  padding: 12px 12px 0;
+  padding: calc(12 * var(--ui-px)) calc(12 * var(--ui-px)) 0;
   font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--foreground);
 }
 
 .playhead-empty-title + .playhead-empty {
-  padding-top: 4px;
+  padding-top: calc(4 * var(--ui-px));
 }
 
 /* The way out of the state, set apart from the explanation above it: the
    explanation is prose, this line is an instruction. */
 .playhead-empty-hint {
   margin: 0;
-  padding: 0 12px 12px;
+  padding: 0 calc(12 * var(--ui-px)) calc(12 * var(--ui-px));
   font-size: var(--font-size-caption);
   line-height: 1.6;
   color: var(--muted-foreground);
@@ -421,7 +421,7 @@
 
 /* Same key pill as the search palette's rows. */
 .playhead-empty-kbd {
-  padding: 1px 5px;
+  padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px));
   font-size: var(--font-size-micro);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -430,7 +430,7 @@
 .playhead-rename-input {
   box-sizing: border-box;
   width: 100%;
-  padding: 6px 12px;
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   font: inherit;
   color: var(--foreground);
   background: var(--card);
@@ -449,7 +449,7 @@
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  padding: 0 0 0 6px;
+  padding: 0 0 0 calc(6 * var(--ui-px));
   color: var(--color-slate-600);
   cursor: grab;
   touch-action: none;
@@ -501,7 +501,7 @@
 /* …and the list opens matching bottom room, so the parted rows (or the
    end-gap's slot line) never overhang the section that follows. */
 .playhead-stack--parting .right-panel-playhead-list {
-  padding-bottom: 12px;
+  padding-bottom: calc(12 * var(--ui-px));
 }
 
 /* The slot line — --selection (the one true accent), same rationale as the
@@ -514,7 +514,7 @@
   position: absolute;
   left: 8px;
   right: 8px;
-  height: 2px;
+  height: calc(2 * var(--ui-px));
   border-radius: 1px;
   background: var(--selection);
   pointer-events: none;

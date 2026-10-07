@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useUiScale } from "../settings/layoutTheme";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { tryMutate } from "../errors/tryMutate";
@@ -154,10 +155,11 @@ function MarkerGlyph({
   onOpenMenu: (xPx: number, yPx: number, markerId: string) => void;
   onBeginDrag: (e: React.PointerEvent) => void;
 }) {
-  const laneHeight = MARKER_LANE_HEIGHT_PX;
+  const scale = useUiScale();
+  const laneHeight = MARKER_LANE_HEIGHT_PX * scale;
   const isRegion = view.shape === "region";
   const stemPx = L_STEM_PX[view.anchored ? "anchored" : "free"];
-  const height = isRegion ? REGION_HEIGHT_PX : stemPx;
+  const height = (isRegion ? REGION_HEIGHT_PX : stemPx) * scale;
   const label = view.label.trim();
   const openMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -187,7 +189,7 @@ function MarkerGlyph({
           // so anchored and free hang from different heights off one baseline.
           top: isRegion
             ? (laneHeight - height) / 2
-            : laneHeight - L_FOOT_INSET_PX - height,
+            : laneHeight - L_FOOT_INSET_PX * scale - height,
           width: isRegion ? view.widthPx : L_WIDTH_PX,
           height,
           // The L is drawn as two BORDERS of an empty box — border-box sizing
@@ -214,7 +216,7 @@ function MarkerGlyph({
         {isRegion && label !== "" && (
           <span
             data-testid="timeline-marker-label"
-            className="pointer-events-none absolute inset-y-0 left-1 whitespace-nowrap text-[9px] font-medium leading-[13px]"
+            className="pointer-events-none absolute inset-y-0 left-1 whitespace-nowrap text-[length:var(--font-size-fine)] font-medium leading-[calc(13*var(--ui-px))]"
             style={{ color: view.anchored ? readableInk(view.color) : undefined }}
           >
             {label}
@@ -233,12 +235,12 @@ function MarkerGlyph({
           title={title}
           onContextMenu={openMenu}
           onPointerDown={onBeginDrag}
-          className={`pointer-events-auto absolute overflow-hidden whitespace-nowrap text-[9px] font-medium leading-none text-foreground/85 ${
+          className={`pointer-events-auto absolute overflow-hidden whitespace-nowrap text-[length:var(--font-size-fine)] font-medium leading-none text-foreground/85 ${
             dragging ? "cursor-grabbing" : "cursor-grab"
           }`}
           style={{
             left: labelLeftPx(view),
-            top: (laneHeight - 9) / 2,
+            top: (laneHeight - 9 * scale) / 2,
             maxWidth:
               view.labelRoomPx === null
                 ? undefined
@@ -261,19 +263,20 @@ function MarkerGlyph({
 /// every header below it out of line with its lane.
 export function MarkerLaneHeader() {
   const { t } = useTranslation();
+  const scale = useUiScale();
   const markersVisible = useMarkersVisible();
   if (!markersVisible) return null;
   return (
     <div
       data-testid="timeline-marker-lane-header"
       className="flex items-center border-b border-border-soft bg-card px-1.5"
-      style={{ height: MARKER_LANE_HEIGHT_PX }}
+      style={{ height: MARKER_LANE_HEIGHT_PX * scale }}
       // The header column is not a timeline surface: a press here must not reach
       // the root's marquee or seek paths (same guard `TrackHeader` carries).
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <span className="truncate text-[9px] uppercase tracking-wide text-muted-foreground/70">
+      <span className="truncate text-[length:var(--font-size-fine)] uppercase tracking-wide text-muted-foreground/70">
         {t("timeline.marker_lane", { defaultValue: "Markers" })}
       </span>
     </div>
@@ -300,6 +303,7 @@ export function MarkerLane({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
+  const scale = useUiScale();
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
   // Both read here rather than threaded down from the timeline, for the same
   // reason the scroll store is: the lane is the only surface that paints markers
@@ -396,7 +400,7 @@ export function MarkerLane({
       <div
         data-testid="timeline-marker-lane"
         className="relative flex-none select-none overflow-hidden border-b border-border-soft bg-card"
-        style={{ width: widthPx, height: MARKER_LANE_HEIGHT_PX }}
+        style={{ width: widthPx, height: MARKER_LANE_HEIGHT_PX * scale }}
         // Neither a scrub surface nor a selection surface: the scroll body above
         // starts a marquee on pointerdown, and the ruler seeks. A press on this
         // row is neither, so it stops here rather than becoming one of them.

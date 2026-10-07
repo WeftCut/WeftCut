@@ -9,8 +9,8 @@
 
 .motif-picker {
   /* Wide enough to seat the preview pane alongside the picker list/form. */
-  width: min(1040px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
+  width: min(var(--dialog-width-picker), calc(100vw - calc(32 * var(--ui-px))));
+  max-height: calc(100vh - calc(64 * var(--ui-px)));
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
@@ -23,7 +23,7 @@
 .motif-picker header {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -36,10 +36,10 @@
 
 .motif-picker-body {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(0, var(--picker-list-width)) minmax(0, 1fr);
   gap: 0;
-  min-height: 360px;
-  max-height: calc(100vh - 160px);
+  min-height: calc(360 * var(--ui-px));
+  max-height: calc(100vh - calc(160 * var(--ui-px)));
 }
 
 /* ---- Still previews ----------------------------------------------------- */
@@ -78,13 +78,13 @@
 }
 
 .motif-preview-large {
-  margin: 4px 0 8px;
+  margin: calc(4 * var(--ui-px)) 0 calc(8 * var(--ui-px));
 }
 
 /* Muted canvas-size tag next to the "Preview" heading — marks the canvas-mode
    box as the composition canvas. Undoes the h3's uppercase/bold styling. */
 .motif-preview-canvas-size {
-  margin-left: 8px;
+  margin-left: calc(8 * var(--ui-px));
   color: var(--muted-foreground);
   font-weight: 400;
   text-transform: none;
@@ -98,9 +98,9 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 24px;
-  height: 24px;
-  margin: -12px 0 0 -12px;
+  width: calc(24 * var(--ui-px));
+  height: calc(24 * var(--ui-px));
+  margin: calc(-12 * var(--ui-px)) 0 0 calc(-12 * var(--ui-px));
   border: 3px solid color-mix(in srgb, var(--muted-foreground) 25%, transparent);
   border-top-color: var(--muted-foreground);
   border-radius: 50%;
@@ -120,7 +120,7 @@
    no height bound on their own. */
 .motif-picker-catalog {
   border-right: 1px solid var(--border-soft);
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - calc(160 * var(--ui-px)));
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -132,8 +132,8 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 8px 4px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(8 * var(--ui-px)) calc(4 * var(--ui-px));
 }
 
 .motif-picker-bar .app-input-wrap {
@@ -145,18 +145,18 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: calc(8 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .motif-card {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-card);
@@ -172,7 +172,7 @@
 .motif-card-select {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   padding: 0;
   border: 0;
   background: transparent;
@@ -190,11 +190,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
-.motif-delete-dialog { width: min(420px, 90vw); }
-.motif-delete-dialog > p { margin: 16px; }
+.motif-delete-dialog { width: min(var(--dialog-width-compact), 90vw); }
+.motif-delete-dialog > p { margin: calc(16 * var(--ui-px)); }
 
 .motif-card-selected {
   background: var(--selection-bg);
@@ -206,7 +206,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .motif-card-name {
@@ -226,22 +226,22 @@
 
 /* One-off categorical badge palette — sanctioned literal (docs/ui-tokens.md).
    Also reused by the property panel's motif lifecycle row. */
-.motif-card-status { flex: none; font-size: var(--font-size-micro); padding: 1px 6px; border-radius: var(--radius-card); }
+.motif-card-status { flex: none; font-size: var(--font-size-micro); padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px)); border-radius: var(--radius-card); }
 .motif-card-status.status-draft { background: #b8860b; color: #fff; }
 .motif-card-status.status-installed { background: #2a6; color: #fff; }
 .motif-card-status.status-builtin { background: #444; color: #ccc; }
 
 .motif-picker-form {
-  padding: 8px 16px 16px;
+  padding: calc(8 * var(--ui-px)) calc(16 * var(--ui-px)) calc(16 * var(--ui-px));
   /* Same reason as `.motif-picker-list` above — needs its own height cap
      so its overflow-y scroll activates when props + large preview push the
      form past the picker's visible area. */
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - calc(160 * var(--ui-px)));
   overflow-y: auto;
 }
 
 .motif-picker-form h3 {
-  margin: 12px 0 6px;
+  margin: calc(12 * var(--ui-px)) 0 calc(6 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 600;
   color: var(--muted-foreground);
@@ -251,10 +251,10 @@
 
 .motif-picker-field {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: calc(110 * var(--ui-px)) 1fr;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: calc(8 * var(--ui-px));
+  margin-bottom: calc(8 * var(--ui-px));
 }
 
 .motif-picker-field > span {
@@ -280,7 +280,7 @@
 .motif-picker-color {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .motif-picker-color code {
@@ -289,24 +289,24 @@
 }
 
 .motif-picker-hint {
-  margin: 4px 0 0;
+  margin: calc(4 * var(--ui-px)) 0 0;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
 }
 
 .motif-picker-actions {
-  margin-top: 16px;
+  margin-top: calc(16 * var(--ui-px));
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .motif-bake-dot {
   position: absolute;
   top: 4px;
   right: 4px;
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--ui-px));
+  height: calc(8 * var(--ui-px));
   border-radius: 50%;
   pointer-events: none;
 }

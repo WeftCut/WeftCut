@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
+import { LAYOUT_THEME_IDS } from '../shared/layout-theme'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
 import { resolvePerformanceBudgets } from '../shared/performance-budgets'
@@ -8,6 +9,27 @@ import { automaticPerformanceBudgets, DEFAULT_PERFORMANCE_POLICY } from '../shar
 
 const PATH = '/cfg/app_settings.json'
 const DIR = '/cfg'
+
+describe('layout theme persistence', () => {
+  it.each([undefined, 'unknown', null, 42, '__proto__'])('recovers legacy/invalid theme %s to 1080p standard', value => {
+    const { fs } = memFs({ [PATH]: JSON.stringify({ layout_theme: value }) });
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().layout_theme).toBe('1080p-standard');
+  });
+
+  it('persists all presets across restart and preserves unrelated preferences', () => {
+    const { fs, files } = memFs();
+    const deps = { fs, path: PATH, dir: DIR };
+    const store = createAppSettingsStore(deps);
+    store.apply({ language: 'zh-CN' });
+    for (const layout_theme of LAYOUT_THEME_IDS) {
+      store.apply({ layout_theme });
+      expect(createAppSettingsStore(deps).get()).toMatchObject({ layout_theme, language: 'zh-CN' });
+    }
+    const before = files.get(PATH);
+    expect(() => store.apply({ layout_theme: 'invalid' as never })).toThrow('Invalid layout theme');
+    expect(files.get(PATH)).toBe(before);
+  });
+});
 
 function memFs(seed: Record<string, string> = {}) {
   const files = new Map(Object.entries(seed))

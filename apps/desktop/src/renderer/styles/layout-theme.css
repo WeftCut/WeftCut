@@ -1,0 +1,46 @@
+/* The single sizing vocabulary for application chrome. Baseline values are
+ * the original 1080p layout. Preset multipliers come from shared/layout-theme.ts.
+ * Never use these tokens for authored text layers or composition dimensions. */
+:root {
+  --layout-font-scale: 1;
+  --layout-width-scale: 1;
+  /* Shared logical UI unit for constraints, controls, spacing and chrome.
+   * Keep world-space preview/timeline geometry in actual CSS pixels. */
+  --ui-px: calc(1px * var(--layout-font-scale));
+  --layout-strip-thickness: 44px;
+  --font-size-fine: calc(9px * var(--layout-font-scale));
+  --font-size-micro: calc(10px * var(--layout-font-scale));
+  --font-size-caption: calc(11px * var(--layout-font-scale));
+  --font-size-body: calc(12px * var(--layout-font-scale));
+  --font-size-label: calc(13px * var(--layout-font-scale));
+  --font-size-title: calc(14px * var(--layout-font-scale));
+  --font-size-heading: calc(16px * var(--layout-font-scale));
+  --font-size-display: calc(22px * var(--layout-font-scale));
+  --font-size-hero: calc(28px * var(--layout-font-scale));
+  --line-height-tight: 1.2;
+  --line-height-body: 1.4;
+  /* Inherited UI text and rem-based controls follow the same preset. */
+  font-size: var(--font-size-heading);
+
+  --dialog-width-compact: calc(420px * var(--layout-width-scale));
+  --dialog-width-prompt: calc(440px * var(--layout-width-scale));
+  --dialog-width-confirm: calc(520px * var(--layout-width-scale));
+  --dialog-width-standard: calc(560px * var(--layout-width-scale));
+  --dialog-width-model: calc(620px * var(--layout-width-scale));
+  --dialog-width-text: calc(640px * var(--layout-width-scale));
+  --dialog-width-status: calc(680px * var(--layout-width-scale));
+  --dialog-width-settings: calc(720px * var(--layout-width-scale));
+  --dialog-width-picker: calc(1040px * var(--layout-width-scale));
+  --dialog-height-settings: 80vh;
+  --dialog-height-model: calc(780px * var(--layout-font-scale));
+  --settings-nav-width: calc(152px * var(--layout-font-scale));
+  --picker-list-width: calc(280px * var(--layout-font-scale));
+  --header-search-width: calc(160px * var(--layout-font-scale));
+}
+
+/* Last-resort containment also covers content-sized prompts. Inner scrolling
+ * remains owned by each dialog's body. This includes all portal dialogs. */
+.app-dialog {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}

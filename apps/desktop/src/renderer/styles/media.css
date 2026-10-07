@@ -9,22 +9,22 @@
   right: 16px;
   bottom: auto;
   top: 16px;
-  padding-bottom: 8px;
+  padding-bottom: calc(8 * var(--ui-px));
 }
 
 .import-proxy-list {
   list-style: none;
   margin: 0;
-  padding: 4px 12px;
+  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .import-proxy-list li {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--foreground);
 }
@@ -36,7 +36,7 @@
 
 .import-proxy-note {
   margin: 0;
-  padding: 2px 12px;
+  padding: calc(2 * var(--ui-px)) calc(12 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
 }
@@ -70,7 +70,7 @@
 }
 
 .media-pool-inner {
-  padding: 8px 16px;
+  padding: calc(8 * var(--ui-px)) calc(16 * var(--ui-px));
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -82,7 +82,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
 }
 
 .media-pool-inner--empty .placeholder {
@@ -95,12 +95,12 @@
 .media-pool-inner--empty::after {
   content: "";
   display: block;
-  height: 28px;
+  height: calc(28 * var(--ui-px));
   flex: none;
 }
 
 .media-pool-inner h2 {
-  margin: 0 0 6px 0;
+  margin: 0 0 calc(6 * var(--ui-px)) 0;
   font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--muted-foreground);
@@ -111,10 +111,10 @@
 .media-pool-search {
   /* Sibling above the scrolling .media-pool-inner, so it never moves. Its
    * padding mirrors the inner's side/top padding. */
-  padding: 8px 16px 0;
+  padding: calc(8 * var(--ui-px)) calc(16 * var(--ui-px)) 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .media-pool-search .app-input-wrap {
@@ -129,8 +129,8 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
+  gap: calc(2 * var(--ui-px));
+  padding: calc(2 * var(--ui-px));
   border: 1px solid var(--border-on-dark);
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
@@ -145,8 +145,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 22px;
+  width: calc(24 * var(--ui-px));
+  height: calc(22 * var(--ui-px));
   border: none;
   border-radius: calc(var(--radius-control) - 2px);
   background: transparent;
@@ -184,7 +184,7 @@
   padding: 0;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 /* Grid mode: fixed-size cards wrapped with flex. A grid with auto-fill +
@@ -198,14 +198,14 @@
 
 .media-list.is-layout-grid .media-item {
   flex: none;
-  width: 148px;
+  width: calc(148 * var(--ui-px));
 }
 
 /* List mode: compact file-manager-style rows — small thumbnail, name,
    inline duration. */
 .media-list.is-layout-list {
   grid-template-columns: 1fr;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 
 .media-list.is-layout-list .media-item {
@@ -218,7 +218,7 @@
      positioned) instead of the 72px thumbnail. */
   position: static;
   flex: none;
-  width: 72px;
+  width: calc(72 * var(--ui-px));
 }
 
 .media-list.is-layout-list .media-item-name {
@@ -230,7 +230,7 @@
 
 .media-list.is-layout-list .media-item-meta-inline {
   flex: none;
-  padding: 0 8px;
+  padding: 0 calc(8 * var(--ui-px));
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
@@ -287,7 +287,7 @@
 .media-item-name {
   display: block;
   width: 100%;
-  padding: 5px 8px 6px;
+  padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px)) calc(6 * var(--ui-px));
   color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
@@ -303,9 +303,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   min-width: 0;
-  padding: 18px 7px 6px;
+  padding: calc(18 * var(--ui-px)) calc(7 * var(--ui-px)) calc(6 * var(--ui-px));
   background: linear-gradient(
     to bottom,
     rgba(11, 13, 17, 0),
@@ -346,7 +346,7 @@
    of card, in every layout. Sized as a fraction of the frame so it reads at the
    full width of a `large` card and still fits a 72px `list` row. */
 .media-group-glyph {
-  width: clamp(18px, 24%, 44px);
+  width: clamp(calc(18 * var(--ui-px)), 24%, calc(44 * var(--ui-px)));
   height: auto;
   color: var(--muted-foreground);
 }
@@ -359,11 +359,11 @@
 
 .media-item-isolated-tag {
   display: inline-block;
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--color-amber-500) 20%, transparent);
   color: var(--color-amber-200);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   font-weight: 600;
   line-height: var(--line-height-tight);
   text-transform: uppercase;
@@ -416,7 +416,7 @@
 .media-drag-preview-name {
   flex: none;
   overflow: hidden;
-  padding: 4px 7px 5px;
+  padding: calc(4 * var(--ui-px)) calc(7 * var(--ui-px)) calc(5 * var(--ui-px));
   color: var(--foreground);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-tight);
@@ -466,7 +466,7 @@
   font-weight: 600;
   color: var(--color-slate-300);
   background: rgba(11, 13, 17, 0.68);
-  padding: 2px 7px;
+  padding: calc(2 * var(--ui-px)) calc(7 * var(--ui-px));
   border-radius: var(--radius-control);
   text-align: center;
   line-height: var(--line-height-tight);
@@ -479,7 +479,7 @@
   display: inline-flex;
   min-width: 0;
   overflow: hidden;
-  padding: 1px 6px;
+  padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px));
   border-radius: var(--radius-control);
   color: var(--color-slate-200);
   background: rgba(11, 13, 17, 0.68);
@@ -524,7 +524,7 @@
   border: 1px solid color-mix(in srgb, var(--color-blue-400) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 600;
   cursor: pointer;
@@ -547,7 +547,7 @@
   border: 1px solid color-mix(in srgb, var(--destructive) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 600;
   white-space: nowrap;
@@ -565,7 +565,7 @@
   border: 1px solid color-mix(in srgb, var(--keyframe) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 600;
   white-space: nowrap;
@@ -583,7 +583,7 @@
   border: 1px solid var(--destructive);
   color: #0a0c10;
   border-radius: var(--radius-control);
-  padding: 2px 8px;
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   font-weight: 700;
   white-space: nowrap;
@@ -605,8 +605,8 @@
   position: absolute;
   top: 6px;
   left: 6px;
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--ui-px));
+  height: calc(8 * var(--ui-px));
   border-radius: 50%;
   background: var(--keyframe);
   box-shadow: 0 0 0 1px color-mix(in srgb, #0a0c10 60%, transparent);
@@ -632,7 +632,7 @@
 }
 
 .media-context-menu {
-  min-width: 252px;
+  min-width: calc(252 * var(--ui-px));
 }
 
 /* The proxy preference is a compact three-way choice, not three independent
@@ -641,17 +641,17 @@
 .media-proxy-radio-group {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px 8px 8px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(4 * var(--ui-px)) calc(8 * var(--ui-px)) calc(8 * var(--ui-px));
 }
 
 .media-proxy-radio-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: calc(5 * var(--ui-px));
   min-width: 0;
-  padding: 5px 7px;
+  padding: calc(5 * var(--ui-px)) calc(7 * var(--ui-px));
   color: var(--muted-foreground);
   font: inherit;
   font-size: var(--font-size-caption);
@@ -683,9 +683,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 10px;
-  width: 10px;
-  height: 10px;
+  flex: 0 0 calc(10 * var(--ui-px));
+  width: calc(10 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
   color: var(--muted-foreground);
 }
 
@@ -715,7 +715,7 @@
    selector on purpose: media.css is imported before settings.css, so a lone
    .media-remove-dialog loses the width to .settings-panel. */
 .settings-panel.media-remove-dialog {
-  width: min(520px, calc(100vw - 32px));
+  width: min(var(--dialog-width-confirm), calc(100vw - calc(32 * var(--ui-px))));
 }
 
 .media-remove-copy {
@@ -725,11 +725,11 @@
 .media-remove-reference-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: min(220px, 32vh);
+  gap: calc(4 * var(--ui-px));
+  max-height: min(calc(220 * var(--ui-px)), 32vh);
   overflow-y: auto;
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0 0 calc(12 * var(--ui-px));
   padding: 0;
 }
 
@@ -737,9 +737,9 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: calc(16 * var(--ui-px));
   min-width: 0;
-  padding: 7px 9px;
+  padding: calc(7 * var(--ui-px)) calc(9 * var(--ui-px));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
@@ -771,8 +771,8 @@
 .derivatives-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: 999px;
   background: rgba(96, 165, 250, 0.12);
   border: 1px solid rgba(96, 165, 250, 0.32);
@@ -782,8 +782,8 @@
 }
 
 .derivatives-pill-spinner {
-  width: 10px;
-  height: 10px;
+  width: calc(10 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
   border-radius: 50%;
   border: 2px solid rgba(191, 219, 254, 0.25);
   border-top-color: var(--color-blue-300);

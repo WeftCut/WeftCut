@@ -4,7 +4,7 @@ html, body { margin: 0; overflow: hidden; background: transparent; cursor: cross
 #magnifier { position: fixed; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;
   background: #18181b; color: #fafafa; pointer-events: none; box-shadow: 0 4px 16px #0006; }
 #zoom { display: block; width: 132px; height: 132px; image-rendering: pixelated; }
-#hex { display: block; text-align: center; margin-top: 6px; font: 14px ui-monospace, monospace; }
+#hex { display: block; text-align: center; margin-top: 6px; font: var(--font-size-title) ui-monospace, monospace; }
 #hint { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px);
   padding: 6px 12px; border-radius: 5px; background: #18181be6; color: #fafafa;
-  font: 12px system-ui; text-align: center; pointer-events: none; }
+  font: var(--font-size-body) system-ui; text-align: center; pointer-events: none; }

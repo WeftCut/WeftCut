@@ -33,12 +33,12 @@ import {
   TextAlignStartIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useUiScale } from "../settings/layoutTheme";
 import "dockview-react/dist/styles/dockview.css";
 
 import { tryMutate } from "../errors/tryMutate";
 import { blurAfterMouseActivation } from "../components/blurAfterMouseActivation";
 import {
-  EDGE_OVERLAY_PX,
   useEdgeOverflow,
   type EdgeAxis,
 } from "../hooks/useEdgeOverflow";
@@ -108,7 +108,7 @@ import {
   DOCK_TAB_COMPONENT_ID,
   PANEL_KINDS,
   PANEL_REGISTRY,
-  STRIP_THICKNESS,
+  stripThickness,
   isPanelKind,
   panelIdOf,
   parsePanelId,
@@ -760,6 +760,8 @@ function useFixedStripThickness(
   sole: boolean,
 ): void {
   const dragging = useDockDragInFlight(containerApi);
+  const scale = useUiScale();
+  const thickness = stripThickness();
   // The sizes Dockview settled on against our wishes, so a Group that cannot
   // reach the thickness (a container too small to give it) stops trading
   // resizes with the layout pass. A set, not the last value: a layout that
@@ -794,13 +796,15 @@ function useFixedStripThickness(
         group,
         axis === "width"
           ? {
-              minimumWidth: STRIP_THICKNESS,
-              maximumWidth: STRIP_THICKNESS,
+              minimumWidth: thickness,
+              minimumHeight: thickness,
+              maximumWidth: thickness,
               maximumHeight: UNCAPPED,
             }
           : {
-              minimumHeight: STRIP_THICKNESS,
-              maximumHeight: STRIP_THICKNESS,
+              minimumHeight: thickness,
+              minimumWidth: thickness,
+              maximumHeight: thickness,
               maximumWidth: UNCAPPED,
             },
       );
@@ -809,13 +813,13 @@ function useFixedStripThickness(
       // now. Read the Group's own size, not the Panel's — the Group is what the
       // constraint sizes, and the header takes its slice out of the Panel.
       const current = group.api[axis];
-      if (Math.round(current) === STRIP_THICKNESS) {
+      if (Math.round(current) === thickness) {
         refused.current.clear();
         return;
       }
       if (refused.current.has(current)) return;
       refused.current.add(current);
-      group.api.setSize({ [axis]: STRIP_THICKNESS });
+      group.api.setSize({ [axis]: thickness });
     };
     pin();
     // Re-pin after any layout change: a drop that leaves the axis unchanged
@@ -828,7 +832,7 @@ function useFixedStripThickness(
       applyGroupConstraints(pinned.current ?? api.group, UNCAPPED_GROUP);
       pinned.current = null;
     };
-  }, [api, axis, containerApi, dragging, sole]);
+  }, [api, axis, containerApi, dragging, sole, scale, thickness]);
 }
 
 /**
@@ -1293,7 +1297,7 @@ function TabStripEdge({
   // render because the hook only ever reads `.current`, from its own effect.
   const scroller = useRef<HTMLElement | null>(null);
   scroller.current = group.model.tabsListElement;
-  const { overflowing, atStart, atEnd, step, clearOverlay } = useEdgeOverflow(
+  const { overflowing, atStart, atEnd, step, clearOverlay, overlaySize } = useEdgeOverflow(
     scroller,
     axis,
     ":scope > .dv-tab",
@@ -1307,9 +1311,9 @@ function TabStripEdge({
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    el.style.scrollPaddingInline = `${EDGE_OVERLAY_PX}px`;
-    el.style.scrollPaddingBlock = `${EDGE_OVERLAY_PX}px`;
-  }, []);
+    el.style.scrollPaddingInline = `${overlaySize}px`;
+    el.style.scrollPaddingBlock = `${overlaySize}px`;
+  }, [overlaySize]);
 
   /* Lift a freshly activated tab out from under the overlay. Dockview parks one
    * flush against the scrollport's LEADING edge (`scrollLeft = offsetLeft`), so
@@ -1338,8 +1342,8 @@ function TabStripEdge({
          — so the paint and the maths cannot drift apart. */
       style={
         axis === "horizontal"
-          ? { width: EDGE_OVERLAY_PX }
-          : { height: EDGE_OVERLAY_PX }
+          ? { width: overlaySize }
+          : { height: overlaySize }
       }
     >
       <button
@@ -1428,6 +1432,8 @@ export function DockWorkspace({
   onResetWorkspace,
 }: DockWorkspaceProps) {
   const { t, i18n } = useTranslation();
+  const scale = useUiScale();
+  const theme = useMemo(() => ({ ...WEFT_DOCK_THEME, gap: 6 * scale }), [scale]);
   const adapterRef = useRef<DockWorkspaceAdapter | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
   const messages = useMemo<Partial<DockviewMessages>>(
@@ -1586,7 +1592,7 @@ export function DockWorkspace({
         >
           <DockviewReact
             className="weft-dockview"
-            theme={WEFT_DOCK_THEME}
+            theme={theme}
             hideBorders
             components={DOCK_COMPONENTS}
             tabComponents={DOCK_TAB_COMPONENTS}

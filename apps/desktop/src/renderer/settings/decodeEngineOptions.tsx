@@ -8,7 +8,7 @@ import type { AppSelectOption } from "../components/AppSelect";
 
 function engineTag(t: TFunction, key: string): ReactNode {
   return (
-    <span style={{ marginLeft: 6, fontSize: 12, color: "var(--muted-foreground)" }}>
+    <span style={{ marginLeft: 6, fontSize: "var(--font-size-body)", color: "var(--muted-foreground)" }}>
       {t(key)}
     </span>
   );

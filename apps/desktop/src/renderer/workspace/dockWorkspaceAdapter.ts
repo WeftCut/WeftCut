@@ -1,3 +1,4 @@
+import { wirePanelConstraints } from './panelConstraints';
 import {
   type DockviewApi,
   type DockviewGroupPanel,
@@ -9,8 +10,8 @@ import {
 import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
-  PANEL_REGISTRY,
-  STRIP_THICKNESS,
+  stripThickness,
+  panelMinimum,
   panelIdOf,
   panelTitle,
   parsePanelId,
@@ -201,12 +202,12 @@ function constrainedDropSize(
   axis: SplitAxis,
   proposed: number,
 ): number {
-  if (isSoleStripGroup(group)) return STRIP_THICKNESS;
+  if (isSoleStripGroup(group)) return stripThickness();
   let minimum = 0;
   for (const panel of group.panels) {
     const parsed = parsePanelId(panel.id);
     if (!parsed) continue;
-    const definition = PANEL_REGISTRY[parsed.kind];
+    const definition = panelMinimum(parsed.kind);
     minimum = Math.max(
       minimum,
       axis === "width" ? definition.minimumWidth : definition.minimumHeight,
@@ -233,6 +234,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     private readonly api: DockviewApi,
     stripDragHost?: HTMLElement,
   ) {
+    this.disposables.push({ dispose: wirePanelConstraints(api) });
     this.disposables.push(api.onWillShowOverlay((event) => {
       if (isBusinessDockDrag(overlayDataTransfer(event))) {
         event.preventDefault();
@@ -317,7 +319,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // The Quick Actions strip claims a fixed slice of width; everything else
     // divides the remainder. Mirrors `createEditingLayout`'s `bodyWidth`, so
     // the imperative first-boot tree and the declarative reset baseline agree.
-    const stripWidth = STRIP_THICKNESS;
+    const stripWidth = stripThickness();
     const bodyWidth = Math.max(1, width - stripWidth);
     const editorHeight = Math.round(height * 0.72);
     const columnWidth = Math.round(bodyWidth * 0.25);
@@ -926,7 +928,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       this.addPanel(kind, reference
         ? {
             position: { referencePanel: reference, direction: "left" },
-            initialWidth: STRIP_THICKNESS,
+            initialWidth: stripThickness(),
           }
         : {});
       return;
@@ -971,7 +973,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   ): IDockviewPanel | undefined {
     const id = panelIdOf(kind, instance);
     if (this.api.getPanel(id)) return undefined;
-    const definition = PANEL_REGISTRY[kind];
+    const definition = panelMinimum(kind);
     const params: DockPanelParams = { kind, instance: parsePanelId(id).instance };
     return this.api.addPanel({
       id,

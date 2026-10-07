@@ -7,8 +7,8 @@ import type { SerializedDockview } from "dockview-react";
 import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
-  PANEL_REGISTRY,
-  STRIP_THICKNESS,
+  stripThickness,
+  panelMinimum,
   panelIdOf,
   panelTitle,
   parsePanelId,
@@ -79,7 +79,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *  or stale entry can never carry a wrong component id or params into fromJSON. */
 function synthesizePanel(id: PanelId) {
   const { kind, instance } = parsePanelId(id);
-  const definition = PANEL_REGISTRY[kind];
+  const definition = panelMinimum(kind);
   const params: DockPanelParams = { kind, instance };
   return {
     id,
@@ -287,7 +287,7 @@ export function createEditingLayout(
   };
   // The Quick Actions strip is a full-height edge bar, so it claims a fixed
   // slice of the remaining editor width rather than a proportion.
-  const stripWidth = STRIP_THICKNESS;
+  const stripWidth = stripThickness();
   const bodyWidth = Math.max(1, width - stripWidth);
   const editorHeight = Math.round(height * 0.72);
   const timelineHeight = Math.round(height * 0.28);

@@ -24,6 +24,7 @@ import { AppDialog } from "../components/AppDialog";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
+import { LAYOUT_THEME_IDS, isLayoutTheme } from '../../shared/layout-theme';
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ import {
   useTimelineWheelAxis,
   useAutoDeleteEmptyTracks,
   useDefaultTextFont,
+  useLayoutTheme,
 } from "./appSettingsStore";
 import { FontSelect } from "../components/FontSelect";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
@@ -157,6 +159,7 @@ export function SettingsPanel({
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const defaultTextFont = useDefaultTextFont();
+  const layoutTheme = useLayoutTheme();
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
   // Project-scoped sections (composition pin, per-project toggles) talk to
   // workspace IPC, so the whole category unmounts — not just hides — when
@@ -280,6 +283,19 @@ export function SettingsPanel({
                   </span>
                 </span>
               </label>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t('settings.layout_theme')}</h3>
+              <p className="settings-blurb">{t('settings.layout_theme_hint')}</p>
+              <AppSelect
+                ariaLabel={t('settings.layout_theme')}
+                value={layoutTheme}
+                options={LAYOUT_THEME_IDS.map(value => ({ value, label: t(`settings.layout_themes.${value}`) }))}
+                onValueChange={value => {
+                  if (isLayoutTheme(value)) void setAppSettings({ layout_theme: value }).catch(err => setError(String(err)));
+                }}
+              />
             </section>
 
             <section className="settings-section">

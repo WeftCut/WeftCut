@@ -48,6 +48,18 @@ const MAX_ZOOM_PX_PER_SEC = 2000;
 const US_PER_SEC = 1_000_000;
 const VIEWPORT_PX = 1200;
 
+it.each([100, 1500])('spaces larger ruler labels without shifting time coordinates at %s px/s', (pxPerSec) => {
+  const input = { fpsNum: 30, fpsDen: 1, pxPerSec, totalSec: 30, scrollLeftPx: 0, viewportWidthPx: 1200 };
+  const baseline = computeRulerModel(input);
+  const relaxed = computeRulerModel({ ...input, uiScale: 1.65 });
+  const labels = relaxed.ticks.filter(tick => tick.label !== undefined);
+  expect(labels.length).toBeLessThan(baseline.ticks.filter(tick => tick.label !== undefined).length);
+  expect(labels[1]!.xPx - labels[0]!.xPx).toBeGreaterThanOrEqual((relaxed.mode === 'frame' ? 80 : 100) * 1.65);
+  for (const tick of relaxed.ticks) {
+    expect(tick.xPx).toBeCloseTo(tick.tUs / 1_000_000 * pxPerSec, 8);
+  }
+});
+
 /// Canonical grid µs, computed in BigInt so the expectation does NOT inherit the
 /// double-precision ceiling the leaf's i128 math exists to avoid. Mirrors the D2
 /// output policy — half-up `round(frame * 1e6 * den / num)` — independently of

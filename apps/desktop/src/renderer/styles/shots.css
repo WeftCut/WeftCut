@@ -24,8 +24,8 @@
 .shots-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--foreground);
 }
@@ -43,7 +43,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 /* The Analyze refusal, in the slot next to the button that raised it. Inline
@@ -67,12 +67,12 @@
 .shots-strip {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--ui-px));
 }
 
 .shots-strip-plot {
   position: relative;
-  height: 56px;
+  height: calc(56 * var(--ui-px));
   overflow: hidden;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
@@ -107,7 +107,7 @@
   position: absolute;
   right: 0;
   left: 0;
-  height: 9px;
+  height: calc(9 * var(--ui-px));
   transform: translateY(-50%);
   border-radius: var(--radius-control);
   cursor: ns-resize;
@@ -119,7 +119,7 @@
   right: 0;
   left: 0;
   top: 50%;
-  height: 1px;
+  height: calc(1 * var(--ui-px));
   background: var(--selection);
   content: "";
 }
@@ -129,9 +129,9 @@
   position: absolute;
   right: 2px;
   top: 50%;
-  width: 7px;
-  height: 7px;
-  margin-top: -3.5px;
+  width: calc(7 * var(--ui-px));
+  height: calc(7 * var(--ui-px));
+  margin-top: calc(-3.5 * var(--ui-px));
   border-radius: 999px;
   background: var(--selection);
   content: "";
@@ -146,7 +146,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-micro);
 }
@@ -163,13 +163,13 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
 }
 
 .shots-param-field {
-  width: 72px;
+  width: calc(72 * var(--ui-px));
 }
 
 /* Pushed to the far end of the parameters row: it acts on the whole list, where
@@ -201,7 +201,7 @@
 .shots-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   margin: 0;
   padding: 0;
   list-style: none;
@@ -215,8 +215,8 @@
 .shots-row {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 6px 8px;
+  gap: calc(5 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: var(--radius-card);
   background: var(--surface-raised);
 }
@@ -260,7 +260,7 @@
 .shots-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -275,7 +275,7 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
@@ -311,8 +311,8 @@
   align-self: flex-start;
   max-width: 100%;
   flex-direction: column;
-  gap: 3px;
-  padding: 3px 4px;
+  gap: calc(3 * var(--ui-px));
+  padding: calc(3 * var(--ui-px)) calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
 }
@@ -379,7 +379,7 @@
   align-self: stretch;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  width: calc(14 * var(--ui-px));
 }
 
 /* Cut: the edit point. */
@@ -388,8 +388,8 @@
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 2px;
-  margin-left: -1px;
+  width: calc(2 * var(--ui-px));
+  margin-left: calc(-1 * var(--ui-px));
   background: var(--selection);
   content: "";
   transition: opacity var(--transition-fast);
@@ -401,7 +401,7 @@
   top: 50%;
   right: 0;
   left: 0;
-  height: 1px;
+  height: calc(1 * var(--ui-px));
   background: var(--border-on-dark-strong);
   content: "";
   transition: opacity var(--transition-fast);
@@ -462,9 +462,9 @@
 .shots-cut-meter {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 4px;
-  margin-left: 6px;
+  width: calc(34 * var(--ui-px));
+  height: calc(4 * var(--ui-px));
+  margin-left: calc(6 * var(--ui-px));
   border-radius: 999px;
   background: var(--surface-raised);
 }
@@ -485,7 +485,7 @@
   top: -2px;
   bottom: -2px;
   left: clamp(0%, calc(var(--notch, 0) * 100%), 100%);
-  width: 1px;
+  width: calc(1 * var(--ui-px));
   background: var(--foreground);
   content: "";
 }
@@ -528,7 +528,7 @@
 .shots-score {
   flex: none;
   min-width: 2.4em;
-  margin-left: 5px;
+  margin-left: calc(5 * var(--ui-px));
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--font-size-micro);
   color: var(--muted-foreground);
@@ -537,7 +537,7 @@
 .shots-row-body {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -555,11 +555,11 @@
 }
 
 .shots-cover {
-  width: 72px;
+  width: calc(72 * var(--ui-px));
 }
 
 .shots-pair-frame {
-  width: 40px;
+  width: calc(40 * var(--ui-px));
 }
 
 .shots-cover img,
@@ -581,7 +581,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
   min-width: 0;
 }
 
@@ -593,7 +593,7 @@
      at the card's trailing edge instead of floating in beside the timecode. */
   flex: 1 1 auto;
   align-items: baseline;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
   padding: 0;
   border: 0;
@@ -639,14 +639,14 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
 .shots-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
 }
@@ -661,11 +661,11 @@
 .shots-flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .shots-flag {
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: var(--muted);
   color: var(--muted-foreground);
@@ -714,8 +714,8 @@
 }
 
 .shots-description-tag {
-  margin-left: 4px;
-  padding: 0 4px;
+  margin-left: calc(4 * var(--ui-px));
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: var(--muted);
   color: var(--muted-foreground);
@@ -755,20 +755,20 @@
 .shots-apply {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   /* The one seam in the Panel, and it earns its place: it is the line between
      the controls and the review, which is what lets every control above it
      give up its border without the band dissolving into the list. Inset by the
      Panel's own padding rather than bled full-width — `.playhead-toolbar`
      draws its seam the same way. */
-  padding-bottom: 8px;
+  padding-bottom: calc(8 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
 .shots-apply-verbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 /* The reason a verb is greyed lives in its `title`, and the shared button

@@ -5,6 +5,7 @@
 // existing users' app_settings.json keeps working after the move to TS.
 
 import type { PausePreset, PausePresetChange } from "./pause-presets";
+import { DEFAULT_LAYOUT_THEME, type LayoutTheme } from './layout-theme';
 import { DEFAULT_RESOURCE_POLICY, resolveResourcePolicy } from './resource-policy';
 import { PERFORMANCE_DEFAULTS, type PerformanceSettings } from "./performance-settings";
 import { DEFAULT_PERFORMANCE_POLICY, BASELINE_BUDGETS, type PerformancePolicy, type PerformancePolicyPatch, type PerformanceTestProfile } from './performance-policy';
@@ -30,6 +31,8 @@ export type MediaPoolLayout = "large" | "grid" | "list";
 export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
+  /** One app-wide typography and dialog sizing preset; absent in old files. */
+  layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
   resource_allocation?: import('./resource-policy').ResourceAllocation;
   /** Machine-local resource budgets; absent in older settings files. */
@@ -139,6 +142,7 @@ export interface AppSettings {
 /// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
+  layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */
   performance?: Partial<PerformanceSettings> | null;
@@ -176,6 +180,7 @@ export interface AppSettingsPatch {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
+  layout_theme: DEFAULT_LAYOUT_THEME,
   resource_policy: { ...DEFAULT_RESOURCE_POLICY },
   resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY),
   performance: PERFORMANCE_DEFAULTS,

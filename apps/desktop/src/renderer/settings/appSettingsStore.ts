@@ -13,6 +13,8 @@
 
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
+import { applyLayoutTheme } from './layoutTheme';
+import { readLayoutTheme } from '../../shared/layout-theme';
 import { APP_SETTINGS_DEFAULTS } from "../../shared/app-settings";
 import { hydratePerformanceSettings } from "../../shared/performance-settings";
 import { cacheBudget } from '../render/cacheBudget';
@@ -49,6 +51,7 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
     settings: APP_SETTINGS_DEFAULTS,
     loaded: false,
     hydrate: (next) => {
+      applyLayoutTheme(next.layout_theme);
       hydrateResourceAllocation(next.resource_allocation);
       notifyResourceSettingsChanged();
       hydratePerformanceSettings(next.performance,
@@ -63,6 +66,8 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
 // Atomic selectors. Each picks one field: a composite selector builds a fresh
 // object per call, which trips `useSyncExternalStore`'s reference equality and
 // infinite-loops (`feedback_zustand_composite_selector`).
+export const useLayoutTheme = () =>
+  useAppSettingsStore((s) => readLayoutTheme(s.settings.layout_theme));
 export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>
@@ -314,7 +319,7 @@ function pinDetectedLocale(): void {
 }
 
 /// Wire-up: fetch the current settings, subscribe to backend changes.
-/// Returns an unlisten function — `App.tsx` calls this once on mount.
+/// Returns an unlisten function — the renderer root owns its lifetime.
 export async function wireAppSettingsStream(): Promise<UnlistenFn> {
   const offResources = await listen<{ renderers: number; pressure: string }>('resources:changed', e => {
     updateRendererResources(e.payload); cacheBudget.maintain();

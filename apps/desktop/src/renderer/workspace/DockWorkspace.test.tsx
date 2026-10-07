@@ -987,6 +987,7 @@ describe("DockWorkspace React integration", () => {
       });
       expect(constraints(group)).toEqual({
         minimumWidth: 44,
+        minimumHeight: 44,
         maximumWidth: 44,
         maximumHeight: UNBOUNDED,
       });
@@ -1002,6 +1003,7 @@ describe("DockWorkspace React integration", () => {
       });
       expect(constraints(group)).toEqual({
         minimumHeight: 44,
+        minimumWidth: 44,
         maximumHeight: 44,
         maximumWidth: UNBOUNDED,
       });
@@ -1053,6 +1055,7 @@ describe("DockWorkspace React integration", () => {
       });
       expect(constraints(group)).toEqual({
         minimumWidth: 44,
+        minimumHeight: 44,
         maximumWidth: 44,
         maximumHeight: UNBOUNDED,
       });
@@ -1080,6 +1083,7 @@ describe("DockWorkspace React integration", () => {
       });
       expect(constraints(group)).toEqual({
         minimumWidth: 44,
+        minimumHeight: 44,
         maximumWidth: 44,
         maximumHeight: UNBOUNDED,
       });
@@ -1128,6 +1132,7 @@ describe("DockWorkspace React integration", () => {
 
       expect(constraints(restored)).toEqual({
         minimumWidth: 44,
+        minimumHeight: 44,
         maximumWidth: 44,
         maximumHeight: UNBOUNDED,
       });
@@ -1179,6 +1184,7 @@ describe("DockWorkspace React integration", () => {
       ).toBe("vertical");
       expect(constraints(group)).toEqual({
         minimumWidth: 44,
+        minimumHeight: 44,
         maximumWidth: 44,
         maximumHeight: UNBOUNDED,
       });

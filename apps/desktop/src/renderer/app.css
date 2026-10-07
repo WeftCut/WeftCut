@@ -108,19 +108,6 @@
 }
 
 :root {
-    /* Compact desktop-editor type scale. Feature styles should consume these
-       roles instead of introducing another one-off pixel size. The 10px
-       micro role covers dense instrumentation (rulers, badges, kbd hints,
-       monospace ids); ordinary labels start at caption. Sizes outside the
-       scale (9px fine print, 16px+ display type) stay literal by design. */
-    --font-size-micro: 10px;
-    --font-size-caption: 11px;
-    --font-size-body: 12px;
-    --font-size-label: 13px;
-    --font-size-title: 14px;
-    --line-height-tight: 1.2;
-    --line-height-body: 1.4;
-
     /* Window-chrome band — ONE height for every caption bar the app shows: the
        editor header (.app-header), the startup strip (.startup-titlebar) and
        agent mode's drag row (.agent-titlebar). Shared so the bar never changes

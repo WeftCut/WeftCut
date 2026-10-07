@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { LayerParamsView } from "../ipc";
+import { useUiScale } from "../settings/layoutTheme";
 import { layerSliceRect, MIN_TRACK_HEIGHT } from "./geometry";
 import { timelineLayerTheme } from "./layerTheme";
 import {
@@ -59,7 +60,7 @@ export const GHOST_HEAD_CAP_PX = 2;
 /// them in two places.
 const GHOST_HEAD_CAP_COLOR = "rgb(255 255 255 / 0.92)";
 
-/// A ghost shorter than this is a bar and nothing else: `text-[10px]` needs a box
+/// A ghost shorter than this is a bar and nothing else: `text-[length:var(--font-size-micro)]` needs a box
 /// this tall before a label is legible rather than clipped.
 ///
 /// Derived, not chosen. It is the smallest band a LANE can produce, so the rule
@@ -137,7 +138,7 @@ export function DragGhostChip({
       : validity === "locked"
         ? t("timeline.drop_locked", { defaultValue: "Locked" })
         : null;
-  const labelled = height >= LABEL_MIN_HEIGHT_PX;
+  const labelled = height >= LABEL_MIN_HEIGHT_PX * useUiScale();
   const timecodes = `${formatTimecode(tStartUs, fpsNum, fpsDen)} → ${formatTimecode(tEndUs, fpsNum, fpsDen)}`;
   return (
     <div
@@ -152,7 +153,7 @@ export function DragGhostChip({
       // not the same kind of thing, and a corner radius is the cheapest way to
       // stop them looking alike. `rounded-r-[4px]` is what `rounded` would have
       // given both ends.
-      className="pointer-events-none absolute z-[5] flex items-center gap-1 overflow-hidden rounded-l-[1px] rounded-r-[4px] border border-white/25 px-2 text-[10px] font-semibold text-white shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
+      className="pointer-events-none absolute z-[5] flex items-center gap-1 overflow-hidden rounded-l-[1px] rounded-r-[4px] border border-white/25 px-2 text-[length:var(--font-size-micro)] font-semibold text-white shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
       style={{
         left: (tStartUs / 1_000_000) * pxPerSec,
         top,

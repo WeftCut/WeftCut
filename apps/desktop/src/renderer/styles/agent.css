@@ -22,7 +22,7 @@
   display: grid;
   /* Record-panel width comes from the sash (AgentMode.tsx sets
      --agent-record-width inline); the fallback is the default width. */
-  grid-template-columns: 1fr var(--agent-record-width, 360px);
+  grid-template-columns: 1fr var(--agent-record-width, calc(360 * var(--ui-px)));
   /* The titlebar row is the shared chrome band (--app-chrome-height in
      app.css), so entering agent mode never changes the caption bar's height.
      The token also keeps the row tall enough to contain the macOS traffic
@@ -33,7 +33,7 @@
      strip between the caption bar and the panes it sits on. The titlebar is
      window chrome, not a pane — it belongs against them, the way .app-header
      meets .dock-workspace in the editor. */
-  grid-template-rows: var(--app-chrome-height) 1fr 6px 80px;
+  grid-template-rows: var(--app-chrome-height) 1fr calc(6 * var(--ui-px)) calc(80 * var(--ui-px));
   grid-template-areas:
     "titlebar titlebar"
     "preview  record"
@@ -42,7 +42,7 @@
   /* Same inter-pane gap as WEFT_DOCK_THEME: the black well shows through
      and separates the panes as depth, like dock groups. Columns only —
      the row gutter is the explicit track above. */
-  column-gap: 6px;
+  column-gap: calc(6 * var(--ui-px));
   row-gap: 0;
   /* The recessed well behind the panes — pure black, one step below
      --surface-sunken, same as .dock-workspace. */
@@ -74,7 +74,7 @@
    the pill lands up to half a device pixel high. Deliberately left there. */
 .agent-titlebar .agent-exit-button {
   align-self: center;
-  height: 22px;
+  height: calc(22 * var(--ui-px));
   padding-block: 0;
   margin-right: var(--app-chrome-gap);
 }
@@ -83,7 +83,7 @@
    4px the shared rule puts before the buttons, so the exit pill clears them by
    the same 16px as in the editor header. */
 .agent-titlebar .window-controls {
-  margin: 0 0 0 4px;
+  margin: 0 0 0 calc(4 * var(--ui-px));
 }
 
 .agent-preview {
@@ -105,11 +105,11 @@
   grid-area: mini;
   /* Uniform --card island, like every dock Panel surface. */
   background: var(--card);
-  padding: 8px 12px;
+  padding: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .agent-record {
@@ -144,8 +144,8 @@
   bottom: 0;
   /* Centered on the column gap: the gap runs 6px left of the record
      panel's edge, so its midpoint sits 3px left of that edge. */
-  right: calc(var(--agent-record-width, 360px) - 2px);
-  width: 10px;
+  right: calc(var(--agent-record-width, calc(360 * var(--ui-px))) - calc(2 * var(--ui-px)));
+  width: calc(10 * var(--ui-px));
   cursor: ew-resize;
   touch-action: none;
   user-select: none;
@@ -164,8 +164,8 @@
 .agent-running-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: 999px;
   background: rgba(251, 191, 36, 0.12);
   border: 1px solid rgba(251, 191, 36, 0.32);
@@ -175,8 +175,8 @@
 }
 
 .agent-running-spinner {
-  width: 10px;
-  height: 10px;
+  width: calc(10 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
   border-radius: 50%;
   border: 2px solid rgba(253, 230, 138, 0.25);
   border-top-color: var(--color-amber-400);
@@ -187,10 +187,10 @@
 .realtime-preview-smoke {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
   width: 100%;
   height: 100%;
-  padding: 12px;
+  padding: calc(12 * var(--ui-px));
   overflow: auto;
   color: var(--color-zinc-200);
   font-size: var(--font-size-body);
@@ -199,9 +199,9 @@
 .realtime-preview-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   border-bottom: 1px solid var(--border-on-dark);
-  padding-bottom: 8px;
+  padding-bottom: calc(8 * var(--ui-px));
 }
 
 .realtime-preview-header strong {
@@ -216,7 +216,7 @@
 
 .realtime-preview-hint code {
   background: rgba(0, 0, 0, 0.3);
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
@@ -225,12 +225,12 @@
 .realtime-preview-stats {
   background: rgba(0, 0, 0, 0.25);
   border-radius: var(--radius-card);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
 }
 
 .realtime-preview-capability h3,
 .realtime-preview-stats h3 {
-  margin: 0 0 6px;
+  margin: 0 0 calc(6 * var(--ui-px));
   font-size: var(--font-size-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -240,30 +240,30 @@
 .realtime-preview-capability ul,
 .realtime-preview-stats ul {
   margin: 0;
-  padding-left: 16px;
+  padding-left: calc(16 * var(--ui-px));
   list-style: disc;
 }
 
 .realtime-preview-capability li,
 .realtime-preview-stats li {
-  margin: 2px 0;
+  margin: calc(2 * var(--ui-px)) 0;
 }
 
 .realtime-preview-capability code,
 .realtime-preview-stats code {
   background: rgba(0, 0, 0, 0.3);
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
 
 .realtime-preview-controls {
   display: flex;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .realtime-preview-controls button {
-  padding: 6px 12px;
+  padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
   border-radius: var(--radius-card);
   border: 1px solid var(--border-on-dark);
   background: rgba(63, 63, 70, 0.5);
@@ -286,12 +286,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 360px;
+  min-height: calc(360 * var(--ui-px));
 }
 
 .realtime-preview-canvas {
   max-width: 100%;
-  max-height: 360px;
+  max-height: calc(360 * var(--ui-px));
   background: #000;
 }
 
@@ -300,18 +300,18 @@
 }
 
 .realtime-preview-divider {
-  width: 1px;
+  width: calc(1 * var(--ui-px));
   background: var(--border-on-dark);
-  margin: 0 4px;
+  margin: 0 calc(4 * var(--ui-px));
 }
 
 .realtime-preview-overlay-ctrls {
   background: rgba(0, 0, 0, 0.25);
   border-radius: var(--radius-card);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(calc(180 * var(--ui-px)), 1fr));
+  gap: calc(6 * var(--ui-px)) calc(12 * var(--ui-px));
 }
 
 .realtime-preview-overlay-ctrls h3 {
@@ -326,7 +326,7 @@
 .realtime-preview-overlay-ctrls label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--color-zinc-300);
 }
@@ -339,7 +339,7 @@
   background: rgba(63, 63, 70, 0.5);
   color: var(--color-zinc-200);
   border: 1px solid var(--border-on-dark);
-  padding: 4px 6px;
+  padding: calc(4 * var(--ui-px)) calc(6 * var(--ui-px));
   border-radius: var(--radius-control);
 }
 
@@ -347,10 +347,10 @@
 .realtime-preview-playback {
   background: rgba(0, 0, 0, 0.25);
   border-radius: var(--radius-card);
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .realtime-preview-playback h3 {

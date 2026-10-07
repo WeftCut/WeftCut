@@ -70,7 +70,7 @@ export function AppDialog({
         <DialogPrimitive.Popup
           style={{ zIndex: layer(1) }}
           className={cn(
-            "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 outline-none",
+            "app-dialog fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 outline-none",
             panelClassName,
           )}
         >

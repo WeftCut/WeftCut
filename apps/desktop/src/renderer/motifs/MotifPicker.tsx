@@ -610,8 +610,8 @@ function MotifPreview({
       // the aspect for the composition's, making the box the canvas itself.
       style={
         canvasMode
-          ? { maxWidth, aspectRatio: `${compW} / ${compH}` }
-          : { maxWidth }
+          ? { maxWidth: `calc(${maxWidth} * var(--ui-px))`, aspectRatio: `${compW} / ${compH}` }
+          : { maxWidth: `calc(${maxWidth} * var(--ui-px))` }
       }
     >
       {pngUrl && (

@@ -66,7 +66,7 @@
   position: absolute;
   left: 2px;
   bottom: -1px;
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   letter-spacing: 0.04em;
   color: var(--color-gray-500);
   white-space: nowrap;
@@ -220,10 +220,10 @@
    Panel is the console further down. */
 .mixer-panel {
   /* Same 12px inset / 8px rhythm as the Captions and Playhead Panels. */
-  padding: 12px;
+  padding: calc(12 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   /* Everything in the mixer speaks --font-size-body; without this the Role
      names inherit the 16px UA default. */
   font-size: var(--font-size-body);
@@ -233,7 +233,7 @@
      need 408px of card list, which is past the width where the console takes
      over, so the list runs one column at every width it is the layout at. The
      rule is what keeps that a measurement rather than an assumption. */
-  --mixer-card-min: 200px;
+  --mixer-card-min: calc(200 * var(--ui-px));
 
   /* The one green→amber→red level ramp, declared once for every meter the Panel
      draws: the per-Role bars, the console's columns and the master's line. A
@@ -254,7 +254,7 @@
 .mixer-roles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(var(--mixer-card-min), 100%), 1fr));
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   min-width: 0;
 }
 
@@ -266,9 +266,9 @@
 .mixer-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
-  padding: 6px 8px;
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: var(--radius-card);
   background: var(--surface-raised);
 }
@@ -292,7 +292,7 @@
 .mixer-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -320,8 +320,8 @@
    a permanently-open field is exactly what this replaces. */
 .mixer-readout {
   flex: none;
-  min-width: 58px;
-  padding: 1px 4px;
+  min-width: calc(58 * var(--ui-px));
+  padding: calc(1 * var(--ui-px)) calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted-foreground);
@@ -353,7 +353,7 @@
    rest of the line (`.app-number-field` is `width: 100%`). */
 .mixer-readout-field {
   flex: none;
-  width: 58px;
+  width: calc(58 * var(--ui-px));
 }
 
 /* Names why a Role is silent; the full sentence is its `title`. It rides the
@@ -374,7 +374,7 @@
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--warning) 20%, transparent);
   color: var(--warning);
@@ -398,7 +398,7 @@
 .mixer-card-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -410,7 +410,7 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   margin-left: auto;
 }
 
@@ -460,8 +460,8 @@
 .mixer-unity-tick {
   position: absolute;
   top: 50%;
-  width: 1px;
-  height: 10px;
+  width: calc(1 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
   translate: -50% -50%;
   background: var(--border-on-dark-strong);
   pointer-events: none;
@@ -474,7 +474,7 @@
 .mixer-role-meter {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -484,7 +484,7 @@
 .mixer-role-meter-track {
   position: relative;
   flex: 1 1 0;
-  height: 4px;
+  height: calc(4 * var(--ui-px));
   min-width: 0;
   overflow: hidden;
   border-radius: 2px;
@@ -507,7 +507,7 @@
    a reading wider than the reserved space is never clipped. */
 .mixer-role-meter-value {
   flex: none;
-  min-width: 32px;
+  min-width: calc(32 * var(--ui-px));
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-size: var(--font-size-micro);
@@ -537,20 +537,20 @@
      is "-30" plus its mark. The few px over each is deliberate slack — the
      uppercase implied-mute badge and the master's head are text, so their
      width moves with the UI font and the translation. */
-  --mixer-console-gap: 4px;
-  --mixer-strip-min-width: 66px;
-  --mixer-master-min-width: 58px;
-  --mixer-db-gutter-width: 26px;
+  --mixer-console-gap: calc(4 * var(--ui-px));
+  --mixer-strip-min-width: calc(66 * var(--ui-px));
+  --mixer-master-min-width: calc(58 * var(--ui-px));
+  --mixer-db-gutter-width: calc(26 * var(--ui-px));
 
   /* The fader's travel. 50 dB at a 0.5 dB step is 100 legal values, so 104px of
      track is 1.04px per step — at EVERY dock width. A fixed length and never a
      percentage of the Panel's height: precision that changes when the Panel
      resizes has no stable feel, which is the whole reason this layout is
      vertical. */
-  --mixer-console-fader-height: 104px;
+  --mixer-console-fader-height: calc(104 * var(--ui-px));
 
   /* Fixed for the reason `.mixer-console-column` states. */
-  --mixer-strip-head-height: 32px;
+  --mixer-strip-head-height: calc(32 * var(--ui-px));
 }
 
 /* Every console column is the SAME grid — the four Role strips, the master
@@ -568,9 +568,9 @@
   grid-template-rows: var(--mixer-strip-head-height) var(--mixer-console-fader-height);
   align-items: center;
   justify-items: center;
-  gap: 4px;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  gap: calc(4 * var(--ui-px));
+  padding-top: calc(6 * var(--ui-px));
+  padding-bottom: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -580,8 +580,8 @@
 .mixer-strip {
   flex: 1 1 0;
   min-width: var(--mixer-strip-min-width);
-  padding-left: 3px;
-  padding-right: 3px;
+  padding-left: calc(3 * var(--ui-px));
+  padding-right: calc(3 * var(--ui-px));
   border-radius: var(--radius-card);
   background: var(--surface-raised);
 }
@@ -599,7 +599,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: calc(1 * var(--ui-px));
   min-width: 0;
 }
 
@@ -624,7 +624,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   min-width: 0;
 }
 
@@ -659,8 +659,8 @@
    here. No `box-shadow`, so the `:focus-visible` ring (which is a box-shadow at
    equal specificity) is never clobbered. */
 .mixer-console-fader .app-slider-thumb {
-  width: 16px;
-  height: 11px;
+  width: calc(16 * var(--ui-px));
+  height: calc(11 * var(--ui-px));
   border-radius: 3px;
   background: linear-gradient(
     180deg,
@@ -678,7 +678,7 @@
   left: 3px;
   right: 3px;
   top: 50%;
-  height: 1px;
+  height: calc(1 * var(--ui-px));
   translate: 0 -50%;
   border-radius: 1px;
   background: color-mix(in srgb, var(--surface-sunken) 70%, black);
@@ -694,7 +694,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 1px;
+  height: calc(1 * var(--ui-px));
   translate: 0 50%;
   background: var(--border-on-dark-strong);
   pointer-events: none;
@@ -705,7 +705,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 
 /* The dB scale, drawn ONCE for the whole console: four copies of one legend
@@ -734,7 +734,7 @@
   right: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--ui-px));
   translate: 0 50%;
   font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
@@ -745,8 +745,8 @@
 
 .mixer-db-tick::after {
   content: "";
-  width: 4px;
-  height: 1px;
+  width: calc(4 * var(--ui-px));
+  height: calc(1 * var(--ui-px));
   background: var(--border-on-dark-strong);
 }
 
@@ -789,7 +789,7 @@
    first. Micro type in both homes — the head's, and the compact line's. */
 .mixer-master-hold {
   flex: none;
-  padding: 0 3px;
+  padding: 0 calc(3 * var(--ui-px));
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--foreground);
@@ -825,7 +825,7 @@
    what keeps the shade's square end inside the rounded column. */
 .mixer-meter-column {
   position: relative;
-  width: 8px;
+  width: calc(8 * var(--ui-px));
 }
 
 .mixer-meter-column-ramp {
@@ -852,8 +852,8 @@
 .mixer-meter-column-peak {
   position: absolute;
   left: 50%;
-  width: 12px;
-  height: 2px;
+  width: calc(12 * var(--ui-px));
+  height: calc(2 * var(--ui-px));
   translate: -50% -50%;
   border-radius: 1px;
   background: var(--foreground);
@@ -873,7 +873,7 @@
      implicit row is taller than a Role's readout row, and a reading centred in
      it sat 11px below the four gain readouts it is meant to line up with. */
   align-self: start;
-  padding: 1px 4px;
+  padding: calc(1 * var(--ui-px)) calc(4 * var(--ui-px));
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   /* Never wrap a reading onto a second line inside its fixed cell: a wrap would
@@ -892,8 +892,8 @@
 .mixer-master {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-top: 8px;
+  gap: calc(8 * var(--ui-px));
+  padding-top: calc(8 * var(--ui-px));
   border-top: 1px solid var(--border);
 }
 
@@ -911,7 +911,7 @@
 .mixer-meter-track {
   position: relative;
   flex: 1 1 0;
-  height: 6px;
+  height: calc(6 * var(--ui-px));
   min-width: 0;
 }
 
@@ -942,8 +942,8 @@
 .mixer-meter-peak {
   position: absolute;
   top: 50%;
-  width: 2px;
-  height: 11px;
+  width: calc(2 * var(--ui-px));
+  height: calc(11 * var(--ui-px));
   translate: -50% -50%;
   border-radius: 1px;
   background: var(--foreground);
@@ -961,12 +961,12 @@
 /* Captions panel — cue list plus the corpus-wide style controls, on the
    same 12px inset / 8px rhythm as the Playhead and Role Mixer Panels. */
 .captions-panel {
-  padding: 12px;
+  padding: calc(12 * var(--ui-px));
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
 }
 
@@ -979,13 +979,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .caption-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   border-radius: var(--radius-control);
 }
 
@@ -995,7 +995,7 @@
 
 .caption-seek {
   flex: 0 0 auto;
-  padding: 2px 4px;
+  padding: calc(2 * var(--ui-px)) calc(4 * var(--ui-px));
   border: none;
   border-radius: var(--radius-control);
   background: transparent;
@@ -1018,8 +1018,8 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 12px;
+  gap: calc(10 * var(--ui-px));
+  padding-bottom: calc(12 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -1027,21 +1027,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: calc(12 * var(--ui-px));
 }
 
 .captions-style-fields {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
 }
 
 /* Keep each label with its field when a narrow dock needs another row. */
 .captions-style-control {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 /* The word beside each number field. `flex: none` so the growing heading can
@@ -1067,25 +1067,25 @@
    here it shares the row with the heading and the color field. */
 .captions-style-section .app-number-field {
   flex: 0 0 auto;
-  width: 64px;
+  width: calc(64 * var(--ui-px));
 }
 
 .property-panel {
-  padding: 12px 14px;
+  padding: calc(12 * var(--ui-px)) calc(14 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
 }
 
 .attribute-panel {
-  padding: 8px 10px;
-  gap: 4px;
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
+  gap: calc(4 * var(--ui-px));
 }
 
 .property-panel h3 {
-  margin: 8px 0 4px 0;
+  margin: calc(8 * var(--ui-px)) 0 calc(4 * var(--ui-px)) 0;
   font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--color-gray-300);
@@ -1095,49 +1095,49 @@
 .property-panel hr {
   border: none;
   border-top: 1px solid var(--border-soft);
-  margin: 8px 0;
+  margin: calc(8 * var(--ui-px)) 0;
 }
 
 .prop-section {
-  --prop-section-label-col: var(--prop-label-col, 96px);
+  --prop-section-label-col: var(--prop-label-col, calc(96 * var(--ui-px)));
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 /* Every group discloses in place. Primary groups divide the flat surface;
    indented bodies preserve a common input edge through nested groups. */
 .attribute-panel > .prop-section {
   border-top: 1px solid var(--border-soft);
-  padding-top: 2px;
+  padding-top: calc(2 * var(--ui-px));
 }
 
 .prop-section-body {
   /* Each level borrows its indent from the label column, preserving the
      input edge and available control width even in nested disclosures. */
-  --prop-label-col: calc(var(--prop-section-label-col) - 8px);
+  --prop-label-col: calc(var(--prop-section-label-col) - calc(8 * var(--ui-px)));
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 4px;
-  padding-inline-start: 8px;
-  padding-bottom: 8px;
+  gap: calc(4 * var(--ui-px));
+  padding-inline-start: calc(8 * var(--ui-px));
+  padding-bottom: calc(8 * var(--ui-px));
 }
 
 .prop-section-body > .prop-section {
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
 }
 
 .prop-section-body .prop-well {
-  --prop-label-col: calc(var(--prop-section-label-col) - 16px);
+  --prop-label-col: calc(var(--prop-section-label-col) - calc(16 * var(--ui-px)));
 }
 
 .prop-name-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: calc(16 * var(--ui-px)) minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 .prop-name-icon {
@@ -1162,11 +1162,11 @@
 .prop-flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .prop-identity > .prop-flags {
-  margin-top: 4px;
+  margin-top: calc(4 * var(--ui-px));
 }
 
 .prop-flags .prop-flag {
@@ -1183,7 +1183,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 .property-panel .prop-field--stacked > .prop-field-control::before {
@@ -1192,7 +1192,7 @@
 
 /* The derived end shares the standard timing field alignment. */
 .prop-time-end-value {
-  padding: 4px 6px;
+  padding: calc(4 * var(--ui-px)) calc(6 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-body);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -1205,13 +1205,13 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .prop-retime-checkbox > input[type="checkbox"] {
   flex: 0 0 auto;
-  width: 13px;
-  height: 13px;
+  width: calc(13 * var(--ui-px));
+  height: calc(13 * var(--ui-px));
   margin: 0;
 }
 
@@ -1230,19 +1230,19 @@
 
 .prop-retime-multiplier {
   position: relative;
-  flex: 0 0 60px;
+  flex: 0 0 calc(60 * var(--ui-px));
   min-width: 0;
 }
 
 .prop-retime-rate-readout {
   width: 100%;
   font-variant-numeric: tabular-nums;
-  padding-inline: 4px;
+  padding-inline: calc(4 * var(--ui-px));
 }
 
 .prop-retime-multiplier .app-input {
-  padding-inline-start: 6px;
-  padding-inline-end: 17px;
+  padding-inline-start: calc(6 * var(--ui-px));
+  padding-inline-end: calc(17 * var(--ui-px));
 }
 
 .prop-retime-multiplier-suffix {
@@ -1260,7 +1260,7 @@
 .prop-identity {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   min-width: 0;
 }
 
@@ -1288,10 +1288,10 @@
 .prop-section-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 24px;
-  margin-inline: -2px;
-  padding: 2px;
+  gap: calc(4 * var(--ui-px));
+  min-height: calc(24 * var(--ui-px));
+  margin-inline: calc(-2 * var(--ui-px));
+  padding: calc(2 * var(--ui-px));
   border: none;
   border-radius: 2px;
   background: transparent;
@@ -1316,8 +1316,8 @@
 
 .prop-section-header > svg {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: calc(12 * var(--ui-px));
+  height: calc(12 * var(--ui-px));
   color: var(--muted-foreground);
 }
 
@@ -1335,47 +1335,47 @@
 .prop-field-pair {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: calc(4 * var(--ui-px)) calc(8 * var(--ui-px));
 }
 
 /* Pauses uses the inspector's label/value grid; only the result and action
    strip span both columns. The reset is a sibling of the disclosure button. */
 .pauses-section { position: relative; }
-.pauses-section:has(.pauses-body) > .prop-section-header { margin-inline-end: 28px; }
-.pauses-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pauses-section:has(.pauses-body) > .prop-section-header { margin-inline-end: calc(28 * var(--ui-px)); }
+.pauses-body { display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); min-width: 0; }
 .pauses-body .pauses-reset { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
 .pauses-preset-trigger { width: 100%; min-width: 0; }
 .pauses-preset-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: start; }
 .pauses-threshold-control { flex: 1; min-width: 0; }
 .pauses-body .prop-field:has(.pauses-threshold-control) { align-items: start; }
-.pauses-body .prop-field:has(.pauses-threshold-control) > .prop-field-label { padding-top: 3px; }
-.pauses-threshold-input { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
+.pauses-body .prop-field:has(.pauses-threshold-control) > .prop-field-label { padding-top: calc(3 * var(--ui-px)); }
+.pauses-threshold-input { display: flex; align-items: center; justify-content: space-between; gap: calc(6 * var(--ui-px)); min-height: calc(24 * var(--ui-px)); }
 .pauses-readout { flex: none; font-size: var(--font-size-caption); font-variant-numeric: tabular-nums; text-align: end; }
-.pauses-floor { margin-top: 2px; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.pauses-floor { margin-top: calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); }
 .pauses-floor > span { font-variant-numeric: tabular-nums; }
 .pauses-number-control { position: relative; flex: 1; min-width: 0; }
-.pauses-number-control .app-number-input { padding-inline-end: 48px; }
+.pauses-number-control .app-number-input { padding-inline-end: calc(48 * var(--ui-px)); }
 .pauses-unit { position: absolute; inset-inline-end: 21px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted-foreground); font-size: var(--font-size-caption); }
-.pauses-summary { display: flex; flex-direction: column; justify-content: center; min-height: 38px; gap: 2px; margin-top: 4px; color: var(--foreground); font-size: var(--font-size-caption); font-variant-numeric: tabular-nums; }
-.pauses-summary > span { display: flex; align-items: center; gap: 5px; }
+.pauses-summary { display: flex; flex-direction: column; justify-content: center; min-height: calc(38 * var(--ui-px)); gap: calc(2 * var(--ui-px)); margin-top: calc(4 * var(--ui-px)); color: var(--foreground); font-size: var(--font-size-caption); font-variant-numeric: tabular-nums; }
+.pauses-summary > span { display: flex; align-items: center; gap: calc(5 * var(--ui-px)); }
 .pauses-summary-detail { color: var(--muted-foreground); }
-.pauses-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; }
-.pauses-write-actions { display: flex; align-items: center; gap: 2px; margin-inline-start: auto; }
+.pauses-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: calc(4 * var(--ui-px)); }
+.pauses-write-actions { display: flex; align-items: center; gap: calc(2 * var(--ui-px)); margin-inline-start: auto; }
 /* Equal widths keep the menu and editor on the same left edge even when
    viewport collision handling shifts them away from the window's right edge. */
-.pauses-preset-menu, .pauses-preset-editor { width: min(310px, calc(100vw - 24px)); }
-.pauses-preset-menu { max-height: min(440px, var(--available-height)); overflow-y: auto; }
+.pauses-preset-menu, .pauses-preset-editor { width: min(calc(310 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px)))); }
+.pauses-preset-menu { max-height: min(calc(440 * var(--ui-px)), var(--available-height)); overflow-y: auto; }
 .pauses-preset-menu .app-menu-item { overflow-wrap: anywhere; }
-.pauses-preset-empty { padding: 4px 12px; color: var(--muted-foreground); font-size: var(--font-size-caption); }
-.pauses-preset-editor { max-height: var(--available-height); overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pauses-preset-empty { padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.pauses-preset-editor { max-height: var(--available-height); overflow-y: auto; padding: calc(12 * var(--ui-px)); display: flex; flex-direction: column; gap: calc(10 * var(--ui-px)); }
 .pauses-editor-title { margin: 0; font-size: var(--font-size-body); font-weight: 500; }
 .pauses-editor-hint { margin: 0; color: var(--muted-foreground); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
-.pauses-preset-form { display: flex; flex-direction: column; gap: 8px; }
-.pauses-preset-form label { display: flex; flex-direction: column; gap: 5px; font-size: var(--font-size-caption); }
+.pauses-preset-form { display: flex; flex-direction: column; gap: calc(8 * var(--ui-px)); }
+.pauses-preset-form label { display: flex; flex-direction: column; gap: calc(5 * var(--ui-px)); font-size: var(--font-size-caption); }
 .pauses-preset-form .app-input { width: 100%; }
-.pauses-editor-actions { display: flex; justify-content: flex-end; gap: 4px; }
-.pauses-preset-list { display: flex; flex-direction: column; gap: 4px; }
-.pauses-preset-entry { display: flex; align-items: center; gap: 2px; font-size: var(--font-size-caption); }
+.pauses-editor-actions { display: flex; justify-content: flex-end; gap: calc(4 * var(--ui-px)); }
+.pauses-preset-list { display: flex; flex-direction: column; gap: calc(4 * var(--ui-px)); }
+.pauses-preset-entry { display: flex; align-items: center; gap: calc(2 * var(--ui-px)); font-size: var(--font-size-caption); }
 .pauses-preset-entry > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pauses-spinner { flex: none; animation: pauses-spin 1s linear infinite; }
 @keyframes pauses-spin { to { transform: rotate(360deg); } }
@@ -1387,8 +1387,8 @@
 .prop-media-refs {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: min(220px, 32vh);
+  gap: calc(4 * var(--ui-px));
+  max-height: min(calc(220 * var(--ui-px)), 32vh);
   overflow-y: auto;
   list-style: none;
   margin: 0;
@@ -1399,10 +1399,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: calc(1 * var(--ui-px));
   width: 100%;
   min-width: 0;
-  padding: 5px 7px;
+  padding: calc(5 * var(--ui-px)) calc(7 * var(--ui-px));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
@@ -1440,7 +1440,7 @@
    docking starts exclusively from the native tab chrome, so no style here may
    imply an HTML5 drag source. */
 .prop-effects {
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 
 /* A real card surface, not a bare row: chromakey alone contributes ten param
@@ -1456,23 +1456,23 @@
 .prop-effect-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
-  min-height: 30px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(4 * var(--ui-px)) calc(6 * var(--ui-px));
+  min-height: calc(30 * var(--ui-px));
 }
 
 /* Chain position. Fixed-width so the names below it stay left-aligned when the
    chain crosses from 9 to 10. */
 .prop-effect-index {
   flex: 0 0 auto;
-  min-width: 15px;
+  min-width: calc(15 * var(--ui-px));
   text-align: center;
   font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
   background: var(--hover-neutral);
   border-radius: var(--radius-control);
-  padding: 1px 3px;
+  padding: calc(1 * var(--ui-px)) calc(3 * var(--ui-px));
 }
 
 /* The whole name is the collapse target — a 12px chevron is too small to be
@@ -1482,8 +1482,8 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 2px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) calc(2 * var(--ui-px));
   background: none;
   border: none;
   color: inherit;
@@ -1521,8 +1521,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--ui-px));
+  height: calc(22 * var(--ui-px));
   padding: 0;
   background: none;
   border: none;
@@ -1542,8 +1542,8 @@
 .prop-effect-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 8px 10px 8px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(8 * var(--ui-px)) calc(10 * var(--ui-px)) calc(8 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
   background: var(--background);
 }
@@ -1552,7 +1552,7 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  padding: 2px 0;
+  padding: calc(2 * var(--ui-px)) 0;
   color: var(--color-slate-600);
   cursor: grab;
   touch-action: none;
@@ -1596,7 +1596,7 @@
 
 .prop-effect-blank {
   margin: 0;
-  padding: 10px 8px;
+  padding: calc(10 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
   text-align: center;
@@ -1613,8 +1613,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 5px 10px;
+  gap: calc(5 * var(--ui-px));
+  padding: calc(5 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-caption);
   color: var(--foreground);
   background: var(--secondary);
@@ -1636,13 +1636,13 @@
    Sits inside the shared .app-menu-list chrome; only the search box, group
    headers, and two-line rows are local. */
 .effect-picker {
-  width: 232px;
+  width: calc(232 * var(--ui-px));
   display: flex;
   flex-direction: column;
 }
 
 .effect-picker-search {
-  padding: 6px;
+  padding: calc(6 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -1652,13 +1652,13 @@
 }
 
 .effect-picker-list {
-  max-height: 300px;
+  max-height: calc(300 * var(--ui-px));
   overflow-y: auto;
-  padding: 4px 0;
+  padding: calc(4 * var(--ui-px)) 0;
 }
 
 .effect-picker-group {
-  padding: 6px 10px 2px 10px;
+  padding: calc(6 * var(--ui-px)) calc(10 * var(--ui-px)) calc(2 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1669,9 +1669,9 @@
 .effect-picker-row {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: calc(1 * var(--ui-px));
   width: 100%;
-  padding: 5px 10px;
+  padding: calc(5 * var(--ui-px)) calc(10 * var(--ui-px));
   background: none;
   border: none;
   color: inherit;
@@ -1695,7 +1695,7 @@
 
 .effect-picker-empty {
   margin: 0;
-  padding: 16px 10px;
+  padding: calc(16 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-caption);
   text-align: center;
   color: var(--muted-foreground);
@@ -1731,9 +1731,9 @@
      width — would push the column past the inspector's right padding
      and overflow into the panel's edge. With `0` as the lower bound,
      flex children inside `.prop-field-control` shrink to fit instead. */
-  grid-template-columns: var(--prop-label-col, 96px) minmax(0, 1fr);
+  grid-template-columns: var(--prop-label-col, calc(96 * var(--ui-px))) minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   color: var(--color-slate-300);
 }
@@ -1754,7 +1754,7 @@
 .prop-value-slot::before {
   content: "";
   flex: 0 0 auto;
-  width: 18px;
+  width: calc(18 * var(--ui-px));
 }
 
 .prop-field-label {
@@ -1763,7 +1763,7 @@
   line-height: var(--line-height-body);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
 }
 
 /* Small `?` icon next to a property label. Shows the hint bubble on
@@ -1775,12 +1775,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 13px;
-  height: 13px;
+  width: calc(13 * var(--ui-px));
+  height: calc(13 * var(--ui-px));
   border-radius: 50%;
   background: var(--secondary);
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   font-weight: 600;
   line-height: 1;
   cursor: help;
@@ -1799,8 +1799,8 @@
  * now (Positioner owns placement and collision-flipping; show/hide is
  * hover/focus-driven by the library). */
 .prop-field-hint-bubble {
-  max-width: 240px;
-  padding: 8px 10px;
+  max-width: calc(240 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   background: var(--card);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
@@ -1815,7 +1815,7 @@
 
 .prop-field-control {
   display: flex;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
   align-items: center;
   /* Allow flex children (range inputs in particular) to shrink below
      their intrinsic min-content. Pairs with `minmax(0, 1fr)` on the
@@ -1829,7 +1829,7 @@
   background: var(--card);
   border: 1px solid var(--border-soft);
   color: var(--foreground);
-  padding: 2px 6px;
+  padding: calc(2 * var(--ui-px)) calc(6 * var(--ui-px));
   font-size: var(--font-size-body);
   border-radius: var(--radius-control);
   width: 100%;
@@ -1842,9 +1842,9 @@
  * animatable row's control on one edge. */
 .anim-field {
   display: grid;
-  grid-template-columns: var(--prop-label-col, 96px) minmax(0, 1fr);
+  grid-template-columns: var(--prop-label-col, calc(96 * var(--ui-px))) minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
 }
 .anim-field-label {
   font-size: var(--font-size-caption);
@@ -1854,25 +1854,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.anim-field-control { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.anim-field-control { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); min-width: 0; }
 
 /* All position controls belong beneath the mode row. Borrow the indent from
  * the label column so the inputs still align with the surrounding inspector. */
-.position-fields, .position-fields-body, .position-path-controls { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.position-fields { container: position-fields / inline-size; --position-label-col: var(--prop-label-col, 96px); padding-bottom: 8px; }
+.position-fields, .position-fields-body, .position-path-controls { display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); min-width: 0; }
+.position-fields { container: position-fields / inline-size; --position-label-col: var(--prop-label-col, calc(96 * var(--ui-px))); padding-bottom: calc(8 * var(--ui-px)); }
 .position-fields > .anim-field > .anim-field-label { color: var(--foreground); font-weight: 500; }
-.position-fields-body { --prop-label-col: calc(var(--position-label-col) - 12px); padding-inline-start: 12px; }
-.position-fields-body .prop-well { --prop-label-col: calc(var(--position-label-col) - 20px); }
+.position-fields-body { --prop-label-col: calc(var(--position-label-col) - calc(12 * var(--ui-px))); padding-inline-start: calc(12 * var(--ui-px)); }
+.position-fields-body .prop-well { --prop-label-col: calc(var(--position-label-col) - calc(20 * var(--ui-px))); }
 .position-path-count { flex: 1; min-width: 0; color: var(--muted-foreground); font-size: var(--font-size-caption); }
 .position-path-controls .app-select { width: 100%; min-width: 0; }
-.position-path-arrival { display: flex; flex-direction: column; gap: 4px; padding-block: 2px 6px; }
-.position-path-arrival > button { white-space: normal; min-height: 26px; }
+.position-path-arrival { display: flex; flex-direction: column; gap: calc(4 * var(--ui-px)); padding-block: calc(2 * var(--ui-px)) calc(6 * var(--ui-px)); }
+.position-path-arrival > button { white-space: normal; min-height: calc(26 * var(--ui-px)); }
 .position-path-arrival .prop-hint { margin: 0; }
-.position-path-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.position-path-selection { flex: 1 1 80px; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.position-path-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: calc(4 * var(--ui-px)); }
+.position-path-selection { flex: 1 1 calc(80 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); }
 /* When the inspector is very narrow, keep node names and percentages legible. */
-@container position-fields (max-width: 210px) {
-  .position-path-controls .anim-field { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+@container position-fields (max-width: 13.125rem) {
+  .position-path-controls .anim-field { grid-template-columns: minmax(0, 1fr); gap: calc(4 * var(--ui-px)); }
   .position-path-controls .prop-value-slot::before { display: none; }
 }
 
@@ -1880,16 +1880,16 @@
  * in flight. The label column drops by the well's own inset so rows inside it
  * keep the panel's value edge; change one and change the other. */
 .prop-well {
-  --prop-label-col: 88px;
+  --prop-label-col: calc(88 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 7px 8px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(7 * var(--ui-px)) calc(8 * var(--ui-px));
   background: var(--background);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
 }
-.prop-well-head { display: flex; align-items: center; gap: 6px; }
+.prop-well-head { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); }
 .prop-well-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -1905,7 +1905,7 @@
 .prop-well-title em { font-style: normal; font-weight: 400; color: var(--color-gray-500); }
 /* Node actions. A toolbar at the well's own edge rather than a row in the
  * value column: there is no property being labelled here. */
-.prop-well-toolbar { display: flex; gap: 2px; }
+.prop-well-toolbar { display: flex; gap: calc(2 * var(--ui-px)); }
 .prop-node-id {
   font-size: var(--font-size-caption);
   color: var(--foreground);
@@ -1915,8 +1915,8 @@
 /* One axis of a merged pair row: `[stopwatch][field]`, two per value column.
  * Each axis keeps its own stopwatch because ADR 0060 has X and Y animate
  * independently — one shared stopwatch would misrepresent the model. */
-.anim-axis { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 0; }
-.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: 0 0 auto; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+.anim-axis { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); min-width: 0; flex: 1 1 0; }
+.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: calc(18 * var(--ui-px)); height: calc(18 * var(--ui-px)); flex: 0 0 auto; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
 .anim-stopwatch:hover:not(:disabled) { color: var(--muted-foreground); background: var(--secondary); }
 .anim-stopwatch.is-lit { color: var(--keyframe); }
 .anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
@@ -1925,7 +1925,7 @@
  * the field(s) it governs. Same footprint family as .anim-stopwatch; lit =
  * linked. (No wrapper class: the chain is just the last child of the value
  * column, so the row stays one grid row like every other.) */
-.scale-link-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+.scale-link-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: calc(18 * var(--ui-px)); height: calc(18 * var(--ui-px)); border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
 .scale-link-toggle:hover { color: var(--muted-foreground); background: var(--secondary); }
 .scale-link-toggle.is-linked { color: var(--accent-foreground); }
 
@@ -1936,7 +1936,7 @@
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
-  min-width: 32px;
+  min-width: calc(32 * var(--ui-px));
   /* Don't shrink the readout — opacity is 0.00–1.00, two digits past
      the decimal need to stay readable even when the panel is narrow. */
   flex: 0 0 auto;
@@ -1947,8 +1947,8 @@
 .segment-status-bar {
   position: relative;
   width: 100%;
-  height: 4px;
-  margin: 0 0 2px 0;
+  height: calc(4 * var(--ui-px));
+  margin: 0 0 calc(2 * var(--ui-px)) 0;
   background: var(--hover-neutral);
   border-radius: 2px;
   overflow: hidden;
@@ -2001,8 +2001,8 @@
 .effects-empty {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: calc(6 * var(--ui-px));
+  margin-bottom: calc(6 * var(--ui-px));
 }
 .effects-empty .placeholder {
   color: var(--muted-foreground);
@@ -2012,23 +2012,23 @@
 }
 .effects-list {
   list-style: none;
-  margin: 0 0 8px 0;
+  margin: 0 0 calc(8 * var(--ui-px)) 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 .effect-card {
   background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
-  padding: 6px 8px;
+  padding: calc(6 * var(--ui-px)) calc(8 * var(--ui-px));
 }
 .effect-card-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: calc(6 * var(--ui-px));
+  margin-bottom: calc(4 * var(--ui-px));
 }
 .effect-card-header .effect-name {
   flex: 1;
@@ -2050,12 +2050,12 @@
   left: 0;
   z-index: 10;
   list-style: none;
-  margin: 4px 0 0 0;
-  padding: 4px 0;
+  margin: calc(4 * var(--ui-px)) 0 0 0;
+  padding: calc(4 * var(--ui-px)) 0;
   background: var(--card);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
-  min-width: 140px;
+  min-width: calc(140 * var(--ui-px));
   box-shadow: var(--shadow-menu);
 }
 .add-effect-menu li {
@@ -2067,7 +2067,7 @@
   background: transparent;
   border: 0;
   color: var(--foreground);
-  padding: 4px 10px;
+  padding: calc(4 * var(--ui-px)) calc(10 * var(--ui-px));
   font-size: var(--font-size-body);
   cursor: pointer;
   font-family: inherit;
@@ -2078,7 +2078,7 @@
 .keyframe-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--ui-px));
 }
 .keyframe-list .placeholder {
   margin: 0;
@@ -2092,13 +2092,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 .keyframe-list-header,
 .keyframe-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 18px;
-  gap: 4px;
+  grid-template-columns: 1fr 1fr 1fr calc(18 * var(--ui-px));
+  gap: calc(4 * var(--ui-px));
   align-items: center;
 }
 .keyframe-list-header {
@@ -2106,14 +2106,14 @@
   color: var(--color-gray-500);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0 2px;
+  padding: 0 calc(2 * var(--ui-px));
 }
 .keyframe-row input[type="number"],
 .keyframe-row select {
   background: var(--card);
   border: 1px solid var(--border-soft);
   color: var(--foreground);
-  padding: 1px 4px;
+  padding: calc(1 * var(--ui-px)) calc(4 * var(--ui-px));
   font-size: var(--font-size-caption);
   border-radius: var(--radius-control);
   font-family: inherit;
@@ -2128,8 +2128,8 @@
   font-size: var(--font-size-body);
   line-height: 1;
   padding: 0;
-  height: 18px;
-  width: 18px;
+  height: calc(18 * var(--ui-px));
+  width: calc(18 * var(--ui-px));
 }
 .kf-remove:hover {
   background: var(--destructive);
@@ -2140,21 +2140,21 @@
   align-self: flex-start;
 }
 
-.prop-bake-status { margin: 0 0 8px; font-size: var(--font-size-body); opacity: 0.8; }
+.prop-bake-status { margin: 0 0 calc(8 * var(--ui-px)); font-size: var(--font-size-body); opacity: 0.8; }
 .prop-bake-status.is-error { color: var(--destructive); }
 .prop-bake-status.is-warming { color: var(--warning); }
 .prop-bake-status.is-ready { color: var(--success); }
-.prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
-.prop-motif-source { margin: 8px 0; }
+.prop-motif-lifecycle { display: flex; align-items: center; gap: calc(8 * var(--ui-px)); margin: calc(6 * var(--ui-px)) 0; flex-wrap: wrap; }
+.prop-motif-source { margin: calc(8 * var(--ui-px)) 0; }
 /* Recessed code well (--surface-sunken per docs/ui-tokens.md "inset editors").
    Without an explicit skin the Tailwind preflight leaves the textarea as a
    borderless transparent box — raw source floating on the panel. */
 .prop-motif-source-text {
   width: 100%;
   box-sizing: border-box;
-  min-height: 160px;
-  margin: 0 0 8px;
-  padding: 8px;
+  min-height: calc(160 * var(--ui-px));
+  margin: 0 0 calc(8 * var(--ui-px));
+  padding: calc(8 * var(--ui-px));
   font-family: var(--mono, ui-monospace, monospace);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-body);
@@ -2209,7 +2209,7 @@
 .kf-extrap {
   position: absolute;
   transform: translate(-50%, -50%);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   line-height: 1;
   color: var(--keyframe);
   white-space: nowrap;
@@ -2240,7 +2240,7 @@
   transform: translateX(-50%);
   padding: 1px 5px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   line-height: 1.4;
   white-space: nowrap;
   pointer-events: none;

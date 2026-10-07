@@ -15,7 +15,7 @@ commit.
 WeftCut is a dark-only application: a neutral dark surround is part of an
 editor's color judgment, and one theme keeps the visual QA surface of
 every panel at ×1. `html.dark` is hardwired, `color-scheme: dark` is set
-in `base.css`, and there is no theme switcher and no
+in `base.css`, and there is no color-theme switcher and no
 `prefers-color-scheme` handling. The light values in `:root` are inert
 theme-tool scaffolding, not a supported theme — never consume them as if
 a light mode existed (decision: ADR 0018).
@@ -120,17 +120,92 @@ Pills stay literal `999px`. These are separate from shadcn's
 
 ## Type scale
 
-| Token | Value | Use |
+Sizing is owned by `apps/desktop/src/renderer/styles/layout-theme.css`.
+The values below describe the unchanged 1080p standard baseline; the selected
+layout theme scales every role, including inherited and rem-based UI text.
+Timeline ruler labels, track and clip names, markers, keyframe labels and drag
+feedback consume these same roles. Ruler label spacing follows the text scale;
+the frame grid and time-to-pixel mapping do not. Marker rows grow with their text,
+and clip labels adapt to the space available in the user's track height.
+
+`components/ui/button.tsx` is the shared action button. Default/large buttons
+use the body role; small/extra-small buttons use caption. Use it for ordinary
+actions. Navigation tabs, shortcut chips and editor gesture targets can keep
+their specialized markup, but their styles must consume shared font roles too.
+`settings/uiTypography.test.ts` scans application sources for fixed pixel fonts;
+only authored render content and standalone developer pages are exempt. The
+isolated desktop color picker receives the selected theme in its capture snapshot
+so its hints and readouts follow the same roles without access to editor IPC.
+
+| Token | Baseline | Use |
 |---|---|---|
 | `--font-size-micro` | 10px | Dense instrumentation: rulers, badges, kbd hints, monospace ids. |
 | `--font-size-caption` | 11px | Captions, secondary metadata. |
 | `--font-size-body` | 12px | Default UI text. |
 | `--font-size-label` | 13px | Section labels, emphasized rows. |
 | `--font-size-title` | 14px | Panel titles. |
+| `--font-size-fine` | 9px | Fine print. |
+| `--font-size-heading` | 16px | Larger headings and inherited root text. |
+| `--font-size-display` | 22px | Splash and performance readouts. |
+| `--font-size-hero` | 28px | Startup heading. |
 | `--line-height-tight` / `--line-height-body` | 1.2 / 1.4 | Line-height roles. |
 
-Literal by design: 9px fine print and 16px+ display type (splash, perf
-HUD readouts) sit outside the compact UI scale.
+## Layout themes
+
+Settings → General → Layout theme exposes one preset selector. Only
+`app_settings.layout_theme` is persisted; font size, scale and window dimensions
+are internal values, not individual preferences. Old or unknown saved values
+fall back to `1080p-standard`; invalid writes are rejected.
+
+Recipes live in `apps/desktop/src/shared/layout-theme.ts`:
+
+| Theme | Text scale | Dialog width scale | Initial window (DIPs) |
+|---|---|---|---|
+| 1080p standard | 1 | 1 | 1440 × 900 |
+| 1080p relaxed | 1.1 | 1.25 | 1760 × 900 |
+| 2K (1440p) standard | 1.2 | 1.2 | 1920 × 1200 |
+| 2K (1440p) relaxed | 1.32 | 1.5 | 2360 × 1200 |
+| 4K standard | 1.5 | 1.5 | 2560 × 1600 |
+| 4K relaxed | 1.65 | 1.875 | 3360 × 1600 |
+
+Relaxed variants use 10% larger text than the corresponding Standard preset.
+
+UI geometry follows the text scale through `--ui-px`: control sizes, padding,
+gaps, fixed columns and minimum/maximum content widths all use baseline pixels
+multiplied by this unit. Dialog width roles retain the separate width scale to
+provide the additional horizontal room in Relaxed presets. Container breakpoints
+use rem units so their compact layouts switch at the same effective UI width.
+
+JS-owned dimensions use `useUiScale()` / `uiPixels()` from
+`renderer/settings/layoutTheme.ts`. Dock group floors refresh after theme changes,
+layout restoration and resizing; the Quick Actions strip updates both its floor
+and cap. Small viewports reduce group floors toward baseline sizes to preserve
+usable scrolling. Agent record and log-console drag sizes are remembered in
+baseline units. Mixer breakpoints and tab overflow geometry use the same scale
+as their CSS. Keep native window chrome, editing coordinates, borders and shadows
+outside this conversion; do not apply a global zoom to the canvas or timeline.
+
+The names are user-selected density presets, not automatic physical-resolution
+detection. CSS pixels / Electron DIPs already include OS scaling; do not apply
+`devicePixelRatio` again. Root tokens update on initial settings hydration and
+every committed settings snapshot, including portal dialogs and other windows.
+
+`styles/layout-theme.css` owns the role-based dialog widths, settings height,
+model-dialog height, settings navigation width, picker column width and header
+search-entry width (160px baseline, following the text scale). Feature
+styles consume these tokens while retaining viewport clamps and body scrolling.
+The settings dialog retains its existing 80% viewport height. New dialog skins
+must use these roles rather than a new fixed pixel width.
+
+Initial main-window dimensions are capped to the logical work area and used
+only when saved geometry is unavailable or unusable. Native minimum dimensions
+also follow the preset: 960 × width scale by 640 × text scale, rounded to DIPs
+and capped to the current display's work area. Startup, theme switches and display
+changes apply these limits. Windows below the new minimum grow to fit; switching
+to a smaller preset does not shrink an existing window. The user's Dock
+arrangement is retained. Authored
+Text layers, composition dimensions, preview rendering and exports are outside
+the layout-theme scope. The dark color palette remains unchanged.
 
 ## Shared dropdown chrome
 

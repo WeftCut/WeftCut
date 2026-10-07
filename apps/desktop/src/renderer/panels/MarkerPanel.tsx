@@ -323,7 +323,7 @@ function TimelineMarkerRow({ row }: { row: PanelMarker }) {
         <MarkerColorField marker={marker} />
         <button
           type="button"
-          className="shrink-0 cursor-pointer font-mono text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 cursor-pointer font-mono text-[length:var(--font-size-caption)] text-muted-foreground hover:text-foreground"
           title={t("marker_panel.go_to", { timecode })}
           aria-label={t("marker_panel.go_to", { timecode })}
           onClick={() => activateMarker(row)}
@@ -383,7 +383,7 @@ function HibernatingMarkerRow({ row }: { row: PanelMarker }) {
         <MarkerColorField marker={marker} />
         <button
           type="button"
-          className="shrink-0 cursor-pointer font-mono text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 cursor-pointer font-mono text-[length:var(--font-size-caption)] text-muted-foreground hover:text-foreground"
           title={t("marker_panel.reveal_clip", { timecode: source })}
           aria-label={t("marker_panel.reveal_clip", { timecode: source })}
           onClick={() => {
@@ -393,7 +393,7 @@ function HibernatingMarkerRow({ row }: { row: PanelMarker }) {
           {source}
         </button>
         {layer && (
-          <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 shrink truncate text-[length:var(--font-size-caption)] text-muted-foreground">
             {layerDisplayName(layer, t, ordinals)}
           </span>
         )}
@@ -406,7 +406,7 @@ function HibernatingMarkerRow({ row }: { row: PanelMarker }) {
         />
         <button
           type="button"
-          className="shrink-0 cursor-pointer rounded-[4px] px-1 text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 cursor-pointer rounded-[4px] px-1 text-[length:var(--font-size-caption)] text-muted-foreground hover:text-foreground"
           onClick={() => {
             void tryMutate(() => detachMarker(marker.id), "detach_marker");
           }}
@@ -440,7 +440,7 @@ function MarkerSectionView({
   return (
     <section aria-label={section.name} className="flex flex-col">
       {section.markers.length === 0 ? (
-        <h3 className="px-0.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+        <h3 className="px-0.5 py-1.5 text-[length:var(--font-size-caption)] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
           {heading}
         </h3>
       ) : (
@@ -449,7 +449,7 @@ function MarkerSectionView({
             type="button"
             aria-expanded={!collapsed}
             onClick={onToggle}
-            className="flex w-full cursor-pointer items-center gap-1 px-0.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground hover:text-foreground"
+            className="flex w-full cursor-pointer items-center gap-1 px-0.5 py-1.5 text-left text-[length:var(--font-size-caption)] font-semibold uppercase tracking-[0.04em] text-muted-foreground hover:text-foreground"
           >
             {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
             {heading}

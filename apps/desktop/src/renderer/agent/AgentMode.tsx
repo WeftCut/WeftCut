@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import {
   forwardRef,
   useState,
+  useEffect,
   type CSSProperties,
   type ForwardedRef,
   type KeyboardEvent,
@@ -20,6 +21,7 @@ import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
+import { useUiScale } from '../settings/layoutTheme';
 
 /// Lightweight viewing layout, selected locally or on a new MCP work session.
 /// Switching back to the editor does not end work or release the undo lock.
@@ -42,14 +44,15 @@ const RECORD_WIDTH_DEFAULT = 360;
 const RECORD_WIDTH_MIN = 280;
 const RECORD_WIDTH_MAX = 720;
 
-function clampRecordWidth(width: number, viewportWidth: number): number {
+function clampRecordWidth(width: number, viewportWidth: number, scale: number): number {
   // Keep at least 480 px for the preview column so the video never
   // collapses to a sliver on narrow windows.
+  const min = Math.min(RECORD_WIDTH_MIN * scale, viewportWidth * 0.45);
   const max = Math.max(
-    RECORD_WIDTH_MIN,
-    Math.min(RECORD_WIDTH_MAX, viewportWidth - 480),
+    min,
+    Math.min(RECORD_WIDTH_MAX * scale, viewportWidth - 480 * scale),
   );
-  return Math.round(Math.min(max, Math.max(RECORD_WIDTH_MIN, width)));
+  return Math.round(Math.min(max, Math.max(min, width)));
 }
 
 export const AgentMode = forwardRef(function AgentMode(
@@ -65,7 +68,15 @@ export const AgentMode = forwardRef(function AgentMode(
   // The mini timeline shows the OPEN composition; `summary` keeps the
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
-  const [recordWidth, setRecordWidth] = useState(RECORD_WIDTH_DEFAULT);
+  const scale = useUiScale();
+  const [recordWidthBase, setRecordWidth] = useState(RECORD_WIDTH_DEFAULT);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  const recordWidth = clampRecordWidth(recordWidthBase * scale, viewportWidth, scale);
 
   /* Width sash between the left column and the record panel — the only
      resizable seam in agent mode. Pointer capture keeps the drag alive
@@ -82,7 +93,8 @@ export const AgentMode = forwardRef(function AgentMode(
         clampRecordWidth(
           startWidth + (startX - move.clientX),
           window.innerWidth,
-        ),
+          scale,
+        ) / scale,
       );
     };
     const onEnd = () => {
@@ -96,11 +108,11 @@ export const AgentMode = forwardRef(function AgentMode(
   };
 
   const onSashKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 64 : 16;
+    const step = (event.shiftKey ? 64 : 16) * scale;
     if (event.key === "ArrowLeft") {
-      setRecordWidth((w) => clampRecordWidth(w + step, window.innerWidth));
+      setRecordWidth(clampRecordWidth(recordWidth + step, window.innerWidth, scale) / scale);
     } else if (event.key === "ArrowRight") {
-      setRecordWidth((w) => clampRecordWidth(w - step, window.innerWidth));
+      setRecordWidth(clampRecordWidth(recordWidth - step, window.innerWidth, scale) / scale);
     } else {
       return;
     }
@@ -156,8 +168,8 @@ export const AgentMode = forwardRef(function AgentMode(
         aria-orientation="vertical"
         aria-label={t("agent_mode.resize_record_panel")}
         aria-valuenow={recordWidth}
-        aria-valuemin={RECORD_WIDTH_MIN}
-        aria-valuemax={RECORD_WIDTH_MAX}
+        aria-valuemin={clampRecordWidth(0, viewportWidth, scale)}
+        aria-valuemax={clampRecordWidth(Infinity, viewportWidth, scale)}
         tabIndex={0}
         onPointerDown={onSashPointerDown}
         onKeyDown={onSashKeyDown}
@@ -165,4 +177,3 @@ export const AgentMode = forwardRef(function AgentMode(
     </div>
   );
 });
-

@@ -279,7 +279,7 @@ function RenderTargetControl() {
             <span className="min-w-0 truncate">{option.label}</span>
             <span
               data-testid="preview-target-isolated"
-              className="shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase text-amber-200"
+              className="shrink-0 rounded bg-amber-500/20 px-1 text-[length:var(--font-size-fine)] font-semibold uppercase text-amber-200"
             >
               {t("media_pool.groups_isolated")}
             </span>

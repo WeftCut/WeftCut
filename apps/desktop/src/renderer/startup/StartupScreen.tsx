@@ -9,7 +9,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
-import { setLocale, wireAppSettingsStream } from "../settings/appSettingsStore";
+import { setLocale } from "../settings/appSettingsStore";
 import { useNativeMenu } from "../menu/nativeMenu";
 import {
   useShortcuts,
@@ -136,29 +136,14 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       .catch(() => {});
   }, []);
 
-  // The settings panel reads app-level stores that are otherwise only wired
-  // inside the editor (`useAppWiring`). Hydrate them for the dialog's
-  // lifetime so its panes show the persisted values, not the boot defaults.
+  // App preferences are wired at the renderer root. Load dialog-only services
+  // here and refresh shortcuts in case another window changed them.
   useEffect(() => {
     if (!settingsOpen) return;
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await wireAppSettingsStream();
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
     void wireDecodeComponent();
     keybindingsGet()
       .then(setKeybindings)
       .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
   }, [settingsOpen]);
 
   const runProtected = useCallback(

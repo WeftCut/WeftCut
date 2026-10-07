@@ -16,6 +16,7 @@ import {
   Type,
 } from "lucide-react";
 import { getAudioEffect } from "../../shared/audioEffects/catalog";
+import { useUiScale } from "../settings/layoutTheme";
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
@@ -131,7 +132,7 @@ function AudioSyncBadge({ layerId, locked }: { layerId: string; locked: boolean 
     <span
       data-testid="audio-sync-offset-badge"
       style={{ right: locked ? 20 : undefined }}
-      className="pointer-events-none absolute bottom-1 right-1 z-[4] rounded bg-sky-600/90 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
+      className="pointer-events-none absolute bottom-1 right-1 z-[4] rounded bg-sky-600/90 px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none text-white shadow-sm"
       title={label}
       aria-label={label}
     >
@@ -169,7 +170,7 @@ function GroupMarkerBadge({
       type="button"
       data-testid="group-marker-count-badge"
       style={{ right: locked ? 20 : undefined }}
-      className="absolute bottom-1 right-1 z-[4] flex cursor-pointer items-center gap-0.5 rounded bg-black/45 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm hover:bg-black/65"
+      className="absolute bottom-1 right-1 z-[4] flex cursor-pointer items-center gap-0.5 rounded bg-black/45 px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none text-white shadow-sm hover:bg-black/65"
       title={label}
       aria-label={label}
       // The badge sits inside the block, whose pointerdown selects and arms a
@@ -223,7 +224,7 @@ function LinkTab({
   return (
     <div
       data-testid="link-tab-anchor"
-      className="absolute left-0 bottom-full z-[4] flex max-w-full items-stretch gap-1 rounded-t px-1 py-0.5 text-[10px] font-semibold leading-none text-white"
+      className="absolute left-0 bottom-full z-[4] flex max-w-full items-stretch gap-1 rounded-t px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none text-white"
       style={{
         maxWidth: clipWidthPx,
         backgroundColor: `hsl(${hue} 75% 45% / ${accentAlpha})`,
@@ -704,8 +705,9 @@ export function LayerBlock({
       : label;
 
   const layerWidthPx = Math.max(width, 4);
-  const showLabel = layerWidthPx >= LAYER_LABEL_MIN_PX;
-  const showFullAffordances = layerWidthPx > LAYER_FULL_LABEL_MIN_PX;
+  const uiScale = useUiScale();
+  const showLabel = layerWidthPx >= LAYER_LABEL_MIN_PX * uiScale;
+  const showFullAffordances = layerWidthPx > LAYER_FULL_LABEL_MIN_PX * uiScale;
   const visibleLabel = showFullAffordances ? label : shortLayerLabel(label);
   const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
@@ -858,7 +860,7 @@ export function LayerBlock({
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
         "absolute flex items-center rounded border border-white/10 px-2",
-        "text-[11px] font-semibold text-white select-none cursor-grab",
+        "text-[length:var(--font-size-caption)] font-semibold text-white select-none cursor-grab",
         "shadow-[0_1px_2px_rgba(0,0,0,0.28)] transition-[outline,box-shadow,border-color] duration-75",
         "hover:border-white/20 hover:shadow-[0_2px_5px_rgba(0,0,0,0.36)]",
         sliceClasses,
@@ -1060,7 +1062,7 @@ export function LayerBlock({
       {isDragAnchor && dragInvalidLabel && (
         <span
           data-testid="layer-drag-invalid-badge"
-          className={`pointer-events-none absolute right-1 top-1 z-[4] rounded px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm ${
+          className={`pointer-events-none absolute right-1 top-1 z-[4] rounded px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none text-white shadow-sm ${
             dragValidity === "collision" ? "bg-red-600/90" : "bg-amber-600/90"
           }`}
         >
@@ -1163,20 +1165,22 @@ export function LayerBlock({
             }
           }}
         />
-      ) : showLabel ? (
+      ) : showLabel && sliceHeight >= 10 * uiScale + 2 ? (
         <span
           // Sticky so the label stays readable while scrolling a long clip:
           // it pins just past the sticky track-header column and slides along
           // within the clip until the clip's tail scrolls past it. Content-
           // width (capped) so it can actually slide; clips itself with ellipsis.
-          className="sticky z-[2] flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-gradient-to-r from-black/65 via-black/40 to-transparent py-1 pl-1.5 pr-3 text-[10px] leading-none text-white"
+          className="sticky z-[2] flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-gradient-to-r from-black/65 via-black/40 to-transparent py-1 pl-1.5 pr-3 text-[length:var(--font-size-micro)] leading-none text-white"
           style={{
             left: HEADER_COL_PX + 4,
+            maxHeight: "100%",
+            paddingBlock: Math.max(0, Math.min(4 * uiScale, (sliceHeight - 10 * uiScale - 2) / 2)),
             maxWidth: locked
-              ? `min(calc(100% - ${layer.kind === "Motif" ? 36 : 24}px), ${showFullAffordances ? 240 : 120}px)`
+              ? `min(calc(100% - ${layer.kind === "Motif" ? 36 : 24}px), ${(showFullAffordances ? 240 : 120) * uiScale}px)`
               : showFullAffordances
-              ? "min(calc(100% - 8px), 240px)"
-              : "min(calc(100% - 8px), 120px)",
+              ? "min(calc(100% - 8px), calc(240 * var(--ui-px)))"
+              : "min(calc(100% - 8px), calc(120 * var(--ui-px)))",
           }}
         >
           <span

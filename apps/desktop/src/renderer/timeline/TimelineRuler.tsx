@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUiScale } from "../settings/layoutTheme";
 import { RulerContextMenu } from "./RulerContextMenu";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import { useAnchorFrame } from "../state/playheadProjection";
@@ -139,6 +140,7 @@ export function TimelineRuler({
   /// loop via this callback.
   onScrub: (event: React.PointerEvent) => void;
 }) {
+  const uiScale = useUiScale();
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
   // The strip's own menu: the in/out and marker COMMANDS. A right-click
   // anywhere on the ruler opens it, because the ruler carries no object a menu
@@ -178,8 +180,9 @@ export function TimelineRuler({
         totalSec,
         scrollLeftPx,
         viewportWidthPx,
+        uiScale,
       }),
-    [fpsNum, fpsDen, pxPerSec, totalSec, scrollLeftPx, viewportWidthPx],
+    [fpsNum, fpsDen, pxPerSec, totalSec, scrollLeftPx, viewportWidthPx, uiScale],
   );
 
   return (
@@ -199,7 +202,7 @@ export function TimelineRuler({
          overflow clip is what actually clips it. */}
     <div
       data-testid="timeline-ruler"
-      className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
+      className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[length:var(--font-size-micro)] text-muted-foreground"
       style={{ width: widthPx }}
       onPointerDown={(e) => {
         // This fixed row owns scrubbing. Track selection is mounted in the

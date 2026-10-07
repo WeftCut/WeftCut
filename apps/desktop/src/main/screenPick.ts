@@ -3,6 +3,7 @@ import { app, BrowserWindow, desktopCapturer, ipcMain, screen, systemPreferences
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { hardenWindow, markInternalWindow, userFacingWindows } from './windows';
 import type { ScreenPickReply, ScreenPickRequest, ScreenPickSnapshot } from '../shared/screenPick';
+import { DEFAULT_LAYOUT_THEME, type LayoutTheme } from '../shared/layout-theme';
 
 interface Overlay {
   win: BrowserWindow;
@@ -19,7 +20,7 @@ interface Session {
 }
 
 /** One process-wide session. Sender identity is checked on every IPC operation. */
-export function registerScreenPick(): void {
+export function registerScreenPick(getLayoutTheme: () => LayoutTheme = () => DEFAULT_LAYOUT_THEME): void {
   let current: Session | null = null;
   const alive = (s: Session): boolean => current === s && !s.owner.isDestroyed();
   const ownedOverlay = (sender: WebContents): Overlay | undefined =>
@@ -59,7 +60,7 @@ export function registerScreenPick(): void {
         throw new Error('Display capture is not native resolution');
       }
       frames.push({ display, snapshot: { png: new Uint8Array(source.thumbnail.toPNG()), width: size.width,
-        height: size.height, scaleFactor: display.scaleFactor, hint } });
+        height: size.height, scaleFactor: display.scaleFactor, hint, layoutTheme: getLayoutTheme() } });
     }
     // ALL captures precede ANY overlay display: neither the magnifier nor an
     // earlier display's overlay can contaminate another frozen sample buffer.

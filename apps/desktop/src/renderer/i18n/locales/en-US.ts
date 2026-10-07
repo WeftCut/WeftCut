@@ -1916,6 +1916,16 @@ const enUS = {
     },
   },
   settings: {
+    layout_theme: 'Layout theme',
+    layout_theme_hint: 'Apply preset text sizes and dialog dimensions. Relaxed layouts provide more horizontal room and slightly larger text.',
+    layout_themes: {
+      '1080p-standard': '1080p · Standard',
+      '1080p-wide': '1080p · Relaxed',
+      '2k-standard': '2K (1440p) · Standard',
+      '2k-wide': '2K (1440p) · Relaxed',
+      '4k-standard': '4K · Standard',
+      '4k-wide': '4K · Relaxed',
+    },
     default_text_font: "Default text font",
     default_text_font_hint: "Used for new text clips. Install fonts through your operating system, then restart WeftCut to update the list.",
     heading: "Settings",

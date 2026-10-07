@@ -546,7 +546,7 @@ export function TrackLane({
           data-validity={visibleDropPreview.plan.validity}
           data-start-us={visibleDropPreview.plan.tStartUs}
           data-end-us={visibleDropPreview.plan.tEndUs}
-          className={`media-drop-ghost pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
+          className={`media-drop-ghost pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[length:var(--font-size-micro)] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
             mediaDropInvalid(visibleDropPreview.plan.validity)
               ? "border-red-300 bg-red-500/55"
               : visibleDropPreview.plan.validity === "locked"

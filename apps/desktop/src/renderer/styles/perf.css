@@ -7,8 +7,8 @@
 /* Shared status dot — green nominal, amber when a metric is hot. */
 .perf-dot {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: calc(7 * var(--ui-px));
+  height: calc(7 * var(--ui-px));
   border-radius: 50%;
   background: var(--color-emerald-400);
 }
@@ -22,8 +22,8 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 20px;
+  width: calc(22 * var(--ui-px));
+  height: calc(20 * var(--ui-px));
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -55,15 +55,15 @@
 .perf-titlebar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   flex: 0 0 auto;
   /* This popup keeps the native traffic lights on macOS (windowConfig.ts), so
      the bar must contain them and the title must start clear of them. Both come
      from Chromium's published button geometry (titleBarOverlay) — see
      .app-header in app.css for why that beats a hardcoded inset. The fallbacks
      are the Win/Linux values, where the renderer draws its own caption. */
-  height: max(34px, env(titlebar-area-height, 34px));
-  padding-left: max(12px, env(titlebar-area-x, 12px));
+  height: max(calc(34 * var(--ui-px)), env(titlebar-area-height, calc(34 * var(--ui-px))));
+  padding-left: max(calc(12 * var(--ui-px)), env(titlebar-area-x, calc(12 * var(--ui-px))));
   border-bottom: 1px solid var(--border-soft);
   background: var(--background);
   user-select: none;
@@ -91,7 +91,7 @@
 .perf-hud-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 16px;
+  padding: calc(16 * var(--ui-px));
 }
 
 .perf-hud-window-empty {
@@ -107,15 +107,15 @@
 .perf-dash {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 880px;
+  gap: calc(12 * var(--ui-px));
+  max-width: calc(880 * var(--ui-px));
   margin: 0 auto;
 }
 
 .perf-dash-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
 }
 
 .perf-dash-sub {
@@ -130,12 +130,12 @@
 /* Headline stat tiles. */
 .perf-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(calc(132 * var(--ui-px)), 1fr));
+  gap: calc(8 * var(--ui-px));
 }
 
 .perf-tile {
-  padding: 9px 11px;
+  padding: calc(9 * var(--ui-px)) calc(11 * var(--ui-px));
   border: 1px solid rgba(55, 65, 81, 0.7);
   border-radius: var(--radius-panel);
   background: rgba(17, 24, 39, 0.55);
@@ -148,15 +148,15 @@
 
 .perf-tile-label {
   color: var(--color-gray-500);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .perf-tile-value {
-  margin-top: 4px;
+  margin-top: calc(4 * var(--ui-px));
   color: var(--foreground);
-  font-size: 22px;
+  font-size: var(--font-size-display);
   font-weight: 700;
   line-height: 1.1;
 }
@@ -172,7 +172,7 @@
 }
 
 .perf-tile-meta {
-  margin-top: 4px;
+  margin-top: calc(4 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-micro);
   white-space: nowrap;
@@ -182,16 +182,16 @@
 
 /* Section card. */
 .perf-card {
-  padding: 11px 12px;
+  padding: calc(11 * var(--ui-px)) calc(12 * var(--ui-px));
   border: 1px solid rgba(55, 65, 81, 0.55);
   border-radius: var(--radius-panel);
   background: rgba(17, 24, 39, 0.4);
 }
 
 .perf-card-title {
-  margin-bottom: 9px;
+  margin-bottom: calc(9 * var(--ui-px));
   color: var(--color-gray-500);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -200,12 +200,12 @@
 .perf-spark-wrap {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6 * var(--ui-px));
 }
 
 .perf-spark {
   width: 100%;
-  height: 56px;
+  height: calc(56 * var(--ui-px));
   display: block;
   border-radius: var(--radius-control);
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.5), rgba(15, 23, 42, 0));
@@ -241,7 +241,7 @@
 }
 
 .perf-spark-empty {
-  height: 56px;
+  height: calc(56 * var(--ui-px));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -252,9 +252,9 @@
 .perf-spark-legend {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: calc(10 * var(--ui-px));
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   letter-spacing: 0.04em;
 }
 
@@ -265,9 +265,9 @@
 .perf-spark-key::before {
   content: "";
   display: inline-block;
-  width: 9px;
-  height: 2px;
-  margin-right: 4px;
+  width: calc(9 * var(--ui-px));
+  height: calc(2 * var(--ui-px));
+  margin-right: calc(4 * var(--ui-px));
   vertical-align: middle;
 }
 
@@ -287,15 +287,15 @@
 .perf-meter {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: calc(9 * var(--ui-px));
 }
 
 .perf-meter + .perf-meter {
-  margin-top: 7px;
+  margin-top: calc(7 * var(--ui-px));
 }
 
 .perf-meter-label {
-  flex: 0 0 34px;
+  flex: 0 0 calc(34 * var(--ui-px));
   color: var(--color-gray-500);
   font-size: var(--font-size-micro);
   text-transform: uppercase;
@@ -303,7 +303,7 @@
 
 .perf-meter-track {
   flex: 1 1 auto;
-  height: 8px;
+  height: calc(8 * var(--ui-px));
   border-radius: var(--radius-control);
   background: rgba(2, 6, 23, 0.6);
   overflow: hidden;
@@ -323,7 +323,7 @@
 
 .perf-meter-val {
   flex: 0 0 auto;
-  min-width: 58px;
+  min-width: calc(58 * var(--ui-px));
   text-align: right;
   color: var(--muted-foreground);
   font-size: var(--font-size-micro);
@@ -331,7 +331,7 @@
 
 /* Alert row. */
 .perf-alert {
-  padding: 7px 11px;
+  padding: calc(7 * var(--ui-px)) calc(11 * var(--ui-px));
   border: 1px solid rgba(245, 158, 11, 0.4);
   border-radius: var(--radius-panel);
   background: rgba(120, 53, 15, 0.2);
@@ -347,9 +347,9 @@
 }
 
 .perf-clips th {
-  padding: 0 8px 6px;
+  padding: 0 calc(8 * var(--ui-px)) calc(6 * var(--ui-px));
   color: var(--color-gray-500);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   font-weight: 600;
   letter-spacing: 0.05em;
   text-align: left;
@@ -358,7 +358,7 @@
 }
 
 .perf-clips td {
-  padding: 5px 8px;
+  padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px));
   color: var(--color-gray-300);
   border-bottom: 1px solid rgba(55, 65, 81, 0.28);
   white-space: nowrap;
@@ -384,13 +384,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  height: 16px;
-  padding: 0 5px;
+  min-width: calc(26 * var(--ui-px));
+  height: calc(16 * var(--ui-px));
+  padding: 0 calc(5 * var(--ui-px));
   border: 1px solid rgba(75, 85, 99, 0.8);
   border-radius: var(--radius-control);
   color: var(--color-slate-400);
-  font-size: 9px;
+  font-size: var(--font-size-fine);
   letter-spacing: 0.04em;
 }
 

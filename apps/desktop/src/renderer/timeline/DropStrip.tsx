@@ -479,7 +479,7 @@ export function DropStrip({
       {lit && (
         <div
           data-testid="timeline-drop-strip-hint"
-          className={`pointer-events-none absolute inset-y-0 z-[6] whitespace-nowrap rounded-sm px-1.5 text-[9px] font-semibold ${
+          className={`pointer-events-none absolute inset-y-0 z-[6] whitespace-nowrap rounded-sm px-1.5 text-[length:var(--font-size-fine)] font-semibold ${
             refused ? "bg-red-950/85 text-red-50" : "bg-blue-950/85 text-blue-50"
           }`}
           style={{ left: hintLeftPx, lineHeight: `${DROP_STRIP_HEIGHT_PX}px` }}

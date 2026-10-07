@@ -5,6 +5,8 @@
 //
 // Shared by the dock tab strip and the Quick Actions strip. ADR 0050.
 
+import { useUiScale } from "../settings/layoutTheme";
+
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import {
@@ -25,6 +27,7 @@ export const EDGE_OVERLAY_PX = 24;
 export type EdgeAxis = "horizontal" | "vertical";
 
 export interface EdgeOverflowHandle extends EdgeState {
+  overlaySize: number;
   /// Step one item toward an end; a no-op at that end stop.
   step(toward: "start" | "end"): void;
   /// Lift `item` out from under an end overlay if it has come to rest under one.
@@ -95,6 +98,7 @@ export function useEdgeOverflow(
   axis: EdgeAxis,
   itemSelector?: string,
 ): EdgeOverflowHandle {
+  const overlaySize = EDGE_OVERLAY_PX * useUiScale();
   const [state, setState] = useState<EdgeState>(SETTLED);
   // Compared against before every `setState`: scroll fires at frame rate and
   // the answer changes a handful of times per gesture.
@@ -147,7 +151,7 @@ export function useEdgeOverflow(
       if (!el || !itemSelector) return;
       const view = {
         ...readGeometry(el, axis),
-        overlaySize: EDGE_OVERLAY_PX,
+        overlaySize,
       };
       const target = edgeScrollTarget(
         view,
@@ -156,7 +160,7 @@ export function useEdgeOverflow(
       );
       if (target !== null) scrollTo(el, target);
     },
-    [ref, axis, itemSelector, scrollTo],
+    [ref, axis, itemSelector, scrollTo, overlaySize],
   );
 
   const clearOverlay = useCallback(
@@ -166,13 +170,13 @@ export function useEdgeOverflow(
       const start = axis === "horizontal" ? item.offsetLeft : item.offsetTop;
       const size = axis === "horizontal" ? item.offsetWidth : item.offsetHeight;
       const target = overlayClearTarget(
-        { ...readGeometry(el, axis), overlaySize: EDGE_OVERLAY_PX },
+        { ...readGeometry(el, axis), overlaySize },
         [start, start + size],
       );
       if (target !== null) scrollTo(el, target);
     },
-    [ref, axis, scrollTo],
+    [ref, axis, scrollTo, overlaySize],
   );
 
-  return { ...state, step, clearOverlay };
+  return { ...state, overlaySize, step, clearOverlay };
 }

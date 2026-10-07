@@ -1846,7 +1846,7 @@ export function Timeline({
                   className="relative grid shrink-0" style={{ gridTemplateColumns: `${HEADER_COL_PX}px ${widthPx}px` }}>
                   {trackReorder.drag?.id === track.id && (
                     <div className="pointer-events-none absolute inset-0 z-20 border border-primary bg-primary/10">
-                      <span className="sticky left-1 rounded bg-primary px-2 text-[10px] text-primary-foreground" role="status">
+                      <span className="sticky left-1 rounded bg-primary px-2 text-[length:var(--font-size-micro)] text-primary-foreground" role="status">
                         {t("timeline.track_move_dragging", { name: trackDisplayName(track, tracks, t), count: track.layers.length })}
                       </span>
                     </div>
@@ -1854,7 +1854,7 @@ export function Timeline({
                   {(trackReorder.indicatorGap === index || (index === orderedTracks.length - 1 && trackReorder.indicatorGap === orderedTracks.length)) && (
                     <div data-testid="track-reorder-indicator"
                       className={`pointer-events-none absolute inset-x-0 z-30 border-t-2 border-primary ${trackReorder.indicatorGap === index ? "top-0" : "bottom-0"}`}>
-                      <span className="sticky left-1 rounded bg-primary px-2 text-[10px] text-primary-foreground">
+                      <span className="sticky left-1 rounded bg-primary px-2 text-[length:var(--font-size-micro)] text-primary-foreground">
                         {t(trackReorder.indicatorGap === index ? "timeline.track_move_above" : "timeline.track_move_below", { name: trackDisplayName(track, tracks, t) })}
                       </span>
                     </div>
@@ -2087,7 +2087,7 @@ function BladeCutPreview({
         <div className="absolute -left-1.5 top-0 h-3 w-3 bg-amber-300 shadow-[0_1px_2px_rgba(0,0,0,0.55)] [clip-path:polygon(50%_100%,0_0,100%_0)]" />
       </div>
       <div
-        className="pointer-events-none absolute top-1 z-[6] -translate-x-1/2 whitespace-nowrap rounded-sm border border-amber-200/50 bg-black/80 px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-amber-100 shadow-[0_1px_5px_rgba(0,0,0,0.45)]"
+        className="pointer-events-none absolute top-1 z-[6] -translate-x-1/2 whitespace-nowrap rounded-sm border border-amber-200/50 bg-black/80 px-1.5 py-0.5 font-mono text-[length:var(--font-size-micro)] font-medium leading-none text-amber-100 shadow-[0_1px_5px_rgba(0,0,0,0.45)]"
         style={{ left: labelX }}
         aria-hidden="true"
       >

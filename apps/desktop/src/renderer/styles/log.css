@@ -11,9 +11,9 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 28px; /* sit on top of the status bar */
+  bottom: calc(28 * var(--ui-px)); /* sit on top of the status bar */
   height: 40vh;
-  min-height: 200px;
+  min-height: min(calc(200 * var(--ui-px)), 80vh);
   max-height: 80vh;
   background: var(--popover);
   border-top: 2px solid var(--border-soft);
@@ -31,10 +31,10 @@
   /* The drag-to-resize seam on the console's top edge — see the
      AgentMode width-sash for the pattern. */
   position: absolute;
-  top: -3px;
+  top: calc(-3 * var(--ui-px));
   left: 0;
   right: 0;
-  height: 6px;
+  height: calc(6 * var(--ui-px));
   cursor: ns-resize;
   background: transparent;
   touch-action: none;
@@ -49,22 +49,22 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
   background: var(--surface-raised);
 }
 
 .log-chip-group {
   display: inline-flex;
-  gap: 4px;
-  padding: 2px;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(2 * var(--ui-px));
   border-radius: var(--radius-card);
   background: rgba(148, 163, 184, 0.06);
 }
 
 .log-chip {
-  padding: 3px 10px;
+  padding: calc(3 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted-foreground);
@@ -86,17 +86,17 @@
 /* Skin from .app-input; .log-search keeps only the toolbar layout. */
 .log-search {
   flex: 1;
-  min-width: 160px;
+  min-width: calc(160 * var(--ui-px));
 }
 
 .log-toolbar-actions {
   display: inline-flex;
-  gap: 4px;
+  gap: calc(4 * var(--ui-px));
   margin-left: auto;
 }
 
 .log-action {
-  padding: 3px 10px;
+  padding: calc(3 * var(--ui-px)) calc(10 * var(--ui-px));
   border-radius: var(--radius-control);
   background: transparent;
   border: 1px solid var(--border);
@@ -128,7 +128,7 @@
 .log-console-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: calc(4 * var(--ui-px)) 0;
 }
 
 .log-console-list ul {
@@ -138,7 +138,7 @@
 }
 
 .log-row {
-  padding: 4px 12px;
+  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -157,20 +157,20 @@
 .log-row-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   min-width: 0;
 }
 
 .log-time {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
-  width: 64px;
+  width: calc(64 * var(--ui-px));
   flex-shrink: 0;
 }
 
 .log-level-dot {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--ui-px));
+  height: calc(8 * var(--ui-px));
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -192,7 +192,7 @@
 .log-category-pill,
 .log-source-pill {
   font-size: var(--font-size-micro);
-  padding: 1px 6px;
+  padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px));
   border-radius: 999px;
   flex-shrink: 0;
 }
@@ -225,7 +225,7 @@
 
 .log-op-state {
   font-size: var(--font-size-micro);
-  padding: 1px 6px;
+  padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px));
   border-radius: 8px;
   flex-shrink: 0;
 }
@@ -239,8 +239,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 48px;
-  height: 14px;
+  min-width: calc(48 * var(--ui-px));
+  height: calc(14 * var(--ui-px));
   background: rgba(148, 163, 184, 0.12);
   overflow: hidden;
 }
@@ -263,7 +263,7 @@
   color: var(--foreground);
   border: none;
   border-radius: 8px;
-  padding: 1px 6px;
+  padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px));
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -277,7 +277,7 @@
   border: none;
   color: var(--muted-foreground);
   cursor: pointer;
-  padding: 0 6px;
+  padding: 0 calc(6 * var(--ui-px));
   font-size: var(--font-size-title);
   line-height: 1;
 }
@@ -287,8 +287,8 @@
 }
 
 .log-row-details {
-  margin-top: 4px;
-  padding: 8px 12px;
+  margin-top: calc(4 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
   background: rgba(15, 23, 42, 0.65);
   border-radius: var(--radius-control);
   font-size: var(--font-size-caption);
@@ -296,12 +296,12 @@
 
 .log-op-id {
   color: var(--muted-foreground);
-  margin-bottom: 4px;
+  margin-bottom: calc(4 * var(--ui-px));
 }
 
 .log-op-id code {
   background: rgba(148, 163, 184, 0.12);
-  padding: 0 4px;
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: var(--radius-control);
 }
 
@@ -312,27 +312,27 @@
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-size: var(--font-size-caption);
   color: var(--foreground);
-  max-height: 240px;
+  max-height: calc(240 * var(--ui-px));
   overflow-y: auto;
 }
 
 .log-op-children {
-  margin-top: 4px !important;
-  padding-left: 24px !important;
+  margin-top: calc(4 * var(--ui-px)) !important;
+  padding-left: calc(24 * var(--ui-px)) !important;
   border-left: 2px solid var(--border);
 }
 
 .log-op-children li {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) calc(4 * var(--ui-px));
   font-size: var(--font-size-caption);
 }
 
 .log-empty {
   text-align: center;
-  padding: 24px;
+  padding: calc(24 * var(--ui-px));
   color: var(--muted-foreground);
   font-style: italic;
 }
@@ -341,7 +341,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
+  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
   background: var(--surface-raised);
   font-size: var(--font-size-caption);

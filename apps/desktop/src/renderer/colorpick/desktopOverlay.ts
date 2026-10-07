@@ -3,11 +3,15 @@ import { sampleHex, type FrameBuffer } from './pixel';
 import { createMagnifier, magnifierPosition } from './magnifier';
 import { desktopPoint } from './desktopPoint';
 import './desktopOverlay.css';
+import '../styles/layout-theme.css';
+import { LAYOUT_THEMES, readLayoutTheme } from '../../shared/layout-theme';
 
 const api = (window as unknown as { screenPicker: ScreenPickOverlayApi }).screenPicker;
 
 async function mount(): Promise<void> {
   const data = await api.snapshot();
+  const theme = LAYOUT_THEMES[readLayoutTheme(data.layoutTheme)];
+  document.documentElement.style.setProperty('--layout-font-scale', String(theme.fontScale));
   if (Math.abs(devicePixelRatio - data.scaleFactor) > .01) throw new Error('Display scale changed during capture');
   const bitmap = await createImageBitmap(new Blob([data.png], { type: 'image/png' }));
   const canvas = document.querySelector<HTMLCanvasElement>('#desktop')!;

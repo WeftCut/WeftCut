@@ -42,7 +42,7 @@ export class PixiErrorBoundary extends Component<Props, State> {
             justifyContent: "center",
             background: "var(--secondary)",
             color: "#ffb4b4",
-            font: "13px ui-monospace, monospace",
+            font: "var(--font-size-label) ui-monospace, monospace",
             padding: "16px",
             textAlign: "center",
           }}
@@ -54,7 +54,7 @@ export class PixiErrorBoundary extends Component<Props, State> {
             <div style={{ wordBreak: "break-word" }}>
               {error.name}: {error.message}
             </div>
-            <div style={{ marginTop: 12, fontSize: 11, opacity: 0.5 }}>
+            <div style={{ marginTop: 12, fontSize: "var(--font-size-caption)", opacity: 0.5 }}>
               Reload the editor to retry. If it keeps crashing, the error above
               is the cause.
             </div>

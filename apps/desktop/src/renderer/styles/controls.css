@@ -10,9 +10,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: calc(8 * var(--ui-px));
   min-width: 0;
-  padding: 5px 8px;
+  padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   text-align: left;
   color: var(--foreground);
@@ -55,8 +55,8 @@
 }
 .font-select small { display: block; color: var(--muted-foreground); }
 .font-select-popup {
-  max-height: min(360px, var(--available-height));
-  max-width: min(480px, calc(100vw - 32px));
+  max-height: min(calc(360 * var(--ui-px)), var(--available-height));
+  max-width: min(calc(480 * var(--ui-px)), calc(100vw - calc(32 * var(--ui-px))));
   overflow-y: auto;
 }
 
@@ -72,14 +72,14 @@
   display: flex;
   align-items: center;
   width: 100%;
-  height: 16px;
+  height: calc(16 * var(--ui-px));
   cursor: pointer;
 }
 
 .app-slider-track {
   position: relative;
   width: 100%;
-  height: 4px;
+  height: calc(4 * var(--ui-px));
   background: var(--accent);
   border-radius: 2px;
 }
@@ -93,8 +93,8 @@
 
 .app-slider-thumb {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: calc(12 * var(--ui-px));
+  height: calc(12 * var(--ui-px));
   background: var(--foreground);
   border-radius: 50%;
   outline: none;
@@ -138,12 +138,12 @@
 .app-slider[data-orientation="vertical"] .app-slider-control {
   align-items: stretch;
   justify-content: center;
-  width: 16px;
+  width: calc(16 * var(--ui-px));
   height: auto;
 }
 
 .app-slider[data-orientation="vertical"] .app-slider-track {
-  width: 4px;
+  width: calc(4 * var(--ui-px));
   height: auto;
 }
 
@@ -153,8 +153,8 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  width: 30px;
-  height: 16px;
+  width: calc(30 * var(--ui-px));
+  height: calc(16 * var(--ui-px));
   padding: 0;
   background: var(--secondary);
   border: 1px solid var(--border);
@@ -181,16 +181,16 @@
 
 .app-switch-thumb {
   position: absolute;
-  left: 2px;
-  width: 10px;
-  height: 10px;
+  left: calc(2 * var(--ui-px));
+  width: calc(10 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
   border-radius: 50%;
   background: var(--muted-foreground);
   transition: left var(--transition-fast), background var(--transition-fast);
 }
 
 .app-switch-thumb[data-checked] {
-  left: 16px;
+  left: calc(16 * var(--ui-px));
   background: #fff;
 }
 
@@ -201,8 +201,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--ui-px));
+  height: calc(16 * var(--ui-px));
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -241,7 +241,7 @@
  * top via the call site's own class. */
 .app-input {
   width: 100%;
-  padding: 4px 8px;
+  padding: calc(4 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-body);
   font-family: inherit;
   color: var(--foreground);
@@ -276,7 +276,7 @@
   width: 100%;
 }
 .app-input--clearable {
-  padding-right: 24px;
+  padding-right: calc(24 * var(--ui-px));
 }
 /* The .app-input-clear ✕ is the one clear affordance — Chromium's native
  * search-cancel ✕ would sit right beside it and double it up. */
@@ -289,7 +289,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  padding: calc(2 * var(--ui-px));
   color: var(--muted-foreground);
   background: transparent;
   border: none;
@@ -308,8 +308,8 @@
 }
 /* A numeric value beside a slider leaves the remaining width for dragging. */
 .app-number-field.kf-slider-number {
-  flex: 0 0 64px;
-  width: 64px;
+  flex: 0 0 calc(64 * var(--ui-px));
+  width: calc(64 * var(--ui-px));
   min-width: 0;
 }
 .app-number-group {
@@ -337,7 +337,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: calc(16 * var(--ui-px));
   padding: 0;
   color: var(--muted-foreground);
   background: var(--card);
@@ -350,8 +350,8 @@
 
 /* Color swatch. */
 .app-color-swatch {
-  width: 32px;
-  height: 22px;
+  width: calc(32 * var(--ui-px));
+  height: calc(22 * var(--ui-px));
   padding: 0;
   background: transparent;
   border: 1px solid var(--border);
@@ -374,8 +374,8 @@
  * to be reset here — no utility class can address them, which is why this is a
  * modifier and not a className at the call site. */
 .app-color-swatch--dot {
-  width: 11px;
-  height: 11px;
+  width: calc(11 * var(--ui-px));
+  height: calc(11 * var(--ui-px));
   border: none;
   border-radius: 999px;
 }
@@ -391,14 +391,14 @@
 .app-color-field {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(2 * var(--ui-px));
 }
 .app-color-pick {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--ui-px));
+  height: calc(22 * var(--ui-px));
   padding: 0;
   background: transparent;
   border: 1px solid var(--border);
@@ -421,7 +421,7 @@
   display: inline-flex;
   align-items: center;
   width: auto;
-  padding: 4px 6px;
+  padding: calc(4 * var(--ui-px)) calc(6 * var(--ui-px));
   cursor: text;
 }
 .app-timecode:focus-within {
@@ -450,7 +450,7 @@
   cursor: not-allowed;
 }
 .app-timecode-sep {
-  padding: 0 1px;
+  padding: 0 calc(1 * var(--ui-px));
   color: var(--muted-foreground);
   user-select: none;
 }
