@@ -1927,7 +1927,7 @@ const enUS = {
       '4k-wide': '4K · Relaxed',
     },
     default_text_font: "Default text font",
-    default_text_font_hint: "Used for new text clips. Install fonts through your operating system, then restart WeftCut to update the list.",
+    default_text_font_hint: "The default font when using text. Install fonts through your operating system, then restart WeftCut to update the list.",
     heading: "Settings",
     cat_general: "General",
     cat_project: "Project",
@@ -1937,7 +1937,7 @@ const enUS = {
     cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",
-    startup_heading: "Startup",
+    preferences_heading: "Basics",
     reopen_on_launch: "Auto-open last project",
     reopen_on_launch_hint:
       "When enabled, WeftCut skips the start screen and auto-opens the last used project.",
@@ -2093,12 +2093,11 @@ const enUS = {
     content_qwen3vl_mmproj: "Qwen3-VL vision projector (F16)",
     content_prereq_msvc14:
       "Requires the Microsoft Visual C++ 2015–2022 x64 runtime (usually already installed).",
-    motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:
       "Background-render motif frames to disk. Smoother playback, instant reopen; uses disk space in the project Cache.",
     preview_heading: "Preview",
-    preview_snap_enabled: "Preview snapping",
+    preview_snap_enabled: "Canvas snapping",
     preview_snap_enabled_hint:
       "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold Ctrl to override.",
     preview_snap_strength: "Snap strength",

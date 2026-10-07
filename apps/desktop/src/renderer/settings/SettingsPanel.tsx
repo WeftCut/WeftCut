@@ -259,7 +259,7 @@ export function SettingsPanel({
             className="settings-pane"
           >
             <section className="settings-section">
-              <h3>{t("settings.startup_heading")}</h3>
+              <h3>{t("settings.preferences_heading")}</h3>
               <label className="settings-toggle-row">
                 <AppSwitch
                   checked={reopenOnLaunch === true}
@@ -283,19 +283,22 @@ export function SettingsPanel({
                   </span>
                 </span>
               </label>
-            </section>
-
-            <section className="settings-section">
-              <h3>{t('settings.layout_theme')}</h3>
-              <p className="settings-blurb">{t('settings.layout_theme_hint')}</p>
-              <AppSelect
-                ariaLabel={t('settings.layout_theme')}
-                value={layoutTheme}
-                options={LAYOUT_THEME_IDS.map(value => ({ value, label: t(`settings.layout_themes.${value}`) }))}
-                onValueChange={value => {
-                  if (isLayoutTheme(value)) void setAppSettings({ layout_theme: value }).catch(err => setError(String(err)));
-                }}
-              />
+              <div className="settings-control-row">
+                <span className="settings-toggle-label">{t("settings.layout_theme")}</span>
+                <AppSelect
+                  className="settings-select"
+                  ariaLabel={t("settings.layout_theme")}
+                  value={layoutTheme}
+                  options={LAYOUT_THEME_IDS.map(value => ({ value, label: t(`settings.layout_themes.${value}`) }))}
+                  onValueChange={value => {
+                    if (isLayoutTheme(value)) void setAppSettings({ layout_theme: value }).catch(err => setError(String(err)));
+                  }}
+                />
+              </div>
+              <p className="settings-toggle-hint">{t("settings.layout_theme_hint")}</p>
+              <span className="settings-toggle-label">{t("settings.data_location_heading")}</span>
+              <p className="settings-toggle-hint">{t("settings.data_location_blurb")}</p>
+              <DataLocationSection onError={setError} />
             </section>
 
             <section className="settings-section">
@@ -309,14 +312,6 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <h3>{t("settings.data_location_heading")}</h3>
-              <p className="settings-blurb">
-                {t("settings.data_location_blurb")}
-              </p>
-              <DataLocationSection onError={setError} />
-            </section>
-
-            <section className="settings-section">
               <h3>{t("settings.timeline_heading")}</h3>
               <TimelineWheelSection onError={setError} />
               <EmptyTrackCleanupSection onError={setError} />
@@ -324,13 +319,9 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <h3>{t("settings.motifs_heading")}</h3>
-              <PrebakeSection onError={setError} />
-            </section>
-
-            <section className="settings-section">
               <h3>{t("settings.preview_heading")}</h3>
               <PreviewSection onError={setError} />
+              <PrebakeSection onError={setError} />
               <PreviewSnapSection onError={setError} />
             </section>
           </div>

@@ -1689,8 +1689,8 @@ const zhCN: Resources = {
       '4k-standard': '4K · 标准',
       '4k-wide': '4K · 宽松',
     },
-    default_text_font: "默认文字字体",
-    default_text_font_hint: "用于新建文字片段。请通过操作系统安装字体，然后重启 WeftCut 更新字体列表。",
+    default_text_font: "文字默认字体",
+    default_text_font_hint: "使用文字时的默认字体。请通过操作系统安装字体，然后重启 WeftCut 更新字体列表。",
     heading: "设置",
     cat_general: "通用",
     cat_project: "项目",
@@ -1699,7 +1699,7 @@ const zhCN: Resources = {
     cat_vlm: "视频理解",
     cat_agent: "代理",
     project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
-    startup_heading: "启动",
+    preferences_heading: "基础",
     reopen_on_launch: "自动打开上一个项目",
     reopen_on_launch_hint:
       "开启后将跳过起始页，自动打开最近使用的项目。",
@@ -1846,12 +1846,11 @@ const zhCN: Resources = {
     content_qwen3vl_mmproj: "Qwen3-VL 视觉投影器（F16）",
     content_prereq_msvc14:
       "需要 Microsoft Visual C++ 2015–2022 x64 运行库（通常已随系统安装）。",
-    motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
       "后台渲染 Motif 帧到磁盘，播放更流畅、重开更快；占用项目 Cache 的磁盘空间。",
     preview_heading: "预览",
-    preview_snap_enabled: "启用预览吸附",
+    preview_snap_enabled: "启用画面吸附",
     preview_snap_enabled_hint:
       "在预览中移动或缩放片段时，自动对齐到画面边缘、中线以及其它片段。按住 Ctrl 可临时关闭。",
     preview_snap_strength: "吸附强度",
