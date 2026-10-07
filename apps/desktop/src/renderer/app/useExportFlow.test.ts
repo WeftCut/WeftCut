@@ -8,6 +8,7 @@ import enUS from "../i18n/locales/en-US";
 import { DEFAULT_EXPORT_SETTINGS } from "../render/exportSettings";
 import { ROOT_ID, summaryFixture } from "../testing/summaryFixture";
 import type { LayerSummary, TrackSummary } from "../ipc";
+import type { PreviewSurfaceHandle } from "../preview/PreviewSurface";
 
 // The export's audio-effect gate, at both of the two sites that run it: the
 // audio-only path and the full pipeline. Everything the hook reaches is driven
@@ -176,23 +177,67 @@ function summary(tracks: TrackSummary[]) {
   });
 }
 
-function mount() {
+function mount(previewRef = createRef<PreviewSurfaceHandle>()) {
   return renderHook(() =>
     useExportFlow({
-      previewRef: createRef(),
+      previewRef,
       proxyStateRef: { current: new Map() },
       decodeProbeMemo: { current: new Map() },
     }),
   );
 }
 
-describe("useExportFlow audio-effect gate", () => {
+describe("useExportFlow", () => {
   beforeEach(() => {
     bridge.answers.clear();
     bridge.log.length = 0;
     bridge.handlers.clear();
     bridge.answers.set("ensure_export_audio_conform", () => []);
     bridge.answers.set("audio_fx_snapshot", () => ({}));
+  });
+
+  it.each(['success', 'sink failure', 'worker failure', 'finish failure', 'mux failure'])("keeps preview suspended from sink admission through cleanup: %s", async outcome => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    act(() => { useProjectStore.getState().apply(project); });
+    bridge.answers.set("project_summary", () => project);
+    let suspended = false;
+    const restore = vi.fn(() => { suspended = false; });
+    const previewRef = createRef<PreviewSurfaceHandle>();
+    previewRef.current = {
+      suspendForExport: () => { suspended = true; return restore; },
+      runPixiExport: async () => {
+        expect(suspended).toBe(true);
+        if (outcome === 'worker failure') throw new Error('worker failed');
+        return { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
+      },
+    } as unknown as PreviewSurfaceHandle;
+    bridge.answers.set("export_video_sink_start", () => {
+      // Reproduce the CI ledger: 4 retained preview decoders reserve 764 of
+      // 921 MiB. The encoder cannot acquire its 192 MiB until preview yields.
+      if (!suspended) throw new Error('Resources are busy');
+      if (outcome === 'sink failure') throw new Error('encoder failed');
+    });
+    bridge.answers.set("export_video_sink_finish", () => {
+      expect(suspended).toBe(true);
+      if (outcome === 'finish failure') throw new Error('finish failed');
+    });
+    bridge.answers.set("export_video_sink_cancel", () => { expect(suspended).toBe(true); });
+    bridge.answers.set("mux_export", () => {
+      expect(suspended).toBe(true);
+      if (outcome === 'mux failure') throw new Error('mux failed');
+    });
+    const { result } = mount(previewRef);
+    await act(async () => {
+      await result.current.runExportWithSettings({
+        ...DEFAULT_EXPORT_SETTINGS, encoderEngine: 'native', includeVideo: true,
+        audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false },
+      }, '/out/movie.mp4');
+    });
+    expect(bridge.log).toContain('invoke export_video_sink_start');
+    expect(result.current.exportState?.kind).toBe(outcome === 'success' ? 'complete' : 'error');
+    expect(restore).toHaveBeenCalledOnce();
+    expect(suspended).toBe(false);
   });
 
   it("gates the audio-only export and names the layer and the effect", async () => {

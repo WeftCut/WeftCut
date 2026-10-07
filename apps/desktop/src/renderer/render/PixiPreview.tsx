@@ -259,12 +259,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         compositor.setAnchorTime(t);
         compositor.compositeFrame(t);
       },
+      suspendForExport() {
+        return suspendPreviewForExport(compositorRef.current, engineRef.current);
+      },
       runExport(opts) {
-        return handlePixiExport(
-          opts,
-          compositorRef.current,
-          engineRef.current,
-        );
+        return handlePixiExport(opts);
       },
     }),
     [],
@@ -1013,54 +1012,53 @@ async function handlePixiExport(
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
     decodeRouting?: ExportDecodeRouting;
   },
-  compositor: Compositor | null,
-  engine: PlaybackEngine | null,
 ): Promise<PixiExportResult> {
   const store = useProjectStore.getState();
   const summary = store.summary;
   if (!summary) {
     throw new Error("No project loaded");
   }
-  // Suspend the preview compositor so its VideoDecoder releases the
-  // hardware video-decode slot. The export Worker's decoder otherwise
-  // wedges fighting for the same slot. Engine is paused first so its
-  // rAF loop can't squeeze in another setAnchorTime tick before
-  // suspend takes effect.
+  const result = await runExport({
+    summary,
+    mediaById: store.mediaById,
+    writeChunk: opts.writeChunk,
+    // Conditional spreads: under exactOptionalPropertyTypes an optional
+    // field may be absent but not explicitly `undefined`.
+    ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+    ...(opts.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
+    ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
+    ...(opts.startUs != null ? { startUs: opts.startUs } : {}),
+    ...(opts.endUs != null ? { endUs: opts.endUs } : {}),
+    ...(opts.keyframeIntervalSec != null
+      ? { keyframeIntervalSec: opts.keyframeIntervalSec }
+      : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
+    ...(opts.nativeSinkPixFmt != null
+      ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
+      : {}),
+    ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
+  });
+  const outFpsNum = opts.outputFps?.num ?? rootCompositionOf(summary).fps_num;
+  const outFpsDen = opts.outputFps?.den ?? rootCompositionOf(summary).fps_den;
+  return {
+    framesEncoded: result.framesEncoded,
+    totalFrames: result.totalFrames,
+    fpsNum: outFpsNum,
+    fpsDen: outFpsDen,
+  };
+}
+
+function suspendPreviewForExport(compositor: Compositor | null, engine: PlaybackEngine | null): () => void {
+  // Yield decoder leases before preparation and native encoder admission.
+  // Pause first so rAF cannot create more decoders before suspension.
   const wasPlaying = engine?.isPlayRequested() ?? false;
   engine?.pause();
   compositor?.setSuspended(true);
-
-  try {
-    const result = await runExport({
-      summary,
-      mediaById: store.mediaById,
-      writeChunk: opts.writeChunk,
-      // Conditional spreads: under exactOptionalPropertyTypes an optional
-      // field may be absent but not explicitly `undefined`.
-      ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
-      ...(opts.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
-      ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
-      ...(opts.startUs != null ? { startUs: opts.startUs } : {}),
-      ...(opts.endUs != null ? { endUs: opts.endUs } : {}),
-      ...(opts.keyframeIntervalSec != null
-        ? { keyframeIntervalSec: opts.keyframeIntervalSec }
-        : {}),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-      ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
-      ...(opts.nativeSinkPixFmt != null
-        ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
-        : {}),
-      ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
-    });
-    const outFpsNum = opts.outputFps?.num ?? rootCompositionOf(summary).fps_num;
-    const outFpsDen = opts.outputFps?.den ?? rootCompositionOf(summary).fps_den;
-    return {
-      framesEncoded: result.framesEncoded,
-      totalFrames: result.totalFrames,
-      fpsNum: outFpsNum,
-      fpsDen: outFpsDen,
-    };
-  } finally {
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
     compositor?.setSuspended(false);
     // Force re-init: the engine's rAF loop will re-acquire decoders
     // via ensureClip on its next tick, but kick the compositor once
@@ -1073,5 +1071,5 @@ async function handlePixiExport(
     compositor?.setAnchorTime(t);
     compositor?.compositeFrame(t);
     if (wasPlaying) engine?.play();
-  }
+  };
 }

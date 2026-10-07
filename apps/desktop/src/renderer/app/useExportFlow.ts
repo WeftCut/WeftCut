@@ -287,7 +287,7 @@ export function useExportFlow(deps: {
 
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
-  //   1. PreviewSurface handle suspends the preview compositor and drives
+  //   1. Suspend preview before preparation/encoder admission, then drive
   //      the Worker. Under the native sink the Worker streams raw packed
   //      frames to export_video_sink_write and ffmpeg writes tempVideoPath;
   //      under WebCodecs it streams video-only fMP4 chunks to tempVideoPath.
@@ -308,6 +308,10 @@ export function useExportFlow(deps: {
     async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
     // Name the run for the log mirror before any state can transition.
     exportLog.begin({ output: path, codec: settings.codec });
+    // Idle preview decoders retain leases. Yield before preparation/encoder
+    // admission, and stay suspended through finish, cancellation and mux.
+    const restorePreview = previewRef.current?.suspendForExport();
+    try {
     // ---- No-material guard -----------------------------------------------
     // A video export with nothing visible to render would emit pure black —
     // reject it as "no video material" instead. (Audio emptiness is judged
@@ -893,6 +897,9 @@ export function useExportFlow(deps: {
       kind: "complete",
       payload: { outputPath: path, durationUs },
     });
+    } finally {
+      restorePreview?.();
+    }
     },
     [t, audioFxGate, previewRef, proxyStateRef, decodeProbeMemo, exportLog],
   );

@@ -88,11 +88,22 @@ retain their lease until their frames close. Small diagnostic records preserve
 packet counts, per-source peak credits and capacity-wait time across reuse.
 
 Process-tree resident memory (Electron and native children) is sampled once per
-second through sysinfo on all three OSes. Shared mappings may be counted twice;
+second through sysinfo on all three OSes. Linux thread entries are excluded:
+they share the owning process's RSS and must not each charge it again.
+Shared mappings between separate processes may still be counted twice;
 this is a conservative pressure signal, not unique physical RAM or dedicated
-VRAM usage. Sample failures preserve known pressure. Usage above target or free
+VRAM usage. The same sample reports available system RAM, including reclaimable
+pages; raw free pages (notably on macOS) are not a pressure signal.
+Sample failures preserve known pressure. Usage above target or available
 system memory below 256 MiB closes new admission and halves picture retention.
-Recovery requires usage below 80% of target and free memory above 512 MiB.
+Recovery requires usage below 80% of target and available memory above 512 MiB.
+
+Export suspends preview and releases its idle decoder leases before preparation
+or native encoder admission. Preview resumes after the whole pipeline, including
+sink finish/cancel and finalization, on success or failure. Waiting until the
+export worker starts can deadlock encoder admission behind preview's leases.
+CI uses the same defaults and pressure policy as the app; platform sampling
+errors must not be hidden behind larger test-only budgets or longer timeouts.
 
 Lowering a setting governs new work and safe eviction. Existing resources remain
 charged until released. The app never kills an export or closes a displayed

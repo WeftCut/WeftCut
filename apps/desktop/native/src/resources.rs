@@ -308,15 +308,12 @@ pub fn resources_snapshot() -> String {
 /// Runs off the Electron thread. Parent traversal includes ffmpeg/model children.
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
-pub async fn resources_memory() -> napi::Result<f64> {
+pub async fn resources_memory() -> napi::Result<ResourceMemorySample> {
     tokio::task::spawn_blocking(|| {
-        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+        use sysinfo::{MemoryRefreshKind, ProcessesToUpdate, System};
         let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing().with_memory(),
-        );
+        system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, process_memory_refresh());
         let root = sysinfo::Pid::from_u32(std::process::id());
         if system.process(root).is_none() {
             return Err(napi::Error::from_reason("Process memory unavailable"));
@@ -336,20 +333,98 @@ pub async fn resources_memory() -> napi::Result<f64> {
                 break;
             }
         }
-        Ok(owned
+        let process_mib = owned
             .iter()
             .filter_map(|pid| system.process(*pid))
             .map(|process| process.memory())
             .sum::<u64>() as f64
-            / 1048576.0)
+            / 1048576.0;
+        Ok(ResourceMemorySample {
+            process_mib,
+            // Free pages exclude reclaimable caches (especially on macOS).
+            // Admission needs usable RAM, not the OS's current free-page list.
+            available_mib: system.available_memory() as f64 / 1048576.0,
+        })
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
 }
 
+#[napi(object)]
+pub struct ResourceMemorySample {
+    pub process_mib: f64,
+    pub available_mib: f64,
+}
+
+fn process_memory_refresh() -> sysinfo::ProcessRefreshKind {
+    // Linux tasks share their process's address space. Counting their RSS as
+    // child processes multiplies Electron memory by its number of threads.
+    sysinfo::ProcessRefreshKind::nothing()
+        .with_memory()
+        .without_tasks()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn memory_sampling_excludes_thread_entries() {
+        // sysinfo enables Linux tasks even in ProcessRefreshKind::nothing().
+        // They share process RSS; including them charges it once per thread.
+        assert!(!process_memory_refresh().tasks());
+    }
+    #[tokio::test]
+    async fn memory_sampling_does_not_multiply_rss_by_live_threads() {
+        // Other tests spawn ffmpeg/model children concurrently. Isolate this
+        // process tree so the comparison is about threads, not those jobs.
+        const CHILD: &str = "WEFTCUT_MEMORY_SAMPLE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "resources::tests::memory_sampling_does_not_multiply_rss_by_live_threads",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        // Exercise the sampler itself with an Electron-like threaded process.
+        let barrier = Arc::new(std::sync::Barrier::new(9));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                })
+            })
+            .collect();
+        let sample = resources_memory().await;
+        let mut reference = sysinfo::System::new();
+        let root = sysinfo::Pid::from_u32(std::process::id());
+        reference.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[root]),
+            true,
+            sysinfo::ProcessRefreshKind::nothing()
+                .with_memory()
+                .without_tasks(),
+        );
+        barrier.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let sample = sample.unwrap();
+        let rss_mib = reference.process(root).unwrap().memory() as f64 / 1048576.0;
+        assert!(sample.process_mib > 0.0);
+        // Allow sampling/allocator drift, but never one full RSS per thread.
+        assert!(
+            sample.process_mib < rss_mib * 2.0,
+            "{} vs {rss_mib}",
+            sample.process_mib
+        );
+        assert!(sample.available_mib > 0.0);
+    }
     #[test]
     fn total_admission_survives_limit_reduction_and_double_release() {
         let g = Governor::new();

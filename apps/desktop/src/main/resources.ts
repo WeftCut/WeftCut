@@ -2,13 +2,14 @@ import { createRequire } from 'node:module';
 import type { ResourceAllocation, ResourceStatus } from '../shared/resource-policy';
 import { resourceAllocation, RESOURCE_CAPACITY_EXCEEDED } from '../shared/resource-policy';
 
+interface ResourceMemorySample { processMib: number; availableMib: number }
 interface NativeResources {
   resourcesConfigure(json: string): void;
   resourcesReserve(threads: number, memoryMiB: number): number;
   resourcesRelease(id: number): void;
   resourcesActivity(playing: boolean, pressured: boolean): void;
   resourcesSnapshot(): string;
-  resourcesMemory(): Promise<number>;
+  resourcesMemory(): Promise<ResourceMemorySample>;
   resourcesCacheWritten(immediate: boolean): Promise<void>;
 }
 let native: NativeResources | undefined;
@@ -46,7 +47,7 @@ export function setResourceActivity(playing: boolean, pressured: boolean): void 
 export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads'> {
   return JSON.parse(getNative().resourcesSnapshot());
 }
-export function processTreeMemory(): Promise<number> { return getNative().resourcesMemory(); }
+export function processTreeMemory(): Promise<ResourceMemorySample> { return getNative().resourcesMemory(); }
 export function notifyResourceCacheWrite(): void {
   void native?.resourcesCacheWritten(false).catch(error => console.warn('Cache maintenance could not start', error));
 }
@@ -56,10 +57,10 @@ export function notifyResourceCacheWrite(): void {
 export function createMemoryPressure() {
   let pressured = false;
   return {
-    update(usedMiB: number | null, targetMiB: number, freeMiB: number) {
+    update(usedMiB: number | null, targetMiB: number, availableMiB: number) {
       if (usedMiB !== null) {
-        if (usedMiB > targetMiB || freeMiB < 256) pressured = true;
-        else if (usedMiB < targetMiB * .8 && freeMiB > 512) pressured = false;
+        if (usedMiB > targetMiB || availableMiB < 256) pressured = true;
+        else if (usedMiB < targetMiB * .8 && availableMiB > 512) pressured = false;
       }
       return pressured;
     },

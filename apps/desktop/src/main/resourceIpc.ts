@@ -1,5 +1,4 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
-import os from 'node:os';
 import { resourceAllocation } from '../shared/resource-policy';
 import type { ResourceStatus } from '../shared/resource-policy';
 import { reserveResources, createMemoryPressure, resourceSnapshot, setResourceActivity, processTreeMemory } from './resources';
@@ -65,8 +64,8 @@ export function installResourceIpc() {
     try {
       const memory = await processTreeMemory();
       if (quitting) return;
-      status = { ...resourceSnapshot(), memory_mib: memory, memory_scope: 'process-tree',
-        pressure: pressure.update(memory, resourceAllocation().memory_mib, os.freemem() / 1048576) ? 'constrained' : 'normal' };
+      status = { ...resourceSnapshot(), memory_mib: memory.processMib, available_memory_mib: memory.availableMib, memory_scope: 'process-tree',
+        pressure: pressure.update(memory.processMib, resourceAllocation().memory_mib, memory.availableMib) ? 'constrained' : 'normal' };
       publish();
     } catch { /* Preserve pressure on a failed sample. */ }
     finally { sampling = false; }

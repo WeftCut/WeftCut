@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import os from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -21,7 +22,7 @@ const acquire = (owner: EventEmitter, id = 'lease') => mocks.handles.get('resour
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
   mocks.windows.mockReturnValue([]);
-  mocks.memory.mockResolvedValue(100);
+  mocks.memory.mockResolvedValue({ processMib: 100, availableMib: 2048 });
   mocks.reserve.mockImplementation(() => vi.fn());
   installResourceIpc();
 });
@@ -71,4 +72,31 @@ it('does not publish into destroyed contents or after quit starts', async () => 
   mocks.quit.forEach(fn => fn()); mocks.activity.mockClear();
   await vi.advanceTimersByTimeAsync(2000);
   expect(mocks.activity).not.toHaveBeenCalled();
+});
+it('keeps admission open when host memory is reclaimable despite few free pages', async () => {
+  // macOS CI: ~510 MiB RSS against a 2304 MiB target, 127 MiB free.
+  // A native sample must carry available RAM (including reclaimable pages).
+  const free = vi.spyOn(os, 'freemem').mockReturnValue(127 * 1048576);
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 2048 });
+  try {
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mocks.activity).toHaveBeenLastCalledWith(false, false);
+    expect(mocks.handles.get('resources:status')!({ sender: sender(8) })).toMatchObject({
+      memory_mib: 510, available_memory_mib: 2048, pressure: 'normal',
+    });
+  } finally { free.mockRestore(); }
+});
+it('closes admission for real host pressure and only reopens after recovery', async () => {
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  mocks.memory.mockRejectedValue(new Error('sample unavailable'));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 400 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 2048 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false);
 });

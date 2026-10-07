@@ -72,6 +72,8 @@ export function rendererResourceShare(): number { return rendererShare; }
 
 export interface ResourceStatus {
   memory_mib: number | null;
+  /** Host RAM available for use, including reclaimable pages. */
+  available_memory_mib?: number;
   memory_scope: 'electron' | 'process-tree' | 'unavailable';
   pressure: 'normal' | 'constrained';
   active: number;

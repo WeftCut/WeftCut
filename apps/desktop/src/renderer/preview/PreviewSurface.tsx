@@ -44,6 +44,7 @@ export interface PreviewSurfaceHandle {
   /// Re-resolve every clip's preview source against the live decodability
   /// bridge and re-composite. Delegates to the underlying PixiPreview.
   refreshSources(): void;
+  suspendForExport(): () => void;
   /// Run the Pixi export pipeline. Resolves with the encoded MP4
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
@@ -105,6 +106,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         },
         refreshSources() {
           pixiRef.current?.refreshSources();
+        },
+        suspendForExport() {
+          return pixiRef.current?.suspendForExport() ?? (() => {});
         },
         async runPixiExport(opts) {
           const handle = pixiRef.current;
