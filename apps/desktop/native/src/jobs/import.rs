@@ -309,6 +309,9 @@ impl ImportQueue {
                 } else {
                     None
                 };
+                // This permit covers both copying and hashing. The copy helper
+                // must not acquire another job slot: on a one-slot allocation
+                // that would wait for the very lease held by this caller.
                 let _permit = permit;
                 let copy = copy_to_workspace(&next.source, &next.workspace_root, cancel.clone());
                 tokio::pin!(copy);
@@ -535,10 +538,6 @@ async fn copy_to_workspace(
     if cancel.load(Ordering::Relaxed) {
         return Ok(None);
     }
-    let _resources = tokio::select! {
-        permit = crate::resources::interactive(16) => permit.map_err(anyhow::Error::msg)?,
-        _ = async { while !cancel.load(Ordering::Relaxed) { tokio::time::sleep(std::time::Duration::from_millis(50)).await; } } => return Ok(None),
-    };
     if !source.is_file() {
         anyhow::bail!("source not found: {}", source.display());
     }

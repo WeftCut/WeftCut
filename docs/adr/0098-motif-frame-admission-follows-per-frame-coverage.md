@@ -56,5 +56,7 @@ frames, foreground promotion, background bake progress, seek/disposal and
 project resets. The Electron regression compares partially and completely
 saved 30-second 1080p/60 fps content. Its saved prefix exceeds the 512 MiB L0
 budget; playback crosses that budget while the partial case keeps baking.
-A synthetic read delay makes overlapping admission observable. Those timings
-are a regression gate, not a hardware throughput benchmark.
+A synthetic slow read makes overlapping admission observable. Playback must
+advance beyond the bounded cache without going backwards or capturing saved
+frames. The gate waits for that progress within a hang deadline; frame rate and
+hold times are diagnostic samples, not hardware throughput requirements.

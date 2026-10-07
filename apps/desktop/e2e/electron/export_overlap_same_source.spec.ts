@@ -3,7 +3,7 @@ import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, tmpDir, waitForHook, driveExport, exportSsimFloor, importAndPlaceMedia, placeMediaLayer } from './helpers/driver'
+import { launchApp, newProject, tmpDir, waitForHook, driveExport, exportSsimFloor, importAndPlaceMedia, placeMediaLayer, invokeCmd } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -18,6 +18,9 @@ async function bootProject(page: Page, parentFolder: string, name: string): Prom
     name,
     canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
   })
+  // Two out-of-phase 1080p decoders plus the encoder exceed the automatic
+  // working allowance on a 7 GiB runner. This is a conformance fixture.
+  await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 4096 } } })
   await waitForHook(page, 'exportTimeline')
 }
 

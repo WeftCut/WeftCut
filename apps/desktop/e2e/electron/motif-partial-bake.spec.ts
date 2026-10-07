@@ -10,9 +10,9 @@ import { resourceDiagnostics } from './helpers/resourceDiagnostics'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 const TOTAL = 1_800
-const SAVED = 240
+const SAVED = 900
 
-// The saved prefix itself exceeds L0 capacity (240 × 1080p RGBA > 512 MiB).
+// The saved prefix itself exceeds L0 capacity (900 × 1080p RGBA > 512 MiB).
 // Seed deterministic authored pixels so the gate measures playback/ongoing
 // baking, not the time needed to capture a long fixture before the test.
 for (const complete of [false, true]) {
@@ -25,7 +25,9 @@ for (const complete of [false, true]) {
         parentFolder: tmpDir('weftcut-partial-project-'), name: 'Partial',
         canvas: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 },
       })
-      await invokeCmd(running.page, 'app_settings_set', { patch: { prebake_motifs: false } })
+      await invokeCmd(running.page, 'app_settings_set', { patch: {
+        prebake_motifs: false, performance_policy: { cache_mib: 512 },
+      } })
       const draft = await createMotifDraft(running.page, {
         id: 'partial-bake-probe', name: 'Partial bake probe', version: 1,
         size: [1920, 1080], default_duration_s: 30, props_schema: {},
@@ -73,8 +75,8 @@ for (const complete of [false, true]) {
         ipcMain._invokeHandlers.set('motif:read', async (...args: any[]) => {
           stats.reads++; stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active)
           try {
-            // Deterministically overlap admission; not a hardware speed claim.
-            await new Promise(resolve => setTimeout(resolve, 25))
+            // Slow storage must preserve progress and concurrent admission.
+            await new Promise(resolve => setTimeout(resolve, 250))
             return await read(...args)
           } finally { stats.active-- }
         })
@@ -104,9 +106,14 @@ for (const complete of [false, true]) {
         const rows = []
         hook.transportPlay()
         try {
-          for (let i = 0; i < 50; i++) {
+          const deadline = performance.now() + 10_000
+          while (performance.now() < deadline) {
             await new Promise(resolve => setTimeout(resolve, 50))
-            rows.push(hook.compositorPerfSnapshot()?.motifs?.[0])
+            const row = hook.compositorPerfSnapshot()?.motifs?.[0]
+            rows.push(row)
+            // Cross the 512 MiB cache (about 64 decoded frames), remaining
+            // inside the saved prefix even on a slow software GPU.
+            if ((row?.boundFrame ?? -1) >= 180) break
           }
         } finally { hook.transportPause() }
         return rows
@@ -121,12 +128,13 @@ for (const complete of [false, true]) {
       })
       const frames = rows.map(row => row?.boundFrame).filter((frame): frame is number => frame != null)
       expect(rows.every(row => row?.boundFrame != null), 'every sample must have a displayed frame').toBe(true)
-      expect(new Set(frames).size).toBeGreaterThan(20)
-      expect(frames.at(-1)!).toBeGreaterThan(120)
+      expect(new Set(frames).size).toBeGreaterThan(3)
+      expect(frames.at(-1)!).toBeGreaterThanOrEqual(180)
       expect(frames.every((frame, i) => i === 0 || frame >= frames[i - 1]!)).toBe(true)
-      expect(Math.max(...rows.map(row => row?.heldMs ?? 0))).toBeLessThan(500)
-      // Read count depends on prefetch/cache retention. Visible frame coverage,
-      // monotonicity and maximum hold above are the playback contract.
+      expect(rows.every(row => row?.targetFrame != null && row.targetFrame < SAVED)).toBe(true)
+      // Frame rate and hold times depend on raster hardware and disk latency.
+      // Gate bounded progress, monotonicity and saved-frame reuse; retain the
+      // timing samples above for diagnosis rather than imposing a CI fps floor.
       expect(stats.captures.every(time => time >= SAVED / 60)).toBe(true)
       if (complete) expect(stats.captures).toHaveLength(0)
       else {

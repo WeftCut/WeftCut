@@ -159,7 +159,7 @@ test('trimmed long-GOP export fits the working allowance and preserves source fr
 
 for (const { label, memory, stepUs, expectedFrames } of [
   { label: 'spaced clips', memory: 4096, stepUs: 2_000_000, expectedFrames: 669 },
-  { label: 'rapid cuts', memory: 2304, stepUs: 300_000, expectedFrames: 108 },
+  { label: 'rapid cuts', memory: 4096, stepUs: 300_000, expectedFrames: 108 },
 ]) test(`sequential ${label} release decoder reservations before admitting later clips`, async () => {
   test.setTimeout(240_000)
   const { app, page } = await launchApp()
@@ -177,6 +177,26 @@ for (const { label, memory, stepUs, expectedFrames } of [
       await invokeCmd(page, 'trim_layer', { layerId, edge: 'out', newTUs: startUs + 300_000 })
     }
     await page.evaluate(id => (window as any).__weftcutTest.waitMediaExportReady({ mediaId: id }), first.mediaId)
+    // Track actual decoder leases rather than relying on a process RSS floor
+    // that differs between hardware and software rendering. Twelve retained
+    // decoders still exceed this budget; sequential clips need only one.
+    await app.evaluate(({ ipcMain }) => {
+      const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
+      const leases = new Set<string>()
+      const stats = { peak: 0 }
+      ;(globalThis as any).__sequentialDecoders = stats
+      ipcMain._invokeHandlers.set('resources:acquire', async (event: any, request: any) => {
+        const result = await acquire(event, request)
+        // WebCodecs export reserves 381 MiB for this 1080p fixture; preview
+        // and encoder reservations are smaller.
+        if (request.threads === 0 && request.memoryMiB >= 300) {
+          leases.add(request.id)
+          stats.peak = Math.max(stats.peak, leases.size)
+        }
+        return result
+      })
+      ipcMain.on('resources:release', (_event, id: string) => leases.delete(id))
+    })
     const outputDir = tmpDir('weftcut-sequential-output-')
     const output = path.join(outputDir, 'sequence.mp4')
     const result = await driveExport(page, { outputAbsPath: output, settings: { audio: { include: false }, decodeEngine: 'webcodecs' } }, { hook: 'exportTimeline' })
@@ -184,6 +204,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
     expect(perf.totalFrames).toBe(expectedFrames)
     expect(perf.sources).toHaveLength(12)
+    expect(await app.evaluate(() => (globalThis as any).__sequentialDecoders.peak)).toBe(1)
     if (label === 'rapid cuts') {
       const reference = path.join(outputDir, 'reference.mp4')
       const repeated = spawnSync(process.env.FFMPEG || 'ffmpeg', [
