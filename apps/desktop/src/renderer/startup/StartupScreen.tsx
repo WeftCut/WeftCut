@@ -239,7 +239,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
         >
           <SettingsIcon size={16} strokeWidth={1.5} aria-hidden />
         </button>
-        <button type="button" className="startup-settings-toggle"
+        <button type="button" className="startup-report-toggle"
           onClick={() => setReportOpen(true)} title={t('help.report_issue')} aria-label={t('help.report_issue')}>
           <BugIcon size={16} strokeWidth={1.5} aria-hidden />
         </button>

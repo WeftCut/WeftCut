@@ -354,7 +354,8 @@
  * locale toggle + caption buttons cluster right), so margin-right: auto
  * pins this one to the left edge. Borderless: the icon itself is the
  * button — no pill chrome. */
-.startup-settings-toggle {
+.startup-settings-toggle,
+.startup-report-toggle {
   align-self: center;
   margin-right: auto;
   margin-left: 8px;
@@ -370,13 +371,14 @@
   transition: color var(--transition-fast);
 }
 
-.startup-settings-toggle:hover {
+.startup-settings-toggle:hover,
+.startup-report-toggle:hover {
   color: var(--foreground);
 }
 
 /* Settings and reporting form one left-aligned group. Only the last button
    supplies the flexible gap before the locale picker. */
-.startup-settings-toggle:has(+ .startup-settings-toggle) {
+.startup-settings-toggle:has(+ .startup-report-toggle) {
   margin-right: 0;
 }
 
@@ -754,7 +756,8 @@
 
 .startup-recent-toggle:focus-visible,
 .startup-locale-toggle:focus-visible,
-.startup-settings-toggle:focus-visible {
+.startup-settings-toggle:focus-visible,
+.startup-report-toggle:focus-visible {
   outline: none;
   border-radius: var(--radius-control);
   box-shadow: var(--focus-ring);
