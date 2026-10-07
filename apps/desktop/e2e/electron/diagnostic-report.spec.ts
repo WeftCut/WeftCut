@@ -38,9 +38,15 @@ test('forced termination prompts on restart, exports the previous session and di
   const userDataDir = tmpDir('weftcut-report-abrupt-')
   const first = await launchApp({ userDataDir })
   const closed = first.app.waitForEvent('close')
-  forceCloseApp(first.app)
+  // The cleanup helper sends SIGTERM on POSIX, which lets Electron quit cleanly.
+  // A crash simulation must bypass quit handlers on every platform.
+  if (process.platform === 'win32') forceCloseApp(first.app)
+  else first.app.process().kill('SIGKILL')
   await closed
   await first.app.close().catch(() => {})
+  const sessionsDir = path.join(userDataDir, 'diagnostics-dev')
+  const [session] = fs.readdirSync(sessionsDir)
+  expect(JSON.parse(fs.readFileSync(path.join(sessionsDir, session!, 'session.json'), 'utf8')).closed).toBe(false)
 
   const second = await launchApp({ userDataDir })
   const output = path.join(userDataDir, 'abrupt.zip')
