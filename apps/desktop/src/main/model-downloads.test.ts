@@ -51,6 +51,22 @@ describe("managed model download ownership", () => {
     expect(() => storage.removeContent("unknown-model")).toThrow("Unknown content");
     expect(rm).not.toHaveBeenCalled();
   });
+  it("resolves a linked download root for missing and removed artifacts", () => {
+    const { root, downloads, partials, rm } = setup();
+    const linked = path.join(root, "linked-downloads");
+    fs.symlinkSync(downloads, linked, process.platform === "win32" ? "junction" : "dir");
+    const storage = createModelDownloads({ downloadsDir: linked, partialDir: partials, join: path.join, fs: { rm } } as unknown as ContentDeps);
+    fs.writeFileSync(path.join(partials, "whisper-model-base.part"), "123");
+    expect(storage.downloadedBytes("whisper-model-base")).toBe(3);
+    expect(storage.referencesContent(profile(path.join(linked, "whisper-cpp-runtime", "v1", "run")), "whisper-cpp-runtime")).toBe(true);
+    expect(storage.referencesContent(profile(path.join(downloads, "whisper-cpp-runtime", "v1", "run")), "whisper-cpp-runtime")).toBe(true);
+    const artifact = path.join(downloads, "whisper-model-base");
+    fs.mkdirSync(artifact);
+    fs.writeFileSync(path.join(artifact, "weights"), "12345");
+    expect(storage.downloadedBytes("whisper-model-base")).toBe(8);
+    storage.removeContent("whisper-model-base");
+    expect(storage.downloadedBytes("whisper-model-base")).toBe(0);
+  });
   it("refuses a catalog directory redirected outside the download root", () => {
     const { root, downloads, storage, rm } = setup();
     const outside = path.join(root, "user-files"); fs.mkdirSync(outside);

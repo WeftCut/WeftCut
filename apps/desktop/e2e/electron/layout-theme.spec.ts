@@ -136,6 +136,7 @@ test('header search text fits the 4K relaxed theme', async () => {
 test('layout themes resize typography and portal dialogs, fit a small window and survive restart', async () => {
   const userDataDir = tmpDir('weftcut-layout-theme-');
   const first = await launchApp({ locale: 'zh-CN', userDataDir });
+  const viewport = await first.page.context().newCDPSession(first.page);
   try {
     await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1600, 1000));
     await first.page.locator('.startup-settings-toggle').click();
@@ -158,11 +159,14 @@ test('layout themes resize typography and portal dialogs, fit a small window and
       expect((await invokeCmd<AppSettings>(first.page, 'app_settings_get')).layout_theme).toBe(id);
     }
     // Exercise renderer containment below the native floor as a separate concern.
-    await first.app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0]!;
-      win.setMinimumSize(0, 0);
-      win.setContentSize(1000, 700);
+    // Native move/display events can restore the theme's minimum while a
+    // macOS window is being resized. Emulate the renderer viewport so this
+    // containment check is independent of the native floor tested above.
+    await viewport.send('Emulation.setDeviceMetricsOverride', {
+      width: 1000, height: 700, mobile: false,
+      deviceScaleFactor: await first.page.evaluate(() => devicePixelRatio),
     });
+    await expect.poll(() => first.page.evaluate(() => innerWidth)).toBe(1000);
     await expect.poll(async () => (await dialog.boundingBox())!.width).toBeLessThanOrEqual(1000 - 32);
     const overflow = await dialog.evaluate(el => {
       const content = el.querySelector('.settings-content')!;
@@ -193,6 +197,7 @@ test('layout themes resize typography and portal dialogs, fit a small window and
     expect(form.overflowY).toBe('auto');
     await first.page.screenshot({ path: '../../.scratch/layout-themes/4k-wide-new-project.png' });
   } finally {
+    await viewport.detach();
     await first.app.close();
   }
   const restarted = await launchApp({ locale: 'zh-CN', userDataDir });

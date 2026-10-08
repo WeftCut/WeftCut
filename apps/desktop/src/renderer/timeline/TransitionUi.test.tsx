@@ -638,12 +638,35 @@ describe("chip context menu", () => {
     openChipMenu(container);
     await screen.findByTestId("transition-chip-menu");
 
-    fireEvent.scroll(window);
+    const viewport = screen.getByTestId("timeline-track-viewport");
+    viewport.scrollTop = 20;
+    fireEvent.scroll(viewport);
     await waitFor(() => {
       expect(screen.queryByTestId("transition-chip-menu")).toBeNull();
     });
     // Closing must not have committed anything.
     expect(ipcMocks.updateTransition).not.toHaveBeenCalled();
     expect(ipcMocks.removeTransition).not.toHaveBeenCalled();
+  });
+
+  it("keeps the menu open for a queued notification, menu scrolling and another panel's scroll", async () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    openChipMenu(container);
+    await screen.findByTestId("transition-chip-menu");
+
+    fireEvent.scroll(screen.getByTestId("timeline-track-viewport"));
+    const popup = screen.getByTestId("transition-chip-menu");
+    popup.scrollTop = 20;
+    fireEvent.scroll(popup);
+    const otherPanel = document.createElement("div");
+    document.body.append(otherPanel);
+    try {
+      otherPanel.scrollTop = 20;
+      fireEvent.scroll(otherPanel);
+      expect(screen.getByTestId("transition-chip-menu")).toBeTruthy();
+    } finally { otherPanel.remove(); }
   });
 });

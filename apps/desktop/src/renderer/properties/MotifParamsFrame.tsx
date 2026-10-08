@@ -55,6 +55,7 @@ export function MotifParamsFrame({
   const readOnly = useLayerReadOnly();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<MotifParamsHost | null>(null);
+  const [hostReady, setHostReady] = useState(false);
   const [height, setHeight] = useState(PARAMS_DEFAULT_HEIGHT_PX);
   const revision = useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
 
@@ -91,7 +92,18 @@ export function MotifParamsFrame({
       if (!readOnly || event.data?.type === "motif:resize") host.handleMessage(event);
     };
     window.addEventListener("message", onMessage);
+    // Dockview can mount this portal while its container is still detached.
+    // Navigate only once the frame has a real viewport in the live document.
+    let animationFrame = 0;
+    const attach = () => {
+      const frame = frameRef.current;
+      if (frame?.isConnected && frame.clientWidth > 0 && frame.clientHeight > 0) {
+        setHostReady(true);
+      } else animationFrame = requestAnimationFrame(attach);
+    };
+    animationFrame = requestAnimationFrame(attach);
     return () => {
+      cancelAnimationFrame(animationFrame);
       window.removeEventListener("message", onMessage);
       hostRef.current = null;
       host.dispose();
@@ -112,7 +124,8 @@ export function MotifParamsFrame({
       // Scripts only: no same-origin (the page must not reach the app's DOM),
       // no forms, no popups, no top-navigation.
       sandbox="allow-scripts"
-      src={src}
+      // Keep the initial document blank until the panel attaches its viewport.
+      src={hostReady ? src : undefined}
       title={t("property_panel.props")}
       style={{ height: `${height}px` }}
       onLoad={() => hostRef.current?.sendInit()}

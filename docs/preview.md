@@ -148,11 +148,14 @@ ffmpeg-usable (runtime) ─┘                                    │
 `status` is first-class: `ok` (a `target` is acquirable), `pending` (a probe
 or proxy build is still outstanding), or `unsupported` (no engine can decode
 the chosen source — see [Unsupported](#unsupported)). `key` —
-`${engine}:${source}:${target}` — is the swap identity: it changes only on an
-engine or source flip, so the Compositor's no-flash overlap-swap now fires
-only for the rare `auto` ffmpeg→webcodecs flip or the user's original↔proxy
-switch. A lane change *inside* the Standard engine does not change the key and
-triggers no swap.
+`${engine}:${source}:${target}` — is the swap identity. An engine/source flip
+or an import moving from its external path to the project copy changes it.
+The Compositor retains the old frame while the replacement decodes, alternating
+between the layer's base and `#swap` pool slots. Completion releases the slot
+that actually held the old source; shared media keys include the resolved
+identity so clips switching at different times cannot reuse another target's
+immutable URL. A lane change *inside* the Standard engine does not change the
+key and triggers no swap.
 
 **Engine selection by setting:**
 

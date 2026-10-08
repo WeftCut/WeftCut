@@ -11,7 +11,7 @@
 // Field queries use case-insensitive `.`-separator patterns (e.g. /^bg.color$/i)
 // so they match the label whether it renders as the raw prop key or its
 // Title Case form — the queries pin wiring and commit shape, not label cosmetics.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
@@ -284,13 +284,20 @@ describe("MotifFields commit contract", () => {
 });
 
 describe("MotifFields params-page branch", () => {
+  beforeEach(() => {
+    // jsdom has no layout; give connected frames the browser's viewport size.
+    vi.spyOn(HTMLIFrameElement.prototype, "clientWidth", "get").mockReturnValue(277);
+    vi.spyOn(HTMLIFrameElement.prototype, "clientHeight", "get").mockReturnValue(240);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it("keeps the generated form for a motif with no params page", () => {
     const section = renderMotifPanel();
     expect(section.querySelector("iframe")).toBeNull();
     expect(section.querySelectorAll(".prop-field").length).toBe(5);
   });
 
-  it("embeds the motif's own sandboxed page instead of the form when it ships one", () => {
+  it("embeds the motif's own sandboxed page instead of the form when it ships one", async () => {
     setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
     render(
       <AttributePanel
@@ -308,13 +315,13 @@ describe("MotifFields params-page branch", () => {
     // Scripts only — no `allow-same-origin`, so the page can never reach the
     // app's DOM or its cookies.
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("src")).toMatch(/^motif:\/\/test-props-motif\/params\.html\?v=\d+$/);
+    await waitFor(() => expect(frame.getAttribute("src")).toMatch(/^motif:\/\/test-props-motif\/params\.html\?v=\d+$/));
     // The page owns the whole surface — no generated rows beside it.
     expect(section.querySelectorAll(".prop-field").length).toBe(0);
     expect(updateLayerParams).not.toHaveBeenCalled();
   });
 
-  it("busts the page URL when the catalog revision bumps (watcher hot-reload)", () => {
+  it("busts the page URL when the catalog revision bumps (watcher hot-reload)", async () => {
     setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
     render(
       <AttributePanel
@@ -327,8 +334,37 @@ describe("MotifFields params-page branch", () => {
       />,
     );
     const srcOf = () => screen.getByRole("region", { name: "Props" }).querySelector("iframe")!.getAttribute("src");
+    await waitFor(() => expect(srcOf()).toContain("motif://"));
     const before = srcOf();
     act(() => setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]));
     expect(srcOf()).not.toBe(before);
   });
+
+  it("defers opaque-origin navigation while the Dockview portal is detached", () => {
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(cb => {
+      callbacks.push(cb); return callbacks.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const container = document.createElement("div");
+    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    const view = render(
+      <AttributePanel tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
+        selectedLayerId="layer-m1" onMutated={vi.fn().mockResolvedValue(undefined)}
+        fpsNum={30} fpsDen={1} currentTimeUs={1_000_000} />,
+      { container },
+    );
+    const frame = container.querySelector("iframe")!;
+    try {
+      act(() => callbacks.shift()!(0));
+      expect(frame.isConnected).toBe(false);
+      expect(frame.getAttribute("src")).toBeNull();
+      document.body.append(container);
+      act(() => callbacks.shift()!(0));
+      expect(frame.getAttribute("src")).toContain("motif://test-props-motif/params.html");
+      expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+      expect(updateLayerParams).not.toHaveBeenCalled();
+    } finally { view.unmount(); container.remove(); }
+  });
+
 });

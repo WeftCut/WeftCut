@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -17,12 +18,15 @@ const appCssPath = new URL("../src/renderer/app.css", import.meta.url);
 const rendererPath = fileURLToPath(
   new URL("../src/renderer/", import.meta.url),
 );
+const positionerWrapperPath = fileURLToPath(
+  new URL("../src/renderer/components/PopupPositioner.tsx", import.meta.url),
+);
 
 async function tsxFilesUnder(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      const path = `${directory}/${entry.name}`;
+      const path = join(directory, entry.name);
       if (entry.isDirectory()) return tsxFilesUnder(path);
       return entry.isFile() && entry.name.endsWith(".tsx") ? [path] : [];
     }),
@@ -107,7 +111,18 @@ test("every app popup Positioner stacks above Dockview resize sashes", async () 
   let positionerCount = 0;
   for (const file of rendererFiles) {
     const source = await readFile(file, "utf8");
-    const tags = source.match(/<[A-Za-z]+\.Positioner\b[^>]*>/gs) ?? [];
+    const tags = source.match(/<(?:[A-Za-z]+\.Positioner|App(?:Menu|Select|Popover)Positioner)\b[^>]*>/gs) ?? [];
+    if (file === positionerWrapperPath) {
+      // These delegates inherit className from their callers. Check that the
+      // class is forwarded, then scan every wrapper call site below as well
+      // as raw Base UI Positioners; skipping this file alone loses that guard.
+      assert.equal(tags.length, 3, "expected all three Positioner delegates");
+      for (const tag of tags) {
+        assert.ok(tag.includes("{...props}"), "Positioner delegate must forward its props");
+        assert.ok(!tag.includes("className="), "Positioner delegate must preserve the caller's className");
+      }
+      continue;
+    }
     positionerCount += tags.length;
     if (tags.some((tag) => !tag.includes('className="app-popup-positioner"'))) {
       uncovered.push(file);

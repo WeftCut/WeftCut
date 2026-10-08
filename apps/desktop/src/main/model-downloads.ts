@@ -8,7 +8,17 @@ function within(root: string, file: string): boolean {
   const relative = path.relative(root, file);
   return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
 }
-function real(file: string): string { try { return fs.realpathSync(file); } catch { return path.resolve(file); } }
+function real(file: string): string {
+  const absolute = path.resolve(file);
+  try { return fs.realpathSync(absolute); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = path.dirname(absolute);
+    if (parent === absolute) throw error;
+    // Missing artifacts still inherit the resolved path of their nearest
+    // existing ancestor (including macOS's /var -> /private/var alias).
+    return path.join(real(parent), path.basename(absolute));
+  }
+}
 
 export function createModelDownloads(content: ContentDeps) {
   const root = path.resolve(content.downloadsDir);

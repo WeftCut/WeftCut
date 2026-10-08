@@ -214,7 +214,11 @@ test("a timeline anchor menu stays open while the pointer enters its submenu", a
     await tab.focus();
     await tab.click({ button: "right" });
     await expect(trigger).toBeVisible();
+    // Popup mount/visibility precedes Base UI's queued initial focus. Send
+    // navigation only once the menu owns the keyboard, as a user would.
+    await expect(page.locator(".app-menu-list")).toBeFocused();
     await page.keyboard.press("ArrowDown");
+    await expect(trigger).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(page.locator(".app-menu-list")).toHaveCount(2);
     await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.app-menu-list'))).toBe(true);
@@ -229,7 +233,9 @@ test("a timeline anchor menu stays open while the pointer enters its submenu", a
     await expect(trigger).toBeVisible();
     await timelinePanel(page, groupId)
       .locator('[data-testid="timeline-ruler"]')
-      .click({ position: { x: 120, y: 10 } });
+      // The menu can overlap the ruler near its tab anchor. Use the far end
+      // of the visible time axis so this is actually an outside press.
+      .click({ position: { x: 600, y: 10 } });
     await expect(page.locator(".app-menu-list")).toHaveCount(0);
     await expect(timelinePanel(page, groupId)).toBeVisible();
   } finally {

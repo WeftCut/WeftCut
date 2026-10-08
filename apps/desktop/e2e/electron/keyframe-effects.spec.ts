@@ -103,14 +103,24 @@ test('visual effect keyframes: inspector, timeline editing, navigation, easing, 
       // expanded curve's low-value key can be below the timeline viewport.
       await diamond(firstKeyId).scrollIntoViewIfNeeded()
       const box = (await diamond(firstKeyId).boundingBox())!
+      const border = await diamond(firstKeyId).evaluate(el => {
+        const style = getComputedStyle(el)
+        return { left: parseFloat(style.borderLeftWidth), top: parseFloat(style.borderTopWidth) }
+      })
       // Keep Playwright's stability/hit-target checks: switching inspectors can
       // still move this low-value key after scrollIntoViewIfNeeded returns.
       await diamond(firstKeyId).click({
-        position: { x: box.width * 0.8, y: box.height / 2 }, button,
+        // Playwright adds border widths to this offset from the transformed
+        // bounding box. Without subtracting them the point falls outside the
+        // rotated diamond and hits the transparent curve underneath it.
+        position: { x: box.width * 0.75 - border.left, y: box.height / 2 - border.top }, button,
       })
       await expect(diamond(firstKeyId)).toHaveClass(/is-selected/)
     }
     await clickFirst('right')
+    // Revealing a low-value key scrolls the track viewport, while the
+    // inspector and its tab stay in their dock positions.
+    await expect(panel).toBeInViewport({ ratio: 1 })
     await page.getByTestId('easing-cmd-hold').click()
     await expect.poll(async () => (await firstKeys())[0]?.segment.kind).toBe('Hold')
     await diamond(lastKeyId).scrollIntoViewIfNeeded()

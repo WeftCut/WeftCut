@@ -82,6 +82,7 @@ function injectClip(compositor: Compositor, layerId: string, mediaId: string) {
   clips.set(layerId, {
     layerId,
     key: layerId,
+    sourcePoolKey: layerId,
     mediaId,
     sprite,
     effects,

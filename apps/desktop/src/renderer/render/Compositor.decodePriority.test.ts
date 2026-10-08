@@ -270,4 +270,76 @@ describe("Compositor preview decode priority wiring", () => {
     expect(sessions.get("after-short")?.requestFrameAt).toHaveBeenCalledWith(0);
     compositor.dispose();
   });
+
+  it("keeps the real decode target through a path move and repeated original/proxy switches", () => {
+    const upload = vi.spyOn(VideoClipSprite.prototype, "updateFrame").mockImplementation(function (this: VideoClipSprite) {
+      this.bindExternalTexture(Texture.WHITE);
+    });
+    type Session = DecodeSession & { ring: FrameRing; disposed: boolean; init: SourceHandleInit };
+    const sessions = new Map<string, Session>();
+    const acquired: Session[] = [];
+    const pool: DecoderPool = {
+      acquire(init) {
+        // Match the production pool: an occupied layer slot returns its handle
+        // regardless of the newly requested engine and path.
+        const existing = sessions.get(init.layerId);
+        if (existing) return existing;
+        const ring = new FrameRing();
+        ring.push({ width: 1, height: 1, close: vi.fn() } as unknown as ImageBitmap, 1_000_000, 33_333);
+        const session: Session = {
+          init, mediaId: init.mediaId, ring, disposed: false,
+          ensureReady: async () => {}, requestFrameAt: async () => {},
+          onFirstFrame: cb => cb(),
+          dispose() { this.disposed = true; ring.dispose(); },
+        };
+        sessions.set(init.layerId, session);
+        acquired.push(session);
+        return session;
+      },
+      release(key) { sessions.get(key)?.dispose(); sessions.delete(key); },
+      dispose() { for (const session of sessions.values()) session.dispose(); sessions.clear(); },
+    };
+    let target = { engine: "ffmpeg" as const, source: "original" as const, status: "ok" as const,
+      target: "/incoming.mov", key: "ffmpeg:original:/incoming.mov" } as import("./CompositionNode").ResolvedRendererSource;
+    const compositor = new Compositor({
+      app: { stage: new Container() } as unknown as Application,
+      width: 1920, height: 1080, mode: "preview", pool,
+      resolveSource: () => target, originalAssetUrl: () => null,
+      sourceColor: () => undefined, mediaById: () => undefined,
+    });
+    const repaint = vi.spyOn(compositor, "scheduleRepaint").mockImplementation(() => {});
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    const clearIntervals = vi.spyOn(globalThis, "clearInterval");
+    try {
+      compositor.setProject(summary([video("switching", 0, 2_000_000)]));
+      compositor.compositeFrame(1_000_000);
+      const initial = acquired[0]!;
+      for (const [engine, source, path] of [
+        ["ffmpeg", "original", "/Media/copied.mov"],
+        ["webcodecs", "proxy", "proxy://clip"],
+        ["ffmpeg", "original", "/Media/copied.mov"],
+        ["webcodecs", "proxy", "proxy://clip"],
+      ] as const) {
+        target = { engine, source, target: path, key: `${engine}:${source}:${path}`, status: "ok" };
+        compositor.compositeFrame(1_000_000);
+        expect(sessions.size).toBe(1);
+        const live = [...sessions.values()][0]!;
+        expect(live.init.engine).toBe(engine);
+        expect(engine === "ffmpeg" ? live.init.sourcePath : live.init.proxyAssetUrl).toBe(path);
+        expect(live.disposed).toBe(false);
+        expect(compositor.activeClipProbe("switching")?.builtFromKey).toBe(target.key);
+      }
+      expect(initial.disposed).toBe(true);
+      expect(acquired).toHaveLength(5);
+      expect(intervals).toHaveBeenCalledTimes(4);
+      for (const timer of intervals.mock.results) expect(clearIntervals).toHaveBeenCalledWith(timer.value);
+      compositor.setProject(summary([]));
+      expect(sessions.size).toBe(0);
+      expect(acquired.every(session => session.disposed)).toBe(true);
+    } finally {
+      compositor.dispose(); repaint.mockRestore(); upload.mockRestore();
+      intervals.mockRestore(); clearIntervals.mockRestore();
+    }
+  });
+
 });

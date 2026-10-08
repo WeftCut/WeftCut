@@ -28,10 +28,13 @@ async function redPixels(page: Page): Promise<number> {
   expect(decoded.status, decoded.stderr.toString()).toBe(0);
   let count = 0;
   const width = png.readUInt32BE(16), ratio = width / viewport.width;
+  // This is an area oracle, not a color-fidelity gate (export checks below
+  // cover that). The Mac screenshots encode the red video at (255,24,0) or
+  // P3 (234,51,35); the latter exceeds the old sRGB green <40 cutoff.
   for (let y = Math.ceil(viewport.y * ratio); y < (viewport.y + viewport.h) * ratio; y++) {
     for (let x = Math.ceil(viewport.x * ratio); x < (viewport.x + viewport.w) * ratio; x++) {
       const i = (y * width + x) * 3;
-      if (decoded.stdout[i]! > 200 && decoded.stdout[i + 1]! < 40 && decoded.stdout[i + 2]! < 40) count++;
+      if (decoded.stdout[i]! > 200 && decoded.stdout[i + 1]! < 70 && decoded.stdout[i + 2]! < 60) count++;
     }
   }
   const fit = Math.min(viewport.w / 320, viewport.h / 180) * ratio;
@@ -76,6 +79,9 @@ test('crop: Quick Panel, context menu, drag/cancel, snapping and exported pixels
     await expect(overlay.locator('[data-crop-edge="n"]')).toHaveCSS('cursor', 'ns-resize');
     await expect(overlay.locator('[data-crop-handle="nw"]')).toHaveCSS('cursor', 'nwse-resize');
     const beforeDrag = await redPixels(page);
+    // Positive control: a black/occluded screenshot must fail before the drag
+    // ratio can silently reduce to an impossible 0 < 0 comparison.
+    expect(beforeDrag).toBeGreaterThan(1000);
     await handle.hover();
     const h = await handle.boundingBox();
     if (!h) throw new Error('no crop handle');

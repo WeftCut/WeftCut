@@ -57,7 +57,7 @@ import { MotifSprite } from "./sprite/MotifSprite";
 import type { MotifPlaybackSnapshot } from "./motifs/MotifPlaybackCursor";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
-import { swapKeys } from "./swapKeys";
+import { nextSwapKeys, swapKeys } from "./swapKeys";
 import { isNativeNv12Frame, isTenBitFrame } from "./decoder/decodedFrame";
 import type { Nv12Ingest } from "./nv12/Nv12Ingest";
 import type { TenBitIngest } from "./tenbit/TenBitIngest";
@@ -314,9 +314,11 @@ export interface CompositionNodeInit {
 
 interface ActiveClip {
   layerId: string;
-  /// The pool key this instance's session lives under (`instanceKey`).
+  /// Stable instance key for ingest and the base decoder-pool slot.
   key: string;
   mediaId: string;
+  /// Current decoder-pool slot; alternates between key and key#swap.
+  sourcePoolKey: string;
   source: DecodeSession;
   sprite: VideoClipSprite;
   effects: EffectChain;
@@ -354,7 +356,7 @@ interface ActiveClip {
 /// Keyed in `CompositionNode.swaps` by the clip's real layerId.
 interface SwapState {
   handle: DecodeSession;
-  /// Pool key of the synthetic swap handle (`${key}#swap`).
+  /// Free pool slot being warmed (key or key#swap).
   swapLayerId: string;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the swap handle
   /// is decoding toward. Becomes the clip's `builtFromKey` on completion; the
@@ -1215,6 +1217,7 @@ export class CompositionNode {
       // a held frame rather than a flash to EMPTY while the new
       // decoder warms up), just swap in the fresh source.
       existing.source = source;
+      existing.sourcePoolKey = key;
       existing.builtFromKey = builtFromKey;
       existing.loggedNull = false;
       return existing;
@@ -1224,6 +1227,7 @@ export class CompositionNode {
       layerId: layer.id,
       key,
       mediaId,
+      sourcePoolKey: key,
       source,
       sprite,
       effects: new EffectChain(),
@@ -1258,7 +1262,9 @@ export class CompositionNode {
       if (!inflight.handle.disposed && inflight.key === rs.key) return;
       this.abandonSwap(clip.layerId);
     }
-    const { swapLayerId, swapMediaId } = swapKeys(clip.key, clip.mediaId);
+    const { swapLayerId, swapMediaId } = nextSwapKeys(
+      clip.key, clip.mediaId, clip.sourcePoolKey, rs.key,
+    );
     // Resolve color/start/codec facts against the REAL media (`clip.mediaId`)
     // even though the handle is acquired under the synthetic `swapMediaId`
     // (a proxy preserves source color — `CompositorInit.sourceColor`).
@@ -1285,19 +1291,23 @@ export class CompositionNode {
     });
     const state: SwapState = { handle, swapLayerId, key: rs.key, timer: null, deadline: null };
     this.swaps.set(clip.layerId, state);
-    void handle.ensureReady().catch(() => {
-      this.abandonSwap(clip.layerId);
-    });
     // `onFirstFrame` is one-shot and usually fires on the GOP key (before the
     // target frame), so it can't carry the swap to completion alone. Drive it
     // with a bounded poll that also keeps the swap handle warm against the
     // idle sweeper; a deadline abandons a swap that never produces the frame.
-    const poll = () => this.pollSwap(clip.layerId);
-    handle.onFirstFrame(poll);
+    const poll = () => {
+      if (this.swaps.get(clip.layerId) === state) this.pollSwap(clip.layerId);
+    };
     state.timer = setInterval(poll, 120);
     state.deadline = setTimeout(() => this.abandonSwap(clip.layerId), 8000);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] begin source-swap ${clip.key} → ${rs.key}`);
+    // A warm source can notify synchronously. Install timers first so that
+    // completing inside onFirstFrame clears them rather than leaking a poll.
+    handle.onFirstFrame(poll);
+    void handle.ensureReady().catch(() => {
+      if (this.swaps.get(clip.layerId) === state) this.abandonSwap(clip.layerId);
+    });
   }
 
   /// Poll an in-flight swap: nudge the new handle toward the current frame and
@@ -1335,14 +1345,16 @@ export class CompositionNode {
     }
     if (state.handle.ring.frameAt(srcTUs) == null) return; // lost the frame; wait
     const old = clip.source;
+    const oldPoolKey = clip.sourcePoolKey;
     clip.source = state.handle;
+    clip.sourcePoolKey = state.swapLayerId;
     clip.builtFromKey = state.key;
     this.clearSwapTimers(state);
     this.swaps.delete(layerId);
-    // Release the ORIGINAL handle by its pool key. The swap handle now lives
-    // under `${key}#swap`, referenced by `clip.source` and kept warm by
-    // `anchor`'s per-tick requests.
-    if (!old.disposed) this.host.pool.release(clip.key);
+    // Release the slot that held the old source. Releasing only the initial
+    // key leaks completed swaps and lets the next acquire reuse the wrong
+    // engine/URL while labelling its frames with the new resolver identity.
+    if (!old.disposed) this.host.pool.release(oldPoolKey);
     this.host.scheduleRepaint();
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] completed source-swap ${clip.key} → ${state.key}`);
