@@ -121,6 +121,7 @@ export type ExportRequest =
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;
       /// Pixels arrive in bounded packets, acknowledged after consumption.
+      frameWindows?: Record<string, number> | undefined;
       motifStream: boolean;
       /// 10 ⇒ f16/WebGL2 composite precision. Whether frames go to the native
       /// sink is `nativeSink` below — the two are independent (8-bit native

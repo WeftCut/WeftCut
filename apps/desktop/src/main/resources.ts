@@ -5,6 +5,8 @@ import { resourceAllocation, RESOURCE_CAPACITY_EXCEEDED } from '../shared/resour
 interface ResourceMemorySample { processMib: number; availableMib: number }
 interface NativeResources {
   resourcesConfigure(json: string): void;
+  resourcesPlanExport(options: string, nativeEncoder: boolean): string;
+  resourcesWaitForChange(revision: number): Promise<void>;
   resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
   resourcesRelease(id: number): void;
   resourcesReserveFinalization(): number;
@@ -22,7 +24,15 @@ export function configureResources(allocation: ResourceAllocation): void {
   getNative().resourcesConfigure(JSON.stringify(allocation));
   void getNative().resourcesCacheWritten(true).catch(error => console.warn('Cache maintenance could not start', error));
 }
-export function reserveDecoderResources(path: string): () => void {
+export function decoderResourceMiB(path: string): number {
+  return (createRequire(import.meta.url)('@weftcut/native-decode') as { decodeMemoryMib(path: string): number }).decodeMemoryMib(path);
+}
+export function tryExportPlan(options: number[], nativeEncoder: boolean): import('../shared/export-resources').ExportAdmission {
+  return JSON.parse(getNative().resourcesPlanExport(JSON.stringify(options), nativeEncoder));
+}
+export function waitForResourceChange(revision: number): Promise<void> { return getNative().resourcesWaitForChange(revision); }
+export function releaseResourceId(id: number): void { getNative().resourcesRelease(id); }
+export function reserveDecoderResources(path: string, finalizationId?: number): () => void {
   if (!native) return () => {}; // isolated managers/tests; app bootstrap installs the authority
   const decode = createRequire(import.meta.url)('@weftcut/native-decode') as {
     configureDecodeThreads(threads: number): void; decodeMemoryMib(path: string): number;
@@ -31,7 +41,7 @@ export function reserveDecoderResources(path: string): () => void {
   decode.configureDecodeThreads(threads);
   // Resident decoders retain memory, not an exclusive background execution
   // slot. Per-session thread caps still follow processing effort.
-  return reserveResources(0, decode.decodeMemoryMib(path));
+  return reserveResources(0, decode.decodeMemoryMib(path), finalizationId);
 }
 export function reserveResources(threads: number, memoryMiB: number, finalizationId?: number): () => void {
   if (!native) return () => {};

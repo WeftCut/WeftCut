@@ -11,13 +11,13 @@ export function installMotifFrames(
     if (event.source !== window || event.data?.type !== 'weftcut:motif-frame-port') return
     const port = event.ports[0]
     if (!port) return
-    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; capture?: Record<string, unknown>; control?: MotifCaptureControl }>) => {
+    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; finalizationToken?: string; capture?: Record<string, unknown>; control?: MotifCaptureControl }>) => {
       if (data.control) { ipcRenderer.send('motif:capture-control', data.control); return }
       let frame: StoredMotifFrame | null = null
       let bitmap: ImageBitmap | null = null
       let failed = true
       try {
-        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? { hash: data.hash, frame: data.frame }) as StoredMotifFrame | null
+        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? { hash: data.hash, frame: data.frame, finalizationToken: data.finalizationToken }) as StoredMotifFrame | null
         if (frame?.kind === 'texture') {
           const texture = imported(frame.key)
           if (!texture) throw new Error('Motif texture import missing')

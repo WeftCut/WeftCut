@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+mod export_plan;
+pub use export_plan::interactive_export;
 
 #[derive(Clone, Deserialize)]
 pub struct Limits {
@@ -45,6 +47,8 @@ struct State {
     critical: bool,
     finalizations: HashMap<u32, FinalizationState>,
     production: HashMap<u32, u32>,
+    plans: HashMap<u32, export_plan::ExportPlanState>,
+    revision: u32,
 }
 #[derive(Default)]
 struct FinalizationState {
@@ -77,6 +81,8 @@ impl Governor {
                 critical: false,
                 finalizations: HashMap::new(),
                 production: HashMap::new(),
+                plans: HashMap::new(),
+                revision: 0,
             }),
             changed: Notify::new(),
         })
@@ -94,14 +100,23 @@ impl Governor {
             return Err("Invalid resource allocation".into());
         }
         self.state.lock().unwrap().limits = limits;
-        self.changed.notify_waiters();
+        self.notify_change();
         Ok(())
+    }
+    fn notify_change(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.revision = s.revision.wrapping_add(1);
+        drop(s);
+        self.changed.notify_waiters();
     }
     fn reserve(&self, claim: Claim) -> Option<u32> {
         self.reserve_for(claim, None)
     }
     fn reserve_for(&self, claim: Claim, finalization: Option<u32>) -> Option<u32> {
         let mut s = self.state.lock().unwrap();
+        if let Some(id) = finalization.filter(|id| s.plans.contains_key(id)) {
+            return Self::borrow_export(&mut s, id, claim);
+        }
         let credit = if let Some(id) = finalization {
             let tail = s.finalizations.get(&id)?;
             if tail.running || tail.released || tail.production.is_some() || claim.mib < 64 {
@@ -146,6 +161,11 @@ impl Governor {
     }
     fn release(&self, id: u32) {
         let mut s = self.state.lock().unwrap();
+        if Self::release_export(&mut s, id) {
+            drop(s);
+            self.notify_change();
+            return;
+        }
         if let Some(tail) = s.production.remove(&id) {
             let finalization = s.finalizations.get_mut(&tail).unwrap();
             if finalization.released {
@@ -167,7 +187,7 @@ impl Governor {
         s.finalizations.remove(&id);
         s.leases.remove(&id);
         drop(s);
-        self.changed.notify_waiters();
+        self.notify_change();
     }
     fn reserve_finalization(&self) -> Option<u32> {
         let id = self.reserve(Claim {
@@ -187,6 +207,7 @@ impl Governor {
         id: u32,
     ) -> Result<FinalizationPermit, FinalizationBlocked> {
         let mut s = self.state.lock().unwrap();
+        Self::finish_export_production(&mut s, id)?;
         let reservation = s.finalizations.get(&id).ok_or(FinalizationBlocked::Failed(
             "Export finalization reservation expired",
         ))?;
@@ -257,7 +278,7 @@ impl Governor {
             s.leases.get_mut(&id).unwrap().threads = 0;
         }
         drop(s);
-        self.changed.notify_waiters();
+        self.notify_change();
     }
     fn snapshot(&self) -> Snapshot {
         let s = self.state.lock().unwrap();
@@ -321,7 +342,7 @@ impl Drop for FinalizationWaiting {
             s.waiting -= 1;
             s.finalization_waiting -= 1;
         }
-        self.0.changed.notify_waiters();
+        self.0.notify_change();
     }
 }
 struct Waiting(Arc<Governor>);
@@ -333,6 +354,11 @@ impl Drop for Waiting {
 pub struct Permit {
     governor: Arc<Governor>,
     id: u32,
+}
+impl Permit {
+    pub fn threads(&self) -> u32 {
+        self.governor.state.lock().unwrap().leases[&self.id].threads
+    }
 }
 impl Drop for Permit {
     fn drop(&mut self) {
@@ -493,11 +519,15 @@ pub fn resources_release(id: u32) {
 #[napi]
 pub fn resources_activity(playing: bool, pressured: bool, critical: Option<bool>) {
     let mut s = governor().state.lock().unwrap();
+    let critical = critical.unwrap_or(pressured);
+    if (s.playing, s.pressured, s.critical) == (playing, pressured, critical) {
+        return;
+    }
     s.playing = playing;
     s.pressured = pressured;
-    s.critical = critical.unwrap_or(pressured);
+    s.critical = critical;
     drop(s);
-    governor().changed.notify_waiters();
+    governor().notify_change();
 }
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]

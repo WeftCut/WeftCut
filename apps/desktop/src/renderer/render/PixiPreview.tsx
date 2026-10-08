@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -99,6 +100,7 @@ interface Props {
   // via `previewDecodableOf?.(…) ?? false`.
   previewDecodableOf?: ((mediaId: string) => boolean) | undefined;
   visible?: boolean;
+  exportSuspended?: boolean;
 }
 
 const LOG = "[weftcut/pixi]";
@@ -187,7 +189,7 @@ function sameHostBox(a: HostBox, b: HostBox): boolean {
 }
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
-  { previewDecodableOf, visible = true },
+  { previewDecodableOf, visible = true, exportSuspended = false },
   ref,
 ) {
   const compositorRef = useRef<Compositor | null>(null);
@@ -196,6 +198,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // `handleInit` must not change identity when an always-rendered dock tab
   // flips visibility. Read the current value through a ref at initialization;
   // the visibility effect owns every subsequent transition.
+  const exportSuspendedRef = useRef(exportSuspended);
+  useLayoutEffect(() => {
+    exportSuspendedRef.current = exportSuspended;
+    compositorRef.current?.setSuspended(exportSuspended);
+  }, [exportSuspended]);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const samplerRef = useRef<PreviewSampler | null>(null);
@@ -472,6 +479,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositor.setPlaybackScaleDiv(
         playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
       );
+      // Export can start while PIXI Application is still initializing.
+      compositor.setSuspended(exportSuspendedRef.current);
       compositor.setPresentationVisible(visibleRef.current);
       // Shared initialization above installs the timed present even when this
       // visibility call early-returns for the already-visible initial state.
@@ -1000,6 +1009,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 /// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
+    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
     finalizationToken?: string | undefined;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
@@ -1024,6 +1034,7 @@ async function handlePixiExport(
     mediaById: store.mediaById,
     writeChunk: opts.writeChunk,
     finalizationToken: opts.finalizationToken,
+    resourcePlan: opts.resourcePlan,
     // Conditional spreads: under exactOptionalPropertyTypes an optional
     // field may be absent but not explicitly `undefined`.
     ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),

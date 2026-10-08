@@ -22,6 +22,37 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('cancelling an export during GPU import cannot leave a late resident pool', async () => {
+    const {owner, transport, buffers, pools}=fixture();
+    let finish!: () => void;
+    vi.mocked(sharedTexture.sendSharedTexture).mockImplementationOnce(() => new Promise<void>(resolve => {finish=resolve}));
+    const reading=transport.read(owner,'late',128,128,42);
+    const rejected=expect(reading).rejects.toThrow('superseded');
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    transport.closeExport(owner,42);
+    finish();
+    await rejected;
+    expect(buffers.snapshot().used_bytes).toBe(0);
+    expect(pools[0]!.close).toHaveBeenCalledOnce();
+  });
+  it('keeps export textures in their parent ledger until final references are released', async () => {
+    const { owner, transport, buffers }=fixture();
+    const reserve=vi.spyOn(buffers,'reserve');
+    let finalReference!: () => void;
+    vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(({allReferencesReleased}) => {
+      finalReference=allReferencesReleased!;
+      return {release:vi.fn()} as unknown as ReturnType<typeof sharedTexture.importSharedTexture>;
+    });
+    const frame=await transport.read(owner,'export',128,128,42);
+    expect(reserve).toHaveBeenCalledWith('motif',128*128*4,42);
+    transport.release(owner,frame.token);
+    transport.closeExport(owner,41);
+    expect(buffers.snapshot().used_bytes).toBe(128*128*4);
+    transport.closeExport(owner,42);
+    expect(buffers.snapshot().used_bytes).toBe(128*128*4);
+    finalReference();
+    expect(buffers.snapshot().used_bytes).toBe(0);
+  });
   it('borrows unused video memory in budget mode while legacy mode retains its own cap', async () => {
     hydratePerformanceSettings({ gpu_buffer_mib: 256, motif_gpu_mib: 16 }, null, true)
     const { owner, buffers, transport } = fixture()

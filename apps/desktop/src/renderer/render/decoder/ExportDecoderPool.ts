@@ -31,7 +31,7 @@ const REORDER_MARGIN = 16;
 
 // Packets awaiting output, live pictures and copies share this window.
 // Keep headroom over the existing DPB-16 assumption.
-const EXPORT_FRAME_WINDOW = 24;
+import { EXPORT_FRAME_WINDOW, exportDecoderMiB, minimumExportFrames } from "../../../shared/export-resources";
 
 interface RingEntry {
   ptsUs: number;
@@ -352,7 +352,7 @@ export class ExportFrameStore implements FrameStore {
 
 export class ExportSourceHandle implements ExportDecodeSession {
   private releaseResources: (() => void) | null = null;
-  private readonly admittedFrames = EXPORT_FRAME_WINDOW;
+  private readonly admittedFrames: number;
   private pendingPackets = 0;
   private pendingCopies = 0;
   // Outputs can arrive before the worker starts consuming a dispatched range.
@@ -450,6 +450,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   constructor(init: SourceHandleInit) {
+    this.admittedFrames = init.exportFrameWindow ?? EXPORT_FRAME_WINDOW;
+    this.bufferStats.capacityFrames = this.admittedFrames;
     this.mediaId = init.mediaId;
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.sourceColor = init.sourceColor;
@@ -496,9 +498,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // preserves the source's colorimetry).
     this.config = withDefaultColorSpace(config, this.sourceColor);
     if (!this.releaseResources) {
-      const frameBytes = (config.codedWidth ?? 1920) * (config.codedHeight ?? 1080) * (this.tenBitLane ? 8 : 4);
-      // 24 admitted frames plus codec-private/reorder surfaces and context.
-      const release = await acquireRenderResources(64 + frameBytes * (EXPORT_FRAME_WINDOW + REORDER_MARGIN) / 1048576);
+      // Admitted dispatch window plus unchanged codec-private surfaces.
+      if (!Number.isInteger(this.admittedFrames) || this.admittedFrames < minimumExportFrames(config) || this.admittedFrames > EXPORT_FRAME_WINDOW)
+        throw new Error('Invalid export decoder window');
+      const release = await acquireRenderResources(exportDecoderMiB(config.codedWidth ?? 1920, config.codedHeight ?? 1080, this.tenBitLane, this.admittedFrames));
       if (this._disposed) { release(); return; }
       this.releaseResources = release;
     }

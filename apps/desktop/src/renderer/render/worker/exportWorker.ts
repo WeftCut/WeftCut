@@ -433,6 +433,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
             layerId: g.clips[0]!.layerId,
             mediaId: g.mediaId,
             handleKey: g.key,
+            exportFrameWindow: req.frameWindows?.[g.mediaId],
             proxyAssetUrl: url ?? "",
             // The source's real color tags, for original AND proxy decodes (a
             // proxy preserves the source colorimetry; its own colr tag outranks

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   handles: new Map<string, (...args: any[]) => any>(),
   listeners: new Map<string, (...args: any[]) => any>(),
-  quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
+  plan: vi.fn(), wait: vi.fn(), releaseId: vi.fn(), quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
 }));
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: any) => mocks.handles.set(name, fn), on: (name: string, fn: any) => mocks.listeners.set(name, fn) },
@@ -13,11 +13,11 @@ vi.mock('electron', () => ({
 }));
 vi.mock('./resources', async importOriginal => ({
   ...await importOriginal<object>(), reserveResources: mocks.reserve, reserveExportFinalization: mocks.reserveFinalization, setResourceActivity: mocks.activity,
-  processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
+  tryExportPlan: mocks.plan, waitForResourceChange: mocks.wait, releaseResourceId: mocks.releaseId, processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
 }));
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc';
 
-const sender = (id: number) => Object.assign(new EventEmitter(), { id });
+const sender = (id: number) => Object.assign(new EventEmitter(), { id, isDestroyed: () => false, send: vi.fn() });
 const acquire = (owner: EventEmitter, id = 'lease') => mocks.handles.get('resources:acquire')!({ sender: owner }, { id, memoryMiB: 64, threads: 0 });
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
@@ -124,4 +124,45 @@ it('finalization tokens belong to one renderer and expire on release or reload',
   owner.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
   expect(() => resolveExportFinalization(20, 'export-b')).toThrow('expired');
   expect(release).toHaveBeenCalledTimes(2);
+});
+
+const planRequest = { id: 'plan-a', options: [900, 800], nativeEncoder: true };
+it('export plans are owner-scoped and children borrow the same native reservation', async () => {
+  const owner = sender(31);
+  mocks.plan.mockReturnValue({ kind: 'admitted', id: 93, index: 1 });
+  expect(await mocks.handles.get('resources:plan-export')!({ sender: owner }, planRequest)).toBe(1);
+  expect(() => resolveExportFinalization(32, 'plan-a')).toThrow('expired');
+  mocks.handles.get('resources:acquire')!({ sender: owner }, { id:'child', memoryMiB:200, threads:0, finalizationToken:'plan-a' });
+  expect(mocks.reserve).toHaveBeenCalledWith(0,200,93);
+  owner.emit('destroyed');
+  expect(mocks.releaseId).toHaveBeenCalledExactlyOnceWith(93);
+  expect(() => resolveExportFinalization(31,'plan-a')).toThrow('expired');
+});
+it.each(['release', 'destroyed', 'navigation'])('cancels queued admission on %s without retaining a reservation', async action => {
+  const owner=sender(33);
+  mocks.plan.mockReturnValue({kind:'blocked',reason:'busy',requestedMiB:800,availableMiB:0,workMiB:921,revision:4});
+  mocks.wait.mockReturnValue(new Promise(() => {}));
+  const pending=mocks.handles.get('resources:plan-export')!({sender:owner},planRequest);
+  const rejected=expect(pending).rejects.toThrow();
+  expect(mocks.handles.get('resources:status')!({sender:owner}).waiting).toBe(1);
+  if(action==='release') mocks.listeners.get('resources:release')!({sender:owner},'plan-a');
+  else if(action==='navigation') owner.emit('did-start-navigation',{isMainFrame:true,isSameDocument:false});
+  else owner.emit('destroyed');
+  await rejected;
+  expect(mocks.handles.get('resources:status')!({sender:owner}).waiting).toBe(0);
+  expect(mocks.releaseId).not.toHaveBeenCalled();
+  expect(() => resolveExportFinalization(33,'plan-a')).toThrow('expired');
+  owner.emit('destroyed');
+});
+
+it('retires preview texture caches before admission and export pools before returning the parent', async () => {
+  const order: string[]=[];
+  const owner=sender(34);
+  installResourceIpc(undefined,{prepare: () => order.push('preview retired'),retire: () => order.push('export retired')});
+  mocks.plan.mockImplementation(() => {order.push('admitted');return {kind:'admitted',id:94,index:0}});
+  mocks.releaseId.mockImplementation(() => order.push('released'));
+  await mocks.handles.get('resources:plan-export')!({sender:owner},planRequest);
+  mocks.listeners.get('resources:release')!({sender:owner},'plan-a');
+  expect(order).toEqual(['preview retired','admitted','export retired','released']);
+  owner.emit('destroyed');
 });

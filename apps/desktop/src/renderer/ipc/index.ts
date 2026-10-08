@@ -3220,6 +3220,7 @@ export async function logDirPath(): Promise<string | null> {
 /// Arguments for the native-encode video sink. Mirrors `VideoSinkStartArgs`
 /// in `export/videosink.rs` (serde camelCase).
 export interface VideoSinkStartArgs {
+  finalizationToken?: string | undefined;
   width: number;
   height: number;
   fpsNum: number;

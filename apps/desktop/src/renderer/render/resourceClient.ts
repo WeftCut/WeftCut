@@ -60,3 +60,19 @@ export async function reserveExportFinalization(): Promise<{ token?: string; rel
     if (live) { live = false; window.api.resources.release(token); }
   } };
 }
+
+/** Register the wait observer before IPC so an immediate rejection is visible. */
+export async function admitExportResources(plans: import('../../shared/export-resources').ExportResourcePlan[], nativeEncoder: boolean,
+  signal: AbortSignal, waiting: (reason: import('../../shared/export-resources').ResourceWaitReason) => void) {
+  signal.throwIfAborted();
+  const token = crypto.randomUUID();
+  const off = window.api.resources.onExportWaiting(event => { if (event.id === token) waiting(event.reason); });
+  const cancel = () => window.api.resources.release(token);
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    const index = await window.api.resources.planExport({ id: token, options: plans.map(p => p.memoryMiB), nativeEncoder });
+    if (signal.aborted) { cancel(); signal.throwIfAborted(); }
+    let live = true;
+    return { token, plan: plans[index]!, release: () => { if (live) { live = false; cancel(); } } };
+  } finally { off(); signal.removeEventListener('abort', cancel); }
+}

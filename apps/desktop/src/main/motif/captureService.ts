@@ -11,12 +11,13 @@ export interface CaptureRequest extends CaptureArgs {
   coalesceKey?: string
   high?: boolean
   bake?: MotifCacheAddress
+  finalizationToken?: string
 }
 export interface CaptureServiceDeps {
   store: MotifFrameStore
   texture: (args: CaptureArgs, consume: (texture: OffscreenSharedTexture) => Promise<StoredMotifFrame>, key?: string, high?: boolean) => Promise<StoredMotifFrame>
   png: (args: CaptureArgs, key?: string, high?: boolean) => Promise<string>
-  copy: ((owner: WebContents, texture: OffscreenSharedTexture) => Promise<MotifTextureFrame>) | null
+  copy: ((owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null
   setTextureEnabled: (enabled: boolean) => void
   isContentFailure: (args: CaptureArgs, error: unknown) => boolean
@@ -34,10 +35,10 @@ export class MotifCaptureService {
     deps.setTextureEnabled(this.useTexture)
   }
 
-  async capture(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean = () => true): Promise<StoredMotifFrame> {
+  async capture(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean = () => true, finalizationId?: number): Promise<StoredMotifFrame> {
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-    const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576)
-    const { coalesceKey, high, bake, ...args } = request
+    const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576, finalizationId)
+    const { coalesceKey, high, bake, finalizationToken: _token, ...args } = request
     const key = coalesceKey === undefined ? undefined : `${owner.id}:${coalesceKey}`
     // Begin resolving the workspace now, without postponing capture admission:
     // control messages follow it on the same preload IPC sender.
@@ -86,7 +87,7 @@ export class MotifCaptureService {
             // Capture/encoding can finish after a document reload. Such work
             // cannot lease a texture to the new preload on the same WebContents.
             if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-            return { ...await this.deps.copy!(owner, texture), persisted }
+            return { ...await this.deps.copy!(owner, texture, finalizationId), persisted }
           }, key, high)
         } catch (error) {
           if (writeFailed || isResourceCapacityError(error) || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE) || this.deps.isContentFailure(args, error)) throw error

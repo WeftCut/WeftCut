@@ -1395,6 +1395,12 @@ const zhCN: Resources = {
     late_frames_other: "播放期间有 {{count}} 帧渲染超时——渲染循环卡顿",
   },
   export: {
+    plan_resources: "正在检查导出所需资源",
+    wait_resources: "正在等待其他处理任务释放资源",
+    wait_memory: "正在等待可用内存恢复",
+    resource_budget: "即使减少缓冲，当前内存使用目标仍不足以完成此导出。请在设置的“性能”页调高“内存使用目标”后重试。导出质量未被更改。",
+    resource_pressure: "当前可用内存不足。请关闭其他应用，或等待内存恢复后重试。",
+
     title: "导出",
     phase_encode: "编码中",
     starting: "正在启动导出…",

@@ -11,9 +11,9 @@ export function createGpuBufferBudget(limitBytes: () => number) {
   const releases = new Map<GpuBufferLease, () => void>();
   let usedBytes = 0;
   return {
-    reserve(kind: GpuBufferKind, bytes: number): GpuBufferLease | null {
+    reserve(kind: GpuBufferKind, bytes: number, finalizationId?: number): GpuBufferLease | null {
       if (!Number.isSafeInteger(bytes) || bytes <= 0 || usedBytes + bytes > limitBytes()) return null;
-      const release = reserveResources(0, bytes / MIB);
+      const release = reserveResources(0, bytes / MIB, finalizationId);
       const lease = Object.freeze({ kind, bytes });
       releases.set(lease, release);
       leases.add(lease); usedBytes += bytes;

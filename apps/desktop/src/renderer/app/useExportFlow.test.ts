@@ -189,6 +189,9 @@ function mount(previewRef = createRef<PreviewSurfaceHandle>()) {
 
 describe("useExportFlow", () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'api', { configurable: true, value: { resources: {
+      planExport: vi.fn(async () => 0), onExportWaiting: () => () => {}, release: vi.fn(),
+    } } });
     bridge.answers.clear();
     bridge.log.length = 0;
     bridge.handlers.clear();

@@ -1603,6 +1603,12 @@ const enUS = {
       "{{count}} frames late during playback — the render loop stalled",
   },
   export: {
+    plan_resources: "Checking export requirements",
+    wait_resources: "Waiting for other processing to release resources",
+    wait_memory: "Waiting for memory to become available",
+    resource_budget: "This export needs more working memory than the current target allows, even with reduced buffering. Increase the Memory target in Settings > Performance and retry. Export quality has not been changed.",
+    resource_pressure: "Available memory is low. Close other applications or wait for memory to recover, then retry.",
+
     title: "Export",
     phase_encode: "Encoding",
     starting: "Starting export…",

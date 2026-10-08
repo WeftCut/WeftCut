@@ -1,3 +1,4 @@
+import { prepareExportResourcePlans } from '../render/exportResourcePlan';
 import { convertFileSrc } from "@/bridge/ipc";
 import { listen } from "@/bridge/events";
 import { join, tempDir } from "@/bridge/path";
@@ -12,7 +13,7 @@ import { reveal as revealInShell } from "@/bridge/shell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createExportFinalization } from "../render/exportFinalization";
-import { reserveExportFinalization } from "../render/resourceClient";
+import { admitExportResources } from "../render/resourceClient";
 import { createExportLogMirror } from "./exportLog";
 import {
   ensureExportAudioConform,
@@ -316,6 +317,8 @@ export function useExportFlow(deps: {
     runningRef.current = true;
     let cleanup: (() => Promise<void>) | undefined;
     let retained = false;
+    const exportController = new AbortController();
+    const onCancel = () => exportController.abort();
     // Name the run for the log mirror before any state can transition.
     exportLog.begin({ output: path, codec: settings.codec });
     // Idle preview decoders retain leases. Yield before preparation/encoder
@@ -669,6 +672,10 @@ export function useExportFlow(deps: {
     let nativeSink = target.engine === "native";
     let sinkTarget = target.engine === "native" ? target : null;
 
+    setExportState({ kind: "preparing", labels: [t("export.plan_resources")], onCancel });
+    const resourcePlans = await prepareExportResourcePlans({ summary, media: useProjectStore.getState().mediaById,
+      routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
+      outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal });
     let audioProduced = false;
     // Finish audio before video production. Once encoding completes, retry
     // needs only immutable files and cannot accidentally mix a newer timeline.
@@ -679,7 +686,9 @@ export function useExportFlow(deps: {
         sampleRate: settings.audio.sampleRate, channels: settings.audio.channels,
       }, exportRange);
     }
-    const finalizationReservation = await reserveExportFinalization();
+
+    const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal,
+      reason => setExportState({ kind: "preparing", labels: [t(reason === 'host-pressure' || reason === 'pressure' ? "export.wait_memory" : "export.wait_resources")], onCancel }));
     releaseFinalization = finalizationReservation.release;
 
     // Native-sink path: start the native-encode video sink (ffmpeg, frames
@@ -688,6 +697,7 @@ export function useExportFlow(deps: {
     if (nativeSink && sinkTarget) {
       try {
         await exportVideoSinkStart({
+          finalizationToken: finalizationReservation.token,
           width: dims.width,
           height: dims.height,
           fpsNum,
@@ -730,7 +740,7 @@ export function useExportFlow(deps: {
           !isIntermediateCodec(settings.codec) &&
           settings.bitDepth === 8;
         if (
-          canFallBack &&
+          !isResourceCapacityError(msg) && canFallBack &&
           window.confirm(t("export_dialog.native_unavailable_fallback"))
         ) {
           const fallbackOk = await smokeEncode(
@@ -785,8 +795,7 @@ export function useExportFlow(deps: {
     };
 
     const startedAtMs = performance.now();
-    const exportController = new AbortController();
-    const onCancel = () => exportController.abort();
+
     const onProgress = (encoded: number, total: number) => {
       if (total <= 0) return;
       const elapsedSec = (performance.now() - startedAtMs) / 1000;
@@ -831,6 +840,7 @@ export function useExportFlow(deps: {
     try {
       result = await previewRef.current?.runPixiExport({
         finalizationToken: finalizationReservation.token,
+        resourcePlan: finalizationReservation.plan,
         onProgress,
         encoderConfig,
         outputFps: { num: fpsNum, den: fpsDen },
@@ -907,7 +917,7 @@ export function useExportFlow(deps: {
     retained = true;
     await finalization.retry();
     } catch (error) {
-      setExportState({ kind: "error", detail: error instanceof Error ? error.message : String(error) });
+      setExportState(exportController.signal.aborted ? null : { kind: "error", detail: error instanceof Error ? error.message : String(error) });
     } finally {
       if (!retained) await cleanup?.();
       restorePreview?.();

@@ -1,3 +1,4 @@
+import { resourceFailureReason } from '../../shared/export-resources';
 import { useTranslation } from "react-i18next";
 
 import { AppDialog } from "../components/AppDialog";
@@ -81,6 +82,9 @@ export function ExportPanel({
   const retryable = state.kind === "error" && !!state.onRetry;
   const resourceError = state.kind === "error" && isResourceCapacityError(state.detail);
 
+  const resourceReason = state.kind === "error" ? resourceFailureReason(state.detail) : undefined;
+  const resourceMessage = resourceReason === 'budget-too-small' ? 'export.resource_budget'
+    : resourceReason === 'host-pressure' || resourceReason === 'pressure' ? 'export.resource_pressure' : 'export.resource_unavailable';
   let body: React.ReactNode;
   let percent = 0;
   switch (state.kind) {
@@ -139,7 +143,7 @@ export function ExportPanel({
       body = (
         <>
           <p className="export-progress-status error">
-            {resourceError ? t("export.resource_unavailable") : t("export.failed", { detail: state.detail })}
+            {resourceError ? t(resourceMessage) : t("export.failed", { detail: state.detail })}
           </p>
           {retryable && <p className="export-retry-hint">{t("export.retry_hint")}</p>}
           {resourceError && (

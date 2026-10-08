@@ -58,9 +58,10 @@ export function openExportSw(
   path: string,
   outFormat: 'NV12' | 'I420P10',
   creditWindow: number,
+  finalizationId?: number,
 ): ExportSwOpenReply {
   if (sessions.has(sessionId)) throw new Error('Export decoder session already exists')
-  const release = reserveDecoderResources(path)
+  const release = reserveDecoderResources(path, finalizationId)
   try {
   const info = backend.exportSwOpen(sessionId, path, outFormat, creditWindow, (err, msg) => {
     if (err) return
