@@ -88,6 +88,7 @@ type MixerLayout = 'cards' | 'console'
 interface MixerGeometry {
   rootWidth: number
   layout: MixerLayout | 'none'
+  dockReady: boolean
 }
 
 // The dock's right-hand column is a fixed share of the workspace, so the
@@ -222,7 +223,15 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     page.evaluate((selector) => {
       const root = document.querySelector(selector)
       if (!(root instanceof HTMLElement)) throw new Error('the Role Mixer Panel is not mounted')
+      const workspace = document.querySelector('.dock-workspace')?.getBoundingClientRect()
+      const grid = document.querySelector('.weft-dockview .dv-dockview.dv-grid-view')?.getBoundingClientRect()
+      const overlay = root.closest('.dv-render-overlay')?.getBoundingClientRect()
+      const tab = document.querySelector('.weft-dock-tab[data-panel-kind="role-mixer"]')
+      const content = tab?.closest('.dv-groupview')?.querySelector('.dv-content-container')?.getBoundingClientRect()
+      const sameBox = (a: DOMRect | undefined, b: DOMRect | undefined) => !!a && !!b &&
+        Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.width - b.width), Math.abs(a.height - b.height)) <= 1
       return {
+        dockReady: sameBox(grid, workspace) && sameBox(overlay, content),
         // Rounded the way the Panel rounds its own ResizeObserver read, so this
         // is the number its layout threshold is compared against.
         rootWidth: Math.round(root.getBoundingClientRect().width),
@@ -428,7 +437,11 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
   // Resize, then wait for the Panel to have caught up. `setBounds` returns
   // before the renderer is resized, and the Panel's own ResizeObserver runs a
   // frame behind Dockview's relayout — so wait for the viewport to be the size
-  // that was asked for, then for the measured root width to stop moving.
+  // that was asked for, then for BOTH Dockview stages to finish: the grid
+  // reaches the workspace bounds, then its portaled panel reaches the group
+  // content box. Their old sizes can agree and remain stable for many polls
+  // during concurrent window resizes. Compare against the workspace itself,
+  // not the Dockview host, which is also resized asynchronously.
   const resizeAndSettle = async (windowWidth: number): Promise<MixerGeometry> => {
     const contentWidth = await setWindowWidth(windowWidth)
     await expect
@@ -442,8 +455,9 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     await expect
       .poll(
         async () => {
-          const { rootWidth } = await mixerGeometry()
-          stable = rootWidth === previous ? stable + 1 : 0
+          const { rootWidth, layout, dockReady } = await mixerGeometry()
+          const expectedLayout = rootWidth >= CONSOLE_LAYOUT_MIN_WIDTH ? 'console' : 'cards'
+          stable = dockReady && rootWidth === previous && layout === expectedLayout ? stable + 1 : 0
           previous = rootWidth
           return stable
         },
