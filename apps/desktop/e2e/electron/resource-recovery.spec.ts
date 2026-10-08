@@ -6,6 +6,43 @@ import { launchApp, newProject, driveExport, invokeCmd, tmpDir, forceCloseApp, i
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 const media = fileURLToPath(new URL('../fixtures/media/test_1080p_30fps_6s.mp4', import.meta.url))
 
+test('export decoder waits for transient working memory to drain', async ({}, testInfo) => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-decode-admission-'), name: 'Decode admission', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 2304 } } })
+    await app.evaluate(({ ipcMain }, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const handler = ipcMain._invokeHandlers.get('resources:acquire')!
+      const trace = { attempts: 0, before: null as any, released: false }
+      ;(globalThis as any).__decodeAdmissionTrace = trace
+      ipcMain._invokeHandlers.set('resources:acquire', (event: any, request: any) => {
+        if (request.memoryMiB === 381) {
+          if (trace.attempts++ === 0) {
+            // Replay CI's 651 + 381 > 921 MiB rejection using a real lease.
+            const before = JSON.parse(native.resourcesSnapshot())
+            const lease = native.resourcesReserve(0, Math.max(1, 651 - before.reserved_mib))
+            trace.before = JSON.parse(native.resourcesSnapshot())
+            setTimeout(() => { native.resourcesRelease(lease); trace.released = true }, 250)
+          }
+        }
+        return handler(event, request)
+      })
+    }, addon)
+    const result = await driveExport(page, { mediaAbsPath: media,
+      outputAbsPath: path.join(tmpDir('weftcut-decode-admission-out-'), 'out.mp4'),
+      settings: { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: false } } })
+    const trace = await app.evaluate(() => (globalThis as any).__decodeAdmissionTrace)
+    await testInfo.attach('decoder-admission', { body: JSON.stringify({ result, trace }), contentType: 'application/json' })
+    expect(result.done.ok, result.done.error).toBe(true)
+    expect(trace.attempts).toBeGreaterThan(1)
+    expect(trace.before.reserved_mib).toBeGreaterThanOrEqual(651)
+    expect(trace.released).toBe(true)
+    expect(await page.evaluate(() => (window as any).__weftcutExportPerf.totalFrames)).toBe(180)
+  } finally { await app.close() }
+})
+
 test('completed encoding waits for the occupied processing slot before mux', async ({}, testInfo) => {
   const { app, page } = await launchApp()
   try {

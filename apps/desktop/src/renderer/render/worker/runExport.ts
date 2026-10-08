@@ -21,7 +21,7 @@ import { rootCompositionOf } from "../../ipc/compositions";
 import { exportMotifPlanner } from "../exportMotifSource";
 import { motifLayersToBake } from "../exportBake";
 import { MotifFrameProducer } from "./motifStream";
-import { acquireRenderResources, exportBufferBytes } from '../resourceClient';
+import { acquireExportResources, exportBufferBytes } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
@@ -206,7 +206,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // target before either the canvas or worker allocates its buffers.
   const pixelBytes = comp.width * comp.height * (init.bitDepth === 10 ? 8 : 4);
   const motifBufferBytes = hasMotifs ? Math.max(pixelBytes, Math.floor(exportBufferBytes() / 2)) : 0;
-  const releaseResources = await acquireRenderResources(64 + (pixelBytes * 8 + motifBufferBytes) / 1048576, 0, init.finalizationToken);
+  const releaseResources = await acquireExportResources(64 + (pixelBytes * 8 + motifBufferBytes) / 1048576, 0, init.finalizationToken, init.signal);
   let worker: Worker;
   try { init.signal?.throwIfAborted(); worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),
@@ -287,6 +287,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
   return await new Promise<RunExportResult>((resolve, reject) => {
     let disposed = false;
+    const resourceWaits = new AbortController();
     const workerResources = new Map<string, () => void>();
     const motifProducer = hasMotifs ? new MotifFrameProducer({
       maxBytes: motifBufferBytes,
@@ -367,6 +368,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     const cleanup = () => {
       if (disposed) return;
       disposed = true;
+      resourceWaits.abort();
       motifProducer?.dispose();
       init.signal?.removeEventListener("abort", onAbort);
       offMsg();
@@ -476,7 +478,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       } else if (ev.type === "nd:returnCredit") {
         window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
       } else if (ev.type === 'resource:acquire') {
-        void acquireRenderResources(ev.memoryMiB, ev.threads).then(release => {
+        void acquireExportResources(ev.memoryMiB, ev.threads, undefined, resourceWaits.signal).then(release => {
           if (disposed) { release(); return; }
           workerResources.set(ev.id, release);
           worker.postMessage({ type: 'resource:result', id: ev.id } satisfies ExportRequest);

@@ -1,4 +1,4 @@
-import { resourceAllocation, setRendererResourceShare } from '../../shared/resource-policy';
+import { isResourceCapacityError, resourceAllocation, setRendererResourceShare } from '../../shared/resource-policy';
 
 /** Test/standalone renderers have no bridge. Production always installs it. */
 let workerAcquire: ((memoryMiB: number, threads: number) => Promise<() => void>) | null = null;
@@ -10,6 +10,30 @@ export async function acquireRenderResources(memoryMiB: number, threads = 0, fin
   await window.api.resources.acquire({ id, memoryMiB: Math.max(1, Math.ceil(memoryMiB)), threads, ...(finalizationToken ? { finalizationToken } : {}) });
   let live = true;
   return () => { if (live) { live = false; window.api.resources.release(id); } };
+}
+
+/** Export can race finite background work for memory, just as the native
+ * encoder races it for CPU. Wait without holding another lease or changing
+ * the authority's limits. Preview admission keeps its fail-fast behavior. */
+export async function acquireExportResources(memoryMiB: number, threads = 0, finalizationToken?: string, signal?: AbortSignal): Promise<() => void> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    signal?.throwIfAborted();
+    try {
+      const release = await acquireRenderResources(memoryMiB, threads, finalizationToken);
+      if (signal?.aborted) { release(); signal.throwIfAborted(); }
+      return release;
+    } catch (error) {
+      const remaining = deadline - Date.now();
+      if (!isResourceCapacityError(error) || remaining <= 0 || Math.ceil(memoryMiB) > resourceAllocation().work_mib) throw error;
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(signal!.reason); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, Math.min(100, remaining));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      });
+    }
+  }
 }
 let constrained = false;
 let playing = false;
