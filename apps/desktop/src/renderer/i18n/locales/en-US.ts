@@ -1587,7 +1587,10 @@ const enUS = {
   },
   transport: {
     preparing_audio: "Preparing audio…",
-    audio_failed: "Audio playback failed. Press Play to retry.",
+    audio_failed: "Audio playback failed",
+    retry_playback: "Retry playback",
+    retry_playback_hint: "Press Play to retry.",
+    cancel_playback: "Cancel playback",
     play_pause_hint: "Play / pause",
     to_start_hint: "Jump to start",
     to_end_hint: "Jump to end",

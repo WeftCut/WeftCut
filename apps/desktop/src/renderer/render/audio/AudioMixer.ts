@@ -27,6 +27,7 @@ import {
 } from "./envelope";
 import { buildPanGraph, constantPanGains, panCurves, type PanGraph } from "./panGraph";
 import { ConformSource } from "./conformSource";
+import { audioErrorDetail } from "./audioError";
 import { acquireRenderResources } from '../resourceClient';
 import {
   type ClockAnchor,
@@ -160,15 +161,31 @@ export class AudioMixer {
 
   /// Read/cache PCM before releasing the transport clock. This has no audio
   /// side effects and works for clips ahead of the parked moment as well.
-  async prepare(masterUs: number, lookaheadUs?: number): Promise<void> {
+  /// False means this window was cancelled by our own stop/cache eviction;
+  /// genuine source failures still reject. Cancellation is not a device error.
+  async prepare(masterUs: number, lookaheadUs?: number): Promise<boolean> {
     const epoch = this.preparationEpoch;
-    await this.ready;
-    if (this.disposed || epoch !== this.preparationEpoch) throw new DOMException("Cancelled", "AbortError");
+    try { await this.ready; } catch (error) {
+      if (this.disposed || epoch !== this.preparationEpoch) return false;
+      throw error;
+    }
+    if (this.disposed || epoch !== this.preparationEpoch) return false;
     const chunks = planChunks({ masterUs, anchor: { compUs: masterUs, ctxTime: 0 },
       ctxNow: 0, layerTStartUs: this.layerTStartUs, layerTEndUs: this.layerTEndUs,
       srcInFrame: this.srcInFrame, srcOutFrame: this.srcOutFrame,
       liveChunkStarts: [], lookaheadUs });
-    await Promise.all(chunks.map((c) => this.bufferFor(c.srcStartFrame, c.frames).ready));
+    const prepared = chunks.map((c) => this.bufferFor(c.srcStartFrame, c.frames));
+    let ready: boolean[];
+    try {
+      ready = await Promise.all(prepared.map((entry) => entry.ready.then(() => true).catch((error: unknown) => {
+        if (entry.controller.signal.aborted) return false;
+        throw error;
+      })));
+    } catch (error) {
+      if (this.disposed || epoch !== this.preparationEpoch) return false;
+      throw error;
+    }
+    return !this.disposed && epoch === this.preparationEpoch && ready.every(Boolean);
   }
 
   private bufferFor(start: number, frames: number): PreparedChunk {
@@ -280,6 +297,7 @@ export class AudioMixer {
     this.layerTStartUs = layerTStartUs;
     this.layerTEndUs = layerTEndUs;
     this.roleGainLinear = roleGainLinear;
+    this.preparationEpoch++;
     this.teardown(true);
     this.lastAnchor = null;
     this.deriveFromView();
@@ -360,8 +378,9 @@ export class AudioMixer {
     const source = this.source;
     if (!source) return;
     let buffer: AudioBuffer;
+    let entry: PreparedChunk | undefined;
     try {
-      const entry = this.bufferFor(srcStartFrame, frames);
+      entry = this.bufferFor(srcStartFrame, frames);
       // Prepared starts are synchronous, so every layer can share a future
       // anchor without an extra promise turn between scheduling and start.
       buffer = entry.buffer ?? await entry.ready;
@@ -373,11 +392,11 @@ export class AudioMixer {
       // Failed read = this chunk stays silent; drop the reservation so the
       // next tick retries. Warn once per layer.
       this.liveChunks.delete(srcStartFrame);
+      if (entry?.controller.signal.aborted) return;
       if (!this.readFailedWarned) {
         this.readFailedWarned = true;
         console.warn(
-          `[weftcut/audio] conform read failed for layer ${this.layerId}; chunk muted:`,
-          e,
+          `[weftcut/audio] conform read failed for layer ${this.layerId}; chunk muted: ${audioErrorDetail(e)}`,
         );
       }
       return;
@@ -486,10 +505,7 @@ export class AudioMixer {
     } catch (e) {
       // Overlap rejection here means a scheduling bug upstream — surface
       // it loudly in dev consoles rather than failing silent.
-      const detail =
-        e instanceof DOMException || e instanceof Error
-          ? `${e.name}: ${e.message}`
-          : String(e);
+      const detail = audioErrorDetail(e);
       console.warn(
         `[weftcut/audio] envelope curve scheduling failed for layer ${this.layerId}: ${detail}`,
       );

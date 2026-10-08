@@ -123,10 +123,17 @@ they share the owning process's RSS and must not each charge it again.
 Shared mappings between separate processes may still be counted twice;
 this is a conservative pressure signal, not unique physical RAM or dedicated
 VRAM usage. The same sample reports available system RAM, including reclaimable
-pages; raw free pages (notably on macOS) are not a pressure signal.
-Sample failures preserve known pressure. Usage above target or available
-system memory below 256 MiB closes new admission and halves picture retention.
-Recovery requires usage below 80% of target and available memory above 512 MiB.
+pages; raw free pages (notably on macOS) are not a pressure signal. macOS uses
+checked Mach VM free, inactive and purgeable pages without subtracting compressor
+occupancy. Failed or invalid host queries report unavailable rather than zero.
+Brief sample failures preserve known pressure. Process and host readings expire
+independently after 10 seconds, including while a query is hung; stale results
+are discarded. Expired readings are reported as unavailable and stop contributing
+pressure, while the native reservation ledger continues limiting work.
+Usage above target or available system memory below 256 MiB closes new admission
+and halves picture retention. The app signal recovers below 80% of target; the
+host signal recovers above 512 MiB. Both must recover or expire to reopen admission.
+See [ADR 0106](adr/0106-memory-telemetry-expires-and-macos-counts-reclaimable-pages.md).
 
 Export suspends preview and releases its idle decoder leases before preparation
 or native encoder admission. Preview resumes after the whole pipeline, including

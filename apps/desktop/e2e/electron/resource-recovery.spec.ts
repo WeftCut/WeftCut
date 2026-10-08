@@ -12,6 +12,15 @@ test('export waits for transient working memory before starting production', asy
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-decode-admission-'), name: 'Decode admission', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 2304 } } })
+    const imported = await importAndPlaceMedia(page, { mediaAbsPath: media })
+    await page.evaluate(mediaId => (window as any).__weftcutTest.waitMediaExportReady({ mediaId }), imported.mediaId)
+    // Import's background work shares the CPU ledger. Drain it before testing
+    // that this memory-only competitor cannot start export production early.
+    await expect.poll(() => app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const { cpu_threads, waiting } = JSON.parse(native.resourcesSnapshot())
+      return { cpu_threads, waiting }
+    }, addon)).toEqual({ cpu_threads: 0, waiting: 0 })
     await page.evaluate(() => {
       ;(window as any).__exportWaits = []
       window.api.resources.onExportWaiting(event => (window as any).__exportWaits.push(event))
@@ -31,9 +40,9 @@ test('export waits for transient working memory before starting production', asy
         return handler(event, request)
       })
     }, addon)
-    const result = await driveExport(page, { mediaAbsPath: media,
+    const result = await driveExport(page, {
       outputAbsPath: path.join(tmpDir('weftcut-decode-admission-out-'), 'out.mp4'),
-      settings: { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: false } } })
+      settings: { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: false } } }, { hook: 'exportTimeline' })
     const trace = await app.evaluate(() => (globalThis as any).__decodeAdmissionTrace)
     await testInfo.attach('decoder-admission', { body: JSON.stringify({ result, trace }), contentType: 'application/json' })
     expect(result.done.ok, result.done.error).toBe(true)

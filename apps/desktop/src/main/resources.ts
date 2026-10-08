@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import type { ResourceAllocation, ResourceStatus } from '../shared/resource-policy';
 import { resourceAllocation, RESOURCE_CAPACITY_EXCEEDED } from '../shared/resource-policy';
 
-interface ResourceMemorySample { processMib: number; availableMib: number }
+export interface ResourceMemorySample { processMib: number; availableMib?: number | null }
 interface NativeResources {
   resourcesConfigure(json: string): void;
   resourcesPlanExport(options: string, nativeEncoder: boolean): string;
@@ -68,21 +68,33 @@ export function notifyResourceCacheWrite(): void {
   void native?.resourcesCacheWritten(false).catch(error => console.warn('Cache maintenance could not start', error));
 }
 
-/** Hysteresis is kept separate from sampling so missing telemetry never clears
- * a known pressure state or prevents settings from being saved. */
-export function createMemoryPressure() {
-  let pressured = false;
+/** Keep brief telemetry gaps from toggling admission, but expire each signal
+ * before the 15-second interactive deadline. Reservations still limit work
+ * when OS telemetry is unavailable. Zero is valid; missing/invalid is not. */
+export const MEMORY_SAMPLE_TTL_MS = 10_000;
+export function createMemoryPressure(now: () => number = () => performance.now()) {
+  type Reading = { value: number; at: number };
+  let process: Reading | null = null;
+  let host: Reading | null = null;
+  let appPressure = false;
   let critical = false;
+  const valid = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
   return {
     critical: () => critical,
-    update(usedMiB: number | null, targetMiB: number, availableMiB: number) {
-      if (usedMiB !== null) {
-        if (availableMiB < 256) critical = true;
-        else if (availableMiB > 512) critical = false;
-        if (usedMiB > targetMiB || availableMiB < 256) pressured = true;
-        else if (usedMiB < targetMiB * .8 && availableMiB > 512) pressured = false;
-      }
-      return pressured;
+    readings: () => ({ processMib: process?.value ?? null, availableMib: host?.value ?? null }),
+    update(usedMiB: number | null, targetMiB: number, availableMiB: number | null | undefined) {
+      const at = now();
+      if (valid(usedMiB)) process = { value: usedMiB, at };
+      if (valid(availableMiB)) host = { value: availableMiB, at };
+      if (process && at - process.at >= MEMORY_SAMPLE_TTL_MS) process = null;
+      if (host && at - host.at >= MEMORY_SAMPLE_TTL_MS) host = null;
+      if (!process) appPressure = false;
+      else if (process.value > targetMiB) appPressure = true;
+      else if (process.value < targetMiB * .8) appPressure = false;
+      if (!host) critical = false;
+      else if (host.value < 256) critical = true;
+      else if (host.value > 512) critical = false;
+      return appPressure || critical;
     },
   };
 }

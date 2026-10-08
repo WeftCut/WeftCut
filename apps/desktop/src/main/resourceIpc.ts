@@ -4,7 +4,7 @@ import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourc
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { resourceAllocation } from '../shared/resource-policy';
 import type { ResourceStatus } from '../shared/resource-policy';
-import { reserveResources, reserveExportFinalization, createMemoryPressure, resourceSnapshot, setResourceActivity, processTreeMemory } from './resources';
+import { reserveResources, reserveExportFinalization, createMemoryPressure, MEMORY_SAMPLE_TTL_MS, resourceSnapshot, setResourceActivity, processTreeMemory, type ResourceMemorySample } from './resources';
 
 const finalizationOwners = new Map<number, Map<string, number>>();
 /** Only main translates an owner-scoped token to a native reservation. */
@@ -112,21 +112,33 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
   ipcMain.handle('resources:status', event => { ownerFor(event.sender); return currentStatus(); });
   let sampling = false;
   let lastDiagnostic = 0;
+  const publishMemory = (memory?: ResourceMemorySample) => {
+    const constrained = pressure.update(memory?.processMib ?? null, resourceAllocation().memory_mib, memory?.availableMib);
+    const readings = pressure.readings();
+    status = { ...resourceSnapshot(), memory_mib: readings.processMib, available_memory_mib: readings.availableMib ?? undefined,
+      memory_scope: readings.processMib === null ? 'unavailable' : 'process-tree', pressure: constrained ? 'constrained' : 'normal' };
+    if (Date.now() - lastDiagnostic >= 10_000) {
+      lastDiagnostic = Date.now();
+      onDiagnostic?.({ status: currentStatus(), allocation: resourceAllocation() });
+    }
+    publish();
+  };
   const sample = async () => {
-    if (sampling || quitting) return;
-    sampling = true;
+    if (quitting) return;
+    let ownsQuery = false;
     try {
+      // Age telemetry even while a native query is pending. A failed/hung query
+      // must not retain yesterday's pressure or display it as current usage.
+      publishMemory();
+      if (sampling) return;
+      sampling = true;
+      ownsQuery = true;
+      const startedAt = performance.now();
       const memory = await processTreeMemory();
-      if (quitting) return;
-      status = { ...resourceSnapshot(), memory_mib: memory.processMib, available_memory_mib: memory.availableMib, memory_scope: 'process-tree',
-        pressure: pressure.update(memory.processMib, resourceAllocation().memory_mib, memory.availableMib) ? 'constrained' : 'normal' };
-      if (Date.now() - lastDiagnostic >= 10_000) {
-        lastDiagnostic = Date.now();
-        onDiagnostic?.({ status: currentStatus(), allocation: resourceAllocation() });
-      }
-      publish();
-    } catch { /* Preserve pressure on a failed sample. */ }
-    finally { sampling = false; }
+      if (quitting || performance.now() - startedAt >= MEMORY_SAMPLE_TTL_MS) return;
+      publishMemory(memory);
+    } catch { /* The heartbeat expires old readings without manufacturing zero. */ }
+    finally { if (ownsQuery) sampling = false; }
   };
   const timer = setInterval(sample, 1000); timer.unref(); sample();
   app.once('before-quit', () => { quitting = true; clearInterval(timer); });

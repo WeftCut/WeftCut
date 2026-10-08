@@ -16,6 +16,7 @@ vi.mock('./resources', async importOriginal => ({
   tryExportPlan: mocks.plan, waitForResourceChange: mocks.wait, releaseResourceId: mocks.releaseId, processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
 }));
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc';
+import { MEMORY_SAMPLE_TTL_MS } from './resources';
 
 const sender = (id: number) => Object.assign(new EventEmitter(), { id, isDestroyed: () => false, send: vi.fn() });
 const acquire = (owner: EventEmitter, id = 'lease') => mocks.handles.get('resources:acquire')!({ sender: owner }, { id, memoryMiB: 64, threads: 0 });
@@ -104,6 +105,54 @@ it('closes admission for real host pressure and only reopens after recovery', as
   await vi.advanceTimersByTimeAsync(1000);
   expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
   mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 2048 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
+});
+
+it('expires pressure and reported usage after repeated telemetry failures', async () => {
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
+  mocks.memory.mockRejectedValue(new Error('sample unavailable'));
+  await vi.advanceTimersByTimeAsync(MEMORY_SAMPLE_TTL_MS - 1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
+  const owner = sender(40);
+  expect(mocks.handles.get('resources:status')!({ sender: owner })).toMatchObject({
+    memory_mib: null, available_memory_mib: undefined, memory_scope: 'unavailable', pressure: 'normal',
+  });
+  owner.emit('destroyed');
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 0 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
+});
+
+it('ages pressure during a hung query and ignores its late result', async () => {
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
+  await vi.advanceTimersByTimeAsync(1000);
+  let complete!: (sample: { processMib: number; availableMib: number }) => void;
+  mocks.memory.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+  await vi.advanceTimersByTimeAsync(1000);
+  const started = mocks.memory.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(MEMORY_SAMPLE_TTL_MS);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
+  expect(mocks.memory).toHaveBeenCalledTimes(started);
+  complete({ processMib: 510, availableMib: 0 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
+});
+
+it('keeps fresh app pressure when host telemetry alone becomes unavailable', async () => {
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
+  await vi.advanceTimersByTimeAsync(1000);
+  mocks.memory.mockResolvedValue({ processMib: 40000, availableMib: null });
+  await vi.advanceTimersByTimeAsync(MEMORY_SAMPLE_TTL_MS);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, false);
+  mocks.memory.mockResolvedValue({ processMib: 510, availableMib: null });
   await vi.advanceTimersByTimeAsync(1000);
   expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
 });

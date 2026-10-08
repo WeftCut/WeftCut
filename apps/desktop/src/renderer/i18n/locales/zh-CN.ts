@@ -1382,8 +1382,11 @@ const zhCN: Resources = {
     quit: "仍要退出",
   },
   transport: {
-    preparing_audio: "正在准备音频…",
-    audio_failed: "音频播放失败，请再次播放以重试。",
+    preparing_audio: "准备音频…",
+    audio_failed: "音频播放失败",
+    retry_playback: "重试播放",
+    retry_playback_hint: "点击播放按钮重试。",
+    cancel_playback: "取消播放",
     play_pause_hint: "播放 / 暂停",
     to_start_hint: "跳转到开头",
     to_end_hint: "跳转到结尾",

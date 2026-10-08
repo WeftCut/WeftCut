@@ -2748,6 +2748,7 @@ dependencies = [
  "image-compare",
  "imbl",
  "insta",
+ "libc",
  "lz4_flex",
  "napi",
  "napi-build",

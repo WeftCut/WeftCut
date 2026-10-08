@@ -7,6 +7,7 @@ use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 mod export_plan;
+mod memory;
 pub use export_plan::interactive_export;
 
 #[derive(Clone, Deserialize)]
@@ -573,9 +574,7 @@ pub async fn resources_memory() -> napi::Result<ResourceMemorySample> {
             / 1048576.0;
         Ok(ResourceMemorySample {
             process_mib,
-            // Free pages exclude reclaimable caches (especially on macOS).
-            // Admission needs usable RAM, not the OS's current free-page list.
-            available_mib: system.available_memory() as f64 / 1048576.0,
+            available_mib: memory::available_memory(&system),
         })
     })
     .await
@@ -585,7 +584,7 @@ pub async fn resources_memory() -> napi::Result<ResourceMemorySample> {
 #[napi(object)]
 pub struct ResourceMemorySample {
     pub process_mib: f64,
-    pub available_mib: f64,
+    pub available_mib: Option<f64>,
 }
 
 fn process_memory_refresh() -> sysinfo::ProcessRefreshKind {
@@ -672,7 +671,7 @@ mod tests {
             "{} vs {rss_mib}",
             sample.process_mib
         );
-        assert!(sample.available_mib > 0.0);
+        assert!(sample.available_mib.is_some_and(|mib| mib > 0.0));
     }
     #[test]
     fn admitted_export_can_finish_under_rss_pressure_without_reserving_a_cpu_slot() {

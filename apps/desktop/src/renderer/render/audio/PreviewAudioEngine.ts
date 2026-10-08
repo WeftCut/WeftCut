@@ -9,6 +9,7 @@ import { lastFrameAnchorUs } from "../../frames";
 import { forEachLayer, instanceKey } from "../compositionWalk";
 import { SyntheticClock } from "../clock";
 import { AudioMixer } from "./AudioMixer";
+import { audioErrorDetail } from "./audioError";
 import type { AudioGraph } from "./AudioGraph";
 import { LOOKAHEAD_S } from "./chunkSchedule";
 import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./roleGate";
@@ -312,7 +313,13 @@ export class PreviewAudioEngine {
       });
     }
     signal.throwIfAborted();
-    await Promise.all(this.window(tUs, PREPARE_US).map((e) => this.ensureMixer(e)!.prepare(tUs, PREPARE_US)));
+    // A changed/evicted window is retried before releasing the clock. Never
+    // treat an internal cancellation as successfully prepared PCM.
+    while (true) {
+      signal.throwIfAborted();
+      const ready = await Promise.all(this.window(tUs, PREPARE_US).map((e) => this.ensureMixer(e)!.prepare(tUs, PREPARE_US)));
+      if (ready.every(Boolean)) return;
+    }
   }
 
   private preload(): void {
@@ -371,12 +378,12 @@ export class PreviewAudioEngine {
         // of video frames. A first open completes on a later microtask.
         if (mixer) {
           const generation = this.generation;
-          void mixer.prepare(tUs).then(() => {
-            if (this.current(generation) && this.state.phase === "playing" && this.entries.get(entry.key) === entry) {
+          void mixer.prepare(tUs).then((ready) => {
+            if (ready && this.current(generation) && this.state.phase === "playing" && this.entries.get(entry.key) === entry && entry.mixer === mixer) {
               mixer.tick(this.clock.rawPositionUs(), true, entry.endUs, this.clock.getAnchor());
             }
           }).catch((error: unknown) => {
-            if (this.entries.get(entry.key) === entry) this.fail(generation, error);
+            if (this.entries.get(entry.key) === entry && entry.mixer === mixer) this.fail(generation, error);
           });
         } else if (entry.startUs <= tUs) {
           throw new Error("Audio source is not ready");
@@ -405,12 +412,14 @@ export class PreviewAudioEngine {
   }
   private fail(generation: number, error: unknown): void {
     if (!this.current(generation)) return;
+    const detail = audioErrorDetail(error);
+    console.error(`[weftcut/audio] playback failed: ${detail}`);
     if (this.graph.ctx.state === "running") this.clock.tick();
     this.invalidate();
     // A failed header/read must be retriable, not a permanently rejected
     // source promise retained behind a Play button that can never recover.
     for (const entry of this.entries.values()) { entry.mixer?.dispose(); entry.mixer = null; }
-    this.setState("error", error instanceof Error ? error.message : String(error));
+    this.setState("error", detail);
   }
   private setState(phase: PlaybackPhase, error: string | null = null): void {
     setResourcePlayback(phase === 'playing');
