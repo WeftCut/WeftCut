@@ -42,7 +42,7 @@
   margin-left: auto;
   /* The same bar rhythm .header-right spaces its own items by. */
   margin-right: var(--app-chrome-gap);
-  min-width: 0;
+  min-width: max-content;
   display: flex;
   align-items: center;
   gap: calc(7 * var(--ui-px));
@@ -70,9 +70,7 @@
 
 .header-search-label {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: max-content;
   white-space: nowrap;
   text-align: left;
 }
@@ -85,6 +83,26 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px));
+}
+
+/* The display can cap a large theme below its requested window minimum.
+   rem follows the theme's root font size, so compact chrome starts when the
+   scaled controls need it. Keep menus, search text and caption buttons usable;
+   the locale button retains its globe, accessible name and tooltip. */
+@container app-chrome (width < 52rem) {
+  .app-brand h1,
+  .app-header .locale-toggle-label,
+  .header-search-kbd {
+    display: none;
+  }
+
+  .header-left {
+    gap: calc(8 * var(--ui-px));
+  }
+
+  .app-header .menu-trigger {
+    padding-inline: calc(6 * var(--ui-px));
+  }
 }
 
 .standalone-row.level-error .row-body {

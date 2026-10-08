@@ -112,23 +112,50 @@ test('panel constraints and chrome scale together when a layout theme changes', 
 
 test('header search text fits the 4K relaxed theme', async () => {
   const { app, page } = await launchApp({ locale: 'zh-CN' });
+  const viewport = await page.context().newCDPSession(page);
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-search-layout-'), name: 'Search layout',
       canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } });
     await invokeCmd(page, 'app_settings_set', { patch: { layout_theme: '4k-wide' } });
     await expect(page.locator('html')).toHaveAttribute('data-layout-theme', '4k-wide');
-    for (const [language, text] of [['zh-CN', '搜索'], ['en-US', 'Search']] as const) {
-      await invokeCmd(page, 'app_settings_set', { patch: { language } });
-      const label = page.locator('.header-search-label');
-      await expect(label).toHaveText(text);
-      const size = await label.evaluate(el => ({ needed: el.scrollWidth, available: el.clientWidth }));
-      expect(size.available, `${language}: ${JSON.stringify(size)}`).toBeGreaterThanOrEqual(size.needed);
-      await page.locator('.header-search').click();
-      await expect(page.locator('.search-palette-input input')).toBeVisible();
-      await page.keyboard.press('Escape');
+    // A theme's native minimum is capped by the display work area. Exercise
+    // that constraint on every OS, independent of the runner's monitor size.
+    const deviceScaleFactor = await page.evaluate(() => window.devicePixelRatio);
+    for (const width of [1800, 1400, 1360, 1280, 1024, 960, 1800]) {
+      await viewport.send('Emulation.setDeviceMetricsOverride', {
+        width, height: 768, mobile: false, deviceScaleFactor,
+      });
+      for (const [language, text] of [['zh-CN', '搜索'], ['en-US', 'Search']] as const) {
+        await invokeCmd(page, 'app_settings_set', { patch: { language } });
+        const label = page.locator('.header-search-label');
+        await expect(label).toHaveText(text);
+        const size = await label.evaluate(el => ({ needed: el.scrollWidth, available: el.clientWidth }));
+        expect(size.available, `${width}px ${language}: ${JSON.stringify(size)}`).toBeGreaterThanOrEqual(size.needed);
+        const chrome = await page.locator('.app-header').evaluate(el => {
+          const left = el.querySelector('.header-left')!.getBoundingClientRect();
+          const search = el.querySelector('.header-search')!.getBoundingClientRect();
+          const right = el.querySelector('.header-right')!.getBoundingClientRect();
+          return { overflow: el.scrollWidth - el.clientWidth,
+            leftGap: search.left - left.right, rightGap: right.left - search.right };
+        });
+        expect(chrome.overflow, `${width}px ${language}`).toBeLessThanOrEqual(1);
+        expect(chrome.leftGap).toBeGreaterThanOrEqual(-1);
+        expect(chrome.rightGap).toBeGreaterThanOrEqual(0);
+        await page.locator('.header-search').click();
+        await expect(page.locator('.search-palette-input input')).toBeVisible();
+        await page.keyboard.press('Escape');
+        if (width === 960 && language === 'en-US') {
+          await page.screenshot({ path: '../../.scratch/layout-themes/4k-compact-header-search.png' });
+        }
+      }
     }
+    // Returning to a roomy window restores the full header.
+    await expect(page.locator('.app-brand h1')).toBeVisible();
+    await expect(page.locator('.header-search-kbd')).toBeVisible();
+    await expect(page.locator('.app-header .locale-toggle-label')).toBeVisible();
     await page.screenshot({ path: '../../.scratch/layout-themes/4k-relaxed-header-search.png' });
   } finally {
+    await viewport.detach();
     await app.close();
   }
 });
