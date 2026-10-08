@@ -22,6 +22,7 @@ import { openComposition, focusedCompositionId } from "../state/compositionAncho
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
 import { useSearchEntries } from "./searchIndexStore";
 import type { MediaUsage, SearchEntryType } from "./types";
+import { EmbeddingPocPane } from './EmbeddingPocPane';
 
 const VISIBLE_PER_GROUP = 5;
 const RANK_CAP = 50;
@@ -57,6 +58,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const entries = useSearchEntries();
   const [query, setQuery] = useState("");
+  const [visualSearch, setVisualSearch] = useState(false);
   const [active, setActive] = useState(0);
   const [sub, setSubState] = useState<MediaSubList | null>(null);
   const [expanded, setExpanded] = useState<Set<SearchEntryType>>(new Set());
@@ -219,7 +221,12 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
     >
       <DialogPortal>
         <DialogOverlay className="search-palette-backdrop bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
-        <DialogPrimitive.Popup className="search-palette" aria-label={t("actions.open_search")}>
+        <DialogPrimitive.Popup className={cn('search-palette', visualSearch && 'search-palette-embedding')} aria-label={t("actions.open_search")}>
+          {(import.meta.env.DEV || import.meta.env.VITE_WEFTCUT_EMBEDDING_POC === '1') && <div className="embedding-poc-tabs">
+            <button type="button" aria-pressed={!visualSearch} onClick={() => setVisualSearch(false)}>项目搜索</button>
+            <button type="button" aria-pressed={visualSearch} onClick={() => { setSub(null); setVisualSearch(true); }}>画面搜索 POC</button>
+          </div>}
+          {visualSearch ? <EmbeddingPocPane onClose={onClose} /> : <>
           <div className="search-palette-input">
             <AppInput
               type="search"
@@ -306,6 +313,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
               ) : null)
             )}
           </div>
+          </>}
         </DialogPrimitive.Popup>
       </DialogPortal>
     </Dialog>

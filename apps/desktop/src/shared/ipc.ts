@@ -398,6 +398,7 @@ import type {
 import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
+  embeddingPoc: import('./embedding-poc').EmbeddingPocApi
   diagnostics: import('./diagnostics').DiagnosticsApi
   resources: {
     reserveExportFinalization(id: string): Promise<void>;

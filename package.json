@@ -17,6 +17,9 @@
     "apps/*"
   ],
   "scripts": {
+    "poc:embedding:litert": "node apps/desktop/scripts/embedding-poc/run-litert.mjs",
+    "poc:embedding": "node apps/desktop/scripts/embedding-poc/run.mjs",
+    "poc:embedding:setup": "node apps/desktop/scripts/embedding-poc/run.mjs setup",
     "version:release": "node apps/desktop/scripts/release.mjs version",
     "bootstrap": "npm --workspace apps/desktop run bootstrap",
     "dev": "npm --workspace apps/desktop run dev",

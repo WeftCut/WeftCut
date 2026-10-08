@@ -63,3 +63,28 @@
 }
 .search-show-more:hover { opacity: 1; }
 .search-empty { padding: calc(18 * var(--ui-px)) calc(12 * var(--ui-px)); font-size: var(--font-size-body); text-align: center; opacity: 0.55; }
+
+/* Throwaway visual-search experiment; keep it visibly separate from commands. */
+.search-palette-embedding { width: min(900px, calc(100vw - 48px)); top: 6vh; max-height: 88vh; }
+.embedding-poc-tabs, .embedding-poc-controls { display: flex; gap: 8px; padding: 8px 0; }
+.embedding-poc-tabs { padding: 10px; border-bottom: 1px solid var(--border); }
+.embedding-poc-tabs button, .embedding-poc button, .embedding-poc input {
+  border: 1px solid var(--border); border-radius: var(--radius-control); padding: 6px 10px;
+  background: var(--background); color: var(--foreground); font: inherit;
+}
+.embedding-poc button, .embedding-poc-tabs button { cursor: pointer; }
+.embedding-poc button:disabled { opacity: .45; cursor: default; }
+.embedding-poc-tabs button[aria-pressed="true"] { border-color: var(--ring); }
+.embedding-poc { padding: 12px; overflow-y: auto; font-size: var(--font-size-body); }
+.embedding-poc p { margin: 6px 0; }
+.embedding-poc-status { display: grid; gap: 4px; margin: 6px 0; overflow-wrap: anywhere; }
+.embedding-poc small { color: var(--muted-foreground); }
+.embedding-poc-controls input { flex: 1; min-width: 0; }
+.embedding-poc-error { color: var(--destructive); white-space: pre-wrap; overflow-wrap: anywhere; }
+.embedding-poc-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.embedding-poc-results article { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.embedding-poc-results article > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.embedding-poc button.embedding-poc-thumbnail { padding: 0; overflow: hidden; }
+.embedding-poc-thumbnail img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: black; }
+.embedding-poc-preview { margin: 10px 0; }
+.embedding-poc-preview video { width: 100%; max-height: 260px; background: black; }

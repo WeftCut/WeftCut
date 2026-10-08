@@ -45,6 +45,12 @@ type Listener = (payload: unknown) => void
 // channel is `backend.invoke`, which fronts the napi/Rust command dispatcher —
 // a single controlled capability that validates its own commands.
 const api: WeftcutApi = {
+  embeddingPoc: {
+    status: () => ipcRenderer.invoke('embedding-poc:status'),
+    start: () => ipcRenderer.invoke('embedding-poc:start'),
+    cancel: () => ipcRenderer.invoke('embedding-poc:cancel'),
+    search: query => ipcRenderer.invoke('embedding-poc:search', query),
+  },
   diagnostics: {
     summary: () => ipcRenderer.invoke('diagnostics:summary'),
     exportBundle: () => ipcRenderer.invoke('diagnostics:export'),

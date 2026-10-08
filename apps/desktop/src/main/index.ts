@@ -21,6 +21,7 @@ import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authori
 import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
+import { createEmbeddingPoc } from './embeddingPoc'
 import { createUpdates } from './updates.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
@@ -963,6 +964,17 @@ app.whenReady().then(async () => {
     workspace,
   })
   tsHost.start()
+  // Throwaway development experiment. The corpus is always read from the actor,
+  // never from renderer-supplied file paths.
+  if (!app.isPackaged) {
+    const embeddingPoc = createEmbeddingPoc(path.resolve(import.meta.dirname, '../../../..'), ffmpegBin,
+      () => tsHost?.openedProject() ? tsHost.actor.snapshot() : null)
+    ipcMain.handle('embedding-poc:status', () => embeddingPoc.status())
+    ipcMain.handle('embedding-poc:start', () => embeddingPoc.start())
+    ipcMain.handle('embedding-poc:cancel', () => embeddingPoc.cancel())
+    ipcMain.handle('embedding-poc:search', (_event, query: string) => embeddingPoc.search(query))
+    app.once('before-quit', () => embeddingPoc.dispose())
+  }
   console.log('[main] TS state actor authoritative; MCP host starting')
 
   // One JSON round trip to a stateless Rust bake primitive. `args` is `unknown`

@@ -1,0 +1,1003 @@
+{
+  "date": "2026-10-08",
+  "hardware": "NVIDIA GeForce RTX 3050 OEM, 8 GB",
+  "driver": "595.99.02",
+  "status": "on hold",
+  "method": "5 public test videos, 68 frames sampled at 1 fps; native/control measurements exclude video extraction and model loading. CUDA worker timings are end-to-end. Small source-retrieval smoke corpus only.",
+  "pytorchWorker": {
+    "media": [
+      "01-cat-dozing.mp4",
+      "02-archery.mp4",
+      "03-tennis.mp4",
+      "04-baby-book.mp4",
+      "05-bunny-animation.mp4"
+    ],
+    "runs": [
+      {
+        "frames": 68,
+        "wallSeconds": 21.19483886199987,
+        "indexSecondsExcludingLoad": 13.963772360999883
+      },
+      {
+        "frames": 68,
+        "wallSeconds": 13.664427236999927,
+        "indexSecondsExcludingLoad": 13.661575868
+      }
+    ],
+    "queries": [
+      {
+        "query": "打瞌睡的猫",
+        "hits": [
+          {
+            "mediaId": "01-cat-dozing",
+            "label": "01-cat-dozing.mp4",
+            "timeUs": 22000000,
+            "score": 0.7076641321182251
+          },
+          {
+            "mediaId": "01-cat-dozing",
+            "label": "01-cat-dozing.mp4",
+            "timeUs": 13000000,
+            "score": 0.7063219547271729
+          },
+          {
+            "mediaId": "01-cat-dozing",
+            "label": "01-cat-dozing.mp4",
+            "timeUs": 19000000,
+            "score": 0.7039982080459595
+          }
+        ],
+        "queryMs": 25.04932900001222,
+        "frames": 68,
+        "wallSeconds": 0.025334649999877
+      },
+      {
+        "query": "射箭的人",
+        "hits": [
+          {
+            "mediaId": "02-archery",
+            "label": "02-archery.mp4",
+            "timeUs": 10000000,
+            "score": 0.747067928314209
+          },
+          {
+            "mediaId": "02-archery",
+            "label": "02-archery.mp4",
+            "timeUs": 7000000,
+            "score": 0.7465987801551819
+          },
+          {
+            "mediaId": "02-archery",
+            "label": "02-archery.mp4",
+            "timeUs": 5000000,
+            "score": 0.7427451014518738
+          }
+        ],
+        "queryMs": 22.338155999932496,
+        "frames": 68,
+        "wallSeconds": 0.022891803999982585
+      },
+      {
+        "query": "打网球",
+        "hits": [
+          {
+            "mediaId": "03-tennis",
+            "label": "03-tennis.mp4",
+            "timeUs": 2000000,
+            "score": 0.6965946555137634
+          },
+          {
+            "mediaId": "03-tennis",
+            "label": "03-tennis.mp4",
+            "timeUs": 0,
+            "score": 0.6955388784408569
+          },
+          {
+            "mediaId": "03-tennis",
+            "label": "03-tennis.mp4",
+            "timeUs": 5000000,
+            "score": 0.6949031352996826
+          }
+        ],
+        "queryMs": 22.719501999972636,
+        "frames": 68,
+        "wallSeconds": 0.02322580600002766
+      },
+      {
+        "query": "戴墨镜的小孩翻书",
+        "hits": [
+          {
+            "mediaId": "04-baby-book",
+            "label": "04-baby-book.mp4",
+            "timeUs": 5000000,
+            "score": 0.69940584897995
+          },
+          {
+            "mediaId": "04-baby-book",
+            "label": "04-baby-book.mp4",
+            "timeUs": 8000000,
+            "score": 0.6950556039810181
+          },
+          {
+            "mediaId": "04-baby-book",
+            "label": "04-baby-book.mp4",
+            "timeUs": 7000000,
+            "score": 0.6919092535972595
+          }
+        ],
+        "queryMs": 22.914329000059297,
+        "frames": 68,
+        "wallSeconds": 0.023553699999865785
+      },
+      {
+        "query": "卡通森林",
+        "hits": [
+          {
+            "mediaId": "05-bunny-animation",
+            "label": "05-bunny-animation.mp4",
+            "timeUs": 8000000,
+            "score": 0.6625103950500488
+          },
+          {
+            "mediaId": "05-bunny-animation",
+            "label": "05-bunny-animation.mp4",
+            "timeUs": 4000000,
+            "score": 0.6600947380065918
+          },
+          {
+            "mediaId": "05-bunny-animation",
+            "label": "05-bunny-animation.mp4",
+            "timeUs": 7000000,
+            "score": 0.6571152806282043
+          }
+        ],
+        "queryMs": 22.317412999882436,
+        "frames": 68,
+        "wallSeconds": 0.02293262400007734
+      }
+    ],
+    "device": "cuda / bfloat16"
+  },
+  "pytorchControl": {
+    "loadSeconds": 1.949511116001304,
+    "frames": 68,
+    "batchSize": 4,
+    "budgets": [
+      {
+        "visionTokens": 280,
+        "sampleShapes": {
+          "input_ids": [
+            1,
+            268
+          ],
+          "attention_mask": [
+            1,
+            268
+          ],
+          "pixel_values": [
+            1,
+            2520,
+            768
+          ],
+          "image_position_ids": [
+            1,
+            2520,
+            2
+          ]
+        },
+        "runs": [
+          {
+            "seconds": 12.44261128799917,
+            "fps": 5.465090761581986
+          },
+          {
+            "seconds": 12.177094634000241,
+            "fps": 5.584254868984428
+          }
+        ],
+        "queries": [
+          {
+            "query": "打瞌睡的猫",
+            "queryMs": 78.98576800107548,
+            "hits": [
+              {
+                "frame": "01-cat-dozing--022.png",
+                "score": 0.7076641321182251
+              },
+              {
+                "frame": "01-cat-dozing--013.png",
+                "score": 0.7063219547271729
+              },
+              {
+                "frame": "01-cat-dozing--019.png",
+                "score": 0.7039982080459595
+              }
+            ]
+          },
+          {
+            "query": "射箭的人",
+            "queryMs": 30.586372999096056,
+            "hits": [
+              {
+                "frame": "02-archery--010.png",
+                "score": 0.748346209526062
+              },
+              {
+                "frame": "02-archery--007.png",
+                "score": 0.7465987801551819
+              },
+              {
+                "frame": "02-archery--005.png",
+                "score": 0.7427451014518738
+              }
+            ]
+          },
+          {
+            "query": "打网球",
+            "queryMs": 23.085495999112027,
+            "hits": [
+              {
+                "frame": "03-tennis--002.png",
+                "score": 0.6970473527908325
+              },
+              {
+                "frame": "03-tennis--000.png",
+                "score": 0.6948421001434326
+              },
+              {
+                "frame": "03-tennis--006.png",
+                "score": 0.6946365833282471
+              }
+            ]
+          },
+          {
+            "query": "戴墨镜的小孩翻书",
+            "queryMs": 27.880341000127373,
+            "hits": [
+              {
+                "frame": "04-baby-book--005.png",
+                "score": 0.69940584897995
+              },
+              {
+                "frame": "04-baby-book--008.png",
+                "score": 0.6975235342979431
+              },
+              {
+                "frame": "04-baby-book--007.png",
+                "score": 0.6919092535972595
+              }
+            ]
+          },
+          {
+            "query": "卡通森林",
+            "queryMs": 22.443333000410348,
+            "hits": [
+              {
+                "frame": "05-bunny-animation--008.png",
+                "score": 0.6630324721336365
+              },
+              {
+                "frame": "05-bunny-animation--004.png",
+                "score": 0.6600947380065918
+              },
+              {
+                "frame": "05-bunny-animation--007.png",
+                "score": 0.6571152806282043
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "visionTokens": 140,
+        "sampleShapes": {
+          "input_ids": [
+            1,
+            124
+          ],
+          "attention_mask": [
+            1,
+            124
+          ],
+          "pixel_values": [
+            1,
+            1260,
+            768
+          ],
+          "image_position_ids": [
+            1,
+            1260,
+            2
+          ]
+        },
+        "runs": [
+          {
+            "seconds": 5.5692992029999004,
+            "fps": 12.209794719481373
+          },
+          {
+            "seconds": 5.591954825000357,
+            "fps": 12.1603271356892
+          }
+        ],
+        "queries": [
+          {
+            "query": "打瞌睡的猫",
+            "queryMs": 23.748554000121658,
+            "hits": [
+              {
+                "frame": "01-cat-dozing--022.png",
+                "score": 0.713593602180481
+              },
+              {
+                "frame": "01-cat-dozing--014.png",
+                "score": 0.7082523107528687
+              },
+              {
+                "frame": "01-cat-dozing--019.png",
+                "score": 0.7071000337600708
+              }
+            ]
+          },
+          {
+            "query": "射箭的人",
+            "queryMs": 23.083513999154093,
+            "hits": [
+              {
+                "frame": "02-archery--010.png",
+                "score": 0.7485019564628601
+              },
+              {
+                "frame": "02-archery--000.png",
+                "score": 0.743630588054657
+              },
+              {
+                "frame": "02-archery--006.png",
+                "score": 0.7435249090194702
+              }
+            ]
+          },
+          {
+            "query": "打网球",
+            "queryMs": 22.72409999932279,
+            "hits": [
+              {
+                "frame": "03-tennis--000.png",
+                "score": 0.6981924176216125
+              },
+              {
+                "frame": "03-tennis--003.png",
+                "score": 0.6979931592941284
+              },
+              {
+                "frame": "03-tennis--002.png",
+                "score": 0.6960501670837402
+              }
+            ]
+          },
+          {
+            "query": "戴墨镜的小孩翻书",
+            "queryMs": 22.46827800081519,
+            "hits": [
+              {
+                "frame": "04-baby-book--005.png",
+                "score": 0.7502014636993408
+              },
+              {
+                "frame": "04-baby-book--007.png",
+                "score": 0.7422469854354858
+              },
+              {
+                "frame": "04-baby-book--009.png",
+                "score": 0.7400456070899963
+              }
+            ]
+          },
+          {
+            "query": "卡通森林",
+            "queryMs": 22.516410001117038,
+            "hits": [
+              {
+                "frame": "05-bunny-animation--008.png",
+                "score": 0.666117250919342
+              },
+              {
+                "frame": "05-bunny-animation--001.png",
+                "score": 0.6657161712646484
+              },
+              {
+                "frame": "05-bunny-animation--000.png",
+                "score": 0.6652443408966064
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "visionTokens": 70,
+        "sampleShapes": {
+          "input_ids": [
+            1,
+            70
+          ],
+          "attention_mask": [
+            1,
+            70
+          ],
+          "pixel_values": [
+            1,
+            630,
+            768
+          ],
+          "image_position_ids": [
+            1,
+            630,
+            2
+          ]
+        },
+        "runs": [
+          {
+            "seconds": 2.9823009120009374,
+            "fps": 22.801186736846166
+          },
+          {
+            "seconds": 2.9826082910003606,
+            "fps": 22.79883691237006
+          }
+        ],
+        "queries": [
+          {
+            "query": "打瞌睡的猫",
+            "queryMs": 22.402169999622856,
+            "hits": [
+              {
+                "frame": "01-cat-dozing--011.png",
+                "score": 0.7285693883895874
+              },
+              {
+                "frame": "01-cat-dozing--010.png",
+                "score": 0.7278286814689636
+              },
+              {
+                "frame": "01-cat-dozing--022.png",
+                "score": 0.7246585488319397
+              }
+            ]
+          },
+          {
+            "query": "射箭的人",
+            "queryMs": 22.844726001494564,
+            "hits": [
+              {
+                "frame": "02-archery--010.png",
+                "score": 0.7638397812843323
+              },
+              {
+                "frame": "02-archery--004.png",
+                "score": 0.7593055367469788
+              },
+              {
+                "frame": "02-archery--005.png",
+                "score": 0.7573554515838623
+              }
+            ]
+          },
+          {
+            "query": "打网球",
+            "queryMs": 22.479560999272508,
+            "hits": [
+              {
+                "frame": "03-tennis--004.png",
+                "score": 0.7181603312492371
+              },
+              {
+                "frame": "03-tennis--006.png",
+                "score": 0.715430736541748
+              },
+              {
+                "frame": "03-tennis--005.png",
+                "score": 0.7133734822273254
+              }
+            ]
+          },
+          {
+            "query": "戴墨镜的小孩翻书",
+            "queryMs": 22.56238699919777,
+            "hits": [
+              {
+                "frame": "04-baby-book--004.png",
+                "score": 0.7570003867149353
+              },
+              {
+                "frame": "04-baby-book--005.png",
+                "score": 0.7546480894088745
+              },
+              {
+                "frame": "04-baby-book--009.png",
+                "score": 0.7545232772827148
+              }
+            ]
+          },
+          {
+            "query": "卡通森林",
+            "queryMs": 21.589856998616597,
+            "hits": [
+              {
+                "frame": "05-bunny-animation--008.png",
+                "score": 0.6906522512435913
+              },
+              {
+                "frame": "05-bunny-animation--000.png",
+                "score": 0.6812712550163269
+              },
+              {
+                "frame": "05-bunny-animation--005.png",
+                "score": 0.6797914505004883
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "litert": {
+    "gpu-140": {
+      "backend": "gpu",
+      "visionTokens": 140,
+      "batchSize": 4,
+      "frames": 68,
+      "loadSeconds": 0.995541,
+      "runs": [
+        {
+          "seconds": 7.85309,
+          "fps": 8.65902
+        },
+        {
+          "seconds": 7.80414,
+          "fps": 8.71333
+        }
+      ],
+      "queries": [
+        {
+          "query": "打瞌睡的猫",
+          "queryMs": 16.9542,
+          "hits": [
+            {
+              "frame": "01-cat-dozing--005.png",
+              "score": 0.735394
+            },
+            {
+              "frame": "01-cat-dozing--019.png",
+              "score": 0.734846
+            },
+            {
+              "frame": "01-cat-dozing--018.png",
+              "score": 0.734845
+            }
+          ]
+        },
+        {
+          "query": "射箭的人",
+          "queryMs": 15.6093,
+          "hits": [
+            {
+              "frame": "02-archery--000.png",
+              "score": 0.76312
+            },
+            {
+              "frame": "02-archery--002.png",
+              "score": 0.76209
+            },
+            {
+              "frame": "02-archery--009.png",
+              "score": 0.759027
+            }
+          ]
+        },
+        {
+          "query": "打网球",
+          "queryMs": 16.2871,
+          "hits": [
+            {
+              "frame": "03-tennis--005.png",
+              "score": 0.743973
+            },
+            {
+              "frame": "03-tennis--002.png",
+              "score": 0.736394
+            },
+            {
+              "frame": "03-tennis--004.png",
+              "score": 0.735868
+            }
+          ]
+        },
+        {
+          "query": "戴墨镜的小孩翻书",
+          "queryMs": 15.7077,
+          "hits": [
+            {
+              "frame": "04-baby-book--005.png",
+              "score": 0.78646
+            },
+            {
+              "frame": "04-baby-book--004.png",
+              "score": 0.783003
+            },
+            {
+              "frame": "04-baby-book--009.png",
+              "score": 0.782838
+            }
+          ]
+        },
+        {
+          "query": "卡通森林",
+          "queryMs": 15.4152,
+          "hits": [
+            {
+              "frame": "05-bunny-animation--004.png",
+              "score": 0.711954
+            },
+            {
+              "frame": "05-bunny-animation--005.png",
+              "score": 0.708021
+            },
+            {
+              "frame": "05-bunny-animation--008.png",
+              "score": 0.705924
+            }
+          ]
+        }
+      ],
+      "preparation": {
+        "frames": 68,
+        "decodeSeconds": 2.202893603
+      },
+      "processSeconds": 16.900319683000003
+    },
+    "gpu-70": {
+      "backend": "gpu",
+      "visionTokens": 70,
+      "requestedActivation": "default",
+      "batchSize": 4,
+      "frames": 68,
+      "loadSeconds": 0.880635,
+      "runs": [
+        {
+          "seconds": 4.51135,
+          "fps": 15.0731
+        },
+        {
+          "seconds": 4.54112,
+          "fps": 14.9743
+        }
+      ],
+      "queries": [
+        {
+          "query": "打瞌睡的猫",
+          "queryMs": 15.0818,
+          "hits": [
+            {
+              "frame": "01-cat-dozing--010.png",
+              "score": 0.755198
+            },
+            {
+              "frame": "01-cat-dozing--011.png",
+              "score": 0.755104
+            },
+            {
+              "frame": "01-cat-dozing--013.png",
+              "score": 0.754525
+            }
+          ]
+        },
+        {
+          "query": "射箭的人",
+          "queryMs": 17.7097,
+          "hits": [
+            {
+              "frame": "02-archery--010.png",
+              "score": 0.781323
+            },
+            {
+              "frame": "02-archery--000.png",
+              "score": 0.779415
+            },
+            {
+              "frame": "02-archery--007.png",
+              "score": 0.776703
+            }
+          ]
+        },
+        {
+          "query": "打网球",
+          "queryMs": 16.7762,
+          "hits": [
+            {
+              "frame": "03-tennis--003.png",
+              "score": 0.756809
+            },
+            {
+              "frame": "03-tennis--005.png",
+              "score": 0.755207
+            },
+            {
+              "frame": "03-tennis--004.png",
+              "score": 0.753536
+            }
+          ]
+        },
+        {
+          "query": "戴墨镜的小孩翻书",
+          "queryMs": 15.8372,
+          "hits": [
+            {
+              "frame": "04-baby-book--004.png",
+              "score": 0.795137
+            },
+            {
+              "frame": "04-baby-book--005.png",
+              "score": 0.792358
+            },
+            {
+              "frame": "04-baby-book--009.png",
+              "score": 0.791255
+            }
+          ]
+        },
+        {
+          "query": "卡通森林",
+          "queryMs": 16.633,
+          "hits": [
+            {
+              "frame": "05-bunny-animation--000.png",
+              "score": 0.721473
+            },
+            {
+              "frame": "05-bunny-animation--008.png",
+              "score": 0.720749
+            },
+            {
+              "frame": "05-bunny-animation--003.png",
+              "score": 0.716407
+            }
+          ]
+        }
+      ],
+      "preparation": {
+        "frames": 68,
+        "decodeSeconds": 2.1950991080000004
+      },
+      "processSeconds": 10.170499670000002
+    },
+    "cpu-140": {
+      "backend": "cpu",
+      "visionTokens": 140,
+      "batchSize": 4,
+      "frames": 68,
+      "loadSeconds": 0.26692,
+      "runs": [
+        {
+          "seconds": 54.8138,
+          "fps": 1.24056
+        },
+        {
+          "seconds": 54.55,
+          "fps": 1.24656
+        }
+      ],
+      "queries": [
+        {
+          "query": "打瞌睡的猫",
+          "queryMs": 43.3573,
+          "hits": [
+            {
+              "frame": "01-cat-dozing--019.png",
+              "score": 0.736211
+            },
+            {
+              "frame": "01-cat-dozing--012.png",
+              "score": 0.731753
+            },
+            {
+              "frame": "01-cat-dozing--004.png",
+              "score": 0.731101
+            }
+          ]
+        },
+        {
+          "query": "射箭的人",
+          "queryMs": 42.6606,
+          "hits": [
+            {
+              "frame": "02-archery--009.png",
+              "score": 0.761731
+            },
+            {
+              "frame": "02-archery--010.png",
+              "score": 0.7601
+            },
+            {
+              "frame": "02-archery--000.png",
+              "score": 0.757922
+            }
+          ]
+        },
+        {
+          "query": "打网球",
+          "queryMs": 35.0566,
+          "hits": [
+            {
+              "frame": "03-tennis--003.png",
+              "score": 0.733377
+            },
+            {
+              "frame": "03-tennis--002.png",
+              "score": 0.732787
+            },
+            {
+              "frame": "03-tennis--004.png",
+              "score": 0.731085
+            }
+          ]
+        },
+        {
+          "query": "戴墨镜的小孩翻书",
+          "queryMs": 41.3615,
+          "hits": [
+            {
+              "frame": "04-baby-book--009.png",
+              "score": 0.785215
+            },
+            {
+              "frame": "04-baby-book--005.png",
+              "score": 0.781688
+            },
+            {
+              "frame": "04-baby-book--004.png",
+              "score": 0.774696
+            }
+          ]
+        },
+        {
+          "query": "卡通森林",
+          "queryMs": 31.2031,
+          "hits": [
+            {
+              "frame": "05-bunny-animation--005.png",
+              "score": 0.702667
+            },
+            {
+              "frame": "05-bunny-animation--002.png",
+              "score": 0.700427
+            },
+            {
+              "frame": "05-bunny-animation--001.png",
+              "score": 0.700322
+            }
+          ]
+        }
+      ],
+      "preparation": {
+        "frames": 68,
+        "decodeSeconds": 2.206522802
+      },
+      "processSeconds": 109.930898562
+    },
+    "gpu-140-fp16": {
+      "backend": "gpu",
+      "visionTokens": 140,
+      "requestedActivation": "float16",
+      "batchSize": 4,
+      "frames": 68,
+      "loadSeconds": 2.23224,
+      "runs": [
+        {
+          "seconds": 7.878,
+          "fps": 8.63163
+        },
+        {
+          "seconds": 7.84989,
+          "fps": 8.66254
+        }
+      ],
+      "queries": [
+        {
+          "query": "打瞌睡的猫",
+          "queryMs": 17.0807,
+          "hits": [
+            {
+              "frame": "01-cat-dozing--005.png",
+              "score": 0.735394
+            },
+            {
+              "frame": "01-cat-dozing--019.png",
+              "score": 0.734846
+            },
+            {
+              "frame": "01-cat-dozing--018.png",
+              "score": 0.734845
+            }
+          ]
+        },
+        {
+          "query": "射箭的人",
+          "queryMs": 17.2921,
+          "hits": [
+            {
+              "frame": "02-archery--000.png",
+              "score": 0.76312
+            },
+            {
+              "frame": "02-archery--002.png",
+              "score": 0.76209
+            },
+            {
+              "frame": "02-archery--009.png",
+              "score": 0.759027
+            }
+          ]
+        },
+        {
+          "query": "打网球",
+          "queryMs": 16.0901,
+          "hits": [
+            {
+              "frame": "03-tennis--005.png",
+              "score": 0.743973
+            },
+            {
+              "frame": "03-tennis--002.png",
+              "score": 0.736394
+            },
+            {
+              "frame": "03-tennis--004.png",
+              "score": 0.735868
+            }
+          ]
+        },
+        {
+          "query": "戴墨镜的小孩翻书",
+          "queryMs": 17.8167,
+          "hits": [
+            {
+              "frame": "04-baby-book--005.png",
+              "score": 0.78646
+            },
+            {
+              "frame": "04-baby-book--004.png",
+              "score": 0.783003
+            },
+            {
+              "frame": "04-baby-book--009.png",
+              "score": 0.782838
+            }
+          ]
+        },
+        {
+          "query": "卡通森林",
+          "queryMs": 16.8282,
+          "hits": [
+            {
+              "frame": "05-bunny-animation--004.png",
+              "score": 0.711954
+            },
+            {
+              "frame": "05-bunny-animation--005.png",
+              "score": 0.708021
+            },
+            {
+              "frame": "05-bunny-animation--008.png",
+              "score": 0.705924
+            }
+          ]
+        }
+      ],
+      "preparation": {
+        "frames": 68,
+        "decodeSeconds": 2.1931042990000003
+      },
+      "processSeconds": 18.219436773
+    }
+  }
+}
