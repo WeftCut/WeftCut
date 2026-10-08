@@ -1246,7 +1246,11 @@ export function installExportHook(
 
   hookSlot().exportTimeline = async ({ outputAbsPath, settings, range }) => {
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
-    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
+    const outputExists = await exists(outputAbsPath);
+    // Atomic mux preserves an older destination on failure. Existence alone
+    // therefore cannot certify this run; observe the real terminal state too.
+    const state = (window as unknown as { __weftcutExportState?: { kind: string } }).__weftcutExportState;
+    if (!outputExists || state?.kind === "error") throwNoOutput(outputAbsPath);
   };
 
   hookSlot().mediaConformPath = ({ mediaId }) =>
@@ -1346,7 +1350,11 @@ export function installExportHook(
       // these audio scenarios doubling as overlap-export regression cover.
     }
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
-    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
+    const outputExists = await exists(outputAbsPath);
+    // Atomic mux preserves an older destination on failure. Existence alone
+    // therefore cannot certify this run; observe the real terminal state too.
+    const state = (window as unknown as { __weftcutExportState?: { kind: string } }).__weftcutExportState;
+    if (!outputExists || state?.kind === "error") throwNoOutput(outputAbsPath);
   };
 
   hookSlot().exportMotifClip = async ({
@@ -1367,7 +1375,11 @@ export function installExportHook(
     // No video source, so the readiness gate has nothing to wait on — the
     // export streams Motif frames to the worker as it composites.
     await runExport(mergeSettings(settings ?? null), outputAbsPath, undefined);
-    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
+    const outputExists = await exists(outputAbsPath);
+    // Atomic mux preserves an older destination on failure. Existence alone
+    // therefore cannot certify this run; observe the real terminal state too.
+    const state = (window as unknown as { __weftcutExportState?: { kind: string } }).__weftcutExportState;
+    if (!outputExists || state?.kind === "error") throwNoOutput(outputAbsPath);
   };
 }
 

@@ -52,6 +52,7 @@ const api: WeftcutApi = {
     recordError: message => ipcRenderer.send('diagnostics:error', message),
   },
   resources: {
+    reserveExportFinalization: id => ipcRenderer.invoke('resources:reserve-export-finalization', id),
     acquire: request => ipcRenderer.invoke('resources:acquire', request),
     release: id => ipcRenderer.send('resources:release', id),
     playing: value => ipcRenderer.send('resources:playing', value),

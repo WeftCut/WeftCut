@@ -400,7 +400,8 @@ import type { MenuProjection } from './menu'
 export interface WeftcutApi {
   diagnostics: import('./diagnostics').DiagnosticsApi
   resources: {
-    acquire(request: { id: string; memoryMiB: number; threads: number }): Promise<void>;
+    reserveExportFinalization(id: string): Promise<void>;
+    acquire(request: { id: string; memoryMiB: number; threads: number; finalizationToken?: string }): Promise<void>;
     release(id: string): void;
     playing(value: boolean): void;
     status(): Promise<import('./resource-policy').ResourceStatus>;

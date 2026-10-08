@@ -41,6 +41,15 @@ struct State {
     waiting: u32,
     playing: bool,
     pressured: bool,
+    critical: bool,
+    finalizations: HashMap<u32, FinalizationState>,
+    production: HashMap<u32, u32>,
+}
+#[derive(Default)]
+struct FinalizationState {
+    running: bool,
+    production: Option<u32>,
+    released: bool,
 }
 pub struct Governor {
     state: Mutex<State>,
@@ -63,6 +72,9 @@ impl Governor {
                 waiting: 0,
                 playing: false,
                 pressured: false,
+                critical: false,
+                finalizations: HashMap::new(),
+                production: HashMap::new(),
             }),
             changed: Notify::new(),
         })
@@ -84,7 +96,19 @@ impl Governor {
         Ok(())
     }
     fn reserve(&self, claim: Claim) -> Option<u32> {
+        self.reserve_for(claim, None)
+    }
+    fn reserve_for(&self, claim: Claim, finalization: Option<u32>) -> Option<u32> {
         let mut s = self.state.lock().unwrap();
+        let credit = if let Some(id) = finalization {
+            let tail = s.finalizations.get(&id)?;
+            if tail.running || tail.released || tail.production.is_some() || claim.mib < 64 {
+                return None;
+            }
+            64
+        } else {
+            0
+        };
         let threads: u32 = s.leases.values().map(|c| c.threads).sum();
         let mib: u64 = s.leases.values().map(|c| c.mib).sum();
         let bg = s.leases.values().filter(|c| c.background).count() as u32;
@@ -97,7 +121,7 @@ impl Governor {
         };
         if s.pressured
             || threads.saturating_add(claim.threads) > cpu_limit
-            || mib.saturating_add(claim.mib) > s.limits.work_mib
+            || mib.saturating_sub(credit).saturating_add(claim.mib) > s.limits.work_mib
             || claim.background
                 && (bg >= s.limits.background_jobs || s.playing && !s.limits.background_playback)
         {
@@ -108,12 +132,89 @@ impl Governor {
             let id = s.next;
             if let std::collections::hash_map::Entry::Vacant(e) = s.leases.entry(id) {
                 e.insert(claim);
+                if let Some(tail) = finalization {
+                    s.leases.get_mut(&tail).unwrap().mib = 0;
+                    s.finalizations.get_mut(&tail).unwrap().production = Some(id);
+                    s.production.insert(id, tail);
+                }
                 return Some(id);
             }
         }
     }
     fn release(&self, id: u32) {
-        self.state.lock().unwrap().leases.remove(&id);
+        let mut s = self.state.lock().unwrap();
+        if let Some(tail) = s.production.remove(&id) {
+            let finalization = s.finalizations.get_mut(&tail).unwrap();
+            if finalization.released {
+                s.finalizations.remove(&tail);
+                s.leases.remove(&tail);
+            } else {
+                finalization.production = None;
+                s.leases.get_mut(&tail).unwrap().mib = 64;
+            }
+        }
+        if let Some(finalization) = s.finalizations.get_mut(&id) {
+            if finalization.running || finalization.production.is_some() {
+                // A renderer can disappear while ffmpeg is still exiting. Keep
+                // its live work charged until the running permit is dropped.
+                finalization.released = true;
+                return;
+            }
+        }
+        s.finalizations.remove(&id);
+        s.leases.remove(&id);
+        drop(s);
+        self.changed.notify_waiters();
+    }
+    fn reserve_finalization(&self) -> Option<u32> {
+        let id = self.reserve(Claim {
+            threads: 0,
+            mib: 64,
+            background: false,
+        })?;
+        self.state
+            .lock()
+            .unwrap()
+            .finalizations
+            .insert(id, FinalizationState::default());
+        Some(id)
+    }
+    fn start_finalization(self: &Arc<Self>, id: u32) -> Result<FinalizationPermit, String> {
+        let mut s = self.state.lock().unwrap();
+        let reservation = s
+            .finalizations
+            .get(&id)
+            .ok_or("Export finalization reservation expired")?;
+        if reservation.running || reservation.released || reservation.production.is_some() {
+            return Err("Export finalization is already running or closed".into());
+        }
+        let threads: u32 = s.leases.values().map(|c| c.threads).sum();
+        // This is continuation of admitted work, not a fresh memory claim.
+        // Ordinary RSS hysteresis cannot strand it, but real host exhaustion
+        // and CPU occupancy still reject it explicitly, retaining the files.
+        if s.critical || threads >= s.limits.cpu_threads {
+            return Err("resource-capacity-exceeded: Not enough resources to finish exporting; retry when resources recover".into());
+        }
+        s.finalizations.get_mut(&id).unwrap().running = true;
+        s.leases.get_mut(&id).unwrap().threads = 1;
+        Ok(FinalizationPermit {
+            governor: self.clone(),
+            id,
+        })
+    }
+    fn finish_finalization(&self, id: u32) {
+        let mut s = self.state.lock().unwrap();
+        let Some(reservation) = s.finalizations.get_mut(&id) else {
+            return;
+        };
+        if reservation.released {
+            s.finalizations.remove(&id);
+            s.leases.remove(&id);
+        } else {
+            reservation.running = false;
+            s.leases.get_mut(&id).unwrap().threads = 0;
+        }
+        drop(s);
         self.changed.notify_waiters();
     }
     fn snapshot(&self) -> Snapshot {
@@ -179,6 +280,27 @@ impl Drop for Permit {
     fn drop(&mut self) {
         self.governor.release(self.id);
     }
+}
+pub struct FinalizationPermit {
+    governor: Arc<Governor>,
+    id: u32,
+}
+impl Drop for FinalizationPermit {
+    fn drop(&mut self) {
+        self.governor.finish_finalization(self.id);
+    }
+}
+pub fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
+    governor().start_finalization(id)
+}
+#[cfg_attr(test, allow(dead_code))]
+#[napi]
+pub fn resources_reserve_finalization() -> napi::Result<u32> {
+    governor().reserve_finalization().ok_or_else(|| {
+        napi::Error::from_reason(
+            "resource-capacity-exceeded: Cannot reserve memory for export finalization",
+        )
+    })
 }
 pub fn governor() -> &'static Arc<Governor> {
     static INSTANCE: OnceLock<Arc<Governor>> = OnceLock::new();
@@ -272,7 +394,11 @@ pub async fn resources_cache_written(immediate: bool) {
 }
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
-pub fn resources_reserve(threads: f64, memory_mib: f64) -> napi::Result<u32> {
+pub fn resources_reserve(
+    threads: f64,
+    memory_mib: f64,
+    finalization: Option<u32>,
+) -> napi::Result<u32> {
     // NAPI's uint32 conversion silently wraps large JS numbers and truncates
     // fractions. Validate doubles before conversion so every entry into the
     // authority rejects invalid claims instead of admitting fewer resources.
@@ -286,11 +412,14 @@ pub fn resources_reserve(threads: f64, memory_mib: f64) -> napi::Result<u32> {
         return Err(napi::Error::from_reason("Invalid resource request"));
     }
     governor()
-        .reserve(Claim {
-            threads: threads as u32,
-            mib: memory_mib as u64,
-            background: false,
-        })
+        .reserve_for(
+            Claim {
+                threads: threads as u32,
+                mib: memory_mib as u64,
+                background: false,
+            },
+            finalization,
+        )
         .ok_or_else(|| {
             napi::Error::from_reason("Resource capacity is busy or the memory target is too small")
         })
@@ -302,10 +431,11 @@ pub fn resources_release(id: u32) {
 }
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
-pub fn resources_activity(playing: bool, pressured: bool) {
+pub fn resources_activity(playing: bool, pressured: bool, critical: Option<bool>) {
     let mut s = governor().state.lock().unwrap();
     s.playing = playing;
     s.pressured = pressured;
+    s.critical = critical.unwrap_or(pressured);
     drop(s);
     governor().changed.notify_waiters();
 }
@@ -390,10 +520,10 @@ mod tests {
             f64::NAN,
             f64::INFINITY,
         ] {
-            assert!(resources_reserve(0.0, memory).is_err());
+            assert!(resources_reserve(0.0, memory, None).is_err());
         }
         for threads in [-1.0, 1.5, 1025.0, 4294967296.0, f64::NAN, f64::INFINITY] {
-            assert!(resources_reserve(threads, 64.0).is_err());
+            assert!(resources_reserve(threads, 64.0, None).is_err());
         }
     }
     #[test]
@@ -454,6 +584,119 @@ mod tests {
         );
         assert!(sample.available_mib > 0.0);
     }
+    #[test]
+    fn admitted_export_can_finish_under_rss_pressure_without_reserving_a_cpu_slot() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 1,
+            task_threads: 1,
+            ..Limits::default()
+        })
+        .unwrap();
+        let id = g.reserve_finalization().unwrap();
+        assert_eq!(g.snapshot().cpu_threads, 0);
+        let production = g
+            .reserve(Claim {
+                threads: 1,
+                mib: 200,
+                background: false,
+            })
+            .unwrap();
+        g.state.lock().unwrap().pressured = true;
+        assert!(g.reserve_finalization().is_none());
+        assert!(g.start_finalization(id).is_err());
+        g.release(production);
+        let permit = g.start_finalization(id).unwrap();
+        assert_eq!(g.snapshot().reserved_mib, 64);
+        assert_eq!(g.snapshot().cpu_threads, 1);
+        assert!(g.start_finalization(id).is_err());
+        drop(permit);
+        assert_eq!(g.snapshot().cpu_threads, 0);
+        // An unsuccessful mux leaves a retryable reservation, not a CPU lease.
+        drop(g.start_finalization(id).unwrap());
+        g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+        assert!(g.start_finalization(id).is_err());
+    }
+    #[test]
+    fn production_transfers_the_same_memory_envelope_to_mux() {
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 512,
+            ..Limits::default()
+        })
+        .unwrap();
+        let id = g.reserve_finalization().unwrap();
+        let production = g
+            .reserve_for(
+                Claim {
+                    threads: 0,
+                    mib: 512,
+                    background: false,
+                },
+                Some(id),
+            )
+            .unwrap();
+        assert_eq!(g.snapshot().reserved_mib, 512);
+        assert!(g.start_finalization(id).is_err());
+        assert!(g
+            .reserve_for(
+                Claim {
+                    threads: 0,
+                    mib: 64,
+                    background: false
+                },
+                Some(id)
+            )
+            .is_none());
+        g.state.lock().unwrap().pressured = true;
+        g.release(production);
+        assert_eq!(g.snapshot().reserved_mib, 64);
+        drop(g.start_finalization(id).unwrap());
+        g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[test]
+    fn renderer_exit_releases_production_and_finalization_in_either_order() {
+        for tail_first in [true, false] {
+            let g = Governor::new();
+            let id = g.reserve_finalization().unwrap();
+            let production = g
+                .reserve_for(
+                    Claim {
+                        threads: 0,
+                        mib: 200,
+                        background: false,
+                    },
+                    Some(id),
+                )
+                .unwrap();
+            if tail_first {
+                g.release(id);
+                g.release(production);
+            } else {
+                g.release(production);
+                g.release(id);
+            }
+            assert_eq!(g.snapshot().active, 0);
+        }
+    }
+
+    #[test]
+    fn host_exhaustion_blocks_continuations_and_owner_exit_cannot_uncharge_live_mux() {
+        let g = Governor::new();
+        let id = g.reserve_finalization().unwrap();
+        g.state.lock().unwrap().critical = true;
+        assert!(g.start_finalization(id).is_err());
+        g.state.lock().unwrap().critical = false;
+        let permit = g.start_finalization(id).unwrap();
+        g.release(id);
+        assert_eq!(g.snapshot().reserved_mib, 64);
+        drop(permit);
+        assert_eq!(g.snapshot().reserved_mib, 0);
+        assert!(g.start_finalization(id).is_err());
+    }
+
     #[test]
     fn total_admission_survives_limit_reduction_and_double_release() {
         let g = Governor::new();

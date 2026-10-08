@@ -5,7 +5,7 @@ import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import { configureResources } from './resources.js'
-import { installResourceIpc } from './resourceIpc.js'
+import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
@@ -1278,6 +1278,12 @@ app.whenReady().then(async () => {
   })
   await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === 'mux_export') {
+      // Never accept a renderer-supplied native lease number (including the
+      // snake-case alias). Only this sender's live continuation token qualifies.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
+      args = { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken) };
+    }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
     if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)

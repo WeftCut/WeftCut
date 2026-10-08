@@ -26,6 +26,26 @@ aggregate thread reservations, playback and pressure can reduce concurrency.
 Changing effort applies to new work and newly opened decoder sessions; it does
 not change memory/cache targets, media quality or existing worker thread counts.
 
+## Retrying export finalization
+
+Video export reserves its stream-copy tail before encoding. Production borrows
+that same memory allowance and returns it when the worker is torn down, so the
+two phases do not consume duplicate reservations. The tail owns no CPU slot
+until it runs. Ordinary RSS pressure blocks new work but allows this admitted
+export to finish; critically low host memory and unavailable CPU capacity still
+block the attempt.
+
+If writing the final file fails after encoding, the export panel offers **Retry
+finishing export** and **Discard export**. Retry reuses the encoded audio/video;
+it does not encode the timeline again. Opening Performance settings preserves
+this pending export. Mux writes a sibling temporary file and replaces the chosen
+output only after success, preserving an older output on failure.
+
+Keep the editor open to retry. This is session-local recovery, not recovery after
+an application crash or restart. Success, explicit discard and editor cleanup
+release the reservation and remove the encoded intermediates. Closing a window
+with a pending retry asks before discarding it. See [ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md).
+
 ## Authority and lifecycle
 
 shared/resource-policy.ts validates intent and derives allocation. Main supplies

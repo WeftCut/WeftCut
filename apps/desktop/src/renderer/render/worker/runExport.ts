@@ -33,6 +33,7 @@ import type {
 } from "./protocol";
 
 export interface RunExportInit {
+  finalizationToken?: string | undefined;
   /// Live project summary from the Zustand store.
   summary: ProjectSummary;
   /// Media lookup, also from the store. Required for asset URL
@@ -205,7 +206,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // target before either the canvas or worker allocates its buffers.
   const pixelBytes = comp.width * comp.height * (init.bitDepth === 10 ? 8 : 4);
   const motifBufferBytes = hasMotifs ? Math.max(pixelBytes, Math.floor(exportBufferBytes() / 2)) : 0;
-  const releaseResources = await acquireRenderResources(64 + (pixelBytes * 8 + motifBufferBytes) / 1048576);
+  const releaseResources = await acquireRenderResources(64 + (pixelBytes * 8 + motifBufferBytes) / 1048576, 0, init.finalizationToken);
   let worker: Worker;
   try { init.signal?.throwIfAborted(); worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),

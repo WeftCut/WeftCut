@@ -1254,7 +1254,7 @@ export function App({ onCloseProject }: AppProps) {
           }}
         />
       )}
-      {exportState && (
+      {exportState && !settingsOpen && (
         <ExportPanel
           state={exportState}
           onClose={() => {
@@ -1264,7 +1264,7 @@ export function App({ onCloseProject }: AppProps) {
           onPlay={openRenderPlayPopup}
           onReveal={revealExportedFile}
           onOpenSettings={() => {
-            setExportState(null);
+            if (exportState.kind !== "error" || !exportState.onRetry) setExportState(null);
             setExportDialogOpen(false);
             openSettings("performance");
           }}
@@ -1278,7 +1278,7 @@ export function App({ onCloseProject }: AppProps) {
         >
           <div className="settings-body">
             <div className="settings-card">
-              <p className="settings-blurb">{t("close_guard.body")}</p>
+              <p className="settings-blurb">{t(exportState?.kind === "error" && exportState.onRetry ? "export.close_pending" : "close_guard.body")}</p>
               <div className="export-actions">
                 <Button size="lg" onClick={() => setCloseConfirmOpen(false)}>
                   {t("close_guard.stay")}
@@ -1286,7 +1286,12 @@ export function App({ onCloseProject }: AppProps) {
                 <Button
                   variant="destructive"
                   size="lg"
-                  onClick={() => void getCurrentWindow().destroy()}
+                  onClick={() => {
+                    void (async () => {
+                      if (exportState?.kind === "error") await exportState.onDiscard?.();
+                      await getCurrentWindow().destroy();
+                    })();
+                  }}
                 >
                   {t("close_guard.quit")}
                 </Button>

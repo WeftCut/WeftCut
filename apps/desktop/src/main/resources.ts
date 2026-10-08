@@ -5,9 +5,10 @@ import { resourceAllocation, RESOURCE_CAPACITY_EXCEEDED } from '../shared/resour
 interface ResourceMemorySample { processMib: number; availableMib: number }
 interface NativeResources {
   resourcesConfigure(json: string): void;
-  resourcesReserve(threads: number, memoryMiB: number): number;
+  resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
   resourcesRelease(id: number): void;
-  resourcesActivity(playing: boolean, pressured: boolean): void;
+  resourcesReserveFinalization(): number;
+  resourcesActivity(playing: boolean, pressured: boolean, critical: boolean): void;
   resourcesSnapshot(): string;
   resourcesMemory(): Promise<ResourceMemorySample>;
   resourcesCacheWritten(immediate: boolean): Promise<void>;
@@ -32,17 +33,22 @@ export function reserveDecoderResources(path: string): () => void {
   // slot. Per-session thread caps still follow processing effort.
   return reserveResources(0, decode.decodeMemoryMib(path));
 }
-export function reserveResources(threads: number, memoryMiB: number): () => void {
+export function reserveResources(threads: number, memoryMiB: number, finalizationId?: number): () => void {
   if (!native) return () => {};
   const owner = getNative();
   let id: number;
-  try { id = owner.resourcesReserve(threads, Math.ceil(memoryMiB)); }
+  try { id = owner.resourcesReserve(threads, Math.ceil(memoryMiB), finalizationId); }
   catch (error) { throw new Error(`${RESOURCE_CAPACITY_EXCEEDED}: ${String(error)}`); }
   let live = true;
   return () => { if (live) { live = false; owner.resourcesRelease(id); } };
 }
-export function setResourceActivity(playing: boolean, pressured: boolean): void {
-  getNative().resourcesActivity(playing, pressured);
+export function reserveExportFinalization(): { nativeId: number; release: () => void } {
+  const owner = getNative();
+  const nativeId = owner.resourcesReserveFinalization();
+  return { nativeId, release: () => owner.resourcesRelease(nativeId) };
+}
+export function setResourceActivity(playing: boolean, pressured: boolean, critical = pressured): void {
+  getNative().resourcesActivity(playing, pressured, critical);
 }
 export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads'> {
   return JSON.parse(getNative().resourcesSnapshot());
@@ -56,9 +62,13 @@ export function notifyResourceCacheWrite(): void {
  * a known pressure state or prevents settings from being saved. */
 export function createMemoryPressure() {
   let pressured = false;
+  let critical = false;
   return {
+    critical: () => critical,
     update(usedMiB: number | null, targetMiB: number, availableMiB: number) {
       if (usedMiB !== null) {
+        if (availableMiB < 256) critical = true;
+        else if (availableMiB > 512) critical = false;
         if (usedMiB > targetMiB || availableMiB < 256) pressured = true;
         else if (usedMiB < targetMiB * .8 && availableMiB > 512) pressured = false;
       }

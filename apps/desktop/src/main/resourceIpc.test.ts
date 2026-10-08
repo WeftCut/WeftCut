@@ -5,17 +5,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   handles: new Map<string, (...args: any[]) => any>(),
   listeners: new Map<string, (...args: any[]) => any>(),
-  quit: [] as (() => void)[], reserve: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
+  quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
 }));
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: any) => mocks.handles.set(name, fn), on: (name: string, fn: any) => mocks.listeners.set(name, fn) },
   BrowserWindow: { getAllWindows: mocks.windows }, app: { once: (_: string, fn: () => void) => mocks.quit.push(fn) },
 }));
 vi.mock('./resources', async importOriginal => ({
-  ...await importOriginal<object>(), reserveResources: mocks.reserve, setResourceActivity: mocks.activity,
+  ...await importOriginal<object>(), reserveResources: mocks.reserve, reserveExportFinalization: mocks.reserveFinalization, setResourceActivity: mocks.activity,
   processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
 }));
-import { installResourceIpc } from './resourceIpc';
+import { installResourceIpc, resolveExportFinalization } from './resourceIpc';
 
 const sender = (id: number) => Object.assign(new EventEmitter(), { id });
 const acquire = (owner: EventEmitter, id = 'lease') => mocks.handles.get('resources:acquire')!({ sender: owner }, { id, memoryMiB: 64, threads: 0 });
@@ -67,8 +67,8 @@ it('rejects memory values that would wrap at the native uint32 boundary', () => 
 it('combines playback across windows and drops playback state when the owner dies', () => {
   const a = sender(5), b = sender(6), playing = mocks.listeners.get('resources:playing')!;
   playing({ sender: a }, true); playing({ sender: b }, false);
-  expect(mocks.activity).toHaveBeenLastCalledWith(true, false);
-  a.emit('destroyed'); expect(mocks.activity).toHaveBeenLastCalledWith(false, false);
+  expect(mocks.activity).toHaveBeenLastCalledWith(true, false, false);
+  a.emit('destroyed'); expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
   b.emit('destroyed');
 });
 it('does not publish into destroyed contents or after quit starts', async () => {
@@ -87,7 +87,7 @@ it('keeps admission open when host memory is reclaimable despite few free pages'
   mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 2048 });
   try {
     await vi.advanceTimersByTimeAsync(1000);
-    expect(mocks.activity).toHaveBeenLastCalledWith(false, false);
+    expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
     expect(mocks.handles.get('resources:status')!({ sender: sender(8) })).toMatchObject({
       memory_mib: 510, available_memory_mib: 2048, pressure: 'normal',
     });
@@ -96,14 +96,32 @@ it('keeps admission open when host memory is reclaimable despite few free pages'
 it('closes admission for real host pressure and only reopens after recovery', async () => {
   mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 200 });
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
   mocks.memory.mockRejectedValue(new Error('sample unavailable'));
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
   mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 400 });
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.activity).toHaveBeenLastCalledWith(false, true);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, true, true);
   mocks.memory.mockResolvedValue({ processMib: 510, availableMib: 2048 });
   await vi.advanceTimersByTimeAsync(1000);
-  expect(mocks.activity).toHaveBeenLastCalledWith(false, false);
+  expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
+});
+
+it('finalization tokens belong to one renderer and expire on release or reload', () => {
+  const owner = sender(20);
+  const release = vi.fn();
+  mocks.reserveFinalization.mockReturnValue({ nativeId: 42, release });
+  const reserve = mocks.handles.get('resources:reserve-export-finalization')!;
+  reserve({ sender: owner }, 'export-a');
+  expect(resolveExportFinalization(20, 'export-a')).toBe(42);
+  expect(() => resolveExportFinalization(21, 'export-a')).toThrow('expired');
+  expect(() => reserve({ sender: owner }, 'export-a')).toThrow('Invalid');
+  mocks.listeners.get('resources:release')!({ sender: owner }, 'export-a');
+  expect(() => resolveExportFinalization(20, 'export-a')).toThrow('expired');
+  expect(release).toHaveBeenCalledOnce();
+  reserve({ sender: owner }, 'export-b');
+  owner.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  expect(() => resolveExportFinalization(20, 'export-b')).toThrow('expired');
+  expect(release).toHaveBeenCalledTimes(2);
 });

@@ -40,6 +40,7 @@ export interface PixiPreviewHandle {
   /// final mux/transcode so the ExportPanel progress UI can drive the full
   /// pipeline.
   runExport(opts: {
+    finalizationToken?: string | undefined;
     onProgress?: (encoded: number, total: number) => void;
     /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
     /// omitted, the worker falls back to its 1080p H.264 default.

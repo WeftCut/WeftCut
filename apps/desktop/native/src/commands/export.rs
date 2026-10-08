@@ -51,6 +51,8 @@ pub async fn mux_export(
     video_path: String,
     audio_path: String,
     output_path: String,
+    finalization_id: Option<u32>,
+    audio_required: bool,
 ) -> Result<(), String> {
     let video = PathBuf::from(video_path);
     let audio = PathBuf::from(audio_path);
@@ -61,7 +63,7 @@ pub async fn mux_export(
                 .map_err(|e| format!("create output dir {}: {e}", parent.display()))?;
         }
     }
-    export::mux_to_file(&video, &audio, &out)
+    export::mux_to_file(&video, &audio, &out, finalization_id, audio_required)
         .await
         .map_err(|e| format!("{e:#}"))
 }

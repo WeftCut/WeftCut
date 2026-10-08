@@ -3,11 +3,11 @@ import { resourceAllocation, setRendererResourceShare } from '../../shared/resou
 /** Test/standalone renderers have no bridge. Production always installs it. */
 let workerAcquire: ((memoryMiB: number, threads: number) => Promise<() => void>) | null = null;
 export function installWorkerResourceClient(acquire: (memoryMiB: number, threads: number) => Promise<() => void>): void { workerAcquire = acquire; }
-export async function acquireRenderResources(memoryMiB: number, threads = 0): Promise<() => void> {
+export async function acquireRenderResources(memoryMiB: number, threads = 0, finalizationToken?: string): Promise<() => void> {
   if (workerAcquire) return workerAcquire(Math.max(1, Math.ceil(memoryMiB)), threads);
   if (typeof window === 'undefined' || !window.api?.resources) return () => {};
   const id = crypto.randomUUID();
-  await window.api.resources.acquire({ id, memoryMiB: Math.max(1, Math.ceil(memoryMiB)), threads });
+  await window.api.resources.acquire({ id, memoryMiB: Math.max(1, Math.ceil(memoryMiB)), threads, ...(finalizationToken ? { finalizationToken } : {}) });
   let live = true;
   return () => { if (live) { live = false; window.api.resources.release(id); } };
 }
@@ -24,3 +24,15 @@ export function updateRendererResources(value: { renderers: number; pressure: st
   for (const notify of changed) notify();
 }
 export const exportBufferBytes = () => resourceAllocation().export_mib * 1048576;
+
+/** Reserve the small stream-copy tail before encoding. It owns no CPU slot
+ * until mux starts and remains owned by this renderer until success/discard. */
+export async function reserveExportFinalization(): Promise<{ token?: string; release: () => void }> {
+  if (typeof window === 'undefined' || !window.api?.resources) return { release: () => {} };
+  const token = crypto.randomUUID();
+  await window.api.resources.reserveExportFinalization(token);
+  let live = true;
+  return { token, release: () => {
+    if (live) { live = false; window.api.resources.release(token); }
+  } };
+}
