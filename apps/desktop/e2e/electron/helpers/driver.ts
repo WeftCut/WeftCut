@@ -1,10 +1,10 @@
-import { _electron as electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
-import { spawnSync } from 'node:child_process'
+import { _electron as electron, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { installResourceDiagnostics, resourceDiagnostics } from './resourceDiagnostics'
+import { installResourceDiagnostics, resourceDiagnostics, startResourceJournal } from './resourceDiagnostics'
+import { ownProcessTree, closeProcessTree } from '../../lib/process-cleanup.mjs'
 
 /// Type-only, so Playwright's transform erases it: the stall probe reads the
 /// renderer's `ExportState` mirror field by field (labels, progress.frame,
@@ -94,6 +94,8 @@ const keepTmp = () => process.env.WEFTCUT_E2E_KEEP_TMP === '1'
 /// caller passed their own — then the driver still kills on exit but never
 /// removes the dir).
 const liveApps = new Map<ElectronApplication, string | null>()
+const processTrees = new WeakMap<ElectronApplication, ReturnType<typeof ownProcessTree>>()
+const stopJournals = new WeakMap<ElectronApplication, () => Promise<void>>()
 /// Every dir minted by tmpDir(), swept at process exit.
 const mintedTmpDirs = new Set<string>()
 
@@ -226,10 +228,11 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
   return () => {
     closing ??= (async () => {
       try {
-        await original()
+        await stopJournals.get(app)?.()
+        await closeProcessTree(processTrees.get(app)!, original)
       } finally {
-        // finally: a rejected close means the process already died — the dir
-        // is still safe (and still ours) to remove.
+        // Graceful close or its forced teardown has finished; remove only the
+        // user-data directory this test minted.
         const dir = liveApps.get(app) ?? null
         liveApps.delete(app)
         if (dir && !keepTmp()) removeDir(dir)
@@ -239,41 +242,11 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
   }
 }
 
-/// Force a leaked app down, synchronously so an 'exit' handler can call it. On
-/// Windows that means its whole process TREE.
-///
-/// LANDMINE — on Windows the main pid alone is NOT enough. Electron's renderer/GPU/crashpad
-/// children inherit the stdio pipes Playwright spawned the app with, so killing
-/// only the leader leaves those pipes open, the ChildProcess 'close' event never
-/// fires, and Playwright keeps the app in its `gracefullyCloseSet`. The
-/// end-of-worker `gracefullyCloseAll()` then blocks on an app it still believes
-/// is closing: a nightly Windows leg died of a 60 s worker-teardown timeout with
-/// all 187 of its tests green, leaving three orphan electron processes for the
-/// runner to reap.
-///
-/// Mirrors Playwright's own Windows force-kill rather than inventing one:
-/// `taskkill /T /F`. Call it while the leader is still ALIVE — `/T` walks the
-/// tree by parent pid, so a leader that has already exited leaves its children
-/// re-parented and out of reach (measured: taskkill after a bare kill() reaps
-/// nothing, and 'close' stays unfired). There is no second chance at the tree.
-///
-/// LANDMINE — POSIX deliberately keeps the leader-only kill, and the symmetry is
-/// not worth "fixing". Playwright spawns detached off-Windows, so
-/// `process.kill(-pid)` looks like the obvious counterpart; it is also what this
-/// sweep runs from inside a `process.on('exit')` listener, and `process.exit()`
-/// cannot finish until that listener returns. A group kill there rode with a
-/// Linux leg whose worker then never exited at all — the runner force-killed it
-/// after 5 minutes with every test green. The evidence for a tree kill is
-/// Windows-only; keep the blast radius there until a Linux failure asks for it.
+/// Force only this app's captured process tree down. POSIX group identity is
+/// checked against our worker before signalling, including during exit cleanup.
 export function forceCloseApp(app: ElectronApplication): void {
   try {
-    const proc = app.process()
-    if (!proc?.pid) return
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
-    } else {
-      proc.kill()
-    }
+    processTrees.get(app)?.force()
   } catch {
     // Already gone.
   }
@@ -336,6 +309,7 @@ export async function launchApp(
     } as Record<string, string>,
   })
   liveApps.set(app, mintedUserDataDir)
+  processTrees.set(app, ownProcessTree(app.process()))
   app.close = wrapClose(app)
   try {
     const page = await app.firstWindow({ timeout: 60_000 })
@@ -346,6 +320,7 @@ export async function launchApp(
     }
     await page.waitForLoadState('domcontentloaded')
     await installResourceDiagnostics(app, page)
+    stopJournals.set(app, startResourceJournal(page, test.info().outputPath(`resource-lifecycle-${app.process().pid}.jsonl`)))
     return { app, page }
   } catch (e) {
     // Boot failed before the caller got a page: close via the wrapper so the

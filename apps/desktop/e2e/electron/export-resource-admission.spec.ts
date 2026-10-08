@@ -157,9 +157,12 @@ test('trimmed long-GOP export fits the working allowance and preserves source fr
   } finally { await app.close() }
 })
 
-for (const { label, memory, stepUs, expectedFrames } of [
-  { label: 'spaced clips', memory: 4096, stepUs: 2_000_000, expectedFrames: 669 },
-  { label: 'rapid cuts', memory: 4096, stepUs: 300_000, expectedFrames: 108 },
+for (const { label, memory, stepUs, clips, expectedFrames } of [
+  // Six retained 381 MiB windows still exceed the 1638 MiB working allowance.
+  // More spaced clips mostly add blank output frames, which consume the
+  // software-rendering deadline without strengthening the release assertion.
+  { label: 'spaced clips', memory: 4096, stepUs: 2_000_000, clips: 6, expectedFrames: 309 },
+  { label: 'rapid cuts', memory: 4096, stepUs: 300_000, clips: 12, expectedFrames: 108 },
 ]) test(`sequential ${label} release decoder reservations before admitting later clips`, async () => {
   test.setTimeout(240_000)
   const { app, page } = await launchApp()
@@ -168,7 +171,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: memory } } })
     const source = path.join(MEDIA, 'test_1080p_30fps_6s.mp4')
     const first = await importAndPlaceMedia(page, { mediaAbsPath: source })
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < clips; i++) {
       const startUs = i * stepUs
       const layerId = i === 0 ? first.layerId : (await page.evaluate(
         args => (window as any).__weftcutTest.placeMediaLayer(args),
@@ -178,7 +181,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     }
     await page.evaluate(id => (window as any).__weftcutTest.waitMediaExportReady({ mediaId: id }), first.mediaId)
     // Track actual decoder leases rather than relying on a process RSS floor
-    // that differs between hardware and software rendering. Twelve retained
+    // that differs between hardware and software rendering. Even six retained
     // decoders still exceed this budget; sequential clips need only one.
     await app.evaluate(({ ipcMain }) => {
       const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
@@ -203,7 +206,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     expect(result.done.ok, result.done.error).toBe(true)
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
     expect(perf.totalFrames).toBe(expectedFrames)
-    expect(perf.sources).toHaveLength(12)
+    expect(perf.sources).toHaveLength(clips)
     expect(await app.evaluate(() => (globalThis as any).__sequentialDecoders.peak)).toBe(1)
     if (label === 'rapid cuts') {
       const reference = path.join(outputDir, 'reference.mp4')

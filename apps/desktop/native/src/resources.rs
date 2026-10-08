@@ -39,6 +39,7 @@ struct State {
     next: u32,
     leases: HashMap<u32, Claim>,
     waiting: u32,
+    finalization_waiting: u32,
     playing: bool,
     pressured: bool,
     critical: bool,
@@ -70,6 +71,7 @@ impl Governor {
                 next: 0,
                 leases: HashMap::new(),
                 waiting: 0,
+                finalization_waiting: 0,
                 playing: false,
                 pressured: false,
                 critical: false,
@@ -120,6 +122,7 @@ impl Governor {
             s.limits.cpu_threads
         };
         if s.pressured
+            || claim.threads > 0 && s.finalization_waiting > 0
             || threads.saturating_add(claim.threads) > cpu_limit
             || mib.saturating_sub(credit).saturating_add(claim.mib) > s.limits.work_mib
             || claim.background
@@ -179,21 +182,29 @@ impl Governor {
             .insert(id, FinalizationState::default());
         Some(id)
     }
-    fn start_finalization(self: &Arc<Self>, id: u32) -> Result<FinalizationPermit, String> {
+    fn start_finalization(
+        self: &Arc<Self>,
+        id: u32,
+    ) -> Result<FinalizationPermit, FinalizationBlocked> {
         let mut s = self.state.lock().unwrap();
-        let reservation = s
-            .finalizations
-            .get(&id)
-            .ok_or("Export finalization reservation expired")?;
+        let reservation = s.finalizations.get(&id).ok_or(FinalizationBlocked::Failed(
+            "Export finalization reservation expired",
+        ))?;
         if reservation.running || reservation.released || reservation.production.is_some() {
-            return Err("Export finalization is already running or closed".into());
+            return Err(FinalizationBlocked::Failed(
+                "Export finalization is already running or closed",
+            ));
         }
         let threads: u32 = s.leases.values().map(|c| c.threads).sum();
         // This is continuation of admitted work, not a fresh memory claim.
         // Ordinary RSS hysteresis cannot strand it, but real host exhaustion
-        // and CPU occupancy still reject it explicitly, retaining the files.
-        if s.critical || threads >= s.limits.cpu_threads {
-            return Err("resource-capacity-exceeded: Not enough resources to finish exporting; retry when resources recover".into());
+        // remains a hard refusal. Temporary CPU occupancy waits without a new
+        // memory claim, ahead of fresh compute work.
+        if s.critical {
+            return Err(FinalizationBlocked::Failed("resource-capacity-exceeded: Not enough resources to finish exporting; retry when resources recover"));
+        }
+        if threads >= s.limits.cpu_threads {
+            return Err(FinalizationBlocked::CpuBusy);
         }
         s.finalizations.get_mut(&id).unwrap().running = true;
         s.leases.get_mut(&id).unwrap().threads = 1;
@@ -201,6 +212,37 @@ impl Governor {
             governor: self.clone(),
             id,
         })
+    }
+    async fn acquire_finalization(self: &Arc<Self>, id: u32) -> Result<FinalizationPermit, String> {
+        // Already admitted work needs a queue entry only while CPU is occupied.
+        // A full background queue must not block an otherwise runnable tail.
+        match self.start_finalization(id) {
+            Ok(permit) => return Ok(permit),
+            Err(FinalizationBlocked::Failed(message)) => return Err(message.into()),
+            Err(FinalizationBlocked::CpuBusy) => {}
+        }
+        let waiting = {
+            let mut s = self.state.lock().unwrap();
+            if s.waiting >= 256 {
+                return Err("resource-capacity-exceeded: Too many queued tasks; retry when current work finishes".into());
+            }
+            s.waiting += 1;
+            s.finalization_waiting += 1;
+            FinalizationWaiting(self.clone())
+        };
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            match self.start_finalization(id) {
+                Ok(permit) => {
+                    drop(waiting);
+                    return Ok(permit);
+                }
+                Err(FinalizationBlocked::Failed(message)) => return Err(message.into()),
+                Err(FinalizationBlocked::CpuBusy) => notified.await,
+            }
+        }
     }
     fn finish_finalization(&self, id: u32) {
         let mut s = self.state.lock().unwrap();
@@ -230,7 +272,7 @@ impl Governor {
         let waiting = {
             let mut s = self.state.lock().unwrap();
             if s.waiting >= 256 {
-                return Err("Too many queued tasks; retry when current work finishes".into());
+                return Err("resource-capacity-exceeded: Too many queued tasks; retry when current work finishes".into());
             }
             s.waiting += 1;
             Waiting(self.clone())
@@ -243,7 +285,7 @@ impl Governor {
             let threads = {
                 let s = self.state.lock().unwrap();
                 if mib > s.limits.work_mib {
-                    return Err(format!("Task requires at least {mib} MiB of working memory; increase the memory target"));
+                    return Err(format!("resource-capacity-exceeded: Requested {mib} MiB working memory exceeds the {} MiB allowance; increase the memory target", s.limits.work_mib));
                 }
                 s.limits.task_threads.min(if background {
                     s.limits.cpu_threads.saturating_sub(1).max(1)
@@ -264,6 +306,22 @@ impl Governor {
             }
             notified.await;
         }
+    }
+}
+#[derive(Debug)]
+enum FinalizationBlocked {
+    CpuBusy,
+    Failed(&'static str),
+}
+struct FinalizationWaiting(Arc<Governor>);
+impl Drop for FinalizationWaiting {
+    fn drop(&mut self) {
+        {
+            let mut s = self.0.state.lock().unwrap();
+            s.waiting -= 1;
+            s.finalization_waiting -= 1;
+        }
+        self.0.changed.notify_waiters();
     }
 }
 struct Waiting(Arc<Governor>);
@@ -290,8 +348,10 @@ impl Drop for FinalizationPermit {
         self.governor.finish_finalization(self.id);
     }
 }
-pub fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
-    governor().start_finalization(id)
+pub async fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
+    tokio::time::timeout(std::time::Duration::from_secs(15), governor().acquire_finalization(id))
+        .await
+        .map_err(|_| "resource-capacity-exceeded: Processing resources are busy; retry finishing the export when they recover".to_string())?
 }
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
@@ -329,7 +389,7 @@ pub async fn interactive(mib: u64) -> Result<Permit, String> {
     )
     .await
     .map_err(|_| {
-        "Resources are busy. Stop playback or wait for other processing, then retry".to_string()
+        "resource-capacity-exceeded: Resources are busy. Stop playback or wait for other processing, then retry".to_string()
     })?
 }
 /// Model weights plus working space. Offloaded weights remain conservatively
@@ -654,6 +714,123 @@ mod tests {
         assert_eq!(g.snapshot().reserved_mib, 64);
         drop(g.start_finalization(id).unwrap());
         g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn finalization_waits_for_one_slot_and_precedes_fresh_compute() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 1,
+            task_threads: 1,
+            ..Limits::default()
+        })
+        .unwrap();
+        let id = g.reserve_finalization().unwrap();
+        let busy = g.acquire(true, 128).await.unwrap();
+        let pending = g.acquire_finalization(id);
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), &mut pending)
+                .await
+                .is_err()
+        );
+        assert_eq!(g.snapshot().waiting, 1);
+        // Releasing the occupied slot cannot let another producer jump ahead.
+        drop(busy);
+        assert!(g
+            .reserve(Claim {
+                threads: 1,
+                mib: 64,
+                background: false
+            })
+            .is_none());
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(g.snapshot().waiting, 0);
+        assert_eq!(g.snapshot().reserved_mib, 64);
+        assert_eq!(g.snapshot().cpu_threads, 1);
+        drop(permit);
+        g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+        assert!(g.acquire(true, 128).await.is_ok());
+    }
+    #[tokio::test]
+    async fn admitted_finalization_can_finish_while_the_background_queue_is_full() {
+        let g = Governor::new();
+        let id = g.reserve_finalization().unwrap();
+        g.state.lock().unwrap().playing = true;
+        let mut queued = tokio::task::JoinSet::new();
+        for _ in 0..256 {
+            let g = g.clone();
+            queued.spawn(async move { g.acquire(true, 64).await });
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while g.snapshot().waiting < 256 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let permit = g.acquire_finalization(id).await.unwrap();
+        assert_eq!(g.snapshot().cpu_threads, 1);
+        assert_eq!(g.snapshot().waiting, 256);
+        queued.abort_all();
+        while queued.join_next().await.is_some() {}
+        assert_eq!(g.snapshot().waiting, 0);
+        drop(permit);
+        g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn cancelling_or_expiring_a_waiting_finalization_restores_admission() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 1,
+            task_threads: 1,
+            ..Limits::default()
+        })
+        .unwrap();
+        let busy = g.acquire(true, 128).await.unwrap();
+        let id = g.reserve_finalization().unwrap();
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            g.acquire_finalization(id)
+        )
+        .await
+        .is_err());
+        assert_eq!(g.snapshot().waiting, 0);
+        assert_eq!(g.state.lock().unwrap().finalization_waiting, 0);
+        let pending = g.acquire_finalization(id);
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), &mut pending)
+                .await
+                .is_err()
+        );
+        g.release(id);
+        assert!(pending.await.err().unwrap().contains("expired"));
+        assert_eq!(g.snapshot().waiting, 0);
+        drop(busy);
+        assert!(g.acquire(true, 128).await.is_ok());
+    }
+    #[tokio::test]
+    async fn impossible_working_claim_fails_instead_of_waiting_for_a_release() {
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 409,
+            ..Limits::default()
+        })
+        .unwrap();
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(50), g.acquire(true, 509))
+                .await
+                .unwrap();
+        let error = result.err().unwrap();
+        assert!(error.contains("resource-capacity-exceeded"));
+        assert!(error.contains("increase the memory target"));
+        assert_eq!(g.snapshot().waiting, 0);
         assert_eq!(g.snapshot().active, 0);
     }
     #[test]

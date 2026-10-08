@@ -32,8 +32,9 @@ Video export reserves its stream-copy tail before encoding. Production borrows
 that same memory allowance and returns it when the worker is torn down, so the
 two phases do not consume duplicate reservations. The tail owns no CPU slot
 until it runs. Ordinary RSS pressure blocks new work but allows this admitted
-export to finish; critically low host memory and unavailable CPU capacity still
-block the attempt.
+export to finish. Critically low host memory still blocks the attempt. Temporary
+CPU occupancy waits up to 15 seconds, with finalization ahead of new compute
+tasks; a longer wait returns the retry panel without discarding encoded work.
 
 If writing the final file fails after encoding, the export panel offers **Retry
 finishing export** and **Discard export**. Retry reuses the encoded audio/video;
@@ -100,7 +101,12 @@ returns credits locally and wakes a parked producer, including across 60-frame
 planning blocks. Long GOPs therefore do not need to be retained in full. The
 window is internal and fixed for a session; the first version has no adaptive
 sizing or global scheduling in the per-frame path. Targets below the combined
-base working set can still fail admission.
+base working set can still fail admission. The 1 GiB settings floor is for
+lighter workloads, not a guarantee of 1080p source export: it projects to
+409 MiB of working memory, while a 1080p/8-bit WebCodecs window (381 MiB) plus
+the export composition worker (128 MiB) already needs 509 MiB before the native
+encoder. Insufficient admission reports recovery options without changing the
+target or reducing output quality.
 
 GOP preroll is discarded behind the requested source time, retaining its lower
 PTS neighbour. Planning blocks split at source activation/deactivation on the

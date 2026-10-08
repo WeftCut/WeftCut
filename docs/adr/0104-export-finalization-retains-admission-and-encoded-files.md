@@ -15,8 +15,15 @@ returns them to finalization. The two sequential phases are not charged twice.
 After production teardown, mux borrows one CPU slot against that reservation;
 it allocates no second memory claim. Only a live, owner-scoped reservation can
 continue under ordinary RSS pressure. New tasks still cannot enter. Critical
-host pressure (available RAM below 256 MiB, recovery above 512 MiB) and occupied
-CPU capacity still reject the attempt. Missing telemetry preserves pressure.
+host pressure (available RAM below 256 MiB, recovery above 512 MiB) still rejects
+the attempt. Occupied CPU capacity now waits for at most 15 seconds, matching
+interactive admission. Queued finalization has priority over new compute claims
+so background work cannot repeatedly steal a single processing slot. Waiting
+holds no CPU slot or additional memory. Timeout, cancellation and owner teardown
+remove that priority; a timeout retains encoded files for retry. This replaces
+the initial immediate CPU refusal, which made completed exports fail during
+short-lived background occupancy on three-core CI hosts.
+Missing telemetry preserves pressure.
 The memory target remains cooperative, not an OS-enforced hard cap.
 
 The main process translates a renderer-owned opaque token into the native

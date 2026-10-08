@@ -281,7 +281,11 @@ pub async fn mux_to_file(
     }
     let (_continuation, _resources) = match finalization_id {
         Some(id) => (
-            Some(crate::resources::continue_finalization(id).map_err(anyhow::Error::msg)?),
+            Some(
+                crate::resources::continue_finalization(id)
+                    .await
+                    .map_err(anyhow::Error::msg)?,
+            ),
             None,
         ),
         None => (

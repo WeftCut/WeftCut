@@ -1,6 +1,8 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 import type { WeftcutApi } from '../../../src/shared/ipc'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const addon = fileURLToPath(new URL('../../../native/index.js', import.meta.url))
 const apps = new WeakMap<Page, ElectronApplication>()
@@ -71,4 +73,34 @@ export async function resourceDiagnostics(page: Page) {
     })),
   ])
   return { main, renderer }
+}
+
+/** Persist while the test is running: reporter finalization and attachments
+ * cannot be relied on when the renderer or worker is killed mid-test. */
+export function startResourceJournal(page: Page, file: string): () => Promise<void> {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  let pending: Promise<void> | null = null
+  const sample = (reason: string): Promise<void> => {
+    if (pending) return pending
+    pending = (async () => {
+      const [resources, exportState] = await Promise.all([
+        resourceDiagnostics(page),
+        bounded(page.evaluate(() => {
+          const w = window as any
+          const s = w.__weftcutExportState
+          return { kind: s?.kind, detail: s?.detail, step: s?.step, frame: s?.progress?.frame,
+            totalFrames: w.__weftcutExportPerf?.totalFrames }
+        })),
+      ])
+      fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason, resources, export: exportState }) + '\n')
+    })().catch(error => {
+      // Recording must neither replace the product failure nor hang cleanup.
+      try { fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason, unavailable: String(error) }) + '\n') } catch { /* Worker exiting. */ }
+    }).finally(() => { pending = null })
+    return pending
+  }
+  fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason: 'launched' }) + '\n')
+  const timer = setInterval(() => { void sample('running') }, 2000)
+  timer.unref()
+  return async () => { clearInterval(timer); await pending; await sample('before-close') }
 }

@@ -52,10 +52,12 @@ for (const action of ['retry', 'discard'] as const) {
       }, addon)
       const result = await driveExport(page, { mediaAbsPath: media, outputAbsPath: output,
         settings: { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: true } } })
+      await testInfo.attach('initial-export-result', { body: JSON.stringify(result, null, 2), contentType: 'application/json' })
       expect(result.lastKind, result.lastDetail ?? undefined).toBe('error')
       const trace = () => app.evaluate(() => (globalThis as any).__finalizationTrace)
       const initial = await trace()
-      expect(initial.mux).toHaveLength(1)
+      await testInfo.attach('initial-finalization-trace', { body: JSON.stringify(initial, null, 2), contentType: 'application/json' })
+      expect(initial.mux, result.done.error ?? result.lastDetail ?? undefined).toHaveLength(1)
       const { videoPath, audioPath, finalizationToken, audioRequired } = initial.mux[0].args
       expect(typeof finalizationToken).toBe('string')
       expect(audioRequired).toBe(true)
