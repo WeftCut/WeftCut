@@ -5,7 +5,7 @@ import { importAndPlaceMedia, launchApp, newProject, summary, tmpDir } from './h
 
 // Real conform reads and Web Audio output, deliberately with no Pixi ticks.
 // This measures the graph's samples, not physical speaker/driver latency.
-test('audio transport starts/stops without presentation and survives closing Preview', async () => {
+test('audio transport starts/stops without presentation and survives closing Preview', async ({}, testInfo) => {
   test.setTimeout(120_000);
   const { app, page } = await launchApp();
   try {
@@ -55,6 +55,50 @@ test('audio transport starts/stops without presentation and survives closing Pre
     // Resume also works with the ticker still stopped.
     await page.evaluate(() => (window as any).__weftcutTest.transportPlay());
     await expect.poll(async () => (await probe())?.rmsDb ?? -120).toBeGreaterThan(-40);
+
+    // A real fetch rejection must remain visible and retriable. The status
+    // shares the toolbar's caption typography and does not displace Play.
+    await page.evaluate(() => {
+      const hook = (window as any).__weftcutTest;
+      hook.transportPause();
+      const original = window.fetch;
+      (window as any).__restoreAudioFetch = () => { window.fetch = original; };
+      window.fetch = (input, init) => {
+        if (String(input).startsWith('weftcut-media:')) {
+          return Promise.reject(new DOMException('Controlled PCM read failure', 'NetworkError'));
+        }
+        return original(input, init);
+      };
+      hook.transportSeekUs(12_000_000);
+      hook.transportPlay();
+    });
+    await expect.poll(async () => (await probe()).phase).toBe('error');
+    const status = page.locator('.audio-playback-status');
+    await expect(status).toHaveAttribute('role', 'alert');
+    await expect(status).toHaveText('Audio playback failed');
+    await expect(status).toHaveAttribute('title', /Press Play to retry.*\nNetworkError: Controlled PCM read failure/);
+    const retry = page.getByRole('button', { name: 'Retry playback', exact: true });
+    await expect(retry).toBeEnabled();
+    const typography = await page.evaluate(() => ({
+      status: getComputedStyle(document.querySelector('.audio-playback-status')!).fontSize,
+      meta: getComputedStyle(document.querySelector('.preview-meta')!).fontSize,
+      toolbar: document.querySelector('.preview-transport')!.getBoundingClientRect().toJSON(),
+      button: document.querySelector('.transport-buttons')!.getBoundingClientRect().toJSON(),
+      statusFits: (() => {
+        const label = document.querySelector('.audio-playback-status-label')!;
+        return label.scrollWidth <= label.clientWidth;
+      })(),
+    }));
+    expect(typography.status).toBe(typography.meta);
+    expect(typography.statusFits).toBe(true);
+    expect(Math.abs((typography.button.x + typography.button.width / 2) - (typography.toolbar.x + typography.toolbar.width / 2))).toBeLessThan(1);
+    await page.locator('.preview-transport').screenshot({ path: testInfo.outputPath('audio-error-toolbar.png') });
+    await page.evaluate(() => (window as any).__restoreAudioFetch());
+    await retry.click();
+    await expect.poll(async () => (await probe()).phase).toBe('playing');
+    await expect(status).toHaveCount(0);
+    await expect.poll(async () => (await probe()).rmsDb).toBeGreaterThan(-40);
+
     const viewMenu = page.locator('.menu-trigger').nth(2);
     await viewMenu.click();
     await page.locator('.app-menu-item').filter({ hasText: /^Preview$/ }).click();

@@ -98,3 +98,17 @@ describe("ExportPanel complete state", () => {
     expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
   });
 });
+
+it("keeps a recoverable export modal and offers translated retry and discard actions", async () => {
+  await i18n.changeLanguage("zh-CN");
+  const onRetry = vi.fn(async () => {}), onDiscard = vi.fn(async () => {}), onClose = vi.fn();
+  render(<ExportPanel state={{ kind: "error", detail: "Resources are busy", onRetry, onDiscard }} onClose={onClose} />);
+  expect(screen.getByText(/无需重新编码/)).toBeTruthy();
+  expect(actions().queryByRole("button", { name: "关闭" })).toBeNull();
+  await userEvent.keyboard("{Escape}");
+  expect(onClose).not.toHaveBeenCalled();
+  await userEvent.click(actions().getByRole("button", { name: "重试完成导出" }));
+  expect(onRetry).toHaveBeenCalledOnce();
+  await userEvent.click(actions().getByRole("button", { name: "放弃导出" }));
+  expect(onDiscard).toHaveBeenCalledOnce();
+});

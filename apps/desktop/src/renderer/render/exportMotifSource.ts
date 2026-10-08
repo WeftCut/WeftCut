@@ -14,7 +14,7 @@ import type { MotifReadTask } from "./worker/motifStream";
  * nested Group instances, trimmed ranges, held tails and output-fps changes.
  * Planning allocates metadata only; the producer admits reads by byte budget. */
 export function planExportMotifFrame(
-  summary: ProjectSummary, tUs: number,
+  summary: ProjectSummary, tUs: number, finalizationToken?: string,
 ): MotifReadTask[] {
   const comp = rootCompositionOf(summary);
   const t = snapFrameFloor(tUs, comp.fps_num, comp.fps_den);
@@ -29,7 +29,7 @@ export function planExportMotifFrame(
         signal.throwIfAborted();
         if (sharedBakedKeyIndex.has(desc.cacheKey)) {
           try {
-            const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, desc.contentFrame);
+            const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, desc.contentFrame, finalizationToken);
             if (bitmap) return bitmap; // producer closes late results on cancel
           } catch { /* missing/corrupt cache: produce the required pixels */ }
         }
@@ -42,7 +42,7 @@ export function planExportMotifFrame(
           ({ bitmap } = await captureMotifFrameResult(spec.motif.manifest.id,
             desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
             spec.motif.manifest.settle_rafs, spec.motif.manifest.content_hash,
-            comp.fps_num, comp.fps_den, { key, high: true }));
+            comp.fps_num, comp.fps_den, { key, high: true, ...(finalizationToken ? { finalizationToken } : {}) }));
         } finally { signal.removeEventListener("abort", cancel); }
         // Cache is an optimization: failure must never discard valid pixels.
         // Await within the read reservation so writes cannot build an unbounded queue.
@@ -68,6 +68,6 @@ export function planExportMotifFrame(
   });
 }
 
-export function exportMotifPlanner(summary: ProjectSummary, startUs: number, fpsNum: number, fpsDen: number) {
-  return (index: number) => planExportMotifFrame(summary, frameTimeUs(startUs, index, fpsNum, fpsDen));
+export function exportMotifPlanner(summary: ProjectSummary, startUs: number, fpsNum: number, fpsDen: number, finalizationToken?: string) {
+  return (index: number) => planExportMotifFrame(summary, frameTimeUs(startUs, index, fpsNum, fpsDen), finalizationToken);
 }

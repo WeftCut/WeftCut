@@ -19,7 +19,7 @@ import {
   classifyWebcodecsDecodability,
   type WebcodecsDecodeVerdict,
 } from "../render/decoder/probeSourceDecodable";
-import { forgetWebcodecsCapability, markWebcodecsUnusable, resetWebcodecsCapabilitySession } from "../render/decoder/webcodecsCapability";
+import { forgetWebcodecsCapability, isWebcodecsUnusable, markWebcodecsUnusable, resetWebcodecsCapabilitySession } from "../render/decoder/webcodecsCapability";
 import {
   sourcesNeedingPreviewProbe,
   type ProbeState,
@@ -216,11 +216,10 @@ export function useImportReadiness(deps: {
     setSweepTick((n) => n + 1);
   }, [summary?.project_id]);
 
-  // Import-time decodability sweep. For every DirectExport video source not yet
-  // probed this session, decode one key frame in the background; on failure
-  // route-correct it (ensureFullProxy promotes the route to Proxied + enqueues a
-  // full proxy). Capable machines pay one sub-second probe and generate no
-  // master proxy. Sequential to avoid competing with preview decoders. Reads
+  // Probe non-bypass originals independently of proxy readiness. Successful and
+  // unsupported verdicts settle this session; unknown results remain retryable.
+  // Only unsupported DirectExport originals need route correction to a full
+  // proxy. Sequential to avoid competing with preview decoders. Reads
   // the fresh Zustand pool; re-runs when `summary` changes (every project:changed).
   useEffect(() => {
     let cancelled = false;
@@ -248,7 +247,8 @@ export function useImportReadiness(deps: {
         (m) =>
           m.available &&
           memo.get(m.id) !== "ok" &&
-          memo.get(m.id) !== "pending",
+          memo.get(m.id) !== "pending" &&
+          !isWebcodecsUnusable(m.id),
       );
       for (const m of candidates) {
         if (cancelled) return;

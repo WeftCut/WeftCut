@@ -1,6 +1,8 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 import type { WeftcutApi } from '../../../src/shared/ipc'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const addon = fileURLToPath(new URL('../../../native/index.js', import.meta.url))
 const apps = new WeakMap<Page, ElectronApplication>()
@@ -12,7 +14,7 @@ export async function installResourceDiagnostics(app: ElectronApplication, page:
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     const failures: unknown[] = []
     ;(globalThis as any).__e2eResourceFailures = failures
-    for (const channel of ['resources:acquire', 'backend:invoke']) {
+    for (const channel of ['resources:acquire', 'resources:plan-export', 'backend:invoke']) {
       const handler = ipcMain._invokeHandlers.get(channel)
       if (!handler) throw new Error(`Missing E2E admission boundary: ${channel}`)
       ipcMain._invokeHandlers.set(channel, async (event: any, request: any) => {
@@ -24,7 +26,9 @@ export async function installResourceDiagnostics(app: ElectronApplication, page:
                 at: Date.now(), channel, owner: event.sender.id,
                 request: channel === 'resources:acquire'
                   ? { id: request.id, memoryMiB: request.memoryMiB, threads: request.threads }
-                  : { command: request.channel },
+                  : channel === 'resources:plan-export'
+                    ? { id: request.id, options: request.options, nativeEncoder: request.nativeEncoder }
+                    : { command: request.channel },
                 ledger: JSON.parse(native.resourcesSnapshot()),
                 error: String(error),
               })
@@ -71,4 +75,34 @@ export async function resourceDiagnostics(page: Page) {
     })),
   ])
   return { main, renderer }
+}
+
+/** Persist while the test is running: reporter finalization and attachments
+ * cannot be relied on when the renderer or worker is killed mid-test. */
+export function startResourceJournal(page: Page, file: string): () => Promise<void> {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  let pending: Promise<void> | null = null
+  const sample = (reason: string): Promise<void> => {
+    if (pending) return pending
+    pending = (async () => {
+      const [resources, exportState] = await Promise.all([
+        resourceDiagnostics(page),
+        bounded(page.evaluate(() => {
+          const w = window as any
+          const s = w.__weftcutExportState
+          return { kind: s?.kind, detail: s?.detail, step: s?.step, frame: s?.progress?.frame,
+            totalFrames: w.__weftcutExportPerf?.totalFrames }
+        })),
+      ])
+      fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason, resources, export: exportState }) + '\n')
+    })().catch(error => {
+      // Recording must neither replace the product failure nor hang cleanup.
+      try { fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason, unavailable: String(error) }) + '\n') } catch { /* Worker exiting. */ }
+    }).finally(() => { pending = null })
+    return pending
+  }
+  fs.appendFileSync(file, JSON.stringify({ at: Date.now(), reason: 'launched' }) + '\n')
+  const timer = setInterval(() => { void sample('running') }, 2000)
+  timer.unref()
+  return async () => { clearInterval(timer); await pending; await sample('before-close') }
 }

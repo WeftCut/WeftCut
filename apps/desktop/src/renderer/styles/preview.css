@@ -231,7 +231,7 @@
 
 .preview-transport {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: calc(8 * var(--ui-px));
   padding: calc(4 * var(--ui-px)) calc(8 * var(--ui-px));
@@ -257,19 +257,50 @@
 }
 
 .preview-meta-cell {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   justify-self: end;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: calc(10 * var(--ui-px));
 }
 
 .preview-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-caption);
   color: var(--color-gray-500);
   font-variant-numeric: tabular-nums;
   padding-right: calc(4 * var(--ui-px));
   user-select: none;
 }
+
+.audio-playback-status {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4 * var(--ui-px));
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  user-select: none;
+}
+.audio-playback-status.is-error { color: var(--warning); }
+.audio-playback-status svg {
+  width: calc(14 * var(--ui-px));
+  height: calc(14 * var(--ui-px));
+  flex-shrink: 0;
+}
+.audio-playback-status-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Give the current status priority over canvas metadata in a narrow panel. */
+.audio-playback-status ~ .preview-meta { flex: 1 1 0; }
 
 /* Dropped-frame indicator: dim while merely reporting a past-session
    count, full --warning while decode is actively behind. */

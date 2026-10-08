@@ -265,17 +265,59 @@ fn mux_args(video_path: &Path, audio_path: &Path, output: &Path) -> Vec<std::ffi
 /// `audio_path` doesn't exist the audio input is omitted — taken on
 /// projects with no audio layers, where `export_audio_only` returns
 /// without producing anything.
-pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) -> Result<()> {
+pub async fn mux_to_file(
+    video_path: &Path,
+    audio_path: &Path,
+    output: &Path,
+    finalization_id: Option<u32>,
+    audio_required: bool,
+) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg is not installed");
     }
     let has_audio = audio_path.exists();
-    let _resources = crate::resources::interactive(64)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    if audio_required && !has_audio {
+        anyhow::bail!("The encoded audio file is missing; cannot finish this export");
+    }
+    let (_continuation, _resources) = match finalization_id {
+        Some(id) => (
+            Some(
+                crate::resources::continue_finalization(id)
+                    .await
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            None,
+        ),
+        None => (
+            None,
+            Some(
+                crate::resources::interactive(64)
+                    .await
+                    .map_err(anyhow::Error::msg)?,
+            ),
+        ),
+    };
     let mut cmd = crate::ffmpeg::command();
     cmd.no_console_window();
-    cmd.args(mux_args(video_path, audio_path, output));
+    // Write beside the destination so committing is atomic on the same volume.
+    // A failed mux must not truncate an existing user file or leave a partial
+    // file that looks like a completed export. TempPath drops the open handle
+    // before ffmpeg uses it, including on Windows.
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let suffix = format!(
+        ".{}",
+        output.extension().and_then(|s| s.to_str()).unwrap_or("mp4")
+    );
+    let staged = tempfile::Builder::new()
+        .prefix(".weftcut-export-")
+        .suffix(&suffix)
+        .tempfile_in(parent)
+        .context("create staged export")?
+        .into_temp_path();
+    cmd.args(mux_args(video_path, audio_path, &staged));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -321,6 +363,10 @@ pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) ->
                 .join("\n")
         );
     }
+    staged
+        .persist(output)
+        .map_err(|e| e.error)
+        .context("save completed export")?;
     Ok(())
 }
 

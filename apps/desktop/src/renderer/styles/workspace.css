@@ -3,7 +3,9 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  /* Only panel viewports scroll. Focus/scrollIntoView must not pan the whole
+     workspace to reveal content clipped inside one of those panels. */
+  overflow: clip;
   /* The recessed well behind the Dock: the theme's 6px inter-group gaps
      (WEFT_DOCK_THEME) show this tone, so region boundaries read as depth
      instead of drawn borders. Pure black, one step below --surface-sunken,
@@ -131,7 +133,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
   /* Every Panel sits on the unified --card surface. */
   background: var(--weft-dock-panel-surface);
 }

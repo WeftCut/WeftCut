@@ -26,6 +26,27 @@ aggregate thread reservations, playback and pressure can reduce concurrency.
 Changing effort applies to new work and newly opened decoder sessions; it does
 not change memory/cache targets, media quality or existing worker thread counts.
 
+## Retrying export finalization
+
+Video export reserves its stream-copy tail before encoding. Production borrows
+that same memory allowance and returns it when the worker is torn down, so the
+two phases do not consume duplicate reservations. The tail owns no CPU slot
+until it runs. Ordinary RSS pressure blocks new work but allows this admitted
+export to finish. Critically low host memory still blocks the attempt. Temporary
+CPU occupancy waits up to 15 seconds, with finalization ahead of new compute
+tasks; a longer wait returns the retry panel without discarding encoded work.
+
+If writing the final file fails after encoding, the export panel offers **Retry
+finishing export** and **Discard export**. Retry reuses the encoded audio/video;
+it does not encode the timeline again. Opening Performance settings preserves
+this pending export. Mux writes a sibling temporary file and replaces the chosen
+output only after success, preserving an older output on failure.
+
+Keep the editor open to retry. This is session-local recovery, not recovery after
+an application crash or restart. Success, explicit discard and editor cleanup
+release the reservation and remove the encoded intermediates. Closing a window
+with a pending retry asks before discarding it. See [ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md).
+
 ## Authority and lifecycle
 
 shared/resource-policy.ts validates intent and derives allocation. Main supplies
@@ -80,7 +101,12 @@ returns credits locally and wakes a parked producer, including across 60-frame
 planning blocks. Long GOPs therefore do not need to be retained in full. The
 window is internal and fixed for a session; the first version has no adaptive
 sizing or global scheduling in the per-frame path. Targets below the combined
-base working set can still fail admission.
+base working set can still fail admission. The 1 GiB settings floor is for
+lighter workloads, not a guarantee of 1080p source export: it projects to
+409 MiB of working memory, while a 1080p/8-bit WebCodecs window (381 MiB) plus
+the export composition worker (128 MiB) already needs 509 MiB before the native
+encoder. Insufficient admission reports recovery options without changing the
+target or reducing output quality.
 
 GOP preroll is discarded behind the requested source time, retaining its lower
 PTS neighbour. Planning blocks split at source activation/deactivation on the
@@ -97,10 +123,17 @@ they share the owning process's RSS and must not each charge it again.
 Shared mappings between separate processes may still be counted twice;
 this is a conservative pressure signal, not unique physical RAM or dedicated
 VRAM usage. The same sample reports available system RAM, including reclaimable
-pages; raw free pages (notably on macOS) are not a pressure signal.
-Sample failures preserve known pressure. Usage above target or available
-system memory below 256 MiB closes new admission and halves picture retention.
-Recovery requires usage below 80% of target and available memory above 512 MiB.
+pages; raw free pages (notably on macOS) are not a pressure signal. macOS uses
+checked Mach VM free, inactive and purgeable pages without subtracting compressor
+occupancy. Failed or invalid host queries report unavailable rather than zero.
+Brief sample failures preserve known pressure. Process and host readings expire
+independently after 10 seconds, including while a query is hung; stale results
+are discarded. Expired readings are reported as unavailable and stop contributing
+pressure, while the native reservation ledger continues limiting work.
+Usage above target or available system memory below 256 MiB closes new admission
+and halves picture retention. The app signal recovers below 80% of target; the
+host signal recovers above 512 MiB. Both must recover or expire to reopen admission.
+See [ADR 0106](adr/0106-memory-telemetry-expires-and-macos-counts-reclaimable-pages.md).
 
 Export suspends preview and releases its idle decoder leases before preparation
 or native encoder admission. Preview resumes after the whole pipeline, including

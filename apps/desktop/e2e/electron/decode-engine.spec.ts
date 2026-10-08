@@ -294,6 +294,22 @@ test.describe('decode-engine resolution (Electron)', () => {
       const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES_FIXTURE })
       expect(kind).toBe('Video')
 
+      // Import first decodes the external source, then copies it into Media/.
+      // Pin identity after that legitimate original-path change; otherwise a
+      // copy finishing between the two probes looks like a decoder reroute.
+      type CopyEntry = { media_id: string; destination_rel: string | null; status: { kind: string } }
+      await expect.poll(async () =>
+        (await invokeCmd<CopyEntry[]>(page, 'import_queue_list'))
+          .find(entry => entry.media_id === mediaId)?.status.kind,
+      ).toBe('Completed')
+      const copied = (await invokeCmd<CopyEntry[]>(page, 'import_queue_list'))
+        .find(entry => entry.media_id === mediaId)!.destination_rel!
+      await page.waitForFunction(({ id, relative }) => {
+        const original = (window as any).__weftcutTest.mediaById(id)?.path as string | undefined
+        return original?.replaceAll('\\', '/').endsWith('/' + relative.replaceAll('\\', '/'))
+      }, { id: mediaId, relative: copied })
+      const originalPath = await page.evaluate(id => (window as any).__weftcutTest.mediaById(id).path as string, mediaId)
+
       await waitForPreviewBridge(page)
       // Not required for the frontend to acquire (resolveDecodeEngine's ffmpeg
       // branch reads `m.path` directly, independent of `decode_route`), but a
@@ -308,7 +324,7 @@ test.describe('decode-engine resolution (Electron)', () => {
       await seek(page, SEEK_US)
       // Lane-agnostic wait (sourceKind null): 'sw' or 'native-gpu' per host,
       // never 'webcodecs' — the engine pin is what this cell proves.
-      const probe1 = await waitForBuiltKey(page, layerId, null, 'ffmpeg:original:')
+      const probe1 = await waitForBuiltKey(page, layerId, null, `ffmpeg:original:${originalPath}`)
       expect(['sw', 'native-gpu']).toContain(probe1.sourceKind)
       expect(probe1.builtFromKey!.startsWith('ffmpeg:original:')).toBe(true)
 
@@ -416,10 +432,14 @@ test.describe('decode-engine resolution (Electron)', () => {
   test('Prefer Proxies: a source with a quick proxy previews from webcodecs:proxy', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
+    const messages: string[] = []
+    page.on('console', message => messages.push(message.text()))
+    let ids: { layerId: string; mediaId: string } | undefined
     try {
       const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
       await newProject(page, { parentFolder: projectParent, name: 'proxy-toggle', canvas: CANVAS })
       const { layerId, mediaId } = await importAndPlaceMedia(page, { mediaAbsPath: H264_FIXTURE })
+      ids = { layerId, mediaId }
 
       // Build the quick proxy on demand, then wait until it lands in the route.
       await invokeCmd(page, 'generate_quick_proxy', { mediaId })
@@ -443,6 +463,27 @@ test.describe('decode-engine resolution (Electron)', () => {
       await seek(page, SEEK_US)
       const probe = await waitForBuiltKey(page, layerId, 'webcodecs', 'webcodecs:proxy:')
       expect(probe.builtFromKey!.startsWith('webcodecs:proxy:')).toBe(true)
+      // Repeated source switches must acquire the requested engine, even when
+      // the import-copy path change already completed an overlap swap.
+      for (const prefer of [false, true, false, true]) {
+        await page.evaluate(v => (window as any).__weftcutTest.setPreferProxies(v), prefer)
+        const next = await waitForBuiltKey(page, layerId, prefer ? 'webcodecs' : null,
+          prefer ? 'webcodecs:proxy:' : 'ffmpeg:original:')
+        if (!prefer) expect(['native-gpu', 'sw']).toContain(next.sourceKind)
+      }
+    } catch (error) {
+      const state = await page.evaluate(ids => {
+        const h = (window as any).__weftcutTest
+        return {
+          probe: h.activeClipProbe(ids?.layerId), resource: h.previewResourceProbe(),
+          media: ids && h.mediaById(ids.mediaId),
+        }
+      }, ids).catch(String)
+      const settings = await invokeCmd(page, 'get_project_settings').catch(String)
+      await test.info().attach('proxy-failure', {
+        body: JSON.stringify({ state, settings, messages }, null, 2), contentType: 'application/json',
+      })
+      throw error
     } finally {
       await app.close()
     }

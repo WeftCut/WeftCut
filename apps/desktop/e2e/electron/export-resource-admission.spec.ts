@@ -41,12 +41,12 @@ test('resource rejection explains recovery and opens performance settings withou
   } finally { await app.close() }
 })
 
-test('bounded WebCodecs 10-bit export drains EOS and preserves gradient precision', async () => {
+for (const memoryMiB of [2304, 4096]) test(`bounded WebCodecs 10-bit export drains EOS and preserves gradient precision (${memoryMiB} MiB)`, async ({}, testInfo) => {
   test.setTimeout(300_000)
   const { app, page } = await launchApp()
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-bounded10-project-'), name: 'Bounded 10-bit', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
-    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 4096 } } })
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: memoryMiB } } })
     const output = path.join(tmpDir('weftcut-bounded10-output-'), 'export.mp4')
     const result = await driveExport(page, {
       mediaAbsPath: path.join(MEDIA, 'test_1080p_gradient10_h264.mp4'), outputAbsPath: output,
@@ -54,6 +54,9 @@ test('bounded WebCodecs 10-bit export drains EOS and preserves gradient precisio
     })
     expect(result.done.ok, result.done.error).toBe(true)
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
+    await testInfo.attach('export-performance', { body: JSON.stringify(perf), contentType: 'application/json' })
+    expect(perf.resourcePlan.memoryMiB).toBeLessThanOrEqual(Math.floor(memoryMiB * .4))
+    expect(perf.sources[0].buffer.capacityFrames).toBe(memoryMiB === 2304 ? 12 : 24)
     expect(perf.nativeHandles).toBe(0)
     expect(perf.totalFrames).toBe(30)
     expect(perf.sources[0].buffer.peakFrames).toBeLessThanOrEqual(perf.sources[0].buffer.capacityFrames)
@@ -81,6 +84,12 @@ test('cancelling bounded production releases export leases and permits a subsequ
         const result = await acquire(event, request)
         leases.add(request.id)
         return result
+      })
+      const plan = ipcMain._invokeHandlers.get('resources:plan-export')!
+      ipcMain._invokeHandlers.set('resources:plan-export', async (event: any, request: any) => {
+        const selected = await plan(event, request)
+        leases.add(request.id)
+        return selected
       })
       ipcMain.on('resources:release', (_event, id: string) => leases.delete(id))
     })
@@ -157,9 +166,12 @@ test('trimmed long-GOP export fits the working allowance and preserves source fr
   } finally { await app.close() }
 })
 
-for (const { label, memory, stepUs, expectedFrames } of [
-  { label: 'spaced clips', memory: 4096, stepUs: 2_000_000, expectedFrames: 669 },
-  { label: 'rapid cuts', memory: 4096, stepUs: 300_000, expectedFrames: 108 },
+for (const { label, memory, stepUs, clips, expectedFrames } of [
+  // Six retained 381 MiB windows still exceed the 1638 MiB working allowance.
+  // More spaced clips mostly add blank output frames, which consume the
+  // software-rendering deadline without strengthening the release assertion.
+  { label: 'spaced clips', memory: 4096, stepUs: 2_000_000, clips: 6, expectedFrames: 309 },
+  { label: 'rapid cuts', memory: 4096, stepUs: 300_000, clips: 12, expectedFrames: 108 },
 ]) test(`sequential ${label} release decoder reservations before admitting later clips`, async () => {
   test.setTimeout(240_000)
   const { app, page } = await launchApp()
@@ -168,7 +180,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: memory } } })
     const source = path.join(MEDIA, 'test_1080p_30fps_6s.mp4')
     const first = await importAndPlaceMedia(page, { mediaAbsPath: source })
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < clips; i++) {
       const startUs = i * stepUs
       const layerId = i === 0 ? first.layerId : (await page.evaluate(
         args => (window as any).__weftcutTest.placeMediaLayer(args),
@@ -178,7 +190,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     }
     await page.evaluate(id => (window as any).__weftcutTest.waitMediaExportReady({ mediaId: id }), first.mediaId)
     // Track actual decoder leases rather than relying on a process RSS floor
-    // that differs between hardware and software rendering. Twelve retained
+    // that differs between hardware and software rendering. Even six retained
     // decoders still exceed this budget; sequential clips need only one.
     await app.evaluate(({ ipcMain }) => {
       const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
@@ -203,7 +215,7 @@ for (const { label, memory, stepUs, expectedFrames } of [
     expect(result.done.ok, result.done.error).toBe(true)
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
     expect(perf.totalFrames).toBe(expectedFrames)
-    expect(perf.sources).toHaveLength(12)
+    expect(perf.sources).toHaveLength(clips)
     expect(await app.evaluate(() => (globalThis as any).__sequentialDecoders.peak)).toBe(1)
     if (label === 'rapid cuts') {
       const reference = path.join(outputDir, 'reference.mp4')
@@ -215,5 +227,29 @@ for (const { label, memory, stepUs, expectedFrames } of [
       const report = analyze({ output, source: reference, samples: [0, 8, 9, 17, 18, 53, 54, 99, 105], ssimMin: exportSsimFloor() })
       expect(report.pass, JSON.stringify(report)).toBe(true)
     }
+  } finally { await app.close() }
+})
+
+
+test('Motif and video export reduces in-flight frames to fit the 2304 MiB memory target', async ({}, testInfo) => {
+  test.setTimeout(180_000)
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-motif-budget-'), name: 'Motif budget', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 2304 } } })
+    const source = await importAndPlaceMedia(page, { mediaAbsPath: path.join(MEDIA, 'test_1080p_30fps_6s.mp4') })
+    await invokeCmd(page, 'trim_layer', { layerId: source.layerId, edge: 'out', newTUs: 2_000_000 })
+    await page.evaluate(id => (window as any).__weftcutTest.waitMediaExportReady({ mediaId: id }), source.mediaId)
+    const output = path.join(tmpDir('weftcut-motif-budget-out-'), 'out.mp4')
+    const result = await driveExport(page, { motifId: 'text-fx', outputAbsPath: output, durationUs: 2_000_000,
+      settings: { encoderEngine: 'native', audio: { include: false } } }, { hook: 'exportMotifClip' })
+    expect(result.done.ok, result.done.error).toBe(true)
+    const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
+    await testInfo.attach('export-performance', { body: JSON.stringify(perf), contentType: 'application/json' })
+    expect(perf.totalFrames).toBe(60)
+    expect(perf.resourcePlan.memoryMiB).toBeLessThanOrEqual(921)
+    expect(perf.resourcePlan.motifFrames).toBeLessThan(3)
+    expect(perf.motif.framesRead).toBe(60)
+    expect(perf.motif.peakBytes).toBeLessThanOrEqual(perf.resourcePlan.motifBufferBytes)
   } finally { await app.close() }
 })

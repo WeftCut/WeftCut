@@ -1,3 +1,4 @@
+import { resourceFailureReason } from '../../shared/export-resources';
 import { useTranslation } from "react-i18next";
 
 import { AppDialog } from "../components/AppDialog";
@@ -31,7 +32,7 @@ export type ExportState =
   // step makes both the user's wait and the probe's stall budget honest.
   | { kind: "finalizing"; step: FinalizeStep }
   | { kind: "complete"; payload: ExportComplete }
-  | { kind: "error"; detail: string };
+  | { kind: "error"; detail: string; onRetry?: () => Promise<void>; onDiscard?: () => Promise<void> };
 
 /// Ordered as they run. `sink` only occurs on the native-encode path.
 export type FinalizeStep = "sink" | "audio" | "mux";
@@ -78,8 +79,12 @@ export function ExportPanel({
   // Stated as the terminal set, not as "not running": a new running phase then
   // stays modal by default instead of silently becoming dismissable.
   const dismissable = state.kind === "complete" || state.kind === "error";
+  const retryable = state.kind === "error" && !!state.onRetry;
   const resourceError = state.kind === "error" && isResourceCapacityError(state.detail);
 
+  const resourceReason = state.kind === "error" ? resourceFailureReason(state.detail) : undefined;
+  const resourceMessage = resourceReason === 'budget-too-small' ? 'export.resource_budget'
+    : resourceReason === 'host-pressure' || resourceReason === 'pressure' ? 'export.resource_pressure' : 'export.resource_unavailable';
   let body: React.ReactNode;
   let percent = 0;
   switch (state.kind) {
@@ -138,8 +143,9 @@ export function ExportPanel({
       body = (
         <>
           <p className="export-progress-status error">
-            {resourceError ? t("export.resource_unavailable") : t("export.failed", { detail: state.detail })}
+            {resourceError ? t(resourceMessage) : t("export.failed", { detail: state.detail })}
           </p>
+          {retryable && <p className="export-retry-hint">{t("export.retry_hint")}</p>}
           {resourceError && (
             <details className="export-error-details">
               <summary>{t("export.technical_details")}</summary>
@@ -154,7 +160,7 @@ export function ExportPanel({
   return (
     <AppDialog
       title={t("export.title")}
-      onClose={dismissable ? onClose : undefined}
+      onClose={dismissable && !retryable ? onClose : undefined}
       panelClassName="settings-panel export-progress-panel"
     >
         <div className="settings-body">
@@ -172,6 +178,12 @@ export function ExportPanel({
             </div>
             {(((state.kind === "preparing" || state.kind === "progress") && state.onCancel) || dismissable) && (
               <div className="export-actions">
+                {state.kind === "error" && state.onRetry && (
+                  <Button size="lg" onClick={() => void state.onRetry?.()}>{t("export.retry_finalize")}</Button>
+                )}
+                {state.kind === "error" && state.onDiscard && (
+                  <Button variant="outline" size="lg" onClick={() => void state.onDiscard?.()}>{t("export.discard_pending")}</Button>
+                )}
                 {resourceError && onOpenSettings && (
                   <Button size="lg" onClick={onOpenSettings}>
                     {t("export.open_settings")}
@@ -200,7 +212,7 @@ export function ExportPanel({
                     {t("export.play")}
                   </Button>
                 )}
-                {dismissable && (
+                {dismissable && !retryable && (
                   <Button variant="default" size="lg" onClick={onClose}>
                     {t("export.dismiss")}
                   </Button>

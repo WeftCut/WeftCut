@@ -28,6 +28,22 @@ async function expectOutsideTrigger(popup: Locator, trigger: Locator) {
   }).toBe(true);
 }
 
+async function expectItemVisible(item: Locator) {
+  await expect(item).toBeVisible();
+  // Compare CSS pixels, as expectContained does. A <1px rounded scroll edge
+  // can exceed a 1% area cutoff on a short row (macOS measured 0.98977).
+  // Check the scrollport too: being inside the window alone misses clipping.
+  await expect.poll(() => item.evaluate(node => {
+    const r = node.getBoundingClientRect();
+    const popup = node.closest<HTMLElement>('[role="menu"], [role="listbox"]')!;
+    const p = popup.getBoundingClientRect();
+    return Math.max(Math.max(0, p.top + popup.clientTop) - r.top,
+      Math.max(0, p.left + popup.clientLeft) - r.left,
+      r.bottom - Math.min(innerHeight, p.top + popup.clientTop + popup.clientHeight),
+      r.right - Math.min(innerWidth, p.left + popup.clientLeft + popup.clientWidth));
+  })).toBeLessThanOrEqual(1);
+}
+
 test('long menus fit the window, scroll to the last item and resize while open', async () => {
   const { app, page } = await launchApp();
   try {
@@ -41,18 +57,20 @@ test('long menus fit the window, scroll to the last item and resize while open',
     await expectOutsideTrigger(popup, trigger);
     await expectContained(popup);
     expect(await popup.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+    // Opening queues initial focus. End sent before that handoff can be
+    // processed by the menubar trigger instead of the scrollable popup.
+    await expect(popup).toBeFocused();
     await page.keyboard.press('End');
     const last = popup.getByRole('menuitem').last();
     await expect(last).toBeFocused();
-    await expect(last).toBeInViewport({ ratio: 0.99 });
+    await expectItemVisible(last);
     expect(await popup.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
     await resize(app, 1000, 480);
     await expectOutsideTrigger(popup, trigger);
     await expectContained(popup);
     await page.keyboard.press('Home');
     await expect(popup.getByRole('menuitem').first()).toBeFocused();
-    // Theme scaling produces fractional row edges; allow subpixel rounding.
-    await expect(popup.getByRole('menuitem').first()).toBeInViewport({ ratio: 0.99 });
+    await expectItemVisible(popup.getByRole('menuitem').first());
     const beforeWheel = await popup.evaluate(node => node.scrollTop);
     await popup.hover({ position: { x: 30, y: 30 } });
     await page.mouse.wheel(0, 300);
@@ -67,7 +85,7 @@ test('long menus fit the window, scroll to the last item and resize while open',
     await expectContained(submenu);
     await page.keyboard.press('End');
     await expect(submenu.getByRole('menuitem').last()).toBeFocused();
-    await expect(submenu.getByRole('menuitem').last()).toBeInViewport({ ratio: 0.99 });
+    await expectItemVisible(submenu.getByRole('menuitem').last());
     await page.keyboard.press('ArrowLeft');
     await expect(page.getByRole('menu')).toHaveCount(1);
     await page.keyboard.press('Escape');
@@ -95,7 +113,7 @@ test('form dropdowns constrain long option lists and keep keyboard selection usa
     await page.keyboard.press('Home');
     await page.keyboard.press('End');
     const last = page.getByRole('option').last();
-    await expect(last).toBeInViewport({ ratio: 0.99 });
+    await expectItemVisible(last);
     await page.keyboard.press('Enter');
     await expect(popup).toHaveCount(0);
     await expect(select).toBeFocused();
@@ -104,7 +122,7 @@ test('form dropdowns constrain long option lists and keep keyboard selection usa
     await fontTrigger.click();
     await expectContained(popup);
     await page.keyboard.press('End');
-    await expect(page.getByRole('option').last()).toBeInViewport({ ratio: 0.99 });
+    await expectItemVisible(page.getByRole('option').last());
     await page.keyboard.press('Escape');
   } finally { await app.close(); }
 });

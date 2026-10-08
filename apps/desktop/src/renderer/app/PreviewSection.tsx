@@ -42,6 +42,7 @@ import {
 } from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
+import { AudioPlaybackStatus } from "../preview/AudioPlaybackStatus";
 import { usePlaybackStore } from "../state/playbackStore";
 import {
   PREVIEW_ZOOM_STEPS,
@@ -72,6 +73,7 @@ export function PreviewSection({
   const { t } = useTranslation();
   const phase = usePlaybackStore((s) => s.phase);
   const playbackError = usePlaybackStore((s) => s.error);
+  const playHint = t(phase === "error" ? "transport.retry_playback" : phase === "preparing" ? "transport.cancel_playback" : "transport.play_pause_hint");
   // Timecode-edit state doubles as the field's seed value: capturing the
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
@@ -142,8 +144,8 @@ export function PreviewSection({
           <button
             type="button"
             onClick={onTogglePlay}
-            title={t("transport.play_pause_hint")}
-            aria-label={t("transport.play_pause_hint")}
+            title={playHint}
+            aria-label={playHint}
             disabled={(summary?.layer_count ?? 0) === 0}
             aria-busy={phase === "preparing"}
           >
@@ -166,8 +168,7 @@ export function PreviewSection({
           </button>
         </div>
         <span className="preview-meta-cell">
-          {phase === "preparing" && <span role="status">{t("transport.preparing_audio")}</span>}
-          {phase === "error" && <span role="alert" title={playbackError ?? undefined}>{t("transport.audio_failed")}</span>}
+          <AudioPlaybackStatus phase={phase} error={playbackError} />
           <DroppedFramesIndicator />
           <span className="preview-meta" aria-hidden="true">
             {comp && (

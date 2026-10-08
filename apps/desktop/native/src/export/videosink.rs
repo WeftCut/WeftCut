@@ -87,6 +87,8 @@ pub struct VideoSinkStartArgs {
     pub software: bool,
     /// Empty ⇒ no ffmpeg (byte-count only; used by tests). Non-empty ⇒ encode.
     pub output_path: String,
+    #[serde(default)]
+    pub finalization_id: Option<u32>,
     /// rawvideo input format the renderer packs: "yuv420p" | "yuv420p10le" |
     /// "yuv422p" | "yuv422p10le". Defaults to yuv420p10le when the caller
     /// omits it.
@@ -190,6 +192,7 @@ fn encoder_intent(args: &VideoSinkStartArgs) -> Result<EncoderIntent, EncodeUnav
 pub(crate) fn sink_cmd_args(
     args: &VideoSinkStartArgs,
     plan: &EncoderPlan,
+    threads: u32,
 ) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut a: Vec<OsString> = vec![
@@ -215,9 +218,9 @@ pub(crate) fn sink_cmd_args(
     a.extend(plan.ffmpeg_args.iter().cloned());
     a.extend([
         "-threads".into(),
-        crate::resources::task_threads().to_string().into(),
+        threads.to_string().into(),
         "-filter_threads".into(),
-        crate::resources::task_threads().to_string().into(),
+        threads.to_string().into(),
     ]);
     a.push(OsString::from(&args.output_path));
     a
@@ -235,8 +238,9 @@ pub async fn export_video_sink_start(
         None
     } else {
         Some(
-            crate::resources::interactive(
+            crate::resources::interactive_export(
                 128 + (u64::from(args.width) * u64::from(args.height) * 32).div_ceil(1024 * 1024),
+                args.finalization_id,
             )
             .await?,
         )
@@ -306,7 +310,7 @@ pub async fn export_video_sink_start(
         });
         let mut cmd = std::process::Command::new(&ffmpeg_bin);
         cmd.no_console_window();
-        for arg in sink_cmd_args(&args, &plan) {
+        for arg in sink_cmd_args(&args, &plan, resources.as_ref().map_or(1, |p| p.threads())) {
             cmd.arg(arg);
         }
         cmd.stdin(std::process::Stdio::piped())
@@ -514,6 +518,7 @@ mod tests {
             crf: None,
             preset: None,
             profile: None,
+            finalization_id: None,
         }
     }
 
@@ -535,6 +540,7 @@ mod tests {
             crf: None,
             preset: None,
             profile: None,
+            finalization_id: None,
         }
     }
 
@@ -703,7 +709,7 @@ mod tests {
                 "hvc1".into(),
             ],
         };
-        let argv = sink_cmd_args(&args_10bit(), &plan);
+        let argv = sink_cmd_args(&args_10bit(), &plan, 2);
         let s: Vec<String> = argv
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -762,6 +768,7 @@ mod tests {
                 crf: None,
                 preset: None,
                 profile: None,
+                finalization_id: None,
             },
         )
         .await

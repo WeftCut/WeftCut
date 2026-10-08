@@ -6,8 +6,8 @@ let port: MessagePort | null = null;
 let nextId = 0;
 const pending = new Map<number, { resolve: (frame: FrameReply) => void; reject: (error: Error) => void }>();
 
-export async function readStoredMotifFrame(hash: string, frame: number): Promise<ImageBitmap | null> {
-  return (await request({ hash, frame })).bitmap;
+export async function readStoredMotifFrame(hash: string, frame: number, finalizationToken?: string): Promise<ImageBitmap | null> {
+  return (await request({ hash, frame, finalizationToken })).bitmap;
 }
 
 export async function captureStoredMotifFrame(capture: Record<string, unknown>): Promise<ImageBitmap> {

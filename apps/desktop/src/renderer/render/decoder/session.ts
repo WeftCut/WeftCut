@@ -8,6 +8,7 @@ import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
 export interface SourceHandleInit {
+  exportFrameWindow?: number | undefined;
   /// Per-clip identity. The preview pool keys decoder + ring instances
   /// by this so that overlapping clips of the same source don't share
   /// (and thrash) a single decoder. The export pool keys by `handleKey`

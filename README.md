@@ -22,6 +22,10 @@
   <a href="https://glama.ai/mcp/servers/WeftCut/WeftCut"><img alt="Glama MCP server score" src="https://glama.ai/mcp/servers/WeftCut/WeftCut/badges/score.svg" /></a>
 </p>
 
+<p align="center">
+  <a href="https://www.producthunt.com/products/weftcut?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-weftcut" target="_blank" rel="noopener noreferrer"><img alt="WeftCut - The open-source video editor your AI agent can drive | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1266067&amp;theme=neutral&amp;t=1791466936489" /></a>
+</p>
+
 ![An agent editing the timeline live over MCP](docs/assets/agent-edit.gif)
 
 <p align="center"><em>An agent works over MCP while playback runs: restyling the
@@ -180,6 +184,17 @@ WeftCut is built and maintained by [UncleChair](https://github.com/UncleChair).
 It exists to speed up my own video work. I wanted an editor an agent could actually drive, and a timeline I could keep watching while it did — so the MCP surface is the part I use daily, not a demo bolted onto the side. Motifs came from the other half of that: the overlays I wanted were easier to *write* than to find, and an agent that can write a web page can write one for the shot in front of it.
 
 The project sits under the [WeftCut](https://github.com/WeftCut) organization so the name, domain and releases have a stable home, but it is a one-person project — issues and pull requests all reach me.
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=WeftCut%2FWeftCut&amp;type=date&amp;legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=WeftCut/WeftCut&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+      <img alt="WeftCut GitHub Star History Chart" src="https://api.star-history.com/chart?repos=WeftCut/WeftCut&amp;type=date&amp;legend=top-left" />
+    </picture>
+  </a>
+</p>
 
 ## License
 

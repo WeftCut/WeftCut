@@ -67,6 +67,10 @@ pub struct ExportAudioOnlyArgs {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MuxExportArgs {
+    #[serde(default)]
+    pub finalization_id: Option<u32>,
+    #[serde(default)]
+    pub audio_required: bool,
     pub video_path: String,
     pub audio_path: String,
     pub output_path: String,

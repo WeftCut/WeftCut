@@ -80,6 +80,8 @@ const paramsFrame = (page: Page) =>
 async function openParamsPage(page: Page, fontSize: number): Promise<FrameLocator> {
   await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
   await expect(paramsFrame(page)).toHaveCount(1, { timeout: 30_000 })
+  // Reveal the parameter surface before checking its measured content height.
+  await paramsFrame(page).scrollIntoViewIfNeeded()
   const ui = dockPanel(page, 'attribute').frameLocator('iframe.motif-params-frame')
   await expect(ui.locator('#f-font_size')).toHaveValue(String(fontSize), { timeout: 15_000 })
   await expect

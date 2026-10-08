@@ -137,8 +137,10 @@ test count is never a mystery.
 
 Every Playwright invocation writes a JSON report to `e2e-report/<project>.json`
 (gitignored) — one per project, since an unscoped run invokes Playwright twice.
-It is the only durable record of what the suite costs: the console reporter is
-`list` locally and `dot` on CI, and `dot` prints no per-test time at all.
+The console reporter is `list` locally and `dot` on CI; `dot` prints no per-test
+time. A companion `<project>.live.jsonl` is flushed at every test start/end and
+worker error. It preserves the last started test and earlier results if the
+job is cancelled before Playwright writes its final JSON report.
 
 - `stats.duration` / `stats.startTime` — that invocation's wall clock. The
   `serial` report's is the suite's hard floor; it owns the machine at
@@ -428,6 +430,17 @@ The pressure sample and current allocation are read afterward and must not be
 mistaken for an exact snapshot at rejection. Main and renderer diagnostics have
 independent answer deadlines, so a broken renderer does not hide the main ledger.
 This recorder does not change resource limits, admission results or errors.
+
+Every app also writes `resource-lifecycle-<pid>.jsonl` under that test's output
+directory: launch, two-second samples and a final sample before closing.
+These include export phase/frame, allocation, pressure and the native ledger,
+and survive an interrupted worker without requiring attachment finalization.
+Normal app close has a ten-second deadline; on failure, cleanup terminates only
+that app's captured process tree and reports the close failure. On POSIX, the
+isolated child group is verified against the worker before signalling, so
+helpers retaining Playwright's stdio cannot strand worker teardown.
+The same owned group is swept when the leader closes, including native children
+with separate stdio that would otherwise outlive a successful Electron quit.
 
 Use `importAndPlaceMedia` from the driver for imports before export. Its default
 120-second deadline follows `WEFTCUT_E2E_STALL_SCALE`; an explicit `timeout`

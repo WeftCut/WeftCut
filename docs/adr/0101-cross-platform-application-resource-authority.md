@@ -26,6 +26,14 @@ retention and closes admission with hysteresis. Resident decoders reserve memory
 and carry thread caps without retaining an exclusive job slot while idle.
 Fallback routes acquire through the same memory authority.
 
+Export's renderer and WebCodecs working-memory claims retry capacity refusals
+for at most 15 seconds, matching native interactive admission. Waiting holds
+no additional lease, ends on export cancellation/worker teardown, and preserves
+the final resource error if capacity does not recover. Claims larger than the
+entire work allowance and non-capacity errors fail immediately. Preview retains
+its fail-fast admission. This lets finite background work drain before export
+decoding without increasing the memory target or bypassing pressure checks.
+
 The contract is cooperative: browser/GPU allocations and running codecs do not
 offer portable whole-process hard caps. Thread counts are not CPU percentages,
 and shared textures are not total VRAM. Temporary disk quotas protect original

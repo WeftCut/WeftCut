@@ -1,3 +1,4 @@
+import { prepareExportResourcePlans } from '../render/exportResourcePlan';
 import { convertFileSrc } from "@/bridge/ipc";
 import { listen } from "@/bridge/events";
 import { join, tempDir } from "@/bridge/path";
@@ -11,6 +12,8 @@ import { remove, writeFile } from "@/bridge/fs";
 import { reveal as revealInShell } from "@/bridge/shell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { createExportFinalization } from "../render/exportFinalization";
+import { admitExportResources } from "../render/resourceClient";
 import { createExportLogMirror } from "./exportLog";
 import {
   ensureExportAudioConform,
@@ -130,6 +133,9 @@ export function useExportFlow(deps: {
 
   const [exportState, setExportState] = useState<ExportState | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const runningRef = useRef(false);
+  const pendingFinalization = useRef<ReturnType<typeof createExportFinalization> | null>(null);
+  useEffect(() => () => { void pendingFinalization.current?.discard(); }, []);
   // Close-guard: the window ✕ (or any close request) during a running
   // export pops a confirm instead of silently killing the export. The ref
   // mirrors export-busy so the close-requested listener (registered once)
@@ -138,12 +144,12 @@ export function useExportFlow(deps: {
   const exportBusyRef = useRef(false);
 
   // Close-guard wiring. "Busy" = an export that closing would kill;
-  // complete/error states are dismissable and don't block the window.
+  // Completed exports and non-retryable failures do not block the window.
   useEffect(() => {
     exportBusyRef.current =
       exportState !== null &&
       exportState.kind !== "complete" &&
-      exportState.kind !== "error";
+      (exportState.kind !== "error" || !!exportState.onRetry);
   }, [exportState]);
   useEffect(() => {
     const win = getCurrentWindow();
@@ -287,12 +293,13 @@ export function useExportFlow(deps: {
 
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
-  //   1. Suspend preview before preparation/encoder admission, then drive
+  //   1. Suspend preview, prepare audio and reserve the final mux, then drive
   //      the Worker. Under the native sink the Worker streams raw packed
   //      frames to export_video_sink_write and ffmpeg writes tempVideoPath;
   //      under WebCodecs it streams video-only fMP4 chunks to tempVideoPath.
-  //   2. Rust audio-only export produces a sibling .m4a (AAC) or .mka (Opus).
-  //   3. Rust stream-copy mux writes the user-chosen path.
+  //   2. Flush the video encoder and release production resources.
+  //   3. Rust stream-copy mux writes the user-chosen path; failures retain both
+  //      encoded files and the finalization reservation for an explicit retry.
   //
   // The Worker emits progress on every encoded frame; that maps to
   // the encode phase of ExportPanel. Sink-flush, audio and mux each name
@@ -300,18 +307,25 @@ export function useExportFlow(deps: {
   // typical project, but they are the phases with no sub-progress of their
   // own, so the step is the only liveness signal anything downstream has.
   //
-  // Temp files live under the OS temp dir with UUIDs; cleaned in
-  // a finally block. If cleanup itself fails the user's output is
-  // still good — we just leave the temps for the next reboot to
-  // clear.
+  // Temp files are retained only for a completed encode awaiting mux. Success,
+  // explicit discard or closing the editor cleans them; this is a session-local
+  // retry, not restart recovery. The close guard includes pending retries.
   const runExportWithSettings = useCallback(
     async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+    // A double click or stale command cannot replace an unfinished export.
+    if (runningRef.current || pendingFinalization.current) return;
+    runningRef.current = true;
+    let cleanup: (() => Promise<void>) | undefined;
+    let retained = false;
+    const exportController = new AbortController();
+    const onCancel = () => exportController.abort();
     // Name the run for the log mirror before any state can transition.
     exportLog.begin({ output: path, codec: settings.codec });
     // Idle preview decoders retain leases. Yield before preparation/encoder
     // admission, and stay suspended through finish, cancellation and mux.
-    const restorePreview = previewRef.current?.suspendForExport();
+    let restorePreview: (() => void) | undefined;
     try {
+    restorePreview = previewRef.current?.suspendForExport();
     // ---- No-material guard -----------------------------------------------
     // A video export with nothing visible to render would emit pure black —
     // reject it as "no video material" instead. (Audio emptiness is judged
@@ -596,6 +610,11 @@ export function useExportFlow(deps: {
     const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.${tempVideoExt}`);
     const audioExt = settings.audio.codec === "opus" ? "mka" : "m4a";
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.${audioExt}`);
+    let releaseFinalization = () => {};
+    cleanup = async () => {
+      releaseFinalization();
+      await Promise.all([tempVideoPath, tempAudioPath].map(file => remove(file).catch(() => {})));
+    };
 
     const summary = useProjectStore.getState().summary!;
     const comp = rootCompositionOf(summary);
@@ -653,12 +672,32 @@ export function useExportFlow(deps: {
     let nativeSink = target.engine === "native";
     let sinkTarget = target.engine === "native" ? target : null;
 
+    setExportState({ kind: "preparing", labels: [t("export.plan_resources")], onCancel });
+    const resourcePlans = await prepareExportResourcePlans({ summary, media: useProjectStore.getState().mediaById,
+      routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
+      outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal });
+    let audioProduced = false;
+    // Finish audio before video production. Once encoding completes, retry
+    // needs only immutable files and cannot accidentally mix a newer timeline.
+    if (settings.audio.include) {
+      setExportState({ kind: "preparing", labels: [t("export.prepare_audio")] });
+      audioProduced = await exportProjectAudioOnly(tempAudioPath, {
+        codec: settings.audio.codec, bitrate: settings.audio.bitrate,
+        sampleRate: settings.audio.sampleRate, channels: settings.audio.channels,
+      }, exportRange);
+    }
+
+    const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal,
+      reason => setExportState({ kind: "preparing", labels: [t(reason === 'host-pressure' || reason === 'pressure' ? "export.wait_memory" : "export.wait_resources")], onCancel }));
+    releaseFinalization = finalizationReservation.release;
+
     // Native-sink path: start the native-encode video sink (ffmpeg, frames
     // streamed over IPC) before the Worker starts. On the WebCodecs path the
     // existing fMP4 streaming path is used.
     if (nativeSink && sinkTarget) {
       try {
         await exportVideoSinkStart({
+          finalizationToken: finalizationReservation.token,
           width: dims.width,
           height: dims.height,
           fpsNum,
@@ -701,7 +740,7 @@ export function useExportFlow(deps: {
           !isIntermediateCodec(settings.codec) &&
           settings.bitDepth === 8;
         if (
-          canFallBack &&
+          !isResourceCapacityError(msg) && canFallBack &&
           window.confirm(t("export_dialog.native_unavailable_fallback"))
         ) {
           const fallbackOk = await smokeEncode(
@@ -756,8 +795,7 @@ export function useExportFlow(deps: {
     };
 
     const startedAtMs = performance.now();
-    const exportController = new AbortController();
-    const onCancel = () => exportController.abort();
+
     const onProgress = (encoded: number, total: number) => {
       if (total <= 0) return;
       const elapsedSec = (performance.now() - startedAtMs) / 1000;
@@ -801,6 +839,8 @@ export function useExportFlow(deps: {
     let result;
     try {
       result = await previewRef.current?.runPixiExport({
+        finalizationToken: finalizationReservation.token,
+        resourcePlan: finalizationReservation.plan,
         onProgress,
         encoderConfig,
         outputFps: { num: fpsNum, den: fpsDen },
@@ -817,8 +857,6 @@ export function useExportFlow(deps: {
       const msg = e instanceof Error ? e.message : String(e);
       if (nativeSink) await exportVideoSinkCancel().catch(() => {});
       if (exportController.signal.aborted) {
-        void remove(tempVideoPath).catch(() => {});
-        void remove(tempAudioPath).catch(() => {});
         setExportState(null);
         return;
       }
@@ -837,7 +875,7 @@ export function useExportFlow(deps: {
 
     // On the native-sink path, signal the sink that all frames have been
     // sent. The sink flushes its encoder + muxer and writes the final
-    // tempVideoPath. Must run BEFORE the audio export + mux.
+    // tempVideoPath. Must run BEFORE mux.
     if (nativeSink) {
       setExportState({ kind: "finalizing", step: "sink" });
       try {
@@ -846,59 +884,44 @@ export function useExportFlow(deps: {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[weftcut/pixi] sink finish failed:", e);
         setExportState({ kind: "error", detail: `Finalize failed: ${msg}` });
-        void remove(tempVideoPath).catch(() => {});
-        void remove(tempAudioPath).catch(() => {});
         return;
       }
     }
 
-    try {
-      // (1) Video is already written to tempVideoPath (streamed above).
-      // Audio-only Rust export -> temp audio file (.m4a/.mka).
-      if (settings.audio.include) {
-        setExportState({ kind: "finalizing", step: "audio" });
-        await exportProjectAudioOnly(
-          tempAudioPath,
-          {
-            codec: settings.audio.codec,
-            bitrate: settings.audio.bitrate,
-            sampleRate: settings.audio.sampleRate,
-            channels: settings.audio.channels,
-          },
-          { startUs: exportRange.startUs, endUs: exportRange.endUs },
-        );
-      }
-
-      // (3) Mux → user-chosen path. Every path already wrote the final codec
-      // to tempVideoPath (WebCodecs direct-encode, or the native-encode video
-      // sink) — the mux step is always a stream-copy into the chosen container.
-      setExportState({ kind: "finalizing", step: "mux" });
-      await muxExport(tempVideoPath, tempAudioPath, path);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] finalize failed:", e);
-      // nativeSink sink-finish already ran (above); mux failure doesn't need cancel.
-      setExportState({
-        kind: "error",
-        detail: `Finalize failed: ${msg}`,
-      });
-      return;
-    } finally {
-      // Best-effort cleanup. Failures here are intentionally
-      // swallowed — the user's output is already at `path`.
-      void remove(tempVideoPath).catch(() => {});
-      void remove(tempAudioPath).catch(() => {});
-    }
-
-    const durationUs = Math.round(
-      (result.totalFrames * 1_000_000 * result.fpsDen) / result.fpsNum,
-    );
-    setExportState({
-      kind: "complete",
-      payload: { outputPath: path, durationUs },
+    const durationUs = Math.round((result.totalFrames * 1_000_000 * result.fpsDen) / result.fpsNum);
+    const cleanupFiles = cleanup;
+    const finalization = createExportFinalization({
+      mux: () => muxExport(tempVideoPath, tempAudioPath, path, { token: finalizationReservation.token, audioRequired: audioProduced }),
+      cleanup: async () => {
+        pendingFinalization.current = null;
+        await cleanupFiles();
+      },
+      onRunning: () => setExportState({ kind: "finalizing", step: "mux" }),
+      onFailure: detail => setExportState({
+        kind: "error", detail: `Finalize failed: ${detail}`,
+        onRetry: async () => {
+          if (runningRef.current) return;
+          runningRef.current = true;
+          const restore = previewRef.current?.suspendForExport();
+          try { await finalization.retry(); } finally { restore?.(); runningRef.current = false; }
+        },
+        onDiscard: async () => {
+          await finalization.discard();
+          setExportState(null);
+          setExportDialogOpen(false);
+        },
+      }),
+      onComplete: () => setExportState({ kind: "complete", payload: { outputPath: path, durationUs } }),
     });
+    pendingFinalization.current = finalization;
+    retained = true;
+    await finalization.retry();
+    } catch (error) {
+      setExportState(exportController.signal.aborted ? null : { kind: "error", detail: error instanceof Error ? error.message : String(error) });
     } finally {
+      if (!retained) await cleanup?.();
       restorePreview?.();
+      runningRef.current = false;
     }
     },
     [t, audioFxGate, previewRef, proxyStateRef, decodeProbeMemo, exportLog],

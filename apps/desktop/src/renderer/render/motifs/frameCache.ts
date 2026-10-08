@@ -355,11 +355,11 @@ export class MotifFrameCache {
 
   /// One IPC for the whole read. LZ4 is decompressed on a native worker;
   /// missing or invalid cache entries return null so callers render again.
-  async readBitmap(cacheKey: string, frameIndex: number): Promise<ImageBitmap | null> {
+  async readBitmap(cacheKey: string, frameIndex: number, finalizationToken?: string): Promise<ImageBitmap | null> {
     if (typeof window === "undefined") return null;
     try {
       const { readStoredMotifFrame } = await import("./frameTransport");
-      return await readStoredMotifFrame(hashCacheKey(cacheKey), frameIndex);
+      return await readStoredMotifFrame(hashCacheKey(cacheKey), frameIndex, finalizationToken);
     } catch { /* lost GPU/port: the CPU read remains available */ }
     const { invoke } = await import("@/bridge/ipc");
     const frame = await invoke<

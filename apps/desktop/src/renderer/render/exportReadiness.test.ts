@@ -76,16 +76,17 @@ describe("sourcesNeedingPreviewProbe", () => {
     expect(out.map((m) => m.id)).toEqual(["b"]);
   });
 
-  it("excludes sources that already have a preview path or are bypassed", () => {
+  it("keeps original probes eligible after proxies land, excluding bypassed or missing sources", () => {
     const out = sourcesNeedingPreviewProbe(
       map(
         v({ id: "q", decode_route: proxied({ quick_proxy: "/q.mp4" }) }),
         v({ id: "dq", decode_route: directExport("/q.mp4") }),
+        v({ id: "full", decode_route: proxied({ full_proxy: "/full.mp4" }) }),
         v({ id: "byp", decode_route: bypass }),
         v({ id: "gone", available: false }),
       ),
     );
-    expect(out).toEqual([]);
+    expect(out.map((m) => m.id)).toEqual(["q", "dq", "full"]);
   });
 });
 

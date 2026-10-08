@@ -1055,10 +1055,14 @@ impl Backend {
             "mux_export" => {
                 let a: crate::commands::MuxExportArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(
-                    crate::commands::export::mux_export(a.video_path, a.audio_path, a.output_path)
-                        .await,
+                ser(crate::commands::export::mux_export(
+                    a.video_path,
+                    a.audio_path,
+                    a.output_path,
+                    a.finalization_id,
+                    a.audio_required,
                 )
+                .await)
             }
             #[cfg(feature = "export")]
             "ensure_export_audio_conform" => {

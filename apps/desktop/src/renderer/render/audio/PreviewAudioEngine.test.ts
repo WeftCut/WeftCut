@@ -5,7 +5,7 @@ import type { AudioGraph } from "./AudioGraph";
 import { PreviewAudioEngine } from "./PreviewAudioEngine";
 
 const reads = vi.hoisted(() => ({ gate: null as Promise<void> | null,
-  opens: [] as string[], windows: [] as number[], failOpen: false }));
+  opens: [] as string[], windows: [] as number[], failOpen: false, failRead: false }));
 vi.mock("./conformSource", () => ({
   ConformSource: class {
     header = { channels: 1 };
@@ -14,9 +14,11 @@ vi.mock("./conformSource", () => ({
       if (reads.failOpen) throw new Error("conform unavailable");
       return new this();
     }
-    async readWindow(_start: number, frames: number) {
+    async readWindow(_start: number, frames: number, signal?: AbortSignal) {
       reads.windows.push(_start);
       if (reads.gate) await reads.gate;
+      signal?.throwIfAborted();
+      if (reads.failRead) throw new DOMException("PCM fetch failed", "NetworkError");
       return [new Float32Array(frames)];
     }
   },
@@ -59,7 +61,7 @@ function setup(startUs = 0) {
   return { engine, ctx, sources, summary, graph, source, layer, track };
 }
 async function settle() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
-afterEach(() => { reads.gate = null; reads.opens = []; reads.windows = []; reads.failOpen = false; vi.useRealTimers(); });
+afterEach(() => { reads.gate = null; reads.opens = []; reads.windows = []; reads.failOpen = false; reads.failRead = false; vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("session-owned preview audio transport", () => {
   it("starts and pauses real mixers without a visual ticker; pause stops synchronously", async () => {
@@ -328,6 +330,60 @@ describe("session-owned preview audio transport", () => {
     expect(engine.snapshot().phase).toBe("error");
     expect(sources.every((s) => s.stop.mock.calls.length > 0)).toBe(true);
     ctx.state = "running";
+    engine.play(); await settle();
+    expect(engine.snapshot().phase).toBe("playing");
+    engine.dispose();
+  });
+
+  it("keeps playing when a clip leaves the audio window during a pending read", async () => {
+    const { engine, ctx, summary, track, layer } = setup();
+    track.layers.push({ ...layer, id: "later-silent-clip", t_start_us: 8_000_000, t_end_us: 10_000_000 });
+    engine.setProject(summary, ROOT_ID);
+    engine.play(); await settle();
+    let release!: () => void;
+    reads.gate = new Promise<void>((r) => { release = r; });
+    ctx.currentTime += 1;
+    await vi.advanceTimersByTimeAsync(16);
+    ctx.currentTime += 5;
+    await vi.advanceTimersByTimeAsync(16);
+    release(); await settle();
+    expect(engine.snapshot().phase).toBe("playing");
+    engine.dispose();
+  });
+
+  it("keeps playing when delayed PCM reads are evicted after a clock advance", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { engine, ctx, summary, layer, sources } = setup();
+    layer.t_end_us = 20_000_000;
+    if (layer.params.kind !== "Audio") throw new Error("fixture");
+    layer.params.src_out_us = 20_000_000;
+    engine.setProject(summary, ROOT_ID);
+    engine.play(); await settle();
+    let release!: () => void;
+    reads.gate = new Promise<void>((r) => { release = r; });
+    for (const advance of [1, 4, 4]) {
+      ctx.currentTime += advance;
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    release(); await settle();
+    await vi.advanceTimersByTimeAsync(16);
+    expect(engine.snapshot().phase).toBe("playing");
+    expect(sources.some((source) => source.stop.mock.calls.length === 0 &&
+      (source.start.mock.calls[0]?.[0] as number) >= ctx.currentTime)).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it("reports a genuine DOMException with its name/message and retries on Play", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    reads.failRead = true;
+    const { engine } = setup();
+    engine.play(); await settle();
+    expect(engine.snapshot()).toMatchObject({ phase: "error", error: "NetworkError: PCM fetch failed" });
+    expect(logged).toHaveBeenCalledWith("[weftcut/audio] playback failed: NetworkError: PCM fetch failed");
+    reads.failRead = false;
     engine.play(); await settle();
     expect(engine.snapshot().phase).toBe("playing");
     engine.dispose();

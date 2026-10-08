@@ -40,6 +40,11 @@ audio model or export mixer would not address them.
   layers and Groups through `forEachLayer`; no visual node must exist first.
   Mixers outside lookahead are released. Pause keeps completed in-window PCM
   for reuse but aborts pending reads and invalidates their scheduling slots.
+  Internally cancelled preparation returns an unready result: initial Play
+  retries it before releasing the clock, while the refill timer prepares the
+  current window on its next tick. Retired mixers cannot fail the current
+  transport. Genuine read/device failures still enter error and log the
+  exception name/message as text for Electron diagnostics.
 - Pause synchronously stops/disconnects every scheduled source. Seek, pause,
   project replacement and disposal invalidate the request generation before
   any asynchronous completion can schedule audio. An edit's monitor-only
@@ -65,7 +70,10 @@ checks that replacing a panel does not dispose or pause the session.
 The Electron acceptance test stops the real Pixi ticker, plays real conform
 PCM, pauses before deliberately blocking the UI thread, and checks graph
 silence. It then closes Preview, controls playback without a panel, and
-reopens it while playing. Existing pan parity tests remain in place.
+reopens it while playing. It also injects a real conform fetch failure, checks
+the compact toolbar status and centered controls, then retries using Play.
+Controlled reads cover cancellation on cache eviction and clip retirement.
+Existing pan parity tests remain in place.
 
 Diagnostics separate PCM/context preparation time, synchronous stop-command
 handling time, and AudioContext base/output latency estimates. They do not

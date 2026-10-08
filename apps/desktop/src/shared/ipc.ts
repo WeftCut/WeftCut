@@ -400,7 +400,11 @@ import type { MenuProjection } from './menu'
 export interface WeftcutApi {
   diagnostics: import('./diagnostics').DiagnosticsApi
   resources: {
-    acquire(request: { id: string; memoryMiB: number; threads: number }): Promise<void>;
+    planExport(request: import('./export-resources').ExportPlanRequest): Promise<number>;
+    estimateDecoder(path: string): Promise<number>;
+    onExportWaiting(cb: (event: import('./export-resources').ExportResourceBlock & { id: string }) => void): () => void;
+    reserveExportFinalization(id: string): Promise<void>;
+    acquire(request: { id: string; memoryMiB: number; threads: number; finalizationToken?: string }): Promise<void>;
     release(id: string): void;
     playing(value: boolean): void;
     status(): Promise<import('./resource-policy').ResourceStatus>;
@@ -574,7 +578,7 @@ export interface WeftcutApi {
       /// CPU transport format for the session's frames: NV12 (8-bit) or
       /// I420P10 (the 10-bit lane; layout documented on `ExportSwFrameMsg`).
       outFormat: 'NV12' | 'I420P10'
-      creditWindow: number
+      finalizationToken?: string | undefined; creditWindow: number
     }): Promise<ExportSwOpenReply>
     decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void
     returnCredit(args: { sessionId: string; credits: number }): void

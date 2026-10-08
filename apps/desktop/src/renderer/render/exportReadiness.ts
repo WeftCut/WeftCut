@@ -55,19 +55,18 @@ export function sourcesNeedingPreflight(
   );
 }
 
-/// Video sources that would show a BLANK preview right now (no preview path on
-/// the route yet, and not bypassed) — candidates for the preview-from-original
-/// bridge. A SUPERSET of `sourcesNeedingPreflight`: it also includes
-/// full-proxy/10-bit sources, so a decodable Hi10P/HEVC gets a verdict in the
-/// shared memo and can bridge while its proxy builds. The import sweep probes
-/// these; the export gate keeps using the narrower `sourcesNeedingPreflight`.
+/// Available non-bypass originals whose WebCodecs capability needs a verdict.
+/// A landed proxy says nothing about the original: pinned Lite still needs to
+/// resolve the original as supported or unsupported. The sweep owns settled
+/// verdicts and skips them; proxy completion must not remove interrupted probes.
+/// The export gate keeps using the narrower `sourcesNeedingPreflight`.
 export function sourcesNeedingPreviewProbe(
   mediaById: ReadonlyMap<string, MediaSummary>,
 ): MediaSummary[] {
   return [...mediaById.values()].filter((m) => {
     if (m.kind !== "Video" || !m.available) return false;
     const r = resolveDecode(m);
-    return r.route !== "bypass" && r.previewPath == null;
+    return r.route !== "bypass";
   });
 }
 

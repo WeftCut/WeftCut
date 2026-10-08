@@ -71,7 +71,7 @@ vi.mock("@/bridge/notification", () => ({
 }));
 
 vi.mock("@/bridge/fs", () => ({
-  remove: async () => {},
+  remove: vi.fn(async () => {}),
   writeFile: async () => {},
 }));
 
@@ -189,6 +189,9 @@ function mount(previewRef = createRef<PreviewSurfaceHandle>()) {
 
 describe("useExportFlow", () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'api', { configurable: true, value: { resources: {
+      planExport: vi.fn(async () => 0), onExportWaiting: () => () => {}, release: vi.fn(),
+    } } });
     bridge.answers.clear();
     bridge.log.length = 0;
     bridge.handlers.clear();
@@ -238,6 +241,74 @@ describe("useExportFlow", () => {
     expect(result.current.exportState?.kind).toBe(outcome === 'success' ? 'complete' : 'error');
     expect(restore).toHaveBeenCalledOnce();
     expect(suspended).toBe(false);
+  });
+
+  it("retains encoded files after mux failure and retries only mux, then cleans up", async () => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    const { remove } = await import("@/bridge/fs");
+    vi.mocked(remove).mockClear();
+    act(() => useProjectStore.getState().apply(project));
+    bridge.answers.set("project_summary", () => project);
+    const encode = vi.fn(async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }));
+    const previewRef = createRef<PreviewSurfaceHandle>();
+    previewRef.current = { suspendForExport: () => () => {}, runPixiExport: encode } as unknown as PreviewSurfaceHandle;
+    const mux = vi.fn().mockRejectedValueOnce(new Error("Resources are busy")).mockResolvedValue(undefined);
+    bridge.answers.set("mux_export", mux);
+    const { result } = mount(previewRef);
+    await act(async () => result.current.runExportWithSettings({
+      ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+      audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false },
+    }, "/out/movie.mp4"));
+    expect(result.current.exportState).toMatchObject({ kind: "error", onRetry: expect.any(Function) });
+    expect(remove).not.toHaveBeenCalled();
+    const failed = result.current.exportState;
+    if (failed?.kind !== "error" || !("onRetry" in failed)) throw new Error("retry missing");
+    await act(async () => { await (failed.onRetry as () => Promise<void>)(); });
+    expect(result.current.exportState?.kind).toBe("complete");
+    expect(encode).toHaveBeenCalledOnce();
+    expect(bridge.log.filter(c => c === "invoke export_video_sink_start")).toHaveLength(1);
+    expect(mux).toHaveBeenCalledTimes(2);
+    expect(mux.mock.calls[0]).toEqual(mux.mock.calls[1]);
+    expect(remove).toHaveBeenCalledTimes(2);
+  });
+
+  it("prepares audio once before video and preserves it through repeated mux failures and discard", async () => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    const { remove } = await import("@/bridge/fs");
+    vi.mocked(remove).mockClear();
+    act(() => useProjectStore.getState().apply(project));
+    bridge.answers.set("project_summary", () => project);
+    bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+    const audio = vi.fn(() => true);
+    bridge.answers.set("export_project_audio_only", audio);
+    const encode = vi.fn(async () => {
+      expect(audio).toHaveBeenCalledOnce();
+      return { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
+    });
+    const mux = vi.fn().mockRejectedValue(new Error("disk full"));
+    bridge.answers.set("mux_export", mux);
+    const previewRef = createRef<PreviewSurfaceHandle>();
+    previewRef.current = { suspendForExport: () => () => {}, runPixiExport: encode } as unknown as PreviewSurfaceHandle;
+    const { result } = mount(previewRef);
+    const settings = { ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native" as const, includeVideo: true,
+      audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true } };
+    await act(async () => result.current.runExportWithSettings(settings, "/out/movie.mp4"));
+    const failed = result.current.exportState;
+    if (failed?.kind !== "error" || !failed.onRetry || !failed.onDiscard) throw new Error("retry missing");
+    await act(async () => { await failed.onRetry!(); });
+    await act(async () => { await result.current.runExportWithSettings(settings, "/out/other.mp4"); });
+    expect(encode).toHaveBeenCalledOnce();
+    expect(audio).toHaveBeenCalledOnce();
+    expect(mux).toHaveBeenCalledTimes(2);
+    expect(mux.mock.calls[0]![0]).toMatchObject({ audioRequired: true });
+    expect(remove).not.toHaveBeenCalled();
+    await act(async () => { await failed.onDiscard!(); });
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(result.current.exportState).toBeNull();
+    await act(async () => { await failed.onRetry!(); });
+    expect(mux).toHaveBeenCalledTimes(2);
   });
 
   it("gates the audio-only export and names the layer and the effect", async () => {

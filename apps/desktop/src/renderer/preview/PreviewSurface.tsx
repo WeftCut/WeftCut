@@ -49,6 +49,8 @@ export interface PreviewSurfaceHandle {
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
   runPixiExport(opts: {
+    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
+    finalizationToken?: string | undefined;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };
@@ -80,6 +82,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
 
     const pixiRef = useRef<PixiPreviewHandle | null>(null);
+    const [exportSuspended, setExportSuspended] = useState(false);
     // The wheel/middle-button view gestures bind HERE rather than inside
     // PixiPreview: this element is the one that contains the canvas AND every
     // overlay stacked on it, and the overlays are siblings of the Pixi host.
@@ -108,7 +111,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           pixiRef.current?.refreshSources();
         },
         suspendForExport() {
-          return pixiRef.current?.suspendForExport() ?? (() => {});
+          setExportSuspended(true);
+          const restore = pixiRef.current?.suspendForExport();
+          return () => { restore?.(); setExportSuspended(false); };
         },
         async runPixiExport(opts) {
           const handle = pixiRef.current;
@@ -151,6 +156,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       >
         <PixiErrorBoundary>
           <PixiPreview
+            exportSuspended={exportSuspended}
             ref={pixiRef}
             previewDecodableOf={previewDecodableOf}
             visible={visible}

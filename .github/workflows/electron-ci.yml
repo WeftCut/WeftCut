@@ -516,8 +516,8 @@ jobs:
 
       # Per-test durations for the run, one JSON per project (playwright.config.ts
       # §reporter). Its own artifact rather than a path added to test-results-*
-      # above: that one is empty on a green run, and a green run is exactly when
-      # these timings are worth reading. if: always() so a red or timed-out leg —
+      # above: timings stay separate from the per-app lifecycle diagnostics in
+      # test-results. The live JSONL survives interrupted runs. if: always() so a red or timed-out leg —
       # the case that motivates looking at cost at all — still publishes them.
       #
       # One per slice, and the whole set is what rebalances the split: the E2E

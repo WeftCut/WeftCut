@@ -1343,13 +1343,20 @@ export function Timeline({
   // to Base UI.
   useEffect(() => {
     if (!contextMenu && !chipMenu && !gapMenu) return;
+    const viewport = rootRef.current;
+    if (!viewport) return;
+    const { scrollLeft, scrollTop } = viewport;
     const onScroll = () => {
+      // A locator/native focus can scroll a clip into view before its context
+      // menu opens, then deliver the queued scroll event after this effect.
+      // Only movement since opening detaches the menu from its subject.
+      if (viewport.scrollLeft === scrollLeft && viewport.scrollTop === scrollTop) return;
       setContextMenu(null);
       setChipMenu(null);
       setGapMenu(null);
     };
-    window.addEventListener("scroll", onScroll, true);
-    return () => window.removeEventListener("scroll", onScroll, true);
+    viewport.addEventListener("scroll", onScroll);
+    return () => viewport.removeEventListener("scroll", onScroll);
   }, [contextMenu, chipMenu, gapMenu]);
 
   /// Right-click on lane background (ADR 0069). Resolves the press to the gap

@@ -15,6 +15,7 @@
 
 .app-top-chrome {
   min-width: 0;
+  container: app-chrome / inline-size;
 }
 
 .app-header {

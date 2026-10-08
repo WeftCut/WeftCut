@@ -52,6 +52,14 @@ const api: WeftcutApi = {
     recordError: message => ipcRenderer.send('diagnostics:error', message),
   },
   resources: {
+    planExport: request => ipcRenderer.invoke('resources:plan-export', request),
+    estimateDecoder: path => ipcRenderer.invoke('resources:estimate-decoder', path),
+    onExportWaiting: cb => {
+      const listener = (_event: Electron.IpcRendererEvent, value: import('../shared/export-resources').ExportResourceBlock & { id: string }) => cb(value);
+      ipcRenderer.on('resources:export-waiting', listener);
+      return () => { ipcRenderer.removeListener('resources:export-waiting', listener); };
+    },
+    reserveExportFinalization: id => ipcRenderer.invoke('resources:reserve-export-finalization', id),
     acquire: request => ipcRenderer.invoke('resources:acquire', request),
     release: id => ipcRenderer.send('resources:release', id),
     playing: value => ipcRenderer.send('resources:playing', value),

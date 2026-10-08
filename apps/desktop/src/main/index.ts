@@ -5,7 +5,7 @@ import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import { configureResources } from './resources.js'
-import { installResourceIpc } from './resourceIpc.js'
+import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
@@ -538,7 +538,10 @@ app.whenReady().then(async () => {
   layoutTheme = readLayoutTheme(initialAppSettings.layout_theme)
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
-  installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)))
+  installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)), {
+    prepare: owner => motifGpu?.close(owner),
+    retire: (owner, id) => motifGpu?.closeExport(owner, id),
+  })
   hydratePerformanceSettings(initialAppSettings.performance,
     !initialAppSettings.performance_policy || initialAppSettings.performance_policy.decode === 'tested' && initialAppSettings.performance_test_compatible
       ? initialAppSettings.performance_calibration : null, !!initialAppSettings.performance_policy)
@@ -1236,7 +1239,7 @@ app.whenReady().then(async () => {
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const motifCapture = new MotifCaptureService({
     store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
-    copy: motifGpu ? (owner, texture) => motifGpu.copy(owner, texture) : null,
+    copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'png')
@@ -1267,13 +1270,14 @@ app.whenReady().then(async () => {
     // outgoing document must not acquire leases in the replacement document.
     return () => document !== null && consumer.document === document && !owner.isDestroyed() && frame !== null && !frame.detached
   }
-  ipcMain.handle('motif:read', (event, args: { hash: string; frame: number }) => {
+  ipcMain.handle('motif:read', (event, args: { hash: string; frame: number; finalizationToken?: string }) => {
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
+    const parent = resolveExportFinalization(owner.id, args.finalizationToken)
     return motifFrames.read(args.hash, args.frame,
       motifGpu ? (file, w, h) => {
         if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
-        return motifGpu.read(owner, file, w, h)
+        return motifGpu.read(owner, file, w, h, parent)
       } : undefined)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
@@ -1285,7 +1289,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
     const isCurrent = trackMotifConsumer(event.sender, event.senderFrame)
-    return motifCapture.capture(event.sender, args, isCurrent)
+    return motifCapture.capture(event.sender, args, isCurrent, resolveExportFinalization(event.sender.id, args.finalizationToken))
   })
 
   let coverRuntimeVersion = ''
@@ -1307,6 +1311,18 @@ app.whenReady().then(async () => {
   })
   await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === 'export_video_sink_start') {
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args?.args ?? {};
+      args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken) } };
+    }
+    if (channel === 'mux_export') {
+      // Never accept a renderer-supplied native lease number (including the
+      // snake-case alias). Only this sender's live continuation token qualifies.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
+      const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
+      if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
+      args = { ...rest, finalizationId: parent };
+    }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
     if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)
@@ -1844,10 +1860,10 @@ app.whenReady().then(async () => {
   // flows on the one dedicated `exportSw:msg` channel (see ./exportSw and
   // `ExportSwMsg` in shared/ipc — never split it); nothing exportSw rides the
   // generic `evt:*` relay.
-  ipcMain.handle('exportSw:open', (e, a: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }) => {
+  ipcMain.handle('exportSw:open', (e, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('exportSw:open — no window for sender')
-    return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow)
+    return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow, resolveExportFinalization(e.sender.id, a.finalizationToken))
   })
   ipcMain.on('exportSw:decodeRange', (_e, a: { sessionId: string; aUs: number; bUs: number }) => {
     // Fire-and-forget .on: napi can throw Err (unknown/already-closed sessionId
