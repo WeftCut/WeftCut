@@ -18,7 +18,12 @@ describe("motifWarmPhase", () => {
   it("falls back to L0 coverage when no bake status", () => {
     expect(motifWarmPhase(null, 0, 5)).toBe(null);
     expect(motifWarmPhase(null, 2, 5)).toEqual({ phase: "warming", done: 2, total: 5 });
-    expect(motifWarmPhase(null, 5, 5)).toEqual({ phase: "ready", done: 5, total: 5 });
+    expect(motifWarmPhase(null, 5, 5)).toEqual({ phase: "preview_ready", done: 5, total: 5 });
+  });
+  it("finishes preview warming at 197/197 without claiming disk completion", () => {
+    expect(motifWarmPhase(null, 197, 197)).toEqual({ phase: "preview_ready", done: 197, total: 197 });
+    expect(motifWarmPhase(null, 196, 197)).toEqual({ phase: "warming", done: 196, total: 197 });
+    expect(motifWarmPhase(null, 197, 197, true)).toEqual({ phase: "ready", done: 197, total: 197 });
   });
   it("treats a baked-on-disk key as ready regardless of L0 coverage", () => {
     expect(motifWarmPhase(null, 0, 5, true)).toEqual({ phase: "ready", done: 5, total: 5 });

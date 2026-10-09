@@ -624,13 +624,16 @@ describe("AttributePanel local disclosures", () => {
     expect(within(timingSection()).getByLabelText("Start")).toBeTruthy();
   });
 
-  it("hides a Motif layer's bake status unless a bake is active or failed", () => {
+  it("distinguishes preview readiness from durable bake completion", () => {
     renderPanel(motifTrack(), "layer-m1");
     // No status entry at all → idle → no standing row.
     expect(document.querySelector(".prop-bake-status")).toBeNull();
 
     act(() => setLayerBakeStatuses({ "layer-m1": { phase: "warming", done: 1, total: 4 } }));
     expect(document.querySelector(".prop-bake-status")?.textContent).toContain("Warming preview");
+
+    act(() => setLayerBakeStatuses({ "layer-m1": { phase: "preview_ready", done: 197, total: 197 } }));
+    expect(document.querySelector(".prop-bake-status")?.textContent).toBe("Preview ready");
 
     act(() => setLayerBakeStatuses({ "layer-m1": { phase: "baking", done: 2, total: 4 } }));
     expect(document.querySelector(".prop-bake-status")?.textContent).toContain("Pre-baking");

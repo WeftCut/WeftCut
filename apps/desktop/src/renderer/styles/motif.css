@@ -310,6 +310,7 @@
   pointer-events: none;
 }
 .motif-bake-dot.is-warming { background: var(--warning); }
+.motif-bake-dot.is-preview_ready { border: 1.5px solid var(--success); }
 .motif-bake-dot.is-ready { background: var(--success); }
 .motif-bake-dot.is-error { background: var(--destructive); }
 .motif-bake-dot.is-baking {
@@ -319,3 +320,6 @@
   animation: motif-bake-spin 0.8s linear infinite;
 }
 @keyframes motif-bake-spin { to { transform: rotate(360deg); } }
+
+.motif-bake-dot.is-queued { background: var(--muted-foreground); }
+.motif-bake-dot.is-paused, .motif-bake-dot.is-retrying { background: var(--warning); }

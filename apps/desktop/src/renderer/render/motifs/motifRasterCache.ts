@@ -7,7 +7,7 @@
 // Pulling the cache + raster function here lets both importers reach the same
 // objects without coupling them to each other's class.
 
-import { MotifFrameCache, hashCacheKey } from "./frameCache";
+import { MotifFrameCache } from "./frameCache";
 import { BakedKeyIndex } from "./bakedKeyIndex";
 import type { Motif } from "./catalog";
 import { rasterMotifFrame } from "./motifRaster";
@@ -44,8 +44,17 @@ function broker(cache: MotifFrameCache) {
 const committedBroker = broker(sharedMotifFrameCache);
 const overlayBroker = broker(sharedMotifOverlayCache);
 let requestEpoch = 0;
+let mainPreparedKeys = new Set<string>();
+/** Durable preparation is the sole background producer for its content.
+ * Renderer prewarming shares disk-read admission and waits for coverage; it
+ * never competes with main's page-local capture slices. */
+export function setMotifPreparationCoverage(cacheKeys: Iterable<string>): void {
+  mainPreparedKeys = new Set(cacheKeys);
+  frameScheduler.coverageChanged();
+}
 export function resetMotifFrameRequests(): void {
   requestEpoch++;
+  mainPreparedKeys.clear();
   frameScheduler.reset(); committedBroker.reset(); overlayBroker.reset();
 }
 export function cancelMotifFrameRequest(key: string): void {
@@ -69,10 +78,11 @@ const frameScheduler = new MotifFrameScheduler({
   shouldRead: (key, frame) => sharedBakedKeyIndex.hasFrame(key, frame) !== false,
   read: (key, frame) => sharedMotifFrameCache.readBitmap(key, frame),
   readMiss: (key, frame) => sharedBakedKeyIndex.forgetFrame(key, frame),
+  backgroundCaptureAllowed: key => !mainPreparedKeys.has(key),
 });
 
 /// Obtain one motif frame, preferring a pre-baked frame on disk over a live
-/// raster. Read-only: writing is the MotifBaker's job (single writer →
+/// raster. Read-only: main owns durable writes (single writer →
 /// no LRU-eviction race on a fire-and-forget encode). Shared by the on-demand
 /// sprite path and the prewarmer, so disk-first is uniform.
 ///
@@ -96,7 +106,7 @@ export async function resolveMotifFrame(
 ): Promise<ImageBitmap> {
   // The DOM-less export path and node tests retain the portable producer.
   if (typeof window !== 'undefined' && typeof MessageChannel !== 'undefined') {
-    return (await acquireFrame(motif, cacheKey, frame, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, false, overlay, priority)).bitmap;
+    return (await acquireFrame(motif, cacheKey, frame, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, overlay, priority)).bitmap;
   }
   if (!overlay) await sharedBakedKeyIndex.whenHydrated();
   if (!overlay && sharedBakedKeyIndex.hasFrame(cacheKey, frame) !== false) {
@@ -115,17 +125,10 @@ export async function resolveMotifFrame(
   return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, coalesceKey, fpsNum, fpsDen);
 }
 
-export function acquireBakedMotifFrame(
-  motif: Motif, cacheKey: string, frame: number, fpsNum: number, fpsDen: number,
-  props: Record<string, unknown>,
-): Promise<CapturedFrame> {
-  return acquireFrame(motif, cacheKey, frame, frame * fpsDen / fpsNum, props, undefined, fpsNum, fpsDen, true, false);
-}
-
 function acquireFrame(
   motif: Motif, cacheKey: string, frame: number, tSec: number, props: Record<string, unknown>,
   coalesceKey: string | undefined, fpsNum: number | undefined, fpsDen: number | undefined,
-  bake: boolean, overlay: boolean,
+  overlay: boolean,
   priority: 'foreground' | 'background' = 'foreground',
 ): Promise<CapturedFrame> {
   const epoch = requestEpoch;
@@ -133,12 +136,12 @@ function acquireFrame(
     if (!overlay) await sharedBakedKeyIndex.whenHydrated();
     if (epoch !== requestEpoch || !ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
     const [w, h] = motif.manifest.size;
-    return frameScheduler.acquire({ cacheKey, frame, ticket, captureOnly: bake || overlay,
+    return frameScheduler.acquire({ cacheKey, frame, ticket, captureOnly: overlay,
       capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!, motif.manifest.settle_rafs,
         motif.manifest.content_hash, fpsNum, fpsDen, {
           key: ticket.key, high: ticket.high(),
           ...(ticket.bake() ? { bake: ticket.bake()! } : {}),
         }),
     });
-  }, coalesceKey, bake ? { hash: hashCacheKey(cacheKey), frame } : undefined, priority);
+  }, coalesceKey, undefined, priority);
 }

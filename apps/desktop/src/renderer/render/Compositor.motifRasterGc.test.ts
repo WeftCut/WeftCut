@@ -1,40 +1,21 @@
-// The baked-index hydrate/GC pass is fire-and-forget from `setProject`, and
-// PixiPreview calls setProject on EVERY project snapshot — so runs must be
-// serialized on a project epoch: a run superseded mid-flight bails at its
-// await boundaries (never GCs against a stale snapshot), and exactly one
-// coalesced follow-up redoes the work for the latest snapshot. The GC live
-// set additionally unions the baker's queued/in-flight target keys, so a hash
-// dir a concurrent bake is writing into is never collected.
-//
-// `document` is stubbed (not a full DOM) so the DOM-gated prewarmer/baker
-// exist; `window` is stubbed so the L2 bridge (`frameCache.ts` rasterRootDir)
-// resolves — both are otherwise absent under vitest. mode "export" keeps the
-// preview-only AudioGraph out of the constructor; the hydrate/GC path is
-// mode-independent.
-
+// Compositor integration with main-owned Motif preparation. Disk discovery and
+// GC races are exercised at their owning seam in main/motif/{baking,bakeWorkspace}.test.ts.
 import { Container, type Application } from "pixi.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const invokeMock = vi.fn();
-const readDirMock = vi.fn();
-const removeMock = vi.fn(async (_path: string) => {});
-const existsMock = vi.fn();
-
-vi.mock("./motifs/syncCatalog", () => ({ syncUserMotifsFromBackend: vi.fn(async () => {}) }));
-
-import type { DirEntry } from "../../shared/ipc";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import type { DecoderPool } from "./decoder/session";
 import { Compositor } from "./Compositor";
 import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-import { hashCacheKey } from "./motifs/frameCache";
 import { sharedBakedKeyIndex } from "./motifs/motifRasterCache";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
-import { useMotifBakeStatusStore } from "../timeline/motifBakeStatusStore";
+import { useMotifBakeStatusStore, setLayerBakeStatuses } from "../timeline/motifBakeStatusStore";
 import { summaryFixture } from "../testing/summaryFixture";
+import type { MotifBakePlan, MotifBakeSnapshot } from '../../shared/motifs/baking';
 
-const RASTER_ROOT = "/ws/Cache/raster";
+const { warm, stopWarm } = vi.hoisted(() => ({ warm: vi.fn(), stopWarm: vi.fn() }));
+vi.mock('./motifs/MotifPrewarmer', () => ({ MotifPrewarmer: class { setTargets = warm; dispose = stopWarm; } }));
+vi.mock("./motifs/syncCatalog", () => ({ syncUserMotifsFromBackend: vi.fn(async () => {}) }));
 
 function motifLayer(props: Record<string, unknown>): LayerSummary {
   return {
@@ -76,253 +57,141 @@ const motif = getMotif("countdown")!;
 const keyFor = (props: Record<string, unknown>): string =>
   motifFrameDescriptor({ props, src_in_us: 0 }, 0, 2_000_000, 30, 1, motif)!.cacheKey;
 const K1 = keyFor({ seconds: 5 });
-const K2 = keyFor({ seconds: 7 });
 
-const dirEntry = (name: string): DirEntry => ({
-  name,
-  isDirectory: true,
-  isFile: false,
-  isSymlink: false,
-});
-
-describe("Compositor baked-index hydrate/GC epoch serialization", () => {
+describe('Compositor delegates durable Motif preparation to main', () => {
   let compositor: Compositor;
-  let idle: Array<() => void>;
-  /// When true, the FIRST readDir of the test never resolves until released —
-  /// that is run #1 parked mid-hydrate, the overlap window under test.
-  let deferFirstReadDir: boolean;
-  let releaseFirstReadDir: ((entries: DirEntry[]) => void) | null;
-  let readDirCalls: number;
-  let entries: DirEntry[];
+  let projectId: string | null;
+  let snapshot: MotifBakeSnapshot;
+  let invoke: ReturnType<typeof vi.fn>;
+  let on: ReturnType<typeof vi.fn>;
+  let off: ReturnType<typeof vi.fn>;
+  let fsRead: ReturnType<typeof vi.fn>;
+  let fsRemove: ReturnType<typeof vi.fn>;
+
+  const create = () => new Compositor({
+    app: { stage: new Container() } as unknown as Application,
+    width: 1920, height: 1080, mode: 'export',
+    originalAssetUrl: () => null, sourceColor: () => undefined, mediaById: () => undefined,
+    pool: { dispose: vi.fn() } as unknown as DecoderPool,
+  });
+  const plans = () => invoke.mock.calls.filter(([command]) => command === 'motif_bake_reconcile')
+    .map(([, args]) => args.plan as MotifBakePlan);
 
   beforeEach(() => {
-    vi.stubGlobal("document", {});
-    // The real bridge modules (bridge/fs, bridge/path, bridge/ipc) all call
-    // `window.api.*` — stub that one object instead of mocking the modules
-    // (dynamic import() of a mocked alias module proved racy under vitest).
-    vi.stubGlobal("window", {
-      api: {
-        backend: { invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args) },
-        path: { join: (parts: string[]) => Promise.resolve(parts.join("/")) },
-        fs: {
-          readDir: (p: string) => readDirMock(p),
-          exists: (p: string) => existsMock(p),
-          remove: (p: string) => removeMock(p),
-          readFile: vi.fn(),
-          mkdir: vi.fn(async () => {}),
-          writeFile: vi.fn(async () => {}),
-          writeTextFile: vi.fn(async () => {}),
-        },
-      },
+    vi.clearAllMocks();
+    sharedBakedKeyIndex.clear();
+    setLayerBakeStatuses({});
+    projectId = 'project-1';
+    snapshot = { generation: 1, statuses: {}, coverage: {} };
+    off = vi.fn(); on = vi.fn(() => off); fsRead = vi.fn(); fsRemove = vi.fn();
+    invoke = vi.fn(async command => {
+      if (command === 'motif_bake_session') return { generation: 1, projectId };
+      if (command === 'motif_bake_reconcile' || command === 'motif_bake_snapshot') return snapshot;
+      throw new Error(`Unexpected renderer command: ${command}`);
     });
-    idle = [];
-    vi.stubGlobal("requestIdleCallback", (cb: () => void) => {
-      idle.push(cb);
-      return idle.length;
-    });
-    vi.stubGlobal("cancelIdleCallback", () => {});
-    deferFirstReadDir = false;
-    releaseFirstReadDir = null;
-    readDirCalls = 0;
-    entries = [];
-    invokeMock.mockReset().mockImplementation((cmd: string) => {
-      if (cmd === "workspace_dir") return Promise.resolve("/ws");
-      // The capture never resolves: the baker's frame stays in flight, which is
-      // exactly the concurrent-write window the GC live set must protect.
-      if (cmd === "motif_capture_frame") return new Promise(() => {});
-      return Promise.resolve(null);
-    });
-    removeMock.mockClear();
-    existsMock.mockReset().mockImplementation(async (p: string) => p === RASTER_ROOT);
-    readDirMock.mockReset().mockImplementation((p: string) => {
-      if (p !== RASTER_ROOT) return Promise.resolve([]);
-      readDirCalls += 1;
-      if (readDirCalls === 1 && deferFirstReadDir) {
-        return new Promise((r) => {
-          releaseFirstReadDir = r;
-        });
-      }
-      return Promise.resolve(entries);
-    });
-    // Pre-bake on, so setProject hands the motif layer to the baker.
-    useAppSettingsStore.setState((s) => ({
-      settings: { ...s.settings, prebake_motifs: true },
-    }));
-    compositor = new Compositor({
-      app: { stage: new Container() } as unknown as Application,
-      width: 1920,
-      height: 1080,
-      mode: "export",
-      originalAssetUrl: () => null,
-      sourceColor: () => undefined,
-      mediaById: () => undefined,
-      pool: { dispose: vi.fn() } as unknown as DecoderPool,
-    });
+    vi.stubGlobal('document', {});
+    vi.stubGlobal('window', { api: { on, backend: { invoke }, fs: { readDir: fsRead, remove: fsRemove } } });
+    useAppSettingsStore.setState(s => ({ settings: { ...s.settings, prebake_motifs: true } }));
+    compositor = create();
   });
-
   afterEach(() => {
     compositor.dispose();
     vi.unstubAllGlobals();
-    useAppSettingsStore.setState((s) => ({
-      settings: { ...s.settings, prebake_motifs: false },
-    }));
+    useAppSettingsStore.setState(s => ({ settings: { ...s.settings, prebake_motifs: false } }));
+    sharedBakedKeyIndex.clear();
+    setLayerBakeStatuses({});
   });
 
-  it("a settled run GCs orphans and keeps live keys", async () => {
-    entries = [dirEntry(hashCacheKey(K1)), dirEntry("deadbeef")];
+  it('declares used ranges and restores saved coverage without renderer filesystem work', async () => {
+    snapshot.coverage[K1] = Array.from({ length: 150 }, (_, i) => i);
     compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(removeMock).toHaveBeenCalledTimes(1));
-    expect(removeMock).toHaveBeenCalledWith(`${RASTER_ROOT}/deadbeef`);
+    await vi.waitFor(() => expect(useMotifBakeStatusStore.getState().byLayer['layer-motif']?.phase).toBe('ready'));
+    expect(plans()).toHaveLength(1);
+    expect(plans()[0]?.contents[0]).toMatchObject({ cacheKey: K1, contentFrames: 150, ranges: [{ start: 0, end: 60 }] });
+    expect(on).toHaveBeenCalledWith('motif:bake', expect.any(Function));
+    expect(on).toHaveBeenCalledWith('motif:bake-ready', expect.any(Function));
+    expect(fsRead).not.toHaveBeenCalled(); expect(fsRemove).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([command]) => command === 'motif_capture_frame')).toBe(false);
   });
 
-  it("reopening waits for disk discovery before starting background captures", async () => {
-    deferFirstReadDir = true;
-    entries = [dirEntry(hashCacheKey(K1))];
+  it('keeps partial restored coverage distinct from a completed manual bake when automatic work is off', async () => {
+    useAppSettingsStore.setState(s => ({ settings: { ...s.settings, prebake_motifs: false } }));
+    snapshot.coverage[K1] = [0];
     compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(1));
-    for (const cb of idle.splice(0)) cb();
-    await new Promise((r) => setTimeout(r, 20));
-    releaseFirstReadDir!(entries);
-    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "motif_capture_frame")).toBe(false);
-    await vi.waitFor(() => expect(readDirCalls).toBe(2));
+    await vi.waitFor(() => expect(sharedBakedKeyIndex.hasFrame(K1, 0)).toBe(true));
+    expect(plans().at(-1)?.contents).toEqual([]);
+    expect(useMotifBakeStatusStore.getState().byLayer['layer-motif']?.phase).not.toBe('ready');
+    snapshot = { ...snapshot, coverage: { [K1]: Array.from({ length: 150 }, (_, i) => i) } };
+    const callback = on.mock.calls[0]![1] as (value: MotifBakeSnapshot) => void;
+    callback(snapshot);
+    expect(useMotifBakeStatusStore.getState().byLayer['layer-motif']?.phase).toBe('ready');
   });
 
-  it("reopening fully baked content restores ready without a per-frame bake queue", async () => {
-    const frames = Array.from({ length: 150 }, (_, frame) => ({
-      name: `${frame}.wfrm`, isDirectory: false, isFile: true, isSymlink: false,
-    }));
-    readDirMock.mockImplementation(async (p: string) =>
-      p === RASTER_ROOT ? [dirEntry(hashCacheKey(K1))] : frames,
-    );
+  it('does not submit another plan for an unchanged project snapshot', async () => {
     compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"])
-      .toEqual({ phase: "ready", done: 150, total: 150 }));
-    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "motif_has_cached_frame")).toBe(false);
+    await vi.waitFor(() => expect(plans()).toHaveLength(1));
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('motif_bake_snapshot', undefined));
+    expect(plans()).toHaveLength(1);
   });
 
-  it("restores manual bakes with the toggle off, without treating partial directories as complete", async () => {
-    useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, prebake_motifs: false } }));
-    readDirMock.mockImplementation(async (p: string) => p === RASTER_ROOT
-      ? [dirEntry(hashCacheKey(K1))]
-      : [{ name: "0.wfrm", isFile: true, isDirectory: false, isSymlink: false }]);
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirMock).toHaveBeenCalledTimes(3));
-    expect(sharedBakedKeyIndex.has(K1)).toBe(true);
-    expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]).toBeUndefined();
-    const all = Array.from({ length: 150 }, (_, f) => ({
-      name: `${f}.wfrm`, isFile: true, isDirectory: false, isSymlink: false,
-    }));
-    compositor.setProject(null);
-    readDirMock.mockImplementation(async (p: string) => p === RASTER_ROOT
-      ? [dirEntry(hashCacheKey(K1))] : all);
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]?.phase).toBe("ready"));
-    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "motif_has_cached_frame")).toBe(false);
-  });
-
-  it("does not rescan a content directory for unchanged project snapshots", async () => {
-    entries = [dirEntry(hashCacheKey(K1))];
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(2));
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(4));
-    expect(readDirMock.mock.calls.filter(([p]) => p !== RASTER_ROOT)).toHaveLength(1);
-  });
-
-  it("dispose during hydration cannot repopulate the shared index or start GC", async () => {
-    deferFirstReadDir = true;
-    entries = [dirEntry(hashCacheKey(K1)), dirEntry("deadbeef")];
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(1));
-    compositor.dispose();
-    releaseFirstReadDir!(entries);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(sharedBakedKeyIndex.has(K1)).toBe(false);
-    expect(removeMock).not.toHaveBeenCalled();
-  });
-
-  it("a project change inside GC's directory read protects newly live content", async () => {
-    let releaseGcRead!: (entries: DirEntry[]) => void;
-    const gcRead = new Promise<DirEntry[]>((resolve) => { releaseGcRead = resolve; });
-    entries = [dirEntry(hashCacheKey(K1)), dirEntry(hashCacheKey(K2))];
-    readDirMock.mockImplementation((p: string) => {
-      if (p !== RASTER_ROOT) return Promise.resolve([]);
-      readDirCalls += 1;
-      return readDirCalls === 2 ? gcRead : Promise.resolve(entries);
+  it('ignores a superseded inventory reply and submits only the latest changed project', async () => {
+    let finish!: (snapshot: MotifBakeSnapshot) => void;
+    const real = invoke.getMockImplementation() as (command: string, args?: unknown) => Promise<unknown>;
+    let first = true;
+    invoke.mockImplementation((command, args) => {
+      if (command === 'motif_bake_reconcile' && first) {
+        first = false;
+        return new Promise(resolve => { finish = resolve; });
+      }
+      return real(command, args);
     });
     compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(2));
-    compositor.setProject(summaryWith({ seconds: 7 }));
-    releaseGcRead(entries);
-    await vi.waitFor(() => expect(readDirCalls).toBe(4));
-    await new Promise((r) => setTimeout(r, 10));
-    expect(removeMock).not.toHaveBeenCalledWith(`${RASTER_ROOT}/${hashCacheKey(K2)}`);
-  });
-
-  it("closing a project cancels queued prewarm captures", async () => {
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    compositor.setProject(null);
-    for (const cb of idle.splice(0)) cb();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "motif_capture_frame")).toBe(false);
-  });
-
-  it("stopping a bake removes its live progress instead of leaving a stuck baking status", async () => {
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]?.phase).toBe("baking"));
-    useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, prebake_motifs: false } }));
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    expect(useMotifBakeStatusStore.getState().byLayer["layer-motif"]).toBeUndefined();
-    await new Promise((r) => setTimeout(r, 10));
-  });
-
-  it("a superseded run never GCs; the follow-up protects the baker's in-flight key", async () => {
-    // Admit a bake only after initial disk discovery has finished.
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(2));
-    for (const cb of idle.splice(0)) cb();
-    await vi.waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("motif_capture_frame", expect.anything()),
-    );
-    readDirCalls = 0;
-    deferFirstReadDir = true;
-    // On "disk": K1's dir (being written by the in-flight bake), K2's dir, and
-    // an orphan. K1 is NOT in snapshot B's active keys — only the baker's
-    // in-flight target set keeps it alive.
-    entries = [dirEntry(hashCacheKey(K1)), dirEntry(hashCacheKey(K2)), dirEntry("deadbeef")];
-
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    // Run #1 is parked inside listBakedHashes.
-    await vi.waitFor(() => expect(readDirCalls).toBe(1));
-
-    // A newer snapshot (props changed → K2) supersedes run #1 and arms one
-    // follow-up.
-    compositor.setProject(summaryWith({ seconds: 7 }));
-    releaseFirstReadDir!(entries);
-
-    await vi.waitFor(() => expect(removeMock).toHaveBeenCalled());
-    // Exactly the orphan, exactly once: run #1 bailed on the stale epoch
-    // without GC'ing, and run #2's live set kept both K1 (in-flight bake) and
-    // K2 (active layer).
-    expect(removeMock).toHaveBeenCalledTimes(1);
-    expect(removeMock).toHaveBeenCalledWith(`${RASTER_ROOT}/deadbeef`);
-  });
-
-  it("multiple setProjects during a run arm exactly one coalesced follow-up", async () => {
-    deferFirstReadDir = true;
-    entries = [dirEntry("deadbeef")];
-
-    compositor.setProject(summaryWith({ seconds: 5 }));
-    await vi.waitFor(() => expect(readDirCalls).toBe(1));
+    await vi.waitFor(() => expect(plans()).toHaveLength(1));
     compositor.setProject(summaryWith({ seconds: 7 }));
     compositor.setProject(summaryWith({ seconds: 9 }));
-    releaseFirstReadDir!(entries);
+    const latestKey = keyFor({ seconds: 9 });
+    snapshot.coverage[latestKey] = [0];
+    finish({ generation: 1, coverage: { [K1]: [0] }, statuses: {} });
+    await vi.waitFor(() => expect(sharedBakedKeyIndex.hasFrame(latestKey, 0)).toBe(true));
+    expect(plans().map(plan => plan.contents[0]?.cacheKey)).toEqual([K1, latestKey]);
+    expect(sharedBakedKeyIndex.has(K1)).toBe(false);
+  });
 
-    await vi.waitFor(() => expect(removeMock).toHaveBeenCalledTimes(1));
-    // Settle, then count: run #1's parked readDir + ONE follow-up's
-    // (listBakedHashes + gcUnreferenced). Without coalescing, each setProject
-    // would have added its own run (two more readDir pairs).
-    await new Promise((r) => setTimeout(r, 10));
-    expect(readDirCalls).toBe(3);
+  it('detaches on disposal without clearing background demand or accepting late discovery', async () => {
+    let finish!: (snapshot: MotifBakeSnapshot) => void;
+    invoke.mockImplementation(async command => {
+      if (command === 'motif_bake_session') return { generation: 1, projectId };
+      return new Promise(resolve => { finish = resolve; });
+    });
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    await vi.waitFor(() => expect(plans()).toHaveLength(1));
+    compositor.dispose();
+    finish({ generation: 1, coverage: { [K1]: [0] }, statuses: {} });
+    await vi.waitFor(() => expect(off).toHaveBeenCalledTimes(2));
+    expect(sharedBakedKeyIndex.has(K1)).toBe(false);
+    expect(plans()).toHaveLength(1);
+    expect(stopWarm).toHaveBeenCalledOnce();
+  });
+
+  it('marks unresolved catalog references unsafe for collection', async () => {
+    const summary = summaryWith({ seconds: 5 });
+    const layer = summary.compositions[summary.root_id]!.tracks[0]!.layers[0]!;
+    if (layer.params.kind !== 'Motif') throw new Error('fixture');
+    layer.params.motif_id = 'unresolved-package';
+    compositor.setProject(summary);
+    await vi.waitFor(() => expect(plans()).toHaveLength(1));
+    expect(plans()[0]?.collect).toBe(false);
+  });
+
+  it('keeps the DOM-less export worker free of background preparation subscriptions', async () => {
+    compositor.dispose();
+    invoke.mockClear(); on.mockClear();
+    vi.stubGlobal('document', undefined);
+    compositor = create();
+    compositor.setProject(summaryWith({ seconds: 5 }));
+    await Promise.resolve(); await Promise.resolve();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(on).not.toHaveBeenCalled();
   });
 });

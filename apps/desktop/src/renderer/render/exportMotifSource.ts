@@ -6,6 +6,7 @@ import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
 import { captureMotifFrameResult } from "./motifs/host";
 import { controlStoredMotifCapture } from "./motifs/frameTransport";
+import { hashCacheKey } from "./motifs/frameCache";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 import { frameTimeUs } from "./worker/frameGrid";
 import type { MotifReadTask } from "./worker/motifStream";
@@ -38,13 +39,22 @@ export function planExportMotifFrame(
         const cancel = () => controlStoredMotifCapture({ key, action: "cancel" });
         signal.addEventListener("abort", cancel, { once: true });
         let bitmap: ImageBitmap;
+        let persisted: boolean;
         try {
-          ({ bitmap } = await captureMotifFrameResult(spec.motif.manifest.id,
+          ({ bitmap, persisted } = await captureMotifFrameResult(spec.motif.manifest.id,
             desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
             spec.motif.manifest.settle_rafs, spec.motif.manifest.content_hash,
-            comp.fps_num, comp.fps_den, { key, high: true, ...(finalizationToken ? { finalizationToken } : {}) }));
+            comp.fps_num, comp.fps_den, { key, high: true,
+              bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame }, bakeOptional: true,
+              ...(finalizationToken ? { finalizationToken } : {}) }));
         } finally { signal.removeEventListener("abort", cancel); }
+        if (persisted) {
+          if (!signal.aborted) sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
+          return bitmap;
+        }
         // Cache is an optimization: failure must never discard valid pixels.
+        // Native capture persists during the existing OSR lease; only portable
+        // capture or unavailable native readback needs this PNG compatibility path.
         // Await within the read reservation so writes cannot build an unbounded queue.
         if (!signal.aborted) {
           let canvas: OffscreenCanvas | undefined;
@@ -56,7 +66,7 @@ export function planExportMotifFrame(
             const png = await canvas.convertToBlob({ type: "image/png" });
             if (!signal.aborted) {
               await sharedMotifFrameCache.writeFrame(desc.cacheKey, desc.contentFrame, png);
-              sharedBakedKeyIndex.add(desc.cacheKey);
+              sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
             }
           } catch (error) {
             console.warn("[weftcut/export] Motif cache write skipped:", error);

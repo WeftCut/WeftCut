@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const invokeMock = vi.fn();
 vi.mock("@/bridge/ipc", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+vi.mock('../frameTransport', () => ({ captureMotifResult: vi.fn() }));
 
-import { captureMotifFramePngBlob } from "../host";
+import { captureMotifFramePngBlob, captureMotifFrameResult } from "../host";
+import { captureMotifResult } from '../frameTransport';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("captureMotifFramePngBlob", () => {
   beforeEach(() => invokeMock.mockReset());
@@ -35,6 +39,20 @@ describe("captureMotifFramePngBlob", () => {
     expect(invokeMock).toHaveBeenCalledWith("motif_capture_frame", expect.objectContaining({
       fpsNum: 30000,
       fpsDen: 1001,
+    }));
+  });
+
+  it('passes optional main persistence and finalization ownership over the capture transport', async () => {
+    vi.stubGlobal('window', { postMessage: vi.fn() });
+    vi.stubGlobal('MessageChannel', class {});
+    const bitmap = {} as ImageBitmap;
+    vi.mocked(captureMotifResult).mockResolvedValue({ bitmap, persisted: true });
+    const bake = { hash: 'a'.repeat(32), frame: 75 };
+    await expect(captureMotifFrameResult('countdown', 2.5, { seconds: 5 }, 480, 480, 1,
+      'revision', 30, 1, { key: 'export', high: true, bake, bakeOptional: true, finalizationToken: 'finalization' }))
+      .resolves.toEqual({ bitmap, persisted: true });
+    expect(captureMotifResult).toHaveBeenCalledWith(expect.objectContaining({
+      bake, bakeOptional: true, finalizationToken: 'finalization', coalesceKey: 'export',
     }));
   });
 });

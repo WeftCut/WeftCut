@@ -4,9 +4,9 @@ import { sourceSignature } from './state/mutations/textCorrection.js'
 import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
-import { configureResources } from './resources.js'
+import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories } from './resources.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
-import { hydrateResourceAllocation } from '../shared/resource-policy.js'
+import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
 import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
@@ -27,10 +27,12 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
+import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
+import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { MotifWorkspace } from './motif/workspace.js'
@@ -114,6 +116,8 @@ let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 // it, and it does not exist until whenReady has built the actor it subscribes to.
 let audioFxBaker: AudioFxBaker | null = null
 let motifWatcher: MotifWatcher | null = null
+let motifBakes: MotifBakeWorkspace | null = null
+let motifAdmissionOpen = false
 // Held at module scope so the before-quit handler can flush the debounced
 // Workspace-layout write before the process exits.
 let workspaceStore: import('./workspace.js').WorkspaceStore | null = null
@@ -811,6 +815,10 @@ app.whenReady().then(async () => {
     commitWorkspace: async (p: string) => {
       const previous = workspaceEvents.current()
       workspaceEvents.beginTransition()
+      motifBakes?.reset()
+      // Native commit can schedule a sweep before the incoming actor/catalog
+      // is ready. Protect its existing cache until main has accepted a plan.
+      retainRasterDirectories([path.join(p, 'Cache', 'raster')])
       try {
         const generation = await napiFacade.commitWorkspace(p)
         workspaceEvents.activate(generation)
@@ -827,8 +835,10 @@ app.whenReady().then(async () => {
     },
     endWorkspace: async () => {
       workspaceEvents.beginTransition()
+      motifBakes?.reset()
       const generation = await backend!.endWorkspace()
       workspaceEvents.activate(generation)
+      wsCache = null
       emitToRenderer('import:queue', [])
     },
   }
@@ -940,12 +950,28 @@ app.whenReady().then(async () => {
 
   tsHost = createTsActorHost({
     onWorkspaceChanging: () => {
+      motifAdmissionOpen = false
       emitToRenderer('project:workspace-changing', {})
       importDiagnostics?.reset()
       audioFxBaker?.suspend()
+      motifBakes?.reset()
     },
     beginImport: () => importDiagnostics!.begin(),
-    onWorkspaceOpened: () => audioFxBaker?.reset(),
+    onWorkspaceOpened: () => {
+      audioFxBaker?.reset()
+      // commitWorkspace precedes async media relinking and actor replacement.
+      // Do not pair the new directory/generation with the outgoing project.
+      motifAdmissionOpen = tsHost?.openedProject()?.dir === wsCache
+      if (motifAdmissionOpen) {
+        motifBakes?.sync()
+        // Opening can fail before actor replacement, restoring the same
+        // project/generation without a project:changed notification. A ready
+        // event redeclares demand into the freshly reset preparation module.
+        emitToRenderer(MOTIF_BAKE_READY_EVENT, {
+          generation: workspaceEvents.requireCurrent(), projectId: tsHost!.actor.snapshot().project_id,
+        })
+      }
+    },
     send: (event, payload) => emitToRenderer(event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     fileExists: (p) => fs.existsSync(p),
@@ -1260,8 +1286,23 @@ app.whenReady().then(async () => {
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
+    promote: key => controlMotifCapture(key, 'promote'),
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'png')
+  motifBakes = new MotifBakeWorkspace({
+    session: () => {
+      const generation = workspaceEvents.current()
+      return motifAdmissionOpen && generation !== null && wsCache ? { generation, root: wsCache } : null
+    },
+    codec: require_('@weftcut/core') as typeof import('@weftcut/core'), capture: motifCapture,
+    pause: backgroundResourcePause,
+    diskBytes: () => resourceAllocation().disk_cache_mib * MIB,
+    retain: retainRasterDirectories,
+    publish: snapshot => emitToRenderer('motif:bake', snapshot),
+  })
+  const offBakeResources = onBackgroundResourceChange(() => motifBakes?.wake())
+  app.once('before-quit', () => { offBakeResources(); motifBakes?.dispose(); motifBakes = null })
   app.once('before-quit', () => motifCapture.dispose())
+  const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
   const motifConsumers = new WeakMap<Electron.WebContents, { document: object | null }>()
   const trackMotifConsumer = (owner: Electron.WebContents, frame: Electron.WebFrameMain | null): (() => boolean) => {
     let consumer = motifConsumers.get(owner)
@@ -1292,7 +1333,7 @@ app.whenReady().then(async () => {
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     const parent = resolveExportFinalization(owner.id, args.finalizationToken)
-    return motifFrames.read(args.hash, args.frame,
+    return currentMotifStore().read(args.hash, args.frame,
       motifGpu ? (file, w, h) => {
         if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
         return motifGpu.read(owner, file, w, h, parent)
@@ -1307,7 +1348,9 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
     const isCurrent = trackMotifConsumer(event.sender, event.senderFrame)
-    return motifCapture.capture(event.sender, args, isCurrent, resolveExportFinalization(event.sender.id, args.finalizationToken))
+    const generation = workspaceEvents.current()
+    return motifCapture.capture(event.sender, args, () => isCurrent() && workspaceEvents.current() === generation,
+      resolveExportFinalization(event.sender.id, args.finalizationToken), currentMotifStore())
   })
 
   let coverRuntimeVersion = ''
@@ -1343,9 +1386,27 @@ app.whenReady().then(async () => {
       args = { ...rest, finalizationId: parent };
     }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
-    if (channel === 'motif_read_cached_frame') return motifFrames.read(args.hash, args.frame)
-    if (channel === 'motif_has_cached_frame') return motifFrames.has(args.hash, args.frame)
-    if (channel === 'motif_write_cached_frame') return motifFrames.write(args.hash, args.frame, args.png)
+    if (channel === 'motif_bake_session') {
+      if (!motifAdmissionOpen && wsCache) throw new Error('Project is changing; retry after it opens')
+      motifBakes!.sync()
+      return { generation: workspaceEvents.requireCurrent(), projectId: wsCache ? tsHost!.actor.snapshot().project_id : null }
+    }
+    if (channel === 'motif_bake_reconcile') {
+      const plan = args.plan as MotifBakePlan
+      validateBakePlan(plan)
+      if (!motifAdmissionOpen || plan.generation !== workspaceEvents.requireCurrent()) throw new Error('Motif workspace superseded')
+      // Deliberate retries reopen only the requested content revisions, not
+      // other failed Motifs. Normal project/playhead updates never reset them.
+      if (Array.isArray(plan?.retryKeys)) for (const content of plan.contents ?? []) {
+        if (plan.retryKeys.includes(content.cacheKey)) resetCaptureFailure(content.capture.motifId, content.capture.contentHash)
+      }
+      return motifBakes!.reconcile(plan)
+    }
+    if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
+    if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
+    if (channel === 'motif_read_cached_frame') return currentMotifStore().read(args.hash, args.frame)
+    if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
+    if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
     if (channel === 'agent_activity_snapshot' || channel === 'agent_session_get' || channel === 'agent_unlock_history') {
       return tsHost!.handleInvoke(channel, args ?? {})

@@ -66,6 +66,24 @@ describe('streamed Motif selection', () => {
     expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
   });
 
+  it('persists cold export frames in main without drawing or encoding pixels again in the renderer', async () => {
+    const b = bitmap();
+    vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true });
+    const canvas = vi.fn(() => { throw new Error('No renderer encode expected'); });
+    vi.stubGlobal('OffscreenCanvas', canvas);
+    const task = planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!;
+    expect(await task.read(new AbortController().signal)).toBe(b);
+    expect(captureMotifFrameResult).toHaveBeenCalledOnce();
+    expect(vi.mocked(captureMotifFrameResult).mock.calls[0]?.[9]).toMatchObject({
+      bake: { hash: expect.stringMatching(/^[0-9a-f]{32}$/), frame: 60 },
+      bakeOptional: true, finalizationToken: 'export-token', high: true,
+    });
+    expect(canvas).not.toHaveBeenCalled();
+    expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
+    expect(sharedBakedKeyIndex.add).toHaveBeenCalledWith(expect.any(String), 60);
+  });
+
   it.each(['missing', 'corrupt', 'unbaked'])('repairs a %s frame and makes it reusable', async kind => {
     const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false });
     if (kind === 'corrupt') vi.mocked(sharedMotifFrameCache.readBitmap).mockRejectedValue(new Error('bad cache'));

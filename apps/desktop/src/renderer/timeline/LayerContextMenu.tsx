@@ -603,7 +603,7 @@ export function LayerContextMenu({
                 />
               </>
             )}
-            {layerKind === "Motif" && (
+            {(layerKind === "Motif" || layerKind === "CompositionRef") && (
               <>
                 <MenuSeparator />
                 <MenuItem

@@ -761,6 +761,14 @@ _Avoid_: append point, re-smoothing
 
 ## Motifs
 
+**Motif preparation**:
+The Workspace session's background work that persists requested Motif content
+frame ranges. Automatic preparation covers used ranges; explicit Pre-bake
+requests full content and moves it to the queue front. Default preparation
+finishes clips in timeline order (ADR 0109). Ready describes durable coverage of that demand, while
+preview warming describes volatile pictures in memory. See ADR 0108.
+_Avoid_: preview-owned bake queue, cached (when completion or retention matters)
+
 **Motif**:
 A parameterized, time-varying overlay authored as a real web page — a manifest
 island plus `index.html`, served over the `motif:` scheme and captured frame by

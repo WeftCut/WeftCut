@@ -24,6 +24,30 @@ const CAPTURE_TIMEOUT_MS = 5000
 const SETUP_TIMEOUT_MS = 30_000
 const READY_ATTEMPTS = 30
 const READY_POLL_MS = 100
+const MAX_BACKGROUND_WAIT_MS = 2000
+
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, pngCaptures: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+let captureCounters = newCaptureCounters()
+const captureLanes = new Map<string, { motifId: string; contentHash: string; captures: number; pageLoads: number }>()
+function diagnosticsLane(motifId: string, contentHash: string) {
+  const key = `${motifId}\0${contentHash}`
+  let lane = captureLanes.get(key)
+  if (!lane) {
+    if (captureLanes.size >= 128) captureLanes.delete(captureLanes.keys().next().value!)
+    lane = { motifId, contentHash, captures: 0, pageLoads: 0 }; captureLanes.set(key, lane)
+  }
+  return lane
+}
+/** Aggregate timings are deliberately content-free so diagnostics can compare
+ * cold runs without exposing authored props or retaining an unbounded log. */
+export function captureDiagnostics(reset = false) {
+  if (reset) { captureCounters = newCaptureCounters(); captureLanes.clear() }
+  return { ...captureCounters, queued: highQueue.filter(t => !t.stale).length + lowQueue.filter(t => !t.stale).length, running: pumping, lanes: [...captureLanes.values()].map(lane => ({ ...lane })) }
+}
+async function timedCapture<T>(phase: 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outputMs', run: () => Promise<T>): Promise<T> {
+  const started = performance.now(), counters = captureCounters
+  try { return await run() } finally { counters[phase] += performance.now() - started }
+}
 
 let runtimeSource: string | null = null
 /// The renderer registers the clock-takeover runtime once at boot
@@ -67,13 +91,14 @@ export function setTextureCaptureEnabled(enabled: boolean): void {
 // user is looking at NOW) dequeues ahead of any queued LOW ticket (keyless
 // prewarmer/baker/MCP): during playback the prewarmer used to hold the chain
 // while fresh sprite frames waited behind it (5b7cbaec). A RUNNING capture is
-// never preempted, FIFO holds within a priority, and LOW starvation during
-// continuous playback is the intent — prewarmer work is speculative.
+// never preempted. Old LOW work receives one frame between HIGH frames after
+// two seconds, so explicitly enabled background work cannot starve forever.
 interface Ticket {
   /// Coalesce key when keyed; lets the pump drop the ticket from queuedKeys
   /// the moment it passes the replaceable window.
   key: string | undefined
   high: boolean
+  queuedAt: number
   /// Set by a superseding same-key request: the waiter was already rejected,
   /// so the pump must skip this ticket instead of executing a stale frame.
   stale: boolean
@@ -94,9 +119,15 @@ function schedule(t: Ticket): void {
 async function pump(): Promise<void> {
   if (pumping) return // the running loop drains whatever lands behind it
   pumping = true
+  let agedLast = false
   try {
     for (;;) {
-      const t = highQueue.shift() ?? lowQueue.shift()
+      while (highQueue[0]?.stale) highQueue.shift()
+      while (lowQueue[0]?.stale) lowQueue.shift()
+      const aged: boolean = !agedLast && highQueue.length > 0 && lowQueue[0] !== undefined
+        && performance.now() - lowQueue[0].queuedAt >= MAX_BACKGROUND_WAIT_MS
+      const t = aged ? lowQueue.shift() : highQueue.shift() ?? lowQueue.shift()
+      agedLast = aged
       if (!t) return
       // A superseded ticket must not occupy its HIGH slot when reached.
       if (t.stale) continue
@@ -136,6 +167,12 @@ const failedLanes = new Map<string, Error>()
 const FAILED_LANE_CAP = 128
 
 const laneKeyOf = (motifId: string, contentHash: string) => `${motifId}\0${contentHash}`
+
+/** Explicit retry revokes only this package's remembered content failure.
+ * Automatic retries leave the failure latch intact to prevent retry storms. */
+export function resetCaptureFailure(motifId: string, contentHash: string): void {
+  failedLanes.delete(laneKeyOf(motifId, contentHash))
+}
 
 function failLane(key: string, err: Error): void {
   if (failedLanes.size >= FAILED_LANE_CAP) failedLanes.delete(failedLanes.keys().next().value!)
@@ -190,6 +227,7 @@ async function buildHost(): Promise<Host> {
     transparent: textureCaptureEnabled,
     webPreferences: { offscreen: textureCaptureEnabled ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   })
+  captureCounters.hostBuilds++
   // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
   // window votes in the quit decision and the app stops quitting when the editor
   // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
@@ -254,7 +292,9 @@ async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
   if (host.loadedId === motifId && host.loadedV === contentHash) return host
   const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
   const url = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}index.html?v=${encodeURIComponent(contentHash)}`
-  await withTimeout(host.win.loadURL(url), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif')
+  captureCounters.pageLoads++
+  diagnosticsLane(motifId, contentHash).pageLoads++
+  await timedCapture('loadMs', () => withTimeout(host!.win.loadURL(url), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
   host.loadedId = motifId
   host.loadedV = contentHash
   host.readyFor = null // re-probe; navigation re-runs addScriptToEvaluateOnNewDocument
@@ -294,7 +334,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
   let h: Host
   try {
     h = await ensureHost(a.motifId, a.contentHash)
-    await waitReady(h, a.motifId)
+    await timedCapture('readyMs', () => waitReady(h, a.motifId))
   } catch (e) {
     // Transport class: no Motif code ran (host build, loadURL, wedged/never-
     // ready probe), so nothing here is attributable to page content — tear
@@ -333,17 +373,17 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
   let ev: any
   let phase = '__motifSetup'
   try {
-    const setup = await h.send('Runtime.evaluate', {
+    const setup = await timedCapture('setupMs', () => h.send('Runtime.evaluate', {
       expression: `window.__motifSetup(${JSON.stringify(props)}, ${JSON.stringify(meta)})`,
       awaitPromise: true, returnByValue: true,
-    }, SETUP_TIMEOUT_MS, 'setup (model loading / decoder initialization)')
+    }, SETUP_TIMEOUT_MS, 'setup (model loading / decoder initialization)'))
     // Setup failures use the same lane handling as frame failures; the runtime
     // has already retired its workers. A timeout tears down the entire host.
     if (setup?.exceptionDetails) ev = setup
     else {
       phase = '__motifRender'
       h.frames?.prepare()
-      ev = await h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+      ev = await timedCapture('renderMs', () => h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }))
     }
   } catch (e) {
     // A hung __motifRender is the Motif's own script (e.g. an infinite loop) —
@@ -370,31 +410,42 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
       // This is paid once per navigation, not for subsequent animation frames.
       await h.send('Page.captureScreenshot', { format: 'png' })
     }
-    return await output(h)
+    return await timedCapture('outputMs', () => output(h))
   } catch (e) {
     teardownHost() // wedged host: rebuild on next call
     throw e
   }
 }
 
-function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>, high = coalesceKey !== undefined): Promise<T> {
+function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>, high = coalesceKey !== undefined, isCurrent: () => boolean = () => true): Promise<T> {
   // Fast-reject a lane whose content already failed this session: same
   // (motifId, contentHash) means the same throwing script against the same
   // page — don't spend queue slots or CDP round trips proving it again.
   const lane = laneKeyOf(a.motifId, a.contentHash)
   const laneError = failedLanes.get(lane)
   if (laneError) return Promise.reject(laneError)
+  const queuedAt = performance.now()
+  const measured = async () => {
+    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    const started = performance.now(), counters = captureCounters
+    counters.queueMs += started - queuedAt
+    counters.captures++
+    diagnosticsLane(a.motifId, a.contentHash).captures++
+    try { const result = await run(); counters.completed++; return result }
+    catch (error) { counters.failed++; throw error }
+    finally { counters.captureMs += performance.now() - started }
+  }
   if (!coalesceKey) {
     // LOW priority: keyless prewarmer/baker/MCP work yields to on-demand
     // sprite frames queued behind it.
     return new Promise<T>((resolve, reject) => {
       schedule({
-        key: undefined, high: false, stale: false, reject,
+        key: undefined, high, queuedAt, stale: false, reject,
         run: async () => {
           // The lane may have failed while this ticket sat queued.
           const err = failedLanes.get(lane)
           if (err) { reject(err); return }
-          try { resolve(await run()) } catch (e) { reject(e as Error) }
+          try { resolve(await measured()) } catch (e) { reject(e as Error) }
         },
       })
     })
@@ -407,14 +458,14 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
     prev.stale = true
     prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
   }
-  const ticket: Ticket = { key: coalesceKey, high, stale: false, reject: () => {}, run: async () => {} }
+  const ticket: Ticket = { key: coalesceKey, high, queuedAt, stale: false, reject: () => {}, run: async () => {} }
   const out = new Promise<T>((resolve, reject) => {
     ticket.reject = reject
     ticket.run = async () => {
       // The lane may have failed while this ticket sat queued.
       const err = failedLanes.get(lane)
       if (err) { reject(err); return }
-      try { resolve(await run()) } catch (e) { reject(e as Error) }
+      try { resolve(await measured()) } catch (e) { reject(e as Error) }
     }
   })
   queuedKeys.set(coalesceKey, ticket)
@@ -439,19 +490,27 @@ export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): 
   }
 }
 
-export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?: boolean): Promise<string> {
-  return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
+export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<string> {
+  return enqueueCapture(a, coalesceKey, () => {
+    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    captureCounters.pngCaptures++
+    return doCapture(a, async h => {
     const shot = await h.send('Page.captureScreenshot', { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string
-  }), high)
+    })
+  }, high, isCurrent)
 }
 
-export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string, high?: boolean): Promise<T> {
+export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
   if (!textureCaptureEnabled) return Promise.reject(new Error('Motif OSR unavailable'))
-  return enqueueCapture(a, coalesceKey, () => doCapture(a, async h => {
+  return enqueueCapture(a, coalesceKey, () => {
+    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    captureCounters.textureCaptures++
+    return doCapture(a, async h => {
     if (!h.frames) throw new Error('Motif host has no shared texture output')
     const texture = await h.frames.capture(a.width, a.height)
     try { return await consume(texture) } finally { texture.release() }
-  }, true), high)
+    }, true)
+  }, high, isCurrent)
 }

@@ -1171,17 +1171,14 @@ function TextFields({
 function BakeStatusLine({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const status = useLayerBakeStatus(layerId);
-  // A standing row only while a bake is in flight or failed — idle and ready
-  // stay quiet (ready is the steady state; the timeline dot carries it).
+  // Durable completion stays quiet (the timeline dot carries it). Preview-only
+  // completion remains explicit so memory coverage does not imply a saved bake.
   if (!status || status.phase === "ready") return null;
-  const text =
-    status.phase === "warming"
-      ? t("property_panel.bake_warming", { done: status.done, total: status.total })
-      : status.phase === "baking"
-        ? t("property_panel.bake_baking", { done: status.done, total: status.total })
-        : t("property_panel.bake_error");
+  const text = t(`property_panel.bake_${status.phase}`, { done: status.done, total: status.total });
+  const reason = status.phase === 'paused' && status.reason
+    ? t(`property_panel.bake_pause_${status.reason}`) : status.error;
   const cls = `prop-bake-status is-${status.phase}`;
-  return <p className={cls}>{text}</p>;
+  return <p className={cls} title={status.error}>{text}{reason ? ` — ${reason}` : ""}</p>;
 }
 
 function MotifFields({

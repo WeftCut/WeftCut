@@ -1,5 +1,5 @@
 // Decouples the timeline's "Pre-bake now" context-menu action (React) from the
-// renderer Compositor that owns the MotifBaker. The Compositor subscribes on
+// renderer demand adapter for main-owned preparation. The Compositor subscribes on
 // construction; the menu calls `requestPrebake(layerId)`. Module-level singleton
 // — there is one Compositor and one timeline per window.
 
@@ -7,7 +7,7 @@ type Listener = (layerId: string) => void;
 
 const listeners = new Set<Listener>();
 
-/// Request an immediate full pre-bake of a single motif layer. No-op if no
+/// Request full pre-bake at the queue front for a Motif or a Group's Motifs. No-op if no
 /// Compositor is subscribed (e.g. before the preview mounts).
 export function requestPrebake(layerId: string): void {
   for (const l of listeners) l(layerId);

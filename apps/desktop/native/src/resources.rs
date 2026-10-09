@@ -542,6 +542,21 @@ pub async fn resources_cache_written(immediate: bool) {
         crate::cache::notify_resource_cache_write();
     }
 }
+/// Protect referenced Motif frame directories while their Workspace session is
+/// open. They still count towards the target; main pauses new bake writes when
+/// its retained artifacts cannot fit rather than evicting and regenerating them.
+#[cfg_attr(test, allow(dead_code))]
+#[napi]
+pub fn resources_retain_raster(paths: Vec<String>) -> napi::Result<()> {
+    let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+    if paths.iter().any(|p| !p.is_absolute()) {
+        return Err(napi::Error::from_reason(
+            "Raster retention requires absolute directories",
+        ));
+    }
+    crate::cache::disk_lru::retain_raster_directories(paths);
+    Ok(())
+}
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
 pub fn resources_reserve(

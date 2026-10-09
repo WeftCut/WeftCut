@@ -3,7 +3,14 @@ import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors
 import { captureMotifResult, type CapturedFrame } from './frameTransport';
 import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
 
-export interface CaptureOptions { key: string; high: boolean; bake?: MotifCacheAddress; finalizationToken?: string }
+export interface CaptureOptions {
+  key: string;
+  high: boolean;
+  bake?: MotifCacheAddress;
+  /** Return valid pixels even when optional cache persistence is unavailable. */
+  bakeOptional?: boolean;
+  finalizationToken?: string;
+}
 
 export function captureMotifFrameResult(
   motifId: string, tSec: number, props: Record<string, unknown>, width: number, height: number,
@@ -21,7 +28,8 @@ export function captureMotifFrameResult(
   return captureMotifResult({
     motifId, tSec, propsJson: JSON.stringify(props), width, height,
     settleRafs: settleRafs ?? null, contentHash: contentHash ?? '', fpsNum, fpsDen,
-    coalesceKey: options.key, high: options.high, bake: options.bake, finalizationToken: options.finalizationToken,
+    coalesceKey: options.key, high: options.high, bake: options.bake,
+    bakeOptional: options.bakeOptional, finalizationToken: options.finalizationToken,
   });
 }
 

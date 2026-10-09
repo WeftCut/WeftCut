@@ -2143,6 +2143,7 @@
 .prop-bake-status { margin: 0 0 calc(8 * var(--ui-px)); font-size: var(--font-size-body); opacity: 0.8; }
 .prop-bake-status.is-error { color: var(--destructive); }
 .prop-bake-status.is-warming { color: var(--warning); }
+.prop-bake-status.is-preview_ready { color: var(--success); }
 .prop-bake-status.is-ready { color: var(--success); }
 .prop-motif-lifecycle { display: flex; align-items: center; gap: calc(8 * var(--ui-px)); margin: calc(6 * var(--ui-px)) 0; flex-wrap: wrap; }
 .prop-motif-source { margin: calc(8 * var(--ui-px)) 0; }
@@ -2265,3 +2266,5 @@
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
+
+.prop-bake-status.is-paused, .prop-bake-status.is-retrying { color: var(--warning); }

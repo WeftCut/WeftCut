@@ -7,11 +7,10 @@
 // return null for it, and the dot renders nothing.
 
 import { create } from "zustand";
+import type { MotifBakeStatus } from "../../shared/motifs/baking";
 
-export interface LayerBakeStatus {
-  phase: "warming" | "baking" | "ready" | "error";
-  done: number;
-  total: number;
+export interface LayerBakeStatus extends Omit<MotifBakeStatus, "phase"> {
+  phase: MotifBakeStatus["phase"] | "warming" | "preview_ready";
 }
 
 interface State {
@@ -55,7 +54,8 @@ export const useLayerBakeStatus = (layerId: string): LayerBakeStatus | null =>
 ///   2. baked-on-disk ⇒ READY, unconditionally (a pre-baked layer is "done"
 ///      even if L0 was partially evicted — disk persistence is durable and the
 ///      resolver reads it back without a re-capture);
-///   3. otherwise L0 coverage drives a `warming`→`ready` bar;
+///   3. otherwise L0 coverage reports `warming` or `preview_ready`; neither
+///      claims durable completion, and eviction can make preview warming resume;
 ///   4. nothing on disk and zero coverage ⇒ idle (null).
 export function motifWarmPhase(
   bake: LayerBakeStatus | null,
@@ -65,7 +65,7 @@ export function motifWarmPhase(
 ): LayerBakeStatus | null {
   if (bake) return bake;
   if (bakedOnDisk && total > 0) return { phase: "ready", done: total, total };
-  if (covered >= total && total > 0) return { phase: "ready", done: total, total };
+  if (total > 0 && covered >= total) return { phase: "preview_ready", done: total, total };
   if (covered > 0) return { phase: "warming", done: covered, total };
   return null;
 }

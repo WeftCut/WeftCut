@@ -24,9 +24,11 @@
 //! without eviction they grow without bound. The canonical conform beside
 //! them stays excluded: rebuilding it is a full decode.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use super::{CacheLayout, FilmstripSrc};
@@ -41,6 +43,15 @@ const LOW_WATER_DEN: u64 = 10;
 const TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// Debounce window for write-triggered sweeps.
 pub const SWEEP_DEBOUNCE: Duration = Duration::from_secs(60);
+
+// Main owns the current Workspace session's referenced Motif directories.
+// Hold this lock through deletion: a newly registered demand must not race a
+// sweep that already enumerated its files. Retention is process-local, so a
+// crash cannot leave immortal marker files in a project.
+static RASTER_RETENTION: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+pub fn retain_raster_directories(paths: Vec<PathBuf>) {
+    *RASTER_RETENTION.get_or_init(Mutex::default).lock().unwrap() = paths.into_iter().collect();
+}
 
 #[derive(Debug, Default)]
 pub struct SweepReport {
@@ -83,6 +94,7 @@ pub fn sweep(layout: &CacheLayout, budget_bytes: u64, now: SystemTime) -> SweepR
     sweep_all(std::slice::from_ref(layout), budget_bytes, now)
 }
 pub fn sweep_all(layouts: &[CacheLayout], budget_bytes: u64, now: SystemTime) -> SweepReport {
+    let retained = RASTER_RETENTION.get_or_init(Mutex::default).lock().unwrap();
     let mut report = SweepReport::default();
     let mut units: Vec<Unit> = Vec::new();
 
@@ -111,6 +123,12 @@ pub fn sweep_all(layouts: &[CacheLayout], budget_bytes: u64, now: SystemTime) ->
         for unit in &units {
             if total <= low_water {
                 break;
+            }
+            if retained
+                .iter()
+                .any(|directory| unit.path.starts_with(directory))
+            {
+                continue;
             }
             let ok = if unit.is_dir {
                 fs::remove_dir_all(&unit.path).is_ok()
@@ -513,6 +531,22 @@ mod tests {
         sweep(&layout, 500, now);
         assert!(!frame.exists());
         assert!(audio.exists());
+    }
+
+    #[test]
+    fn referenced_raster_survives_pressure_and_becomes_evictable_after_release() {
+        let (_tmp, layout) = layout();
+        let now = SystemTime::now();
+        let raster = layout.current_root().join("raster").join("retained");
+        fs::create_dir_all(&raster).unwrap();
+        let frame = raster.join("0.wfrm");
+        fs::write(&frame, vec![0; 1024]).unwrap();
+        retain_raster_directories(vec![raster]);
+        assert_eq!(sweep(&layout, 0, now).units_deleted, 0);
+        assert!(frame.exists());
+        retain_raster_directories(vec![]);
+        assert_eq!(sweep(&layout, 0, now).units_deleted, 1);
+        assert!(!frame.exists());
     }
 
     #[test]

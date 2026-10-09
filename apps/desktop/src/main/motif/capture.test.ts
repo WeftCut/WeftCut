@@ -111,7 +111,7 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture } = await import('./capture')
+const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
 type UserMotifStoreT = import('./store').UserMotifStore
 
 /// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
@@ -369,6 +369,75 @@ describe('capture host shutdown', () => {
     } finally {
       setTextureCaptureEnabled(false)
     }
+  })
+
+  it('respects explicit foreground priority without a coalescing key', async () => {
+    slowScreenshots = 1
+    const before = shotOrder.length
+    const running = captureMotifFrameB64({ ...args, motifId: 'keyless-running' })
+    const background = captureMotifFrameB64({ ...args, motifId: 'keyless-background' }, undefined, false)
+    const foreground = captureMotifFrameB64({ ...args, motifId: 'keyless-foreground' }, undefined, true)
+    await Promise.all([running, background, foreground])
+    expect(shotOrder.slice(before)).toEqual(['keyless-running', 'keyless-foreground', 'keyless-background'])
+  })
+
+  it('checks session currency after waiting in the capture queue, before page IO', async () => {
+    slowScreenshots = 1
+    const before = screenshotCalls
+    const running = captureMotifFrameB64({ ...args, motifId: 'session-running' })
+    let current = true
+    const queued = captureMotifFrameB64({ ...args, motifId: 'stale-session' }, undefined, false, () => current)
+    const rejected = expect(queued).rejects.toThrow('superseded')
+    current = false
+    await running
+    await rejected
+    expect(screenshotCalls - before).toBe(1)
+    expect(currentUrl).toContain('session-running')
+  })
+
+  it('reports page reuse independently of total captures and allows diagnostics reset', async () => {
+    captureDiagnostics(true)
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 0 })
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 1 })
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics-next', tSec: 0 })
+    const stats = captureDiagnostics()
+    expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, pngCaptures: 3, textureCaptures: 0 })
+    expect(stats.captureMs).toBeGreaterThanOrEqual(0)
+    expect(stats.loadMs).toBeGreaterThanOrEqual(0)
+    expect(captureDiagnostics(true)).toMatchObject({ captures: 0, pageLoads: 0 })
+  })
+
+  it('explicit retry clears only the selected content failure latch', async () => {
+    throwingLanes.add('retry-content@v1')
+    throwingLanes.add('other-failure@v1')
+    const retryArgs = { ...args, motifId: 'retry-content' }
+    const otherArgs = { ...args, motifId: 'other-failure' }
+    await expect(captureMotifFrameB64(retryArgs)).rejects.toThrow('__motifRender threw')
+    await expect(captureMotifFrameB64(otherArgs)).rejects.toThrow('__motifRender threw')
+    throwingLanes.delete('retry-content@v1')
+    throwingLanes.delete('other-failure@v1')
+    await expect(captureMotifFrameB64(retryArgs)).rejects.toThrow('__motifRender threw')
+    resetCaptureFailure(retryArgs.motifId, retryArgs.contentHash)
+    await expect(captureMotifFrameB64(retryArgs)).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64(otherArgs)).rejects.toThrow('__motifRender threw')
+  })
+
+  it('ages waiting background frames without letting an old batch monopolize foreground', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+    try {
+      const before = shotOrder.length
+      setupDelayMs = 2500
+      const running = captureMotifFrameB64({ ...args, motifId: 'age-running' })
+      await vi.advanceTimersByTimeAsync(1)
+      setupDelayMs = 0
+      const lowA = captureMotifFrameB64({ ...args, motifId: 'age-low-a' }, 'age-low-a', false)
+      const lowB = captureMotifFrameB64({ ...args, motifId: 'age-low-b' }, 'age-low-b', false)
+      const highA = captureMotifFrameB64({ ...args, motifId: 'age-high-a' }, 'age-high-a', true)
+      const highB = captureMotifFrameB64({ ...args, motifId: 'age-high-b' }, 'age-high-b', true)
+      await vi.advanceTimersByTimeAsync(2501)
+      await Promise.all([running, lowA, lowB, highA, highB])
+      expect(shotOrder.slice(before)).toEqual(['age-running', 'age-low-a', 'age-high-a', 'age-low-b', 'age-high-b'])
+    } finally { setupDelayMs = 0; vi.useRealTimers() }
   })
 
   it('refuses a capture queued past shutdown instead of reopening the host', async () => {

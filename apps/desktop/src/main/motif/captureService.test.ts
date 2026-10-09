@@ -11,14 +11,16 @@ function fixture(enabled = true) {
   const writer = { png: vi.fn(async () => {}), encoded: vi.fn(async () => {}) };
   const encoder = { encode: vi.fn(async () => Buffer.from('wfrm')), close: vi.fn() };
   const prepareWrite = vi.fn(async () => writer);
+  const read = vi.fn(async (): Promise<StoredMotifFrame | null> => ({ kind: 'rgba', width: 2, height: 2, rgba: new Uint8Array(16) }));
   const deps = {
-    store: { prepareWrite } as unknown as MotifFrameStore,
+    store: { prepareWrite, read } as unknown as MotifFrameStore,
     texture: vi.fn(async (_args: unknown, consume: (t: OffscreenSharedTexture) => Promise<StoredMotifFrame>) => consume(texture)),
     png: vi.fn(async () => Buffer.from('png').toString('base64')),
     copy: vi.fn(async () => ({ kind: 'texture' as const, key: 'pool', token: 'lease' })),
     createEncoder: vi.fn(() => encoder), setTextureEnabled: vi.fn(), isContentFailure: vi.fn(() => false),
+    promote: vi.fn(),
   } satisfies CaptureServiceDeps;
-  return { deps, writer, encoder, prepareWrite, service: new MotifCaptureService(deps, enabled) };
+  return { deps, writer, encoder, prepareWrite, read, service: new MotifCaptureService(deps, enabled) };
 }
 
 describe('Motif capture and persistence', () => {
@@ -83,7 +85,7 @@ describe('Motif capture and persistence', () => {
     finish();
     expect(await result).toMatchObject({ kind: 'texture', persisted: true });
     expect(h.deps.png).not.toHaveBeenCalled(); expect(h.writer.png).not.toHaveBeenCalled();
-    expect(h.deps.texture).toHaveBeenCalledWith(expect.anything(), expect.any(Function), '12:job', false);
+    expect(h.deps.texture).toHaveBeenCalledWith(expect.anything(), expect.any(Function), '12:job', false, expect.any(Function));
   });
 
   it('without a GPU persists the captured PNG directly and retains alpha bytes for delivery', async () => {
@@ -129,5 +131,189 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); const { bake: _bake, ...preview } = args;
     expect(await h.service.capture(owner, preview)).toMatchObject({ persisted: false });
     expect(h.prepareWrite).not.toHaveBeenCalled(); expect(h.encoder.encode).not.toHaveBeenCalled();
+  });
+
+  it('persists without a renderer owner, GPU copy, or pixel delivery', async () => {
+    const h = fixture();
+    await expect(h.service.persist(args)).resolves.toBeUndefined();
+    expect(h.writer.encoded).toHaveBeenCalledExactlyOnceWith(Buffer.from('wfrm'));
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.deps.png).not.toHaveBeenCalled();
+  });
+
+  it('persists through PNG without shared texture support', async () => {
+    const h = fixture(false);
+    await h.service.persist(args);
+    expect(h.writer.png).toHaveBeenCalledExactlyOnceWith(Buffer.from('png'));
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.deps.texture).not.toHaveBeenCalled();
+  });
+
+  it('native persistence does not require a display texture transport adapter', async () => {
+    const h = fixture();
+    const service = new MotifCaptureService({ ...h.deps, copy: null }, true);
+    await service.persist(args);
+    expect(h.writer.encoded).toHaveBeenCalledTimes(1);
+    expect(h.deps.png).not.toHaveBeenCalled();
+    const { bake: _bake, ...preview } = args;
+    await expect(service.capture(owner, preview)).resolves.toMatchObject({ kind: 'png', persisted: false });
+  });
+
+  it('readback failure falls back in main while display texture transport stays enabled', async () => {
+    const h = fixture(); h.encoder.encode.mockRejectedValue(new Error('device unavailable'));
+    await h.service.persist(args);
+    await h.service.persist({ ...args, tSec: 1, bake: { ...args.bake, frame: 1 } });
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+    expect(h.encoder.encode).toHaveBeenCalledTimes(1);
+    expect(h.encoder.close).toHaveBeenCalledTimes(1);
+    expect(h.writer.png).toHaveBeenCalledTimes(2);
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('persistence disk failure stays an error without recapture or disabling GPU', async () => {
+    const h = fixture(); h.writer.encoded.mockRejectedValue(new Error('disk full'));
+    await expect(h.service.persist(args)).rejects.toThrow('disk full');
+    expect(h.deps.png).not.toHaveBeenCalled();
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('already-cancelled persistence performs no capture or disk work', async () => {
+    const h = fixture();
+    await expect(h.service.persist(args, () => false)).rejects.toThrow('superseded');
+    expect(h.prepareWrite).not.toHaveBeenCalled();
+    expect(h.deps.texture).not.toHaveBeenCalled();
+    expect(h.deps.png).not.toHaveBeenCalled();
+  });
+
+  it('cancellation during capture performs no encoding or disk work', async () => {
+    const h = fixture(); let current = true; let finish!: () => void;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    const result = h.service.persist(args, () => current);
+    current = false; finish();
+    await expect(result).rejects.toThrow('superseded');
+    expect(h.prepareWrite).not.toHaveBeenCalled();
+    expect(h.encoder.encode).not.toHaveBeenCalled();
+  });
+
+  it('concurrent persistence and display share a capture then read the persisted pixels', async () => {
+    const h = fixture(); let finish!: () => void;
+    h.writer.encoded.mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
+    const persist = h.service.persist(args);
+    const duplicate = h.service.persist(args);
+    const { bake: _bake, ...preview } = args;
+    const display = h.service.capture(owner, preview);
+    await vi.waitFor(() => expect(h.writer.encoded).toHaveBeenCalledTimes(1));
+    expect(h.read).not.toHaveBeenCalled();
+    finish();
+    await Promise.all([persist, duplicate]);
+    await expect(display).resolves.toMatchObject({ kind: 'rgba', persisted: true });
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+    expect(h.deps.copy).not.toHaveBeenCalled();
+    expect(h.read).toHaveBeenCalledExactlyOnceWith(args.bake.hash, args.bake.frame);
+  });
+
+  it('a persistence demand joins an existing display before consumption', async () => {
+    const h = fixture(); let finish!: () => void;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    const { bake: _bake, ...preview } = args;
+    const display = h.service.capture(owner, preview);
+    const persist = h.service.persist(args);
+    finish();
+    await expect(display).resolves.toMatchObject({ persisted: true });
+    await expect(persist).resolves.toBeUndefined();
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+    expect(h.writer.encoded).toHaveBeenCalledTimes(1);
+    expect(h.deps.copy).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelling background interest preserves a joined current display consumer', async () => {
+    const h = fixture(); let finish!: () => void; let backgroundCurrent = true;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    const persist = h.service.persist(args, () => backgroundCurrent);
+    const rejected = expect(persist).rejects.toThrow('superseded');
+    const { bake: _bake, ...preview } = args;
+    const display = h.service.capture(owner, preview);
+    backgroundCurrent = false; finish();
+    await rejected;
+    await expect(display).resolves.toMatchObject({ kind: 'rgba', persisted: true });
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+    expect(h.writer.encoded).toHaveBeenCalledTimes(1);
+  });
+
+  it('a foreground display promotes the queued shared background capture', async () => {
+    const h = fixture(); let finish!: () => void;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    const persist = h.service.persist(args);
+    const { bake: _bake, ...preview } = args;
+    const display = h.service.capture(owner, { ...preview, high: true });
+    expect(h.deps.promote).toHaveBeenCalledExactlyOnceWith('job');
+    finish(); await persist; await display;
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+  });
+
+  it('workspace sessions do not share pending persistence acknowledgements', async () => {
+    const h = fixture(); let finish!: () => void;
+    h.writer.encoded.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    const persist = h.service.persist(args);
+    const otherStore = { prepareWrite: vi.fn(async () => h.writer), read: vi.fn() } as unknown as MotifFrameStore;
+    const { bake: _bake, ...preview } = args;
+    await expect(h.service.capture(owner, preview, () => true, undefined, otherStore)).resolves.toMatchObject({ kind: 'texture', persisted: false });
+    finish(); await persist;
+    expect(h.deps.texture).toHaveBeenCalledTimes(2);
+    expect(h.read).not.toHaveBeenCalled();
+  });
+
+  it.each(['prepare', 'write'] as const)('optional persistence %s failure keeps the captured texture without recapture', async failure => {
+    const h = fixture();
+    if (failure === 'prepare') h.prepareWrite.mockRejectedValue(new Error('disk unavailable'));
+    else h.writer.encoded.mockRejectedValue(new Error('disk full'));
+    await expect(h.service.capture(owner, { ...args, bakeOptional: true })).resolves.toMatchObject({ kind: 'texture', persisted: false });
+    expect(h.deps.texture).toHaveBeenCalledTimes(1);
+    expect(h.deps.copy).toHaveBeenCalledTimes(1);
+    expect(h.deps.png).not.toHaveBeenCalled();
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('optional PNG persistence failure retains the same captured bytes', async () => {
+    const h = fixture(false); h.writer.png.mockRejectedValue(new Error('disk full'));
+    await expect(h.service.capture(owner, { ...args, bakeOptional: true })).resolves.toMatchObject({ kind: 'png', bytes: Buffer.from('png'), persisted: false });
+    expect(h.deps.png).toHaveBeenCalledTimes(1);
+  });
+
+  it('optional export pixels remain available after a joined background disk failure', async () => {
+    const h = fixture(); let finish!: () => void;
+    h.deps.texture.mockImplementationOnce(async (_args, consume) => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      return consume(texture);
+    });
+    h.writer.encoded.mockRejectedValue(new Error('disk full'));
+    const persist = h.service.persist(args);
+    const rejected = expect(persist).rejects.toThrow('disk full');
+    const display = h.service.capture(owner, { ...args, bakeOptional: true });
+    finish(); await rejected;
+    await expect(display).resolves.toMatchObject({ kind: 'texture', persisted: false });
+    expect(h.deps.copy).toHaveBeenCalledTimes(1);
+    expect(h.deps.png).not.toHaveBeenCalled();
+  });
+
+  it('optional persistence never swallows content errors', async () => {
+    const h = fixture(); h.deps.texture.mockRejectedValue(new Error('broken content')); h.deps.isContentFailure.mockReturnValue(true);
+    await expect(h.service.capture(owner, { ...args, bakeOptional: true })).rejects.toThrow('broken content');
+    expect(h.deps.png).not.toHaveBeenCalled();
   });
 });

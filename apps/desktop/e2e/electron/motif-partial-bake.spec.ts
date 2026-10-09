@@ -7,6 +7,7 @@ import type { E2EHook } from '../../src/renderer/testhook/e2eHook'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { createMotifDraft, publishMotifDraft } from './helpers/motif'
 import { resourceDiagnostics } from './helpers/resourceDiagnostics'
+import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 const TOTAL = 1_800
@@ -26,7 +27,7 @@ for (const complete of [false, true]) {
         canvas: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 },
       })
       await invokeCmd(running.page, 'app_settings_set', { patch: {
-        prebake_motifs: false, performance_policy: { cache_mib: 512 },
+        prebake_motifs: false, performance_policy: { cache_mib: 512 }, resource_policy: { background_playback: false },
       } })
       const draft = await createMotifDraft(running.page, {
         id: 'partial-bake-probe', name: 'Partial bake probe', version: 1,
@@ -87,6 +88,7 @@ for (const complete of [false, true]) {
         })
       })
       await waitForHook(running.page, 'motifReopenProject')
+      await invokeCmd(running.page, 'motif_capture_diagnostics', { reset: true })
       await running.page.evaluate(path =>
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifReopenProject({ path }), projectPath)
       await waitForHook(running.page, 'compositorPerfSnapshot')
@@ -101,9 +103,10 @@ for (const complete of [false, true]) {
       await running.page.evaluate(({ layerId, expectedFrames }) =>
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames }),
       { layerId, expectedFrames: complete ? TOTAL : SAVED })
-      const rows = await running.page.evaluate(async () => {
+      const { rows, observedPlaybackPause } = await running.page.evaluate(async () => {
         const hook = (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest
         const rows = []
+        let observedPlaybackPause = false
         hook.transportPlay()
         try {
           const deadline = performance.now() + 10_000
@@ -111,19 +114,25 @@ for (const complete of [false, true]) {
             await new Promise(resolve => setTimeout(resolve, 50))
             const row = hook.compositorPerfSnapshot()?.motifs?.[0]
             rows.push(row)
+            if (!observedPlaybackPause) {
+              const state = await (window as any).api.backend.invoke('motif_bake_snapshot') as MotifBakeSnapshot
+              observedPlaybackPause = Object.values(state.statuses).some(status => status.phase === 'paused' && status.reason === 'playback')
+            }
             // Cross the 512 MiB cache (about 64 decoded frames), remaining
             // inside the saved prefix even on a slow software GPU.
             if ((row?.boundFrame ?? -1) >= 180) break
           }
         } finally { hook.transportPause() }
-        return rows
+        return { rows, observedPlaybackPause }
       })
       const stats = await running.app.evaluate(() => (globalThis as any).__partialBakeStats as {
         reads: number; maxActive: number; captures: number[];
       })
+      const captureDiagnostics = await invokeCmd<{ lanes: { motifId: string; captures: number }[] }>(running.page, 'motif_capture_diagnostics')
+      const bakeSnapshot = await invokeCmd<MotifBakeSnapshot>(running.page, 'motif_bake_snapshot')
       // Attach before assertions so a playback failure retains the evidence.
       await testInfo.attach('partial-bake-playback.json', {
-        body: JSON.stringify({ complete, stats, rows, resources: await resourceDiagnostics(running.page) }),
+        body: JSON.stringify({ complete, stats, rows, observedPlaybackPause, captureDiagnostics, bakeSnapshot, resources: await resourceDiagnostics(running.page) }),
         contentType: 'application/json',
       })
       const frames = rows.map(row => row?.boundFrame).filter((frame): frame is number => frame != null)
@@ -136,10 +145,17 @@ for (const complete of [false, true]) {
       // Gate bounded progress, monotonicity and saved-frame reuse; retain the
       // timing samples above for diagnosis rather than imposing a CI fps floor.
       expect(stats.captures.every(time => time >= SAVED / 60)).toBe(true)
-      if (complete) expect(stats.captures).toHaveLength(0)
+      if (complete) {
+        expect(stats.captures).toHaveLength(0)
+        expect(captureDiagnostics.lanes.filter(lane => lane.motifId === motifId).reduce((n, lane) => n + lane.captures, 0)).toBe(0)
+        expect(bakeSnapshot.statuses[cacheKey!]?.phase).toBe('ready')
+      }
       else {
+        expect(observedPlaybackPause, 'background work must explain why playback paused it').toBe(true)
         await expect.poll(async () => (await fs.readdir(directory)).filter(name => name.endsWith('.wfrm')).length,
           { timeout: 15_000 }).toBeGreaterThan(SAVED)
+        await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(running.page, 'motif_bake_snapshot')).statuses[cacheKey!]?.reason,
+          { timeout: 15_000 }).not.toBe('playback')
         expect((await fs.readdir(directory)).filter(name => name.endsWith('.wfrm')).length).toBeLessThan(TOTAL)
       }
     } finally { await running.app.close() }

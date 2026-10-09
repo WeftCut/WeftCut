@@ -14,6 +14,7 @@ interface NativeResources {
   resourcesSnapshot(): string;
   resourcesMemory(): Promise<ResourceMemorySample>;
   resourcesCacheWritten(immediate: boolean): Promise<void>;
+  resourcesRetainRaster(paths: string[]): void;
 }
 let native: NativeResources | undefined;
 const getNative = () => native ??= createRequire(import.meta.url)('@weftcut/core') as NativeResources;
@@ -59,7 +60,16 @@ export function reserveExportFinalization(): { nativeId: number; release: () => 
 }
 export function setResourceActivity(playing: boolean, pressured: boolean, critical = pressured): void {
   getNative().resourcesActivity(playing, pressured, critical);
+  backgroundPause = pressured ? 'memory' : playing && !resourceAllocation().background_playback ? 'playback' : undefined;
+  for (const notify of resourceObservers) notify();
 }
+let backgroundPause: 'memory' | 'playback' | undefined;
+const resourceObservers = new Set<() => void>();
+export function backgroundResourcePause(): 'memory' | 'playback' | undefined { return backgroundPause; }
+export function onBackgroundResourceChange(notify: () => void): () => void {
+  resourceObservers.add(notify); return () => { resourceObservers.delete(notify); };
+}
+export function retainRasterDirectories(paths: string[]): void { getNative().resourcesRetainRaster(paths); }
 export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads'> {
   return JSON.parse(getNative().resourcesSnapshot());
 }

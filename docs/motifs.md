@@ -193,8 +193,8 @@ options that exist).
   overlay that the render path merges at its canonicalization choke point, so it
   reaches both the rasterized frame and the frame cache key — and nothing else: no
   backend command, no history entry, nothing in the project file. Only the
-  on-screen sprite reads it; the prewarmer, the disk baker, bake status and the
-  export bake all describe committed props, so a live gesture can never write a
+  on-screen sprite reads it; lookahead, main preparation, bake status and export
+  frame requests all describe committed props, so a live gesture can never write a
   transient frame to disk or move a bake progress bar. The sprite routes
   overlay-affected frames to a separate small in-RAM lane (64 MB) rather than the
   committed-content L0 LRU, so a drag's per-tick cache keys can't evict committed
@@ -289,13 +289,16 @@ cache captures each frame index once and reuses it.
   awaiting `window.__motifRender(t, props, meta)` runs `setup`/`frame`/seek/settle and
   resolves when the frame is visually ready; PNG capture or the Windows OSR
   texture copy follows (see the transport details below). The whole
-  render+capture is **serialized** under a lock so the several fill loops (on-demand
-  sprite, prewarmer, baker) cannot interleave on the one host and screenshot a stale
+  render+capture is **serialized** on the one host so preview, background
+  preparation, export and cover requests cannot interleave and screenshot a stale
   frame. On-demand sprite requests additionally carry a per-layer **coalesce key**:
   a newer frame's request replaces a still-queued older one from the same sprite
   (latest wins, the replaced waiter rejects with a distinct superseded error), so
   real-time playback can't pile a stale-request backlog onto the one chain ahead of
-  the prewarmer and the baker. Every CDP step is timeout-fenced — a wedged offscreen
+  background preparation. Foreground tickets normally run first; a background
+  ticket waiting two seconds receives one frame between foreground tickets, so
+  background work cannot starve when resource policy allows it. Every CDP step
+  is timeout-fenced — a wedged offscreen
   renderer fails the capture and tears the host down for rebuild rather than hanging
   the chain for the process's life.
 
@@ -303,10 +306,10 @@ cache captures each frame index once and reuses it.
 
 A capture costs tens of ms for a simple built-in to ~1 s for a heavy 1080p page — far
 more than a cheap vector raster — so the cost is
-managed by **cache dedup, not a second renderer**: a static overlay produces identical
-pixels every content frame, so the cache collapses it to one capture; only Motifs with
-many *distinct* frames pay the per-frame cost repeatedly. Three escalation levers sit
-over the one capture function:
+managed by reuse of content-frame identities: repeated requests for the same
+content frame share work, and existing frames are read without another capture.
+Different frame indices remain distinct cache entries, even if their pixels happen
+to match. Three escalation levers sit over the one capture function:
 
 - **L0 — on demand (default).** The playhead frame is captured when needed and bound as
   a texture, at the resolution the composite needs. An in-RAM LRU of per-frame bitmaps
@@ -322,15 +325,27 @@ over the one capture function:
   frames, so adding a farther-ahead frame does not evict the next one to play.
   An in-flight prewarm result outside the latest window is closed rather than
   inserted; results still needed by the new plan remain usable after a seek.
+  When main already owns preparation for a content, this lookahead only reads
+  persisted frames and waits for missing coverage; it does not create a competing
+  capture sequence. The foreground playhead can still request a missing frame
+  immediately. Without main preparation, lookahead can capture its bounded window.
 - **L2 — persisted frames.** One disposable `.wfrm`
   LZ4/straight-RGBA file per frame under `<workspace>/Cache/raster/<hash>/`,
   where `<hash>` is a 128-bit hash (two FNV-1a-64 lanes, 32 hex chars) of
-  `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
+  `(captureRuntimeVersion, motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
   safe to delete (regenerates). Driven by a global **Pre-bake** setting (off by default)
-  and a per-layer **Pre-bake now** action; reads are disk-first, gated by an in-RAM
-  baked-key index so un-baked Motifs pay no fs cost. On project load, hash dirs no live
-  key references are garbage-collected — but only after re-pulling the user-Motif
+  and a per-layer **Pre-bake now** action. Main owns preparation for the Workspace
+  session: automatic demand covers used ranges, explicit demand covers full
+  content, and finishing clips in order reuses page setup. Renderer reload does
+  not cancel work. Queued, paused (with reason), retrying and failed states are
+  distinct from durable readiness. Referenced frames are retained against
+  eviction; insufficient temporary space pauses new growth rather than causing
+  repeated regeneration. See [ADR 0108](adr/0108-motif-preparation-belongs-to-the-workspace-session.md).
+  Reads are disk-first, guided by main's exact frame inventory mirrored in the
+  renderer's baked-key index. Known holes avoid needless disk reads; unknown
+  coverage retains the disk probe until discovery succeeds. On project load, hash
+  dirs no live key references are garbage-collected — but only after re-pulling the user-Motif
   catalog, and the GC is **skipped entirely** while any Motif layer is unresolvable:
   "can't resolve right now" (catalog sync lost the race with project open, a transient
   IPC failure) is not "orphaned", and deleting baked frames on a guess costs tens of
@@ -353,10 +368,11 @@ LZ4 decoding plus pixel IPC. Live capture retains a PNG fallback.
 
 Baking on Windows reads the OSR texture on a persistent native worker and
 encodes `.wfrm` directly, reusing the staging texture. It avoids PNG and pixel
-IPC; atomic persistence finishes before the baker marks the frame complete.
-Native readback failure keeps the same captured bitmap for the PNG compatibility
-writer. With PNG capture, main persists the original capture without renderer
-re-encoding. The file format is unchanged; no migration is needed.
+IPC; atomic persistence finishes before main marks the frame complete.
+Pure background baking delivers no bitmap to the editor. Native readback failure
+uses the main-process PNG compatibility writer. With PNG capture, main persists
+the original capture without renderer re-encoding. The file format is unchanged;
+no migration is needed.
 
 Live Windows capture retains the CDP clock commands but obtains pixels from
 OSR shared textures. Resize commits before rendering; two native rAFs settle
@@ -366,7 +382,8 @@ the session; `WEFTCUT_MOTIF_CAPTURE=png` forces the previous path for diagnosis.
 See [ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md)
 and [the measured conformance cases](../poc/motif-frame-cache/FINDINGS.md).
 
-The key is **source-derived**: `contentHash` is a hash of the Motif's manifest + HTML, so
+The key is **source-derived**: `contentHash` covers the manifest, HTML and companion
+resource paths and bytes, so
 editing a Motif's source (or updating an installed one) yields a fresh key and re-captures —
 the cache tracks *current* content rather than relying on a layer's stored version. A Motif
 with no `contentHash` (a built-in seeded from the build-time bundle, whose content is fixed)
@@ -379,19 +396,30 @@ frames). Changing props, the content duration, or the composition fps does chang
 
 ### Runtime ownership and teardown
 
-`MotifFrameService` owns the preview's prewarmer, baker, bake status and serialized
-index hydration/GC. `Compositor` only supplies project/playhead changes and disposal.
-Both background workers use `IdleBatchQueue` for scheduling and cancellation; frame
-ownership stays with the worker until it transfers the bitmap to L0.
+Main's `MotifBakeWorkspace` binds storage and preparation to one Workspace session.
+Its `MotifBakeCoordinator` owns frame inventory, queued ranges, progress, resource
+pauses, bounded retries and collection. `MotifFrameService` owns the preview's
+prewarmer, projects committed layer inputs into preparation demands, and maps
+main snapshots into the renderer's read index and layer status display.
+`MotifBakeClient` serializes those plans and subscriptions. `Compositor` supplies
+project/playhead changes and disposes only the preview-owned work.
 
-Preview, prewarm and baking acquire frames through one broker per cache lane.
-Identical requests share a capture, and L0 hits require none. Every caller owns
-its bitmap clone; L0 is pinned while cloning. The broker does not publish fresh
-results into L0, so each consumer still performs its own stale-result check.
-A later bake attaches its writer to a rendering capture; once texture consumption
-has started, it uses the resulting bitmap's PNG compatibility writer instead.
-Preview joins promote queued work. Superseding a sprite cancels only that
-subscriber, cancelling queued capture only when no consumers remain.
+Background scheduling keeps lazy range cursors and completes clips in timeline
+order (start time, then stable track/layer order). Separate occurrences retain
+their own range positions while sharing persisted pixels. **Pre-bake now** moves
+the requested Motif, or the Motifs inside a Group, to the front after the current
+frame. Foreground captures still interleave between frames; temporarily blocked
+work yields to eligible work. Range selection never changes the full content
+duration or other render inputs. See [ADR 0109](adr/0109-motif-preparation-finishes-clips-in-timeline-order.md).
+
+Preview and lookahead share a renderer frame broker. Identical requests share
+acquisition, and L0 hits need no capture. Each caller owns a bitmap clone; L0 is
+pinned while cloning, and consumers check stale results before publishing them.
+Main's `MotifCaptureService` separately shares overlapping display and persistence
+requests within the same bound store. A bake can attach to a display capture
+before texture consumption; a display joining a persistence job waits for the
+write and reads the saved pixels. A foreground join promotes a queued producer.
+Cancelling one consumer does not invalidate another consumer's wanted result.
 
 - **Cached and bound are different lifetimes.** L0 owns cached bitmaps; sprites
   retain the bitmap they bind. Eviction removes cache membership immediately but
@@ -399,21 +427,27 @@ subscriber, cancelling queued capture only when no consumers remain.
   insertion keeps the existing bitmap and closes the duplicate. L0 also owns its
   per-content frame counts, so a newly created preview service sees pre-existing
   coverage through an O(1) query; it needs no subscription or event replay.
-- **Baking transfers ownership exactly once.** The baker owns its acquired bitmap
-  through native or compatibility persistence. A failed write or disposal closes it in a
-  `finally`; a successful warm transfers ownership to L0. Disposal is checked after
-  the disk check, capture and persistence, preventing late results from warming L0
-  or publishing progress. Progress counts distinct completed frame indices across
-  playhead replans, and completed frames are excluded from subsequent work.
-- **Project close stops both planners.** The prewarm and bake targets are cleared;
-  disposing the service additionally cancels its idle workers and invalidates its
-  in-flight hydration/GC epoch. An already-issued capture is not forcibly cancelled.
-  The shared content-addressed L0 can outlive a preview service.
-- **GC has revocable deletion authority.** Only one hydration/GC pass runs at a time;
-  project changes coalesce into one follow-up. Its epoch is checked after hydration
-  and inside the disk collector immediately before each deletion, including after
-  asynchronous path resolution. The live set includes queued/in-flight bake keys.
-  A filesystem removal already submitted to main cannot be retracted by this check.
+- **Background persistence owns no display bitmap.** Main holds the OSR surface
+  through encoding and atomic writing, then releases it. A persistence-only
+  request never imports a display texture or warms L0. Progress counts distinct
+  persisted frame indices within the demanded ranges; reads, writes and discovered
+  misses update the same main-owned coverage. Renderer lookahead can subsequently
+  load those frames into L0.
+- **Preview disposal and project close have different effects.** Disposing the
+  preview stops lookahead and detaches its observer; main preparation continues
+  through preview remount or renderer reload. Close, reopen and Save As retire the
+  Workspace session. Queued work checks its generation before capture; already
+  admitted writes keep the old bound root and cannot publish into the next
+  session. Shared content-addressed L0 pixels can outlive a preview instance,
+  but old persistence acknowledgements cannot cross sessions.
+- **Main owns collection and retention.** Discovery and collection are serialized;
+  session and plan revisions revoke obsolete collection passes before each
+  deletion. Unresolved Motifs prevent collection, and queued or in-flight content
+  stays live. The native disk sweeper retains referenced raster directories,
+  initially protecting the whole incoming raster root until discovery narrows the
+  set. Retained bytes still count toward the temporary-cache target. Insufficient
+  capacity pauses new growth instead of repeatedly evicting and regenerating the
+  requested frames. A filesystem removal already submitted cannot be retracted.
 - **CDP deadlines belong to the host.** The host's `send` wraps every command in a
   timeout, including viewport and transparent-background setup. Callers cannot omit
   the deadline. Settled commands clear their timeout timers; a transport failure
@@ -421,17 +455,14 @@ subscriber, cancelling queued capture only when no consumers remain.
   Awaited decoder setup has a separate 30-second deadline; normal frame/CDP
   operations retain 5 seconds, and capture transport allows 60 seconds.
 
-Two remaining limitations are worth keeping explicit. `BakedKeyIndex` is a
-disk-read hint based on directory presence, not a certificate that every frame is
-present: interrupted bakes can still appear ready after reload, although missing
-frames fall back to capture. Native capture writes bind their workspace when
-the bake request is admitted, and project switches reset broker jobs so new
-consumers cannot inherit an old workspace's persistence acknowledgement.
-Compatibility bitmap writes still resolve through the current workspace bridge.
-A future
-workspace-scoped disk module should own writes, completion metadata and collection
-together; that would strengthen project-switch isolation and make persisted
-readiness exact.
+Startup inventory enumerates frame files and validates headers and lengths without
+decompressing the entire project cache. `ready` requires coverage of the demanded
+ranges, so an interrupted bake restores its progress and schedules only holes.
+Payload checksums are verified when frames are read; a missing or corrupt frame
+invalidates coverage and is produced again. RAM warming alone never establishes
+durable readiness. Completion remains subject to storage availability and resource
+policy: a permanently full disk or sustained resource pause can prevent completion,
+and the paused state exposes that reason.
 
 ### Editing an installed Motif
 
@@ -470,11 +501,17 @@ preview and installation, without overwriting a same-name installed Motif.
 
 ### Status display
 
-Each Motif layer reports a bake phase — `idle | warming{progress} | rastering{progress} | ready | error`.
-A **status dot** on the timeline layer block reflects it: warming shows L0 coverage filling
-ahead of the playhead, a persisted (L2) sequence reads as ready immediately, error is
-surfaced, idle shows nothing. The **property panel** adds a status line only while a bake is
-in flight or failed — idle and ready earn no standing row there.
+Main reports `queued | baking | paused | retrying | ready | error`, with completed
+and requested frame counts. `paused` identifies playback policy, memory pressure,
+resource admission or disk capacity. Finite retries preserve progress; an explicit
+Pre-bake action can retry a failed content. `ready` means the requested range is
+persisted, which may be only the used range for automatic preparation.
+
+The renderer adds `warming` for L0 coverage when no stronger preparation status
+applies; even full RAM coverage remains warming without persisted completion.
+An absent status is idle. The timeline **status dot** reflects these states, and
+the **property panel** shows progress, pause reasons or errors. Idle and ready
+need no standing property-panel row.
 
 ## Compositor integration
 
@@ -487,15 +524,20 @@ apply to the sprite.
 
 ## Export
 
-The export Worker has no DOM and cannot drive a renderer, so before the encode loop the
-**main process** captures every Motif layer's frames — through the same host, at export
-resolution, on the composition fps grid — and hands the bitmaps to the Worker
-(transferred). This is surfaced through the export "preparing" wait. When a Motif is
-already persisted at L2, the renderer asks the shared frame reader for fresh
-bitmaps and transfers them to the Worker; the Worker never accesses filesystem IPC.
-Either way the bytes
-come from the same capture path the preview used, so the exported Motif matches the
-preview.
+The export Worker has no DOM and cannot capture a Motif. Its bounded frame-demand
+stream requests only the content frames needed by the output, including trimmed
+ranges, nested Groups and retiming. The renderer reads existing L2 frames through
+the shared reader or requests a foreground capture from main, then transfers fresh
+bitmaps to the Worker. Byte credits bound the in-flight window; export does not
+wait for a complete project-wide background bake before encoding.
+
+Missing frames use the same capture host, dimensions and exact frame-grid inputs
+as preview. Capture can persist an export frame during the existing OSR lease,
+sharing an overlapping background job when possible. This cache write is optional:
+a disk failure preserves valid export pixels. If native persistence is unavailable,
+the compatibility writer can persist the captured bitmap. The Worker never accesses
+filesystem IPC, and cancellation releases its frame window without cancelling
+another consumer's still-needed work.
 
 ## User Motifs
 
@@ -565,9 +607,11 @@ same backend cores (so the two surfaces can't drift):
   never about capture or timing — and resolves built-ins **and** user Motifs (drafts +
   installed). `list_motifs` enumerates the full catalog (each entry carries `status` =
   `builtin | installed | draft`, plus `content_hash`/`target_id`), and `motifs://current`
-  mirrors it. Raster state is read-only (`idle | warming | rastering | ready | error`); the
-  export "preparing" wait blocks on pending bakes. (The MCP list is manifest-only — `html` is
-  stripped so it doesn't bloat agent context; agents fetch source on demand.)
+  mirrors it. Preparation state is observed from the Workspace session; preview
+  warming is a separate RAM-cache signal, and export requests its own bounded
+  frame stream rather than waiting for every background demand. (The MCP list is
+  manifest-only — `html` is stripped so it doesn't bloat agent context; agents
+  fetch source on demand.)
 - **Author.** `open_motif_draft` opens the working source; `read_motif` reads
   inventory or a selected file; `update_motif_files` applies a revision-checked
   batch. `preview_motif` returns a frame and exact revision; `install_motif`

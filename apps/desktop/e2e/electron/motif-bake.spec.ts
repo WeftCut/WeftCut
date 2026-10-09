@@ -4,8 +4,69 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
+import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
+
+interface CaptureDiagnostics {
+  captures: number;
+  pageLoads: number;
+  lanes: { motifId: string; contentHash: string; captures: number; pageLoads: number }[];
+}
+const capturesFor = (stats: CaptureDiagnostics, motifId: string) => stats.lanes.filter(lane => lane.motifId === motifId).reduce((n, lane) => n + lane.captures, 0)
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
+
+test('Pre-bake now moves a clip ahead of unfinished background work @serial', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-bake-order-'), name: 'Ordered preparation',
+      canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
+    const layers: { layerId: string; key: string }[] = []
+    for (let i = 0; i < 3; i++) {
+      const draft = await createMotifDraft(page, { id: `ordered-${i}`, name: `Ordered ${i}`, version: 1,
+        size: [64, 64], default_duration_s: 2, props_schema: {} },
+        `<!doctype html><body><script>motif.define({frame(t){document.body.style.background='rgb(${50+i*50},'+Math.floor(t*60)+',100)'}})</script>`)
+      const motifId = await publishMotifDraft(page, draft)
+      const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 2_000_000 }), motifId)
+      const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), layerId)
+      layers.push({ layerId, key })
+    }
+    await app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const original = native.motifEncodePng
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const state = { calls: 0, held: false, release: () => { native.motifEncodePng = original; release() } }
+      ;(globalThis as any).__bakeOrderGate = state
+      native.motifEncodePng = async (...args: any[]) => {
+        if (++state.calls === 4) { state.held = true; await gate }
+        return original(...args)
+      }
+    }, addon)
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__bakeOrderGate.held), { timeout: 30_000 }).toBe(true)
+    const read = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
+    const before = await read()
+    const active = layers.find(l => before.statuses[l.key]?.done > 0)!
+    const target = layers.findLast(l => before.statuses[l.key]?.done === 0)!
+    expect(active).toBeTruthy(); expect(target).toBeTruthy()
+    await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), target.layerId)
+    const block = page.locator(`[data-layer-id="${target.layerId}"]`)
+    await block.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Pre-bake now', exact: true }).click()
+    await app.evaluate(() => (globalThis as any).__bakeOrderGate.release())
+    await expect.poll(async () => (await read()).statuses[target.key]?.phase, { timeout: 40_000 }).toBe('ready')
+    const promoted = await read()
+    expect(promoted.statuses[active.key]!.done).toBeLessThan(60)
+    expect(promoted.statuses[active.key]!.done).toBeGreaterThanOrEqual(before.statuses[active.key]!.done)
+    await expect.poll(async () => Object.values((await read()).statuses).every(s => s.phase === 'ready'), { timeout: 60_000 }).toBe(true)
+  } finally {
+    await app.evaluate(() => (globalThis as any).__bakeOrderGate?.release()).catch(() => {})
+    await app.close()
+  }
+})
 
 for (const missingFrame of [null, 7] as const) {
 test(`Motif pre-bake survives a cold app restart and captures only missing frames (${missingFrame ?? 'complete'}) @serial`, async () => {
@@ -33,7 +94,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     if (missingFrame !== null) await fs.unlink(path.join(baked.hashDir, `${missingFrame}.wfrm`))
     running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
     await waitForHook(running.page, 'motifReopenProject')
-    await running.page.evaluate(() => { (window as any).__weftcutMotifPerf = { renders: 0 } })
+    await invokeCmd(running.page, 'motif_capture_diagnostics', { reset: true })
     await running.page.evaluate(path => (window as any).__weftcutTest.motifReopenProject({ path }), projectPath)
     await waitForHook(running.page, 'weftcutSampleComposite')
     await expect.poll(() => running.page.evaluate(async () => {
@@ -50,7 +111,8 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     })
     await running.page.evaluate(layerId =>
       (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), layerId)
-    expect(await running.page.evaluate(() => (window as any).__weftcutMotifPerf.renders)).toBe(missingFrame === null ? 0 : 1)
+    const diagnostics = await invokeCmd<CaptureDiagnostics>(running.page, 'motif_capture_diagnostics')
+    expect(capturesFor(diagnostics, 'countdown')).toBe(missingFrame === null ? 0 : 1)
     const after = await Promise.all(Array.from({ length: 30 }, (_, f) =>
       fs.stat(path.join(baked.hashDir, `${f}.wfrm`)).then(s => s.mtimeMs),
     ))
@@ -97,7 +159,7 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
         canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
       })
       await waitForHook(page, 'prebakeLayerAndWait')
-      await page.evaluate(() => { (window as any).__weftcutMotifPerf = { renders: 0 } })
+      await invokeCmd(page, 'motif_capture_diagnostics', { reset: true })
       const layerId = await page.evaluate(() => (window as any).__weftcutTest.addMotifLayer({
         motifId: 'countdown', durationUs: 1_000_000, props: { seconds: 1 },
       })) as string
@@ -113,7 +175,7 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
           })
         })
       }
-      const beforeBake = await page.evaluate(() => (window as any).__weftcutMotifPerf.renders)
+      const beforeBake = capturesFor(await invokeCmd<CaptureDiagnostics>(page, 'motif_capture_diagnostics'), 'countdown')
       const baked = await page.evaluate(async layerId => {
         const hook = (window as any).__weftcutTest
         return hook.prebakeLayerAndWait({ layerId, expectedFrames: 30 })
@@ -143,9 +205,139 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
         expect(decoded.stats.png).toBe(30)
       }
       if (mode === 'warm-cache') {
-        expect(await page.evaluate(() => (window as any).__weftcutMotifPerf.renders)).toBe(beforeBake)
+        // Renderer L0 is display-owned. A main-owned bake persists directly
+        // without requesting ImageBitmaps back across IPC from that cache.
+        const backgroundCaptures = capturesFor(await invokeCmd<CaptureDiagnostics>(page, 'motif_capture_diagnostics'), 'countdown') - beforeBake
+        expect(backgroundCaptures).toBeGreaterThan(0)
+        expect(backgroundCaptures).toBeLessThanOrEqual(30)
       }
       console.log(`[motif-bake:${mode}] ${JSON.stringify(decoded.stats)}`)
     } finally { await app.close() }
   })
 }
+
+test('Motif background work survives renderer reload and reuses pages across multiple contents @serial', async ({}, testInfo) => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-bake-many-'), name: 'Many contents',
+      canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 },
+    })
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
+    const layers: { layerId: string; motifId: string; cacheKey: string }[] = []
+    for (let i = 0; i < 4; i++) {
+      const draft = await createMotifDraft(page, {
+        id: `affinity-${i}`, name: `Affinity ${i}`, version: 1,
+        size: [64, 64], default_duration_s: 2, props_schema: {},
+      }, `<!doctype html><html><body style="margin:0"><script>
+        motif.define({ frame(t) { document.body.style.background = 'rgb(${40 + i * 40},' + Math.floor(t * 60) + ',180)'; }});
+      </script></body></html>`)
+      const motifId = await publishMotifDraft(page, draft)
+      const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 2_000_000 }), motifId) as string
+      const cacheKey = await page.evaluate(layerId => (window as any).__weftcutTest.cacheKeyForLayer(layerId), layerId) as string
+      layers.push({ layerId, motifId, cacheKey })
+    }
+    // Clear only measurements; all actual frame artifacts begin cold in this
+    // isolated project. Automatic demand survives renderer reconstruction.
+    await invokeCmd(page, 'motif_capture_diagnostics', { reset: true })
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
+    const readSnapshot = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
+    await expect.poll(async () => {
+      const snapshot = await readSnapshot()
+      return layers.some(layer => (snapshot.statuses[layer.cacheKey]?.done ?? 0) > 0)
+    }, { timeout: 20_000 }).toBe(true)
+    const beforeReload = await readSnapshot()
+    expect(layers.some(layer => beforeReload.statuses[layer.cacheKey]?.phase !== 'ready')).toBe(true)
+    await page.reload()
+    await waitForHook(page, 'prebakeLayerAndWait')
+    await expect.poll(async () => {
+      const snapshot = await readSnapshot()
+      return layers.every(layer => snapshot.statuses[layer.cacheKey]?.phase === 'ready' && snapshot.statuses[layer.cacheKey]?.done === 60)
+    }, { timeout: 90_000 }).toBe(true)
+    const completed = await readSnapshot()
+    expect(completed.generation).toBe(beforeReload.generation)
+    const stats = await invokeCmd<CaptureDiagnostics>(page, 'motif_capture_diagnostics')
+    const selected = stats.lanes.filter(lane => layers.some(layer => layer.motifId === lane.motifId))
+    const captures = selected.reduce((n, lane) => n + lane.captures, 0)
+    const pageLoads = selected.reduce((n, lane) => n + lane.pageLoads, 0)
+    expect(captures).toBeGreaterThanOrEqual(240)
+    // A frame-round-robin implementation reloads almost every capture. A
+    // bounded content slice must retain meaningful affinity on any hardware.
+    expect(pageLoads).toBeLessThan(captures * .75)
+    await testInfo.attach('motif-background-affinity.json', {
+      body: JSON.stringify({ beforeReload, completed, diagnostics: stats }), contentType: 'application/json',
+    })
+  } finally { await app.close() }
+})
+
+test('Motif background preparation resumes automatically after a failed workspace switch in the same generation @serial', async ({}, testInfo) => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-bake-failed-open-'), name: 'Preparation recovery',
+      canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 },
+    })
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
+    const draft = await createMotifDraft(page, {
+      id: 'workspace-recovery-probe', name: 'Workspace recovery probe', version: 1,
+      size: [64, 64], default_duration_s: 2, props_schema: {},
+    }, `<!doctype html><html><body style="margin:0"><script>
+      motif.define({ frame(t) { document.body.style.background = 'rgb(70,' + Math.floor(t * 60) + ',160)'; }});
+    </script></body></html>`)
+    const motifId = await publishMotifDraft(page, draft)
+    await waitForHook(page, 'addMotifLayer')
+    const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({
+      motifId, durationUs: 2_000_000,
+    }), motifId) as string
+    const cacheKey = await page.evaluate(layerId => (window as any).__weftcutTest.cacheKeyForLayer(layerId), layerId) as string
+    const workspace = await invokeCmd<string>(page, 'workspace_dir')
+
+    // Hold one actual encode after three frames have persisted. The workspace
+    // transition is therefore guaranteed to interrupt unfinished main-owned
+    // preparation even on fast hardware; no production scheduling is mocked.
+    await app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const original = native.motifEncodePng
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const state = { calls: 0, held: false, release: () => { native.motifEncodePng = original; release() } }
+      ;(globalThis as any).__failedOpenBakeGate = state
+      native.motifEncodePng = async (...args: any[]) => {
+        if (++state.calls === 4) { state.held = true; await gate }
+        return original(...args)
+      }
+    }, addon)
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__failedOpenBakeGate.held), { timeout: 30_000 }).toBe(true)
+    const readSnapshot = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
+    const before = await readSnapshot()
+    expect(before.statuses[cacheKey]?.done).toBeGreaterThan(0)
+    expect(before.statuses[cacheKey]?.done).toBeLessThan(60)
+    expect(before.statuses[cacheKey]?.phase).not.toBe('ready')
+
+    const missing = path.join(tmpDir('weftcut-missing-project-'), 'does-not-exist')
+    await expect(invokeCmd(page, 'project_open', { path: missing })).rejects.toThrow(/ProjectFolderMissing/)
+    expect(await invokeCmd<string>(page, 'workspace_dir')).toBe(workspace)
+    const session = await invokeCmd<{ generation: number }>(page, 'motif_bake_session')
+    expect(session.generation).toBe(before.generation)
+    await app.evaluate(() => (globalThis as any).__failedOpenBakeGate.release())
+
+    // Only observe from here: no project edit, preview seek, settings toggle,
+    // reload or second manual pre-bake may restart preparation for this test.
+    await expect.poll(async () => {
+      const snapshot = await readSnapshot()
+      return snapshot.statuses[cacheKey]?.phase === 'ready' && snapshot.statuses[cacheKey]?.done === 60
+    }, { timeout: 60_000 }).toBe(true)
+    const completed = await readSnapshot()
+    expect(completed.generation).toBe(before.generation)
+    expect(completed.coverage[cacheKey]).toHaveLength(60)
+    await testInfo.attach('motif-failed-workspace-recovery.json', {
+      body: JSON.stringify({ before, session, completed }), contentType: 'application/json',
+    })
+  } finally {
+    await app.evaluate(() => (globalThis as any).__failedOpenBakeGate?.release()).catch(() => {})
+    await app.close()
+  }
+})

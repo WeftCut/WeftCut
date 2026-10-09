@@ -26,12 +26,14 @@ export class MotifFrameScheduler {
   private captures = 0;
   private scheduled = false;
   private epoch = 0;
-  private preferBake = false;
 
   constructor(private readonly deps: {
     shouldRead: (cacheKey: string, frame: number) => boolean;
     read: (cacheKey: string, frame: number) => Promise<ImageBitmap | null>;
     readMiss: (cacheKey: string, frame: number) => void;
+    /** Main owns background production for these content keys. Foreground
+     * subscribers can still promote the same queued request immediately. */
+    backgroundCaptureAllowed: (cacheKey: string) => boolean;
   }) {}
 
   acquire(request: Request): Promise<CapturedFrame> {
@@ -48,9 +50,17 @@ export class MotifFrameScheduler {
     queueMicrotask(() => { this.scheduled = false; this.drain(); });
   }
 
+  /** Authoritative disk coverage changed. A previously missing frame may now
+   * be saved; retry its read without ever opening a competing background page. */
+  coverageChanged(): void {
+    for (const job of this.queue) {
+      if (job.readMiss && this.deps.shouldRead(job.cacheKey, job.frame)) job.readMiss = false;
+    }
+    this.wake();
+  }
+
   reset(): void {
     this.epoch++;
-    this.preferBake = false;
     for (const job of this.queue) job.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE));
     this.queue = [];
     // Admitted work keeps its resource until it actually settles. Its result
@@ -81,15 +91,15 @@ export class MotifFrameScheduler {
         void this.run(job, true);
       }
       if (this.captures < 1) {
-        const candidates = this.queue.filter(job => job.ticket.high() === high && !this.readsDisk(job));
-        // A whole speculative window must not put hundreds of captures in
-        // front of the idle baker. Foreground always wins; background bake
-        // and prewarm take turns when both have work.
-        const job = (high ? undefined : candidates.find(job => !!job.ticket.bake() === this.preferBake)) ?? candidates[0];
+        const candidates = this.queue.filter(job => job.ticket.high() === high && !this.readsDisk(job)
+          && (high || this.deps.backgroundCaptureAllowed(job.cacheKey)));
+        // Main-owned preparation has no competing background capture here.
+        // Foreground promotion remains immediate; saved frames use separate
+        // read slots even while a different content is being captured.
+        const job = candidates[0];
         if (job) {
           this.queue.splice(this.queue.indexOf(job), 1);
           this.captures++;
-          if (!high) this.preferBake = !job.ticket.bake();
           void this.run(job, false);
         }
       }

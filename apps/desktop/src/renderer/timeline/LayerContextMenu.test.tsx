@@ -137,6 +137,7 @@ describe("LayerContextMenu — kind-gated rows", () => {
   it.each([
     ["Audio", "Separate audio to new track"],
     ["Motif", "Pre-bake now"],
+    ["CompositionRef", "Pre-bake now"],
   ])("%s gets its own row and NOT Mark shot cuts", (kind, ownRow) => {
     renderMenu(kind);
     expect(screen.getByRole("menuitem", { name: ownRow })).toBeTruthy();

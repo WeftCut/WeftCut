@@ -106,14 +106,7 @@ function MotifBakeDot({ layerId, locked }: { layerId: string; locked: boolean })
   const { t } = useTranslation();
   const phase = useLayerBakePhase(layerId);
   if (!phase) return null;
-  const label =
-    phase === "warming"
-      ? t("timeline.bake_dot_warming", { defaultValue: "Warming…" })
-      : phase === "baking"
-        ? t("timeline.bake_dot_baking", { defaultValue: "Pre-baking…" })
-        : phase === "ready"
-          ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
-          : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
+  const label = t(`timeline.bake_dot_${phase}`);
   return <span className={`motif-bake-dot is-${phase}`} style={{ right: locked ? 20 : undefined }} title={label} aria-label={label} />;
 }
 

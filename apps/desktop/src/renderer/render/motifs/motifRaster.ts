@@ -25,8 +25,8 @@ export async function rasterMotifFrame(
 }
 
 /// Portable direct-capture helper, at the motif's manifest size. The editor's
-/// disk baker uses `acquireBakedMotifFrame` to share captures and persist native
-/// textures; this helper always captures. `tSec = frame * fpsDen/fpsNum`;
+/// background preparation runs in main and persists without sending pixels;
+/// this helper always captures. `tSec = frame * fpsDen/fpsNum`;
 /// the fps pair is also forwarded so the capture's `meta.fps` names the same
 /// rate the frame grid was computed on.
 export function bakeMotifFrame(

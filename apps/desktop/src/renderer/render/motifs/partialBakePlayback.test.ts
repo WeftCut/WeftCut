@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MotifPrewarmer } from './MotifPrewarmer';
 import {
   cancelMotifFrameRequest, resetMotifFrameRequests, resolveMotifFrame,
-  sharedBakedKeyIndex, sharedMotifFrameCache, acquireBakedMotifFrame,
+  sharedBakedKeyIndex, sharedMotifFrameCache,
+  setMotifPreparationCoverage,
 } from './motifRasterCache';
 import { captureMotifFrameResult } from './host';
 
@@ -61,6 +62,73 @@ it('pipelines three saved frames of an incomplete long Motif without capture', a
   warm();
   await settle();
   expect(read.mock.calls.map(([, frame]) => frame)).toEqual([0, 1, 2]);
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+});
+
+it('waits for main-owned preparation instead of switching its capture page for speculative frames', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set());
+  setMotifPreparationCoverage(['long']);
+  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockResolvedValue(bitmap());
+  const h = warm();
+  await settle();
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+  for (let i = 0; i < 5; i++) {
+    // Progress updates may rebuild the prewarm plan many times while main
+    // is rendering other content. Those updates must not start a second producer.
+    setMotifPreparationCoverage(['long']);
+    h.prewarmer.setTargets(h.specs);
+    await settle();
+  }
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+  sharedBakedKeyIndex.add('long', 2);
+  setMotifPreparationCoverage(['long']);
+  await settle();
+  expect(read).toHaveBeenCalledExactlyOnceWith('long', 2);
+  expect(sharedMotifFrameCache.hasFrame('long', 2)).toBe(true);
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+});
+
+it('foreground demand promotes a waiting main-owned frame and still shares one capture with prewarm', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set());
+  setMotifPreparationCoverage(['long']);
+  warm();
+  await settle();
+  const foreground = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
+  await settle();
+  expect(captureMotifFrameResult).toHaveBeenCalledOnce();
+  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].high).toBe(true);
+  cleanup.at(-1)!();
+  (await foreground).close();
+  await settle();
+  expect(sharedMotifFrameCache.hasFrame('long', 0)).toBe(true);
+  expect(captureMotifFrameResult).toHaveBeenCalledOnce();
+});
+
+it('returns speculative capture ownership when automatic preparation is disabled', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set());
+  setMotifPreparationCoverage(['long']);
+  warm();
+  await settle();
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+  setMotifPreparationCoverage([]);
+  await settle();
+  expect(captureMotifFrameResult).toHaveBeenCalledOnce();
+});
+
+it('retries a failed disk read only after main publishes repaired coverage', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
+  setMotifPreparationCoverage(['long']);
+  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockResolvedValueOnce(null).mockResolvedValue(bitmap());
+  warm();
+  await settle();
+  expect(read).toHaveBeenCalledOnce();
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+  sharedBakedKeyIndex.add('long', 0);
+  setMotifPreparationCoverage(['long']);
+  await settle();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(sharedMotifFrameCache.hasFrame('long', 0)).toBe(true);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
 });
 
@@ -159,21 +227,6 @@ it('foreground demand promotes a queued prewarm read without acquiring it twice'
   await settle();
   expect(sharedMotifFrameCache.hasFrame('long', 9)).toBe(true);
   expect(read.mock.calls.filter(([, frame]) => frame === 9)).toHaveLength(1);
-});
-
-it('background baking gets a turn ahead of the rest of a speculative capture window', async () => {
-  warm();
-  await settle();
-  const finish = cleanup.at(-1)!;
-  const bake = acquireBakedMotifFrame(motif, 'other', 80, 60, 1, {});
-  const settled = bake.catch(() => undefined);
-  await settle();
-  finish();
-  await settle();
-  expect(captureMotifFrameResult).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(captureMotifFrameResult).mock.calls[1]![1]).toBe(80 / 60);
-  cleanup.at(-1)!();
-  (await settled)?.bitmap.close();
 });
 
 it('a project reset fences work waiting for inventory restoration', async () => {

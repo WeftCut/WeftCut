@@ -1,21 +1,6 @@
 import { localAt } from '../compositionClock';
-// The single owner of the PREVIEW realm's motif raster lifecycle: the L0 warm
-// prewarmer, the L2 disk baker, the baked-index hydrate/GC, and the per-layer
-// bake-status feed. What triggers it: a project snapshot change
-// (`handleProjectChanged` — re-plan targets, re-publish statuses, kick the
-// serialized hydrate/GC), the playhead crossing a frame boundary
-// (`noteFrameBoundary` — re-plan, throttled to once per composition frame),
-// the timeline's "Pre-bake now" bus, and the prewarmer/baker's own progress
-// callbacks (status recompute).
-//
-// Realm gating: the prewarmer and baker are constructed only where `document`
-// exists. The export Worker has no DOM — its motif frames arrive injected via
-// `Compositor.setMotifFrames`, a different mechanism — so it gets NEITHER,
-// and every method here degrades to a no-op there.
-//
-// Owned by the Compositor as a collaborator. The service never reaches back
-// into Compositor internals: everything it reads of the owner arrives through
-// the narrow `MotifFrameServiceDeps` getters.
+// Preview warming is renderer-owned. Main owns durable preparation, inventory,
+// retries and resource admission; this module declares demand and projects status.
 
 import type { LayerSummary, ProjectSummary } from "../../ipc";
 import { useAppSettingsStore } from "../../settings/appSettingsStore";
@@ -24,21 +9,22 @@ import {
   motifWarmPhase,
   type LayerBakeStatus,
 } from "../../timeline/motifBakeStatusStore";
-import { compositionLocalUs, forEachLayer } from "../compositionWalk";
+import { compositionLocalUs, forEachLayer, type PlacedLayer } from "../compositionWalk";
 import { getMotif } from "./catalog";
 import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
-import { MotifBaker, type BakeContentSpec } from "./MotifBaker";
+import { MotifBakeClient } from './bakeClient';
+import type { MotifBakePlan, MotifBakeSession, MotifBakeSnapshot, MotifFrameRange } from '../../../shared/motifs/baking';
+import { hashCacheKey } from './frameCache';
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { MOTIF_RECENT_FRAMES } from "./motifFrames";
 import {
   resolveMotifFrame,
   sharedBakedKeyIndex,
   sharedMotifFrameCache,
-  acquireBakedMotifFrame,
   resetMotifFrameRequests,
   cancelMotifFrameRequest,
+  setMotifPreparationCoverage,
 } from "./motifRasterCache";
-import { encodeBitmapToPng } from "./pngEncode";
 import { onPrebakeRequest } from "./prebakeBus";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
 import { syncUserMotifsFromBackend } from "./syncCatalog";
@@ -80,43 +66,25 @@ export interface MotifFrameServiceDeps {
   currentTimeUs: () => number;
 }
 
+// Explicit choices belong to the renderer's workspace session, not a Compositor.
+let manualSession: { generation: number; layers: Set<string> } | null = null;
+
 export class MotifFrameService {
-  /// Background filler that warms the shared motif-frame cache ahead of the
-  /// playhead. DOM-gated: only a DOM realm (the main-thread preview) creates
-  /// one; the export Worker (no `document`, frames injected via
-  /// `setMotifFrames`) leaves it null.
+  private layerBakeRanges = new Map<string, MotifFrameRange[]>();
+  private pendingPriorityGroups: string[][] = [];
   private prewarmer: MotifPrewarmer | null;
-  /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
-  private baker: MotifBaker | null;
-  /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
-  /// entries in `recomputeBakeStatuses`.
+  private client: MotifBakeClient | null;
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
-  /// Signature of the last published bake-status map, so recompute is a no-op
-  /// when nothing changed (it runs every frame via updateBakeTargets).
-  private lastBakeStatusSig = "";
-  /// LayerIds the user manually "Pre-bake now"'d this session — baked even
-  /// when the global setting is off.
+  private lastBakeStatusSig = '';
   private manualPrebakeLayers = new Set<string>();
-  /// Monotonic epoch, bumped by every project change (both paths). The
-  /// hydrate/GC run captures it and bails at each await boundary once it has
-  /// moved on — its snapshot-derived reads would be stale against the newer
-  /// summary/fps, and the pending re-run supersedes it. Per-Compositor on
-  /// purpose even though `sharedBakedKeyIndex` is a process-wide singleton:
-  /// preview is the only realm with a baker (see above), so one epoch guards
-  /// the one writer.
-  private projectEpoch = 0;
-  /// Serialization of `hydrateBakedIndexAndGc`: at most one run in flight; a
-  /// project change arriving mid-run arms ONE coalesced follow-up, never a
-  /// queue (a firehose of snapshots must not stack GC passes).
-  private hydrateGcRunning = false;
-  private hydrateGcPending = false;
-  /// Unsubscribe handle for the prebake bus.
+  private pendingRetryLayers = new Set<string>();
+  private liveCacheKeys: string[] = [];
   private prebakeUnsub: (() => void) | null = null;
-  /// Last composition frame index we re-planned the prewarm targets at, so the
-  /// per-tick refresh in `noteFrameBoundary` only fires on a frame change.
+  private settingsUnsub: (() => void) | null = null;
   private lastPrewarmFrame = -1;
   private disposed = false;
-  private projectId: string | null = null;
+  private generation: number | null = null;
+  private projectEpoch = 0;
   private diskDiscoveryPending = false;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
@@ -135,119 +103,73 @@ export class MotifFrameService {
             onProgress: () => this.recomputeBakeStatuses(),
           })
         : null;
-    this.baker =
-      typeof document !== "undefined"
-        ? new MotifBaker({
-            schedule: (cb) => scheduleIdle(cb),
-            cancel: (t) => cancelIdle(t),
-            // Background persistence remains idle-paced, one frame at a time.
-            batchSize: 1,
-            isOnDisk: async (k, f) => sharedBakedKeyIndex.framesFor(k)?.has(f)
-              ?? sharedMotifFrameCache.hasPersistedFrame(k, f),
-            persist: async (k, f, bmp) => {
-              const png = await encodeBitmapToPng(bmp);
-              if (this.disposed) return;
-              await sharedMotifFrameCache.writeFrame(k, f, png);
-            },
-            warm: (k, f, bmp) => {
-              sharedBakedKeyIndex.add(k, f);
-              sharedMotifFrameCache.setFrame(k, f, bmp);
-            },
-            onStatus: (cacheKey, status) => {
-              this.bakeStatusByCacheKey.set(cacheKey, status);
-              this.recomputeBakeStatuses();
-            },
-          })
-        : null;
+    this.client = this.prewarmer ? new MotifBakeClient(
+      snapshot => this.acceptSnapshot(snapshot),
+      error => {
+        console.warn('[weftcut/motifs] preparation unavailable', error);
+        this.resumeAfterDiskDiscovery();
+      },
+    ) : null;
+    if (this.client) this.settingsUnsub = useAppSettingsStore.subscribe((next, previous) => {
+      if (next.settings.prebake_motifs !== previous.settings.prebake_motifs) this.submitBakePlan();
+    });
+    if (this.client) this.prebakeUnsub = onPrebakeRequest(layerId => {
+      const summary = this.deps.projectSummary();
+      const selected = summary && Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(t => t.layers)).find(l => l.id === layerId);
+      const ids = new Set<string>();
+      if (selected?.params.kind === 'CompositionRef') {
+        forEachLayer(summary!, selected.params.composition_id, ({ layer }) => {
+          if (layer.params.kind === 'Motif') ids.add(layer.id);
+        });
+      } else if (selected?.params.kind === 'Motif') ids.add(layerId);
+      for (const id of ids) {
+        this.manualPrebakeLayers.add(id);
+        this.pendingRetryLayers.add(id);
+      }
+      this.pendingPriorityGroups.unshift([...ids]);
+      this.submitBakePlan();
+    });
   }
 
-  /// The project snapshot changed (or was closed — the null path tears down
-  /// instead). Bumps the epoch, re-plans prewarm/bake targets at the current
-  /// playhead, re-publishes bake statuses, and kicks the serialized
-  /// hydrate/GC.
   handleProjectChanged(): void {
-    if (this.disposed) return;
-    this.projectEpoch += 1;
+    if (this.disposed || !this.client) return;
+    const epoch = ++this.projectEpoch;
+    this.client.invalidate();
     this.lastPrewarmFrame = -1;
-    const summary = this.deps.projectSummary();
-    const projectId = summary?.project_id ?? null;
-    if (projectId !== this.projectId) {
-      this.projectId = projectId;
-      resetMotifFrameRequests();
-      sharedBakedKeyIndex.clear();
-      this.manualPrebakeLayers.clear();
-    }
-    // Disk discovery owns admission: neither the idle loops nor an on-demand
-    // sprite may decide to capture against an index that has not been restored.
-    this.diskDiscoveryPending = !!summary && !!this.baker;
+    this.diskDiscoveryPending = !!this.deps.projectSummary();
     this.prewarmer?.setTargets([]);
-    this.baker?.setTargets([]);
-    this.bakeStatusByCacheKey.clear();
     if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
-    if (!summary) {
-      this.prewarmer?.setTargets([]);
-      this.baker?.setTargets([]);
-      this.manualPrebakeLayers.clear();
+    else {
       sharedBakedKeyIndex.clear();
+      this.manualPrebakeLayers.clear();
+      this.pendingRetryLayers.clear();
+      this.pendingPriorityGroups = [];
       this.bakeStatusByCacheKey.clear();
-      this.lastBakeStatusSig = "";
       setLayerBakeStatuses({});
-      return;
     }
-    // Subscribe to the timeline's "Pre-bake now" bus exactly once (DOM-gated
-    // by `this.baker`). A request records the layer and refreshes bake targets
-    // so it bakes even when the global setting is off.
-    if (this.baker && !this.prebakeUnsub) {
-      this.prebakeUnsub = onPrebakeRequest((layerId) => {
-        this.manualPrebakeLayers.add(layerId);
-        this.updateBakeTargets(this.deps.currentTimeUs());
-      });
-    }
-    // Re-plan the prewarm window against the new project at the current
-    // playhead. Reached only for a non-null summary (the null branch returns
-    // above).
-    const tUs = this.deps.currentTimeUs();
-    this.updatePrewarmTargets(tUs);
-    this.updateBakeTargets(tUs);
-    this.recomputeBakeStatuses();
-    // Hydrate the on-disk baked-key index + GC orphaned hash dirs against the
-    // new project's live keys. Fire-and-forget — never blocks load. Serialized
-    // (at most one run, latest-wins coalescing) so overlapping runs can't
-    // interleave their readDir/remove or GC against a stale snapshot.
-    this.scheduleHydrateBakedIndexAndGc();
+    void syncUserMotifsFromBackend().then(() => {
+      if (!this.disposed && epoch === this.projectEpoch) this.submitBakePlan();
+    });
   }
 
-  /// The playhead composited at `tUsSnapped` (already on the frame grid).
-  /// Refreshes the prewarm + bake windows when the playhead crosses a frame
-  /// boundary; throttled to once per composition frame so scrub/play ticks
-  /// within the same frame don't re-plan. Runs whether playing or paused.
   noteFrameBoundary(tUsSnapped: number): void {
     if (!this.prewarmer) return;
-    const frameIdx = Math.round(
-      (tUsSnapped * this.deps.fpsNum()) / (1_000_000 * this.deps.fpsDen()),
-    );
+    const frameIdx = Math.round(tUsSnapped * this.deps.fpsNum() / (1_000_000 * this.deps.fpsDen()));
     if (frameIdx === this.lastPrewarmFrame) return;
     this.lastPrewarmFrame = frameIdx;
     this.updatePrewarmTargets(tUsSnapped);
-    this.updateBakeTargets(tUsSnapped);
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.projectEpoch += 1;
-    this.hydrateGcPending = false;
+    this.projectEpoch++;
     this.prewarmer?.dispose();
-    this.prewarmer = null;
-    this.baker?.dispose();
-    this.baker = null;
+    this.client?.dispose();
     this.prebakeUnsub?.();
-    this.prebakeUnsub = null;
-    this.manualPrebakeLayers.clear();
-    sharedBakedKeyIndex.clear();
-    this.bakeStatusByCacheKey.clear();
-    this.lastBakeStatusSig = "";
-    setLayerBakeStatuses({});
+    this.settingsUnsub?.();
+    sharedBakedKeyIndex.finishHydration();
+    // Background jobs and durable coverage survive preview remounts.
   }
 
   // ============================================================
@@ -335,164 +257,129 @@ export class MotifFrameService {
     this.prewarmer.setTargets(specs);
   }
 
-  /// Feed the L2 baker (the SOLE disk writer). Persists the FULL content of:
-  /// every active motif content when the global `prebake_motifs` setting
-  /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
-  /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
-  /// shape; acquisition reuses L0/in-flight captures. A fresh capture requests
-  /// native persistence; an existing bitmap uses the compatibility writer.
-  private updateBakeTargets(tUs: number): void {
-    const summary = this.deps.projectSummary();
-    if (!this.baker || !summary || this.diskDiscoveryPending) return;
-    const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
-    const specs: BakeContentSpec[] = [];
-    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
-      const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
-      if (!wanted) return;
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const fpsNum = this.deps.fpsNum();
-      const fpsDen = this.deps.fpsDen();
-      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, fpsNum, fpsDen, motif);
-      if (!desc) return;
-      // Plan-time fps in locals — same closure-capture rationale as
-      // `updatePrewarmTargets`.
-      const canonicalProps = desc.canonicalProps;
-      specs.push({
-        cacheKey: desc.cacheKey,
-        persistedFrames: sharedBakedKeyIndex.framesFor(desc.cacheKey),
-        contentFrame: desc.contentFrame,
-        contentDurationFrames: desc.contentDurationFrames,
-        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        render: (frame: number) => acquireBakedMotifFrame(motif, desc.cacheKey, frame, fpsNum, fpsDen, canonicalProps),
-      });
-    });
-    const activeKeys = new Set(specs.map((spec) => spec.cacheKey));
-    for (const key of this.bakeStatusByCacheKey.keys()) {
-      if (!activeKeys.has(key)) this.bakeStatusByCacheKey.delete(key);
-    }
-    this.baker.setTargets(specs);
-    this.recomputeBakeStatuses();
+  private submitBakePlan(): void {
+    this.client?.reconcile(this.deps.projectSummary()?.project_id ?? null, session => this.buildBakePlan(session));
   }
 
-  /// On project load: rebuild the in-RAM baked-key index from what's on disk
-  /// (so the resolver's disk-first read fires only for keys that actually have
-  /// frames) and reclaim disk for hash dirs no live key references anymore.
-  /// Fire-and-forget; any fs error is swallowed so it can never block load.
-  ///
-  /// Runs only through `scheduleHydrateBakedIndexAndGc` (serialized, epoch-
-  /// guarded): two overlapping runs could interleave their readDir/remove, and
-  /// a run that computed its live set at T0 would otherwise GC frames a
-  /// concurrent baker write or newer snapshot just made live.
-  ///
-  /// Safety rules for the GC half (see liveRasterKeys.ts for the why):
-  /// 1. Re-pull the user-Motif catalog first — project open can win the race
-  ///    against the boot-time catalog sync, and GC'ing against a stale catalog
-  ///    deletes live frames.
-  /// 2. If ANY motif layer is unresolvable afterwards, skip the GC entirely:
-  ///    "can't resolve" is not "orphaned".
-  /// 3. The live set includes the baker's queued/in-flight target keys, so a
-  ///    hash dir the baker is writing into right now is never collected
-  ///    mid-write.
-  private async hydrateBakedIndexAndGc(): Promise<void> {
-    const summary = this.deps.projectSummary();
-    if (!summary) return;
-    const epoch = this.projectEpoch;
-    // True once a newer project change superseded this run: bail before
-    // touching shared state — the pending re-run redoes the work against the
-    // new snapshot. (sharedBakedKeyIndex is a module singleton, but this guard
-    // is per-Compositor; the preview realm is the only one that runs this.)
-    const stale = () => this.disposed || this.projectEpoch !== epoch;
-    // Preview-realm only: the export Worker has no window/IPC bridge (the
-    // sync would warn-fail) and no L2 to GC (rasterRootDir is null there).
-    if (this.baker) await syncUserMotifsFromBackend();
-    if (stale()) return;
-    const { activeKeys, unresolved } = collectLiveRasterKeys(
-      summary,
-      this.deps.fpsNum(),
-      this.deps.fpsDen(),
-    );
-    sharedBakedKeyIndex.setLiveCandidates(activeKeys);
-    try {
-      const hashes = await sharedMotifFrameCache.listBakedHashes();
-      if (stale()) return; // don't write a stale run's hydration into the index
-      sharedBakedKeyIndex.hydrateFromHashes(hashes);
-      // Read each live content directory once per project opening. Successful
-      // writes extend this inventory; props/source/fps changes mint new keys.
-      for (const key of new Set(activeKeys)) {
-        if (sharedBakedKeyIndex.framesFor(key) !== undefined) continue;
-        if (!sharedBakedKeyIndex.has(key)) {
-          sharedBakedKeyIndex.restoreFrames(key, new Set());
-          continue;
+  private buildBakePlan(session: MotifBakeSession): MotifBakePlan {
+    if (this.generation !== session.generation) {
+      if (manualSession && manualSession.generation === session.generation) {
+        for (const id of this.manualPrebakeLayers) manualSession.layers.add(id);
+        this.manualPrebakeLayers = manualSession.layers;
+      } else {
+        if (this.generation !== null) {
+          this.manualPrebakeLayers.clear();
+          this.pendingRetryLayers.clear();
+          this.pendingPriorityGroups = [];
         }
-        try {
-          const frames = await sharedMotifFrameCache.listPersistedFrames(key);
-          if (stale()) return;
-          sharedBakedKeyIndex.restoreFrames(key, frames);
-        } catch (error) {
-          // Unknown coverage is not empty coverage. The baker's disk checks
-          // remain available when enumeration fails.
-          console.warn("[weftcut/motifs] frame inventory unavailable", error);
-        }
-        if (stale()) return;
+        manualSession = { generation: session.generation, layers: this.manualPrebakeLayers };
       }
-      this.resumeAfterDiskDiscovery();
-      // The index now reflects on-disk frames; recompute so last-session-baked
-      // layers (no live baker status) surface as "ready".
-      this.recomputeBakeStatuses();
-      if (unresolved.length > 0) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/motifs] skipping raster GC: ${unresolved.length} motif id(s) unresolvable ` +
-            `(${unresolved.slice(0, 5).join(", ")}${unresolved.length > 5 ? ", …" : ""}) — ` +
-            `their on-disk frames are kept`,
-        );
-        return;
-      }
-      // Live = the snapshot's active keys ∪ what the baker is queued/writing
-      // RIGHT NOW: a GC computed from activeKeys alone could delete a hash dir
-      // a concurrent bake just created for a newly-targeted content.
-      await sharedMotifFrameCache.gcUnreferenced([
-        ...activeKeys,
-        ...(this.baker?.targetCacheKeys() ?? []),
-      ], () => !stale());
-    } catch (e) {
-      console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
-    } finally {
-      if (!stale()) this.resumeAfterDiskDiscovery();
+      this.generation = session.generation;
+      resetMotifFrameRequests();
+      sharedBakedKeyIndex.clear();
+      if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
+      this.bakeStatusByCacheKey.clear();
     }
+    const summary = this.deps.projectSummary();
+    const plan: MotifBakePlan = { generation: session.generation, contents: [], live: [], collect: true };
+    this.layerBakeRanges.clear();
+    if (!summary) { this.liveCacheKeys = []; return plan; }
+    const fpsNum = this.deps.fpsNum(), fpsDen = this.deps.fpsDen();
+    const { activeKeys, unresolved } = collectLiveRasterKeys(summary, fpsNum, fpsDen);
+    this.liveCacheKeys = [...new Set(activeKeys)];
+    plan.live = this.liveCacheKeys.map(cacheKey => ({ cacheKey, hash: hashCacheKey(cacheKey) }));
+    plan.collect = unresolved.length === 0;
+    const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
+    const retryKeys = new Set<string>();
+    const priorityRanks = new Map<string, number>();
+    const contents = new Map<string, MotifBakePlan['contents'][number]>();
+    const roots = new Set([summary.root_id, this.deps.openCompositionId()]);
+    // A manually requested layer remains demanded even if its timeline closes.
+    for (const [id, comp] of Object.entries(summary.compositions)) {
+      if (comp.tracks.some(track => track.layers.some(layer => this.manualPrebakeLayers.has(layer.id)))) roots.add(id);
+    }
+    const placements: { root: string; rank: number; placed: PlacedLayer }[] = [];
+    for (const [rank, root] of [...roots].entries()) forEachLayer(summary, root, placed => placements.push({ root, rank, placed }));
+    // Stable ties retain track/layer order. The playhead does not reorder baking.
+    placements.sort((a, b) => a.rank - b.rank || a.placed.tStartUs - b.placed.tStartUs);
+    plan.sequence = [];
+    for (const { root, placed } of placements) {
+      const { layer } = placed;
+      if (layer.params.kind !== 'Motif') continue;
+      const view = layer.params;
+      const full = this.manualPrebakeLayers.has(layer.id);
+      if ((!globalOn || (root !== summary.root_id && root !== this.deps.openCompositionId())) && !full) continue;
+      const motif = getMotif(layer.params.motif_id);
+      if (!motif) continue;
+      const durationUs = layer.t_end_us - layer.t_start_us;
+      const local = (time: number) => (placed.clock ? localAt(placed.clock, time) : compositionLocalUs(time - placed.offsetUs, fpsNum, fpsDen)) - layer.t_start_us;
+      const desc = motifFrameDescriptor(layer.params, local(placed.tStartUs), durationUs, fpsNum, fpsDen, motif);
+      if (!desc) continue;
+      if (this.pendingRetryLayers.has(layer.id)) {
+        retryKeys.add(desc.cacheKey);
+        const rank = this.pendingPriorityGroups.findIndex(ids => ids.includes(layer.id));
+        priorityRanks.set(desc.cacheKey, Math.min(priorityRanks.get(desc.cacheKey) ?? Infinity, rank));
+      }
+      // Sample actual root-grid anchors visible through Group trims. The full
+      // content duration remains a render input and cache identity.
+      const firstRoot = Math.ceil(placed.tStartUs * fpsNum / (1_000_000 * fpsDen) - 0.0001);
+      const lastRoot = Math.ceil(placed.tEndUs * fpsNum / (1_000_000 * fpsDen) - 0.0001) - 1;
+      if (!full && lastRoot < firstRoot) continue;
+      const frameAt = (rootFrame: number) => motifFrameDescriptor(view,
+        local(Math.round(rootFrame * 1_000_000 * fpsDen / fpsNum)), durationUs, fpsNum, fpsDen, motif)!.contentFrame;
+      const range = full ? { start: 0, end: desc.contentDurationFrames }
+        : { start: frameAt(firstRoot), end: frameAt(lastRoot) + 1 };
+      if (root === this.deps.openCompositionId()) {
+        const ranges = this.layerBakeRanges.get(layer.id) ?? [];
+        ranges.push(range); this.layerBakeRanges.set(layer.id, ranges);
+      }
+      plan.sequence.push({ cacheKey: desc.cacheKey, ranges: [range] });
+      const existing = contents.get(desc.cacheKey);
+      if (existing) { existing.ranges.push(range); if (full) existing.explicit = true; continue; }
+      contents.set(desc.cacheKey, {
+        ...(full ? { explicit: true } : {}),
+        cacheKey: desc.cacheKey, hash: hashCacheKey(desc.cacheKey),
+        contentFrames: desc.contentDurationFrames, ranges: [range],
+        capture: { motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '',
+          propsJson: JSON.stringify(desc.canonicalProps), width: desc.renderW, height: desc.renderH,
+          settleRafs: motif.manifest.settle_rafs ?? null, fpsNum, fpsDen },
+      });
+    }
+    plan.contents = [...contents.values()];
+    if (retryKeys.size) {
+      plan.retryKeys = [...retryKeys];
+      plan.promoteKeys = [...retryKeys].sort((a, b) => priorityRanks.get(a)! - priorityRanks.get(b)!);
+    }
+    // A user action is one retry submission, even if a project update
+    // supersedes its eventual acknowledgement. Ordinary re-plans cannot reset
+    // the main-owned finite retry budget repeatedly.
+    this.pendingRetryLayers.clear();
+    this.pendingPriorityGroups = [];
+    return plan;
+  }
+
+  private acceptSnapshot(snapshot: MotifBakeSnapshot): void {
+    if (this.disposed || snapshot.generation !== this.generation) return;
+    // Replace inventory because retention can evict frames between snapshots.
+    sharedBakedKeyIndex.clear();
+    // Missing coverage means discovery failed or is still unknown, not that
+    // there are no saved frames. Keep the disk-first probe available for those
+    // live keys; exact empty inventories below still prove actual holes.
+    for (const key of this.liveCacheKeys) {
+      if (!(key in snapshot.coverage)) sharedBakedKeyIndex.add(key);
+    }
+    for (const [key, frames] of Object.entries(snapshot.coverage)) sharedBakedKeyIndex.restoreFrames(key, new Set(frames));
+    this.bakeStatusByCacheKey = new Map(Object.entries(snapshot.statuses));
+    setMotifPreparationCoverage(this.bakeStatusByCacheKey.keys());
+    this.resumeAfterDiskDiscovery();
+    this.recomputeBakeStatuses();
   }
 
   private resumeAfterDiskDiscovery(): void {
-    if (!this.diskDiscoveryPending) return;
     this.diskDiscoveryPending = false;
     sharedBakedKeyIndex.finishHydration();
-    const tUs = this.deps.currentTimeUs();
-    this.updatePrewarmTargets(tUs);
-    this.updateBakeTargets(tUs);
+    this.updatePrewarmTargets(this.deps.currentTimeUs());
     this.recomputeBakeStatuses();
-  }
-
-  /// Kick `hydrateBakedIndexAndGc` with at most one run in flight. A run that
-  /// is already underway is not duplicated; a project change arriving mid-run
-  /// arms a single follow-up so the latest snapshot's hydrate/GC still
-  /// happens. Never re-arms after dispose.
-  private scheduleHydrateBakedIndexAndGc(): void {
-    if (this.hydrateGcRunning) {
-      this.hydrateGcPending = true;
-      return;
-    }
-    this.hydrateGcRunning = true;
-    // Never rejects: hydrate swallows fs errors, and syncUserMotifsFromBackend
-    // swallows IPC ones.
-    void this.hydrateBakedIndexAndGc().finally(() => {
-      this.hydrateGcRunning = false;
-      const again = this.hydrateGcPending;
-      this.hydrateGcPending = false;
-      if (again && !this.disposed) this.scheduleHydrateBakedIndexAndGc();
-    });
   }
 
   /// Build the per-layer bake-status map and publish it to the store. A layer
@@ -517,7 +404,23 @@ export class MotifFrameService {
         view, 0, durationUs, this.deps.fpsNum(), this.deps.fpsDen(), motif,
       );
       if (!desc) return;
-      const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
+      let live = this.bakeStatusByCacheKey.get(desc.cacheKey);
+      const requested = this.layerBakeRanges.get(layer.id);
+      const saved = sharedBakedKeyIndex.framesFor(desc.cacheKey);
+      if (live && requested && saved) {
+        const ranges: MotifFrameRange[] = [];
+        for (const r of [...requested].sort((a, b) => a.start - b.start)) {
+          const last = ranges.at(-1);
+          if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+          else ranges.push({ ...r });
+        }
+        const total = ranges.reduce((n, r) => n + r.end - r.start, 0);
+        let done = 0;
+        for (const frame of saved) if (ranges.some(r => frame >= r.start && frame < r.end)) done++;
+        // A later occurrence of shared content cannot keep a completed clip
+        // looking unfinished. Progress belongs to this clip's requested range.
+        live = done === total ? { phase: 'ready', done, total } : { ...live, done, total };
+      }
       // L0 coverage of this layer's content frames — the "is preview warm"
       // signal that drives the green bar — the cache owns exact O(1) counts,
       // including frames that predate this service (e.g. preview remount).
