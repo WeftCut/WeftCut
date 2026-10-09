@@ -510,11 +510,12 @@ export function App({ onCloseProject }: AppProps) {
   // (defined above) so its import callbacks route through the busy guard +
   // refresh.
   const {
-    importingMediaIds,
-    proxyState,
+    importsById,
+    readinessById,
+    readinessOf,
+    previewDecodableOf,
     proxyStateRef,
     decodeProbeMemo,
-    previewDecodableMediaIds,
     optimizeById,
     importMediaFiles,
   } = useImportReadiness({ summary, run, previewRef });
@@ -1117,11 +1118,6 @@ export function App({ onCloseProject }: AppProps) {
     ),
   );
 
-  const previewDecodableOf = useCallback(
-    (id: string) => decodeProbeMemo.current.get(id) === "ok",
-    [decodeProbeMemo],
-  );
-
   const dockPanelContracts = useMemo<DockPanelContracts>(
     () => ({
       summary,
@@ -1131,9 +1127,9 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      importingMediaIds,
-      proxyState,
-      previewDecodableMediaIds,
+      importsById,
+      readinessById,
+      readinessOf,
       optimizeById,
       onMutated: refresh,
       onImportMedia: importMediaFiles,
@@ -1148,9 +1144,9 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      importingMediaIds,
-      proxyState,
-      previewDecodableMediaIds,
+      importsById,
+      readinessById,
+      readinessOf,
       optimizeById,
       refresh,
       importMediaFiles,

@@ -401,16 +401,12 @@ preview source. The four legal routes, all represented by distinct variants:
   the original via the native software decoder (`SwSourceHandle`) instead.
   See [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
 
-The `Option` payloads express **readiness**: preview is ready when
-`quick_proxy` is `Some`, or the route is `Bypass`; export is ready when
-`full_proxy` is `Some`, or the route is `DirectExport` or `Bypass`. `NativeSw`
-follows `Proxied`'s readiness exactly — the toggle only changes which ready
-path preview reads, not readiness itself. The illegal combination — FullProxy
-export with Original preview — is unrepresentable by construction.
-`resolveDecode(media)` is the single resolver that maps a `DecodeRoute` and
-optional session bridge to `{ previewPath, exportPath }`, replacing ad-hoc
-flag reads at every call site. See
-[ADR 0028](adr/0028-persist-decode-route-as-folded-enum.md).
+The optional route paths record derivative availability on disk.
+`resolveDecode(media)` maps that persisted record to preview/export paths;
+runtime preview engine and source selection use `resolvePreviewSource` and
+`resolveDecodeEngine` (ADR 0030). Media-pool actionability uses that same
+resolution, not the mere presence of a proxy path or a job-completion event.
+See [ADR 0107](adr/0107-actionability-follows-playback-capability.md).
 
 The static import route is intentionally narrow. H.264 and AV1 8-bit,
 browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and
@@ -421,21 +417,20 @@ route-corrects the media by transitioning the route from `DirectExport` to
 `Proxied` and enqueueing a full proxy, and the export waits for the store to
 show a usable path.
 
-Import also runs a session-scoped preview decodability sweep for sources that
-would otherwise be blank until a proxy lands. A successful probe lets preview
-temporarily read the original via `previewPlaybackPathFor(...,
-{ previewDecodable: true })`; this bridge is not persisted and is replaced by
-the quick proxy once it exists. `importOptimizeStatus` classifies the same
-states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or `direct`
-for every pool entry, and the Media Pool card carries the verdict: a corner dot
-while work is outstanding, the codec-named reason in the badge tooltip. It is
-informational — the one state that needs the user to act, `failed`, also reaches
-the status log, because the pool can be hidden behind another dock tab.
+Import probes original-video capability with bounded, per-source tasks.
+Successful evidence permits Lite to use the original immediately. Standard
+uses its native engine admission without waiting for the Lite probe. A verified
+same-content workspace relocation retains evidence, including when summary
+updates coalesce. Replacing content or losing source availability invalidates
+it. The renderer summary carries a verified `content_hash` (null while pending);
+main's `media:source-relocated` event carries an explicit equal-content handoff.
 
-This is a second, orthogonal axis to `mediaReadiness`, which answers "may the
-user drag this?" rather than "is a job still running?". The two stay separate
-functions: a bridged clip is simultaneously fully usable and still optimizing,
-so folding them into one enum would have no state to express it.
+`mediaReadiness` answers whether a source can be placed now. Workspace copy
+progress (waiting/copying/failed) and `importOptimizeStatus` (checking/bridged/
+transcoding/failed/ready/direct) are independent. Copying does not disable an
+otherwise usable card, and job success cannot make an unsupported engine usable.
+The pool reads a readiness snapshot; timeline drops re-check the same authority
+live. First-editable and first-frame-submitted diagnostics remain distinct.
 
 On import the clip appears immediately from a stat-only probe (the item carries
 a provisional `file_hash_blake3`); a lightweight standalone BLAKE3 pass then sets

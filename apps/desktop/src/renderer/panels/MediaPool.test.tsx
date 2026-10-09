@@ -88,9 +88,8 @@ function renderPool(
     ...render(
       <MediaPool
         media={media}
-        importing={new Set()}
-        proxyState={new Map()}
-        previewDecodable={new Set()}
+        importsById={new Map()}
+        readinessById={new Map(media.map(m => [m.id, { ready: true }]))}
         fpsNum={30}
         fpsDen={1}
         onCancelImport={vi.fn().mockResolvedValue(undefined)}
@@ -319,6 +318,7 @@ describe("MediaPool optimize badges", () => {
     media.kind = "Video";
     const { container } = renderPool([media], {
       optimizeById: optimize("waiting-clip", "transcoding"),
+      readinessById: new Map([[media.id, { ready: false, reason: "proxy_pending" }]]),
     });
 
     expect(container.querySelector(".media-proxy-pending-badge")).not.toBeNull();
@@ -569,5 +569,26 @@ describe("Media Pool drop isolation", () => {
     fireEvent(zone, filesDrop);
     expect(filesDrop.defaultPrevented).toBe(true);
     expect(container.querySelector(".media-pool-drop-overlay")).toBeNull();
+  });
+});
+
+
+describe('copy progress is independent of actionability', () => {
+  it.each(['Pending', 'Copying'] as const)('shows %s while keeping the original draggable', kind => {
+    const media = makeMedia('copying-clip', { route: 'bypass' });
+    const { container } = renderPool([media], {
+      importsById: new Map([[media.id, { media_id: media.id, source: media.path, destination_rel: null, status: { kind } }]]),
+    });
+    expect(container.querySelector<HTMLElement>('.media-item')?.draggable).toBe(true);
+    expect(container.querySelector('.media-import-cancel')?.textContent).toBe(kind === 'Pending' ? 'Waiting to copy…' : 'Copying…');
+    expect(container.querySelector('.is-not-placeable')).toBeNull();
+  });
+  it('shows a copy failure without denying a readable original', () => {
+    const media = makeMedia('copying-clip', { route: 'bypass' });
+    const { container } = renderPool([media], {
+      importsById: new Map([[media.id, { media_id: media.id, source: media.path, destination_rel: null, status: { kind: 'Failed', detail: 'disk full' } }]]),
+    });
+    expect(container.querySelector<HTMLElement>('.media-item')?.draggable).toBe(true);
+    expect(container.querySelector('.media-copy-failed')).not.toBeNull();
   });
 });

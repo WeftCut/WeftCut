@@ -1811,6 +1811,22 @@ describe('cutsToTimeline', () => {
 })
 
 describe('applyWorkspacePathsEvent', () => {
+  it('announces a content-preserving handoff only for matching hash and size', () => {
+    for (const matches of [true, false]) {
+      const actor = freshActor();
+      const source = probedItem();
+      actor.dispatch('add_media_item', { media: source });
+      const relocated = vi.fn();
+      applyWorkspacePathsEvent(actor, {
+        media_id: MID, path_abs: 'ws/Media/clip.mp4', path_rel: 'Media/clip.mp4',
+        file_hash_blake3: matches ? source.file_hash_blake3 : 'changed',
+        file_size: source.file_size, file_mtime: 1,
+      }, relocated);
+      expect(relocated).toHaveBeenCalledTimes(matches ? 1 : 0);
+      if (matches) expect(relocated).toHaveBeenCalledWith({ media_id: MID, from: source.path_abs,
+        to: 'ws/Media/clip.mp4', content_hash: source.file_hash_blake3, size_bytes: source.file_size });
+    }
+  });
   it('updates the media item path/rel/hash/size/mtime via the set_media_workspace_paths dispatch', () => {
     const actor = freshActor()
     // Insert the item first (otherwise MediaNotFound).

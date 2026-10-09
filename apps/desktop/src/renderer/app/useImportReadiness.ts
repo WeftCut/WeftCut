@@ -17,11 +17,9 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import {
   classifyWebcodecsDecodability,
-  type WebcodecsDecodeVerdict,
 } from "../render/decoder/probeSourceDecodable";
-import { forgetWebcodecsCapability, isWebcodecsUnusable, markWebcodecsUnusable, resetWebcodecsCapabilitySession } from "../render/decoder/webcodecsCapability";
+import { forgetWebcodecsCapability, markWebcodecsUnusable, resetWebcodecsCapabilitySession } from "../render/decoder/webcodecsCapability";
 import {
-  sourcesNeedingPreviewProbe,
   type ProbeState,
 } from "../render/exportReadiness";
 import {
@@ -32,13 +30,17 @@ import {
 } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useProjectStore } from "../state/projectStore";
+import { PreviewCapabilities } from './previewCapabilities';
+import { MEDIA_SOURCE_RELOCATED, type MediaSourceRelocated } from '../../shared/media-source-relocated';
+import { forgetFfmpegCapability, resetFfmpegCapabilitySession } from '../render/decoder/ffmpegCapability';
+import { resolvePreviewSource, onPreviewResolutionChange } from '../render/decoder/resolvePreviewSource';
 import { resolveDecode } from "../render/decodeRoute";
-import { backgroundResourcesAvailable, onResourceChange, resourcePressure } from "../render/resourceClient";
+import { onResourceChange, resourcePressure } from "../render/resourceClient";
 import { resourceAllocation } from '../../shared/resource-policy';
 import { ImportRequestQueue, importRequestWindow } from './importRequestQueue';
 import { rendererImportDiagnostics } from '../importDiagnostics';
 import { IMPORT_DIAGNOSTIC_TRACK } from '../../shared/import-diagnostics';
-import { mediaReadiness } from '../panels/mediaReadiness';
+import { type MediaReadiness, mediaReadiness } from '../panels/mediaReadiness';
 
 /// Owns the import pipeline + per-media preview readiness: the import queue,
 /// the copying/proxy lifecycle maps, the session decodability probe memo, the
@@ -51,11 +53,12 @@ export function useImportReadiness(deps: {
   run: (action: () => Promise<unknown>) => Promise<void>;
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
 }): {
-  importingMediaIds: Set<string>;
-  proxyState: Map<string, ProxyState>;
+  importsById: ReadonlyMap<string, ImportEntry>;
+  readinessById: ReadonlyMap<string, MediaReadiness>;
+  readinessOf: (id: string) => MediaReadiness;
+  previewDecodableOf: (id: string) => boolean;
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
   decodeProbeMemo: React.MutableRefObject<Map<string, ProbeState>>;
-  previewDecodableMediaIds: Set<string>;
   optimizeById: ReadonlyMap<string, OptimizeInfo>;
   importMediaFiles: () => Promise<void>;
   importPaths: (paths: string[]) => Promise<void>;
@@ -97,9 +100,11 @@ export function useImportReadiness(deps: {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    importQueueList().then(setImportQueue).catch(() => {});
+    let streamed = false;
+    importQueueList().then(entries => { if (!cancelled && !streamed) setImportQueue(entries); }).catch(() => {});
     (async () => {
       const u = await listen<ImportEntry[]>(IMPORT_EVENTS.queue, (e) => {
+        streamed = true;
         setImportQueue(e.payload);
       });
       if (cancelled) {
@@ -114,18 +119,7 @@ export function useImportReadiness(deps: {
     };
   }, []);
 
-  // In-flight = Pending/Copying only. Once an entry moves past those
-  // (Completed/Failed/Cancelled) its path_abs has either landed or never
-  // will, so a copying badge would lie.
-  const importingMediaIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const entry of importQueue) {
-      if (entry.status.kind === "Pending" || entry.status.kind === "Copying") {
-        set.add(entry.media_id);
-      }
-    }
-    return set;
-  }, [importQueue]);
+  const importsById = useMemo(() => new Map(importQueue.map(entry => [entry.media_id, entry])), [importQueue]);
   // Per-video proxy lifecycle for the current session. Filled by the
   // `media:job_*` listener below (proxy / quick_proxy / proxy_bypass)
   // and consulted by
@@ -212,155 +206,72 @@ export function useImportReadiness(deps: {
   // Bumped whenever the sweep mutates decodeProbeMemo/routeCorrected (refs, so
   // they don't re-render on their own) to force the dialog to reclassify.
   const [sweepTick, setSweepTick] = useState(0);
-  const previewDecodableMediaIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const [id, state] of decodeProbeMemo.current) {
-      if (state === "ok") ids.add(id);
-    }
-    return ids;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sweepTick]);
-  useEffect(() => {
-    for (const media of useProjectStore.getState().mediaById.values()) {
-      rendererImportDiagnostics.report(media.id, 'pool_observed');
-      if (mediaReadiness(media, importingMediaIds, proxyState, { previewDecodable: previewDecodableMediaIds.has(media.id) }).ready) {
-        rendererImportDiagnostics.report(media.id, 'editable');
-      }
-    }
-  }, [summary, importingMediaIds, proxyState, previewDecodableMediaIds, diagnosticTick]);
-  // Media_ids whose proxy failure already reached the status log. A failure is
-  // reported once per media per session; the pool badge carries the durable
-  // truth, so re-emitting on every re-render would only flood the log.
   const notifiedFailureIds = useRef<Set<string>>(new Set());
-  const probeIdentities = useRef(new Map<string, string>());
-
-  const [resourceTick, setResourceTick] = useState(0);
+  const [capabilities] = useState(() => new PreviewCapabilities({
+    memo: decodeProbeMemo.current,
+    available: () => !resourcePressure(),
+    probe: (media, signal) => classifyWebcodecsDecodability(convertFileSrc(media.path), 2500, signal,
+      resolvePreviewSource(media, false).status === 'pending'),
+    forget: id => {
+      routeCorrected.current.delete(id);
+      notifiedFailureIds.current.delete(id);
+      forgetWebcodecsCapability(id);
+      forgetFfmpegCapability(id);
+    },
+    verdict: (media, verdict) => {
+      if (verdict !== 'unsupported') return;
+      markWebcodecsUnusable(media.id, 'webcodecs cannot decode original');
+      if (resolveDecode(media).route === 'direct-export') {
+        routeCorrected.current.add(media.id);
+        void ensureFullProxy(media.id).catch(error => console.error('[weftcut] route correction failed', error));
+      }
+    },
+    changed: () => { setSweepTick(n => n + 1); previewRef.current?.refreshSources(); },
+  }));
   useEffect(() => {
-    let available = backgroundResourcesAvailable();
-    return onResourceChange(() => {
-      const next = backgroundResourcesAvailable();
-      // Telemetry publishes repeatedly even when availability is unchanged.
-      // Restarting on every sample would continually abort a slow decoder.
-      if (next !== available) { available = next; setResourceTick((n) => n + 1); }
-    });
-  }, []);
-  useEffect(() => {
-    decodeProbeMemo.current.clear();
+    capabilities.clear();
     routeCorrected.current.clear();
     notifiedFailureIds.current.clear();
     resetWebcodecsCapabilitySession();
+    resetFfmpegCapabilitySession();
     setProxyState(new Map());
-    setSweepTick((n) => n + 1);
-  }, [summary?.project_id]);
-
-  // Probe non-bypass originals independently of proxy readiness. Successful and
-  // unsupported verdicts settle this session; unknown results remain retryable.
-  // Only unsupported DirectExport originals need route correction to a full
-  // proxy. Sequential to avoid competing with preview decoders. Reads
-  // the fresh Zustand pool; re-runs when `summary` changes (every project:changed).
+    setImportQueue([]);
+    return () => capabilities.clear();
+  }, [summary?.project_id, capabilities]);
   useEffect(() => {
-    let cancelled = false;
-    const abort = new AbortController();
-    let pendingId: string | undefined;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    let retryNeeded = false;
-    const memo = decodeProbeMemo.current;
-    const live = useProjectStore.getState().mediaById;
-    for (const [id, identity] of probeIdentities.current) {
-      const media = live.get(id);
-      if (!media || identity !== `${media.path}:${media.size_bytes}`) {
-        memo.delete(id);
-        routeCorrected.current.delete(id);
-        notifiedFailureIds.current.delete(id);
-        forgetWebcodecsCapability(id);
-      }
+    capabilities.update(useProjectStore.getState().mediaById);
+    setSweepTick(n => n + 1);
+  }, [summary, capabilities]);
+  useEffect(() => onResourceChange(capabilities.refresh), [capabilities]);
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen<MediaSourceRelocated>(MEDIA_SOURCE_RELOCATED, e => capabilities.relocate(e.payload))
+      .then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+    return () => { disposed = true; stop?.(); };
+  }, [capabilities]);
+  useEffect(() => onPreviewResolutionChange(() => {
+    setSweepTick(n => n + 1);
+    previewRef.current?.refreshSources();
+  }), [previewRef]);
+  const previewDecodableOf = useCallback((id: string) => {
+    const media = useProjectStore.getState().mediaById.get(id);
+    return !!media && capabilities.decoded(media);
+  }, [capabilities]);
+  const readinessOf = useCallback((id: string): MediaReadiness => {
+    const media = useProjectStore.getState().mediaById.get(id);
+    return media ? mediaReadiness(media, media.kind === 'Video'
+      ? resolvePreviewSource(media, capabilities.decoded(media)) : undefined) : { ready: false, reason: 'missing' };
+  }, [capabilities]);
+  const readinessById = useMemo(() => new Map(
+    [...useProjectStore.getState().mediaById.keys()].map(id => [id, readinessOf(id)]),
+  ), [summary, sweepTick, readinessOf]);
+  useEffect(() => {
+    for (const [id, readiness] of readinessById) {
+      rendererImportDiagnostics.report(id, 'pool_observed');
+      if (readiness.ready) rendererImportDiagnostics.report(id, 'editable');
     }
-    probeIdentities.current = new Map([...live].map(([id, media]) => [id, `${media.path}:${media.size_bytes}`]));
-    for (const id of routeCorrected.current) if (!live.has(id)) routeCorrected.current.delete(id);
-    for (const id of notifiedFailureIds.current) if (!live.has(id)) notifiedFailureIds.current.delete(id);
-    void (async () => {
-      const pool = useProjectStore.getState().mediaById;
-      const candidates = sourcesNeedingPreviewProbe(pool).filter(
-        (m) =>
-          m.available &&
-          memo.get(m.id) !== "ok" &&
-          memo.get(m.id) !== "pending" &&
-          !isWebcodecsUnusable(m.id),
-      );
-      for (const m of candidates) {
-        if (cancelled) return;
-        pendingId = m.id;
-        memo.set(m.id, "pending");
-        let verdict: WebcodecsDecodeVerdict = "unknown";
-        try {
-          verdict = await classifyWebcodecsDecodability(convertFileSrc(m.path), 2500, abort.signal);
-        } catch {
-          verdict = "unknown";
-        }
-        if (cancelled) return;
-        pendingId = undefined;
-        if (verdict === "unknown") retryNeeded = true;
-        const ok = verdict === "ok";
-        // DEFINITIVE WebCodecs-unsupported original (no codec mapping /
-        // isConfigSupported declines both lanes — NOT a transient stall): sticky-
-        // mark it so a pinned-Lite (webcodecs) resolve reaches
-        // status:"unsupported" (surfacing UnsupportedClipCard) instead of hanging
-        // on "pending" forever. Only "unsupported" is marked — a flaky/deadline
-        // "unknown" must never condemn a decodable source. Mirrors the ffmpeg/HW
-        // markers (ffmpegCapability.ts).
-        if (verdict === "unsupported") {
-          markWebcodecsUnusable(m.id, "webcodecs cannot decode original");
-        }
-        // Cleanup removes this effect's pending memo before the next sweep;
-        // cancelled probes must never publish a result into another project.
-        if (ok) {
-          memo.set(m.id, "ok");
-          // A paused clip already on the timeline won't re-run ensureClip on its
-          // own; nudge the compositor to re-run ENGINE resolution now that this
-          // source's WebCodecs-original probe (tier 2) reads "ok" — the resolver
-          // can promote it from the proxy to decoding the original.
-          previewRef.current?.refreshSources();
-        } else {
-          memo.delete(m.id);
-          // A freshly-marked-unsupported original: nudge a re-composite now so
-          // the UnsupportedClipCard surfaces immediately when pinned to Lite,
-          // rather than staying blank/pending until the next seek. (The "ok"
-          // branch above nudges for the promote-to-original case; this nudges
-          // for the newly-unsupported case.)
-          if (verdict === "unsupported") previewRef.current?.refreshSources();
-          // Only DirectExport sources need route-correction (they were
-          // pointing export at an original this machine can't decode). A
-          // full-proxy source that fails the probe already routes correctly;
-          // it just gets no bridge — preview waits for its proxy as before.
-          // "unsupported" ONLY: like the sticky mark above, a transient
-          // "unknown" (probe deadline on a loaded machine) must not demote a
-          // decodable source onto a lossy proxy — it stays direct and the
-          // next sweep re-probes it.
-          if (verdict === "unsupported" && resolveDecode(m).route === "direct-export") {
-            routeCorrected.current.add(m.id);
-            try {
-              await ensureFullProxy(m.id);
-            } catch (e) {
-              console.error("[weftcut] route-correct failed for", m.id, e);
-            }
-          }
-        }
-        // Force the import dialog to reclassify: memo/routeCorrected are refs
-        // and the decodable ("ok") branch fires no store event, so without this
-        // a now-decodable clip would stay stuck on "checking" in the dialog.
-        setSweepTick((x) => x + 1);
-      }
-      if (!cancelled && retryNeeded) {
-        retry = setTimeout(() => setResourceTick((n) => n + 1), 5000);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      clearTimeout(retry);
-      abort.abort();
-      if (pendingId && memo.get(pendingId) === "pending") memo.delete(pendingId);
-    };
-  }, [summary, previewRef, resourceTick]);
+  }, [readinessById, diagnosticTick]);
 
   // Deps recreated each render; they read `.current` refs so they're always
   // live. `sweepTick` is what forces re-eval when only a ref changed.
@@ -470,11 +381,12 @@ export function useImportReadiness(deps: {
   }, [importPaths]);
 
   return {
-    importingMediaIds,
-    proxyState,
+    importsById,
+    readinessById,
+    readinessOf,
+    previewDecodableOf,
     proxyStateRef,
     decodeProbeMemo,
-    previewDecodableMediaIds,
     optimizeById,
     importMediaFiles,
     importPaths,

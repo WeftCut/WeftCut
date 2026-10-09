@@ -656,7 +656,7 @@ app.whenReady().then(async () => {
       // TS actor instead of forwarding to the renderer.
       if (event === 'media:workspace_paths') {
         if (tsHost) {
-          try { applyWorkspacePathsEvent(tsHost.actor, payload as never) }
+          try { applyWorkspacePathsEvent(tsHost.actor, payload as never, proof => emitToRenderer('media:source-relocated', proof)) }
           catch (e) { console.warn('[main] media:workspace_paths write-back threw', e) }
           return
         }

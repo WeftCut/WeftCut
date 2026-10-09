@@ -197,6 +197,8 @@ export interface MediaSummary {
   width: number | null;
   height: number | null;
   size_bytes: number;
+  /// Verified content identity. Null while the initial hash is pending.
+  content_hash?: string | null;
   /// False when path_abs doesn't resolve to a real file. UI surfaces a
   /// "missing source" badge; project still opens; layers referencing the
   /// missing item render placeholders.

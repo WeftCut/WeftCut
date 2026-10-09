@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MediaSummary } from "../ipc";
-import type { DecodeRoute } from "../render/decodeRoute";
-import { mediaReadiness, type ProxyState } from "./mediaReadiness";
+import { mediaReadiness } from "./mediaReadiness";
 
 const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   id: "m1",
@@ -19,168 +19,60 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   ...over,
 });
 
-// Route helpers, named for the preview readiness they encode.
-const proxied = (over: Partial<{ quick_proxy: string | null; full_proxy: string | null }> = {}): DecodeRoute => ({
-  route: "proxied", quick_proxy: over.quick_proxy ?? null, full_proxy: over.full_proxy ?? null, format_version: 1,
+
+vi.mock('../bridge/ipc', () => ({ convertFileSrc: (path: string) => path }));
+import { resolvePreviewSource } from '../render/decoder/resolvePreviewSource';
+import { useAppSettingsStore } from '../settings/appSettingsStore';
+import { useDecodeComponentStore } from '../settings/decodeComponentStore';
+import { useProxyPrefStore } from '../state/proxyPreferenceStore';
+import { markFfmpegUnusable, resetFfmpegCapabilitySession } from '../render/decoder/ffmpegCapability';
+import { markWebcodecsUnusable, resetWebcodecsCapabilitySession } from '../render/decoder/webcodecsCapability';
+
+beforeEach(() => {
+  useAppSettingsStore.setState(s => ({ settings: { ...s.settings, decode_engine: 'auto' } }));
+  useDecodeComponentStore.setState({ available: true });
+  useProxyPrefStore.setState({ preferProxies: false, overrides: {} });
+  resetFfmpegCapabilitySession(); resetWebcodecsCapabilitySession();
 });
-const bypass: DecodeRoute = { route: "bypass" };
-
-const baseAudio = (over: Partial<MediaSummary> = {}): MediaSummary => ({
-  ...baseVideo({ kind: "Audio", width: null, height: null, decode_route: bypass }),
-  ...over,
-});
-
-const emptyImporting = new Set<string>();
-const emptyProxyState = new Map<string, ProxyState>();
-
-describe("mediaReadiness", () => {
-  it("video is ready when the quick proxy on the route is set", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4", full_proxy: "C:/m/clip.proxy.mp4" }) }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
+const ready = (m = baseVideo(), decoded = false) => mediaReadiness(m, resolvePreviewSource(m, decoded));
+describe('actionability shares the actual playback resolution', () => {
+  it('allows Standard on the original before hashing, copying or proxy generation', () => {
+    expect(ready()).toEqual({ ready: true });
   });
-
-  it("video is ready when only the full export master is on disk (preview falls back to it)", () => {
-    // resolveDecode prefers the lighter quick proxy but falls back to the full
-    // master when the quick proxy is absent (e.g. an older import whose quick was
-    // cleaned up) — the full proxy is a scrub-friendly H.264 source, so it's a
-    // valid preview path rather than a blank.
-    const r = mediaReadiness(
-      baseVideo({ decode_route: proxied({ full_proxy: "C:/m/clip.proxy.mp4" }) }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
+  it('Lite waits for actual original evidence, even when a proxy job claims success', () => {
+    useDecodeComponentStore.setState({ available: false });
+    expect(ready()).toEqual({ ready: false, reason: 'proxy_pending' });
+    expect(ready(baseVideo(), true)).toEqual({ ready: true });
   });
-
-  it("video is ready when proxy state map says ready, even without a route path", () => {
-    const r = mediaReadiness(
-      baseVideo(),
-      emptyImporting,
-      new Map([["m1", "ready"]]),
-    );
-    expect(r).toEqual({ ready: true });
+  it('does not confuse persisted proxy paths with user-selected playback sources', () => {
+    useDecodeComponentStore.setState({ available: false });
+    const m = baseVideo({ decode_route: { route: 'direct-export', quick_proxy: '/proxy.mp4' } });
+    expect(ready(m).ready).toBe(false);
+    useProxyPrefStore.setState({ preferProxies: true });
+    expect(ready(m)).toEqual({ ready: true });
   });
-
-  it("video is ready when the route's quick proxy is set", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4" }) }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
+  it('keeps using a playable original while a requested proxy is not yet available', () => {
+    useProxyPrefStore.setState({ preferProxies: true });
+    expect(ready()).toEqual({ ready: true });
   });
-
-  it("video is ready when the route is bypass (original decodes directly)", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: bypass }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
+  it('blocks missing originals even if capability was previously successful', () => {
+    expect(ready(baseVideo({ available: false }), true)).toEqual({ ready: false, reason: 'missing' });
   });
-
-  it("video waits when a DirectExport route has no quick proxy yet", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: { route: "direct-export", quick_proxy: null } }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
+  it('responds to terminal engine failure and falls back to verified Lite', () => {
+    markFfmpegUnusable('m1', 'failed');
+    expect(ready().ready).toBe(false);
+    expect(ready(baseVideo(), true).ready).toBe(true);
+    markWebcodecsUnusable('m1', 'unsupported');
+    expect(ready(baseVideo(), true)).toEqual({ ready: false, reason: 'unsupported' });
   });
-
-  it("video is ready when the preview bridge probe succeeded", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: { route: "direct-export", quick_proxy: null } }),
-      emptyImporting,
-      emptyProxyState,
-      { previewDecodable: true },
-    );
-    expect(r).toEqual({ ready: true });
+  it('respects a pinned engine instead of trusting another engine capability', () => {
+    useAppSettingsStore.setState(s => ({ settings: { ...s.settings, decode_engine: 'webcodecs' } }));
+    expect(ready().ready).toBe(false);
+    useAppSettingsStore.setState(s => ({ settings: { ...s.settings, decode_engine: 'ffmpeg' } }));
+    useDecodeComponentStore.setState({ available: false });
+    expect(ready(baseVideo(), true)).toEqual({ ready: false, reason: 'unsupported' });
   });
-
-  it("video falls back to proxy_pending when no path and no map entry", () => {
-    const r = mediaReadiness(baseVideo(), emptyImporting, emptyProxyState);
-    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
-  });
-
-  it("video is proxy_pending when explicitly pending in map", () => {
-    const r = mediaReadiness(
-      baseVideo(),
-      emptyImporting,
-      new Map([["m1", "pending"]]),
-    );
-    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
-  });
-
-  it("video is proxy_failed when map says failed", () => {
-    const r = mediaReadiness(
-      baseVideo(),
-      emptyImporting,
-      new Map([["m1", "failed"]]),
-    );
-    expect(r).toEqual({ ready: false, reason: "proxy_failed" });
-  });
-
-  it("importing takes precedence over proxy state", () => {
-    const r = mediaReadiness(
-      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4" }) }),
-      new Set(["m1"]),
-      new Map([["m1", "ready"]]),
-    );
-    expect(r).toEqual({ ready: false, reason: "importing" });
-  });
-
-  it("missing takes precedence over proxy state but not importing", () => {
-    const r = mediaReadiness(
-      baseVideo({ available: false }),
-      emptyImporting,
-      new Map([["m1", "ready"]]),
-    );
-    expect(r).toEqual({ ready: false, reason: "missing" });
-  });
-
-  it("importing beats missing", () => {
-    const r = mediaReadiness(
-      baseVideo({ available: false }),
-      new Set(["m1"]),
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: false, reason: "importing" });
-  });
-
-  it("audio is ready once copy is done (no proxy needed)", () => {
-    const r = mediaReadiness(baseAudio(), emptyImporting, emptyProxyState);
-    expect(r).toEqual({ ready: true });
-  });
-
-  it("audio respects importing", () => {
-    const r = mediaReadiness(
-      baseAudio(),
-      new Set(["m1"]),
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: false, reason: "importing" });
-  });
-
-  it("image is ready once copy is done", () => {
-    const r = mediaReadiness(
-      baseVideo({ kind: "Image", duration_us: null, decode_route: bypass }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
-  });
-
-  it("subtitle is ready once copy is done", () => {
-    const r = mediaReadiness(
-      baseVideo({ kind: "Subtitle", duration_us: null, decode_route: bypass }),
-      emptyImporting,
-      emptyProxyState,
-    );
-    expect(r).toEqual({ ready: true });
+  it.each(['Audio', 'Image', 'Subtitle'])('permits available %s without waiting for background files', kind => {
+    expect(mediaReadiness(baseVideo({ kind }))).toEqual({ ready: true });
   });
 });

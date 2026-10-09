@@ -33,7 +33,7 @@ import {
   type TransitionDirection,
   type TransitionSummary,
 } from "../ipc";
-import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
+import { type MediaReadiness } from "../panels/mediaReadiness";
 import { findPanelLayer } from "../panels/panelLayer";
 import { scaleFanOutFor, type ParamTrack } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
@@ -240,17 +240,8 @@ interface TimelineProps {
   /// Snapshot of the current media pool — used by `onMediaDrop` to
   /// validate readiness before lowering the drop to `addMediaLayer`.
   media: MediaSummary[];
-  /// Media that are still copying into the workspace. Cards in this set
-  /// are not interactive in the pool; the drop handler rejects them as
-  /// defence in depth (e.g. status flipping mid-drag, future non-drag
-  /// drop pathways).
-  importing: ReadonlySet<string>;
-  /// Per-video proxy lifecycle from `media:job_*`. Same defence-in-depth
-  /// role at the drop site as `importing`.
-  proxyState: ReadonlyMap<string, ProxyState>;
-  /// Media ids whose original can be used as a session preview bridge while
-  /// optimization is still running.
-  previewDecodable: ReadonlySet<string>;
+  /// Same capability verdict as the media pool; independent of copy progress.
+  readinessOf: (id: string) => MediaReadiness;
   visible?: boolean;
   onExitBlade: () => void;
   /// Park the film at this ROOT moment. A Panel scrubs on its own clock, so it
@@ -282,9 +273,7 @@ export function Timeline({
   fpsDen,
   bladeMode,
   media,
-  importing,
-  proxyState,
-  previewDecodable,
+  readinessOf,
   visible = true,
   onExitBlade,
   onSeek,
@@ -973,9 +962,7 @@ export function Timeline({
         );
         return;
       }
-      const readiness = mediaReadiness(m, importing, proxyState, {
-        previewDecodable: previewDecodable.has(m.id),
-      });
+      const readiness = readinessOf(m.id);
       if (!readiness.ready) {
         console.warn(
           `media drop rejected: ${payload.mediaId} is ${readiness.reason}`,
@@ -1015,11 +1002,9 @@ export function Timeline({
     },
     [
       compositionId,
-      importing,
+      readinessOf,
       media,
       onMutated,
-      previewDecodable,
-      proxyState,
       revealSpawnedTrack,
     ],
   );

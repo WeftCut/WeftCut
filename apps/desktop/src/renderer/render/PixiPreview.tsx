@@ -31,7 +31,6 @@ import {
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
   useDecodeComponentAvailable,
-  useDecodeComponentStore,
 } from "../settings/decodeComponentStore";
 import { containMap } from "../colorpick/pixel";
 import { EffectInputCapture } from './effects/EffectInputCapture';
@@ -51,12 +50,10 @@ import {
   setPreviewFit,
   usePreviewViewStore,
 } from "../state/previewViewStore";
-import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
 } from "./decoder/transports/slotFenceQueue";
-import { proxyIntent } from "../state/proxyPreferenceStore";
-import { resolveDecodeEngine } from "./decoder/decodeEngine";
+import { resolvePreviewSource } from "./decoder/resolvePreviewSource";
 import {
   fitScale,
   fittedCanvasBox,
@@ -65,8 +62,6 @@ import {
   roomFrom,
   type HostBox,
 } from "./decoder/playbackResolution";
-import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
-import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
 import { logEmit, type MediaSummary } from "../ipc";
 import {
@@ -400,35 +395,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
-        const setting = useAppSettingsStore.getState().settings.decode_engine;
-        const componentAvailable = useDecodeComponentStore.getState().available;
-        const qp = quickProxyPath(m);
-        const r = resolveDecodeEngine({
-          setting,
-          componentAvailable,
-          // Gate on availability: intent true but no proxy on disk keeps the
-          // original decoding until a build lands (then the swap key flips).
-          useProxySource: proxyIntent(mediaId) && qp !== null,
-          proxyReady: qp !== null,
-          proxyUrl: qp !== null ? convertFileSrc(qp) : null,
-          originalPath: m.path,
-          // convertFileSrc HERE (the impure edge) so the Compositor + pure
-          // core stay URL-scheme-agnostic.
-          originalUrl: convertFileSrc(m.path),
-          // Session probe memo (App's decodeProbeMemo via the prop) — read
-          // live so a mid-session probe flip feeds the webcodecs×original
-          // branch on the next ensureClip. A sticky "webcodecs-confirmed-
-          // unusable" mark (set by the import sweep on a DEFINITIVE
-          // unsupported-codec verdict, e.g. ProRes) wins as "fail" so a pinned-
-          // Lite decode resolves status:"unsupported" (UnsupportedClipCard)
-          // instead of hanging on "pending"; mirrors the `ffmpegUsable` feed.
-          webcodecsCanDecodeOriginal: isWebcodecsUnusable(mediaId)
-            ? "fail"
-            : (previewDecodableOf?.(mediaId) ?? false)
-              ? "ok"
-              : "untested",
-          ffmpegUsable: !isFfmpegUnusable(mediaId),
-        });
+        const r = resolvePreviewSource(m, previewDecodableOf?.(mediaId) ?? false);
         noteResolution(mediaId, r);
         return r;
       };

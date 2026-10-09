@@ -55,21 +55,6 @@ export function sourcesNeedingPreflight(
   );
 }
 
-/// Available non-bypass originals whose WebCodecs capability needs a verdict.
-/// A landed proxy says nothing about the original: pinned Lite still needs to
-/// resolve the original as supported or unsupported. The sweep owns settled
-/// verdicts and skips them; proxy completion must not remove interrupted probes.
-/// The export gate keeps using the narrower `sourcesNeedingPreflight`.
-export function sourcesNeedingPreviewProbe(
-  mediaById: ReadonlyMap<string, MediaSummary>,
-): MediaSummary[] {
-  return [...mediaById.values()].filter((m) => {
-    if (m.kind !== "Video" || !m.available) return false;
-    const r = resolveDecode(m);
-    return r.route !== "bypass";
-  });
-}
-
 export interface PrepareDeps {
   /// Three-valued decodability verdict for an original
   /// (`classifyWebcodecsDecodability`). Only a DEFINITIVE "unsupported" may

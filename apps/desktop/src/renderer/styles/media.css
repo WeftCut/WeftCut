@@ -514,12 +514,11 @@
 /* The importing / missing status indicators sit on top of the
    thumbnail (inside .media-item-thumb) so the card's name strip stays
    uncluttered. */
-.media-import-cancel {
+.media-import-cancel, .media-copy-failed {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  bottom: calc(5 * var(--ui-px));
+  left: calc(5 * var(--ui-px));
   right: auto;
-  transform: translate(-50%, -50%);
   background: color-mix(in srgb, var(--color-blue-400) 85%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-blue-400) 90%, transparent);
   color: #0a0c10;
@@ -535,6 +534,11 @@
 
 .media-import-cancel:hover {
   background: var(--color-blue-400);
+}
+
+.media-copy-failed {
+  background: var(--destructive);
+  cursor: default;
 }
 
 .media-missing-badge {

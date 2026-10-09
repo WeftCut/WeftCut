@@ -6,7 +6,7 @@
 // docs/render.md#export-source-resolution and docs/data-model.md#mediaitem.
 
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
-import { acquireRenderResources, backgroundResourcesAvailable } from "../resourceClient";
+import { acquireRenderResources, backgroundResourcesAvailable, resourcePressure } from "../resourceClient";
 
 type DecoderLike = Pick<VideoDecoder, "configure" | "decode" | "close" | "flush">;
 
@@ -182,8 +182,9 @@ export function classifyWebcodecsDecodability(
   assetUrl: string,
   deadlineMs = 2500,
   signal?: AbortSignal,
+  interactive = false,
 ): Promise<WebcodecsDecodeVerdict> {
-  if (signal?.aborted || !backgroundResourcesAvailable()) return Promise.resolve("unknown");
+  if (signal?.aborted || resourcePressure() || (!interactive && !backgroundResourcesAvailable())) return Promise.resolve("unknown");
   const key = `${deadlineMs}:${assetUrl}`;
   let task = probes.get(key);
   if (task?.abort.signal.aborted) return Promise.resolve("unknown");

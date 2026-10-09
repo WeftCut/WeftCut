@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   sourcesNeedingPreflight,
-  sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
   createAudioFxTracker,
@@ -20,7 +19,6 @@ import {
   MEDIA_JOB_EVENTS,
   type AudioFxStatusEvent,
   type LayerFxState,
-  type MediaSummary,
 } from "../ipc";
 
 // Route helpers, named for the readiness state they encode.
@@ -46,47 +44,6 @@ describe("sourcesNeedingPreflight", () => {
       ["m4", vid({ id: "m4", kind: "Audio", decode_route: bypass })],
     ]);
     expect(sourcesNeedingPreflight(pool as any).map((m) => m.id)).toEqual(["m1"]);
-  });
-});
-
-describe("sourcesNeedingPreviewProbe", () => {
-  const v = (over: Partial<MediaSummary>): MediaSummary =>
-    ({
-      id: over.id ?? "m",
-      kind: "Video",
-      label: "",
-      path: "/o.mp4",
-      available: true,
-      decode_route: proxied(), // proxied, nothing ready
-      codec: "hevc",
-      pix_fmt: "yuv420p",
-      ...over,
-    }) as MediaSummary;
-
-  const map = (...items: MediaSummary[]) =>
-    new Map(items.map((m) => [m.id, m]));
-
-  it("includes a would-be-blank DirectExport source", () => {
-    const out = sourcesNeedingPreviewProbe(map(v({ id: "a", decode_route: directExport() })));
-    expect(out.map((m) => m.id)).toEqual(["a"]);
-  });
-
-  it("includes a would-be-blank full-proxy/10-bit source (not just DirectExport)", () => {
-    const out = sourcesNeedingPreviewProbe(map(v({ id: "b", pix_fmt: "yuv420p10le" })));
-    expect(out.map((m) => m.id)).toEqual(["b"]);
-  });
-
-  it("keeps original probes eligible after proxies land, excluding bypassed or missing sources", () => {
-    const out = sourcesNeedingPreviewProbe(
-      map(
-        v({ id: "q", decode_route: proxied({ quick_proxy: "/q.mp4" }) }),
-        v({ id: "dq", decode_route: directExport("/q.mp4") }),
-        v({ id: "full", decode_route: proxied({ full_proxy: "/full.mp4" }) }),
-        v({ id: "byp", decode_route: bypass }),
-        v({ id: "gone", available: false }),
-      ),
-    );
-    expect(out.map((m) => m.id)).toEqual(["q", "dq", "full"]);
   });
 });
 

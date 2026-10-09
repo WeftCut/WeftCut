@@ -57,21 +57,3 @@ export function quickProxyPath(media: { decode_route: DecodeRoute }): string | n
     case "native-sw": return r.quick_proxy;
   }
 }
-
-/** Preview path with the non-persisted session bridge layered on: when this
- *  machine confirmed it can decode the original (import probe), the original is
- *  usable until a proxy lands.
- *
- *  NOTE: the RENDER path uses the engine resolver at decode time. This helper
- *  survives as the Media Pool actionability gate (`mediaReadiness.ts`): "is there
- *  any preview source right now?" — a UI-readiness question distinct from engine
- *  tier selection. */
-export function previewPathLive(
-  media: { kind: string; path: string; decode_route: DecodeRoute },
-  opts?: { previewDecodable?: boolean },
-): string | null {
-  const { previewPath } = resolveDecode(media);
-  if (previewPath) return previewPath;
-  if (opts?.previewDecodable) return media.path;
-  return null;
-}

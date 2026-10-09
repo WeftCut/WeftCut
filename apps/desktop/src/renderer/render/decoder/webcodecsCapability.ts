@@ -14,10 +14,11 @@
 /// wrongly condemned. Consumed by `PixiPreview.resolveSource`, which owns what
 /// the mark means for source resolution. Mirrors ffmpegCapability's
 /// `markFfmpegUnusable`/`isFfmpegUnusable`.
+import { notifyDecodeCapabilityChange } from './capabilityChanges';
 const webcodecsUnusable = new Set<string>();
 
 export function markWebcodecsUnusable(mediaId: string, _reason: string): void {
-  webcodecsUnusable.add(mediaId);
+  if (!webcodecsUnusable.has(mediaId)) { webcodecsUnusable.add(mediaId); notifyDecodeCapabilityChange(); }
 }
 
 export function isWebcodecsUnusable(mediaId: string): boolean {
@@ -25,10 +26,10 @@ export function isWebcodecsUnusable(mediaId: string): boolean {
 }
 
 export function forgetWebcodecsCapability(mediaId: string): void {
-  webcodecsUnusable.delete(mediaId);
+  if (webcodecsUnusable.delete(mediaId)) notifyDecodeCapabilityChange();
 }
 
 /// Test/e2e hook: forget session verdicts (used by webcodecsCapability.test.ts).
 export function resetWebcodecsCapabilitySession(): void {
-  webcodecsUnusable.clear();
+  if (webcodecsUnusable.size) { webcodecsUnusable.clear(); notifyDecodeCapabilityChange(); }
 }

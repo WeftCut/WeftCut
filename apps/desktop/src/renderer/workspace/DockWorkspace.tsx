@@ -65,10 +65,11 @@ import {
   importCancel,
   restackLayer,
   updateLayer,
+  type ImportEntry,
   type KeybindingsMap,
   type ProjectSummary,
 } from "../ipc";
-import { type ProxyState } from "../panels/mediaReadiness";
+import { type MediaReadiness } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { bumpPreviewLayoutEpoch } from "../preview/layoutRectCache";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
@@ -126,9 +127,9 @@ export interface DockPanelContracts {
   previewDecodableOf: (mediaId: string) => boolean;
   revealedTrackId: string | null;
   keybindings: KeybindingsMap;
-  importingMediaIds: ReadonlySet<string>;
-  proxyState: ReadonlyMap<string, ProxyState>;
-  previewDecodableMediaIds: ReadonlySet<string>;
+  importsById: ReadonlyMap<string, ImportEntry>;
+  readinessById: ReadonlyMap<string, MediaReadiness>;
+  readinessOf: (id: string) => MediaReadiness;
   optimizeById: ReadonlyMap<string, OptimizeInfo>;
   onMutated: () => Promise<void>;
   onImportMedia: () => Promise<void>;
@@ -225,12 +226,11 @@ function MediaDockPanel() {
     <MediaDropZone>
       <MediaPool
         media={summary?.media ?? []}
-        importing={contracts.importingMediaIds}
-        proxyState={contracts.proxyState}
-        previewDecodable={contracts.previewDecodableMediaIds}
+        readinessById={contracts.readinessById}
         optimizeById={contracts.optimizeById}
         fpsNum={comp?.fps_num ?? 30}
         fpsDen={comp?.fps_den ?? 1}
+        importsById={contracts.importsById}
         onCancelImport={async (id) => {
           await importCancel(id).catch(() => false);
         }}
@@ -284,9 +284,7 @@ function TimelineDockPanel() {
         fpsDen={comp?.fps_den ?? 1}
         bladeMode={bladeMode}
         media={summary?.media ?? []}
-        importing={contracts.importingMediaIds}
-        proxyState={contracts.proxyState}
-        previewDecodable={contracts.previewDecodableMediaIds}
+        readinessOf={contracts.readinessOf}
         visible={runtime.isVisible}
         onExitBlade={() => setTool("select")}
         onSeek={contracts.onSeek}

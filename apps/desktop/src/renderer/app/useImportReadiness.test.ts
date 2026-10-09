@@ -2,8 +2,8 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MediaSummary, ProjectSummary } from "../ipc";
-const mocks = vi.hoisted(() => ({ probe: vi.fn(), proxy: vi.fn(), import: vi.fn(), pool: new Map(), listeners: new Map<string, (event: unknown) => void>() }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), probe: vi.fn(), proxy: vi.fn(), import: vi.fn(), pool: new Map(), listeners: new Map<string, (event: unknown) => void>() }));
+vi.mock("react-i18next", async original => ({ ...await original<typeof import("react-i18next")>(), useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@/bridge/ipc", () => ({ convertFileSrc: (path: string) => path }));
 vi.mock("@/bridge/dialog", () => ({ open: vi.fn() }));
 vi.mock("@/bridge/events", () => ({ listen: async (name: string, callback: (event: unknown) => void) => {
@@ -12,7 +12,7 @@ vi.mock("@/bridge/events", () => ({ listen: async (name: string, callback: (even
 } }));
 vi.mock("../ipc", () => ({
   IMPORT_EVENTS: { queue: 'queue' }, MEDIA_JOB_EVENTS: { started: 'start', complete: 'complete', error: 'error' },
-  importQueueList: async () => [], ensureFullProxy: mocks.proxy, importMedia: mocks.import, logEmit: vi.fn(),
+  importQueueList: mocks.list, ensureFullProxy: mocks.proxy, importMedia: mocks.import, logEmit: vi.fn(),
 }));
 vi.mock("../state/projectStore", () => ({ useProjectStore: { getState: () => ({ mediaById: mocks.pool }) } }));
 vi.mock("../render/decoder/probeSourceDecodable", () => ({ classifyWebcodecsDecodability: mocks.probe }));
@@ -29,6 +29,8 @@ const previewRef = { current: null };
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetAllMocks();
+  mocks.proxy.mockResolvedValue(undefined);
+  mocks.list.mockResolvedValue([]);
   capability.resetWebcodecsCapabilitySession();
   vi.spyOn(capability, 'markWebcodecsUnusable');
   vi.spyOn(resourcePolicy, 'resourceAllocation').mockReturnValue({
@@ -157,6 +159,37 @@ describe('batch import', () => {
 });
 
 describe('import probe scope', () => {
+  it('rechecks the live source at drop time even before a new UI snapshot renders', async () => {
+    mocks.probe.mockResolvedValue('ok');
+    const project = summary('a');
+    const hook = renderHook(() => useImportReadiness({ summary: project, run, previewRef }));
+    await act(async () => {});
+    const atDrop = hook.result.current.readinessOf;
+    expect(atDrop('shared-id')).toEqual({ ready: true });
+    mocks.pool.set('shared-id', { ...media('a.mov'), available: false });
+    expect(atDrop('shared-id')).toEqual({ ready: false, reason: 'missing' });
+    expect(hook.result.current.readinessById.get('shared-id')).toEqual({ ready: true });
+  });
+  it('keeps a decoded original actionable when its workspace copy enters the queue', async () => {
+    mocks.probe.mockResolvedValue('ok');
+    const project = summary('a');
+    const hook = renderHook(() => useImportReadiness({ summary: project, run, previewRef }));
+    await act(async () => {});
+    await act(async () => { mocks.listeners.get('queue')!({ payload: [{ media_id: 'shared-id', status: { kind: 'Copying' } }] }); });
+    expect(hook.result.current.readinessById.get('shared-id')).toEqual({ ready: true });
+  });
+
+  it('retains successful decode evidence across a same-content workspace copy', async () => {
+    mocks.pool.set('shared-id', { ...media('a.mov'), content_hash: 'verified-content' });
+    mocks.probe.mockResolvedValueOnce('ok').mockImplementation(() => new Promise(() => {}));
+    const hook = renderHook(({ project }) => useImportReadiness({ summary: project, run, previewRef }), { initialProps: { project: summary('a') } });
+    await act(async () => {});
+    mocks.pool.set('shared-id', { ...media('project/Media/a.mov'), content_hash: 'verified-content' });
+    hook.rerender({ project: summary('a') });
+    expect(hook.result.current.decodeProbeMemo.current.get('shared-id')).toBe('ok');
+    expect(mocks.probe).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels obsolete sweeps without publishing unsupported into the next project', async () => {
     const pending: { resolve: (verdict: string) => void; signal: AbortSignal }[] = [];
     mocks.probe.mockImplementation((_path, _deadline, signal) => new Promise((resolve) => pending.push({ resolve, signal })));
@@ -189,7 +222,7 @@ describe('import probe scope', () => {
     expect(mocks.probe).toHaveBeenCalledTimes(3);
   });
 
-  it('finishes original capability after a proxy interrupts the probe and retains the verdict', async () => {
+  it('keeps the original probe running across proxy completion and retains its verdict', async () => {
     const pending: { resolve: (verdict: string) => void; signal: AbortSignal }[] = [];
     mocks.probe.mockImplementation((_path, _deadline, signal) => new Promise((resolve) => pending.push({ resolve, signal })));
     const refreshSources = vi.fn();
@@ -201,21 +234,35 @@ describe('import probe scope', () => {
     // probe is pending. Use the real route selector and capability store.
     mocks.pool.set('shared-id', { ...media('a.mov'), decode_route: { route: 'direct-export', quick_proxy: '/quick.mp4' } });
     hook.rerender({ project: summary('a') });
-    expect(pending[0]!.signal.aborted).toBe(true);
-    expect(pending).toHaveLength(2);
-    await act(async () => { pending[0]!.resolve('ok'); pending[1]!.resolve('unsupported'); });
+    expect(pending[0]!.signal.aborted).toBe(false);
+    expect(pending).toHaveLength(1);
+    await act(async () => { pending[0]!.resolve('unsupported'); });
     expect(capability.isWebcodecsUnusable('shared-id')).toBe(true);
     expect(mocks.proxy).toHaveBeenCalledTimes(1);
-    expect(refreshSources).toHaveBeenCalledTimes(1);
+    expect(refreshSources).toHaveBeenCalled();
     expect(hook.result.current.decodeProbeMemo.current.has('shared-id')).toBe(false);
     hook.rerender({ project: summary('a') });
-    expect(pending).toHaveLength(2);
+    expect(pending).toHaveLength(1);
     // Replacing the original invalidates even an unsupported verdict.
     mocks.pool.set('shared-id', media('replacement.mov'));
     hook.rerender({ project: summary('a') });
     expect(capability.isWebcodecsUnusable('shared-id')).toBe(false);
-    expect(pending).toHaveLength(3);
-    await act(async () => { pending[2]!.resolve('ok'); });
+    expect(pending).toHaveLength(2);
+    await act(async () => { pending[1]!.resolve('ok'); });
     expect(hook.result.current.decodeProbeMemo.current.get('shared-id')).toBe('ok');
+  });
+});
+
+
+describe('copy queue bootstrap', () => {
+  it('does not overwrite a streamed completion with a stale initial query', async () => {
+    mocks.pool.clear();
+    let reply!: (entries: unknown[]) => void;
+    mocks.list.mockImplementation(() => new Promise(resolve => { reply = resolve; }));
+    const project = summary('a');
+    const hook = renderHook(() => useImportReadiness({ summary: project, run, previewRef }));
+    await act(async () => { mocks.listeners.get('queue')!({ payload: [{ media_id: 'a', status: { kind: 'Completed' } }] }); });
+    await act(async () => { reply([{ media_id: 'a', status: { kind: 'Pending' } }]); });
+    expect(hook.result.current.importsById.get('a')?.status.kind).toBe('Completed');
   });
 });

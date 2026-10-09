@@ -146,9 +146,8 @@ function renderPool(media: MediaSummary[] = []) {
     ...render(
       <MediaPool
         media={media}
-        importing={new Set()}
-        proxyState={new Map()}
-        previewDecodable={new Set()}
+        importsById={new Map()}
+        readinessById={new Map(media.map(m => [m.id, { ready: true }]))}
         fpsNum={30}
         fpsDen={1}
         onCancelImport={vi.fn().mockResolvedValue(undefined)}

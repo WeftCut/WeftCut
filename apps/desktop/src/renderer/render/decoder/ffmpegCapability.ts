@@ -6,6 +6,7 @@
 // maps/sets.
 import type { FfmpegLane } from "./decodeEngine";
 import { hwEligibleOnAnyLane } from "../../../shared/hwLaneEligibility";
+import { notifyDecodeCapabilityChange } from './capabilityChanges';
 
 /// TWIN of main's `classKeyOf` (src/main/decode-capability.ts) — MUST produce a
 /// BYTE-IDENTICAL format string so a renderer-derived key hits the exact cache
@@ -52,7 +53,12 @@ export function markHwUnusable(mediaId: string, _reason: string): void {
 const ffmpegUnusable = new Set<string>();
 
 export function markFfmpegUnusable(mediaId: string, _reason: string): void {
-  ffmpegUnusable.add(mediaId);
+  if (!ffmpegUnusable.has(mediaId)) { ffmpegUnusable.add(mediaId); notifyDecodeCapabilityChange(); }
+}
+
+export function forgetFfmpegCapability(mediaId: string): void {
+  hwUnusable.delete(mediaId);
+  if (ffmpegUnusable.delete(mediaId)) notifyDecodeCapabilityChange();
 }
 
 export function isFfmpegUnusable(mediaId: string): boolean {
@@ -130,4 +136,5 @@ export async function pickInitialLane(
 export function resetFfmpegCapabilitySession(): void {
   hwUnusable.clear();
   ffmpegUnusable.clear();
+  notifyDecodeCapabilityChange();
 }

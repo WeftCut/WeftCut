@@ -51,9 +51,11 @@ export interface MediaWorkspacePathsEvent {
  *  MediaNotFound is benign (the media may have been removed between import
  *  and copy-completion) — logged, not thrown. */
 export function applyWorkspacePathsEvent(
-  actor: Pick<ActorHandle, 'dispatch'>,
+  actor: Pick<ActorHandle, 'dispatch' | 'snapshot'>,
   payload: MediaWorkspacePathsEvent,
+  relocated?: (proof: import('../../shared/media-source-relocated').MediaSourceRelocated) => void,
 ): DispatchResult {
+  const previous = actor.snapshot().media_pool[payload.media_id];
   const r = actor.dispatch('set_media_workspace_paths', {
     media: payload.media_id,
     paths: {
@@ -66,6 +68,10 @@ export function applyWorkspacePathsEvent(
   })
   if (!r.ok) {
     console.warn(`[jobs-writeback] set_media_workspace_paths failed for ${payload.media_id}: ${r.error.error}`)
+  }
+  if (r.ok && previous && previous.file_hash_blake3 === payload.file_hash_blake3 && previous.file_size === payload.file_size) {
+    relocated?.({ media_id: payload.media_id, from: previous.path_abs, to: payload.path_abs,
+      content_hash: payload.file_hash_blake3, size_bytes: payload.file_size });
   }
   return r
 }

@@ -16,7 +16,7 @@ import {
   type PoolMenuTarget,
 } from "./PoolContextMenu";
 import { MediaThumbnail } from "./MediaThumbnail";
-import { mediaReadiness, type ProxyState } from "./mediaReadiness";
+import { PREPARING_MEDIA, type MediaReadiness } from "./mediaReadiness";
 import { isOptimizing, type OptimizeInfo } from "./importOptimize";
 import { RenameGroupDialog } from "./RenameGroupDialog";
 import {
@@ -44,6 +44,7 @@ import { AppInput } from "../components/AppInput";
 import { Button } from "../components/ui/button";
 import {
   type MediaPoolLayout,
+  type ImportEntry,
   type MediaSummary,
   type ProjectSummary,
   compositionsDelete,
@@ -240,9 +241,8 @@ export function MediaDropZone({ children }: { children: React.ReactNode }) {
 
 export function MediaPool({
   media,
-  importing,
-  proxyState,
-  previewDecodable,
+  importsById,
+  readinessById,
   optimizeById,
   fpsNum,
   fpsDen,
@@ -251,9 +251,8 @@ export function MediaPool({
   onImportMedia,
 }: {
   media: MediaSummary[];
-  importing: ReadonlySet<string>;
-  proxyState: ReadonlyMap<string, ProxyState>;
-  previewDecodable: ReadonlySet<string>;
+  importsById: ReadonlyMap<string, ImportEntry>;
+  readinessById: ReadonlyMap<string, MediaReadiness>;
   /// Pool-wide optimization verdicts from useImportReadiness. Drives the
   /// background-optimizing dot and the codec-named reason in badge tooltips.
   optimizeById?: ReadonlyMap<string, OptimizeInfo>;
@@ -365,14 +364,8 @@ export function MediaPool({
     ? (media.find((candidate) => candidate.id === mediaTarget.mediaId) ?? null)
     : null;
   const contextReadiness = contextMedia
-    ? mediaReadiness(contextMedia, importing, proxyState, {
-        previewDecodable: previewDecodable.has(contextMedia.id),
-      })
+    ? (readinessById.get(contextMedia.id) ?? PREPARING_MEDIA)
     : null;
-  const contextReason =
-    contextReadiness && !contextReadiness.ready
-      ? contextReadiness.reason
-      : null;
   const contextOverride = contextMedia
     ? proxyOverrides[contextMedia.id]
     : undefined;
@@ -412,14 +405,17 @@ export function MediaPool({
     };
   } else if (contextMedia && contextReadiness) {
     const m = contextMedia;
+    const copyStatus = importsById.get(m.id)?.status.kind;
     menuTarget = {
       kind: "media",
       media: m,
       proxyMode: contextProxyMode,
-      canSetProxy: contextReason !== "importing",
-      canAnalyze: contextReadiness.ready,
+      // Artifact-producing actions need the final cache key, independently of
+      // whether the original is already playable.
+      canSetProxy: m.content_hash !== null,
+      canAnalyze: contextReadiness.ready && m.content_hash !== null,
       analyzing: analyzingId === m.id,
-      canRemove: contextReason !== "importing",
+      canRemove: copyStatus !== 'Pending' && copyStatus !== 'Copying',
       onProxyModeChange: (mode) => {
         closeMenu();
         const next = mode === "auto" ? null : mode === "proxy" ? true : false;
@@ -592,9 +588,9 @@ export function MediaPool({
                 );
               }
               const m = item.media;
-              const readiness = mediaReadiness(m, importing, proxyState, {
-                previewDecodable: previewDecodable.has(m.id),
-              });
+              const readiness = readinessById.get(m.id) ?? PREPARING_MEDIA;
+              const copyStatus = importsById.get(m.id)?.status;
+              const copying = copyStatus?.kind;
               const interactive = readiness.ready;
               const reason = readiness.ready ? null : readiness.reason;
               // Optimization is the second, orthogonal axis: `readiness`
@@ -627,10 +623,9 @@ export function MediaPool({
                     // `.media-item.is-not-placeable`. The reason classes below
                     // stay because each dresses its OWN badge.
                     interactive ? "" : "is-not-placeable",
-                    reason === "importing" ? "is-importing" : "",
                     reason === "missing" ? "is-missing" : "",
                     reason === "proxy_pending" ? "is-proxy-pending" : "",
-                    reason === "proxy_failed" ? "is-proxy-failed" : "",
+                    reason === "unsupported" ? "is-proxy-failed" : "",
                     flashId === m.id ? "is-search-flash" : "",
                     selected ? "is-selected" : "",
                   ]
@@ -702,11 +697,11 @@ export function MediaPool({
                                 defaultValue: "Preview is being prepared…",
                               }),
                             )
-                          : reason === "proxy_failed"
+                          : reason === "unsupported"
                             ? withReason(
-                                t("media_pool.proxy_failed_hint", {
+                                t("media_pool.unsupported_hint", {
                                   defaultValue:
-                                    "Preview could not be prepared. Re-import to retry.",
+                                    "Switch decode engines in Settings or use an available proxy.",
                                 }),
                               )
                             : t("media_pool.importing")
@@ -733,7 +728,7 @@ export function MediaPool({
                           : t("media_pool.no_duration")}
                       </span>
                     </div>
-                    {reason === "importing" && (
+                    {(copying === "Pending" || copying === "Copying") && (
                       <button
                         type="button"
                         className="media-import-cancel"
@@ -743,8 +738,11 @@ export function MediaPool({
                         }}
                         title={t("media_pool.importing_cancel_hint")}
                       >
-                        {t("media_pool.importing")}
+                        {t(copying === "Pending" ? "media_pool.copy_pending" : "media_pool.importing")}
                       </button>
+                    )}
+                    {copying === "Failed" && (
+                      <span className="media-copy-failed" title={copyStatus?.kind === 'Failed' ? copyStatus.detail : undefined}>{t('media_pool.copy_failed')}</span>
                     )}
                     {reason === "missing" && (
                       <span
@@ -768,18 +766,18 @@ export function MediaPool({
                         })}
                       </span>
                     )}
-                    {reason === "proxy_failed" && (
+                    {reason === "unsupported" && (
                       <span
                         className="media-proxy-failed-badge"
                         title={withReason(
-                          t("media_pool.proxy_failed_hint", {
+                          t("media_pool.unsupported_hint", {
                             defaultValue:
-                              "Preview could not be prepared. Re-import to retry.",
+                              "Switch decode engines in Settings or use an available proxy.",
                           }),
                         )}
                       >
-                        {t("media_pool.proxy_failed", {
-                          defaultValue: "Preview failed",
+                        {t("media_pool.unsupported", {
+                          defaultValue: "Engine unsupported",
                         })}
                       </span>
                     )}

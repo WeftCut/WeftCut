@@ -236,11 +236,11 @@ impl ImportQueue {
     }
 
     fn emit_queue(&self) {
-        let snapshot = self.list();
-        let events = self
-            .inner
-            .lock()
-            .unwrap()
+        // Serialize snapshot and publication together: concurrent enqueue and
+        // completion must never publish an older snapshot after a newer one.
+        let guard = self.inner.lock().expect("import queue poisoned");
+        let snapshot = guard.history.clone();
+        let events = guard
             .cache
             .as_ref()
             .map(|cache| cache.scoped_events(self.events.clone()))
@@ -285,19 +285,7 @@ impl ImportQueue {
                     cancel: cancel.clone(),
                     cancel_wake: cancel_wake.clone(),
                 });
-                if let Some(entry) = guard
-                    .history
-                    .iter_mut()
-                    .rev()
-                    .find(|e| e.media_id == media_id.to_string())
-                {
-                    entry.status = ImportStatus::Copying;
-                }
             }
-            events.emit(
-                events::STARTED,
-                serde_json::json!({ "mediaId": media_id.to_string() }),
-            );
             // Status-log producer: pair Started/Ok-Err on the same
             // op_id so the console collapses the lifecycle.
             let log_op_id = uuid::Uuid::now_v7();
@@ -332,6 +320,25 @@ impl ImportQueue {
                 // must not acquire another job slot: on a one-slot allocation
                 // that would wait for the very lease held by this caller.
                 let _permit = permit;
+                if cancel.load(Ordering::Acquire) {
+                    return Ok(None);
+                }
+                {
+                    let mut guard = self.inner.lock().expect("import queue poisoned");
+                    if let Some(entry) = guard
+                        .history
+                        .iter_mut()
+                        .rev()
+                        .find(|entry| entry.media_id == media_id.to_string())
+                    {
+                        entry.status = ImportStatus::Copying;
+                    }
+                }
+                self.emit_queue();
+                events.emit(
+                    events::STARTED,
+                    serde_json::json!({ "mediaId": media_id.to_string() }),
+                );
                 next.timer.start();
                 let copy = copy_to_workspace(&next.source, &next.workspace_root, cancel.clone());
                 tokio::pin!(copy);
@@ -732,6 +739,10 @@ mod tests {
             cache.clone(),
         );
         wait_until(|| crate::resources::background_diagnostic_state()["waiting"] == 1).await;
+        assert!(queue.list().iter().any(|entry| {
+            entry.media_id == cancelled_id.to_string()
+                && matches!(entry.status, ImportStatus::Pending)
+        }));
         assert!(queue.cancel(cancelled_id));
         wait_until(|| {
             queue.list().iter().any(|e| {

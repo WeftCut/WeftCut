@@ -104,6 +104,12 @@ the component's ffmpeg changes. A property of the machine, never of a
 project.
 _Avoid_: session bridge, decode memo
 
+**Media actionability**:
+Whether a source can be placed on the timeline now, using an available source
+and the current Decode engine resolution. Independent of workspace-copy and
+optimization progress. Session capability survives verified same-content
+relocation, but not source replacement or real decode failure (ADR 0107).
+
 ## Transitions
 
 **Transition direction**:

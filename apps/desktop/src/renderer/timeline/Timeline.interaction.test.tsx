@@ -318,9 +318,7 @@ function renderTimeline(overrides: {
       fpsDen={overrides.fpsDen ?? 1}
       bladeMode={overrides.bladeMode ?? false}
       media={overrides.media ?? []}
-      importing={new Set()}
-      proxyState={new Map()}
-      previewDecodable={new Set()}
+      readinessOf={() => ({ ready: true })}
       onExitBlade={vi.fn()}
       onSeek={onSeek}
       onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
@@ -4540,9 +4538,7 @@ describe("Timeline playhead projection", () => {
         fpsDen={1}
         bladeMode={false}
         media={[]}
-        importing={new Set()}
-        proxyState={new Map()}
-        previewDecodable={new Set()}
+        readinessOf={() => ({ ready: true })}
         onExitBlade={vi.fn()}
         onSeek={onSeek}
         onMutated={vi.fn().mockResolvedValue(undefined)}
@@ -4905,9 +4901,7 @@ describe("Timeline move promise", () => {
       fpsDen: 1,
       bladeMode: false,
       media: [],
-      importing: new Set<string>(),
-      proxyState: new Map(),
-      previewDecodable: new Set<string>(),
+      readinessOf: () => ({ ready: true as const }),
       onExitBlade: vi.fn(),
       onSeek: vi.fn(),
       onMutated: vi.fn().mockResolvedValue(undefined),

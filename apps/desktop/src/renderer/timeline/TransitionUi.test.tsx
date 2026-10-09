@@ -131,9 +131,7 @@ function renderTimeline(overrides: {
       fpsDen={1}
       bladeMode={false}
       media={[]}
-      importing={new Set()}
-      proxyState={new Map()}
-      previewDecodable={new Set()}
+      readinessOf={() => ({ ready: true })}
       onExitBlade={vi.fn()}
       onSeek={vi.fn()}
       onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
@@ -454,9 +452,7 @@ describe("chip two-edge drag (spec D6)", () => {
         fpsDen={1}
         bladeMode
         media={[]}
-        importing={new Set()}
-        proxyState={new Map()}
-        previewDecodable={new Set()}
+        readinessOf={() => ({ ready: true })}
         onExitBlade={vi.fn()}
         onSeek={vi.fn()}
         onMutated={vi.fn().mockResolvedValue(undefined)}
