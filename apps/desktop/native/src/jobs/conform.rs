@@ -115,7 +115,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut child = crate::ffmpeg::command()
+    let mut child = crate::ffmpeg::command_with_threads(1)
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the shared temp; see
         // hwaccel.rs.
@@ -124,6 +124,8 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         .arg(&media.path_abs)
         .args([
             "-vn",
+            "-threads",
+            "1",
             "-ac",
             &out_channels.to_string(),
             "-ar",

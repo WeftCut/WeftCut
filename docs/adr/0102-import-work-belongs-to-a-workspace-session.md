@@ -30,6 +30,26 @@ global resource ledger; task count alone must not turn a valid import into a
 permanent queue-overflow failure. Metadata probes and source hashing also pass
 through admission.
 
+User-visible import preparation (metadata, source hash, GOP probe, canonical
+audio and waveform) shares a FIFO single-operation lane. It claims one CPU
+thread and 128 MiB from the same authority, using the interactive reserve so
+long transcodes and paused background admission during playback cannot starve
+it. Pressure, memory limits and export finalization priority still apply;
+single-thread codec commands match the claim. Proxies, thumbnails and workspace
+copies retain background admission.
+
+The UI keeps one rolling request queue across picker/drop selections. Its
+lookahead window is bounded by the smaller of allocated CPU slots and the number
+of 128-MiB preparation claims the working-memory allowance could hold (at least
+one request). This is a conservative backpressure policy, not a measured optimum
+or a second execution scheduler; native admission remains authoritative. A
+completion immediately admits another path without waiting for its selection's
+slowest file. Selections share capacity and rotate fairly. Allocation changes
+resize the window, while memory pressure stops new submissions until it clears.
+Failure stops the affected selection's unsent paths and drains its active
+siblings before reporting the error. Workspace change (including same-project
+reopen) retires all obsolete unsent paths.
+
 Waveform construction spools levels to disk with bounded buffers. Compatible
 48 kHz mono/stereo inputs reuse canonical audio conforms; other input formats
 retain source decoding to preserve existing waveform values. Renderer posters

@@ -443,7 +443,7 @@ impl Backend {
         );
         let metadata_json = crate::jobs::singleflight::source(&cache, &buf, "probe", async {
             let _permit = tokio::select! {
-                permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
+                permit = crate::resources::import_preparation() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
             timer.start();
@@ -491,7 +491,7 @@ impl Backend {
         );
         let hash = crate::jobs::singleflight::source(&cache, &buf, "hash", async {
             let permit = tokio::select! {
-                permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
+                permit = crate::resources::import_preparation() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
             timer.start();

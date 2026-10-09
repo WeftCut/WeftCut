@@ -939,7 +939,11 @@ app.whenReady().then(async () => {
   })
 
   tsHost = createTsActorHost({
-    onWorkspaceChanging: () => { importDiagnostics?.reset(); audioFxBaker?.suspend() },
+    onWorkspaceChanging: () => {
+      emitToRenderer('project:workspace-changing', {})
+      importDiagnostics?.reset()
+      audioFxBaker?.suspend()
+    },
     beginImport: () => importDiagnostics!.begin(),
     onWorkspaceOpened: () => audioFxBaker?.reset(),
     send: (event, payload) => emitToRenderer(event, payload),

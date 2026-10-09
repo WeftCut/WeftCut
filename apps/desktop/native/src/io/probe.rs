@@ -130,6 +130,8 @@ pub async fn probe_metadata_scoped(
     command
         .no_console_window()
         .args([
+            "-threads",
+            "1",
             "-v",
             "quiet",
             "-print_format",
@@ -176,6 +178,8 @@ pub async fn probe_max_keyframe_gap_secs_scoped(
     let command = command
         .no_console_window()
         .args([
+            "-threads",
+            "1",
             "-v",
             "error",
             "-select_streams",

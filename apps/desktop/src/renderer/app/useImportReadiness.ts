@@ -33,7 +33,9 @@ import {
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
-import { backgroundResourcesAvailable, onResourceChange } from "../render/resourceClient";
+import { backgroundResourcesAvailable, onResourceChange, resourcePressure } from "../render/resourceClient";
+import { resourceAllocation } from '../../shared/resource-policy';
+import { ImportRequestQueue, importRequestWindow } from './importRequestQueue';
 import { rendererImportDiagnostics } from '../importDiagnostics';
 import { IMPORT_DIAGNOSTIC_TRACK } from '../../shared/import-diagnostics';
 import { mediaReadiness } from '../panels/mediaReadiness';
@@ -63,6 +65,20 @@ export function useImportReadiness(deps: {
 
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
   const [diagnosticTick, setDiagnosticTick] = useState(0);
+  const importEpoch = useRef(0);
+  const [importRequests] = useState(() => new ImportRequestQueue(importMedia,
+    () => resourcePressure() ? 0 : importRequestWindow(resourceAllocation())));
+  useEffect(() => onResourceChange(importRequests.refresh), [importRequests]);
+  useEffect(() => () => { importEpoch.current++; importRequests.refresh(); }, [summary?.project_id, importRequests]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    // Also ends queued selections on same-project reopen and Save As. Correctness must
+    // not depend on optional diagnostic delivery.
+    void listen('project:workspace-changing', () => { importEpoch.current++; importRequests.refresh(); })
+      .then(un => { if (disposed) un(); else unlisten = un; });
+    return () => { disposed = true; unlisten?.(); };
+  }, [importRequests]);
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -405,13 +421,10 @@ export function useImportReadiness(deps: {
   const importPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
-      await run(async () => {
-        for (const p of paths) {
-          await importMedia(p);
-        }
-      });
+      const epoch = importEpoch.current;
+      await run(() => importRequests.enqueue(paths, () => epoch === importEpoch.current));
     },
-    [run],
+    [run, importRequests],
   );
 
   const importMediaFiles = useCallback(async () => {

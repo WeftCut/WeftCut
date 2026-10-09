@@ -139,9 +139,20 @@ async fn run_derivative(
             timer.hit();
             return Ok(path);
         }
-        let _permit = tokio::select! {
-            permit = ffmpeg_sem().acquire() => permit?,
-            _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+        // Audio needed for editing must not sit behind full-length transcodes.
+        // Keep both permit types alive until the producer has exited.
+        let (_preparation, _background) = if matches!(kind, JobKind::Conform | JobKind::Waveform) {
+            let permit = tokio::select! {
+                permit = crate::resources::import_preparation() => permit?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            (Some(permit), None)
+        } else {
+            let permit = tokio::select! {
+                permit = ffmpeg_sem().acquire() => permit?,
+                _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            (None, Some(permit))
         };
         timer.start();
         cache.check_active()?;
@@ -614,7 +625,7 @@ fn spawn_proxy_decision(
         );
         let gop_result = singleflight::source(&cache, &media.path_abs, "gop", async {
             let _permit = tokio::select! {
-                permit = ffmpeg_sem().acquire() => permit?,
+                permit = crate::resources::import_preparation() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
             timer.start();

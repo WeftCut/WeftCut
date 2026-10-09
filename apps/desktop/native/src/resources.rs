@@ -60,6 +60,7 @@ struct FinalizationState {
 pub struct Governor {
     state: Mutex<State>,
     changed: Notify,
+    preparation: Arc<tokio::sync::Semaphore>,
 }
 #[derive(Serialize)]
 pub struct Snapshot {
@@ -86,6 +87,7 @@ impl Governor {
                 revision: 0,
             }),
             changed: Notify::new(),
+            preparation: Arc::new(tokio::sync::Semaphore::new(1)),
         })
     }
     fn configure(&self, limits: Limits) -> Result<(), String> {
@@ -290,7 +292,30 @@ impl Governor {
             cpu_threads: s.leases.values().map(|c| c.threads).sum(),
         }
     }
+    async fn acquire_preparation(self: &Arc<Self>) -> Result<PreparationPermit, String> {
+        // FIFO and held for the whole operation: batch probes enter before the
+        // first hash, and preparation never fans out into concurrent disk reads.
+        let lane = self
+            .preparation
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let resources = self.acquire_threads(false, 128, Some(1)).await?;
+        Ok(PreparationPermit {
+            _resources: resources,
+            _lane: lane,
+        })
+    }
     async fn acquire(self: &Arc<Self>, background: bool, mib: u64) -> Result<Permit, String> {
+        self.acquire_threads(background, mib, None).await
+    }
+    async fn acquire_threads(
+        self: &Arc<Self>,
+        background: bool,
+        mib: u64,
+        threads: Option<u32>,
+    ) -> Result<Permit, String> {
         let waiting = {
             let mut s = self.state.lock().unwrap();
             if s.waiting >= 256 {
@@ -309,7 +334,7 @@ impl Governor {
                 if mib > s.limits.work_mib {
                     return Err(format!("resource-capacity-exceeded: Requested {mib} MiB working memory exceeds the {} MiB allowance; increase the memory target", s.limits.work_mib));
                 }
-                s.limits.task_threads.min(if background {
+                threads.unwrap_or(s.limits.task_threads).min(if background {
                     s.limits.cpu_threads.saturating_sub(1).max(1)
                 } else {
                     s.limits.cpu_threads
@@ -355,6 +380,19 @@ impl Drop for Waiting {
 pub struct Permit {
     governor: Arc<Governor>,
     id: u32,
+}
+/// User-visible import preparation uses the interactive reserve, but still
+/// respects the common CPU/memory ledger, pressure and finalization priority.
+/// The lane must live as long as the actual process/blocking worker.
+pub(crate) struct PreparationPermit {
+    _resources: Permit,
+    _lane: tokio::sync::OwnedSemaphorePermit,
+}
+pub(crate) async fn import_preparation() -> anyhow::Result<PreparationPermit> {
+    governor()
+        .acquire_preparation()
+        .await
+        .map_err(anyhow::Error::msg)
 }
 impl Permit {
     pub fn threads(&self) -> u32 {
@@ -635,6 +673,106 @@ mod tests {
         // sysinfo enables Linux tasks even in ProcessRefreshKind::nothing().
         // They share process RSS; including them charges it once per thread.
         assert!(!process_memory_refresh().tasks());
+    }
+    #[tokio::test]
+    async fn import_preparation_uses_one_slot_while_long_jobs_and_playback_are_active() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 13,
+            task_threads: 4,
+            background_jobs: 6,
+            ..Limits::default()
+        })
+        .unwrap();
+        let mut long_jobs = Vec::new();
+        for _ in 0..3 {
+            long_jobs.push(g.acquire(true, 128).await.unwrap());
+        }
+        g.state.lock().unwrap().playing = true;
+        let preparation = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            g.acquire_preparation(),
+        )
+        .await
+        .expect("import preparation must not wait for a long transcode or playback to finish")
+        .unwrap();
+        assert_eq!(preparation._resources.threads(), 1);
+        assert_eq!(g.snapshot().cpu_threads, 13);
+        drop(preparation);
+        drop(long_jobs);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn import_preparation_is_serial_and_cancelled_waiters_release_the_lane() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let g = Governor::new();
+        let first = g.acquire_preparation().await.unwrap();
+        let mut second = Box::pin(g.acquire_preparation());
+        assert!(matches!(
+            second
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert_eq!(g.snapshot().active, 1);
+        drop(second); // workspace cancellation while waiting for the lane
+        drop(first);
+        let next = g.acquire_preparation().await.unwrap();
+        assert_eq!(g.snapshot().cpu_threads, 1);
+        drop(next);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn import_preparation_respects_pressure_memory_and_single_cpu_limits() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 1,
+            task_threads: 1,
+            work_mib: 128,
+            ..Limits::default()
+        })
+        .unwrap();
+        let long = g.acquire(true, 128).await.unwrap();
+        let mut pending = Box::pin(g.acquire_preparation());
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert_eq!(g.snapshot().cpu_threads, 1);
+        drop(long);
+        g.state.lock().unwrap().pressured = true;
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(pending); // cancellation while holding lane, but waiting for resources
+        assert_eq!(g.snapshot().waiting, 0);
+        g.state.lock().unwrap().pressured = false;
+        let memory = g
+            .reserve(Claim {
+                threads: 0,
+                mib: 64,
+                background: false,
+            })
+            .unwrap();
+        let mut pending = Box::pin(g.acquire_preparation());
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        g.release(memory);
+        drop(pending.await.unwrap());
+        assert_eq!(g.snapshot().active, 0);
+        assert_eq!(g.snapshot().waiting, 0);
     }
     #[tokio::test]
     async fn memory_sampling_does_not_multiply_rss_by_live_threads() {

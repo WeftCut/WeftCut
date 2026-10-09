@@ -347,7 +347,7 @@ pub async fn run_from_input(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut cmd = crate::ffmpeg::command();
+    let mut cmd = crate::ffmpeg::command_with_threads(1);
     cmd.no_console_window()
         // Reap on future-drop so no orphan keeps writing the shared temp; see
         // hwaccel.rs.
@@ -382,6 +382,8 @@ pub async fn run_from_input(
     let mut child = cmd
         .args([
             "-vn",
+            "-threads",
+            "1",
             "-ac",
             "2",
             "-ar",

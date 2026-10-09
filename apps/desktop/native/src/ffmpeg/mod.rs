@@ -37,8 +37,14 @@ use crate::process::NoConsoleWindow;
 /// defaults follow the cross-platform allocation; encoder callers also put
 /// `-threads` before their output (input and output options have separate scope).
 pub fn command() -> tokio::process::Command {
+    command_with_threads(crate::resources::task_threads())
+}
+
+/// Use the CPU claim of a narrower admission lane rather than the default
+/// multi-thread transcode allocation. Output encoders still need their own cap.
+pub(crate) fn command_with_threads(threads: u32) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(ffmpeg_path());
-    let threads = crate::resources::task_threads().to_string();
+    let threads = threads.max(1).to_string();
     command.args([
         "-threads",
         &threads,

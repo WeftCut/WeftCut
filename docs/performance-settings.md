@@ -81,6 +81,16 @@ windows; each cannot claim a full app target. Legacy preview values remain
 additional upper bounds, so raising the app target need not expand every cache.
 
 Background jobs leave an interactive processing slot when more than one exists.
+Import preparation uses that reserve through a serial, one-thread/128-MiB lane:
+metadata, source hash, GOP probing, audio conform and waveforms may proceed during
+playback, subject to memory pressure and the common allocation. Long transcodes,
+thumbnails and workspace copies remain background work. Import requests use a
+rolling lookahead of `max(1, min(cpu_threads, floor(work_mib / 128)))`, shared
+across selections. This bounds request buildup using the existing preparation
+claim; it is not an execution concurrency target or a benchmark-derived optimum.
+Each completion can submit the next path immediately. Memory pressure pauses
+new submissions and setting changes resize the window without cancelling active
+work. Native preparation remains serial to bound disk I/O.
 Native queues admit at most 256 waiters; a 32-slot background entry gate keeps
 bulk import fan-out below that limit, with cancellation while waiting. Oversized
 jobs fail with an actionable error. Interactive waits time out after 15 seconds;
