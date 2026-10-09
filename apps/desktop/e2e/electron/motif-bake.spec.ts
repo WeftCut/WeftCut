@@ -6,6 +6,7 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 import { createMotifDraft, publishMotifDraft } from './helpers/motif'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
+import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 
 interface CaptureDiagnostics {
   captures: number;
@@ -83,10 +84,11 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     const layerId = await running.page.evaluate(() => (window as any).__weftcutTest.addMotifLayer({
       motifId: 'countdown', durationUs: 1_000_000, props: { seconds: 1 },
     })) as string
-    const baked = await running.page.evaluate(layerId =>
-      (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), layerId,
-    ) as { hashDir: string }
+    const key = await running.page.evaluate(layerId => (window as any).__weftcutTest.cacheKeyForLayer(layerId), layerId) as string
+    await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(running.page, 'motif_bake_snapshot')).statuses[key]?.phase,
+      { timeout: 30_000 }).toBe('ready')
     const projectPath = await invokeCmd<string>(running.page, 'workspace_dir')
+    const baked = { hashDir: path.join(projectPath, 'Cache', 'raster', hashCacheKey(key)) }
     const stamps = await Promise.all(Array.from({ length: 30 }, (_, f) =>
       fs.stat(path.join(baked.hashDir, `${f}.wfrm`)).then(s => s.mtimeMs),
     ))
@@ -109,8 +111,26 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
         times: Array.from({ length: 30 }, (_, i) => ({ tInLayerUs: Math.round(i * 1_000_000 / 30) })),
       })
     })
-    await running.page.evaluate(layerId =>
-      (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), layerId)
+    // Observe automatic recovery, without a manual pre-bake that could conceal
+    // a broken startup declaration. Seeking must retain persisted completion.
+    await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(running.page, 'motif_bake_snapshot')).statuses[key]?.phase,
+      { timeout: 30_000 }).toBe('ready')
+    await running.page.evaluate(layerId => (window as any).__weftcutTest.revealLayer({ layerId }), layerId)
+    // The one-second fixture is too narrow for the status dot at default zoom.
+    await running.page.locator(`[data-layer-id="${layerId}"]`).hover()
+    await running.page.keyboard.down('Control')
+    await running.page.mouse.wheel(0, -1200)
+    await running.page.keyboard.up('Control')
+    const dot = running.page.locator(`[data-layer-id="${layerId}"] .motif-bake-dot`)
+    for (const us of [900_000, 100_000, 700_000, 0]) {
+      await running.page.evaluate(({ key, us }) => {
+        const h = (window as any).__weftcutTest
+        h.clearMotifCacheKey(key)
+        h.weftcutSeekUs(us)
+      }, { key, us })
+      await expect(dot).toHaveAttribute('title', 'Pre-baked')
+      await running.page.evaluate(() => (window as any).__weftcutTest.weftcutSampleComposite(240, 240))
+    }
     const diagnostics = await invokeCmd<CaptureDiagnostics>(running.page, 'motif_capture_diagnostics')
     expect(capturesFor(diagnostics, 'countdown')).toBe(missingFrame === null ? 0 : 1)
     const after = await Promise.all(Array.from({ length: 30 }, (_, f) =>

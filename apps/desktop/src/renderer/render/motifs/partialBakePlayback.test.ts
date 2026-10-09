@@ -155,10 +155,22 @@ it('an uncached sibling does not reduce saved-frame read concurrency', async () 
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(1);
 });
 
-it('failed reads release disk capacity and use only one capture slot', async () => {
+it('transient read failure preserves disk coverage and never starts a replacement capture', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
+  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockRejectedValueOnce(new Error('transport unavailable'));
+  vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false });
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'first', 60, 1)).rejects.toThrow('transport unavailable');
+  expect(sharedBakedKeyIndex.hasFrame('long', 0)).toBe(true);
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+  read.mockResolvedValue(bitmap());
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'retry', 60, 1)).resolves.toBeTruthy();
+  expect(captureMotifFrameResult).not.toHaveBeenCalled();
+});
+
+it('missing frames release disk capacity and use only one capture slot', async () => {
   sharedBakedKeyIndex.restoreFrames('long', new Set(Array.from({ length: 10 }, (_, i) => i)));
   const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockImplementation(async (_key, frame) => {
-    if (frame < 3) throw new Error('unreadable frame');
+    if (frame < 3) return null;
     return bitmap();
   });
   warm();

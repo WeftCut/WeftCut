@@ -146,6 +146,10 @@ describe('MotifFrameService prewarm admission', () => {
       expect(useMotifBakeStatusStore.getState().byLayer.later).toMatchObject({ phase: 'queued', done: 0, total: 30 });
       service.noteFrameBoundary(0);
       expect(bake).toHaveBeenCalledTimes(2);
+      // Turning automatic work off does not undo the first clip's saved range.
+      state.automatic = false; state.statuses = {};
+      service.handleProjectChanged(); await Promise.resolve();
+      expect(useMotifBakeStatusStore.getState().byLayer.early).toMatchObject({ phase: 'ready', done: 30, total: 30 });
     } finally { service.dispose(); }
   });
 
@@ -170,7 +174,7 @@ describe('MotifFrameService prewarm admission', () => {
     } finally { service.dispose(); }
   });
 
-  it('releases the preview hydration fence when main discovery fails', async () => {
+  it('reports failed preparation instead of silently restarting preview warming, and recovers on acknowledgement', async () => {
     vi.stubGlobal('document', {});
     state.fail = true;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -180,7 +184,15 @@ describe('MotifFrameService prewarm admission', () => {
     try {
       service.handleProjectChanged();
       await sharedBakedKeyIndex.whenHydrated();
+      expect(targets()).toHaveLength(0);
+      expect(useMotifBakeStatusStore.getState().byLayer.visible).toMatchObject({ phase: 'error', error: 'Error: disconnected' });
+      state.fail = false;
+      const key = bake.mock.lastCall![0].contents[0].cacheKey;
+      state.coverage = { [key]: Array.from({ length: 30 }, (_, i) => i) };
+      state.statuses = { [key]: { phase: 'ready', done: 30, total: 30 } };
+      service.handleProjectChanged(); await Promise.resolve();
       expect(targets()).toHaveLength(1);
+      expect(useMotifBakeStatusStore.getState().byLayer.visible).toMatchObject({ phase: 'ready', done: 30, total: 30 });
     } finally { service.dispose(); vi.restoreAllMocks(); }
   });
 });

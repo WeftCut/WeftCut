@@ -86,6 +86,7 @@ export class MotifFrameService {
   private generation: number | null = null;
   private projectEpoch = 0;
   private diskDiscoveryPending = false;
+  private preparationError: string | null = null;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
     this.prewarmer =
@@ -107,6 +108,7 @@ export class MotifFrameService {
       snapshot => this.acceptSnapshot(snapshot),
       error => {
         console.warn('[weftcut/motifs] preparation unavailable', error);
+        this.preparationError = String(error);
         this.resumeAfterDiskDiscovery();
       },
     ) : null;
@@ -145,6 +147,7 @@ export class MotifFrameService {
       this.pendingRetryLayers.clear();
       this.pendingPriorityGroups = [];
       this.bakeStatusByCacheKey.clear();
+      this.preparationError = null;
       setLayerBakeStatuses({});
     }
     void syncUserMotifsFromBackend().then(() => {
@@ -211,6 +214,9 @@ export class MotifFrameService {
   private updatePrewarmTargets(tUs: number): void {
     const summary = this.deps.projectSummary();
     if (!this.prewarmer || !summary || this.diskDiscoveryPending) return;
+    // A rejected durable plan is not permission to launch a second background
+    // producer that only fills RAM. Foreground preview can still read/capture.
+    if (this.preparationError) { this.prewarmer.setTargets([]); return; }
     const specs: PrewarmContentSpec[] = [];
     this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
       const motif = getMotif(layer.params.motif_id);
@@ -308,7 +314,6 @@ export class MotifFrameService {
       if (layer.params.kind !== 'Motif') continue;
       const view = layer.params;
       const full = this.manualPrebakeLayers.has(layer.id);
-      if ((!globalOn || (root !== summary.root_id && root !== this.deps.openCompositionId())) && !full) continue;
       const motif = getMotif(layer.params.motif_id);
       if (!motif) continue;
       const durationUs = layer.t_end_us - layer.t_start_us;
@@ -333,6 +338,9 @@ export class MotifFrameService {
         const ranges = this.layerBakeRanges.get(layer.id) ?? [];
         ranges.push(range); this.layerBakeRanges.set(layer.id, ranges);
       }
+      // Display coverage describes the clip even when automatic work is off.
+      // The toggle controls demand, not whether persisted frames count as ready.
+      if ((!globalOn || (root !== summary.root_id && root !== this.deps.openCompositionId())) && !full) continue;
       plan.sequence.push({ cacheKey: desc.cacheKey, ranges: [range] });
       const existing = contents.get(desc.cacheKey);
       if (existing) { existing.ranges.push(range); if (full) existing.explicit = true; continue; }
@@ -360,6 +368,7 @@ export class MotifFrameService {
 
   private acceptSnapshot(snapshot: MotifBakeSnapshot): void {
     if (this.disposed || snapshot.generation !== this.generation) return;
+    this.preparationError = null;
     // Replace inventory because retention can evict frames between snapshots.
     sharedBakedKeyIndex.clear();
     // Missing coverage means discovery failed or is still unknown, not that
@@ -405,9 +414,12 @@ export class MotifFrameService {
       );
       if (!desc) return;
       let live = this.bakeStatusByCacheKey.get(desc.cacheKey);
+      if (this.preparationError && (useAppSettingsStore.getState().settings.prebake_motifs || this.manualPrebakeLayers.has(layer.id))) {
+        live = { phase: 'error', done: 0, total: desc.contentDurationFrames, error: this.preparationError };
+      }
       const requested = this.layerBakeRanges.get(layer.id);
       const saved = sharedBakedKeyIndex.framesFor(desc.cacheKey);
-      if (live && requested && saved) {
+      if (requested && saved) {
         const ranges: MotifFrameRange[] = [];
         for (const r of [...requested].sort((a, b) => a.start - b.start)) {
           const last = ranges.at(-1);
@@ -419,7 +431,8 @@ export class MotifFrameService {
         for (const frame of saved) if (ranges.some(r => frame >= r.start && frame < r.end)) done++;
         // A later occurrence of shared content cannot keep a completed clip
         // looking unfinished. Progress belongs to this clip's requested range.
-        live = done === total ? { phase: 'ready', done, total } : { ...live, done, total };
+        if (done === total) live = { phase: 'ready', done, total };
+        else if (live) live = { ...live, done, total };
       }
       // L0 coverage of this layer's content frames — the "is preview warm"
       // signal that drives the green bar — the cache owns exact O(1) counts,

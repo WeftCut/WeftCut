@@ -110,9 +110,9 @@ export class MotifFrameScheduler {
     try {
       let value: CapturedFrame;
       if (read) {
-        let bitmap: ImageBitmap | null = null;
-        try { bitmap = await this.deps.read(job.cacheKey, job.frame); }
-        catch { /* Missing/corrupt/unavailable pixels use the capture budget. */ }
+        // Only an authoritative miss permits a new capture. A transport,
+        // allocation or transient I/O failure says nothing about disk coverage.
+        const bitmap = await this.deps.read(job.cacheKey, job.frame);
         if (!bitmap) {
           if (!this.wanted(job)) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
           job.readMiss = true;

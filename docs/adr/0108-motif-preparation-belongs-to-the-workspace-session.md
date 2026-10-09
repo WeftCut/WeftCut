@@ -75,6 +75,12 @@ can return it to warming. Read misses/corruption and
 foreground writes update the same coverage authority. Header inventory is cheap;
 payload checksums remain verified by the existing reader.
 
+A rejected preparation declaration is a visible failure, not permission to
+silently restart RAM-only background captures. A later acknowledged declaration
+restores ordinary work. Clip coverage remains ready when automatic preparation
+is disabled. A failed renderer read/transport request preserves known disk
+coverage; only a confirmed missing/invalid frame admits replacement capture.
+
 Referenced raster directories are retained by the native disk sweeper while
 the workspace uses them. Retention is process-local and still counts towards
 the temporary-cache target. Incoming workspaces initially retain the whole
