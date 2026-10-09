@@ -394,6 +394,16 @@ pub(crate) async fn import_preparation() -> anyhow::Result<PreparationPermit> {
         .await
         .map_err(anyhow::Error::msg)
 }
+/// The serial workspace copier hashes on one thread and uses a 1-MiB buffer
+/// plus Tokio file buffers. Keep a small working-memory allowance, without
+/// taking a transcode/background slot or holding the preparation FIFO lane.
+/// Common CPU/memory limits, pressure and export finalization still apply.
+pub(crate) async fn workspace_copy() -> anyhow::Result<Permit> {
+    governor()
+        .acquire_threads(false, 8, Some(1))
+        .await
+        .map_err(anyhow::Error::msg)
+}
 impl Permit {
     pub fn threads(&self) -> u32 {
         self.governor.state.lock().unwrap().leases[&self.id].threads

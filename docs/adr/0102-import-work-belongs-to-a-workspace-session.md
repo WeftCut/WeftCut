@@ -35,8 +35,13 @@ audio and waveform) shares a FIFO single-operation lane. It claims one CPU
 thread and 128 MiB from the same authority, using the interactive reserve so
 long transcodes and paused background admission during playback cannot starve
 it. Pressure, memory limits and export finalization priority still apply;
-single-thread codec commands match the claim. Proxies, thumbnails and workspace
-copies retain background admission.
+single-thread codec commands match the claim. Proxies and thumbnails retain
+background admission. Workspace copies use their own single-worker FIFO and
+claim one CPU thread for inline hashing plus 8 MiB for bounded copy/file buffers.
+They can use the interactive reserve without taking a transcode slot or holding
+the preparation lane. Playback does not pause copying; CPU/memory limits,
+pressure and export finalization priority still apply. Cancelling a copy or
+retiring its workspace interrupts admission waits as well as running copies.
 
 The UI keeps one rolling request queue across picker/drop selections. Its
 lookahead window is bounded by the smaller of allocated CPU slots and the number

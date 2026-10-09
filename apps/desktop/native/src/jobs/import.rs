@@ -32,6 +32,7 @@ use crate::logs::LogBusSlot;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Notify;
 use tracing::{info, warn};
 
 use crate::io::probe::FileFacts;
@@ -95,6 +96,7 @@ struct PendingImport {
 struct RunningImport {
     media_id: MediaId,
     cancel: Arc<AtomicBool>,
+    cancel_wake: Arc<Notify>,
 }
 
 impl ImportQueue {
@@ -189,6 +191,7 @@ impl ImportQueue {
         inner.cache = None;
         if let Some(running) = &inner.running {
             running.cancel.store(true, Ordering::Release);
+            running.cancel_wake.notify_one();
         }
     }
 
@@ -216,6 +219,7 @@ impl ImportQueue {
         if let Some(run) = guard.running.as_ref() {
             if run.media_id == media_id {
                 run.cancel.store(true, Ordering::Relaxed);
+                run.cancel_wake.notify_one();
                 return true;
             }
         }
@@ -273,11 +277,13 @@ impl ImportQueue {
                 continue;
             }
             let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_wake = Arc::new(Notify::new());
             {
                 let mut guard = self.inner.lock().expect("import queue poisoned");
                 guard.running = Some(RunningImport {
                     media_id,
                     cancel: cancel.clone(),
+                    cancel_wake: cancel_wake.clone(),
                 });
                 if let Some(entry) = guard
                     .history
@@ -313,13 +319,16 @@ impl ImportQueue {
             let outcome = async {
                 let permit = if let Some(cache) = &next.cache {
                     tokio::select! {
-                        permit = crate::jobs::ffmpeg_sem().acquire() => Some(permit?),
+                        permit = crate::resources::workspace_copy() => Some(permit?),
                         _ = cache.cancelled() => return Ok(None),
+                        _ = cancel_wake.notified() => return Ok(None),
                     }
                 } else {
                     None
                 };
-                // This permit covers both copying and hashing. The copy helper
+                // One lightweight permit covers copying and inline hashing;
+                // the FIFO copy worker supplies the disk concurrency limit.
+                // The copy helper
                 // must not acquire another job slot: on a one-slot allocation
                 // that would wait for the very lease held by this caller.
                 let _permit = permit;
@@ -634,6 +643,136 @@ async fn copy_to_workspace(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn scoped_copies_progress_under_transcode_load_and_cancel_while_waiting() {
+        // The production queue uses the global governor. Isolate it from other
+        // tests instead of substituting an unscoped queue that skips admission.
+        const CHILD: &str = "WEFTCUT_COPY_ADMISSION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "jobs::import::tests::scoped_copies_progress_under_transcode_load_and_cancel_while_waiting", "--nocapture"])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        async fn wait_until(condition: impl Fn() -> bool) {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while !condition() {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("copy queue must progress without releasing transcode slots");
+        }
+        crate::resources::resources_configure(
+            serde_json::json!({
+                "cpu_threads": 13, "task_threads": 4, "background_jobs": 6,
+                "work_mib": 4505, "disk_cache_mib": 2048, "background_playback": false
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut transcodes = Vec::new();
+        for _ in 0..3 {
+            transcodes.push(crate::jobs::ffmpeg_sem().acquire().await.unwrap());
+        }
+        crate::resources::resources_activity(true, false, None);
+        let ws = TempDir::new().unwrap();
+        let source = TempDir::new().unwrap();
+        let cache = crate::cache::CacheLayout::new(ws.path().join("Cache"));
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let queue = ImportQueue::new(sink.clone(), LogBusSlot::new());
+        for name in ["first.bin", "second.bin"] {
+            let path = source.path().join(name);
+            std::fs::write(&path, vec![17u8; 1024]).unwrap();
+            queue.enqueue_scoped(
+                crate::state::ids::new_id(),
+                path,
+                ws.path().to_path_buf(),
+                cache.clone(),
+            );
+        }
+        wait_until(|| {
+            queue
+                .list()
+                .iter()
+                .filter(|e| matches!(e.status, ImportStatus::Completed))
+                .count()
+                == 2
+        })
+        .await;
+        for name in ["first.bin", "second.bin"] {
+            assert_eq!(
+                std::fs::read(ws.path().join("Media").join(name)).unwrap(),
+                vec![17u8; 1024]
+            );
+        }
+        let stages = sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(event, value)| event == "import:diagnostic" && value["stage"] == "copy")
+            .filter_map(|(_, value)| value["status"].as_str().map(str::to_owned))
+            .filter(|status| status == "running" || status == "completed")
+            .collect::<Vec<_>>();
+        assert_eq!(stages, ["running", "completed", "running", "completed"]);
+
+        // Pressure still closes copy admission; cancelling a waiting copy must
+        // release its waiter without requiring memory pressure to recover.
+        crate::resources::resources_activity(false, true, None);
+        let cancelled_id = crate::state::ids::new_id();
+        queue.enqueue_scoped(
+            cancelled_id,
+            source.path().join("first.bin"),
+            ws.path().to_path_buf(),
+            cache.clone(),
+        );
+        wait_until(|| crate::resources::background_diagnostic_state()["waiting"] == 1).await;
+        assert!(queue.cancel(cancelled_id));
+        wait_until(|| {
+            queue.list().iter().any(|e| {
+                e.media_id == cancelled_id.to_string()
+                    && matches!(e.status, ImportStatus::Cancelled)
+            })
+        })
+        .await;
+        assert_eq!(
+            crate::resources::background_diagnostic_state()["waiting"],
+            0
+        );
+
+        // Workspace retirement also drains blocked admission and never writes
+        // the obsolete copy into either workspace.
+        let obsolete = source.path().join("obsolete.bin");
+        std::fs::write(&obsolete, b"obsolete").unwrap();
+        queue.enqueue_scoped(
+            crate::state::ids::new_id(),
+            obsolete,
+            ws.path().to_path_buf(),
+            cache.clone(),
+        );
+        wait_until(|| crate::resources::background_diagnostic_state()["waiting"] == 1).await;
+        let next_ws = TempDir::new().unwrap();
+        cache.set_workspace(next_ws.path()).unwrap();
+        queue.cancel_all();
+        wait_until(|| !queue.inner.lock().unwrap().worker_alive).await;
+        assert_eq!(
+            crate::resources::background_diagnostic_state()["waiting"],
+            0
+        );
+        assert!(!ws.path().join("Media/obsolete.bin").exists());
+        assert!(!next_ws.path().join("Media/obsolete.bin").exists());
+        crate::resources::resources_activity(false, false, None);
+        drop(transcodes);
+        assert_eq!(
+            crate::resources::background_diagnostic_state()["reserved_mib"],
+            0
+        );
+    }
 
     #[test]
     fn pick_dest_filename_basic() {

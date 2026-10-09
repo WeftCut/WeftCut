@@ -62,6 +62,12 @@ Quick proxies survive reopen and are checked against their recipe and file
 format. Artifact producers are shared by cache root, content identity, kind
 and recipe; completion is delivered to each requesting media item.
 
+Thumbnail file renames, directory publication and required stale-directory
+cleanup allow at most six attempts for transient file contention, with 50–800 ms
+exponential backoff (1.55 seconds of waiting per operation). Workspace changes
+interrupt the wait; permanent errors and exhausted retries remain visible job
+failures. Retrying publication does not re-run FFmpeg or restart frame numbering.
+
 Every project opening owns a generation and frozen cache root. Switch, reopen,
 Save As and Close cancel old imports; native events and TS continuations are
 checked before state updates. Cancellation retains leases until child teardown.
@@ -83,9 +89,14 @@ additional upper bounds, so raising the app target need not expand every cache.
 Background jobs leave an interactive processing slot when more than one exists.
 Import preparation uses that reserve through a serial, one-thread/128-MiB lane:
 metadata, source hash, GOP probing, audio conform and waveforms may proceed during
-playback, subject to memory pressure and the common allocation. Long transcodes,
-thumbnails and workspace copies remain background work. Import requests use a
-rolling lookahead of `max(1, min(cpu_threads, floor(work_mib / 128)))`, shared
+playback, subject to memory pressure and the common allocation. Long transcodes
+and thumbnails remain background work. Workspace copies have a separate serial
+queue and claim one thread for inline hashing plus 8 MiB for bounded buffers;
+they do not wait for transcode slots or take the preparation lane. Copies may
+proceed during playback, while common CPU/memory limits, memory pressure and
+export finalization priority still apply. Waiting copies are cancellable.
+Import requests use a rolling lookahead of
+`max(1, min(cpu_threads, floor(work_mib / 128)))`, shared
 across selections. This bounds request buildup using the existing preparation
 claim; it is not an execution concurrency target or a benchmark-derived optimum.
 Each completion can submit the next path immediately. Memory pressure pauses
@@ -162,6 +173,7 @@ an OS-enforced whole-process RAM, CPU-percentage or dedicated-VRAM hard cap.
 
 | Owner | Enforcement |
 | --- | --- |
+| Workspace source copies | Single-worker FIFO, one-thread/8-MiB admission independent of transcode slots; common pressure/CPU/memory limits and cancellable waits. |
 | Native thumbnails, waveform, conform, proxies, scene analysis, speech extraction | Shared background admission and FFmpeg thread requests. |
 | Import metadata/GOP probes and source hashing | Shared background admission, in-flight source deduplication and session cancellation; metadata probes have a timeout. |
 | On-demand frame/filmstrip extraction, audio effects, audio export and mux | Interactive admission, bounded waits and child-lifetime permits. |
