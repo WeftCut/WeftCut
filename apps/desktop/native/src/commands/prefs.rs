@@ -83,4 +83,7 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 #[serde(rename_all = "camelCase")]
 pub struct LogEmitArgs {
     pub input: crate::logs::LogEntryInput,
+    /// Optional diagnostic owner; a queued emit must not land in a replacement
+    /// workspace's bus. Existing unscoped log producers keep their contract.
+    pub expected_generation: Option<u32>,
 }

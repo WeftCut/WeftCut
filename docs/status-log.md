@@ -39,7 +39,64 @@ A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
 - Flush: line-buffered; explicit flush on app shutdown / workspace
   close.
 
-### Lifecycle
+### Import timing diagnostics
+
+UI and MCP `import_media` requests share an `import_id`, allocated before the
+metadata probe. Rows use category `Import`, message `Import timing: <stage>`
+and structured `details` (`schema: 1`). They persist in the normal project
+JSONL. The application diagnostic bundle also retains an explicit selection of
+timings, correlation ids, codec metadata and resource snapshots; labels, paths
+and free-form errors stay out of that structured selection. No upload is automatic.
+
+- Info: request start, renderer milestones, and `background_settled` summary.
+- Debug: registration metadata and each native stage's queued/running/terminal
+  event. Debug rows are persisted even when the console's Info+ filter hides them.
+- Warn: request/stage/write-back failures. Cancellation is distinguished from
+  failure. A workspace transition ends tracking and lists unfinished stages;
+  late events cannot attach to the next opening, including a same-path reopen.
+
+Native stages cover `probe`, `hash`, `gop_probe`, `copy` (including its hash),
+`thumbnails`, `conform`, `waveform`, `quick_proxy`, and `proxy` (export master).
+`queue_ms` is time from entering that stage until it obtains resources;
+it also includes single-flight waiting, and for copy includes FIFO waiting.
+Dependencies before a stage is entered (e.g. conform before waveform) are
+visible in the request-relative `elapsed_ms`, not counted again as stage queue
+time. `work_ms` starts at admission; `total_ms = queue_ms + work_ms`. These are
+monotonic, stage-local clocks. Cache hits never enter admission: their validation
+time is work and their queue time is zero. `cache` distinguishes `hit`, `miss`, and `shared`
+(another producer supplied the result). `admission_at_enqueue` snapshots
+playback policy, memory pressure, and resource occupancy/limits; it is context
+at enqueue, not proof of the cause of the entire wait.
+
+The summary waits for the initial derivative plan (including quick-then-full
+proxy chaining), workspace copy and their completion/write-back events. Its
+status is `completed` or `incomplete`; it does not mean the user has previewed
+the clip. Later on-demand proxy/recovery jobs may emit additional stage rows.
+
+Renderer milestones are once per imported media:
+
+- `pool_observed`: the renderer's project state contains the item (not a claim
+  that the Media Pool tab is visible).
+- `editable`: the same readiness gate used by the Media Pool permits use.
+- `first_frame_submitted`: a real video frame was bound in a visible preview
+  composite and `app.render()` returned successfully. This measures render
+  submission, not physical display scanout; it includes the resolved engine.
+- `audio_prepared`: the requested playback window has prepared PCM. It is not
+  proof that sound reached the speakers, nor just that a conform file exists.
+
+Milestone `elapsed_ms` is measured at main's receipt and includes IPC delay.
+Frame/audio milestones happen only if the user previews/plays that source, so
+they also include user idle time; absent milestones are not zero latency or
+failures. `since_editable_ms` helps distinguish those observations from initial
+readiness. The import start is when its command enters main, not when a batch
+was selected; earlier files in the UI's serial batch precede that start.
+
+Registration records version, media id/label, size, duration and stream metadata.
+Timing state is session-only, bounded to 2048 requests, and never changes project
+state or import scheduling. Capacity eviction emits `tracking_ended` with its
+reason. There are no per-frame log rows.
+
+### LogBus lifecycle
 
 - **Pre-workspace: strict refuse.** Neither the ring buffer nor the
   JSONL writer exist before a workspace is opened. Startup-screen
@@ -75,7 +132,8 @@ flush immediately; a hard kill can lose the last batch.
 
 Collected evidence includes main/renderer console messages, renderer JS errors,
 observed renderer/child-process failures, project log messages (excluding tool
-arguments, details and i18n arguments), and resource status/effective allocations
+arguments, arbitrary details and i18n arguments; import timing uses the explicit
+field selection described above), and resource status/effective allocations
 every ten seconds. A ZIP contains the current session and the most recent
 abnormal session (retained even after dismissal for later reporting), plus
 environment information and a README.

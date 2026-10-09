@@ -19,17 +19,18 @@ import { scopeComposition } from './mutations/helpers'
 import { parseDiscardSegments } from './mutations/split'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
+import type { ImportTrace } from '../importDiagnostics'
 
 /** Rust compute facade — each method runs a native (no-actor-write) computation
  *  and returns a serialized result. Built in index.ts from the Backend napi. */
 export interface ComputeNapi {
   /** Probe a media file → serialized MediaItem JSON. Stat-only (instant
    *  appearance); the item carries a PROVISIONAL hash. (import_media) */
-  probeMedia(path: string): Promise<string>
+  probeMedia(path: string, importId?: string): Promise<string>
   /** Standalone BLAKE3 of a source file — the hash-first import's hash pass
    *  Run AFTER the stat-only probe + insert, BEFORE
    *  derivative enqueue, so jobs bake the real cache key. (Backend.hashMediaSource) */
-  hashMediaSource(path: string): Promise<string>
+  hashMediaSource(path: string, importId?: string): Promise<string>
   /** Parse a subtitle body → {cues, simplified, label} JSON. (apply_subtitles) */
   parseSubtitles(body: string, format: string | null): Promise<string>
   /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. */
@@ -108,6 +109,7 @@ interface ShotReportShot { t_start_us: number; t_end_us: number; keyframe_t_us: 
 interface ShotReport { shots: ShotReportShot[]; cut_scores: Array<{ t_us: number; score: number }> }
 
 export type HybridDeps = {
+  beginImport?: () => ImportTrace
   actor: ActorHandle
   compute: ComputeNapi
   /** Kick the existing derivative jobs (proxy/conform/thumb/waveform) for a set
@@ -787,57 +789,62 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
   switch (tool) {
     case 'import_media': {
       if (deps.canImport?.() === false) throw new Error('Project is changing; retry importing after it opens')
-      const path = args.path as string
-      const assertCurrent = captureImportSession(deps)
-      // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
-      // would pass it, land a pool row with null metadata and a pending hash,
-      // and only then die in the hash pass with the OS's own locale text. What
-      // the path IS is decided here, by name, before any read or write.
-      const facts = deps.statPath(path)
-      if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
-      if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
-      if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
-      if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
-      // Insert the probed item FIRST so the clip appears in the timeline
-      // immediately. A probe that fails has written nothing; it says so.
-      let item: MediaItem
-      try { item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem }
-      catch (e) { throw new Error(`import_media: probing ${path} failed: ${errText(e)}. Nothing was imported`) }
-      assertCurrent()
-      const r = deps.actor.dispatch('add_media_item', { media: item })
-      if (!r.ok) throw new Error(JSON.stringify(r.error))
-      // Compute the REAL content hash (a lightweight standalone read pass), set it
-      // on the pool item, THEN enqueue derivatives — so every job bakes the final
-      // cache key and no derivative ever touches a pending alias (ADR 0007
-      // superseded). One extra full read of the source, accepted to start
-      // derivatives promptly instead of waiting for the workspace copy.
-      let hash: string
-      try { hash = await deps.compute.hashMediaSource(path) }
-      catch (e) {
+      const trace = deps.beginImport?.()
+      try {
+        const path = args.path as string
+        const assertCurrent = captureImportSession(deps)
+        // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
+        // would pass it, land a pool row with null metadata and a pending hash,
+        // and only then die in the hash pass with the OS's own locale text. What
+        // the path IS is decided here, by name, before any read or write.
+        const facts = deps.statPath(path)
+        if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
+        if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
+        if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
+        if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
+        // Insert the probed item FIRST so the clip appears in the timeline
+        // immediately. A probe that fails has written nothing; it says so.
+        let item: MediaItem
+        try { item = JSON.parse(await (trace ? deps.compute.probeMedia(path, trace.id) : deps.compute.probeMedia(path))) as MediaItem }
+        catch (e) { throw new Error(`import_media: probing ${path} failed: ${errText(e)}. Nothing was imported`) }
         assertCurrent()
-        // The row is provisional until its hash lands, so a read that fails
-        // here leaves nothing behind. `force: false`: were a layer already
-        // placed on it, the row stays and the error still names the failure.
-        const rollback = deps.actor.dispatch('remove_media', { media: item.id, force: false })
-        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. ${rollback.ok
-          ? 'The provisional pool row was rolled back; nothing was imported'
-          : `The provisional pool row ${item.id} could not be rolled back (${mapCommandError(rollback.error).message}); it stays with a pending hash — delete_media removes it`}`)
-      }
-      assertCurrent()
-      const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
-      // Benign if the media was removed during hashing — nothing left to enqueue.
-      if (!hr.ok) return item.id
-      const hashedItem: MediaItem = { ...item, file_hash_blake3: hash }
-      // Derivative jobs read the SOURCE (hashedItem.path_abs is still the original);
-      // content-addressed by the real hash, so source vs the workspace copy is
-      // equivalent.
-      await deps.enqueueDerivatives([hashedItem])
-      assertCurrent()
-      // Workspace copy runs in PARALLEL: copies the source into <workspace>/Media,
-      // re-confirms the same hash, and flips path_abs via the media:workspace_paths
-      // seam. No-op napi when no workspace.
-      if (deps.workspaceDir()) await deps.enqueueWorkspaceCopy(item.id, path)
-      return item.id
+        const r = deps.actor.dispatch('add_media_item', { media: item })
+        if (!r.ok) throw new Error(JSON.stringify(r.error))
+        trace?.bind(item, Boolean(deps.workspaceDir()))
+        // Compute the REAL content hash (a lightweight standalone read pass), set it
+        // on the pool item, THEN enqueue derivatives — so every job bakes the final
+        // cache key and no derivative ever touches a pending alias (ADR 0007
+        // superseded). One extra full read of the source, accepted to start
+        // derivatives promptly instead of waiting for the workspace copy.
+        let hash: string
+        try { hash = await (trace ? deps.compute.hashMediaSource(path, trace.id) : deps.compute.hashMediaSource(path)) }
+        catch (e) {
+          assertCurrent()
+          // The row is provisional until its hash lands, so a read that fails
+          // here leaves nothing behind. `force: false`: were a layer already
+          // placed on it, the row stays and the error still names the failure.
+          const rollback = deps.actor.dispatch('remove_media', { media: item.id, force: false })
+          throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. ${rollback.ok
+            ? 'The provisional pool row was rolled back; nothing was imported'
+            : `The provisional pool row ${item.id} could not be rolled back (${mapCommandError(rollback.error).message}); it stays with a pending hash — delete_media removes it`}`)
+        }
+        assertCurrent()
+        const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
+        // Benign if the media was removed during hashing — nothing left to enqueue.
+        if (!hr.ok) { trace?.fail('Media removed during hashing'); return item.id }
+        const hashedItem: MediaItem = { ...item, file_hash_blake3: hash }
+        // Derivative jobs read the SOURCE (hashedItem.path_abs is still the original);
+        // content-addressed by the real hash, so source vs the workspace copy is
+        // equivalent.
+        await deps.enqueueDerivatives([hashedItem])
+        assertCurrent()
+        // Workspace copy runs in PARALLEL: copies the source into <workspace>/Media,
+        // re-confirms the same hash, and flips path_abs via the media:workspace_paths
+        // seam. No-op napi when no workspace.
+        if (deps.workspaceDir()) await deps.enqueueWorkspaceCopy(item.id, path)
+        trace?.queued()
+        return item.id
+      } catch (error) { trace?.fail(error); throw error }
     }
     case 'apply_subtitles':
       // Reached by the agent's tool and by a Subtitle item dropped on the

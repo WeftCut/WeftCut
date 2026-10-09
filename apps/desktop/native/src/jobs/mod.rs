@@ -18,6 +18,7 @@
 //! - `media:job_error`    — `{ media_id, kind, error }`
 
 pub mod conform;
+pub(crate) mod diagnostics;
 pub mod filmstrip;
 mod frame;
 pub mod hwaccel;
@@ -113,8 +114,16 @@ async fn run_derivative(
     kind: JobKind,
     generate: impl std::future::Future<Output = anyhow::Result<std::path::PathBuf>>,
 ) -> anyhow::Result<std::path::PathBuf> {
+    let mut timer = diagnostics::StageTimer::new(
+        events.clone(),
+        serde_json::to_value(kind)?.as_str().unwrap_or("unknown"),
+        None,
+        Some(media.id.to_string()),
+    );
     cache.check_active()?;
     if let Some(path) = cached_derivative(cache, media, kind) {
+        timer.hit();
+        timer.finish(&Ok(()));
         return Ok(path);
     }
     emit(
@@ -125,20 +134,24 @@ async fn run_derivative(
             kind,
         },
     );
-    singleflight::run(cache, media, kind, async {
+    let result = singleflight::run(cache, media, kind, async {
         if let Some(path) = cached_derivative(cache, media, kind) {
+            timer.hit();
             return Ok(path);
         }
         let _permit = tokio::select! {
             permit = ffmpeg_sem().acquire() => permit?,
             _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
         };
+        timer.start();
         cache.check_active()?;
         let result = generate.await;
         cache.check_active()?;
         result
     })
-    .await
+    .await;
+    timer.finish(&result);
+    result
 }
 
 fn cached_derivative(
@@ -324,6 +337,29 @@ pub fn enqueue_for_media(
         return;
     }
     let cache = cache.snapshot();
+    let events = cache.scoped_events(events);
+    let mut planned = Vec::new();
+    if matches!(media.kind, MediaKind::Video) {
+        planned.push("thumbnails");
+    }
+    if media.metadata.audio.is_some() {
+        planned.extend(["conform", "waveform"]);
+    }
+    let decision_pending = matches!(media.kind, MediaKind::Video)
+        && proxy_decision::route_needs_decision(&media.decode_route);
+    if matches!(media.kind, MediaKind::Video)
+        && !decision_pending
+        && !matches!(media.decode_route, DecodeRoute::Bypass)
+    {
+        planned.push("quick_proxy");
+        if matches!(
+            media.decode_route,
+            DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
+        ) {
+            planned.push("proxy");
+        }
+    }
+    diagnostics::plan(&events, media.id, &planned, decision_pending);
     spawn_decorations(
         events.clone(),
         log_slot.clone(),
@@ -562,6 +598,7 @@ fn spawn_proxy_decision(
                 // re-chaining the
                 // full build. `None` GOP forces the safe transcode path,
                 // matching the on-demand build.
+                diagnostics::plan(&events, media_id, &["quick_proxy"], false);
                 spawn_quick_proxy(events, log_slot, cache, media, false, None);
                 return;
             }
@@ -569,24 +606,39 @@ fn spawn_proxy_decision(
         // Probe the source's keyframe interval (on a blocking worker — it
         // shells out to ffprobe) so the routing policy can demote long-GOP
         // friendly H.264 to a short-GOP scrub proxy instead of a direct decode.
-        let source_gop_secs = singleflight::source(&cache, &media.path_abs, "gop", async {
+        let mut timer = diagnostics::StageTimer::new(
+            events.clone(),
+            "gop_probe",
+            None,
+            Some(media_id.to_string()),
+        );
+        let gop_result = singleflight::source(&cache, &media.path_abs, "gop", async {
             let _permit = tokio::select! {
                 permit = ffmpeg_sem().acquire() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
+            timer.start();
             let gap =
                 crate::io::probe::probe_max_keyframe_gap_secs_scoped(&media.path_abs, &cache).await;
             cache.check_active()?;
             Ok(serde_json::to_string(&gap)?)
         })
-        .await
-        .ok()
-        .and_then(|json| serde_json::from_str::<Option<f64>>(&json).ok())
-        .flatten();
+        .await;
+        timer.finish(&gop_result);
+        let source_gop_secs = gop_result
+            .ok()
+            .and_then(|json| serde_json::from_str::<Option<f64>>(&json).ok())
+            .flatten();
         if cache.is_cancelled() {
             return;
         }
         let route = proxy_decision::decide(&media, source_gop_secs);
+        let planned: &[&str] = match proxy_decision::job_for(route) {
+            proxy_decision::ProxyJob::None => &[],
+            proxy_decision::ProxyJob::QuickOnly => &["quick_proxy"],
+            proxy_decision::ProxyJob::QuickThenFull => &["quick_proxy", "proxy"],
+        };
+        diagnostics::plan(&events, media_id, planned, false);
         // Commit the authoritative initial route FIRST, then spawn the jobs the
         // route implies.
         let initial = DecodeRoute::from_proxy_route(route);
@@ -1338,9 +1390,18 @@ mod tests {
             assert_eq!(result, path);
         }
         assert!(
-            sink.names().is_empty(),
+            !sink.names().iter().any(|name| name == EVENT_STARTED),
             "cache adoption must not emit started"
         );
+        let rows = sink.events.lock().unwrap();
+        let completions: Vec<_> = rows
+            .iter()
+            .filter(|(event, row)| event == "import:diagnostic" && row["status"] == "completed")
+            .collect();
+        assert_eq!(completions.len(), 3);
+        assert!(completions
+            .iter()
+            .all(|(_, row)| row["cache"] == "hit" && row["queue_ms"] == 0.0));
     }
 
     #[tokio::test]

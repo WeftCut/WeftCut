@@ -84,6 +84,7 @@ struct ImportQueueInner {
 }
 
 struct PendingImport {
+    timer: super::diagnostics::StageTimer,
     media_id: MediaId,
     source: PathBuf,
     workspace_root: PathBuf,
@@ -147,6 +148,15 @@ impl ImportQueue {
             }
             guard.cache = cache.clone();
             guard.pending.push_back(PendingImport {
+                timer: super::diagnostics::StageTimer::new(
+                    cache
+                        .as_ref()
+                        .map(|cache| cache.scoped_events(self.events.clone()))
+                        .unwrap_or_else(|| self.events.clone()),
+                    "copy",
+                    None,
+                    Some(media_id.to_string()),
+                ),
                 media_id,
                 source: source.clone(),
                 workspace_root,
@@ -239,7 +249,7 @@ impl ImportQueue {
 
     async fn worker_loop(self) {
         loop {
-            let next = {
+            let mut next = {
                 let mut guard = self.inner.lock().expect("import queue poisoned");
                 let next = guard.pending.pop_front();
                 if next.is_none() {
@@ -313,6 +323,7 @@ impl ImportQueue {
                 // must not acquire another job slot: on a one-slot allocation
                 // that would wait for the very lease held by this caller.
                 let _permit = permit;
+                next.timer.start();
                 let copy = copy_to_workspace(&next.source, &next.workspace_root, cancel.clone());
                 tokio::pin!(copy);
                 if let Some(cache) = &next.cache {
@@ -328,6 +339,11 @@ impl ImportQueue {
                 }
             }
             .await;
+            if matches!(&outcome, Ok(None)) {
+                next.timer.cancelled();
+            } else {
+                next.timer.finish(&outcome);
+            }
             if next
                 .cache
                 .as_ref()

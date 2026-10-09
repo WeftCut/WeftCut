@@ -5,6 +5,7 @@ import path from 'node:path'
 import { format } from 'node:util'
 import { DiagnosticsStore, redactDiagnosticText } from './diagnosticsStore'
 import type { DiagnosticSummary } from '../shared/diagnostics'
+import { importDiagnosticDetails } from './importDiagnosticExport'
 
 let store: DiagnosticsStore | null = null
 let ownerId: number | null = null
@@ -16,12 +17,14 @@ export function diagnosticOwner(id: number): void { ownerId = id }
 export function recordDiagnostic(kind: string, message: string): void { store?.record(kind, message) }
 
 /** Structured project events contribute only their message and classification;
- * tool arguments, project snapshots, details and i18n arguments are excluded. */
+ * tool arguments, project snapshots, details and i18n arguments are excluded,
+ * except for the explicitly selected import timing fields. */
 export function recordProjectDiagnostic(payload: unknown): void {
   if (!payload || typeof payload !== 'object') return
   const p = payload as Record<string, unknown>
   if (typeof p.message === 'string') recordDiagnostic('project', JSON.stringify({
     level: p.level, category: p.category, message: p.message, op_state: p.op_state,
+    details: importDiagnosticDetails(p),
   }))
 }
 

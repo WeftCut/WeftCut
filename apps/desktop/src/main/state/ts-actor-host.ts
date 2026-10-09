@@ -31,6 +31,7 @@ import type { RecentsStore } from '../recents'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
+  beginImport?: HybridDeps['beginImport']
   onWorkspaceChanging?: () => void
   onWorkspaceOpened?: () => void
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -300,6 +301,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
   // hands them straight to the Backend's open-time job re-fan-out napi.
   const hybridDeps: HybridDeps = {
+    beginImport: deps.beginImport,
     actor,
     compute: deps.compute,
     enqueueDerivatives: async (items) => { await deps.napi.enqueueJobsForMedia(JSON.stringify(items)) },

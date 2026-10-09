@@ -13,6 +13,7 @@ import {
 import { resolvePauseSubject } from '../pauseSubject'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
 import { root, withGroup } from './fixtures/project'
+import { ImportDiagnostics } from '../../importDiagnostics'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -86,6 +87,19 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
 }
 
 describe('runHybrid: import_media', () => {
+  it('correlates the real hybrid probe, hash, and media registration without changing the result', async () => {
+    const actor = freshActor(), deps = makeDeps(actor)
+    const emit = vi.fn(), send = vi.fn()
+    const diagnostics = new ImportDiagnostics({ emit, send, version: 'test', id: () => 'import-request' })
+    deps.beginImport = () => diagnostics.begin()
+    const id = await runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    expect(id).toBe(MID)
+    expect(deps._probeMedia).toHaveBeenCalledWith('C:/x.mp4', 'import-request')
+    expect(deps._hashMediaSource).toHaveBeenCalledWith('C:/x.mp4', 'import-request')
+    expect(send).toHaveBeenCalledWith('import:diagnostic-track', { import_id: 'import-request', media_id: MID })
+    expect(emit.mock.calls.map(([row]) => row.details.stage)).toEqual(['requested', 'registered', 'request_completed'])
+  })
+
   it('does not insert a completed probe into a replacement project', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)

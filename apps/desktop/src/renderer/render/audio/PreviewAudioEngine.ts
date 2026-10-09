@@ -1,5 +1,6 @@
 import { layerRateNumber } from '../../layerTiming';
 import type { AudioRole } from '../../ipc';
+import { rendererImportDiagnostics } from '../../importDiagnostics';
 // Session-owned transport and preview audio. No Pixi, React, DOM, or visual
 // readiness dependency. The independent timer replenishes Web Audio's sample-
 // accurate schedule; presentation only reads the clock and observes commands.
@@ -317,7 +318,10 @@ export class PreviewAudioEngine {
     // treat an internal cancellation as successfully prepared PCM.
     while (true) {
       signal.throwIfAborted();
-      const ready = await Promise.all(this.window(tUs, PREPARE_US).map((e) => this.ensureMixer(e)!.prepare(tUs, PREPARE_US)));
+      const entries = this.window(tUs, PREPARE_US);
+      const ready = await Promise.all(entries.map((e) => this.ensureMixer(e)!.prepare(tUs, PREPARE_US)));
+      signal.throwIfAborted();
+      entries.forEach((entry, i) => { if (ready[i]) rendererImportDiagnostics.report(entry.view.media_id, 'audio_prepared'); });
       if (ready.every(Boolean)) return;
     }
   }

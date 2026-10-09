@@ -18,6 +18,7 @@
 import { Application, Container } from "pixi.js";
 import { PreviewSyncTracker, type PreviewSyncSnapshot } from "./previewSync";
 import { observePreviewSubmit } from "./previewPresentation";
+import { rendererImportDiagnostics } from '../importDiagnostics';
 import type { ClockSyncSnapshot } from "./clock";
 import type { InjectedMotifFrames } from "./worker/motifStream";
 
@@ -248,6 +249,7 @@ export class Compositor {
   private presentationDirty = false;
   private ownerCompositeCount = 0;
   private presentedCompositeCount = 0;
+  private importFrames = new Map<string, string>();
   /// Raw fps rational so `setAnchorTime` / `compositeFrame` can snap `tUs`
   /// to project-frame boundaries with exact rational arithmetic. Always
   /// `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`, never a pre-rounded
@@ -326,9 +328,16 @@ export class Compositor {
       },
       noteFrameTiming: (startUs, endUs) => this.sync.frame(startUs, endUs),
       noteHeldScene: (startUs) => this.sync.hold(startUs, 1_000_000 * this.fpsDen / this.fpsNum),
+      noteImportFrame: (mediaId, engine) => {
+        if (rendererImportDiagnostics.pending(mediaId, 'first_frame_submitted')) this.importFrames.set(mediaId, engine);
+      },
     };
     if (this.mode === "preview") {
       this.stopObservingSubmit = observePreviewSubmit(init.app, () => {
+        if (this.presentationVisible && !this.suspended) {
+          for (const [mediaId, engine] of this.importFrames) rendererImportDiagnostics.report(mediaId, 'first_frame_submitted', engine);
+        }
+        this.importFrames.clear();
         if (this.playing && !this.scrubbing && !this.suspended && this.presentationVisible) {
           this.sync.submit(performance.now(), this.readOutputClock?.() ?? null);
         } else this.sync.interrupt();
@@ -601,6 +610,7 @@ export class Compositor {
     const prevChildCount = this.stage.children.length;
 
     this.ownerCompositeCount += 1;
+    this.importFrames.clear();
     // Hidden dock tabs retain decoder ownership but skip presentation.
     // Audio is independently scheduled by the editor session.
     if (!this.presentationVisible) {

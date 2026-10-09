@@ -394,6 +394,21 @@ pub fn governor() -> &'static Arc<Governor> {
     INSTANCE.get_or_init(Governor::new)
 }
 pub struct BackgroundGate;
+/// Snapshot only, not an assertion of the reason for the entire wait. Limits
+/// and playback may change while a request is queued.
+pub(crate) fn background_diagnostic_state() -> serde_json::Value {
+    let s = governor().state.lock().unwrap();
+    serde_json::json!({
+        "playing": s.playing, "background_playback": s.limits.background_playback,
+        "memory_pressure": s.pressured,
+        "background_active": s.leases.values().filter(|c| c.background).count(),
+        "background_limit": s.limits.background_jobs, "waiting": s.waiting,
+        "reserved_mib": s.leases.values().map(|c| c.mib).sum::<u64>(),
+        "work_mib": s.limits.work_mib,
+        "threads_active": s.leases.values().map(|c| c.threads).sum::<u32>(),
+        "cpu_threads": s.limits.cpu_threads,
+    })
+}
 impl BackgroundGate {
     pub async fn acquire(&self) -> anyhow::Result<Permit> {
         // Bound pressure on the authority. Excess background work waits here;

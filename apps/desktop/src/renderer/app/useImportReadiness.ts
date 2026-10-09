@@ -34,6 +34,9 @@ import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
 import { backgroundResourcesAvailable, onResourceChange } from "../render/resourceClient";
+import { rendererImportDiagnostics } from '../importDiagnostics';
+import { IMPORT_DIAGNOSTIC_TRACK } from '../../shared/import-diagnostics';
+import { mediaReadiness } from '../panels/mediaReadiness';
 
 /// Owns the import pipeline + per-media preview readiness: the import queue,
 /// the copying/proxy lifecycle maps, the session decodability probe memo, the
@@ -59,6 +62,16 @@ export function useImportReadiness(deps: {
   const { summary, run, previewRef } = deps;
 
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
+  const [diagnosticTick, setDiagnosticTick] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<Parameters<typeof rendererImportDiagnostics.track>[0]>(IMPORT_DIAGNOSTIC_TRACK, e => {
+      rendererImportDiagnostics.track(e.payload);
+      setDiagnosticTick(n => n + 1);
+    }).then(un => { if (disposed) un(); else unlisten = un; }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); rendererImportDiagnostics.track({ reset: true }); };
+  }, []);
 
   // Import queue subscription (docs/data-model.md § `MediaItem`). The
   // background-copy worker pushes a fresh history list on every state
@@ -191,6 +204,14 @@ export function useImportReadiness(deps: {
     return ids;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sweepTick]);
+  useEffect(() => {
+    for (const media of useProjectStore.getState().mediaById.values()) {
+      rendererImportDiagnostics.report(media.id, 'pool_observed');
+      if (mediaReadiness(media, importingMediaIds, proxyState, { previewDecodable: previewDecodableMediaIds.has(media.id) }).ready) {
+        rendererImportDiagnostics.report(media.id, 'editable');
+      }
+    }
+  }, [summary, importingMediaIds, proxyState, previewDecodableMediaIds, diagnosticTick]);
   // Media_ids whose proxy failure already reached the status log. A failure is
   // reported once per media per session; the pool badge carries the durable
   // truth, so re-emitting on every re-render would only flood the log.

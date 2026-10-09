@@ -46,6 +46,8 @@ import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
+import { ImportDiagnostics } from './importDiagnostics'
+import { IMPORT_DIAGNOSTIC_MILESTONE } from '../shared/import-diagnostics'
 import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
@@ -608,6 +610,7 @@ app.whenReady().then(async () => {
 
   // Construct + init the Backend before creating the window
   const workspaceEvents = createWorkspaceEventGate()
+  let importDiagnostics: ImportDiagnostics | undefined
   backend = new Backend(
     app.getPath('userData'),
     dataRoot.cacheDir,
@@ -618,6 +621,13 @@ app.whenReady().then(async () => {
       if (!workspaceEvents.accept(message.payload)) return
       const payload = event === 'import:queue' && message.payload?.entries
         ? message.payload.entries : message.payload
+      if (event === 'import:diagnostic' || event === 'import:diagnostic-plan') {
+        importDiagnostics?.native(event, payload)
+        return
+      }
+      if (event === 'media:job_complete' || event === 'media:job_error' || event === 'import:complete' || event === 'import:error') {
+        importDiagnostics?.native(event, payload)
+      }
       if (event === 'log:entry') recordProjectDiagnostic(payload)
       // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
       // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
@@ -786,9 +796,12 @@ app.whenReady().then(async () => {
    *  no op_id/op_state, which is why the content-download producer invokes
    *  log_emit directly too (`docs/status-log.md`). Swallows — a logging
    *  failure must never fail the call that produced the row. */
-  const emitLogEntry = (entry: McpLogEntryInput): void => {
-    try { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) } catch { /* no bus */ }
+  const emitLogEntry = (entry: Omit<McpLogEntryInput, 'category'> & { category: { kind: 'Mcp' | 'Import' } }): void => {
+    const generation = entry.category.kind === 'Import' ? workspaceEvents.current() : undefined
+    if (generation === null) return
+    try { void backend!.invoke('log_emit', JSON.stringify({ input: entry, expectedGeneration: generation })).catch(() => {}) } catch { /* no bus */ }
   }
+  importDiagnostics = new ImportDiagnostics({ emit: emitLogEntry, send: emitToRenderer, version: process.env.WEFTCUT_BUILD_VERSION ?? app.getVersion() })
 
   // Wrap napiFacade.commitWorkspace to also refresh wsCache as a side effect —
   // the orchestrator calls it before replaceState, so by the time any post-open
@@ -841,8 +854,8 @@ app.whenReady().then(async () => {
   // Rust compute facade for the native-compute → TS-write hybrids:
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
   const computeFacade = {
-    probeMedia: (p: string) => backend!.probeMedia(p, workspaceEvents.requireCurrent()),
-    hashMediaSource: (p: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent()),
+    probeMedia: (p: string, importId?: string) => backend!.probeMedia(p, workspaceEvents.requireCurrent(), importId),
+    hashMediaSource: (p: string, importId?: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent(), importId),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
@@ -926,7 +939,8 @@ app.whenReady().then(async () => {
   })
 
   tsHost = createTsActorHost({
-    onWorkspaceChanging: () => audioFxBaker?.suspend(),
+    onWorkspaceChanging: () => { importDiagnostics?.reset(); audioFxBaker?.suspend() },
+    beginImport: () => importDiagnostics!.begin(),
     onWorkspaceOpened: () => audioFxBaker?.reset(),
     send: (event, payload) => emitToRenderer(event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
@@ -1311,6 +1325,7 @@ app.whenReady().then(async () => {
   })
   await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === IMPORT_DIAGNOSTIC_MILESTONE) { importDiagnostics?.milestone(args); return null }
     if (channel === 'export_video_sink_start') {
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args?.args ?? {};
       args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken) } };

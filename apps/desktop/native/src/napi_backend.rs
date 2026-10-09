@@ -428,22 +428,31 @@ impl Backend {
         &self,
         path: String,
         expected_generation: Option<u32>,
+        import_id: Option<String>,
     ) -> napi::Result<String> {
         let cache = self
             .cache
             .snapshot_expected(expected_generation)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let buf = std::path::PathBuf::from(&path);
+        let mut timer = crate::jobs::diagnostics::StageTimer::new(
+            cache.scoped_events(self.events.clone()),
+            "probe",
+            import_id,
+            None,
+        );
         let metadata_json = crate::jobs::singleflight::source(&cache, &buf, "probe", async {
             let _permit = tokio::select! {
                 permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
+            timer.start();
             let metadata = crate::io::probe::probe_metadata_scoped(&buf, &cache).await?;
             Ok(serde_json::to_string(&metadata)?)
         })
-        .await
-        .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        .await;
+        timer.finish(&metadata_json);
+        let metadata_json = metadata_json.map_err(|e| Error::from_reason(format!("{e:#}")))?;
         let metadata = serde_json::from_str(&metadata_json)
             .map_err(|e| Error::from_reason(format!("{e:#}")))?;
         cache
@@ -467,17 +476,25 @@ impl Backend {
         &self,
         path: String,
         expected_generation: Option<u32>,
+        import_id: Option<String>,
     ) -> napi::Result<String> {
         let cache = self
             .cache
             .snapshot_expected(expected_generation)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let buf = std::path::PathBuf::from(&path);
+        let mut timer = crate::jobs::diagnostics::StageTimer::new(
+            cache.scoped_events(self.events.clone()),
+            "hash",
+            import_id,
+            None,
+        );
         let hash = crate::jobs::singleflight::source(&cache, &buf, "hash", async {
             let permit = tokio::select! {
                 permit = crate::jobs::ffmpeg_sem().acquire() => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
+            timer.start();
             let worker_cache = cache.clone();
             let worker_path = buf.clone();
             let facts = tokio::task::spawn_blocking(move || {
@@ -488,8 +505,9 @@ impl Backend {
             cache.check_active()?;
             Ok(facts.blake3_hex)
         })
-        .await
-        .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        .await;
+        timer.finish(&hash);
+        let hash = hash.map_err(|e| Error::from_reason(format!("{e:#}")))?;
         cache
             .check_active()
             .map_err(|e| Error::from_reason(e.to_string()))?;
@@ -883,6 +901,13 @@ impl Backend {
             "log_emit" => {
                 let a: crate::commands::prefs::LogEmitArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
+                if let Some(generation) = a.expected_generation {
+                    let slot = self.log_slot.snapshot();
+                    if self.cache.snapshot_expected(Some(generation)).is_ok() {
+                        slot.emit(a.input);
+                    }
+                    return Ok("null".into());
+                }
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
@@ -1720,6 +1745,43 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn import_timing_log_cannot_land_in_a_reopened_workspace() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timing.vproj");
+        std::fs::create_dir_all(&path).unwrap();
+        let old = b
+            .commit_workspace(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let current = b
+            .commit_workspace(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let row = |generation| {
+            serde_json::json!({
+                "expectedGeneration": generation,
+                "input": { "level": "info", "category": { "kind": "Import" },
+                    "source": { "kind": "System" }, "message": "Import timing: hash" }
+            })
+            .to_string()
+        };
+        b.dispatch("log_emit", &row(old)).await.unwrap();
+        let timing_rows = || {
+            b.log_slot
+                .current()
+                .unwrap()
+                .list()
+                .into_iter()
+                .filter(|entry| entry.message == "Import timing: hash")
+                .count()
+        };
+        assert_eq!(timing_rows(), 0);
+        b.dispatch("log_emit", &row(current)).await.unwrap();
+        assert_eq!(timing_rows(), 1);
+    }
+
     #[cfg(all(feature = "speech", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transcribe_clip_without_key_is_clean_error() {
@@ -1785,7 +1847,7 @@ mod tests {
         std::fs::write(&f, b"hello weftcut").unwrap();
 
         let got = b
-            .hash_media_source(f.to_string_lossy().to_string(), None)
+            .hash_media_source(f.to_string_lossy().to_string(), None, None)
             .await
             .unwrap();
         let want = blake3::hash(b"hello weftcut").to_hex().to_string();

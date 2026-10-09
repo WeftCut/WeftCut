@@ -286,6 +286,7 @@ export interface CompositionNodeHost {
   noteLateLayer(): void;
   noteFrameTiming?(startUs: number | null, endUs: number | null): void;
   noteHeldScene?(rootUs: number | null): void;
+  noteImportFrame?(mediaId: string, engine: string): void;
 }
 
 export interface CompositionNodeInit {
@@ -1469,6 +1470,7 @@ export class CompositionNode {
       clip.boundFrameTargetUs = srcTUs;
       clip.boundFrameDurationUs = selected.durationUs;
       clip.boundFrameSourceKey = clip.builtFromKey;
+      if (this.host.mode === 'preview') this.host.noteImportFrame?.(clip.mediaId, clip.builtFromKey.split(':', 1)[0] ?? 'unknown');
     } else {
       // Diagnostic: log when `selectFrame` returns null (painter holds
       // previous frame). Throttled to "only when this clip's state
