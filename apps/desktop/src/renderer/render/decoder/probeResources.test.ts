@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), acquire: vi.fn(), available: vi.fn() }));
 vi.mock('./mediaInput', () => ({ openMediaInput: mocks.open }));
-vi.mock('../resourceClient', () => ({ acquireRenderResources: mocks.acquire, backgroundResourcesAvailable: mocks.available }));
+vi.mock('../resourceClient', () => ({
+  acquireRenderResources: mocks.acquire,
+  backgroundResourcesAvailable: mocks.available,
+  resourcePressure: () => false,
+}));
 import { classifyWebcodecsDecodability } from './probeSourceDecodable';
 
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
