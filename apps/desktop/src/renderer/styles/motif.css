@@ -194,7 +194,6 @@
 }
 
 .motif-delete-dialog { width: min(var(--dialog-width-compact), 90vw); }
-.motif-delete-dialog > p { margin: calc(16 * var(--ui-px)); }
 
 .motif-card-selected {
   background: var(--selection-bg);

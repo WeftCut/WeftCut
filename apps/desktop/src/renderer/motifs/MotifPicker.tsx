@@ -325,15 +325,30 @@ export function MotifPicker({
             </div>
           </div>
         )}
-        {deleting && <AppDialog title={t('motif_picker.delete_button')} panelClassName="settings-panel motif-delete-dialog"
-          onClose={deleteBusy ? undefined : () => setDeleting(null)}>
-          <p>{t('motif_picker.delete_confirm', { name: deleting.name })}</p>
-          {deleteError && <p className="settings-error">{deleteError}</p>}
-          <div className="motif-picker-actions">
-            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(null)}>{t('motif_picker.cancel')}</Button>
-            <Button variant="destructive" disabled={deleteBusy} onClick={() => void removeItem()}>{t('motif_picker.delete_button')}</Button>
-          </div>
-        </AppDialog>}
+        {deleting && (
+          <AppDialog
+            title={t("motif_picker.delete_button")}
+            panelClassName="settings-panel motif-delete-dialog"
+            onClose={deleteBusy ? undefined : () => setDeleting(null)}
+          >
+            <div className="settings-body">
+              <div className="settings-card">
+                <p className="settings-blurb">
+                  {t("motif_picker.delete_confirm", { name: deleting.name })}
+                </p>
+                {deleteError && <p className="settings-error" role="alert">{deleteError}</p>}
+                <div className="export-actions">
+                  <Button size="lg" disabled={deleteBusy} onClick={() => setDeleting(null)}>
+                    {t("motif_picker.cancel")}
+                  </Button>
+                  <Button variant="destructive" size="lg" disabled={deleteBusy} onClick={() => void removeItem()}>
+                    {t("motif_picker.delete_button")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </AppDialog>
+        )}
     </AppDialog>
   );
 }
