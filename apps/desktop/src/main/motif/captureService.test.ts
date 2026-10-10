@@ -235,6 +235,48 @@ describe('Motif capture and persistence', () => {
     expect(h.deps.copy).toHaveBeenCalledTimes(1);
   });
 
+  it('rechecks a committed cache address when a display miss arrives after persistence completed', async () => {
+    const h = fixture(false);
+    await h.service.persist(args);
+    // The renderer observed a hole before the background write, but its
+    // foreground request reaches main after the pending job was removed.
+    const { bake, ...preview } = args;
+    const display = await h.service.capture(owner, { ...preview, cache: bake });
+    expect(display).toMatchObject({ kind: 'rgba', persisted: true });
+    expect(h.deps.png).toHaveBeenCalledTimes(1);
+    expect(h.writer.png).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares a display cache recheck with persistence that arrives during the read', async () => {
+    const h = fixture(false);
+    let finish!: (value: StoredMotifFrame | null) => void;
+    h.read.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const { bake, ...preview } = args;
+    const display = h.service.capture(owner, { ...preview, cache: bake });
+    const persist = h.service.persist(args);
+    await Promise.resolve();
+    expect(h.deps.png).not.toHaveBeenCalled();
+    finish(null);
+    await expect(display).resolves.toMatchObject({ persisted: true });
+    await persist;
+    expect(h.deps.png).toHaveBeenCalledTimes(1);
+    expect(h.writer.png).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not acknowledge another cache address as persisted when a bake joins a cache hit', async () => {
+    const h = fixture(false);
+    let finish!: (value: StoredMotifFrame | null) => void;
+    h.read.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const { bake, ...preview } = args;
+    const display = h.service.capture(owner, { ...preview, cache: bake });
+    const other = { hash: 'b'.repeat(32), frame: 0 };
+    const persist = h.service.persist({ ...args, bake: other });
+    finish({ kind: 'rgba', width: 2, height: 2, rgba: new Uint8Array(16) });
+    await Promise.all([display, persist]);
+    expect(h.prepareWrite).toHaveBeenCalledExactlyOnceWith(other.hash, other.frame);
+    expect(h.writer.png).toHaveBeenCalledTimes(1);
+  });
+
   it('cancelling background interest preserves a joined current display consumer', async () => {
     const h = fixture(); let finish!: () => void; let backgroundCurrent = true;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {

@@ -17,6 +17,7 @@ import { MotifFrameScheduler } from './MotifFrameScheduler';
 import { captureMotifFrameResult } from './host';
 import { controlStoredMotifCapture, type CapturedFrame } from './frameTransport';
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
+import { hashCacheKey } from '../../../shared/motifs/cacheKey';
 
 /// Process-wide per-frame cache shared by every MotifSprite AND the
 /// prewarmer, so identical (motif, props, dims, fps, frame) rasters resolve
@@ -140,6 +141,7 @@ function acquireFrame(
       capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!, motif.manifest.settle_rafs,
         motif.manifest.content_hash, fpsNum, fpsDen, {
           key: ticket.key, high: ticket.high(),
+          ...(!overlay ? { cache: { hash: hashCacheKey(cacheKey), frame } } : {}),
           ...(ticket.bake() ? { bake: ticket.bake()! } : {}),
         }),
     });

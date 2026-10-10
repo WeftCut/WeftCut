@@ -7,6 +7,7 @@ export interface CaptureOptions {
   key: string;
   high: boolean;
   bake?: MotifCacheAddress;
+  cache?: MotifCacheAddress;
   /** Return valid pixels even when optional cache persistence is unavailable. */
   bakeOptional?: boolean;
   finalizationToken?: string;
@@ -29,6 +30,7 @@ export function captureMotifFrameResult(
     motifId, tSec, propsJson: JSON.stringify(props), width, height,
     settleRafs: settleRafs ?? null, contentHash: contentHash ?? '', fpsNum, fpsDen,
     coalesceKey: options.key, high: options.high, bake: options.bake,
+    cache: options.cache,
     bakeOptional: options.bakeOptional, finalizationToken: options.finalizationToken,
   });
 }

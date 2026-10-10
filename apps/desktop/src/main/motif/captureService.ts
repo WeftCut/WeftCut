@@ -11,6 +11,8 @@ export interface CaptureRequest extends CaptureArgs {
   coalesceKey?: string
   high?: boolean
   bake?: MotifCacheAddress
+  /** Committed display address to recheck after renderer-side cache misses. */
+  cache?: MotifCacheAddress
   /** Export pixels remain usable when optional cache persistence fails. */
   bakeOptional?: boolean
   finalizationToken?: string
@@ -130,7 +132,7 @@ export class MotifCaptureService {
   }
 
   private async persistFrame(request: CaptureRequest & { bake: MotifCacheAddress }, isCurrent: () => boolean, store: MotifFrameStore): Promise<void> {
-    const { coalesceKey, high, bake, bakeOptional: _optional, finalizationToken: _token, ...args } = request
+    const { coalesceKey, high, bake, cache: _cache, bakeOptional: _optional, finalizationToken: _token, ...args } = request
     const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576)
     let writeFailed = false
     const write = async (bytes: Uint8Array, png: boolean) => {
@@ -188,7 +190,7 @@ export class MotifCaptureService {
   private async captureDisplay(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean, finalizationId: number | undefined, store: MotifFrameStore, register: (attach: DisplayJob['attach']) => void): Promise<StoredMotifFrame> {
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576, finalizationId)
-    const { coalesceKey, high, bake, bakeOptional, finalizationToken: _token, ...args } = request
+    const { coalesceKey, high, bake, cache, bakeOptional, finalizationToken: _token, ...args } = request
     const key = coalesceKey === undefined ? undefined : `${owner.id}:${coalesceKey}`
     // Begin resolving the workspace now, without postponing capture admission:
     // control messages follow it on the same preload IPC sender.
@@ -227,6 +229,14 @@ export class MotifCaptureService {
       return true
     }
     try {
+      if (cache && (!bake || sameAddress(cache, bake))) {
+        // A background write may finish after the renderer's disk miss, with
+        // no pending receipt left to join. Register this display job BEFORE
+        // reading so any new persistence demand can join the same producer.
+        const stored = await store.read(cache.hash, cache.frame)
+        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (stored && (!destinationAddress || sameAddress(cache, destinationAddress))) return { ...stored, persisted: true }
+      }
       if (this.useTexture && this.deps.copy) {
         try {
           return await this.deps.texture(args, async texture => {

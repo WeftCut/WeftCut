@@ -121,6 +121,28 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     await running.page.keyboard.down('Control')
     await running.page.mouse.wheel(0, -1200)
     await running.page.keyboard.up('Control')
+    // Replay a renderer miss whose reply arrives after background persistence
+    // completed. Main must recheck the committed address, not capture again
+    // merely because there is no longer an in-flight background receipt.
+    await running.app.evaluate(({ ipcMain }, hash) => {
+      const read = ipcMain._invokeHandlers.get('motif:read')!
+      ;(globalThis as any).__staleMotifMissDelivered = false
+      ipcMain._invokeHandlers.set('motif:read', (event: any, args: any) => {
+        if (args.hash === hash && args.frame === 0 && !(globalThis as any).__staleMotifMissDelivered) {
+          ;(globalThis as any).__staleMotifMissDelivered = true
+          return null
+        }
+        return read(event, args)
+      })
+    }, hashCacheKey(key))
+    await running.page.evaluate(async key => {
+      const hook = (window as any).__weftcutTest
+      hook.clearMotifCacheKey(key)
+      await hook.renderMotifSpriteFrames({
+        motifId: 'countdown', fpsNum: 30, fpsDen: 1, durationUs: 1_000_000, props: { seconds: 1 },
+        times: [{ tInLayerUs: 0 }],
+      })
+    }, key)
     const dot = running.page.locator(`[data-layer-id="${layerId}"] .motif-bake-dot`)
     for (const us of [900_000, 100_000, 700_000, 0]) {
       await running.page.evaluate(({ key, us }) => {
@@ -131,6 +153,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
       await expect(dot).toHaveAttribute('title', 'Pre-baked')
       await running.page.evaluate(() => (window as any).__weftcutTest.weftcutSampleComposite(240, 240))
     }
+    expect(await running.app.evaluate(() => (globalThis as any).__staleMotifMissDelivered)).toBe(true)
     const diagnostics = await invokeCmd<CaptureDiagnostics>(running.page, 'motif_capture_diagnostics')
     expect(capturesFor(diagnostics, 'countdown')).toBe(missingFrame === null ? 0 : 1)
     const after = await Promise.all(Array.from({ length: 30 }, (_, f) =>

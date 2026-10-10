@@ -129,7 +129,16 @@ test('benchmark cancellation and completion never silently modify budgets @seria
   try {
     const pane = await openPerformance(page);
     const read = () => invokeCmd<AppSettings>(page, 'app_settings_get');
-    const before = (await read()).performance;
+    // Hosted Windows has 16 GiB RAM: its automatic work allowance is only
+    // ~2.2 GiB, below the fixed eight-stream calibration reservation (~4.1 GiB).
+    // Explicitly admit this isolated workload; production must still reject
+    // it under an insufficient user budget (covered separately below).
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 16384 } } });
+    const budgets = async () => {
+      const settings = await read();
+      return { performance: settings.performance, resource_policy: settings.resource_policy };
+    };
+    const before = await budgets();
     const status = () => page.evaluate(() => window.api.performanceCalibration.status());
     const cache = path.join(await app.evaluate(({ app }) => app.getPath('userData')), 'data', 'cache', 'performance-calibration');
     expect(fs.existsSync(path.join(cache, 'h264-4k60.mp4'))).toBe(false);
@@ -137,19 +146,38 @@ test('benchmark cancellation and completion never silently modify budgets @seria
     await expect.poll(async () => (await status()).running).toBe(true);
     await pane.getByRole('button', { name: '取消测试', exact: true }).click();
     await expect.poll(async () => (await status()).running).toBe(false);
-    expect((await read()).performance).toEqual(before);
+    expect(await budgets()).toEqual(before);
     await pane.getByRole('button', { name: '进行基准测试', exact: true }).click();
     await expect.poll(async () => (await status()).running, { timeout: 900_000, intervals: [1000] }).toBe(false);
     const manifest = JSON.parse(fs.readFileSync(path.join(cache, 'manifest.json'), 'utf8'));
     expect(manifest).toMatchObject({ version: 1, codec: 'h264', width: 3840, height: 2160, fps: 60, durationUs: 20_000_000 });
     expect(fs.statSync(path.join(cache, 'h264-4k60.mp4')).size).toBe(manifest.bytes);
     expect(fs.readdirSync(cache).filter(name => name.startsWith('.prepare-'))).toEqual([]);
-    expect((await read()).performance).toEqual(before);
+    expect(await budgets()).toEqual(before);
     const report = (await status()).report;
     if (report?.state === 'complete' && report.recommendation) {
       await pane.getByRole('button', { name: '保存测试建议', exact: true }).click();
       await expect.poll(async () => (await read()).performance_test_profile?.calibration).toEqual(report.recommendation);
-      expect((await read()).performance).toEqual(before);
+      expect(await budgets()).toEqual(before);
     }
   } finally { await page.evaluate(() => window.api.performanceCalibration.cancel()).catch(() => {}); await app.close(); }
+});
+
+test('benchmark rejects insufficient capacity without changing resource budgets', async () => {
+  test.skip(process.platform !== 'win32', 'D3D11VA prototype');
+  const { app, page } = await launchApp({ locale: 'zh-CN' });
+  try {
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 1024 } } });
+    const before = await invokeCmd<AppSettings>(page, 'app_settings_get');
+    const error = await page.evaluate(async () => {
+      try { await window.api.performanceCalibration.start(); return null; }
+      catch (error) { return String(error); }
+    });
+    expect(error).toContain('resource-capacity-exceeded');
+    expect(await page.evaluate(() => window.api.performanceCalibration.status()))
+      .toMatchObject({ running: false, report: { state: 'error', recommendation: null } });
+    const after = await invokeCmd<AppSettings>(page, 'app_settings_get');
+    expect(after.performance).toEqual(before.performance);
+    expect(after.resource_policy).toEqual(before.resource_policy);
+  } finally { await app.close(); }
 });

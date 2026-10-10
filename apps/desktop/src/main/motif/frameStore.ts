@@ -157,7 +157,9 @@ export class MotifFrameStore {
       entries = await fs.readdir(root, { withFileTypes: true })
     } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
     for (const entry of entries) {
-      if (!entry.isDirectory() || !/^[0-9a-f]{32}$/.test(entry.name) || live.has(entry.name)) continue
+      // The former PNG cache used eight-hex hashes. They cannot be read by
+      // the current store, but still need collection after live discovery.
+      if (!entry.isDirectory() || !/^(?:[0-9a-f]{8}|[0-9a-f]{32})$/.test(entry.name) || live.has(entry.name)) continue
       const target = path.resolve(root, entry.name)
       if (path.dirname(target) !== root) throw new Error('Invalid Motif collection path')
       if (!isCurrent()) return
