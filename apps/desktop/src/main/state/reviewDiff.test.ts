@@ -159,6 +159,23 @@ describe('diffProjects — classes', () => {
   })
 })
 
+describe('diffProjects — track order', () => {
+  it('a track reorder is a listed-only placement change of the composition; adding a track is not', () => {
+    const { a, tA } = setup()
+    const before = a.snapshot()
+    ok(a.dispatch('move_track', { track: tA, new_position: 1 }))
+    const after = a.snapshot()
+    const c = only(diffProjects(before, after))
+    expect(c).toMatchObject({ class: 'modified', kind: 'Composition', keys: [entityKey('Composition', before.root_id)], aspects: ['placement'], ranges: [] })
+    expect([...touchedEntityKeys(before, after)]).toEqual([entityKey('Composition', before.root_id)])
+    const mid = a.snapshot()
+    const t = ok(a.dispatch('add_track', {})) as Uuid
+    const added = diffProjects(mid, a.snapshot())
+    expect(added.map((x) => [x.class, x.kind, x.id])).toEqual([['added', 'Track', entityKey('Track', t)]])
+    expect([...touchedEntityKeys(mid, a.snapshot())]).toEqual([entityKey('Track', t)])
+  })
+})
+
 describe('diffProjects — exclusions', () => {
   it('track mute/solo/lock/enable, composition envelope, settings and media pool produce nothing', () => {
     const { a, tA } = setup()
@@ -308,6 +325,7 @@ type Op =
   | { t: 'label'; n: number }
   | { t: 'marker'; at: number; attach: number | null }
   | { t: 'group'; n: number }
+  | { t: 'reorder'; n: number }
 
 const step = (n: number) => n * 100_000
 const opArb: fc.Arbitrary<Op> = fc.oneof(
@@ -320,6 +338,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   fc.record({ t: fc.constant('label' as const), n: fc.nat(20) }),
   fc.record({ t: fc.constant('marker' as const), at: fc.integer({ min: 0, max: 12 }).map(step), attach: fc.option(fc.nat(20), { nil: null }) }),
   fc.record({ t: fc.constant('group' as const), n: fc.nat(20) }),
+  fc.record({ t: fc.constant('reorder' as const), n: fc.nat(20) }),
 )
 
 /** Apply one op against the live snapshot; refusals are simply skipped. */
@@ -328,6 +347,7 @@ function apply(a: ActorHandle, op: Op): void {
   const tracks = root(p).tracks.map((t) => t.id)
   const layers = Object.values(p.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers.map((l) => l.id)))
   const pick = (n: number) => layers[n % layers.length]
+  if (op.t === 'reorder') { if (tracks.length > 1) a.dispatch('move_track', { track: tracks[op.n % tracks.length], new_position: (op.n + 1) % tracks.length }); return }
   if (op.t !== 'add' && op.t !== 'marker' && layers.length === 0) return
   switch (op.t) {
     case 'add': a.dispatch('add_layer', { track: tracks[op.track], kind: 'color', t_start_us: op.start, t_end_us: op.start + op.len }); break

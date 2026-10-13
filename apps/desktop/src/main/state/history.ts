@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
+import { ABSENT, diffProjects, entitiesEqual, extractEntities, groupDecorations, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -77,6 +78,28 @@ export interface HistoryStatus {
 
 const DEFAULT_CAP = 200
 
+/** The Review baseline (ADR 0115; spec Part B): the state the user last
+ *  accepted. `base` is patched by every `*Everywhere` preference patch exactly
+ *  like a checkpoint; `approved` overlays per-entity approvals on it
+ *  (`ABSENT` = approved as gone); `agentTouched` holds every entity an
+ *  Agent-sourced recorded commit touched since. */
+export interface ReviewBaseline {
+  readonly base: Project
+  readonly approved: ReadonlyMap<EntityKey, EntityValue | Absent>
+  readonly agentTouched: ReadonlySet<EntityKey>
+}
+interface MutableBaseline { base: Project; approved: Map<EntityKey, EntityValue | Absent>; agentTouched: Set<EntityKey> }
+
+/** The baseline compared against `current()`: unreviewed changes (any key an
+ *  agent touched) and user-only ones, plus Group decorations for both. */
+export interface ReviewState {
+  baseline_revision: number
+  has_baseline: boolean
+  unreviewed: Change[]
+  user: Change[]
+  decorations: GroupDecoration[]
+}
+
 /** The 'Initial' entry's summary half — shared by the constructor and reset() so
  *  the seed row is spelled once. */
 function seed(initial: Project): Pick<HistoryEntry, 'summary' | 'label_key' | 'affected' | 'snapshot'> {
@@ -97,6 +120,13 @@ export class History {
   // make old, untraceable effects explicitly unknown rather than falsely undone.
   private effectLineage = new WeakMap<object, ReadonlySet<Uuid>>()
   private knownEffects = new Set<Uuid>()
+  // Review baseline — null until a work session begins or an agent first
+  // commits. Revision only ever increases (also across reset) so a consumer's
+  // cached view can never be mistaken for a fresh one.
+  private review: MutableBaseline | null = null
+  private reviewRev = 0
+  private reviewMemo: { rev: number; base: Project; current: Project; state: ReviewState } | null = null
+  private reviewListener: ((revision: number) => void) | null = null
 
   effectStates(ids: readonly Uuid[]): Array<'applied' | 'reverted' | 'unknown'> {
     const active = this.effectLineage.get(this.snapshots[this.cursor])
@@ -120,11 +150,14 @@ export class History {
     this.evictedCount = 0 // a fresh stack has discarded nothing
     this.effectLineage = new WeakMap()
     this.knownEffects.clear()
+    // A project opening's baseline goes with its history (ADR 0115).
+    if (this.review !== null) { this.review = null; this.bumpReview() }
   }
 
   current(): Project { return this.snapshots[this.cursor].snapshot }
 
   record(entry: HistoryEntry, baseEffects = this.effectLineage.get(this.snapshots[this.cursor])): void {
+    this.attribute(this.snapshots[this.cursor].snapshot, entry)
     this.knownEffects.add(entry.op_id)
     if (this.knownEffects.size > 4000) this.knownEffects.delete(this.knownEffects.values().next().value!)
     const effects = new Set([...baseEffects ?? []].filter(id => this.knownEffects.has(id)))
@@ -211,6 +244,120 @@ export class History {
    *  stack row. */
   deleteCheckpoint(id: Uuid): boolean { return this.checkpoints.delete(id) }
 
+  // ── Review baseline (ADR 0115) ────────────────────────────────────────────
+
+  /** Attribution: an Agent-sourced recorded commit (a checkpoint restore an
+   *  agent performs included) adds every entity it touched to `agentTouched`,
+   *  initializing the baseline from its predecessor when there is none yet.
+   *  User commits add nothing — and remove nothing, so a user edit cannot
+   *  launder an agent change. Undo/redo record nothing and need nothing: values
+   *  are compared, so a change undone back to the baseline simply disappears. */
+  private attribute(predecessor: Project, entry: HistoryEntry): void {
+    if (entry.actor.kind !== 'Agent') return
+    let changed = false
+    if (this.review === null) { this.review = { base: predecessor, approved: new Map(), agentTouched: new Set() }; changed = true }
+    const touched = this.review.agentTouched
+    for (const k of touchedEntityKeys(predecessor, entry.snapshot)) {
+      if (!touched.has(k)) { touched.add(k); changed = true }
+    }
+    if (changed) this.bumpReview()
+  }
+
+  private bumpReview(): void {
+    this.reviewRev += 1
+    try { this.reviewListener?.(this.reviewRev) }
+    catch (err) { console.warn('[history] review listener threw', err) }
+  }
+
+  /** One listener (the actor), told the new revision on every baseline change:
+   *  initialize, re-pin, approval, attribution, reset. Not on `*Everywhere`
+   *  patches — those already broadcast, and the review memo keys on the
+   *  patched snapshots' identity. */
+  onReviewChange(cb: ((revision: number) => void) | null): void { this.reviewListener = cb }
+  reviewRevision(): number { return this.reviewRev }
+  reviewBaseline(): ReviewBaseline | null { return this.review }
+
+  /** A checkpoint's stored snapshot (a work session's `Pre-agent` one is what
+   *  the baseline pins to), or null when it is gone. */
+  checkpointSnapshot(id: Uuid): Project | null { return this.checkpoints.get(id)?.snapshot ?? null }
+
+  /** Work session begin: initialize from `snapshot` when there is no baseline;
+   *  re-pin to it only when nothing is unreviewed, otherwise keep
+   *  accumulating. Returns whether the baseline now IS `snapshot`. */
+  pinReviewBaseline(snapshot: Project): boolean {
+    if (this.review !== null && this.reviewState().unreviewed.length > 0) return false
+    this.review = { base: snapshot, approved: new Map(), agentTouched: new Set() }
+    this.bumpReview()
+    return true
+  }
+
+  /** Approve all: the baseline becomes the current state. Records nothing and
+   *  ignores the history lock (approval changes no project state). No-op
+   *  without a baseline. */
+  approveAll(): void {
+    if (this.review === null) return
+    this.review = { base: this.current(), approved: new Map(), agentTouched: new Set() }
+    this.bumpReview()
+  }
+
+  /** Approve the changes that hold any of `keys`: each of a change's entities
+   *  takes its current value in the overlay (a shift group approves as a unit)
+   *  and leaves `agentTouched`. A key in no change is ignored. Returns how
+   *  many changes were approved. */
+  approveKeys(keys: Iterable<EntityKey>): number {
+    const wanted = new Set(keys)
+    return this.approveWhere((c) => c.keys.some((k) => wanted.has(k)))
+  }
+  /** As approveKeys, by change id from the current review state. */
+  approveChanges(ids: Iterable<string>): number {
+    const wanted = new Set(ids)
+    return this.approveWhere((c) => wanted.has(c.id))
+  }
+  private approveWhere(pick: (c: Change) => boolean): number {
+    const review = this.review
+    if (review === null) return 0
+    const { unreviewed, user } = this.reviewState()
+    const picked = [...unreviewed, ...user].filter(pick)
+    if (picked.length === 0) return 0
+    const cur = extractEntities(this.current())
+    const base = extractEntities(review.base)
+    for (const change of picked) {
+      for (const k of change.keys) {
+        const v = cur.get(k)
+        // An approval equal to the base value needs no overlay entry; keeping
+        // the overlay minimal keeps its values off the unpatched path.
+        if (v === undefined ? !base.has(k) : entitiesEqual(base.get(k), v)) review.approved.delete(k)
+        else review.approved.set(k, v ?? ABSENT)
+        review.agentTouched.delete(k)
+      }
+    }
+    this.bumpReview()
+    return picked.length
+  }
+
+  /** The baseline against the current state, memoized on (baseline revision,
+   *  base and current snapshot identity) — computed only when asked.
+   *
+   *  Known caveat: approved overlay values bypass the `*Everywhere` patches.
+   *  The fps re-snap (replaceCompositionEverywhere) moves markers in every
+   *  snapshot and in `base` but not in `approved`; the re-snapped marker's key
+   *  is not in `agentTouched`, so the difference surfaces only as a user
+   *  change (hidden by default). The re-snap is refused while any layer
+   *  exists (`FpsLockedByContent`), so only bare markers can be affected. */
+  reviewState(): ReviewState {
+    const review = this.review
+    const current = this.current()
+    if (review === null) return { baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] }
+    const m = this.reviewMemo
+    if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
+    const changes = diffProjects(review, current)
+    const unreviewed: Change[] = [], user: Change[] = []
+    for (const c of changes) (c.keys.some((k) => review.agentTouched.has(k)) ? unreviewed : user).push(c)
+    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) }
+    this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
+    return state
+  }
+
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
    *  (project_settings_patch_convention). The track-flag variant is
    *  replaceTrackFlagsEverywhere, the audio-role-flag one
@@ -218,6 +365,7 @@ export class History {
   replaceSettingsEverywhere(settings: ProjectSettings): void {
     for (const e of this.snapshots) e.snapshot = { ...e.snapshot, settings: { ...settings } }
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, settings: { ...settings } }
+    if (this.review) this.review.base = { ...this.review.base, settings: { ...settings } }
   }
 
   /** Patch one track's flags into EVERY snapshot + checkpoint where the track
@@ -241,6 +389,7 @@ export class History {
     }
     for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
+    if (this.review) this.review.base = patchTrack(this.review.base)
   }
 
   /** Patch one audio role's mute/solo into EVERY snapshot + checkpoint.
@@ -258,6 +407,7 @@ export class History {
     }
     for (const e of this.snapshots) e.snapshot = apply(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = apply(cp.snapshot)
+    if (this.review) this.review.base = apply(this.review.base)
   }
 
   /** Set `media_pool` on EVERY snapshot + checkpoint.
@@ -267,6 +417,7 @@ export class History {
   replaceMediaPoolEverywhere(pool: Record<string, MediaItem>): void {
     for (const e of this.snapshots) e.snapshot = { ...e.snapshot, media_pool: pool }
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, media_pool: pool }
+    if (this.review) this.review.base = { ...this.review.base, media_pool: pool }
   }
 
   /** The WHOLE composition envelope is preference-shaped (docs/features.md
@@ -282,6 +433,7 @@ export class History {
   replaceCompositionEverywhere(transform: (p: Project) => Project): void {
     for (const e of this.snapshots) e.snapshot = transform(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = transform(cp.snapshot)
+    if (this.review) this.review.base = transform(this.review.base)
   }
 
   /** Does ANY stored snapshot or checkpoint hold a layer? The history-scope half

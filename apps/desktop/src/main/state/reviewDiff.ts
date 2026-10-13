@@ -15,19 +15,20 @@
 // cannot differ, and an approved value that bypassed the patch must not show
 // up as a false difference either.
 import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
+import type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLocation, GroupDecoration, TimeRange } from '../../shared/review'
+
+export type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLocation, GroupDecoration, TimeRange }
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 
-export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transition' | 'Link'
-/** `Layer:<id>`, `Marker:<id>` … — stable across snapshots, unique project-wide. */
-export type EntityKey = `${EntityKind}:${string}`
-
 /** One entity's compared value plus where it lives. Composition and Track
  *  values are slim (only compared fields), so an approved overlay entry never
- *  pins a whole track's layers. Layer/Marker/Transition/Link hold the model
+ *  pins a whole track's layers. A composition's `track_order` (its tracks'
+ *  ids, top of the list first) is compared because it is the z-order: a
+ *  `move_track` reorder is a reviewable `placement` change of the composition. Layer/Marker/Transition/Link hold the model
  *  object itself (shared with the snapshot, never copied). */
 export type EntityValue =
-  | { kind: 'Composition'; id: Uuid; label: string | null }
+  | { kind: 'Composition'; id: Uuid; label: string | null; track_order: readonly Uuid[] }
   | { kind: 'Track'; id: Uuid; composition_id: Uuid; label: string | null; role: TrackRole | null }
   | { kind: 'Layer'; id: Uuid; composition_id: Uuid; track_id: Uuid; layer: Layer }
   | { kind: 'Marker'; id: Uuid; composition_id: Uuid; marker: Marker }
@@ -61,7 +62,7 @@ const compositionMemo = new WeakMap<Composition, readonly EntityValue[]>()
 function compositionEntities(c: Composition): readonly EntityValue[] {
   const hit = compositionMemo.get(c)
   if (hit) return hit
-  const out: EntityValue[] = [{ kind: 'Composition', id: c.id, label: c.label }]
+  const out: EntityValue[] = [{ kind: 'Composition', id: c.id, label: c.label, track_order: c.tracks.map((t) => t.id) }]
   for (const t of c.tracks) {
     out.push({ kind: 'Track', id: t.id, composition_id: c.id, label: t.label, role: t.role })
     for (const l of t.layers) out.push({ kind: 'Layer', id: l.id, composition_id: c.id, track_id: t.id, layer: l })
@@ -129,12 +130,21 @@ function transitionEqual(a: Transition, b: Transition): boolean {
 }
 function linkLabel(l: Link): unknown { return (l as Link & { label?: unknown }).label ?? null }
 
+/** Same relative order of the tracks both sides hold. Adding or removing a
+ *  track is that track's own change, not a reorder of its composition. */
+function trackOrderEqual(a: readonly Uuid[], b: readonly Uuid[]): boolean {
+  if (a === b) return true
+  const inA = new Set(a), inB = new Set(b)
+  const ca = a.filter((id) => inB.has(id)), cb = b.filter((id) => inA.has(id))
+  return ca.length === cb.length && ca.every((id, i) => id === cb[i])
+}
+
 /** Are two entity values equal under the compared fields (location included)? */
 export function entitiesEqual(a: EntityValue | undefined, b: EntityValue | undefined): boolean {
   if (a === b) return true
   if (!a || !b || a.kind !== b.kind || a.id !== b.id) return false
   switch (a.kind) {
-    case 'Composition': return a.label === (b as typeof a).label
+    case 'Composition': { const c = b as typeof a; return a.label === c.label && trackOrderEqual(a.track_order, c.track_order) }
     case 'Track': { const t = b as typeof a; return a.composition_id === t.composition_id && a.label === t.label && a.role === t.role }
     case 'Layer': { const l = b as typeof a; return a.composition_id === l.composition_id && a.track_id === l.track_id && jsonEqual(a.layer, l.layer) }
     case 'Marker': { const m = b as typeof a; return a.composition_id === m.composition_id && jsonEqual(a.marker, m.marker) }
@@ -144,37 +154,6 @@ export function entitiesEqual(a: EntityValue | undefined, b: EntityValue | undef
 }
 
 // ── Changes ───────────────────────────────────────────────────────────────────
-
-export type ChangeClass = 'added' | 'removed' | 'modified' | 'moved' | 'shifted'
-export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
-export interface TimeRange { composition_id: Uuid; t_start_us: number; t_end_us: number }
-export interface EntityLocation { composition_id: Uuid; track_id: Uuid | null }
-
-export interface Change {
-  /** Stable for the same difference: the entity key, or `Shift:<composition>:<delta>`. */
-  id: string
-  class: ChangeClass
-  /** The entity kind; a shift group mixing layers and markers reports `Layer`. */
-  kind: EntityKind
-  /** Every entity the change covers — approved as one unit. */
-  keys: EntityKey[]
-  /** What differs. Empty for added/removed/shifted; `moved` always carries
-   *  `placement` plus whatever else changed with the move. */
-  aspects: ChangeAspect[]
-  /** The composition the change is listed under (current side, else baseline);
-   *  null for a Composition entity. */
-  composition_id: Uuid | null
-  /** Every composition the change lives in, either side. */
-  composition_ids: Uuid[]
-  /** `moved` only: baseline and current location. */
-  from?: EntityLocation
-  to?: EntityLocation
-  /** `shifted` only: the translation, current − baseline. */
-  delta_us?: number
-  /** Union of baseline and current footprints, merged per composition; empty
-   *  for listed-only changes (link, track, composition). */
-  ranges: TimeRange[]
-}
 
 const ASPECT_ORDER: readonly ChangeAspect[] = ['placement', 'timing', 'retime', 'params', 'keyframes', 'effects', 'label', 'flags']
 function orderedAspects(s: ReadonlySet<ChangeAspect>): ChangeAspect[] { return ASPECT_ORDER.filter((a) => s.has(a)) }
@@ -257,7 +236,12 @@ function compareMarkers(a: MarkerEntity, b: MarkerEntity): { aspects: Set<Change
 function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
   const out = new Set<ChangeAspect>()
   switch (a.kind) {
-    case 'Composition': if (a.label !== (b as typeof a).label) out.add('label'); break
+    case 'Composition': {
+      const c = b as typeof a
+      if (!trackOrderEqual(a.track_order, c.track_order)) out.add('placement')
+      if (a.label !== c.label) out.add('label')
+      break
+    }
     case 'Track': {
       const t = b as typeof a
       if (a.composition_id !== t.composition_id) out.add('placement')
@@ -431,17 +415,6 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
 
 // ── Group propagation ─────────────────────────────────────────────────────────
 
-/** A Group layer that shows a composition containing changes ("contains
- *  changes"), at the Group layer's own footprint in its composition. */
-export interface GroupDecoration {
-  layer_id: Uuid
-  composition_id: Uuid
-  t_start_us: number
-  t_end_us: number
-  /** Ids of the changes it contains, directly or through nested Groups. */
-  change_ids: string[]
-}
-
 /**
  * Every Group layer in `current` whose `params.composition` holds a change —
  * recursively: a Group layer inside a decorated Group's composition decorates
@@ -499,7 +472,10 @@ export function touchedEntityKeys(before: Project, after: Project): Set<EntityKe
       continue
     }
     if (a.label !== b.label) out.add(entityKey('Composition', id))
-    if (a.tracks !== b.tracks) touchedTracks(a.tracks, b.tracks, out)
+    if (a.tracks !== b.tracks) {
+      if (!trackOrderEqual(a.tracks.map((t) => t.id), b.tracks.map((t) => t.id))) out.add(entityKey('Composition', id))
+      touchedTracks(a.tracks, b.tracks, out)
+    }
     if (a.markers !== b.markers) touchedList(a.markers, b.markers, 'Marker', (x, y) => jsonEqual(x, y), out)
     if (a.transitions !== b.transitions) touchedList(a.transitions, b.transitions, 'Transition', transitionEqual, out)
     if (a.links !== b.links) touchedList(a.links, b.links, 'Link', (x, y) => jsonEqual(x.members, y.members) && jsonEqual(linkLabel(x), linkLabel(y)), out)

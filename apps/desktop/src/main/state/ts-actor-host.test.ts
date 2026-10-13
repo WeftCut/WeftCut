@@ -530,6 +530,41 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  it('review_view / review_approve / review_approve_all serve the Review baseline and announce review:changed', async () => {
+    const { deps, sent } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      type View = { version: { session: number; revision: number; baseline_revision: number }; has_baseline: boolean; unreviewed: Array<{ id: string }>; user: Array<{ id: string }> }
+      expect(await host.handleInvoke('review_view', {})).toMatchObject({ has_baseline: false, unreviewed: [], user: [] })
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      await Promise.resolve()
+      // Attribution inside two commits: one coalesced notification.
+      expect(sent.filter((s) => s.event === 'review:changed')).toHaveLength(1)
+      const view = await host.handleInvoke('review_view', {}) as View
+      expect(view).toMatchObject({ has_baseline: true, version: { ...host.publication().version } })
+      expect(view.unreviewed).toHaveLength(2)
+      const before = host.publication().version
+      const historyBefore = host.actor.historyStatus()
+      const approved = await host.handleInvoke('review_approve', { change_ids: [view.unreviewed[0].id], keys: ['Layer:stale'] }) as View
+      expect(approved.unreviewed.map((c) => c.id)).toEqual([view.unreviewed[1].id])
+      expect(approved.version.baseline_revision).toBeGreaterThan(view.version.baseline_revision)
+      host.actor.lockHistory('agent at work')
+      expect(await host.handleInvoke('review_approve_all', {})).toMatchObject({ unreviewed: [], user: [] })
+      // Approval is not a project write: no publication, no history entry.
+      expect(host.publication().version).toEqual(before)
+      expect(host.actor.historyStatus()).toEqual({ ...historyBefore, lock_reason: 'agent at work' })
+      await Promise.resolve()
+      expect(sent.filter((s) => s.event === 'review:changed').at(-1)?.payload).toEqual({ baseline_revision: approved.version.baseline_revision + 1 })
+      // Closing accepts silently: nothing to review without an open project.
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      await host.handleInvoke('project_close', {})
+      expect(await host.handleInvoke('review_view', {})).toMatchObject({ has_baseline: false, unreviewed: [] })
+    } finally { host.stop() }
+  })
+
   it('project_jump_to moves the cursor through the host and broadcasts project:changed', async () => {
     const { deps, sent } = makeInMemoryDeps()
     const host = createTsActorHost(deps)

@@ -12,6 +12,7 @@ export type Route =
   | { kind: 'command' }       // actor.command(channel, args)
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
+  | { kind: 'review' }        // Review baseline read + approvals (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
@@ -167,6 +168,12 @@ export function routeChannel(channel: string): Route {
     // every edit whether the panel is open or not (spec decision 5).
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
+    // Review: a read and two approvals. Approval folds changes into the Review
+    // baseline; it changes nothing in the project and records nothing, so it
+    // is not a command and the history lock does not apply (ADR 0115).
+    case 'review_view':
+    case 'review_approve_all':
+    case 'review_approve': return { kind: 'review' }
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }

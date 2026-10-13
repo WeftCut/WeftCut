@@ -6,7 +6,8 @@ import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
-import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
+import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState } from './history'
+import type { EntityKey } from './reviewDiff'
 import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -182,6 +183,22 @@ export interface ActorHandle {
   restoreCheckpoint(id: Uuid): void
   deleteCheckpoint(id: Uuid): void
   listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
+  /** Review (ADR 0115). The baseline compared against the current state —
+   *  memoized, computed only when asked. */
+  reviewState(): ReviewState
+  /** Work session begin: pin the Review baseline to the session's `Pre-agent`
+   *  checkpoint (current state when `checkpointId` is absent or gone).
+   *  Initializes when there is none; re-pins only when nothing is unreviewed.
+   *  Returns whether the baseline was (re)pinned. */
+  pinReviewBaseline(checkpointId?: Uuid): boolean
+  /** Approvals record nothing, emit no project change and ignore the history
+   *  lock. `approveReview` returns how many changes it approved. */
+  approveReviewAll(): void
+  approveReview(sel: { change_ids?: readonly string[]; keys?: readonly EntityKey[] }): number
+  /** Told the new baseline revision on every baseline change (initialize,
+   *  re-pin, approval, attribution, reset) — synchronously, possibly inside a
+   *  commit; a consumer should defer its own work. */
+  subscribeReview(cb: (revision: number) => void): () => void
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   /** Everything the call records is stamped with the agent `client` names
    *  (normalized; the fallback when absent), never the instance actor. */
@@ -209,6 +226,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   const history = new History(opts.initial, actor, idGen(), clock()) // consumes the Initial op_id
   const subs = new Set<(e: ChangeEvent) => void>()
+  const reviewSubs = new Set<(revision: number) => void>()
+  history.onReviewChange((rev) => {
+    for (const cb of reviewSubs) {
+      try { cb(rev) } catch (err) { console.warn('[actor] review subscriber threw; continuing', err) }
+    }
+  })
   const motifCatalog: MotifCatalog = opts.motifCatalog ?? new MotifCatalog()
 
   function current(): Project { return history.current() }
@@ -2344,6 +2367,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
     restoreCheckpoint,
     deleteCheckpoint,
     listCheckpoints,
+    reviewState: () => history.reviewState(),
+    pinReviewBaseline: (checkpointId) =>
+      history.pinReviewBaseline((checkpointId !== undefined ? history.checkpointSnapshot(checkpointId) : null) ?? current()),
+    approveReviewAll: () => history.approveAll(),
+    approveReview: (sel) => (sel.change_ids?.length ? history.approveChanges(sel.change_ids) : 0) + (sel.keys?.length ? history.approveKeys(sel.keys) : 0),
+    subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
     dryRun,
     setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },
   }

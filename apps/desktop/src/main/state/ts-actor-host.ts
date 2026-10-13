@@ -16,6 +16,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
+import { REVIEW_CHANGED_EVENT, type ReviewApproveArgs, type ReviewChangedPayload, type ReviewView } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -155,6 +156,9 @@ export interface TsActorHost {
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
   /** Full published view; reads during replacement retain the last settled view. */
   publication: () => ProjectPublication<ReturnType<typeof buildProjectSummary>>
+  /** The Review view (ADR 0115) against the published project — what
+   *  `review_view` serves. Empty while no project is open. */
+  reviewView: () => ReviewView
   /** Preserve the raw operation result and add a renderer-only view barrier. */
   published: <T>(run: () => Promise<T>) => Promise<PublishedResult<T>>
   /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
@@ -523,6 +527,30 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { value, publication: before === publicationVersion.revision ? null : { ...publicationVersion } }
   }
 
+  function reviewView(): ReviewView {
+    const s = actor.reviewState()
+    const version = { ...publicationVersion, baseline_revision: s.baseline_revision }
+    // Closing accepts unreviewed changes silently (ADR 0115): with no project
+    // open there is nothing to review, though the actor still holds one.
+    if (publishedDir === null) return { version, has_baseline: false, unreviewed: [], user: [], decorations: [] }
+    return { version, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: s.user, decorations: s.decorations }
+  }
+
+  // Baseline changes reach the renderer as one coalesced `review:changed` per
+  // microtask: attribution fires inside a commit, and an approval of several
+  // changes must not fan out into several refetches.
+  let reviewNotifyQueued = false
+  actor.subscribeReview(() => {
+    if (reviewNotifyQueued) return
+    reviewNotifyQueued = true
+    queueMicrotask(() => {
+      reviewNotifyQueued = false
+      if (!emitting) return
+      try { deps.send(REVIEW_CHANGED_EVENT, { baseline_revision: actor.reviewState().baseline_revision } satisfies ReviewChangedPayload) }
+      catch (error) { console.warn('[ts-actor-host] review notification failed', error) }
+    })
+  })
+
   function reject(reason: string): never { throw new Error(reason) }
 
   // ── LogBus pin-row helpers ──────────────────────────────────────────────────
@@ -651,6 +679,19 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.historyView(actor.historyCapacity())
       case 'projectSettings':
         return actor.snapshot().settings
+      case 'review': {
+        // Approvals answer with the fresh view: the surface that approved is
+        // the one reading it, so the recompute is wanted, not speculative.
+        if (channel === 'review_approve_all') actor.approveReviewAll()
+        else if (channel === 'review_approve') {
+          const a = args as ReviewApproveArgs
+          actor.approveReview({
+            change_ids: Array.isArray(a.change_ids) ? a.change_ids.filter((x) => typeof x === 'string') : [],
+            keys: Array.isArray(a.keys) ? a.keys.filter((x) => typeof x === 'string') : [],
+          })
+        }
+        return reviewView()
+      }
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
@@ -791,6 +832,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     }),
     handleInvoke,
     publication,
+    reviewView,
     published,
     mcpCall,
     hybridDeps,
