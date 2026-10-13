@@ -58,3 +58,30 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-spin { animation: agent-activity-spin 1.2s linear infinite; }
 @keyframes agent-activity-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-spin { animation: none; } }
+/* Tabs: Activity · Tacks (one entry per review surface, AGENT_PANEL_TABS). */
+.agent-panel-tabs { display: flex; gap: calc(2 * var(--ui-px)); padding: 0 calc(10 * var(--ui-px)); border-bottom: 1px solid var(--border); }
+.agent-panel-tabs > button { border-radius: 0 !important; border-bottom: 2px solid transparent; color: var(--muted-foreground); padding-block: calc(7 * var(--ui-px)) !important; }
+.agent-panel-tabs > button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--selection); }
+.agent-panel-tab-count { min-width: calc(16 * var(--ui-px)); padding: 0 calc(4 * var(--ui-px)); border-radius: 999px; background: color-mix(in srgb, var(--tack) 22%, transparent); color: var(--foreground); font-size: var(--font-size-micro); text-align: center; }
+/* The Tacks tab fills the rest of the panel, as the activity list does. */
+.agent-tacks { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.agent-tacks-subtitle { margin: 0; padding: calc(7 * var(--ui-px)) calc(14 * var(--ui-px)) 0; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.agent-tacks-count { color: var(--muted-foreground); font-size: var(--font-size-caption); padding-left: calc(4 * var(--ui-px)); }
+.agent-tack-group-heading { display: flex; align-items: flex-start; gap: calc(4 * var(--ui-px)); }
+.agent-tack-group-heading > .agent-work-heading { flex: 1; min-width: 0; }
+.agent-tack-clear { margin-top: calc(6 * var(--ui-px)); font-size: var(--font-size-caption); border: 1px solid var(--border); flex: none; }
+.agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
+.agent-tack[data-selected="true"] { background: var(--selection-bg); box-shadow: inset 2px 0 0 var(--selection); }
+.agent-tack-row { display: flex; align-items: flex-start; gap: calc(2 * var(--ui-px)); }
+.agent-tack-row > button:not(.agent-tack-main) { flex: none; color: var(--muted-foreground); }
+.agent-tack-row > button[aria-pressed="true"] { color: var(--foreground); background: var(--active-neutral); }
+.agent-tack-main { flex: 1; min-width: 0; align-items: flex-start !important; }
+.agent-tack-main > svg { flex: none; margin-top: calc(2 * var(--ui-px)); }
+.agent-tack-kind { color: var(--tack); }
+.agent-tack-kind.kind-issue { color: var(--warning); }
+.agent-tack-kind.kind-note { color: var(--muted-foreground); }
+.agent-tack-status { color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; margin-top: calc(2 * var(--ui-px)); }
+.agent-tack.status-resolved .agent-activity-copy > span, .agent-tack.status-dismissed .agent-activity-copy > span { color: var(--muted-foreground); }
+.agent-tack.status-dismissed .agent-activity-copy > span { text-decoration: line-through; }
+.agent-tack.state-stale .agent-activity-copy small, .agent-tack.state-hibernating .agent-activity-copy small { font-style: italic; }
+.agent-tack-body { margin: 0 0 calc(8 * var(--ui-px)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(220 * var(--ui-px)); overflow: auto; }

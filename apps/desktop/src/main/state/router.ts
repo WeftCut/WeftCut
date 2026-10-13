@@ -13,6 +13,7 @@ export type Route =
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
   | { kind: 'review' }        // Review baseline read + approvals (ADR 0115) — never a project write
+  | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
@@ -174,6 +175,11 @@ export function routeChannel(channel: string): Route {
     case 'review_view':
     case 'review_approve_all':
     case 'review_approve': return { kind: 'review' }
+    // The user's tack actions (resolve / dismiss / reopen / clear). Served by
+    // the TackStore beside agent activity, like the MCP tack verbs: not project
+    // content, so not a command, never recorded, not under the history lock.
+    case 'agent_tacks_set_status':
+    case 'agent_tacks_delete': return { kind: 'tacks' }
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }

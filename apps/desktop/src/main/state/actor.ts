@@ -980,7 +980,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // it was born on. Taken on trust exactly as `add_markers` takes its rows —
         // the caller derives `t_us` from the anchor it supplies, and this commit's
         // reconcile re-derives it right back.
-        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
+        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, typeof a.note === 'string' ? a.note : undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
         // shift_layers — one delta over a set: the named layers (+ link partners
         // unless escaped) or everything starting at/after a time. One commit,
         // one undo; the value names what moved so the refs can too.

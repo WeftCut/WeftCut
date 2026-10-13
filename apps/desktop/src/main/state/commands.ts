@@ -226,7 +226,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // `label` defaults to the EMPTY string, not absence: the dispatch arm turns an
   // absent label into agent shorthand ('m'), and a human marker must instead stay
   // unnamed so the ruler tooltip falls back to the translated noun.
-  add_marker: (a) => ({ op: 'add_marker', args: { t_us: a.tUs, end_t_us: a.endTUs ?? null, label: a.label ?? '', composition_id: a.compositionId ?? null, anchor: a.anchor ?? null } }),
+  add_marker: (a) => ({ op: 'add_marker', args: { t_us: a.tUs, end_t_us: a.endTUs ?? null, label: a.label ?? '', note: a.note ?? '', composition_id: a.compositionId ?? null, anchor: a.anchor ?? null } }),
   update_marker: (a) => ({ op: 'update_marker', args: { marker: a.markerId, patch: a.patch } }),
   remove_marker: (a) => ({ op: 'remove_marker', args: { marker: a.markerId } }),
   // Anchoring's two explicit gestures. They are their own channels rather than a

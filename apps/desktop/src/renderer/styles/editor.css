@@ -93,6 +93,26 @@
   pointer-events: none;
 }
 
+/* Tacks (ADR 0115): a band along the strip's foot, below the marker pips'
+   full-height lines and region fills, in the one tack hue. */
+.mini-tack {
+  position: absolute;
+  bottom: 0;
+  height: calc(5 * var(--ui-px));
+  background: var(--tack);
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+.mini-tack-region {
+  opacity: 0.75;
+}
+
+.mini-tack-point {
+  width: 3px; /* fixed-px: time-axis tick weight */
+  margin-left: -1px; /* fixed-px: centres the tick on its frame */
+}
+
 .mini-playhead {
   position: absolute;
   top: calc(-2 * var(--ui-px));

@@ -116,6 +116,8 @@ export class TackStore {
 
   get size(): number { return this.records.size }
 
+  has(id: string): boolean { return this.records.has(id) }
+
   /** Every tack with its placement, in creation order — or only those placed
    *  in `compositionId`. Copies: a caller cannot reach the store's records. */
   views(compositionId: string | null = null): TackView[] {

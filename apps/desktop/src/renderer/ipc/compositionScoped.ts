@@ -57,6 +57,28 @@ export async function addMarkerAtIn(
   });
 }
 
+/// One complete marker in `compositionId` — a region when `endTUs` is set, with
+/// its label and note — as ONE recorded `add_marker`. The path a tack takes
+/// into project content (ADR 0115): `anchor` ties it to the clip inside that
+/// same commit, as `addMarkerAtIn` does.
+export async function addMarkerIn(opts: {
+  compositionId: string | null;
+  tUs: number;
+  endTUs: number | null;
+  label: string;
+  note: string;
+  anchor: MarkerAnchorArg | null;
+}): Promise<string> {
+  return invoke<string>("add_marker", {
+    tUs: opts.tUs,
+    endTUs: opts.endTUs,
+    label: opts.label,
+    note: opts.note,
+    compositionId: opts.compositionId,
+    anchor: opts.anchor,
+  });
+}
+
 export async function addColorLayerIn(opts: {
   compositionId: string | null;
   tStartUs: number;

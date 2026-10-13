@@ -91,6 +91,17 @@ export const TACK_LABEL_LIMIT = 200
 export const TACK_BODY_LIMIT = 4000
 export const TACK_KINDS = ['note', 'issue', 'question'] as const
 export const TACK_STATUSES = ['open', 'resolved', 'dismissed'] as const
+/** The user's tack actions from the agent panel (renderer → main). They go
+ *  through the same TackStore and the same activity delta as the MCP verbs, and
+ *  record no history. Exactly one selector per delete: the listed ids (all must
+ *  exist), every tack of one work session (`null`: those created outside any
+ *  session), or every tack whose status is one of `statuses`. */
+export type TackDeleteSelector =
+  | { tack_ids: string[] }
+  | { session_id: string | null }
+  | { statuses: TackStatus[] }
+export const TACK_SET_STATUS_CHANNEL = 'agent_tacks_set_status'
+export const TACK_DELETE_CHANNEL = 'agent_tacks_delete'
 export interface AgentActivitySnapshot {
   workspace_id: string
   revision: number

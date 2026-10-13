@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
+import type { TackView } from "../../shared/agent-activity";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 
@@ -17,6 +18,10 @@ import { usePointerGesture } from "../hooks/usePointerGesture";
 interface MiniTimelineProps {
   durationUs: number;
   markers: MarkerSummary[];
+  /// Open tacks placed on this composition (`paintableTacks`), painted as a
+  /// band along the strip's foot — a separate row of ink from the marker pips,
+  /// which run the strip's full height.
+  tacks?: readonly TackView[];
   onSeek: (tUs: number) => void;
   fpsNum: number;
   fpsDen: number;
@@ -64,6 +69,7 @@ function formatTickLabel(us: number): string {
 export function MiniTimeline({
   durationUs,
   markers,
+  tacks = [],
   onSeek,
   fpsNum,
   fpsDen,
@@ -191,6 +197,23 @@ export function MiniTimeline({
               // trim included: a whitespace-only label must read as the entity
               // noun on both surfaces, not blank on one of them.
               title={m.label.trim() || t("kinds.marker")}
+            />
+          );
+        })}
+        {durationUs > 0 && tacks.map((tack) => {
+          if (tack.t_us === null) return null;
+          const left = (tack.t_us / durationUs) * 100;
+          const span =
+            tack.end_t_us !== null && tack.end_t_us > tack.t_us
+              ? ((tack.end_t_us - tack.t_us) / durationUs) * 100
+              : 0;
+          return (
+            <div
+              key={tack.id}
+              data-testid="mini-tack"
+              className={span > 0 ? "mini-tack mini-tack-region" : "mini-tack mini-tack-point"}
+              style={span > 0 ? { left: `${left}%`, width: `${span}%` } : { left: `${left}%` }}
+              title={tack.label}
             />
           );
         })}

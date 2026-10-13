@@ -378,3 +378,54 @@ export function computeLaneMarkers(input: LaneMarkerInput): LaneMarker[] {
   }
   return out;
 }
+
+// ===== Tack bands (ADR 0115) ================================================
+
+/// Painted width of a point tack's band, in time-axis px: wide enough to click,
+/// narrow enough to stay a point. Like the marker L, horizontal geometry stays in
+/// time-axis pixels and does not follow the layout theme.
+export const TACK_POINT_PX = 4;
+
+/// The fields of a placed tack this model reads (a `TackView` that is visible).
+export interface LaneTackSource {
+  id: string;
+  t_us: number | null;
+  end_t_us: number | null;
+  label: string;
+}
+
+/// One painted tack band, in the same row coordinates as `LaneMarker`.
+export interface LaneTack {
+  id: string;
+  xPx: number;
+  widthPx: number;
+  label: string;
+  tUs: number;
+  endTUs: number | null;
+}
+
+/// Tack band layout for one (tacks, zoom, viewport) triple, windowed by the
+/// very interval the ticks and markers use — a band that popped in at a
+/// different scroll offset than the mark painted over it would read as a
+/// different place. Unplaced tacks (`t_us === null`) have nowhere to paint.
+export function computeLaneTacks(input: {
+  tacks: readonly LaneTackSource[];
+  pxPerSec: number;
+  scrollLeftPx: number;
+  viewportWidthPx: number;
+  overscanPx?: number;
+}): LaneTack[] {
+  const { tacks, pxPerSec, scrollLeftPx, viewportWidthPx } = input;
+  if (!(pxPerSec > 0)) return [];
+  const { x0, x1 } = paintedWindowPx(scrollLeftPx, viewportWidthPx, input.overscanPx ?? RULER_OVERSCAN_PX);
+  const out: LaneTack[] = [];
+  for (const t of tacks) {
+    if (t.t_us === null) continue;
+    const xPx = (t.t_us / US_PER_SEC) * pxPerSec;
+    const endTUs = t.end_t_us !== null && t.end_t_us > t.t_us ? t.end_t_us : null;
+    const endXPx = endTUs === null ? xPx : (endTUs / US_PER_SEC) * pxPerSec;
+    if (endXPx < x0 || xPx > x1) continue;
+    out.push({ id: t.id, xPx, widthPx: Math.max(TACK_POINT_PX, endXPx - xPx), label: t.label, tUs: t.t_us, endTUs });
+  }
+  return out.sort((a, b) => a.tUs - b.tUs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}

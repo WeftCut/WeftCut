@@ -11,6 +11,7 @@ import type { CropRect } from '../../shared/crop';
 
 import { invoke } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
+import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
 
 export function setPosition(layerId: string, position: PositionAnimation, geometryOnly = false): Promise<void> {
   return invoke<void>('set_position', { layerId, position, geometryOnly });
@@ -1122,6 +1123,23 @@ export async function reviewApprove(args: ReviewApproveArgs): Promise<ReviewView
 /** Ends work locally; view selection is renderer-owned. */
 export async function agentSessionEnd(): Promise<void> {
   return invoke<void>("agent_session_end");
+}
+
+// ── Tacks (ADR 0115): the user's actions from the agent panel ───────────────
+// Served by main's TackStore beside agent activity, like the MCP tack verbs:
+// the change arrives through the activity delta, nothing is recorded, and the
+// history lock does not apply. Converting a tack is `addMarkerIn` (an ordinary
+// recorded marker) followed by `agentTacksDelete`.
+
+/// Resolve, dismiss or reopen tacks. Every id must still exist, or none changes.
+export async function agentTacksSetStatus(tackIds: readonly string[], status: TackStatus): Promise<void> {
+  return invoke<void>(TACK_SET_STATUS_CHANNEL, { tack_ids: [...tackIds], status });
+}
+
+/// Clear tacks: the listed ids, one work session's (`null`: those created
+/// outside any session), or every tack with one of the given statuses.
+export async function agentTacksDelete(selector: TackDeleteSelector): Promise<{ deleted_tack_ids: string[] }> {
+  return invoke<{ deleted_tack_ids: string[] }>(TACK_DELETE_CHANNEL, { ...selector });
 }
 
 // ============================================================

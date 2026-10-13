@@ -540,6 +540,7 @@ const enUS = {
     follow_playhead: "Timeline auto-scroll",
     show_markers: "Show markers",
     show_safe_areas: "Show safe areas",
+    review_overlay: "Review overlay",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",
     workspaces_heading: "Workspaces",
@@ -1215,6 +1216,8 @@ const enUS = {
     zoom_percent: "{{percent}}%",
   },
   timeline: {
+    review_overlay: "Review overlay",
+    review_overlay_hint: "Review overlay: show the tacks agents left for your review as bands in the marker lane",
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
     empty_ab_roll:
       "No A/B-roll content here. Drop a clip on $t(tracks.roles.a-roll) or $t(tracks.roles.b-roll), or press {{key}} to switch to All Tracks.",
@@ -1464,6 +1467,9 @@ const enUS = {
   "locate": "Locate object",
   "object_missing": "Object no longer exists",
   "arguments": "Call arguments",
+  "tabs": "Agent panel sections",
+  "tab_activity": "Activity",
+  "tab_tacks": "Tacks",
   "tools": {
     "begin_agent_session": "Start work session",
     "open_project": "Open project",
@@ -1598,6 +1604,41 @@ const enUS = {
     "delete_motif": "Delete motif"
   }
 },
+  // Tacks (ADR 0115): agent review marks. English says Tack; Chinese says
+  // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
+  tacks: {
+    subtitle: "Notes the agent tacked on for your review",
+    open_count: "{{count}} open",
+    clear_closed: "Clear resolved & dismissed",
+    clear_closed_hint: "Remove every resolved or dismissed tack from this project opening",
+    clear_session: "Clear",
+    clear_session_hint: "Remove every tack from this group",
+    empty: "Tacks an agent leaves for your review will appear here.",
+    outside_session: "Outside a work session",
+    earlier_session: "Earlier work session",
+    group_count: "{{open}} open of {{count}}",
+    kind: "Kind",
+    kind_note: "Note",
+    kind_issue: "Issue",
+    kind_question: "Question",
+    status_open: "Open",
+    status_resolved: "Resolved",
+    status_dismissed: "Dismissed",
+    state_hibernating: "Hibernating",
+    state_stale: "No longer on the timeline",
+    hibernating_hint: "Hibernating: its clip no longer shows this moment, so it cannot be located or converted",
+    stale_hint: "Its clip or composition no longer exists, so it cannot be located or converted",
+    place: "Place",
+    locate: "Locate on the timeline",
+    resolve: "Resolve",
+    dismiss: "Dismiss",
+    reopen: "Reopen",
+    convert: "Convert to marker",
+    convert_hint: "Add an ordinary marker here with this label and note (undoable), then remove the tack",
+    no_body: "No details.",
+    band_tooltip: "Tack: {{label}} · {{time}}",
+    retention: "Tacks last for this project opening only. They are never saved or exported.",
+  },
   agent_mode: {
     exit: "Exit to editor",
     exit_hint: "Return to the full editor. The work session and undo lock remain unchanged.",

@@ -93,3 +93,46 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await app.close()
   }
 })
+
+test('tacks: listed in the panel, banded in the marker lane, converted into one undoable marker', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  let client: Client | null = null
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-agent-tacks-'), name: 'agent-tacks', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+    const info = await page.evaluate(() => (window as any).api.mcp.getInfo()) as { url: string; bearer_token: string }
+    client = new Client({ name: 'Tack test agent', version: '1.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
+    const created = await client.callTool({ name: 'create_tacks', arguments: { tacks: [{ label: 'Long pause', body: 'Keep the breath?', kind: 'question', t_us: 0, end_t_us: 1_000_000 }] } })
+    expect(created.isError).not.toBe(true)
+    const markers = async () => {
+      const s = await invokeCmd<{ root_id: string; compositions: Record<string, { markers: Array<{ label: string; note: string }> }> }>(page, 'project_summary', {})
+      return s.compositions[s.root_id]!.markers
+    }
+
+    // The Review overlay paints the tack inside the marker lane without moving it.
+    const lane = page.getByTestId('timeline-marker-lane')
+    await expect(page.getByTestId('timeline-tack')).toHaveCount(1)
+    const before = await lane.boundingBox()
+    await page.getByTestId('timeline-review-overlay-toggle').click()
+    await expect(page.getByTestId('timeline-tack')).toHaveCount(0)
+    expect(await lane.boundingBox()).toEqual(before)
+    await page.getByTestId('timeline-review-overlay-toggle').click()
+
+    // A band click opens the Agent panel on its Tacks tab with the row selected.
+    await page.getByTestId('timeline-tack').click()
+    await expect(dockPanel(page, 'agent')).toHaveCount(1)
+    await expect(page.getByRole('tab', { name: /Tacks/ })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.agent-tack[data-selected="true"]')).toContainText('Long pause')
+    await page.getByRole('button', { name: 'Convert to marker' }).click()
+    await expect(page.locator('.agent-tack')).toHaveCount(0)
+    await expect.poll(markers).toEqual([expect.objectContaining({ label: 'Long pause', note: 'Keep the breath?' })])
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(markers).toEqual([])
+    expect((await invokeCmd<AgentActivitySnapshot>(page, 'agent_activity_snapshot', {})).tacks).toEqual([])
+  } finally {
+    await client?.close()
+    await app.close()
+  }
+})

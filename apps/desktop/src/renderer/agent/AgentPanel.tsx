@@ -10,7 +10,8 @@ import { revealAffected } from '../history/historyLinkage'
 import { formatClock } from '../history/historyRows'
 import { AppDialog } from '../components/AppDialog'
 import { AgentSection } from '../settings/AgentSection'
-import { useAgentActivity } from './activityStore'
+import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
+import { TacksTab } from './TacksTab'
 import { buildActivitySections, type ActivityRow } from './activityRows'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
@@ -24,6 +25,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
   const expanded = useAgentActivity(s => s.expanded)
   const following = useAgentActivity(s => s.following)
   const toggle = useAgentActivity(s => s.toggle)
+  const tab = useAgentActivity(s => s.tab)
+  const openTacks = useAgentActivity(s => s.snapshot?.tacks.filter(x => x.status === 'open').length ?? 0)
   const project = useProjectStore(s => s.summary)
   const layers = useProjectStore(s => s.layerById)
   const list = useRef<HTMLDivElement>(null)
@@ -58,7 +61,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     if (!anchor) return
     const row = Array.from(el.querySelectorAll<HTMLElement>('[data-agent-anchor]')).find(r => r.dataset.agentAnchor === anchor.id)
     if (row) el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.offset
-  }, [sections, expanded, following])
+  }, [sections, expanded, following, tab])
   const onScroll = () => {
     const el = list.current
     if (!el) return
@@ -108,6 +111,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     <button type="button" aria-expanded={expanded[`reads-${r.id}`] ?? false} onClick={() => toggle(`reads-${r.id}`)}>
       {expanded[`reads-${r.id}`] ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}{t('agent_panel.reads', { count: r.activities.length })}</button>
     {expanded[`reads-${r.id}`] && r.activities.map(entry)}</div>
+  /** A tab's count badge: the open tacks for Tacks; nothing for Activity. */
+  const badge = (id: AgentPanelTab) => id === 'tacks' ? openTacks : 0
   return <div className="agent-panel agent-activity-panel">
     <header className="agent-connection-header"><button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
       <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
@@ -120,6 +125,14 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     {session && <section className="agent-session-header"><strong>{session.client}</strong><p>{session.reason}</p>
       <button type="button" disabled={busy !== null} title={t('agent_panel.end_hint')} aria-description={t('agent_panel.end_hint')} onClick={() => void action('agent_session_end', agentSessionEnd)}>{t('agent_panel.end_session')}</button></section>}
     {locked && <div className="agent-history-lock"><AppIcon icon={Lock} size="label" /><span>{snapshot?.lock_reason || t('agent_panel.locked')}</span><button type="button" disabled={busy !== null} onClick={() => void action('agent_unlock_history', () => invoke('agent_unlock_history'))}>{t('agent_panel.unlock')}</button></div>}
+    {/* One tab per review surface. Content below the bar belongs to the tab;
+        the connection, session and lock rows above it hold for every tab. */}
+    <div className="agent-panel-tabs" role="tablist" aria-label={t('agent_panel.tabs')}>
+      {AGENT_PANEL_TABS.map(id => <button type="button" role="tab" key={id} aria-selected={tab === id}
+        title={id === 'tacks' ? t('tacks.subtitle') : undefined}
+        onClick={() => useAgentActivity.setState({ tab: id })}>{t(`agent_panel.tab_${id}`)}{badge(id) > 0 && <span className="agent-panel-tab-count">{badge(id)}</span>}</button>)}
+    </div>
+    {tab === 'tacks' ? <TacksTab editor={editor} /> : <>
     <div className="agent-activity-toolbar" role="group" aria-label={t('agent_panel.filter')}>
       {(['all', 'errors'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => useAgentActivity.setState({ filter: value })}>{t(`agent_panel.filter_${value}`)}</button>)}
       {!following && <button type="button" onClick={() => useAgentActivity.setState({ following: true, anchor: null })}>{t('agent_panel.latest')}</button>}</div>
@@ -140,7 +153,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
             {failure && <AppIcon icon={AlertCircle} size="label" className="agent-activity-error" />}<small>{t(work.end_reason === 'disconnected' ? 'agent_panel.disconnected' : work.ended_at ? 'agent_panel.session_ended' : 'agent_panel.session_active')}</small></button>
           {open && section.rows.map(row)}</section>
       })}</div>
-    <footer className="agent-retention-note" title={t('agent_panel.retention')}>{t('agent_panel.retention')}</footer>
+    <footer className="agent-retention-note" title={t('agent_panel.retention')}>{t('agent_panel.retention')}</footer></>}
     {settings && <AppDialog title={t('agent_panel.connection_settings')} onClose={() => setSettings(false)} panelClassName="agent-connect-dialog"><div className="agent-connect-dialog-body"><AgentSection /></div></AppDialog>}
   </div>
 }

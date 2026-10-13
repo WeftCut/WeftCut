@@ -30,6 +30,7 @@ const ALL_CHANNELS: readonly string[] = [
   'project_summary', 'project_publication', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
   'review_view', 'review_approve_all', 'review_approve',
+  'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer',
   'motif_staleness_report', 'acknowledge_motif_staleness',
@@ -109,6 +110,7 @@ describe('router partition gate', () => {
       'project_summary', 'project_history_view', 'get_project_settings',
       'agent_session_end', 'agent_session_begin',
       'review_view', 'review_approve_all', 'review_approve',
+      'agent_tacks_set_status', 'agent_tacks_delete',
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
@@ -158,6 +160,12 @@ describe('routeChannel', () => {
   it('routes the review read and approvals to their own kind, never command', () => {
     for (const ch of ['review_view', 'review_approve_all', 'review_approve']) {
       expect(routeChannel(ch)).toEqual({ kind: 'review' })
+      expect(PRODUCTION_OPS.has(ch)).toBe(false)
+    }
+  })
+  it('routes the panel tack actions to their own kind, never command', () => {
+    for (const ch of ['agent_tacks_set_status', 'agent_tacks_delete']) {
+      expect(routeChannel(ch)).toEqual({ kind: 'tacks' })
       expect(PRODUCTION_OPS.has(ch)).toBe(false)
     }
   })

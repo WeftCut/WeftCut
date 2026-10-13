@@ -523,6 +523,7 @@ const zhCN: Resources = {
     follow_playhead: "时间线自动滚动",
     show_markers: "显示标记",
     show_safe_areas: "显示安全框",
+    review_overlay: "审阅叠加层",
     close_active_panel: "关闭活动面板",
     reset_workspace: "重置工作区",
     workspaces_heading: "工作区",
@@ -1063,6 +1064,8 @@ const zhCN: Resources = {
     zoom_percent: "{{percent}}%",
   },
   timeline: {
+    review_overlay: "审阅叠加层",
+    review_overlay_hint: "审阅叠加层：在标记轨中以色带显示代理留下、供你审阅的批注",
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
     empty_ab_roll:
       "此处没有 A/B 轨内容。将片段拖到 $t(tracks.roles.a-roll) 或 $t(tracks.roles.b-roll)，或按 {{key}} 切换到全轨显示。",
@@ -1280,6 +1283,9 @@ const zhCN: Resources = {
   "locate": "定位对象",
   "object_missing": "对象已不存在",
   "arguments": "调用参数",
+  "tabs": "代理面板分区",
+  "tab_activity": "活动",
+  "tab_tacks": "批注",
   "tools": {
     "begin_agent_session": "开始工作会话",
     "open_project": "打开项目",
@@ -1413,6 +1419,41 @@ const zhCN: Resources = {
     "delete_motif": "删除 Motif"
   }
 },
+  // Tacks (ADR 0115): agent review marks. English says Tack; Chinese says
+  // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
+  tacks: {
+    subtitle: "代理留下、供你审阅的批注",
+    open_count: "{{count}} 条待处理",
+    clear_closed: "清除已解决和已忽略",
+    clear_closed_hint: "从本次打开的项目中移除所有已解决或已忽略的批注",
+    clear_session: "清除",
+    clear_session_hint: "移除本组的全部批注",
+    empty: "代理留下、供你审阅的批注将在这里显示。",
+    outside_session: "工作会话之外",
+    earlier_session: "较早的工作会话",
+    group_count: "{{open}} 条待处理，共 {{count}} 条",
+    kind: "类型",
+    kind_note: "说明",
+    kind_issue: "问题",
+    kind_question: "待确认",
+    status_open: "待处理",
+    status_resolved: "已解决",
+    status_dismissed: "已忽略",
+    state_hibernating: "休眠中",
+    state_stale: "已不在时间线上",
+    hibernating_hint: "休眠中：所属片段已不再显示这一时刻，无法定位或转换",
+    stale_hint: "所属片段或合成已不存在，无法定位或转换",
+    place: "位置",
+    locate: "在时间线上定位",
+    resolve: "标为已解决",
+    dismiss: "忽略",
+    reopen: "重新打开",
+    convert: "转换为标记",
+    convert_hint: "在此处添加一个普通标记，以此批注的标题和内容作为标记的名称与备注（可撤销），然后移除该批注",
+    no_body: "无详细内容。",
+    band_tooltip: "批注：{{label}} · {{time}}",
+    retention: "批注只保留在本次打开的项目中，不会保存或导出。",
+  },
   agent_mode: {
     exit: "退出代理模式",
     exit_hint: "返回编辑器，不结束代理会话或解除撤销锁。",

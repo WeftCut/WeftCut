@@ -59,6 +59,7 @@ the hue as an rgba literal.
 | `--success` | `#46c46a` | Ready/ok states (bake-ready, meter green). |
 | `--warning` | `#f0a020` | Warming/attention states (bake-warming, meter amber). |
 | `--keyframe` | `#facc15` | Keyframe diamonds, armed stopwatches, pending badges. A domain accent, deliberately distinct from `--warning`. |
+| `--tack` | `#2dd4bf` | Tacks (agent review marks): the marker-lane band under the Review overlay, the mini timeline band, the agent panel's Tacks tab. Distinct from marker colours, selection and status hues. |
 
 One-off categorical palettes (log category pills, kind badges, motif card
 status badges) may stay literal or use the pinned `--color-*` Tailwind

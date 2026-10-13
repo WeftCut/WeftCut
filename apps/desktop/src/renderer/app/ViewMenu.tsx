@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import { getCommand } from "../commands/registry";
+import { useAgentActivity } from "../agent/activityStore";
 import { Menu, MenuHeading, MenuItem, MenuSeparator, SubMenu } from "../menu/Menu";
 import {
   useDisplayMode,
@@ -66,6 +67,7 @@ export function ViewMenu({
   const followPlayhead = useFollowPlayheadEnabled();
   const markersVisible = useMarkersVisible();
   const safeAreaGuides = useSafeAreaGuidesVisible();
+  const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
   // rebuild so recovery is never dead.
@@ -199,6 +201,15 @@ export function ViewMenu({
         label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
         checked={safeAreaGuides}
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
+      />
+      {/* The Review overlay (ADR 0115): agent review material painted on the
+          timeline — tack bands in the marker lane. Runtime state of the agent
+          panel's store, like the material it shows; no binding. Last of the
+          display toggles: it shows agent material, not the user's project. */}
+      <MenuItem
+        label={t("view.review_overlay")}
+        checked={reviewOverlay}
+        onSelect={() => useAgentActivity.setState({ reviewOverlay: !reviewOverlay })}
       />
       {/* The preview's view, with its own chrome. Fit only: the two stepping
           commands read as an errand from a menu, and the toolbar's zoom

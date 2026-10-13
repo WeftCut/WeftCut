@@ -12,6 +12,7 @@ import { serializeProjectToJson } from './persistence'
 import { currentEditTrace, editTraceId, EDIT_TRACE_ARG, runEditTrace } from '../../shared/editTrace'
 import { describeGridRepairs, type GridRepair } from './serialize'
 import { AgentActivityService } from '../agent/activity'
+import { runTackIpc } from '../agent/tackIpc'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
@@ -697,6 +698,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'newWorkspace': return persistence.newWorkspace(args as never)
       case 'save': return persistence.save()
       case 'close': return persistence.close()
+      case 'tacks': return runTackIpc(agent.tacks, channel, args)
       case 'agentSessionEnd': agent.end('user'); return null
       // Compatibility for the old local channel: it now requests a view only.
       case 'agentSessionBegin': deps.send(AGENT_VIEW_EVENT, { workspace_id: agent.snapshot().workspace_id }); return null

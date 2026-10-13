@@ -19,6 +19,7 @@ import {
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
+import { useCompositionTacks } from "./tackModel";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 import { useUiScale } from '../settings/layoutTheme';
@@ -67,6 +68,7 @@ export const AgentMode = forwardRef(function AgentMode(
   // The mini timeline shows the OPEN composition; `summary` keeps the
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
+  const tacks = useCompositionTacks(comp?.id ?? null);
   const scale = useUiScale();
   const [recordWidthBase, setRecordWidth] = useState<number>(AGENT.recordWidth.default);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
@@ -150,6 +152,7 @@ export const AgentMode = forwardRef(function AgentMode(
         <MiniTimeline
           durationUs={comp?.duration_us ?? 0}
           markers={comp?.markers ?? []}
+          tacks={tacks}
           onSeek={onSeek}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}
