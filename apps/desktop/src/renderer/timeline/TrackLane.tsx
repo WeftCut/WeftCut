@@ -42,7 +42,7 @@ import {
   type MediaDropSnapOptions,
 } from "./mediaDrag";
 import { previewTrackId } from "./placement";
-import { ReviewGhosts } from "./ReviewMarks";
+import { ReviewFocusWash, ReviewGhosts } from "./ReviewMarks";
 
 export function TrackLane({
   track,
@@ -516,6 +516,9 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {/* The review focus's time range (ADR 0115), first so everything the
+          lane draws lies over it; paint only. */}
+      <ReviewFocusWash compositionId={compositionId} pxPerSec={pxPerSec} />
       {/* The selected gap (ADR 0069). It takes pointer events only to carry
           its tooltip; every press on it bubbles to the lane's own pointerdown
           and contextmenu, which resolve it as lane background: clicking a

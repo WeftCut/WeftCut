@@ -20,7 +20,7 @@ import {
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
-import { useAgentActivity } from "./activityStore";
+import { useAgentActivity, type ReviewItem } from "./activityStore";
 import { useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
@@ -45,6 +45,12 @@ interface AgentModeProps {
 
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
 const AGENT = UI_METRICS.agent;
+
+const focusReviewItem = (item: ReviewItem) => {
+  const s = useAgentActivity.getState();
+  if (item.kind === "tack") s.selectTack(item.id);
+  else s.selectChange(item.id);
+};
 
 function clampRecordWidth(width: number, viewportWidth: number, scale: number): number {
   // Keep the preview column's minimum width so the video never collapses to
@@ -71,7 +77,8 @@ export const AgentMode = forwardRef(function AgentMode(
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
   const tacks = useCompositionTacks(comp?.id ?? null);
-  const selectedTack = useAgentActivity((s) => s.selectedTack);
+  const focus = useAgentActivity((s) => s.reviewFocus);
+  const hover = useAgentActivity((s) => s.reviewHover);
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
   const changes = useCompositionChangeRanges(comp?.id ?? null);
@@ -159,8 +166,12 @@ export const AgentMode = forwardRef(function AgentMode(
           durationUs={comp?.duration_us ?? 0}
           markers={comp?.markers ?? []}
           tacks={tacks}
-          selectedTackId={selectedTack}
+          focus={focus}
+          hover={hover}
           changes={changes}
+          // A band press focuses its item and shows its row in the panel
+          // beside the strip (tab, group and row opened; the tab scrolls to it).
+          onFocus={focusReviewItem}
           onSeek={onSeek}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}

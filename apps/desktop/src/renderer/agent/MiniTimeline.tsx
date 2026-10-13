@@ -5,6 +5,8 @@ import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
 import type { ReviewRangeMark } from "./reviewHighlight";
+import type { ReviewItem } from "./activityStore";
+import { hitBand, type BandItem } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
@@ -26,15 +28,20 @@ interface MiniTimelineProps {
   /// paints the tacks' UNION (`tackCoverage`) at one opacity: overlapping
   /// tacks must not darken into what reads as a different mark.
   tacks?: readonly TackView[];
-  /// The agent panel's selected tack (`selectedTack`). Drawn over the union at
-  /// full strength when it is one of `tacks`, so the tack the panel is showing
-  /// can be found on the strip.
-  selectedTackId?: string | null;
+  /// The review focus (`reviewFocus`). A focused tack is drawn over the union
+  /// at full strength when it is one of `tacks`, a focused change's ranges
+  /// over the change band, so what the panel is showing can be found here.
+  focus?: ReviewItem | null;
+  /// The panel row under the pointer (`reviewHover`): its mark is ringed.
+  hover?: ReviewItem | null;
   /// Review change ranges on this composition (`useCompositionChangeRanges`),
   /// painted as a second band along the strip's head — opposite the tack band,
   /// so the two never read as one: added/modified/removed in their review
   /// hues, shifted muted.
   changes?: readonly ReviewRangeMark[];
+  /// A press on a band that names an item (`hitBand`) focuses it instead of
+  /// seeking; the caller shows its row.
+  onFocus?: (item: ReviewItem) => void;
   onSeek: (tUs: number) => void;
   fpsNum: number;
   fpsDen: number;
@@ -79,12 +86,25 @@ function formatTickLabel(us: number): string {
   return `${m}:${pad(s, 2)}`;
 }
 
+/// How near a point mark a band press still names it, in strip pixels.
+const POINT_SLOP_PX = 4;
+
+/// A change band item per painted change range — not the "contains changes"
+/// footprints of Group clips (`Group:` ids), which name no row to show.
+function changeBandItems(changes: readonly ReviewRangeMark[]): BandItem[] {
+  return changes
+    .filter((c) => !c.changeId.startsWith("Group:"))
+    .map((c) => ({ id: c.changeId, startUs: c.tStartUs, endUs: c.tEndUs }));
+}
+
 export function MiniTimeline({
   durationUs,
   markers,
   tacks = [],
-  selectedTackId = null,
+  focus = null,
+  hover = null,
   changes = [],
+  onFocus,
   onSeek,
   fpsNum,
   fpsDen,
@@ -158,18 +178,54 @@ export function MiniTimeline({
   // Merged once per tack set: the union is what the band paints, so a strip
   // under a dense review reads as covered, not as a stack of shades.
   const tackBand = useMemo(() => tackCoverage(tacks), [tacks]);
-  const selectedTack =
-    selectedTackId === null ? undefined : tacks.find((tack) => tack.id === selectedTackId);
-  const selectedSpan =
-    selectedTack === undefined || selectedTack.t_us === null
-      ? null
-      : {
-          start: selectedTack.t_us,
-          end:
-            selectedTack.end_t_us !== null && selectedTack.end_t_us > selectedTack.t_us
-              ? selectedTack.end_t_us
-              : null,
-        };
+  const tackItems = useMemo<BandItem[]>(
+    () =>
+      tacks.flatMap((tack) =>
+        tack.t_us === null
+          ? []
+          : [{ id: tack.id, startUs: tack.t_us, endUs: Math.max(tack.t_us, tack.end_t_us ?? tack.t_us) }],
+      ),
+    [tacks],
+  );
+  const changeItems = useMemo(() => changeBandItems(changes), [changes]);
+  // The focused and hovered tack, drawn over the union: the selection solid,
+  // the hover ringed (a hover on the selection adds nothing).
+  const tackSpan = (item: ReviewItem | null) =>
+    item?.kind === "tack" ? tackItems.find((x) => x.id === item.id) ?? null : null;
+  const selectedSpan = tackSpan(focus);
+  const hoverSpan = hover?.kind === "tack" && hover.id !== selectedSpan?.id ? tackSpan(hover) : null;
+  const changeMark = (c: ReviewRangeMark) =>
+    focus?.kind === "change" && focus.id === c.changeId
+      ? " mini-change-selected"
+      : hover?.kind === "change" && hover.id === c.changeId
+        ? " mini-change-hover"
+        : "";
+
+  // A band press names the item under it — the tack or change whose range
+  // holds that moment — and focuses it; on bare band it falls through to the
+  // strip's seek. Measured on the hit row itself, which spans the strip.
+  const bandItemAt = (items: readonly BandItem[], e: React.PointerEvent<HTMLElement>): string | null => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || durationUs <= 0) return null;
+    const tUs = ((e.clientX - rect.left) / rect.width) * durationUs;
+    return hitBand(items, tUs, (POINT_SLOP_PX / rect.width) * durationUs);
+  };
+  const bandHandlers = (kind: ReviewItem["kind"], items: readonly BandItem[], label: (id: string) => string) => ({
+    onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || onFocus === undefined) return;
+      const id = bandItemAt(items, e);
+      if (id === null) return;
+      // The strip's own pointerdown would seek; this press was for the item.
+      e.stopPropagation();
+      onFocus({ kind, id });
+    },
+    // The label under the pointer as the hover text — set on the node, not
+    // through state, so moving along the band renders nothing.
+    onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+      const id = bandItemAt(items, e);
+      e.currentTarget.title = id === null ? "" : label(id);
+    },
+  });
 
   const playheadLeft =
     durationUs > 0
@@ -247,17 +303,20 @@ export function MiniTimeline({
             style={{ left: `${(tUs / durationUs) * 100}%` }}
           />
         ))}
-        {durationUs > 0 && selectedSpan !== null && (
-          <div
-            data-testid="mini-tack-selected"
-            className={`mini-tack mini-tack-selected ${selectedSpan.end === null ? "mini-tack-point" : "mini-tack-region"}`}
-            style={{
-              left: `${(selectedSpan.start / durationUs) * 100}%`,
-              ...(selectedSpan.end === null
-                ? {}
-                : { width: `${((selectedSpan.end - selectedSpan.start) / durationUs) * 100}%` }),
-            }}
-          />
+        {durationUs > 0 && ([["selected", selectedSpan], ["hover", hoverSpan]] as const).map(([role, span]) =>
+          span === null ? null : (
+            <div
+              key={role}
+              data-testid={`mini-tack-${role}`}
+              className={`mini-tack mini-tack-${role} ${span.endUs <= span.startUs ? "mini-tack-point" : "mini-tack-region"}`}
+              style={{
+                left: `${(span.startUs / durationUs) * 100}%`,
+                ...(span.endUs <= span.startUs
+                  ? {}
+                  : { width: `${((span.endUs - span.startUs) / durationUs) * 100}%` }),
+              }}
+            />
+          ),
         )}
         {durationUs > 0 && changes.map((c, i) => {
           const left = (c.tStartUs / durationUs) * 100;
@@ -266,12 +325,33 @@ export function MiniTimeline({
             <div
               key={`${c.changeId}-${i}`}
               data-testid="mini-change"
+              data-change-id={c.changeId}
               data-change-class={c.cls}
-              className={`mini-change mini-change-${c.cls}`}
+              className={`mini-change mini-change-${c.cls}${changeMark(c)}`}
               style={{ left: `${left}%`, width: `${Math.max(0, span)}%` }}
             />
           );
         })}
+        {durationUs > 0 && onFocus !== undefined && changeItems.length > 0 && (
+          <div
+            data-testid="mini-change-band"
+            className="mini-band-hit mini-band-hit-changes"
+            {...bandHandlers("change", changeItems, (id) => {
+              const cls = changes.find((c) => c.changeId === id)?.cls;
+              return cls === undefined ? "" : t(`changes.class_${cls}`);
+            })}
+          />
+        )}
+        {durationUs > 0 && onFocus !== undefined && tackItems.length > 0 && (
+          <div
+            data-testid="mini-tack-band"
+            className="mini-band-hit mini-band-hit-tacks"
+            {...bandHandlers("tack", tackItems, (id) => {
+              const tack = tacks.find((x) => x.id === id);
+              return tack === undefined ? "" : tack.label.trim() || t(`tacks.kind_${tack.kind}`);
+            })}
+          />
+        )}
         <div className="mini-playhead" style={{ left: playheadLeft }} />
       </div>
       <div

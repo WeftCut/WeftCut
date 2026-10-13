@@ -1452,6 +1452,13 @@ const zhCN: Resources = {
     state_stale: "已不在时间线上",
     hibernating_hint: "休眠中：所属片段已不再显示这一时刻，无法定位或转换",
     stale_hint: "所属片段或合成已不存在，无法定位或转换",
+    // 失效的批注集中在所属分组末尾的这个小标题下。
+    stale_group: "已失效",
+    was_at: "原位置 {{place}}",
+    outdated: "内容已修改",
+    outdated_hint: "代理写下这条批注之后，它覆盖的片段又被修改过，请确认它是否仍然适用",
+    follows: "跟随",
+    follows_gone: "已删除的片段",
     place: "位置",
     locate: "在时间线上定位",
     resolve: "标为已解决",

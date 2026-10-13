@@ -4,14 +4,18 @@ import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession, TackView }
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
-import { useAgentActivity, wireAgentActivity } from './activityStore'
+import { tackGroupKey, tackRowKey, useAgentActivity, wireAgentActivity } from './activityStore'
 
+const tackView = (id: string, patch: Partial<TackView> = {}): TackView => ({ id, session_id: 'session', connection_id: 'c', client: 'Client',
+  activity_id: 'a', kind: 'note', label: id, body: '', status: 'open', created_at: '',
+  range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible',
+  outdated: false, follows: { start: null, end: null }, ...patch })
 const work: AgentWorkSession = { id: 'session', connection_id: 'c', client: 'Client', reason: 'Edit', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 function snapshot(revision: number, session: AgentWorkSession | null = null): AgentActivitySnapshot {
   return { workspace_id: 'project', revision, session, sessions: session ? [session] : [], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [] }
 }
 beforeEach(() => {
-  useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true })
+  useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true, tab: 'activity', reviewFocus: null, reviewHover: null })
   mocks.invoke.mockReset(); mocks.listeners.clear()
 })
 describe('agent view and snapshot state', () => {
@@ -94,5 +98,72 @@ describe('agent view and snapshot state', () => {
     expect(useAgentActivity.getState().snapshot?.revision).toBe(5)
     expect(useAgentActivity.getState().snapshot?.session?.id).toBe(work.id)
     stop()
+  })
+})
+
+describe('review focus', () => {
+  const seed = (tacks: TackView[]) => useAgentActivity.getState().receive({ ...snapshot(1, work), tacks })
+  const state = () => useAgentActivity.getState()
+
+  it('is one focus for tacks and changes: choosing one kind lets the other go', () => {
+    seed([tackView('t1')])
+    state().selectTack('t1')
+    expect(state()).toMatchObject({ tab: 'tacks', reviewFocus: { kind: 'tack', id: 't1' } })
+    expect(state().expanded).toMatchObject({ [tackGroupKey('session')]: true, [tackRowKey('t1')]: true })
+    state().selectChange('Layer:x')
+    expect(state()).toMatchObject({ tab: 'changes', reviewFocus: { kind: 'change', id: 'Layer:x' } })
+    state().setReviewFocus({ kind: 'tack', id: 't1' })
+    expect(state().reviewFocus).toEqual({ kind: 'tack', id: 't1' })
+  })
+
+  it('makes a fresh focus per select, even of the same item, so surfaces can reveal it again', () => {
+    seed([tackView('t1')])
+    state().selectTack('t1')
+    const first = state().reviewFocus
+    state().selectTack('t1')
+    expect(state().reviewFocus).toEqual(first)
+    expect(state().reviewFocus).not.toBe(first)
+  })
+
+  it('keeps the hover object while it names the same row', () => {
+    state().setReviewHover({ kind: 'change', id: 'c' })
+    const held = state().reviewHover
+    state().setReviewHover({ kind: 'change', id: 'c' })
+    expect(state().reviewHover).toBe(held)
+    state().setReviewHover(null)
+    expect(state().reviewHover).toBeNull()
+  })
+
+  it('goes with its tack: a snapshot without it clears focus and hover, one with it keeps them', () => {
+    seed([tackView('t1'), tackView('t2')])
+    useAgentActivity.setState({ reviewFocus: { kind: 'tack', id: 't1' }, reviewHover: { kind: 'tack', id: 't2' } })
+    state().receive({ ...snapshot(2, work), tacks: [tackView('t1', { status: 'resolved' }), tackView('t2')] })
+    expect(state()).toMatchObject({ reviewFocus: { kind: 'tack', id: 't1' }, reviewHover: { kind: 'tack', id: 't2' } })
+    state().receive({ ...snapshot(3, work), tacks: [tackView('t2')] })
+    expect(state()).toMatchObject({ reviewFocus: null, reviewHover: { kind: 'tack', id: 't2' } })
+    state().receive({ ...snapshot(4, work), tacks: [] })
+    expect(state().reviewHover).toBeNull()
+  })
+
+  it('a change focus is not the snapshot\'s to drop; a new project opening drops any focus', () => {
+    seed([])
+    useAgentActivity.setState({ reviewFocus: { kind: 'change', id: 'Layer:x' } })
+    state().receive({ ...snapshot(2, work), tacks: [] })
+    expect(state().reviewFocus).toEqual({ kind: 'change', id: 'Layer:x' })
+    state().receive({ ...snapshot(3), workspace_id: 'reopened' })
+    expect(state()).toMatchObject({ reviewFocus: null, reviewHover: null })
+  })
+
+  it('lets go on a tab that does not list its kind, and drops the hover on any tab switch', () => {
+    seed([tackView('t1')])
+    state().selectTack('t1')
+    useAgentActivity.setState({ reviewHover: { kind: 'tack', id: 't1' } })
+    useAgentActivity.setState({ tab: 'tacks' })
+    expect(state().reviewHover).not.toBeNull()
+    useAgentActivity.setState({ tab: 'activity' })
+    expect(state()).toMatchObject({ reviewFocus: null, reviewHover: null })
+    state().selectChange('Layer:x')
+    useAgentActivity.setState({ tab: 'tacks' })
+    expect(state().reviewFocus).toBeNull()
   })
 })

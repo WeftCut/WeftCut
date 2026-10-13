@@ -8,8 +8,9 @@ import { getCommand } from "../commands/registry";
 import { useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useComposition } from "../state/projectStore";
-import { useAgentActivity } from "../agent/activityStore";
+import { selectFocusedTack, useAgentActivity } from "../agent/activityStore";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
+import { locateTack } from "../agent/tackActions";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
 import { packLaneTacks, windowLaneTacks } from "./rulerModel";
 
@@ -28,8 +29,10 @@ import { packLaneTacks, windowLaneTacks } from "./rulerModel";
 /// so an agent resolving or adding tacks mid-session cannot reflow the tracks.
 /// And its height is fixed at two sub-rows of chips whatever it holds.
 ///
-/// Never a scrub surface: the ruler stays the sole one. A chip click selects
-/// its tack in the agent panel; nothing here seeks.
+/// Never a scrub surface: the ruler stays the sole one. A chip click focuses
+/// its tack (the review focus, shared with the agent panel) and shows its row;
+/// a double-click locates it — the panel's Locate, and the one press here that
+/// seeks. A click on bare lane lets the focus go.
 const REVIEW = UI_METRICS.timeline.review;
 
 /// One icon per kind, the same the Tacks tab draws, so a chip and its panel
@@ -40,6 +43,8 @@ const KIND_ICON: Record<TackKind, typeof StickyNote> = {
   question: CircleHelp,
 };
 
+/// Focus the tack and show its row: the panel opens on the Tacks tab with the
+/// row expanded and scrolled to (`TacksTab`).
 const selectTack = (id: string) => {
   useAgentActivity.getState().selectTack(id);
   void getCommand("openAgentPanel")?.run();
@@ -103,7 +108,9 @@ export function ReviewLane({
   const scale = useUiScale();
   const exists = useReviewLaneExists();
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
-  const selected = useAgentActivity((s) => s.selectedTack);
+  const selected = useAgentActivity(selectFocusedTack);
+  // The Tacks tab row under the pointer, so the chip it names can be found.
+  const hovered = useAgentActivity((s) => (s.reviewHover?.kind === "tack" ? s.reviewHover.id : null));
   // `compositionId` null names the root, as everywhere on the timeline; tacks
   // carry the concrete id.
   const resolvedId = useComposition(compositionId)?.id ?? null;
@@ -154,7 +161,11 @@ export function ReviewLane({
       // Neither a scrub surface nor a selection surface (the marker lane's
       // guard): a press here must not start the body's marquee.
       onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        // Bare lane, not a chip or badge: nothing is pointed at any more.
+        if (e.target === e.currentTarget) useAgentActivity.getState().setReviewFocus(null);
+      }}
     >
       {painted.chips.map(({ chip, title }) => (
         <div
@@ -164,6 +175,7 @@ export function ReviewLane({
           data-kind={chip.kind}
           data-row={chip.row}
           data-selected={selected === chip.id ? "true" : undefined}
+          data-hovered={hovered === chip.id ? "true" : undefined}
           title={title}
           className="review-tack"
           style={{
@@ -173,6 +185,10 @@ export function ReviewLane({
             height: REVIEW.chipHeight * scale,
           }}
           onClick={() => selectTack(chip.id)}
+          onDoubleClick={() => {
+            const tack = tacks.find((x) => x.id === chip.id);
+            if (tack) locateTack(tack);
+          }}
         >
           <AppIcon icon={KIND_ICON[chip.kind]} size="fine" className="review-tack-icon" />
           {chip.label.trim() !== "" && <span className="review-tack-label">{chip.label}</span>}
@@ -189,6 +205,7 @@ export function ReviewLane({
           data-tack-id={o.ids[0]}
           data-count={o.ids.length}
           data-selected={selected !== null && o.ids.includes(selected) ? "true" : undefined}
+          data-hovered={hovered !== null && o.ids.includes(hovered) ? "true" : undefined}
           title={t("tacks.band_overflow", { count: o.ids.length })}
           className="review-tack-overflow"
           style={{

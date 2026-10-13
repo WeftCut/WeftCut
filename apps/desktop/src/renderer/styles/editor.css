@@ -138,6 +138,42 @@
 .mini-change-removed { background: var(--review-removed); }
 .mini-change-shifted { background: var(--review-shifted); opacity: 0.45; }
 
+/* The review focus on the strip (agent/reviewFocus.ts): the focused change's
+   ranges at full strength with a ring, as the selected tack is drawn; a row
+   under the pointer rings its mark without filling it. */
+.mini-change-selected {
+  height: calc(6 * var(--ui-px));
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--review-focus);
+}
+
+.mini-change-hover,
+.mini-tack-hover {
+  background: transparent;
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--review-focus);
+}
+
+/* The bands' click targets: a strip of the band's own edge, a little taller
+   than the ink, over the full width. A press that names an item focuses it;
+   one on bare band falls through to the strip's seek. */
+.mini-band-hit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+}
+
+.mini-band-hit-changes {
+  top: 0;
+  height: calc(9 * var(--ui-px));
+}
+
+.mini-band-hit-tacks {
+  bottom: 0;
+  height: calc(10 * var(--ui-px));
+}
+
 /* Review lane chips (ADR 0115, timeline/ReviewLane.tsx). Opaque: the fill is
    the tack hue mixed into the lane's own surface, not laid over it at an
    alpha, so a chip reads the same wherever it sits — and packing keeps chips
@@ -215,6 +251,70 @@
 .review-tack-overflow:hover,
 .review-tack-overflow[data-selected] {
   background: color-mix(in srgb, var(--tack) 26%, var(--card));
+}
+
+/* The Tacks tab row under the pointer names its chip: a ring, no fill, so it
+   never reads as the selection. */
+.review-tack[data-hovered]:not([data-selected]),
+.review-tack-overflow[data-hovered]:not([data-selected]) {
+  box-shadow: inset 2px 0 0 var(--tack), 0 0 0 1px var(--tack);
+}
+
+/* The review focus across the editor's lanes (agent/reviewFocus.ts,
+   timeline/ReviewMarks.tsx). The wash lies under the clips, so it tints the
+   lane's empty stretches and the clips' edges, never their pictures; its two
+   edges are drawn so a range on a busy lane still reads where it starts and
+   ends. A point is the one line. */
+.review-focus-wash {
+  --review-focus-hue: var(--tack);
+  background: color-mix(in srgb, var(--review-focus-hue) 14%, transparent);
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--review-focus-hue) 60%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--review-focus-hue) 60%, transparent);
+}
+
+.review-focus-wash[data-kind="change"] {
+  --review-focus-hue: var(--review-focus);
+  background: color-mix(in srgb, var(--review-focus-hue) 9%, transparent);
+}
+
+.review-focus-wash[data-point] {
+  width: 2px; /* fixed-px: time-axis line weight */
+  margin-left: -1px; /* fixed-px: centres the line on its frame */
+  background: color-mix(in srgb, var(--review-focus-hue) 75%, transparent);
+  box-shadow: none;
+}
+
+/* A clip the focus names: a ring just outside the block, clear of its review
+   mark's inset edge and of its selection outline (-1px), so all three read at
+   once. Hover is the thinner ring. */
+.review-focus-outline {
+  inset: -4px; /* fixed-px: past the selection outline's 2px border */
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--tack), 0 0 0 3px rgb(0 0 0 / 0.5);
+}
+
+.review-focus-outline[data-focus="change"] {
+  box-shadow: 0 0 0 2px var(--review-focus), 0 0 0 3px rgb(0 0 0 / 0.5);
+}
+
+.review-focus-outline[data-focus="hover"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--review-focus) 80%, transparent);
+}
+
+.review-ghost[data-focus="change"] {
+  box-shadow: 0 0 0 2px var(--review-focus), 0 0 0 3px rgb(0 0 0 / 0.5);
+}
+
+.review-ghost[data-focus="hover"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--review-focus) 80%, transparent);
+}
+
+/* While a change is focused the other review marks step back — still there,
+   no longer competing with the one being looked at. */
+.review-clip-mark[data-recede],
+.review-ghost[data-recede] {
+  opacity: 0.45;
 }
 
 .mini-playhead {

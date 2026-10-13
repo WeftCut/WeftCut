@@ -127,12 +127,29 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
     await page.locator('.app-menu-item').filter({ hasText: /^Review overlay$/ }).click()
     await expect(lane.getByTestId('timeline-tack')).toHaveCount(1)
 
-    // A chip click opens the Agent panel on its Tacks tab with the row selected.
-    await page.getByTestId('timeline-tack').click()
-    await expect(page.getByTestId('timeline-tack')).toHaveAttribute('data-selected', 'true')
+    // A chip click opens the Agent panel on its Tacks tab with the row selected
+    // and expanded.
+    const chip = page.getByTestId('timeline-tack')
+    await chip.click()
+    await expect(chip).toHaveAttribute('data-selected', 'true')
     await expect(dockPanel(page, 'agent')).toHaveCount(1)
     await expect(page.getByRole('tab', { name: /Tacks/ })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.agent-tack[data-selected="true"]')).toContainText('Long pause')
+    const row = page.locator('.agent-tack[data-selected="true"]')
+    await expect(row).toContainText('Long pause')
+    await expect(row.locator('.agent-tack-main')).toHaveAttribute('aria-expanded', 'true')
+    const wash = page.locator('[data-testid="review-focus-wash"][data-kind="tack"]')
+    await expect(wash.first()).toBeAttached()
+    // Bare lane lets the focus go: no selected chip, no wash.
+    const laneBox = (await lane.boundingBox())!
+    await lane.click({ position: { x: Math.min(laneBox.width - 10, 600), y: 4 } })
+    await expect(chip).not.toHaveAttribute('data-selected', 'true')
+    await expect(wash).toHaveCount(0)
+    // The row's own click focuses it again — chip solid, range washed over the
+    // lanes. (It also collapses the row; a second click reopens it.)
+    await page.locator('.agent-tack .agent-tack-main').click()
+    await expect(chip).toHaveAttribute('data-selected', 'true')
+    await expect(wash.first()).toBeAttached()
+    await page.locator('.agent-tack .agent-tack-main').click()
     await page.getByRole('button', { name: 'Convert to marker' }).click()
     await expect(page.locator('.agent-tack')).toHaveCount(0)
     await expect.poll(markers).toEqual([expect.objectContaining({ label: 'Long pause', note: 'Keep the breath?' })])
@@ -177,6 +194,13 @@ test('changes: an agent edit is listed, highlighted and counted until approved',
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.agent-change')).toHaveCount(1)
     await expect(page.locator('.agent-change')).toContainText('Added')
+
+    // A row click focuses the change: its clip is ringed and its range washed.
+    await page.locator('.agent-change .agent-change-main').click()
+    await expect(page.locator('.agent-change')).toHaveAttribute('data-selected', 'true')
+    const ring = page.locator('[data-layer-id] [data-testid="review-focus-outline"][data-focus="change"]')
+    await expect(ring).toHaveCount(1)
+    await expect(page.locator('[data-testid="review-focus-wash"][data-kind="change"]').first()).toBeAttached()
 
     // Approve all: the list, the highlight and the count go together.
     await page.getByRole('button', { name: 'Approve all' }).click()

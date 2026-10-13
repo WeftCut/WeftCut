@@ -108,3 +108,16 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-change.source-user { opacity: .7; }
 .agent-change.source-user .agent-change-badge { border-style: dashed; }
 .agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }
+/* The review focus (shared with the timelines): a change row selects as a tack
+   row does. Its main button carries badge and copy; pressed, it is the row's
+   highlight that shows it, not the toolbar's pressed fill. */
+.agent-change[data-selected="true"] { background: var(--selection-bg); box-shadow: inset 2px 0 0 var(--selection); border-radius: 4px; }
+.agent-change .agent-tack-row { padding-left: 0; }
+.agent-change-main { align-items: center !important; }
+.agent-tack-row > .agent-change-main[aria-pressed="true"] { color: inherit; background: none; }
+/* Tack states (ticket 10): an open tack whose clips changed after it was
+   written carries a quiet badge; stale ones gather at the foot of their group,
+   muted, under a heading of their own. */
+.agent-tack-outdated { flex: none; margin-top: calc(1 * var(--ui-px)); padding: 0 calc(5 * var(--ui-px)); border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: 999px; color: var(--warning); font-size: var(--font-size-micro); white-space: nowrap; }
+.agent-tack-stale-heading { margin: 0; padding: calc(8 * var(--ui-px)) calc(7 * var(--ui-px)) calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); font-weight: 500; }
+.agent-tack-stale > .agent-tack:not([data-selected="true"]) { opacity: .7; }

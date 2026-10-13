@@ -1,0 +1,150 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { TackView } from '../../shared/agent-activity'
+import type { Change, ReviewView } from '../../shared/review'
+import { useAgentActivity } from './activityStore'
+import { resetReviewForTests, useReview } from './reviewStore'
+import { EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, useFocusPaint } from './reviewFocus'
+
+const S = 1_000_000
+const tack = (patch: Partial<TackView> = {}): TackView => ({
+  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: '', status: 'open', created_at: '',
+  range: { kind: 'free', composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S }, composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S,
+  state: 'visible', outdated: false, follows: { start: null, end: null }, ...patch,
+})
+const change = (patch: Partial<Change> & { id: string }): Change => ({
+  class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
+})
+const changes = [
+  change({ id: 'Layer:a', ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }, { composition_id: 'grp', t_start_us: 5 * S, t_end_us: 6 * S }] }),
+  change({ id: 'Layer:gone', class: 'removed', from: { composition_id: 'root', track_id: 'v1' }, ranges: [{ composition_id: 'root', t_start_us: 4 * S, t_end_us: 5 * S }] }),
+  change({ id: 'Shift:root:1', class: 'shifted', keys: ['Layer:b', 'Layer:c'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
+]
+
+describe('buildFocusPaint', () => {
+  it('paints nothing with nothing pointed at', () => {
+    expect(buildFocusPaint(null, null, [tack()], changes)).toBe(EMPTY_FOCUS_PAINT)
+  })
+
+  it('a tack washes its current range and outlines the clips either end follows, once each', () => {
+    const focus = { kind: 'tack' as const, id: 't' }
+    const p = buildFocusPaint(focus, null, [tack({ follows: { start: { layer_id: 'x' }, end: { layer_id: 'y' } } })], changes)
+    expect(p.focus).toBe(focus)
+    expect(p.washes).toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 3 * S }])
+    expect([...p.layers]).toEqual([['x', 'tack'], ['y', 'tack']])
+    expect(p.changeFocused).toBe(false)
+  })
+
+  it('a point tack washes one instant; a tack with no place washes nothing but still names its clip', () => {
+    expect(buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ end_t_us: null })], []).washes)
+      .toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 2 * S }])
+    const p = buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ state: 'hibernating', t_us: null, end_t_us: null, follows: { start: { layer_id: 'x' }, end: null } })], [])
+    expect([p.washes, [...p.layers]]).toEqual([[], [['x', 'tack']]])
+  })
+
+  it('a change washes every range it has, outlines its clips, and makes the rest recede', () => {
+    const p = buildFocusPaint({ kind: 'change', id: 'Shift:root:1' }, null, [], changes)
+    expect([...p.layers]).toEqual([['b', 'change'], ['c', 'change']])
+    expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 7 * S, endUs: 9 * S }])
+    expect(p.changeFocused).toBe(true)
+    expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], changes).washes.map(w => w.compositionId)).toEqual(['root', 'grp'])
+  })
+
+  it('a removed change outlines its ghost, not a clip', () => {
+    const p = buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], changes)
+    expect([[...p.layers], [...p.ghosts]]).toEqual([[], [['Layer:gone', 'change']]])
+  })
+
+  it('a hovered change row only outlines, and the focus wins on a clip both name', () => {
+    const hover = buildFocusPaint(null, { kind: 'change', id: 'Layer:a' }, [], changes)
+    expect([[...hover.layers], hover.washes, hover.changeFocused]).toEqual([[['a', 'hover']], [], false])
+    const both = buildFocusPaint({ kind: 'change', id: 'Layer:a' }, { kind: 'change', id: 'Layer:a' }, [], changes)
+    expect([...both.layers]).toEqual([['a', 'change']])
+    // A hovered tack row has no clip outline: its chip and mini mark read the hover.
+    expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { start: { layer_id: 'x' }, end: null } })], []).layers]).toEqual([])
+  })
+
+  it('an item no longer listed paints nothing and recedes nothing', () => {
+    const p = buildFocusPaint({ kind: 'change', id: 'Layer:approved' }, null, [tack()], changes)
+    expect([p.layers.size, p.ghosts.size, p.washes, p.changeFocused]).toEqual([0, 0, [], false])
+  })
+})
+
+describe('useFocusPaint', () => {
+  const view = (unreviewed: Change[], baseline = 1): ReviewView => ({
+    version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
+  })
+  beforeEach(() => {
+    resetReviewForTests()
+    useAgentActivity.setState({ snapshot: null, reviewFocus: null, reviewHover: null, tab: 'changes' })
+  })
+  afterEach(() => resetReviewForTests())
+
+  it('follows the focus and the Review view, keeping unchanged parts by identity', () => {
+    useReview.getState().apply(view(changes))
+    useAgentActivity.getState().selectChange('Layer:a')
+    const first = useFocusPaint.getState()
+    expect([...first.layers]).toEqual([['a', 'change']])
+    // A view that still lists it with the same footprint: same maps, same washes.
+    useReview.getState().apply(view([...changes, change({ id: 'Layer:z' })], 2))
+    expect(useFocusPaint.getState().layers).toBe(first.layers)
+    expect(useFocusPaint.getState().washes).toBe(first.washes)
+    // Approved: the focus goes, and the paint with it.
+    useReview.getState().apply(view([], 3))
+    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useFocusPaint.getState().layers.size).toBe(0)
+  })
+
+  it('carries a fresh focus per select, so a timeline can reveal the same item again', () => {
+    useReview.getState().apply(view(changes))
+    useAgentActivity.getState().selectChange('Layer:a')
+    const first = useFocusPaint.getState().focus
+    useAgentActivity.getState().selectChange('Layer:a')
+    expect(useFocusPaint.getState().focus).not.toBe(first)
+    expect(useFocusPaint.getState().focus).toEqual(first)
+  })
+})
+
+describe('focusRevealScrollLeft', () => {
+  const view = { scrollLeftPx: 1000, viewportPx: 600 }
+  it('leaves a range already in view alone', () => {
+    expect(focusRevealScrollLeft({ startPx: 1100, endPx: 1500 }, view)).toBeNull()
+    expect(focusRevealScrollLeft({ startPx: 1000, endPx: 1600 }, view)).toBeNull()
+  })
+  it('centres a range that fits, from either side, never past the start', () => {
+    expect(focusRevealScrollLeft({ startPx: 3000, endPx: 3200 }, view)).toBe(2800)
+    expect(focusRevealScrollLeft({ startPx: 200, endPx: 400 }, view)).toBe(0)
+    // Half in view still counts as out: the whole range is what was asked for.
+    expect(focusRevealScrollLeft({ startPx: 900, endPx: 1100 }, view)).toBe(700)
+  })
+  it('shows the start of a range wider than the view, unless the start is on screen', () => {
+    expect(focusRevealScrollLeft({ startPx: 3000, endPx: 5000 }, view)).toBe(3000 - 48)
+    expect(focusRevealScrollLeft({ startPx: 1200, endPx: 5000 }, view)).toBeNull()
+  })
+  it('a point is a zero-width range', () => {
+    expect(focusRevealScrollLeft({ startPx: 2000, endPx: 2000 }, view)).toBe(1700)
+  })
+  it('does nothing without a viewport', () => {
+    expect(focusRevealScrollLeft({ startPx: 3000, endPx: 3200 }, { scrollLeftPx: 0, viewportPx: 0 })).toBeNull()
+  })
+})
+
+describe('hitBand', () => {
+  const items = [
+    { id: 'long', startUs: 0, endUs: 10 * S },
+    { id: 'short', startUs: 4 * S, endUs: 6 * S },
+    { id: 'point', startUs: 12 * S, endUs: 12 * S },
+    { id: 'near', startUs: 12.5 * S, endUs: 12.5 * S },
+  ]
+  it('names the shortest range holding the moment', () => {
+    expect(hitBand(items, 5 * S, 0.2 * S)).toBe('short')
+    expect(hitBand(items, 2 * S, 0.2 * S)).toBe('long')
+    expect(hitBand(items, 6 * S, 0.2 * S)).toBe('short')
+  })
+  it('else the nearest point within the slop, else nothing', () => {
+    expect(hitBand(items, 12.1 * S, 0.2 * S)).toBe('point')
+    expect(hitBand(items, 12.4 * S, 0.2 * S)).toBe('near')
+    expect(hitBand(items, 11 * S, 0.2 * S)).toBeNull()
+    expect(hitBand([], 0, S)).toBeNull()
+  })
+})

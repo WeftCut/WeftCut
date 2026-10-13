@@ -1067,3 +1067,12 @@ Fold unreviewed changes into the review baseline — all at once or one change
 at a time. Changes nothing in the project and records nothing. UI word:
 Approve / 批准.
 _Avoid_: accept, commit, apply
+
+**Review focus**:
+The one tack or change the agent panel and the timelines point at together —
+chosen from a panel row, a review lane chip, a removed clip's ghost or the mini
+timeline's bands. Its row is highlighted, its chip solid, its time range washed
+across the editor's lanes and the clips it covers or follows outlined; the
+editor timeline scrolls it into view but never seeks (Locate does). One for
+both kinds, runtime-only, gone with its item. No UI word of its own.
+_Avoid_: selection (that is clips'), highlight (the per-activity highlight)

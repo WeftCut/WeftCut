@@ -126,7 +126,20 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     {expanded[`reads-${r.id}`] && r.activities.map(entry)}</div>
   /** A tab's count badge: open tacks, unreviewed changes; nothing for Activity. */
   const badge = (id: AgentPanelTab) => id === 'tacks' ? openTacks : id === 'changes' ? unreviewed : 0
-  return <div className="agent-panel agent-activity-panel">
+  // Esc lets the review focus go — from inside the panel only. Everywhere else
+  // Esc already has owners (blade and region arms, the inline track reveal, a
+  // maximised panel's restore), and a focus that vanished as one of those was
+  // dismissed would be a second, unasked-for effect. Here it is the nearest
+  // thing to dismiss, so it is consumed. A portalled dialog's keys bubble
+  // through React to here but are not inside this box, and are its own.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) return
+    if (useAgentActivity.getState().reviewFocus === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    useAgentActivity.getState().setReviewFocus(null)
+  }
+  return <div className="agent-panel agent-activity-panel" onKeyDown={onKeyDown}>
     <header className="agent-connection-header"><button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
       <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
       {expanded.connections ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>

@@ -64,6 +64,7 @@ the hue as an rgba literal.
 | `--review-modified` | `#fbbf24` | Review: a modified clip's edge, a moved clip's dashed edge, the Group "contains changes" badge, modified/moved stretches of the change band and their badges. |
 | `--review-removed` | `#f87171` | Review: a removed clip's ghost outline at its baseline place, removed stretches of the change band, the `removed` badge. Same hue as `--destructive`, separate role. |
 | `--review-shifted` | `#94a3b8` | Review: a shifted clip's muted tint, shifted stretches of the change band, the `shifted` badge — deliberately quiet so a ripple does not dominate. |
+| `--review-focus` | `#e2e8f0` | Review focus on a change: the translucent wash over its time range across the editor's lanes, the ring round its clips or removed ghost (thinner while its row is only hovered), its mark on the mini timeline. Neutral so it never reads as one more change class; a focused tack uses `--tack` for the same wash and ring. |
 
 One-off categorical palettes (log category pills, kind badges, motif card
 status badges) may stay literal or use the pinned `--color-*` Tailwind

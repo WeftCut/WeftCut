@@ -13,7 +13,7 @@ import { useEffect, useMemo } from 'react'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
 import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
-import type { ReviewApproveResult, ReviewVersion, ReviewView } from '../../shared/review'
+import type { Change, ReviewApproveResult, ReviewVersion, ReviewView } from '../../shared/review'
 import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
@@ -74,6 +74,13 @@ export function isNewerReviewView(next: ReviewView['version'], held: ReviewView[
   if (next.session !== held.session) return next.session > held.session
   if (next.revision < held.revision || next.baseline_revision < held.baseline_revision) return false
   return next.revision > held.revision || next.baseline_revision > held.baseline_revision
+}
+
+/** The changes the Changes tab lists: the unreviewed ones, and the user's own
+ *  while "show my changes" is on — what a review focus can name. */
+export function listedChanges(s: Pick<ReviewState, 'view' | 'showUser'>): readonly Change[] {
+  if (s.view === null) return []
+  return s.showUser && s.view.user.length > 0 ? [...s.view.unreviewed, ...s.view.user] : s.view.unreviewed
 }
 
 const sameVersion = (a: ReviewVersion, b: ReviewVersion): boolean =>
@@ -312,6 +319,20 @@ useAgentActivity.subscribe((s, prev) => {
   const a = activities.find(x => x.id === held.activityId)
   if (!a || !s.expanded[a.id]) { clearActivityChanges(); return }
   if (!sameIds(a.history_ids, held.historyIds) || a.effect !== held.effect) void showActivityChanges(a)
+})
+
+// A focused or hovered change leaves with its row: approved, undone, folded
+// into a different shift, or a user change whose list was hidden. A view not
+// fetched yet names nothing either way, so it drops nothing.
+useReview.subscribe((s, prev) => {
+  if (s.view === null || (s.view === prev.view && s.showUser === prev.showUser)) return
+  const { reviewFocus, reviewHover } = useAgentActivity.getState()
+  if (reviewFocus?.kind !== 'change' && reviewHover?.kind !== 'change') return
+  const ids = new Set(listedChanges(s).map(c => c.id))
+  const gone = (item: typeof reviewFocus) => item?.kind === 'change' && !ids.has(item.id)
+  if (gone(reviewFocus) || gone(reviewHover)) {
+    useAgentActivity.setState({ ...(gone(reviewFocus) ? { reviewFocus: null } : {}), ...(gone(reviewHover) ? { reviewHover: null } : {}) })
+  }
 })
 
 let activityHosts = 0

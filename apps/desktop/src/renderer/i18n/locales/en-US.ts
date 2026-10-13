@@ -1637,6 +1637,13 @@ const enUS = {
     state_stale: "No longer on the timeline",
     hibernating_hint: "Hibernating: its clip no longer shows this moment, so it cannot be located or converted",
     stale_hint: "Its clip or composition no longer exists, so it cannot be located or converted",
+    // Stale tacks gather under this heading at the foot of their group.
+    stale_group: "No longer placed",
+    was_at: "Was at {{place}}",
+    outdated: "Content changed",
+    outdated_hint: "The clips it covers changed after the agent wrote it — check it still applies",
+    follows: "Follows",
+    follows_gone: "Removed clip",
     place: "Place",
     locate: "Locate on the timeline",
     resolve: "Resolve",

@@ -3,11 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronRight, CircleHelp, LocateFixed, StickyNote, TriangleAlert, X } from 'lucide-react'
 import type { TackKind, TackView } from '../../shared/agent-activity'
 import { formatTimecode } from '../frames'
-import { groupDisplayName, groupOrdinals } from '../lib/layerName'
+import { groupDisplayName, groupOrdinals, layerDisplayName } from '../lib/layerName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
-import { groupTacks, tackUnplacedReason } from './tackModel'
+import { groupTacks, tackFollowedLayers, tackUnplacedReason } from './tackModel'
 import { convertTackToMarker, deleteTacks, locateTack, setTackStatus } from './tackActions'
 
 const KIND_ICON: Record<TackKind, typeof StickyNote> = { note: StickyNote, issue: TriangleAlert, question: CircleHelp }
@@ -15,7 +15,12 @@ const NO_TACKS: TackView[] = []
 
 /** The Tacks tab of the shared agent panel: what agents tacked on for review,
  *  grouped by the work session that left them. Locate is the editor's alone
- *  (ADR 0065); everything else is the same in both layouts. */
+ *  (ADR 0065); everything else is the same in both layouts.
+ *
+ *  A row's click focuses its tack (the review focus, shared with the
+ *  timelines: its chip, its range, the clips it follows), and hovering it
+ *  outlines its chip. Stale tacks — their start content gone — gather at the
+ *  foot of their group, where they were; they can only be closed or cleared. */
 export function TacksTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const tacks = useAgentActivity(s => s.snapshot?.tacks ?? NO_TACKS)
@@ -23,27 +28,56 @@ export function TacksTab({ editor }: { editor: boolean }) {
   const ready = useAgentActivity(s => s.ready)
   const expanded = useAgentActivity(s => s.expanded)
   const toggle = useAgentActivity(s => s.toggle)
-  const selected = useAgentActivity(s => s.selectedTack)
+  const focus = useAgentActivity(s => s.reviewFocus)
+  const selected = focus?.kind === 'tack' ? focus.id : null
+  const setHover = useAgentActivity(s => s.setReviewHover)
   const summary = useProjectStore(s => s.summary)
+  const layers = useProjectStore(s => s.layerById)
   const list = useRef<HTMLDivElement>(null)
   const groups = useMemo(() => groupTacks(tacks, sessions ?? [], tackGroupKey), [tacks, sessions])
   const ordinals = useMemo(() => summary ? groupOrdinals(summary.compositions, summary.root_id) : undefined, [summary])
   const closed = tacks.filter(x => x.status !== 'open').length
 
-  // A chip click or a locate names a tack; bring its row into view.
+  // A chip, a mini timeline band or a locate focuses a tack; bring its row
+  // into view. Per focus object, so selecting the same tack again finds a row
+  // the list has since scrolled away from.
   useEffect(() => {
-    if (selected === null) return
-    const row = list.current?.querySelector<HTMLElement>(`[data-tack-id="${CSS.escape(selected)}"]`)
+    if (focus?.kind !== 'tack') return
+    const row = list.current?.querySelector<HTMLElement>(`[data-tack-id="${CSS.escape(focus.id)}"]`)
     row?.scrollIntoView?.({ block: 'nearest' })
-  }, [selected])
+  }, [focus])
+  // A row unmounted under the pointer never hears it leave.
+  useEffect(() => () => {
+    if (useAgentActivity.getState().reviewHover?.kind === 'tack') useAgentActivity.getState().setReviewHover(null)
+  }, [])
+
+  const placeAt = (compositionId: string, tUs: number, endTUs: number | null): string | null => {
+    const c = summary?.compositions[compositionId]
+    if (!c) return null
+    const time = formatTimecode(tUs, c.fps_num, c.fps_den) + (endTUs === null ? '' : ` – ${formatTimecode(endTUs, c.fps_num, c.fps_den)}`)
+    return c.id === summary?.root_id ? time : `${groupDisplayName(c.id, c.label, ordinals, t)} · ${time}`
+  }
 
   const place = (x: TackView): string => {
-    if (x.state === 'stale') return t('tacks.state_stale')
+    // Where a stale tack was, from the times it was made at — a range that
+    // follows one clip kept none, nor does one whose composition went, and
+    // those say only that it is gone.
+    if (x.state === 'stale') {
+      const r = x.range
+      const was = r.kind === 'anchored' ? null : placeAt(r.composition_id, r.t_us, r.end_t_us)
+      return was === null ? t('tacks.state_stale') : t('tacks.was_at', { place: was })
+    }
     if (x.state === 'hibernating') return t('tacks.state_hibernating')
-    const c = x.composition_id === null ? undefined : summary?.compositions[x.composition_id]
-    if (!c || x.t_us === null) return '—'
-    const time = formatTimecode(x.t_us, c.fps_num, c.fps_den) + (x.end_t_us === null ? '' : ` – ${formatTimecode(x.end_t_us, c.fps_num, c.fps_den)}`)
-    return c.id === summary?.root_id ? time : `${groupDisplayName(c.id, c.label, ordinals, t)} · ${time}`
+    if (x.composition_id === null || x.t_us === null) return '—'
+    return placeAt(x.composition_id, x.t_us, x.end_t_us) ?? '—'
+  }
+
+  /** The clip(s) a tack follows, by the names the timeline gives them; one
+   *  name when both ends follow the same clip, null for a free tack. */
+  const follows = (x: TackView): string | null => {
+    const ids = tackFollowedLayers(x)
+    if (ids.length === 0) return null
+    return ids.map(id => { const l = layers.get(id); return l ? layerDisplayName(l, t, ordinals) : t('tacks.follows_gone') }).join(' → ')
   }
 
   const row = (x: TackView) => {
@@ -51,18 +85,22 @@ export function TacksTab({ editor }: { editor: boolean }) {
     const reason = tackUnplacedReason(x)
     const why = reason ? t(reason) : null
     const statusToggle = (status: 'resolved' | 'dismissed') => void setTackStatus([x.id], x.status === status ? 'open' : status)
+    const followed = open ? follows(x) : null
+    const focusThis = () => useAgentActivity.getState().setReviewFocus({ kind: 'tack', id: x.id })
     return <article key={x.id} data-tack-id={x.id} data-selected={selected === x.id ? 'true' : undefined}
-      className={`agent-tack status-${x.status} state-${x.state}`}>
+      className={`agent-tack status-${x.status} state-${x.state}`}
+      onMouseEnter={() => setHover({ kind: 'tack', id: x.id })} onMouseLeave={() => setHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main" aria-expanded={open}
-          onClick={() => { toggle(tackRowKey(x.id)); useAgentActivity.setState({ selectedTack: x.id }) }}>
+          onClick={() => { toggle(tackRowKey(x.id)); focusThis() }}>
           <AppIcon icon={KIND_ICON[x.kind]} size="title" className={`agent-tack-kind kind-${x.kind}`} aria-label={t(`tacks.kind_${x.kind}`)} />
           <span className="agent-activity-copy"><span>{x.label}</span><small title={why ?? undefined}>{place(x)}</small></span>
+          {x.outdated && x.status === 'open' && <span className="agent-tack-outdated" title={t('tacks.outdated_hint')}>{t('tacks.outdated')}</span>}
           <span className="agent-tack-status">{t(`tacks.status_${x.status}`)}</span>
           {open ? <AppIcon icon={ChevronDown} size="body" /> : <AppIcon icon={ChevronRight} size="body" />}
         </button>
         {editor && <button type="button" aria-label={t('tacks.locate')} title={why ?? t('tacks.locate')} disabled={reason !== null}
-          onClick={() => { useAgentActivity.setState({ selectedTack: x.id }); locateTack(x) }}><AppIcon icon={LocateFixed} size="body" /></button>}
+          onClick={() => { focusThis(); locateTack(x) }}><AppIcon icon={LocateFixed} size="body" /></button>}
         <button type="button" aria-pressed={x.status === 'resolved'} aria-label={t(x.status === 'resolved' ? 'tacks.reopen' : 'tacks.resolve')}
           title={t(x.status === 'resolved' ? 'tacks.reopen' : 'tacks.resolve')} onClick={() => statusToggle('resolved')}><AppIcon icon={Check} size="body" /></button>
         <button type="button" aria-pressed={x.status === 'dismissed'} aria-label={t(x.status === 'dismissed' ? 'tacks.reopen' : 'tacks.dismiss')}
@@ -72,6 +110,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
         <p className="agent-tack-body">{x.body.trim() || t('tacks.no_body')}</p>
         <dl><dt>{t('tacks.kind')}</dt><dd>{t(`tacks.kind_${x.kind}`)}</dd>
           <dt>{t('agent_panel.client')}</dt><dd>{x.client}</dd>
+          {followed && <><dt>{t('tacks.follows')}</dt><dd>{followed}</dd></>}
           {why && <><dt>{t('tacks.place')}</dt><dd>{why}</dd></>}</dl>
         <button type="button" disabled={reason !== null} title={why ?? t('tacks.convert_hint')} onClick={() => void convertTackToMarker(x)}>{t('tacks.convert')}</button>
       </div>}
@@ -91,6 +130,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
         const defaultOpen = g.tacks.some(x => x.status === 'open')
         const open = expanded[g.key] ?? defaultOpen
         const title = g.session?.reason ?? t(g.sessionId === null ? 'tacks.outside_session' : 'tacks.earlier_session')
+        const stale = g.tacks.filter(x => x.state === 'stale')
         return <section key={g.key} className="agent-work-group agent-tack-group">
           <div className="agent-tack-group-heading">
             <button type="button" className="agent-work-heading" aria-expanded={open} onClick={() => toggle(g.key, defaultOpen)}>
@@ -100,7 +140,11 @@ export function TacksTab({ editor }: { editor: boolean }) {
             <button type="button" className="agent-tack-clear" title={t('tacks.clear_session_hint')}
               onClick={() => void deleteTacks({ session_id: g.sessionId })}>{t('tacks.clear_session')}</button>
           </div>
-          {open && g.tacks.map(row)}
+          {open && g.tacks.filter(x => x.state !== 'stale').map(row)}
+          {open && stale.length > 0 && <div className="agent-tack-stale" role="group" aria-label={t('tacks.stale_group')}>
+            <h4 className="agent-tack-stale-heading" title={t('tacks.stale_hint')}>{t('tacks.stale_group')}</h4>
+            {stale.map(row)}
+          </div>}
         </section>
       })}
     </div>

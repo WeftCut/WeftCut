@@ -97,6 +97,14 @@ export function tackCoverage(tacks: readonly Pick<TackView, 't_us' | 'end_t_us'>
   return { spans, points: [...points].filter(t => !covered(t)).sort((a, b) => a - b) }
 }
 
+/** The clips a tack follows, start's first, each once: both ends of an edge
+ *  range on one clip name it once, an anchored tack names its one clip, a free
+ *  one none. */
+export function tackFollowedLayers(t: Pick<TackView, 'follows'>): string[] {
+  const ids = [t.follows.start?.layer_id, t.follows.end?.layer_id].filter((id): id is string => id !== undefined)
+  return [...new Set(ids)]
+}
+
 /** Why a tack cannot be located or converted, as an i18n key — or null when
  *  it can. Only a visible tack has a place on a timeline. */
 export function tackUnplacedReason(t: TackView): string | null {

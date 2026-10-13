@@ -54,7 +54,7 @@ beforeEach(async () => {
     root: { tracks: [track('t1', [clip('late', 'Late clip', 8 * S, 9 * S), clip('early', 'Early clip', S, 2 * S)])] },
     groups: [compositionFixture({ id: 'grp', label: 'Intro', tracks: [track('gt', [])] })],
   }))
-  useAgentActivity.setState({ snapshot: null, ready: true, tab: 'changes', expanded: {}, selectedTack: null })
+  useAgentActivity.setState({ snapshot: null, ready: true, tab: 'changes', expanded: {}, reviewFocus: null, reviewHover: null })
 })
 afterEach(() => { cleanup(); resetReviewForTests() })
 
@@ -138,5 +138,61 @@ describe('AgentPanel Changes tab', () => {
     fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Locate on the timeline' }))
     expect(mocks.reveal).toHaveBeenCalledWith('early')
     expect(mocks.jump).toHaveBeenCalledWith(S)
+  })
+
+  it('a row click focuses its change without seeking; a second click lets it go; hover names it', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    const early = rows()[0]!
+    fireEvent.mouseEnter(early)
+    expect(useAgentActivity.getState().reviewHover).toEqual({ kind: 'change', id: 'Layer:early' })
+    fireEvent.mouseLeave(early)
+    expect(useAgentActivity.getState().reviewHover).toBeNull()
+    const main = within(early).getByRole('button', { name: /Early clip/ })
+    fireEvent.click(main)
+    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'change', id: 'Layer:early' })
+    expect([early.dataset.selected, main.getAttribute('aria-pressed')]).toEqual(['true', 'true'])
+    expect(mocks.jump).not.toHaveBeenCalled()
+    expect(mocks.reveal).not.toHaveBeenCalled()
+    fireEvent.click(main)
+    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+  })
+
+  it('an approved change takes the focus and the hover with it; one still listed keeps them', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    act(() => useAgentActivity.setState({ reviewFocus: { kind: 'change', id: 'Layer:early' }, reviewHover: { kind: 'change', id: 'Layer:late' } }))
+    act(() => { useReview.getState().apply(view(2, unreviewed.filter(c => c.id !== 'Layer:late'))) })
+    expect(useAgentActivity.getState()).toMatchObject({ reviewFocus: { kind: 'change', id: 'Layer:early' }, reviewHover: null })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? { applied: true, view: view(3, []) } : view(2))
+    fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Approve' }))
+    await flush()
+    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+  })
+
+  it('a user change stays focusable only while "show my changes" lists it', async () => {
+    useReview.setState({ showUser: true })
+    render(<AgentPanel editor />)
+    await flush()
+    act(() => useAgentActivity.getState().selectChange('Layer:mine'))
+    act(() => { useReview.getState().apply(view(2), true) })
+    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'change', id: 'Layer:mine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
+    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+  })
+
+  it('a change focused elsewhere (a ghost, the mini timeline) opens the tab and scrolls its row into view', async () => {
+    useAgentActivity.setState({ tab: 'activity' })
+    const scrolled: string[] = []
+    // jsdom lays nothing out and has no scrollIntoView; record who asked.
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) { scrolled.push(this.dataset.changeId ?? '') }
+    try {
+      render(<AgentPanel editor />)
+      await flush()
+      act(() => useAgentActivity.getState().selectChange('Layer:late'))
+      await flush()
+      expect(screen.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')).toBe('true')
+      expect(scrolled).toContain('Layer:late')
+    } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
   })
 })

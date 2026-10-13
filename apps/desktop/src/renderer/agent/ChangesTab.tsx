@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CheckCheck, LocateFixed } from 'lucide-react'
 import type { Change } from '../../shared/review'
@@ -10,6 +10,7 @@ import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
 import { formatShiftSeconds, groupChanges, keyIds, type ChangeRow } from './changeModel'
 import { canLocateChange, locateChange } from './changeActions'
+import { useAgentActivity } from './activityStore'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
  *  Review baseline because an agent touched it, grouped by composition and in
@@ -21,7 +22,12 @@ import { canLocateChange, locateChange } from './changeActions'
  *  user's, and carry no approve button. Main sends them only while shown.
  *
  *  An approval names the list on screen; one made after an agent changed the
- *  list approves nothing and says so above the fresh list. */
+ *  list approves nothing and says so above the fresh list.
+ *
+ *  A row's click focuses its change (the review focus, shared with the
+ *  timelines: its range washed, its clips or ghost outlined, the others'
+ *  marks stepping back); a second click lets it go. Hovering a row outlines
+ *  its clips. Neither seeks — Locate does. */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
@@ -31,10 +37,25 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const layers = useProjectStore(s => s.layerById)
   const ordinals = useProjectStore(s => s.groupOrdinals)
   const [busy, setBusy] = useState(false)
+  const focus = useAgentActivity(s => s.reviewFocus)
+  const selected = focus?.kind === 'change' ? focus.id : null
+  const setHover = useAgentActivity(s => s.setReviewHover)
+  const list = useRef<HTMLDivElement>(null)
   const unreviewed = view?.unreviewed ?? []
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
     [view, showUser, summary?.root_id])
+
+  // A ghost or a mini timeline band focuses a change; bring its row into view.
+  useEffect(() => {
+    if (focus?.kind !== 'change') return
+    const row = list.current?.querySelector<HTMLElement>(`[data-change-id="${CSS.escape(focus.id)}"]`)
+    row?.scrollIntoView?.({ block: 'nearest' })
+  }, [focus])
+  // A row unmounted under the pointer never hears it leave.
+  useEffect(() => () => {
+    if (useAgentActivity.getState().reviewHover?.kind === 'change') useAgentActivity.getState().setReviewHover(null)
+  }, [])
 
   const approve = async (run: () => Promise<boolean>) => {
     if (busy) return
@@ -101,11 +122,17 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const row = ({ change: c, source }: ChangeRow) => {
     const when = time(c)
     const locatable = editor && canLocateChange(c)
-    return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} className={`agent-change class-${c.class} source-${source}`}>
+    const focused = selected === c.id
+    return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
+      className={`agent-change class-${c.class} source-${source}`}
+      onMouseEnter={() => setHover({ kind: 'change', id: c.id })} onMouseLeave={() => setHover(null)}>
       <div className="agent-tack-row">
-        <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
-        <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
-          <small>{[describe(c), when].filter(Boolean).join(' · ')}</small></span>
+        <button type="button" className="agent-tack-main agent-change-main" aria-pressed={focused}
+          onClick={() => useAgentActivity.getState().setReviewFocus(focused ? null : { kind: 'change', id: c.id })}>
+          <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
+          <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
+            <small>{[describe(c), when].filter(Boolean).join(' · ')}</small></span>
+        </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
         {editor && <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
           onClick={() => locateChange(c)}><AppIcon icon={LocateFixed} size="body" /></button>}
@@ -127,7 +154,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
     </div>
     {stale && <p className="agent-tacks-subtitle" role="status">{t('changes.approval_stale')}</p>}
-    <div className="agent-activity-list">
+    <div className="agent-activity-list" ref={list}>
       {!groups.length && <p className="agent-empty">{t(empty)}</p>}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{compositionName(g.compositionId)}</span>

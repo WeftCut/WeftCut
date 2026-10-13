@@ -208,6 +208,7 @@ import {
 import { TransitionChipMenu } from "./TransitionChipMenu";
 import { useAgentActivity } from "../agent/activityStore";
 import { useReviewConsumer } from "../agent/reviewStore";
+import { focusRevealScrollLeft, useFocusPaint } from "../agent/reviewFocus";
 
 interface TimelineProps {
   /// The composition this timeline renders — its Panel's own instance, never
@@ -382,6 +383,36 @@ export const Timeline = memo(function Timeline({
       }),
     [compositionId],
   );
+
+  // The review focus (ADR 0115): selecting a tack or change in the agent panel
+  // or on the Review lane brings its range into this Panel's view when it lies
+  // on this composition — by scrolling only. Never a seek: the playhead is the
+  // user's observation point, and the panel's Locate is the verb that moves it;
+  // nor a composition switch, which is Locate's too. Per select (a fresh focus
+  // object), not per tack movement, so a range the agent's edits drag along
+  // does not pull the view after it. A store subscription and not a read, so a
+  // focus change costs this whole tree no render.
+  useEffect(() => {
+    if (!visible) return;
+    return useFocusPaint.subscribe((s, prev) => {
+      const root = rootRef.current;
+      if (s.focus === prev.focus || s.focus === null || !root) return;
+      const here = compositionId ?? useProjectStore.getState().summary?.root_id ?? null;
+      const mine = s.washes.filter((w) => w.compositionId === here);
+      if (mine.length === 0) return;
+      const pxPerUs = pxPerSecForScrollRef.current / 1_000_000;
+      const next = focusRevealScrollLeft(
+        {
+          startPx: Math.min(...mine.map((w) => w.startUs)) * pxPerUs,
+          endPx: Math.max(...mine.map((w) => w.endUs)) * pxPerUs,
+        },
+        { scrollLeftPx: root.scrollLeft, viewportPx: root.clientWidth - headerColumnPx() },
+      );
+      if (next === null) return;
+      root.scrollLeft = next;
+      setTimelineScrollLeftPx(compositionId, root.scrollLeft);
+    });
+  }, [visible, compositionId]);
 
   // Publish horizontal scroll for the ruler's tick window. Deliberately NOT
   // React state here: this component is the whole timeline tree, and a

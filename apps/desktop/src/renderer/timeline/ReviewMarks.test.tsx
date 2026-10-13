@@ -6,6 +6,8 @@ import type { Change, ReviewView } from "../../shared/review";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useAgentActivity } from "../agent/activityStore";
+import type { TackView } from "../../shared/agent-activity";
+import { usePlayheadStore } from "../state/playheadStore";
 import { resetReviewForTests, useReview } from "../agent/reviewStore";
 import { buildReviewHighlight } from "../agent/reviewHighlight";
 import { useProjectStore } from "../state/projectStore";
@@ -117,7 +119,9 @@ describe("Review overlay clip decorations", () => {
     const decorated = geometry(container);
     const paints = q(container, '[data-testid="review-clip-mark"], [data-testid="review-ghost"], [data-testid="review-group-badge"]');
     expect(paints.length).toBe(6);
-    for (const p of paints) expect(p.className.split(/\s+/)).toContain("pointer-events-none");
+    // A ghost takes the click (it focuses its change) and nothing else — see
+    // "a ghost click focuses its change".
+    for (const p of paints) if (p.dataset.testid !== "review-ghost") expect(p.className.split(/\s+/)).toContain("pointer-events-none");
     act(() => useAgentActivity.setState({ reviewOverlay: false }));
     expect(q(container, '[data-testid="review-clip-mark"], [data-testid="review-ghost"], [data-testid="review-group-badge"]')).toHaveLength(0);
     expect(geometry(container)).toEqual(decorated);
@@ -135,5 +139,98 @@ describe("Review overlay clip decorations", () => {
     const { container } = renderTimeline();
     act(() => { useReview.getState().apply({ ...view, version: { ...view.version, baseline_revision: 2 }, unreviewed: [] }); });
     expect(q(container, '[data-testid="review-clip-mark"], [data-testid="review-ghost"], [data-testid="review-group-badge"]')).toHaveLength(0);
+  });
+});
+
+describe("Review focus on the editor timeline", () => {
+  const tack = (patch: Partial<TackView> = {}): TackView => ({
+    id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", kind: "issue", label: "Pause", body: "", status: "open",
+    range: { kind: "edges", composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, start: { layer_id: "edited", src_us: 0 }, end: null }, created_at: "",
+    composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, state: "visible", outdated: false, follows: { start: { layer_id: "edited" }, end: null }, ...patch,
+  });
+  beforeEach(() => {
+    useAgentActivity.setState({
+      snapshot: { workspace_id: "w", revision: 1, session: null, sessions: [], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [tack()] },
+      reviewFocus: null, reviewHover: null, tab: "activity",
+    });
+  });
+  const washes = (c: HTMLElement) => q(c, '[data-testid="review-focus-wash"]');
+  const outlines = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-focus-outline"]').map((o) => [o.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, o.dataset.focus]));
+
+  it("a focused tack washes its range across every lane, under the clips, and rings the clip it follows", () => {
+    const { container } = renderTimeline();
+    const before = geometry(container);
+    act(() => useAgentActivity.getState().selectTack("t1"));
+    const painted = washes(container);
+    expect(painted.map((w) => [w.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId, w.dataset.kind]).sort()).toEqual([["track-1", "tack"], ["track-2", "tack"]]);
+    for (const w of painted) {
+      expect(w.className.split(/\s+/)).toContain("pointer-events-none");
+      // First in its lane: everything the lane draws lies over it.
+      expect(w.parentElement!.firstElementChild).toBe(w);
+      expect(parseFloat(w.style.width)).toBeCloseTo(parseFloat(w.style.left));
+    }
+    expect(outlines(container)).toEqual({ edited: "tack" });
+    expect(geometry(container)).toEqual(before);
+  });
+
+  it("a point tack is a line; the overlay switched off takes wash and ring with it", () => {
+    useAgentActivity.setState((s) => ({ snapshot: { ...s.snapshot!, tacks: [tack({ end_t_us: null })] } }));
+    const { container } = renderTimeline();
+    act(() => useAgentActivity.getState().selectTack("t1"));
+    expect(washes(container).every((w) => w.dataset.point === "true" && w.style.width === "")).toBe(true);
+    act(() => useAgentActivity.setState({ reviewOverlay: false }));
+    expect(washes(container)).toHaveLength(0);
+    expect(q(container, '[data-testid="review-focus-outline"]')).toHaveLength(0);
+  });
+
+  it("a focused change rings its clips and washes its range; the other marks step back", () => {
+    useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 },
+      unreviewed: view.unreviewed.map((c) => (c.id === "Layer:edited" ? { ...c, ranges: [{ composition_id: ROOT_ID, t_start_us: S, t_end_us: 2 * S }] } : c)) });
+    const { container } = renderTimeline();
+    act(() => useAgentActivity.getState().selectChange("Layer:edited"));
+    expect(outlines(container)).toEqual({ edited: "change" });
+    expect(washes(container).map((w) => w.dataset.kind)).toEqual(["change", "change"]);
+    const recede = Object.fromEntries(q(container, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.recede ?? null]));
+    expect(recede).toEqual({ added: "true", edited: null, moved: "true", shifted: "true" });
+    expect(q(container, '[data-testid="review-ghost"]')[0]!.dataset.recede).toBe("true");
+  });
+
+  it("a hovered change row rings its clips thinly; a focused removal rings its ghost", () => {
+    const { container } = renderTimeline();
+    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Shift:x:5" }));
+    expect(outlines(container)).toEqual({ shifted: "hover" });
+    expect(washes(container)).toHaveLength(0);
+    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    const ghost = q(container, '[data-testid="review-ghost"]')[0]!;
+    expect([ghost.dataset.focus, ghost.dataset.recede]).toEqual(["change", undefined]);
+  });
+
+  it("a ghost click focuses its change; a clip click still only selects the clip", () => {
+    const { container } = renderTimeline();
+    fireEvent.click(q(container, '[data-testid="review-ghost"]')[0]!);
+    expect(useAgentActivity.getState()).toMatchObject({ tab: "changes", reviewFocus: { kind: "change", id: "Layer:gone" } });
+    const block = q(container, '[data-layer-id="added"]')[0]!;
+    fireEvent.pointerDown(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.click(block);
+    expect([...layerIdsOf(currentSelection())]).toEqual(["added"]);
+    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Layer:gone" });
+  });
+
+  it("brings a focused range into view by scrolling, never by moving the playhead", () => {
+    const { container, getByTestId } = renderTimeline();
+    const viewport = getByTestId("timeline-track-viewport");
+    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 300 });
+    const playhead = usePlayheadStore.getState();
+    act(() => useAgentActivity.getState().selectChange("Shift:x:5"));
+    // The change has no range; nothing to reveal, nothing moved.
+    expect(viewport.scrollLeft).toBe(0);
+    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    const wash = washes(container)[0]!;
+    const [left, width] = [parseFloat(wash.style.left), parseFloat(wash.style.width)];
+    expect(viewport.scrollLeft).toBeGreaterThan(0);
+    expect(viewport.scrollLeft).toBeLessThanOrEqual(left);
+    expect(viewport.scrollLeft + viewport.clientWidth).toBeGreaterThan(left + width);
+    expect(usePlayheadStore.getState()).toBe(playhead);
   });
 });
