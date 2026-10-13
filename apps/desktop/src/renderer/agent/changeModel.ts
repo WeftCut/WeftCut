@@ -1,7 +1,7 @@
 // Renderer-side reading of review changes for the Changes tab (ADR 0115):
 // grouping by composition, row order, and the words a row is made of. Pure —
 // the store lives in `reviewStore.ts`, locate in `changeActions.ts`.
-import type { Change, EntityKey, EntityKind } from '../../shared/review'
+import { parseEntityKey, type Change, type EntityKind } from '../../shared/review'
 
 /** Whose change a row lists: an unreviewed (agent-touched) one, or one only the
  *  user made — shown under "show my changes", never needing approval. */
@@ -42,14 +42,9 @@ export function groupChanges(unreviewed: readonly Change[], user: readonly Chang
     .map(g => ({ ...g, rows: [...g.rows].sort(byTime) }))
 }
 
-export function parseKey(key: EntityKey): { kind: EntityKind; id: string } {
-  const at = key.indexOf(':')
-  return { kind: key.slice(0, at) as EntityKind, id: key.slice(at + 1) }
-}
-
 /** The ids of every key of `kind` a change covers. */
 export function keyIds(change: Change, kind: EntityKind): string[] {
-  return change.keys.flatMap(k => { const p = parseKey(k); return p.kind === kind ? [p.id] : [] })
+  return change.keys.flatMap(k => { const p = parseEntityKey(k); return p.kind === kind ? [p.id] : [] })
 }
 
 /** A shift's translation as a signed number of seconds for display: `+2.4`,

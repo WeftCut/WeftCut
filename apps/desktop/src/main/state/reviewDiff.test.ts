@@ -284,6 +284,16 @@ describe('diffProjects — effective baseline overlay', () => {
     ok(a.dispatch('update_layer', { layer: x, patch: { label: 'again' } }))
     expect(only(diffProjects({ base, approved }, a.snapshot()))).toMatchObject({ id: L(x), class: 'modified', aspects: ['label'] })
   })
+
+  it('an approved value inside a composition both sides share still differs from it', () => {
+    const { a, tA } = setup()
+    const x = color(a, tA, 0, S)
+    const first = a.snapshot()
+    ok(a.dispatch('update_layer', { layer: x, patch: { label: 'approved' } }))
+    const approved = new Map<EntityKey, EntityValue | typeof ABSENT>([[L(x), extractEntities(a.snapshot()).get(L(x))!]])
+    // Undone back to `first`: the base and current root are one object.
+    expect(only(diffProjects({ base: first, approved }, first))).toMatchObject({ id: L(x), class: 'modified', aspects: ['label'] })
+  })
 })
 
 describe('mergeRanges', () => {
@@ -390,6 +400,20 @@ describe('diffProjects — properties', () => {
       if (a.historyStatus().len > len) ok(a.dispatch('undo', {}))
       // Value equality, not identity: compare against a deep copy of the start.
       return diffProjects(structuredClone(before), a.snapshot()).length === 0
+    }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
+  })
+
+  it('skipping the compositions both sides share by reference changes no result', () => {
+    fc.assert(fc.property(fc.array(opArb, { maxLength: 12 }), fc.array(opArb, { minLength: 1, maxLength: 4 }), (prefix, edits) => {
+      const { a } = setup()
+      for (const o of prefix) apply(a, o)
+      const before = a.snapshot()
+      for (const o of edits) apply(a, o)
+      const after = a.snapshot()
+      // A deep copy shares nothing, so it takes the full walk.
+      expect(diffProjects(before, after)).toEqual(diffProjects(structuredClone(before), after))
+      const approved = new Map([...touchedEntityKeys(before, after)].slice(0, 1).map((k) => [k, extractEntities(after).get(k) ?? ABSENT] as const))
+      expect(diffProjects({ base: before, approved }, after)).toEqual(diffProjects({ base: structuredClone(before), approved }, after))
     }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
   })
 })

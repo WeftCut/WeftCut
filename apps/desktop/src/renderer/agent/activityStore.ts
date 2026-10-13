@@ -26,8 +26,9 @@ interface AgentPanelState {
    *  Tacks tab. Cleared with the project opening. */
   selectedTack: string | null
   /** The editor timeline's Review overlay (tack bands in the marker lane; the
-   *  Changes decorations on clips and lanes, `timeline/ReviewMarks.tsx`). Runtime-only like the material it shows: on by
-   *  default, kept across project openings within one app run, not persisted. */
+   *  Changes decorations on clips and lanes, `timeline/ReviewMarks.tsx`).
+   *  Runtime-only like the material it shows: on by default, kept across
+   *  project openings within one app run, not persisted. */
   reviewOverlay: boolean
   receive: (snapshot: AgentActivitySnapshot) => void
   toggle: (id: string, defaultValue?: boolean) => void

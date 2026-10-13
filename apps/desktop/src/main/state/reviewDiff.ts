@@ -15,8 +15,9 @@
 // cannot differ, and an approved value that bypassed the patch must not show
 // up as a false difference either.
 import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
-import type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLocation, GroupDecoration, TimeRange } from '../../shared/review'
+import { parseEntityKey, type Change, type ChangeAspect, type ChangeClass, type EntityKey, type EntityKind, type EntityLocation, type GroupDecoration, type TimeRange } from '../../shared/review'
 
+export { parseEntityKey }
 export type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLocation, GroupDecoration, TimeRange }
 
 // ── Entities ──────────────────────────────────────────────────────────────────
@@ -25,8 +26,9 @@ export type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLo
  *  values are slim (only compared fields), so an approved overlay entry never
  *  pins a whole track's layers. A composition's `track_order` (its tracks'
  *  ids, top of the list first) is compared because it is the z-order: a
- *  `move_track` reorder is a reviewable `placement` change of the composition. Layer/Marker/Transition/Link hold the model
- *  object itself (shared with the snapshot, never copied). */
+ *  `move_track` reorder is a reviewable `placement` change of the
+ *  composition. Layer/Marker/Transition/Link hold the model object itself
+ *  (shared with the snapshot, never copied). */
 export type EntityValue =
   | { kind: 'Composition'; id: Uuid; label: string | null; track_order: readonly Uuid[] }
   | { kind: 'Track'; id: Uuid; composition_id: Uuid; label: string | null; role: TrackRole | null }
@@ -50,11 +52,9 @@ export interface BaselineOverlay {
 export type BaselineSource = Project | BaselineOverlay
 
 export function entityKey(kind: EntityKind, id: Uuid): EntityKey { return `${kind}:${id}` }
-export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: Uuid } {
-  const at = key.indexOf(':')
-  return { kind: key.slice(0, at) as EntityKind, id: key.slice(at + 1) }
-}
 function keyOf(v: EntityValue): EntityKey { return entityKey(v.kind, v.id) }
+/** The composition an entity lives in — its own id for a Composition. */
+function compositionOf(v: EntityValue): Uuid { return v.kind === 'Composition' ? v.id : v.composition_id }
 
 // Per-composition memo: immer shares untouched compositions between snapshots,
 // so walking a history of snapshots extracts each composition object once.
@@ -328,6 +328,15 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
   const before = effectiveEntities(baseline)
   const after = extractEntities(current)
   if (before === after) return []
+  // Only the keys of compositions that may differ: one immer shared between
+  // the two sides, with no approval reaching into it, holds the very same
+  // entity values on both and cannot.
+  const base = isOverlay(baseline) ? baseline.base : baseline
+  const shared = sharedCompositions(baseline, current)
+  const keys = new Set<EntityKey>()
+  for (const p of [base, current])
+    for (const c of Object.values(p.compositions)) if (!shared.has(c.id)) for (const v of compositionEntities(c)) keys.add(keyOf(v))
+  if (isOverlay(baseline)) for (const k of baseline.approved.keys()) keys.add(k)
   const changes: Change[] = []
   const shifts = new Map<string, { composition_id: Uuid; delta: number; keys: EntityKey[]; ranges: TimeRange[]; layers: number }>()
   const compositionChanges = new Map<Uuid, Change>()
@@ -354,7 +363,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     return change
   }
 
-  for (const key of new Set([...before.keys(), ...after.keys()])) {
+  for (const key of keys) {
     const b = before.get(key), c = after.get(key)
     if (entitiesEqual(b, c)) continue
     if (!b || !c) {
@@ -413,6 +422,23 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     return d || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)
   })
   return changes
+}
+
+/** Ids of the compositions `current` shares by reference with the baseline's
+ *  base project, less every one an approved overlay entry lives in on either
+ *  side — the compositions `diffProjects` can skip. */
+function sharedCompositions(baseline: BaselineSource, current: Project): Set<Uuid> {
+  const base = isOverlay(baseline) ? baseline.base : baseline
+  const out = new Set<Uuid>()
+  for (const [id, c] of Object.entries(current.compositions)) if (base.compositions[id] === c) out.add(id)
+  if (out.size === 0 || !isOverlay(baseline) || baseline.approved.size === 0) return out
+  const inBase = extractEntities(base)
+  for (const [k, v] of baseline.approved) {
+    if (v !== ABSENT) out.delete(compositionOf(v))
+    const b = inBase.get(k)
+    if (b) out.delete(compositionOf(b))
+  }
+  return out
 }
 
 // ── Group propagation ─────────────────────────────────────────────────────────

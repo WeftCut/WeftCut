@@ -7,7 +7,7 @@ import { groupDisplayName, layerDisplayName } from '../lib/layerName'
 import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
-import { approveAllChanges, approveChanges, useReview, useReviewView } from './reviewStore'
+import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
 import { formatShiftSeconds, groupChanges, keyIds, type ChangeRow } from './changeModel'
 import { canLocateChange, locateChange } from './changeActions'
 
@@ -18,11 +18,15 @@ import { canLocateChange, locateChange } from './changeActions'
  *  "Show my changes" lists the differences only the user made, too. They need
  *  no approval — the baseline is what the user accepted, and their own edits
  *  are accepted by making them — so their rows are muted, marked as the
- *  user's, and carry no approve button. */
+ *  user's, and carry no approve button. Main sends them only while shown.
+ *
+ *  An approval names the list on screen; one made after an agent changed the
+ *  list approves nothing and says so above the fresh list. */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
   const showUser = useReview(s => s.showUser)
+  const stale = useReview(s => s.approvalStale)
   const summary = useProjectStore(s => s.summary)
   const layers = useProjectStore(s => s.layerById)
   const ordinals = useProjectStore(s => s.groupOrdinals)
@@ -111,17 +115,18 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     </article>
   }
 
-  const userCount = view?.user.length ?? 0
+  const userCount = view?.user_count ?? 0
   const empty = !view ? 'agent_panel.loading' : !view.has_baseline ? 'changes.no_baseline' : 'changes.empty'
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
     <p className="agent-tacks-subtitle">{t('changes.subtitle')}</p>
     <div className="agent-activity-toolbar">
       <span className="agent-tacks-count">{t('changes.unreviewed_count', { count: unreviewed.length })}</span>
       <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
-        onClick={() => useReview.setState({ showUser: !showUser })}>{t('changes.show_mine', { count: userCount })}</button>
+        onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>
       <button type="button" className="agent-changes-approve-all" disabled={busy || unreviewed.length === 0} title={t('changes.approve_all_hint')}
         onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
     </div>
+    {stale && <p className="agent-tacks-subtitle" role="status">{t('changes.approval_stale')}</p>}
     <div className="agent-activity-list">
       {!groups.length && <p className="agent-empty">{t(empty)}</p>}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">

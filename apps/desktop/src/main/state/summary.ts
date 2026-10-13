@@ -217,9 +217,16 @@ export function markerShownEnd(c: Composition, m: Marker): number | null {
 
 function markerShownEndForLayer(m: Marker, layer: Layer | undefined, hibernating: boolean): number | null {
   if (m.end_t_us === null || m.end_t_us === undefined) return null
-  if (m.anchor === null || hibernating) return m.end_t_us
-  if (layer === undefined || layer.t_end_us <= m.t_us) return m.end_t_us
-  return Math.min(m.end_t_us, layer.t_end_us)
+  if (m.anchor === null || hibernating || layer === undefined) return m.end_t_us
+  return sourceRegionShownEndUs(layer, m.t_us, m.end_t_us)
+}
+
+/** The clip rule of `markerShownEnd` over a bare awake region of `layer`
+ *  starting at timeline `tUs`: drawn as far as the clip still runs, unless the
+ *  clip's end sits on or before the start. The tack projection
+ *  (`main/agent/tacks.ts`) draws an anchored tack's region with it. */
+export function sourceRegionShownEndUs(layer: Layer, tUs: number, endUs: number): number {
+  return layer.t_end_us <= tUs ? endUs : Math.min(endUs, layer.t_end_us)
 }
 
 /** Explicit label, else path basename, else the whole path. */

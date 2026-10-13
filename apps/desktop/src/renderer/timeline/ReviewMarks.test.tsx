@@ -7,6 +7,7 @@ import type { LayerSummary, TrackSummary } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useAgentActivity } from "../agent/activityStore";
 import { resetReviewForTests, useReview } from "../agent/reviewStore";
+import { buildReviewHighlight } from "../agent/reviewHighlight";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, layerIdsOf, currentSelection } from "../state/selectionStore";
 import { ROOT_ID, compositionFixture, groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
@@ -43,7 +44,7 @@ const change = (patch: Partial<Change> & { id: string }): Change => ({
   class: "added", kind: "Layer", keys: [patch.id as Change["keys"][number]], aspects: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
 });
 const view: ReviewView = {
-  version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [],
+  version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0,
   unreviewed: [
     change({ id: "Layer:added" }),
     change({ id: "Layer:edited", class: "modified", aspects: ["params"] }),
@@ -98,6 +99,17 @@ describe("Review overlay clip decorations", () => {
     expect(badge).toHaveLength(1);
     expect(badge[0]!.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId).toBe("group-clip");
     expect(badge[0]!.textContent).toBe("1");
+    expect(badge[0]!.getAttribute("aria-label")).toBe("Contains 1 unreviewed change(s)");
+  });
+
+  it("counting a selected activity's changes, the Group badge does not call them unreviewed", () => {
+    const { container } = renderTimeline();
+    act(() => useReview.setState({ activity: {
+      activityId: "a", historyIds: ["op"], effect: "applied", status: "ready", reverted: false, count: 1,
+      highlight: buildReviewHighlight([view.unreviewed[5]!], view.decorations),
+    } }));
+    const [badge] = q(container, '[data-testid="review-group-badge"]');
+    expect(badge!.getAttribute("aria-label")).toBe("Contains 1 change(s)");
   });
 
   it("never takes pointer events and never changes clip or lane geometry", () => {

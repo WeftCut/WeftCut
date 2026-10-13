@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
 import { act, renderHook } from '@testing-library/react'
-import { acquireReview, approveAllChanges, approveChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, selectHighlight, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
+import { acquireReview, approveAllChanges, approveChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, selectHighlight, setShowUser, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity, AgentActivitySnapshot } from '../../shared/agent-activity'
 import { buildReviewHighlight } from './reviewHighlight'
@@ -17,8 +17,9 @@ const change = (patch: Partial<Change> = {}): Change => ({
   ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: 1_000_000 }], ...patch,
 })
 const view = (revision: number, baseline: number, unreviewed: Change[] = [change()], session = 1): ReviewView => ({
-  version: { session, revision, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], decorations: [],
+  version: { session, revision, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
 })
+const approved = (v: ReviewView, applied = true) => ({ applied, view: v })
 /** Resolve microtasks and the listen() promise. */
 const flush = () => new Promise(r => setTimeout(r, 0))
 const reviewCalls = () => mocks.invoke.mock.calls.filter(([c]) => c === 'review_view').length
@@ -40,11 +41,12 @@ describe('review view versions', () => {
 
   it('drops a fetch that started before an approval and answered after it', async () => {
     let answer!: (v: ReviewView) => void
-    mocks.invoke.mockImplementation((channel: string) => channel === 'review_view'
-      ? new Promise<ReviewView>(r => { answer = r })
-      : Promise.resolve(view(2, 2, [])))
+    let reads = 0
+    mocks.invoke.mockImplementation((channel: string) => channel !== 'review_view' ? Promise.resolve(approved(view(2, 2, [])))
+      : ++reads === 1 ? Promise.resolve(view(2, 1)) : new Promise<ReviewView>(r => { answer = r }))
     const release = acquireReview()
     await flush()
+    void refreshReview()
     // The approval's reply lands first: the list empties at once.
     expect(await approveAllChanges()).toBe(true)
     expect(useReview.getState().view?.unreviewed).toEqual([])
@@ -98,13 +100,43 @@ describe('review consumers', () => {
     release()
   })
 
-  it('approves one change by id and applies the returned view', async () => {
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? view(1, 3, []) : view(1, 1))
+  it('approves one change by id against the held view and applies the returned view', async () => {
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? approved(view(1, 3, [])) : view(1, 1))
     const release = acquireReview()
     await flush()
-    await approveChanges(['Shift:root:-2400000'])
-    expect(mocks.invoke).toHaveBeenCalledWith('review_approve', { change_ids: ['Shift:root:-2400000'] })
+    expect(await approveChanges(['Shift:root:-2400000'])).toBe(true)
+    expect(mocks.invoke).toHaveBeenCalledWith('review_approve', {
+      version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Shift:root:-2400000'],
+    })
     expect(useReview.getState().view?.unreviewed).toEqual([])
+    expect(useReview.getState().approvalStale).toBe(false)
+    release()
+  })
+
+  it('a refused approval (the view moved on) shows the fresh list and says so', async () => {
+    const fresh = view(2, 1, [change(), change({ id: 'Layer:new', keys: ['Layer:new'] })])
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? approved(fresh, false) : view(1, 1))
+    const release = acquireReview()
+    await flush()
+    expect(await approveAllChanges()).toBe(false)
+    expect(useReview.getState().view).toBe(fresh)
+    expect(useReview.getState().approvalStale).toBe(true)
+    release()
+  })
+
+  it('asks for the user-only list only while "show my changes" is on', async () => {
+    const mine = change({ id: 'Layer:mine', keys: ['Layer:mine'] })
+    mocks.invoke.mockImplementation(async (_: string, args: { include_user?: boolean }) =>
+      ({ ...view(1, 1), user: args.include_user ? [mine] : [], user_count: 1 }))
+    const release = acquireReview()
+    await flush()
+    expect(mocks.invoke).toHaveBeenLastCalledWith('review_view', { include_user: false })
+    expect(useReview.getState().view?.user).toEqual([])
+    // Same version, now with the list: taken although it is not newer.
+    setShowUser(true)
+    await flush()
+    expect(mocks.invoke).toHaveBeenLastCalledWith('review_view', { include_user: true })
+    expect(useReview.getState().view?.user).toEqual([mine])
     release()
   })
 })
@@ -119,14 +151,16 @@ describe('buildReviewHighlight', () => {
         ranges: [{ composition_id: 'root', t_start_us: 3, t_end_us: 9 }] }),
       change({ id: 'Track:t', class: 'removed', kind: 'Track', keys: ['Track:t'], ranges: [] }),
     ], [
-      { layer_id: 'group-1', composition_id: 'root', t_start_us: 0, t_end_us: 1, change_ids: ['Layer:m', 'User:only'] },
+      { layer_id: 'group-1', composition_id: 'root', t_start_us: 4, t_end_us: 7, change_ids: ['Layer:m', 'User:only'] },
       { layer_id: 'group-2', composition_id: 'root', t_start_us: 0, t_end_us: 1, change_ids: ['User:only'] },
     ])
     expect([...h.layers]).toEqual([['a', 'added'], ['m', 'modified'], ['s1', 'shifted'], ['s2', 'shifted']])
     expect(h.ghosts).toEqual([{ changeId: 'Layer:gone', layerId: 'gone', compositionId: 'root', trackId: 'track-1', tStartUs: 3, tEndUs: 9 }])
     // Only changes in the given set count: a decoration of user changes alone gets no badge.
     expect([...h.groups]).toEqual([['group-1', 1]])
-    expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'shifted', 'removed'])
+    expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'shifted', 'removed', 'modified'])
+    // A Group containing changes bands its own footprint on the timeline holding it.
+    expect(h.ranges.at(-1)).toEqual({ changeId: 'Group:group-1', cls: 'modified', compositionId: 'root', tStartUs: 4, tEndUs: 7 })
   })
 })
 

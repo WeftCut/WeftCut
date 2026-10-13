@@ -9,6 +9,12 @@ export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transit
 /** `Layer:<id>`, `Marker:<id>` … — stable across snapshots, unique project-wide. */
 export type EntityKey = `${EntityKind}:${string}`
 
+/** The kind and id an entity key names; the id may itself hold colons. */
+export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string } {
+  const at = key.indexOf(':')
+  return { kind: key.slice(0, at) as EntityKind, id: key.slice(at + 1) }
+}
+
 export type ChangeClass = 'added' | 'removed' | 'modified' | 'moved' | 'shifted'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
@@ -52,28 +58,47 @@ export interface GroupDecoration {
   change_ids: string[]
 }
 
+/** The project publication a view was computed against (ADR 0114) plus the
+ *  baseline revision — together the view's identity. `baseline_revision`
+ *  increases on every baseline change (initialize, re-pin, approval,
+ *  attribution, reset); it never goes back, not even across a project open. */
+export interface ReviewVersion { session: number; revision: number; baseline_revision: number }
+
+/** `review_view` arguments. The user-only list is sent only when asked for
+ *  (the Changes tab's "show my changes"); its count always is. */
+export interface ReviewViewArgs { include_user?: boolean }
+
 /** What the review surfaces read (`review_view`). */
 export interface ReviewView {
-  /** The project publication this view was computed against (ADR 0114) plus
-   *  the baseline revision — together the view's identity. `baseline_revision`
-   *  increases on every baseline change (initialize, re-pin, approval,
-   *  attribution, reset); it never goes back, not even across a project open. */
-  version: { session: number; revision: number; baseline_revision: number }
+  version: ReviewVersion
   /** False until the first work session begins or an agent first edits. */
   has_baseline: boolean
   /** Differences an Agent-sourced commit touched since the baseline. */
   unreviewed: Change[]
-  /** Differences only the user caused; hidden by default, never need approval. */
+  /** Differences only the user caused; hidden by default, never need approval.
+   *  Empty unless the request asked for them (`include_user`). */
   user: Change[]
+  /** How many user-only differences there are, listed or not. */
+  user_count: number
   /** Group layers containing changes of EITHER list; filter by `change_ids`
    *  against the list on screen. */
   decorations: GroupDecoration[]
 }
 
-/** `review_approve` arguments: change ids from the current view, and/or entity
- *  keys. A key approves the whole change that holds it (a shift group approves
- *  as a unit). Unknown ids/keys are ignored — the view may be stale. */
-export interface ReviewApproveArgs { change_ids?: string[]; keys?: EntityKey[] }
+/** `review_approve_all` arguments. `version` is the view the user acted on:
+ *  main approves only while it is still the current one, so a commit landing
+ *  between what the user saw and their click is never approved unseen. */
+export interface ReviewApproveAllArgs extends ReviewViewArgs { version: ReviewVersion }
+
+/** `review_approve` arguments: change ids from the view the user acted on,
+ *  and/or entity keys. A key approves the whole change that holds it (a shift
+ *  group approves as a unit). Unknown ids/keys are ignored. */
+export interface ReviewApproveArgs extends ReviewApproveAllArgs { change_ids?: string[]; keys?: EntityKey[] }
+
+/** What an approval answers: whether it was applied — false when `version`
+ *  is no longer the current view, and then nothing was approved — and the
+ *  fresh view either way. */
+export interface ReviewApproveResult { applied: boolean; view: ReviewView }
 
 /** `review_activity_view` arguments: the history op ids of one activity row
  *  (`AgentActivity.history_ids`). */

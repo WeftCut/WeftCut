@@ -54,13 +54,13 @@ it("shows the unreviewed change count while there is one; a click opens the agen
   await act(async () => {});
   expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
   const change = (id: `Layer:${string}`): Change => ({ id, class: "added", kind: "Layer", keys: [id], aspects: [], composition_id: "r", composition_ids: ["r"], ranges: [] });
-  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, unreviewed: [change("Layer:a"), change("Layer:b")], user: [], decorations: [] }); });
+  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, unreviewed: [change("Layer:a"), change("Layer:b")], user: [], user_count: 0, decorations: [] }); });
   const badge = container.querySelector<HTMLElement>('[data-testid="status-bar-review"]')!;
   expect(badge.textContent).toBe("2 to review");
   act(() => badge.click());
   expect(useAgentActivity.getState().tab).toBe("changes");
   expect(open).toHaveBeenCalledTimes(1);
-  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 2 }, has_baseline: true, unreviewed: [], user: [], decorations: [] }); });
+  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 2 }, has_baseline: true, unreviewed: [], user: [], user_count: 0, decorations: [] }); });
   expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
   unregister();
   resetReviewForTests();

@@ -8,8 +8,6 @@
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, TACK_STATUSES, type TackStatus } from '../../shared/agent-activity'
 import { TackError, type TackStore } from './tacks'
 
-export const TACK_IPC_CHANNELS: ReadonlySet<string> = new Set([TACK_SET_STATUS_CHANNEL, TACK_DELETE_CHANNEL])
-
 const isStatus = (v: unknown): v is TackStatus => (TACK_STATUSES as readonly unknown[]).includes(v)
 
 function ids(v: unknown, field: string): string[] {

@@ -160,7 +160,9 @@ export class History {
     this.evictedCount = 0 // a fresh stack has discarded nothing
     this.effectLineage = new WeakMap()
     this.knownEffects.clear()
-    // A project opening's baseline goes with its history (ADR 0115).
+    // A project opening's baseline goes with its history (ADR 0115), and so
+    // does the memo holding the previous project's snapshots.
+    this.reviewMemo = null
     if (this.review !== null) { this.review = null; this.bumpReview() }
   }
 
@@ -284,7 +286,6 @@ export class History {
    *  patches — those already broadcast, and the review memo keys on the
    *  patched snapshots' identity. */
   onReviewChange(cb: ((revision: number) => void) | null): void { this.reviewListener = cb }
-  reviewRevision(): number { return this.reviewRev }
   reviewBaseline(): ReviewBaseline | null { return this.review }
 
   /** A checkpoint's stored snapshot (a work session's `Pre-agent` one is what
@@ -357,7 +358,10 @@ export class History {
   reviewState(): ReviewState {
     const review = this.review
     const current = this.current()
-    if (review === null) return { baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] }
+    if (review === null) {
+      this.reviewMemo = null
+      return { baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] }
+    }
     const m = this.reviewMemo
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
     const changes = diffProjects(review, current)

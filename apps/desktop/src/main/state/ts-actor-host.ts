@@ -17,7 +17,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
-import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewChangedPayload, type ReviewView } from '../../shared/review'
+import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewApproveResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -158,8 +158,9 @@ export interface TsActorHost {
   /** Full published view; reads during replacement retain the last settled view. */
   publication: () => ProjectPublication<ReturnType<typeof buildProjectSummary>>
   /** The Review view (ADR 0115) against the published project — what
-   *  `review_view` serves. Empty while no project is open. */
-  reviewView: () => ReviewView
+   *  `review_view` serves; the user-only list only when `includeUser`. Empty
+   *  while no project is open. */
+  reviewView: (includeUser?: boolean) => ReviewView
   /** Preserve the raw operation result and add a renderer-only view barrier. */
   published: <T>(run: () => Promise<T>) => Promise<PublishedResult<T>>
   /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
@@ -528,13 +529,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { value, publication: before === publicationVersion.revision ? null : { ...publicationVersion } }
   }
 
-  function reviewView(): ReviewView {
+  function reviewView(includeUser = false): ReviewView {
     const s = actor.reviewState()
     const version = { ...publicationVersion, baseline_revision: s.baseline_revision }
     // Closing accepts unreviewed changes silently (ADR 0115): with no project
     // open there is nothing to review, though the actor still holds one.
-    if (publishedDir === null) return { version, has_baseline: false, unreviewed: [], user: [], decorations: [] }
-    return { version, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: s.user, decorations: s.decorations }
+    if (publishedDir === null) return { version, has_baseline: false, unreviewed: [], user: [], user_count: 0, decorations: [] }
+    return { version, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: includeUser ? s.user : [], user_count: s.user.length, decorations: s.decorations }
+  }
+
+  /** Is `held` — the version of the view the user approved from — still the
+   *  current view's? Any commit moves the publication revision and any
+   *  baseline change its revision; mid-replacement the actor may hold
+   *  changes no publication shows yet, so nothing is current then. */
+  function reviewViewCurrent(version: unknown): boolean {
+    if (typeof version !== 'object' || version === null || replacing || publishedDir === null) return false
+    const held = version as Partial<ReviewVersion>
+    return held.session === publicationVersion.session && held.revision === publicationVersion.revision
+      && held.baseline_revision === actor.reviewState().baseline_revision
   }
 
   /** What one activity's ops did (spec Part B, per-activity highlight). Like
@@ -549,13 +561,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // microtask: attribution fires inside a commit, and an approval of several
   // changes must not fan out into several refetches.
   let reviewNotifyQueued = false
-  actor.subscribeReview(() => {
+  let reviewRevision = 0
+  actor.subscribeReview((revision) => {
+    reviewRevision = revision
     if (reviewNotifyQueued) return
     reviewNotifyQueued = true
     queueMicrotask(() => {
       reviewNotifyQueued = false
       if (!emitting) return
-      try { deps.send(REVIEW_CHANGED_EVENT, { baseline_revision: actor.reviewState().baseline_revision } satisfies ReviewChangedPayload) }
+      try { deps.send(REVIEW_CHANGED_EVENT, { baseline_revision: reviewRevision } satisfies ReviewChangedPayload) }
       catch (error) { console.warn('[ts-actor-host] review notification failed', error) }
     })
   })
@@ -689,18 +703,23 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'projectSettings':
         return actor.snapshot().settings
       case 'review': {
-        // Approvals answer with the fresh view: the surface that approved is
-        // the one reading it, so the recompute is wanted, not speculative.
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
-        if (channel === 'review_approve_all') actor.approveReviewAll()
-        else if (channel === 'review_approve') {
-          const a = args as ReviewApproveArgs
+        const includeUser = (args as ReviewViewArgs).include_user === true
+        if (channel === 'review_view') return reviewView(includeUser)
+        // An approval applies only to the view the user acted on; a stale one
+        // approves nothing. Either way it answers with the fresh view: the
+        // surface that approved is the one reading it, so the recompute is
+        // wanted, not speculative.
+        const a = args as Partial<ReviewApproveArgs>
+        const applied = reviewViewCurrent(a.version)
+        if (applied && channel === 'review_approve_all') actor.approveReviewAll()
+        else if (applied) {
           actor.approveReview({
             change_ids: Array.isArray(a.change_ids) ? a.change_ids.filter((x) => typeof x === 'string') : [],
             keys: Array.isArray(a.keys) ? a.keys.filter((x) => typeof x === 'string') : [],
           })
         }
-        return reviewView()
+        return { applied, view: reviewView(includeUser) } satisfies ReviewApproveResult
       }
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)

@@ -36,8 +36,10 @@ const unreviewed: Change[] = [
 ]
 const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', aspects: ['label'], ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
-  version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed: list, user, decorations: [],
+  version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed: list, user, user_count: user.length, decorations: [],
 })
+/** Main sends the user-only list only when asked. */
+const served = (v: ReviewView, args?: { include_user?: boolean }): ReviewView => (args?.include_user ? v : { ...v, user: [] })
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)
 const flush = () => act(async () => { await new Promise(r => setTimeout(r, 0)) })
 
@@ -45,8 +47,9 @@ beforeEach(async () => {
   await i18n.changeLanguage('en-US')
   resetReviewForTests()
   mocks.listeners.clear(); mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true)
-  mocks.invoke.mockReset().mockImplementation(async (channel: string) =>
-    channel === 'review_view' ? view(1) : channel.startsWith('review_approve') ? view(2, []) : { available: true, url: '', connections: [] })
+  mocks.invoke.mockReset().mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+    channel === 'review_view' ? served(view(1), args)
+      : channel.startsWith('review_approve') ? { applied: true, view: served(view(2, []), args) } : { available: true, url: '', connections: [] })
   useProjectStore.getState().apply(summaryFixture({
     root: { tracks: [track('t1', [clip('late', 'Late clip', 8 * S, 9 * S), clip('early', 'Early clip', S, 2 * S)])] },
     groups: [compositionFixture({ id: 'grp', label: 'Intro', tracks: [track('gt', [])] })],
@@ -82,14 +85,14 @@ describe('AgentPanel Changes tab', () => {
     await flush()
     fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Approve' }))
     await flush()
-    expect(calls('review_approve')).toEqual([{ change_ids: ['Layer:early'] }])
+    expect(calls('review_approve')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Layer:early'] }])
     // That reply was the empty view; reseed and approve all.
     act(() => { useReview.getState().apply(view(3)) })
     expect(rows()).toHaveLength(4)
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? view(4, []) : view(1))
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(4, []) } : view(1))
     fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
     await flush()
-    expect(calls('review_approve_all')).toHaveLength(1)
+    expect(calls('review_approve_all')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 3 }, include_user: false }])
     expect(rows()).toHaveLength(0)
     expect(useReview.getState().highlight.layers.size).toBe(0)
     expect(screen.getByText('Nothing to review. Every agent change is approved.')).toBeTruthy()
@@ -103,6 +106,8 @@ describe('AgentPanel Changes tab', () => {
     expect(filter.getAttribute('aria-pressed')).toBe('false')
     expect(document.querySelector('[data-source="user"]')).toBeNull()
     fireEvent.click(filter)
+    await flush()
+    expect(calls('review_view').at(-1)).toEqual({ include_user: true })
     const user = document.querySelector<HTMLElement>('[data-source="user"]')!
     expect(user.dataset.changeId).toBe('Layer:mine')
     expect(within(user).getByText('You')).toBeTruthy()
@@ -110,6 +115,17 @@ describe('AgentPanel Changes tab', () => {
     // Interleaved by time within its composition; the unreviewed count is unchanged.
     expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Shift:comp-root:-2400000', 'Layer:mine', 'Layer:late'])
     expect(screen.getByText('4 unreviewed')).toBeTruthy()
+  })
+
+  it('an approval made after the list changed approves nothing and says so above the fresh list', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    const fresh = { ...view(1, [...unreviewed, change({ id: 'Layer:new', ranges: range(0, S) })], []), version: { session: 1, revision: 2, baseline_revision: 1 } }
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: false, view: fresh } : fresh)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
+    await flush()
+    expect(rows()).toHaveLength(5)
+    expect(screen.getByText('The changes were updated — review again. Nothing was approved.').getAttribute('role')).toBe('status')
   })
 
   it('locates in the editor only: reveals the clip and seeks to its footprint', async () => {

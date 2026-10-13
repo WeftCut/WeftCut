@@ -23,7 +23,10 @@ export interface ReviewGhost {
   tEndUs: number
 }
 
-/** One painted stretch of the mini timeline's change band. */
+/** One painted stretch of the mini timeline's change band: a change's own
+ *  range, or a Group clip containing changes at its footprint (`changeId`
+ *  `Group:<layer id>`, painted as `modified`), so what changed inside a
+ *  Group shows on the timeline holding it. */
 export interface ReviewRangeMark {
   changeId: string
   cls: ChangeClass
@@ -71,7 +74,9 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
   const groups = new Map<string, number>()
   for (const d of decorations) {
     const n = d.change_ids.reduce((sum, id) => sum + (ids.has(id) ? 1 : 0), 0)
-    if (n > 0) groups.set(d.layer_id, n)
+    if (n === 0) continue
+    groups.set(d.layer_id, n)
+    ranges.push({ changeId: `Group:${d.layer_id}`, cls: 'modified', compositionId: d.composition_id, tStartUs: d.t_start_us, tEndUs: d.t_end_us })
   }
   return { layers, ghosts, groups, ranges }
 }

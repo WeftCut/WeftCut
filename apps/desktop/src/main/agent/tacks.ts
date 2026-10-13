@@ -15,7 +15,7 @@ import { eachLayer } from '../state/model'
 import { CommandFailure } from '../state/errors'
 import { hasSourceWindow } from '../state/mutations/helpers'
 import { snapMarkerTimes, sourceInstantAt } from '../state/mutations/markers'
-import { sourceInstantHibernating, sourceInstantTimelineUs } from '../state/summary'
+import { sourceInstantHibernating, sourceInstantTimelineUs, sourceRegionShownEndUs } from '../state/summary'
 import { TACK_CAPACITY, type Tack, type TackKind, type TackRange, type TackStatus, type TackView } from '../../shared/agent-activity'
 
 /** Who created a tack: the MCP call running when `create` was entered. */
@@ -83,7 +83,7 @@ function place(p: Project, range: TackRange, layers: LayerIndex): Placement {
     // Drawn only as far as the clip still runs, as `markerShownEnd` draws an
     // anchored region: past the out point is no longer the material it names.
     // A region a later retime squeezed under one frame reads as a point.
-    const shown = layer.t_end_us <= t ? e : Math.min(e, layer.t_end_us)
+    const shown = sourceRegionShownEndUs(layer, t, e)
     end = shown > t ? shown : null
   }
   return { composition_id: composition.id, t_us: t, end_t_us: end, state: 'visible' }

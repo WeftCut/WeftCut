@@ -536,7 +536,8 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.start()
     try {
       await host.handleInvoke('project_new_workspace', publicationProject)
-      type View = { version: { session: number; revision: number; baseline_revision: number }; has_baseline: boolean; unreviewed: Array<{ id: string }>; user: Array<{ id: string }> }
+      type View = { version: { session: number; revision: number; baseline_revision: number }; has_baseline: boolean; unreviewed: Array<{ id: string }>; user: Array<{ id: string }>; user_count: number }
+      type Approved = { applied: boolean; view: View }
       expect(await host.handleInvoke('review_view', {})).toMatchObject({ has_baseline: false, unreviewed: [], user: [] })
       expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
       expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
@@ -548,11 +549,12 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(view.unreviewed).toHaveLength(2)
       const before = host.publication().version
       const historyBefore = host.actor.historyStatus()
-      const approved = await host.handleInvoke('review_approve', { change_ids: [view.unreviewed[0].id], keys: ['Layer:stale'] }) as View
+      const { applied, view: approved } = await host.handleInvoke('review_approve', { version: view.version, change_ids: [view.unreviewed[0].id], keys: ['Layer:stale'] }) as Approved
+      expect(applied).toBe(true)
       expect(approved.unreviewed.map((c) => c.id)).toEqual([view.unreviewed[1].id])
       expect(approved.version.baseline_revision).toBeGreaterThan(view.version.baseline_revision)
       host.actor.lockHistory('agent at work')
-      expect(await host.handleInvoke('review_approve_all', {})).toMatchObject({ unreviewed: [], user: [] })
+      expect(await host.handleInvoke('review_approve_all', { version: approved.version })).toMatchObject({ applied: true, view: { unreviewed: [], user: [] } })
       // Approval is not a project write: no publication, no history entry.
       expect(host.publication().version).toEqual(before)
       expect(host.actor.historyStatus()).toEqual({ ...historyBefore, lock_reason: 'agent at work' })
@@ -562,6 +564,48 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
       await host.handleInvoke('project_close', {})
       expect(await host.handleInvoke('review_view', {})).toMatchObject({ has_baseline: false, unreviewed: [] })
+    } finally { host.stop() }
+  })
+
+  it('an approval applies only to the view the user acted on: a commit landing in between approves nothing', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      type View = { version: { session: number; revision: number; baseline_revision: number }; unreviewed: Array<{ id: string; keys: string[] }> }
+      type Approved = { applied: boolean; view: View }
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      const seen = await host.handleInvoke('review_view', {}) as View
+      expect(seen.unreviewed).toHaveLength(1)
+      // The agent commits again between what the user saw and the click.
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      for (const [channel, args] of [['review_approve_all', {}], ['review_approve', { change_ids: [seen.unreviewed[0].id] }]] as const) {
+        const r = await host.handleInvoke(channel, { ...args, version: seen.version }) as Approved
+        expect(r.applied).toBe(false)
+        expect(r.view.unreviewed).toHaveLength(2)
+        expect(r.view.version.revision).toBeGreaterThan(seen.version.revision)
+      }
+      // No version at all is no view the user acted on.
+      expect(await host.handleInvoke('review_approve_all', {})).toMatchObject({ applied: false })
+      const fresh = await host.handleInvoke('review_view', {}) as View
+      expect(fresh.version.baseline_revision).toBe(seen.version.baseline_revision + 1)
+      // Against the current view it applies.
+      const r = await host.handleInvoke('review_approve', { version: fresh.version, change_ids: [fresh.unreviewed[0].id] }) as Approved
+      expect(r).toMatchObject({ applied: true, view: { unreviewed: [{ id: fresh.unreviewed[1].id }] } })
+    } finally { host.stop() }
+  })
+
+  it('review_view sends the user-only list only when asked, and always its count', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      expect(host.actor.dispatch('add_track', {}).ok).toBe(true)
+      expect(await host.handleInvoke('review_view', {})).toMatchObject({ unreviewed: [{}], user: [], user_count: 1 })
+      expect(await host.handleInvoke('review_view', { include_user: true })).toMatchObject({ unreviewed: [{}], user: [{}], user_count: 1 })
     } finally { host.stop() }
   })
 

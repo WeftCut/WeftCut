@@ -1,6 +1,6 @@
 # ADR 0115: Agent review lives beside the project, not in it
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -76,3 +76,9 @@ compared, so a per-entity overlay suffices.
   content present; revisit if that lock changes.
 - Spatial tacks (regions on the frame) is deferred and will need its own
   decision about coordinates under transforms.
+- The tack band lives in the marker lane, whose row exists only while markers
+  are visible. With markers hidden, tacks show in the agent panel and the mini
+  timeline only.
+- Approval is refused when the view the user acted on is no longer current
+  (an agent committed in between); nothing is approved and the fresh list is
+  shown to review again.

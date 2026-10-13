@@ -192,10 +192,12 @@ export interface ActorHandle {
    *  Returns whether the baseline was (re)pinned. */
   pinReviewBaseline(checkpointId?: Uuid): boolean
   /** Approvals record nothing, emit no project change and ignore the history
-   *  lock. `approveReview` returns how many changes it approved. */
+   *  lock. */
   approveReviewAll(): void
   /** What the recorded ops `ids` did — `History.opDiff`; a read. */
   reviewOpDiff(ids: readonly Uuid[]): OpDiff
+  /** Approve by change id and/or entity key, as `approveReviewAll` does for
+   *  everything. Returns how many changes it approved. */
   approveReview(sel: { change_ids?: readonly string[]; keys?: readonly EntityKey[] }): number
   /** Told the new baseline revision on every baseline change (initialize,
    *  re-pin, approval, attribution, reset) — synchronously, possibly inside a

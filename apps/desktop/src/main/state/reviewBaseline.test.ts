@@ -282,6 +282,20 @@ describe('Review baseline — memo and notification', () => {
     expect(a.reviewState()).not.toBe(s2)
   })
 
+  it('a reset lets go of the memo, and with it the previous project\'s snapshots', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'h')
+    const h = new History(p0, { kind: 'User' }, 'op0')
+    h.record({ op_id: 'op1', actor: AGENT, timestamp: '<TS>', summary: 's', label_key: 'k', affected: [], snapshot: { ...p0 } })
+    h.reviewState()
+    const memo = () => (h as unknown as { reviewMemo: unknown }).reviewMemo
+    expect(memo()).not.toBeNull()
+    h.reset(blankProject(gen, 'next'), { kind: 'User' }, 'op2')
+    expect(memo()).toBeNull()
+    expect(h.reviewState().has_baseline).toBe(false)
+    expect(memo()).toBeNull()
+  })
+
   it('subscribers hear baseline changes (initialize, attribution, approval, reset), not user commits', () => {
     const { a, tA } = setup()
     const heard = vi.fn()

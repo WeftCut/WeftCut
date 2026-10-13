@@ -4,6 +4,7 @@ import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { formatTimecode } from "../frames";
 import {
+  useActivityHighlightShown,
   useGroupReviewCount,
   useLayerReviewMark,
   useTrackReviewGhosts,
@@ -50,6 +51,7 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
 /// The "contains changes" badge on a Group clip: how many highlighted changes
 /// live inside the composition it shows, nesting included. Top-right, left of
 /// the lock when there is one. It names; going in is the clip's double-click.
+/// Counting a selected activity's changes, it does not call them unreviewed.
 export function ReviewGroupBadge({
   layerId,
   locked,
@@ -59,8 +61,9 @@ export function ReviewGroupBadge({
 }) {
   const { t } = useTranslation();
   const count = useGroupReviewCount(layerId);
+  const activity = useActivityHighlightShown();
   if (count === 0) return null;
-  const label = t("changes.group_badge", { count });
+  const label = t(activity ? "changes.group_badge_activity" : "changes.group_badge", { count });
   return (
     <span
       data-testid="review-group-badge"

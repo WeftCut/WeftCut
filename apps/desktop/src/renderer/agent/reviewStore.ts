@@ -13,7 +13,7 @@ import { useEffect, useMemo } from 'react'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
 import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
-import type { ReviewView } from '../../shared/review'
+import type { ReviewApproveResult, ReviewVersion, ReviewView } from '../../shared/review'
 import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
@@ -47,13 +47,22 @@ interface ReviewState {
    *  read a stable map. */
   highlight: ReviewHighlight
   /** The Changes tab's "show my changes" filter: user-only differences are
-   *  listed too. Off by default; runtime only, like the review itself. */
+   *  listed too. Off by default; runtime only, like the review itself. Main
+   *  sends that list only while it is on (`setShowUser`). */
   showUser: boolean
+  /** Whether `view` was asked for with the user-only list. */
+  viewListsUser: boolean
+  /** The last approval was refused: the view it was made from had moved on
+   *  (an agent committed meanwhile), so nothing was approved and the fresh
+   *  list is on screen. Cleared by the next approval. */
+  approvalStale: boolean
   /** The selected activity row's changes, preferred by every timeline surface
    *  over `highlight` once ready. Null when no row is selected. */
   activity: ActivityHighlight | null
-  /** Take `next` unless it is older than the held view. True when applied. */
-  apply: (next: ReviewView) => boolean
+  /** Take `next` unless it is older than the held view — or, at the same
+   *  version, unless it adds nothing (`listsUser` where the held view had no
+   *  user list). True when applied. */
+  apply: (next: ReviewView, listsUser?: boolean) => boolean
 }
 
 /** Is `next` a strictly newer view than `held`? A view is identified by its
@@ -67,14 +76,21 @@ export function isNewerReviewView(next: ReviewView['version'], held: ReviewView[
   return next.revision > held.revision || next.baseline_revision > held.baseline_revision
 }
 
+const sameVersion = (a: ReviewVersion, b: ReviewVersion): boolean =>
+  a.session === b.session && a.revision === b.revision && a.baseline_revision === b.baseline_revision
+
 export const useReview = create<ReviewState>((set, get) => ({
   view: null,
   highlight: EMPTY_HIGHLIGHT,
   showUser: false,
+  viewListsUser: false,
+  approvalStale: false,
   activity: null,
-  apply: next => {
-    if (!isNewerReviewView(next.version, get().view?.version ?? null)) return false
-    set({ view: next, highlight: buildReviewHighlight(next.unreviewed, next.decorations) })
+  apply: (next, listsUser = false) => {
+    const held = get()
+    const fillsUser = listsUser && !held.viewListsUser && held.view !== null && sameVersion(next.version, held.view.version)
+    if (!fillsUser && !isNewerReviewView(next.version, held.view?.version ?? null)) return false
+    set({ view: next, viewListsUser: listsUser, highlight: fillsUser ? held.highlight : buildReviewHighlight(next.unreviewed, next.decorations) })
     return true
   },
 }))
@@ -92,8 +108,9 @@ export async function refreshReview(): Promise<void> {
   if (pending) { again = true; return }
   pending = true
   try {
-    const next = await reviewView()
-    if (consumers > 0) useReview.getState().apply(next)
+    const listsUser = useReview.getState().showUser
+    const next = await reviewView({ include_user: listsUser })
+    if (consumers > 0) useReview.getState().apply(next, listsUser)
   } catch { /* keep the last good view */ }
   finally {
     pending = false
@@ -128,6 +145,13 @@ export function acquireReview(): () => void {
     consumers -= 1
     if (consumers === 0) { teardown?.(); teardown = null }
   }
+}
+
+/** Turn "show my changes" on or off; turning it on fetches the user-only list
+ *  unless the held view already has it. */
+export function setShowUser(on: boolean): void {
+  useReview.setState({ showUser: on })
+  if (on && consumers > 0 && !useReview.getState().viewListsUser) void refreshReview()
 }
 
 /** Keep the Review view fresh while the calling component is mounted (and
@@ -175,6 +199,12 @@ export function useGroupReviewCount(layerId: string): number {
   return useReview(s => (overlay ? selectHighlight(s).groups.get(layerId) ?? 0 : 0))
 }
 
+/** Whether the timelines show a selected activity's own changes rather than
+ *  the unreviewed ones — what a badge counting them calls them. */
+export function useActivityHighlightShown(): boolean {
+  return useReview(s => s.activity?.status === 'ready')
+}
+
 /** Removed layers to outline on one track of the editor timeline. */
 export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
   const overlay = useOverlay()
@@ -198,16 +228,35 @@ export function useCompositionChangeRanges(compositionId: string | null): readon
 
 // ── Approval ──────────────────────────────────────────────────────────────────
 
-/** Approve every unreviewed change. The reply is the fresh view and lands in
- *  the store straight away, so the tab empties and every highlight goes in the
- *  same render. */
-export function approveAllChanges(): Promise<boolean> {
-  return tryMutate(async () => { useReview.getState().apply(await reviewApproveAll()) }, 'review_approve_all')
+/** Run one approval against the held view. It names that view's version:
+ *  main approves only while it is still current, so a change committed after
+ *  the list on screen is never approved unseen. The reply is the fresh view
+ *  either way and lands in the store straight away, so the tab updates and
+ *  every highlight goes in the same render. True when the approval applied. */
+async function approve(
+  run: (version: ReviewVersion, includeUser: boolean) => Promise<ReviewApproveResult>,
+  context: string,
+): Promise<boolean> {
+  let applied = false
+  const ok = await tryMutate(async () => {
+    const { view, showUser } = useReview.getState()
+    if (view === null) return
+    const r = await run(view.version, showUser)
+    useReview.getState().apply(r.view, showUser)
+    applied = r.applied
+    useReview.setState({ approvalStale: !r.applied })
+  }, context)
+  return ok && applied
 }
 
-/** Approve the given changes (a shift group approves as one). */
+/** Approve every unreviewed change of the held view. */
+export function approveAllChanges(): Promise<boolean> {
+  return approve((version, include_user) => reviewApproveAll({ version, include_user }), 'review_approve_all')
+}
+
+/** Approve the given changes of the held view (a shift group approves as one). */
 export function approveChanges(changeIds: readonly string[]): Promise<boolean> {
-  return tryMutate(async () => { useReview.getState().apply(await reviewApprove({ change_ids: [...changeIds] })) }, 'review_approve')
+  return approve((version, include_user) => reviewApprove({ version, include_user, change_ids: [...changeIds] }), 'review_approve')
 }
 
 // ── Per-activity highlight ────────────────────────────────────────────────────
@@ -279,5 +328,5 @@ export function useActivityHighlightHost(): void {
 export function resetReviewForTests(): void {
   teardown?.(); teardown = null; consumers = 0; pending = false; again = false
   activityToken += 1
-  useReview.setState({ view: null, highlight: EMPTY_HIGHLIGHT, showUser: false, activity: null })
+  useReview.setState({ view: null, viewListsUser: false, approvalStale: false, highlight: EMPTY_HIGHLIGHT, showUser: false, activity: null })
 }

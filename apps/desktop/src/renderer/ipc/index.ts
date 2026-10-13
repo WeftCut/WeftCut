@@ -36,7 +36,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
-import type { ReviewActivityView, ReviewApproveArgs, ReviewView } from "../../shared/review";
+import type { ReviewActivityView, ReviewApproveAllArgs, ReviewApproveArgs, ReviewApproveResult, ReviewView, ReviewViewArgs } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
 export type {
   Change as ReviewChange,
@@ -45,9 +45,13 @@ export type {
   EntityKey as ReviewEntityKey,
   GroupDecoration as ReviewGroupDecoration,
   ReviewActivityView,
+  ReviewApproveAllArgs,
   ReviewApproveArgs,
+  ReviewApproveResult,
   ReviewChangedPayload,
+  ReviewVersion,
   ReviewView,
+  ReviewViewArgs,
 } from "../../shared/review";
 import type {
   AudioFxSnapshot,
@@ -1098,9 +1102,10 @@ export async function projectRestoreCheckpoint(checkpointId: string): Promise<vo
 /// The Review baseline against the current project: unreviewed (agent-touched)
 /// changes, user-only changes and Group decorations. Main computes it only
 /// when asked, memoized per baseline and project revision. Refetch on
-/// `REVIEW_CHANGED_EVENT` and on `project:changed`.
-export async function reviewView(): Promise<ReviewView> {
-  return invoke<ReviewView>("review_view");
+/// `REVIEW_CHANGED_EVENT` and on `project:changed`. The user-only list comes
+/// only with `include_user`; `user_count` always does.
+export async function reviewView(args: ReviewViewArgs = {}): Promise<ReviewView> {
+  return invoke<ReviewView>("review_view", { ...args });
 }
 
 /// What one agent call did: the history ops of an activity row, each diffed
@@ -1113,16 +1118,18 @@ export async function reviewActivityView(historyIds: readonly string[]): Promise
 
 /// Approve everything: the baseline becomes the current state. Changes nothing
 /// in the project, records nothing, and is allowed under the history lock.
-/// Answers with the fresh view.
-export async function reviewApproveAll(): Promise<ReviewView> {
-  return invoke<ReviewView>("review_approve_all");
+/// Applied only while `version` (the view the user acted on) is still current;
+/// answers with whether it was, and the fresh view.
+export async function reviewApproveAll(args: ReviewApproveAllArgs): Promise<ReviewApproveResult> {
+  return invoke<ReviewApproveResult>("review_approve_all", { ...args });
 }
 
 /// Approve changes by id (from the view) and/or entity key; a key approves the
-/// whole change holding it, so a shift group approves as a unit. Stale ids are
-/// ignored. Answers with the fresh view.
-export async function reviewApprove(args: ReviewApproveArgs): Promise<ReviewView> {
-  return invoke<ReviewView>("review_approve", { ...args });
+/// whole change holding it, so a shift group approves as a unit. Unknown ids
+/// are ignored. Applied only while `version` is still the current view;
+/// answers with whether it was, and the fresh view.
+export async function reviewApprove(args: ReviewApproveArgs): Promise<ReviewApproveResult> {
+  return invoke<ReviewApproveResult>("review_approve", { ...args });
 }
 
 // ============================================================
