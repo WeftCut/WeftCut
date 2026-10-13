@@ -168,6 +168,16 @@ export function sourceInstantHibernating(at: SourceInstant, layer: Layer | undef
   return compareTime(time, sourceIn(layer.params)) < 0 || compareTime(time, sourceOut(layer)) >= 0
 }
 
+/** The same question for the END of a range: an end sits on the far side of
+ *  its frame, so the window is half-open the other way, `(src_in, src_out]` —
+ *  an end on the clip's out point is still on the clip. An edge-anchored
+ *  tack's end (`main/agent/tacks.ts`) is lost when this says so. */
+export function sourceEndInstantLost(at: SourceInstant, layer: Layer | undefined): boolean {
+  if (layer === undefined || !hasSourceWindow(layer.params)) return true
+  const time = addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)
+  return compareTime(time, sourceIn(layer.params)) <= 0 || compareTime(time, sourceOut(layer)) > 0
+}
+
 /** The timeline time a source instant of `layer` reads at, on the frame grid
  *  of the composition holding it — the ONE source→timeline derivation:
  *  `reconcileMarkers` writes an anchored marker's `t_us` with it and the tack

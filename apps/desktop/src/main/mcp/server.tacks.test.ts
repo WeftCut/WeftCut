@@ -47,14 +47,17 @@ describe('create_tacks / update_tack / delete_tacks', () => {
     expect(created.isError).toBeFalsy()
     const ids = created.structuredContent!.tack_ids as string[]
     expect(ids).toHaveLength(2)
-    expect(JSON.parse(created.content[0]!.text)).toEqual({ tack_ids: ids })
+    expect(JSON.parse(created.content[0]!.text)).toEqual({ tack_ids: ids, follows: [
+      { start: { layer_id: h.clip }, end: { layer_id: h.clip } }, { start: { layer_id: h.clip }, end: null },
+    ] })
 
     const viaTool = JSON.parse((await h.call('read_project', { view: 'tacks' })).content[0]!.text)
     expect(viaTool).toEqual(await h.read('project://tacks'))
     expect(viaTool).toMatchObject([
       { id: ids[0], kind: 'issue', status: 'open', state: 'visible', t_us: 2_000_000, end_t_us: 3_000_000, client: 'client-one',
         range: { kind: 'anchored', layer_id: h.clip, src_us: 3_000_000, src_end_us: 4_000_000 } },
-      { id: ids[1], kind: 'question', body: 'Swell here or later', range: { kind: 'free', composition_id: h.rootId, t_us: 4_000_000, end_t_us: null } },
+      { id: ids[1], kind: 'question', body: 'Swell here or later', outdated: false,
+        range: { kind: 'edges', composition_id: h.rootId, t_us: 4_000_000, end_t_us: null, start: { layer_id: h.clip, src_us: 5_000_000 }, end: null } },
     ])
     expect(await h.read(`project://tacks?composition=${h.rootId}`)).toHaveLength(2)
 
@@ -148,5 +151,72 @@ describe('refusals change nothing and name what to fix', () => {
     if (!r.ok) expect(r.error.message).toContain('served by the MCP host')
     const v = h.actor.mcpCall('read_project', JSON.stringify({ view: 'tacks' }))
     expect(v.ok).toBe(false)
+  })
+})
+
+describe('harness feedback', () => {
+  it('create_tacks reports what each tack follows, and hints at times in the text and at tacks that follow nothing', async () => {
+    const h = host()
+    const out = await h.call('create_tacks', { tacks: [
+      { label: 'Breath before the answer', t_us: 2_000_000, end_t_us: 3_000_000 },
+      { label: 'Pause at 0:12', t_us: 2_000_000 },
+      { label: 'Breath', body: '大约4秒的停顿', t_us: 2_000_000 },
+      { label: 'Music in?', t_us: 7_000_000, end_t_us: 8_000_000 },
+    ] })
+    expect(out.structuredContent).toMatchObject({ follows: [
+      { start: { layer_id: h.clip }, end: { layer_id: h.clip } }, { start: { layer_id: h.clip }, end: null },
+      { start: { layer_id: h.clip }, end: null }, { start: null, end: null },
+    ] })
+    const hints = out.structuredContent!.hints as string[]
+    expect(hints).toHaveLength(3)
+    expect(hints[0]).toMatch(/^tacks\[1\] mentions a time \("0:12"\).*describe the content/)
+    expect(hints[1]).toMatch(/^tacks\[2\] mentions a time \("4秒"\)/)
+    expect(hints[2]).toMatch(/^tacks\[3\] has no clip under either end/)
+    const clean = await h.call('create_tacks', { tacks: [{ label: 'Two shots of the same take', body: 'Keep the 4K one?', t_us: 2_000_000 }] })
+    expect(clean.structuredContent).not.toHaveProperty('hints')
+  })
+
+  it('a committing call reports the caller’s own changed open tacks, and nothing otherwise', async () => {
+    const h = host()
+    const track = h.ts.actor.snapshot().compositions[h.rootId].tracks[0].id
+    const [mine] = (await h.call('create_tacks', { tacks: [{ label: 'mine', t_us: 2_000_000, anchor_layer_id: h.clip }] })).structuredContent!.tack_ids
+    const [theirs] = (await h.call('create_tacks', { tacks: [{ label: 'theirs', t_us: 3_000_000 }] }, 'two')).structuredContent!.tack_ids
+
+    const moved = await h.call('move_layer', { layer_id: h.clip, new_t_start_us: 2_000_000, new_track_id: track })
+    expect(moved.structuredContent!.affected_tacks).toEqual([{ tack_id: mine, label: 'mine', change: 'moved' }])
+    expect(JSON.parse(moved.content[0]!.text).affected_tacks).toEqual(moved.structuredContent!.affected_tacks)
+
+    // Connection two's trim outdates both tacks; only two hears about its own.
+    const trimmed = await h.call('trim_layer', { layer_id: h.clip, edge: 'out', new_t_us: 5_000_000 }, 'two')
+    expect(trimmed.structuredContent!.affected_tacks).toEqual([{ tack_id: theirs, label: 'theirs', change: 'outdated' }])
+
+    // A call that changes none of the caller's tacks, a read, and a refusal carry no field.
+    const added = await h.call('add_track', { label: 'More' })
+    expect(added.structuredContent).not.toHaveProperty('affected_tacks')
+    expect(JSON.parse(added.content[0]!.text)).not.toHaveProperty('affected_tacks')
+    const read = await h.agent.run('one', 'client-one', 'read_project', { view: 'tacks' }, true, () => handleCallTool(h.backend, () => h.ts, 'read_project', { view: 'tacks' })) as Res
+    expect(read.content).toHaveLength(1)
+    const refused = await h.call('trim_layer', { layer_id: h.clip, edge: 'out', new_t_us: 99_000_000 })
+    expect(refused.isError).toBe(true)
+    expect(JSON.stringify(refused)).not.toContain('affected_tacks')
+  })
+
+  it('end_agent_session lists the session’s open tacks that are stale, hibernating or outdated', async () => {
+    const h = host()
+    await h.call('begin_agent_session', { reason: 'Pauses' })
+    const [gone, resolved, fine] = (await h.call('create_tacks', { tacks: [
+      { label: 'on the clip', t_us: 2_000_000, anchor_layer_id: h.clip },
+      { label: 'resolved one', t_us: 3_000_000, anchor_layer_id: h.clip },
+      { label: 'over a gap', t_us: 7_000_000 },
+    ] })).structuredContent!.tack_ids
+    await h.call('update_tack', { tack_id: resolved, patch: { status: 'resolved' } })
+    const deleted = await h.call('delete_layers', { layer_ids: [h.clip] })
+    expect(deleted.structuredContent!.affected_tacks).toEqual([{ tack_id: gone, label: 'on the clip', change: 'stale' }])
+    const ended = await h.call('end_agent_session', {})
+    expect(ended.structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip', state: 'stale', outdated: false }])
+    expect(fine).toBeDefined()
+
+    await h.call('begin_agent_session', { reason: 'Again' })
+    expect((await h.call('end_agent_session', {})).structuredContent).not.toHaveProperty('tacks_to_review')
   })
 })

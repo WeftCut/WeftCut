@@ -65,7 +65,8 @@ describe('agent view and snapshot state', () => {
   it('merges tack deltas in creation order and drops them on a reset', async () => {
     const tack = (id: string, patch: Partial<TackView> = {}): TackView => ({ id, session_id: null, connection_id: 'c', client: 'Client',
       activity_id: 'a', kind: 'note', label: id, body: '', status: 'open', created_at: '',
-      range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible', ...patch })
+      range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible',
+      outdated: false, follows: { start: null, end: null }, ...patch })
     const delta = (revision: number, patch: Record<string, unknown>) => ({ payload: { ...snapshot(revision), from_revision: revision - 1, reset: false, removed_ids: [], removed_tack_ids: [], ...patch } })
     mocks.invoke.mockResolvedValueOnce({ ...snapshot(1), tacks: [tack('a'), tack('b')] })
     const stop = await wireAgentActivity()

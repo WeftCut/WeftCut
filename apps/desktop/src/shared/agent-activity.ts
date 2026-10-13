@@ -45,15 +45,30 @@ export interface AgentConnection {
 }
 /** A Tack: a time range an agent points the user at for review (ADR 0115).
  *  Runtime-only within a project opening — not project content, not in history,
- *  never serialized. `range` is free on a composition's clock, or anchored to a
- *  layer's SOURCE time and placed when read (see `TackView`). */
+ *  never serialized. `range` says what the tack follows, and is placed when
+ *  read (see `TackView`). */
 export type TackKind = (typeof TACK_KINDS)[number]
 export type TackStatus = (typeof TACK_STATUSES)[number]
+/** One end of an `edges` range, tied to the clip that was under it at
+ *  creation: the same source-instant pair a `MarkerAnchor` stores. */
+export interface TackEdgeAnchor { layer_id: string; src_us: number; src_fraction?: ExactTime }
 export type TackRange =
+  /** Follows nothing: a time on a composition's clock. What `create_tacks`
+   *  stores when neither end had a clip under it. */
   | { kind: 'free'; composition_id: string; t_us: number; end_t_us: number | null }
-  /** `src_fraction` / `src_end_fraction` carry the sub-microsecond remainder
-   *  of the source instant on a retimed layer, exactly as a `MarkerAnchor` does. */
+  /** Pinned to ONE clip by `anchor_layer_id`. `src_fraction` /
+   *  `src_end_fraction` carry the sub-microsecond remainder of the source
+   *  instant on a retimed layer, exactly as a `MarkerAnchor` does. */
   | { kind: 'anchored'; layer_id: string; src_us: number; src_end_us: number | null; src_fraction?: ExactTime; src_end_fraction?: ExactTime }
+  /** Each end follows the clip under it at creation, independently (`null`:
+   *  that end was over a gap, or a point's absent end). `composition_id`,
+   *  `t_us`, `end_t_us` are the times as created — the fallback a lost or
+   *  unanchored end is placed from. At least one of `start` / `end` is set. */
+  | { kind: 'edges'; composition_id: string; t_us: number; end_t_us: number | null; start: TackEdgeAnchor | null; end: TackEdgeAnchor | null }
+/** Which clip each end of a tack follows; null for an end that follows none
+ *  (a free tack, a gap end, a point's end). An anchored tack reports its one
+ *  layer for both ends of a region. */
+export interface TackFollows { start: { layer_id: string } | null; end: { layer_id: string } | null }
 export interface Tack {
   id: string
   /** The work session the creating call ran in; null outside one. */
@@ -76,16 +91,27 @@ export type TackState = 'visible' | 'hibernating' | 'stale'
 /** A tack as read: the stored record plus its placement, derived from the
  *  current project on every read. `composition_id` is where it is placed (an
  *  anchored tack's layer's composition), null when stale; `t_us` / `end_t_us`
- *  are null unless `visible`. */
+ *  are null unless `visible`. `outdated`: a clip the tack covered at creation
+ *  has since changed in more than a pure move in time (trimmed, split,
+ *  retimed, re-styled, deleted) — by anyone. */
 export interface TackView extends Tack {
   composition_id: string | null
   t_us: number | null
   end_t_us: number | null
   state: TackState
+  outdated: boolean
+  follows: TackFollows
 }
+/** One of the calling connection's open tacks that a mutating MCP call moved,
+ *  resized, put out of place or made outdated — reported on that call's
+ *  result as `affected_tacks`. */
+export interface AffectedTack { tack_id: string; label: string; change: 'moved' | 'resized' | 'stale' | 'hibernating' | 'outdated' }
+/** An open tack of a work session that needs the agent's look before it ends
+ *  the session — `end_agent_session`'s `tacks_to_review`. */
+export interface TackToReview { tack_id: string; label: string; state: TackState; outdated: boolean }
 /** Tacks retained per project opening; beyond it `create_tacks` refuses. */
 export const TACK_CAPACITY = 1000
-/** A tack's label is a few words (the panel row, the timeline band); its body
+/** A tack's label is a few words (the panel row, the timeline chip); its body
  *  carries the detail. Both bounded so 1000 tacks stay a small payload. */
 export const TACK_LABEL_LIMIT = 200
 export const TACK_BODY_LIMIT = 4000

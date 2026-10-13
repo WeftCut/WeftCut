@@ -62,15 +62,19 @@ export function tackUnplacedReason(t: TackView): string | null {
 }
 
 /** The `add_marker` a tack converts into: its place, its label and body as the
- *  marker's label and note, and — iff the tack is anchored — the same source
- *  instant on the same clip, so the marker follows the clip as the tack did.
- *  Null when the tack has no place to convert at. */
+ *  marker's label and note, and the source instant it follows — an anchored
+ *  tack's, or an edge-anchored tack's start — so the marker follows the clip as
+ *  the tack did (a marker anchors one instant; its region end stays timeline
+ *  time). Free otherwise. Null when the tack has no place to convert at. */
 export function tackMarkerArgs(t: TackView): {
   compositionId: string; tUs: number; endTUs: number | null; label: string; note: string; anchor: MarkerAnchorArg | null
 } | null {
   if (t.state !== 'visible' || t.composition_id === null || t.t_us === null) return null
-  const anchor: MarkerAnchorArg | null = t.range.kind === 'anchored'
-    ? { layer: t.range.layer_id, src_us: t.range.src_us, ...(t.range.src_fraction ? { src_fraction: t.range.src_fraction } : {}) }
+  const r = t.range
+  const instant = r.kind === 'anchored' ? { layer: r.layer_id, src_us: r.src_us, src_fraction: r.src_fraction }
+    : r.kind === 'edges' && r.start !== null ? { layer: r.start.layer_id, src_us: r.start.src_us, src_fraction: r.start.src_fraction }
     : null
   return { compositionId: t.composition_id, tUs: t.t_us, endTUs: t.end_t_us, label: t.label, note: t.body, anchor }
 }
+  const anchor: MarkerAnchorArg | null = instant === null ? null
+    : { layer: instant.layer, src_us: instant.src_us, ...(instant.src_fraction ? { src_fraction: instant.src_fraction } : {}) }

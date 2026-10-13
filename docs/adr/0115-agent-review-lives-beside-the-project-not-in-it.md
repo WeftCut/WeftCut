@@ -22,13 +22,26 @@ lifecycle. Review material has a different one.
 **A Tack is not a marker.** It is runtime agent-review state owned by
 the project opening, beside agent activity: not in `Project`, not recorded,
 not serialized, not exported, untouched by undo, checkpoint restore and the
-history lock. It names a time range, free or anchored to a layer's source time,
-and its timeline position is derived when it is read. No marker consumer
+history lock. It names a time range whose position is derived when it is
+read. No marker consumer
 (lane model, `Ctrl+K`, `summary.ts`, serialize, validate) learns that it
 exists; it has its own MCP verbs and its own panel. Users do not create or
 reply to tacks; they resolve, dismiss, clear, or **convert** one into an
 ordinary recorded marker — the single path from review material into project
 content.
+
+**A tack follows content, and says when it lost it.** Unless the agent pins
+the range to one clip, each end anchors to the clip under it (A-roll first,
+then track order) by source time, keeping its timeline time only over a gap and
+as the fallback. A ripple moves a tack with its material; a cut inside the
+range shrinks it. When the start's material is deleted the tack is stale —
+listed, never painted somewhere it no longer means; when the clips it covers
+change other than by moving, it is outdated. The agent is told both in the
+result of the call that caused it and again when it ends its session, and is
+asked to describe content rather than timecodes and to tack after its edits.
+This is the web-annotation pattern (a content selector first, a position
+selector as fallback, orphaned when neither holds) applied to clip source
+time, as OTIO places a clip's markers.
 
 **The Review baseline is owned by `History`.** It is the state the user last
 accepted, initialized from the first work session's checkpoint or before the
@@ -56,6 +69,12 @@ exactly as ADR 0056 warned, and bulk removal becomes a recorded edit.
 project snapshot to disk and carry it through the schema upgrade chain
 (ADR 0047), and contradict history's project-opening scope, on which the fps
 rate lock's `locked_by: "history"` release already depends.
+
+**Mapping tack positions through each edit.** Rejected: editors that map
+positions through every change (ProseMirror, CodeMirror) work on a
+one-dimensional document whose edits are axis operations. Timeline edits are
+entity operations; inferring a time-axis map from them is guesswork that
+anchoring to content does not need.
 
 **Baseline as a checkpoint.** Rejected: checkpoints are user-visible restore
 points; one per approval recreates the clutter this ADR removes, and a user

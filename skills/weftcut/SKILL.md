@@ -151,10 +151,13 @@ descriptions:
 ## Pointing the user at something
 
 Tacks are how you point the user at something to review — a pause to check, a
-shot to judge, a cut to decide. `create_tacks` places a whole batch in one
-call; anchor each to its clip so it follows the material. Tacks live in the
-agent panel for this project opening only — never in the project, its history
-or an export — so leaving them costs the user nothing.
+shot to judge, a cut to decide. Create them once the session's edits are done:
+`create_tacks` places a whole batch in one call. Each end follows the clip
+under it automatically; pass `anchor_layer_id` only to pin one to a specific
+clip. Describe the content in label and body, never a timecode — the panel
+shows each tack's live place. Tacks live in the agent panel for this project
+opening only — never in the project, its history or an export — so leaving
+them costs the user nothing.
 
 Markers are the user's content: saved, undoable, exported. Create one with
 `add_marker` only when the user asks for markers — never as a review mark.
@@ -162,7 +165,9 @@ Markers are the user's content: saved, undoable, exported. Create one with
 A tack's status tells you what the user decided: resolved (they acted on it) or
 dismissed (it does not matter), while open is still waiting. Read
 `project://tacks` before acting on your earlier tacks, and use `update_tack` to
-resolve one you fixed yourself.
+resolve one you fixed yourself. When an edit's result lists one of yours in
+`affected_tacks`, update or resolve it, and do the same for any
+`tacks_to_review` that `end_agent_session` returns.
 
 ## Motifs (animated overlays)
 

@@ -360,6 +360,10 @@ async function dispatchTool(
         const active = tsHost.agent.snapshot().session
         tsHost.agent.end(p.force === true ? 'forced' : 'agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
+        // The session's open tacks that no longer point where they were made
+        // to — the agent's last chance to fix or resolve them. Omitted when none.
+        const review = active === null ? [] : tsHost.agent.tacks.toReview(active.id)
+        if (review.length) result.tacks_to_review = review
       } else {
         // The lock is taken here rather than through mcpCall because the OWNER
         // is the connection, which only this seam knows.

@@ -119,7 +119,8 @@ describe('AgentPanel — per-activity highlight', () => {
 function tack(patch: Partial<TackView> = {}): TackView {
   return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', kind: 'issue', label: 'Long pause',
     body: 'Keep the breath?', status: 'open', range: { kind: 'free', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000 },
-    created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000, state: 'visible', ...patch }
+    created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000, state: 'visible',
+    outdated: false, follows: { start: null, end: null }, ...patch }
 }
 const work = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Review pauses', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)

@@ -313,7 +313,7 @@ itself is an `isError` result whose text names the folder and the fix, with
 | `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
 | `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it, and undo, redo and a checkpoint restore put back the stamp of the state they return to, so compare it for change, not for order |
 | `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` — plus the project state: `project` (`{ name, dir }` of the project the user has open, `null` on the start screen or after Close Project), `recent_projects` (the start screen's Recents, `[{ name, path }]`, newest first) and `default_parent_folder` (where New Project would create one, or `null`). The one non-error read of whether a project is open, and what `open_project` / `create_project` draw on (see *No project open* below) |
-| `project://tacks` | every **tack** of this project opening, oldest first — the review ranges agents left for the user (see *Tacks* below). Each is the stored record — `{ id, kind, label, body, status, range, session_id, connection_id, client, activity_id, created_at }` — plus its placement derived at read time: `composition_id`, `t_us`, `end_t_us` and `state` (`visible` / `hibernating` / `stale`). `project://tacks?composition=<id>` keeps the tacks placed in that composition (`not_found` for an unknown id); unlike the per-composition reads, the bare URI is the whole project opening, because a stale tack is placed nowhere |
+| `project://tacks` | every **tack** of this project opening, oldest first — the review ranges agents left for the user (see *Tacks* below). Each is the stored record — `{ id, kind, label, body, status, range, session_id, connection_id, client, activity_id, created_at }` — plus what is derived at read time: `composition_id`, `t_us`, `end_t_us`, `state` (`visible` / `hibernating` / `stale`), `outdated` and `follows`. `project://tacks?composition=<id>` keeps the tacks placed in that composition (`not_found` for an unknown id); unlike the per-composition reads, the bare URI is the whole project opening, because a stale tack is placed nowhere |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `composition://meter` | latest PREVIEW master-bus level — `{ live: true, rms_db, peak_db }` while something is playing, `{ live: false }` once nothing has for 2 seconds. The preview UI pushes this reading at about 2 Hz, so the liveness window is a few pushes wide and polling faster than that returns the same numbers. A tap on the preview mixer, so it answers "how loud is what the user is hearing right now" and nothing about a render; a stopped transport reports `live: false` rather than a stale reading. Master bus only — the per-role levels the Role Mixer draws are a renderer-side tap and reach no MCP surface ([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)) |
@@ -757,23 +757,61 @@ the project's revision, and opening, creating or reopening a project clears
 every tack, as it clears the activity stream; a call still running from the
 previous opening cannot create one in the new.
 
-A tack's `range` is **free** — `{ kind: "free", composition_id, t_us, end_t_us }`
-on a composition's clock — or **anchored** — `{ kind: "anchored", layer_id,
-src_us, src_end_us }` in a clip's SOURCE time, converted from timeline time at
-creation exactly as `add_marker` converts with `anchor_layer_id`. An anchored
-tack stores no timeline time: every read places it with the anchored-marker
-mapping (*Markers follow clips*), so it follows its clip through moves, trims,
-splits and into a Group. The derived `state` is `visible`; `hibernating` when
-the clip's source window no longer covers its start (a trim or split moved past
-it — undo or re-extend wakes it); or `stale` when its clip — or a free tack's
-composition — exists nowhere. A stale tack stays listed. `t_us` / `end_t_us` are
-null unless visible; an anchored range is drawn only as far as its clip runs.
+A tack's `range` says what it follows. Without `anchor_layer_id` it is
+**edges** — `{ kind: "edges", composition_id, t_us, end_t_us, start, end }`:
+each end ties itself, independently, to the clip under it at creation, as
+`{ layer_id, src_us, src_fraction? }` in that clip's SOURCE time (converted
+exactly as `add_marker` converts with `anchor_layer_id`, after the times land
+on the frame grid). The clip under an instant is the first enabled layer with
+a source window (VideoClip, Audio, Group) on an enabled track, A roll tracks
+first, then the composition's tracks in order; a start sits on `[t_start_us,
+t_end_us)` and an end on `(t_start_us, t_end_us]`, so an end on a clip's out
+point is that clip's. When the start's clip also holds the end it keeps it. A
+point ties only its start; an end over a gap is `null` and keeps its time.
+With no clip under either end the range is **free** — `{ kind: "free",
+composition_id, t_us, end_t_us }` on the composition's clock, following
+nothing. With `anchor_layer_id` it is **anchored** — `{ kind: "anchored",
+layer_id, src_us, src_end_us }` — pinned to that one clip.
+
+Every read places it with the anchored-marker mapping (*Markers follow clips*): an anchored
+tack, or an edges tack's start, follows its clip through moves, trims, splits
+and into a Group; an edges start with no clip keeps its `t_us`. An edges end
+follows its clip while that still shows the frame, in the same composition,
+after the start; otherwise (clip deleted, frame trimmed away) it keeps the
+created length from the start. So a ripple upstream moves the tack, a cut
+closing up inside it shrinks it, and an anchored region is drawn only as far as
+its clip runs. The derived `state` is `visible`; `hibernating` when the start's
+clip no longer covers its frame (a trim or split moved past it — undo or
+re-extend wakes it); or `stale` when the start's clip — or a free tack's
+composition — exists nowhere. A stale tack stays listed. `t_us` / `end_t_us`
+are null unless visible.
+
+`outdated` is true once a clip the tack **covered** at creation has changed in
+anything but a pure move in time (both edges shifted by one delta, nothing else
+different) — trimmed, split, retimed, re-styled — or a covered clip other than
+the start's is gone; by anyone, agent or user, and undo clears it again. The
+covered clips are the anchor clips plus every layer overlapping the range on
+their tracks (an anchored tack: its clip's track); a free tack covers nothing.
+`follows` — `{ start: { layer_id } | null, end: { layer_id } | null }` — names
+the clip each end follows (an anchored region reports its clip for both).
 Every tack also carries who made it — `session_id` (the work session, null
 outside one), `connection_id`, `client`, `activity_id` (the creating call's row
 in the agent panel) — and its `status`, so an agent reading back sees what the
 user resolved or dismissed.
 
-- `create_tacks { tacks: [{ label, body?, kind?, t_us, end_t_us?, anchor_layer_id?, composition_id? }] }` → `{ tack_ids }` — a batch, because the canonical use (one per detected pause or shot) is many at once; every entry is validated before any is created, and the first refusal names its index (`tacks[3].t_us …`). `label` is a few words (at most 200 characters), `body` plain text (at most 4000), `kind` one of `note` (default), `issue`, `question`. Times land on the composition's frame grid as a marker's do; a region spans at least one frame and nothing starts before 0. Free tacks go on the root unless `composition_id` names a Group. With `anchor_layer_id` the clip must have a source window (`WrongLayerKind` otherwise), sit in `composition_id` when that is given (`CrossCompositionSet`), and cover `t_us` (`InvalidArgument`); `end_t_us` may run past it. At most 1000 tacks per project opening: past that the whole batch is refused with `TackLimit` — the store never evicts, since a review item lost silently is worse than a refusal.
+**Feedback to the creating agent.** After any mutating call that committed,
+the open tacks of the CALLING connection that the call moved, resized, put out
+of place or outdated ride on its result as `affected_tacks: [{ tack_id, label,
+change }]`, `change` one of `moved`, `resized`, `stale`, `hibernating`,
+`outdated` (the most serious when several apply). A JSON-object result gains
+the field in `structuredContent` and in its JSON text; a result with no JSON
+object text (plain text, an image) gains a trailing text block `{
+"affected_tacks": … }`. Reads, refusals and calls that changed none of the
+caller's tacks are unchanged. `end_agent_session` adds `tacks_to_review: [{
+tack_id, label, state, outdated }]` — the session's open tacks that are stale,
+hibernating or outdated — when there are any.
+
+- `create_tacks { tacks: [{ label, body?, kind?, t_us, end_t_us?, anchor_layer_id?, composition_id? }] }` → `{ tack_ids, follows, hints? }` — a batch, because the canonical use (one per detected pause or shot) is many at once; every entry is validated before any is created, and the first refusal names its index (`tacks[3].t_us …`). `label` is a few words (at most 200 characters), `body` plain text (at most 4000), `kind` one of `note` (default), `issue`, `question`. Times land on the composition's frame grid as a marker's do; a region spans at least one frame and nothing starts before 0. Tacks go on the root unless `composition_id` names a Group. With `anchor_layer_id` the clip must have a source window (`WrongLayerKind` otherwise), sit in `composition_id` when that is given (`CrossCompositionSet`), and cover `t_us` (`InvalidArgument`); `end_t_us` may run past it. `follows` is each tack's, in input order. `hints` (omitted when empty) is soft advice, never a refusal: a label or body naming a time (`12:34`, `1:02.5`, `4s`, `250 ms`, `4秒` …) — the panel shows the live place, so describe the content — and a tack with no clip under either end. At most 1000 tacks per project opening: past that the whole batch is refused with `TackLimit` — the store never evicts, since a review item lost silently is worse than a refusal.
 - `update_tack { tack_id, patch: { label?, body?, kind?, status? } }` → the tack as `project://tacks` reads it. `status` is `open`, `resolved` or `dismissed`. A tack's place is fixed at creation; delete and re-create to move one. `TackNotFound` for an id this opening does not hold.
 - `delete_tacks { tack_ids? , session_id? }` → `{ deleted_tack_ids }` — exactly one selector: the listed ids (all must exist, or none goes), or every tack created in that work session.
 

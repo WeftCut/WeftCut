@@ -1028,8 +1028,11 @@ activity stream retains running calls and does not restore from disk.
 _Avoid_: diagnostic log entry, history entry, permanent transcript
 
 **Tack**:
-A time range an agent points the user at for review — free on a composition,
-or anchored to a layer's source time and placed on read. Runtime-only within a
+A time range an agent points the user at for review. Each end follows the
+content under it — the clip's source time, placed on read — unless it sits over
+a gap or the agent pinned the whole range to one clip. A tack whose start
+content is gone is stale (失效); one whose covered clips changed other than by
+moving is outdated (内容已修改). Runtime-only within a
 project opening; not project content, not in history, never exported. The user
 resolves, dismisses or clears it, or converts it into an ordinary marker
 (ADR 0115). Named for the tailor's tack: a temporary thread mark pulled out

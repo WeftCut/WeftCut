@@ -49,8 +49,8 @@ describe('tack records', () => {
     expect(s.view(inSession!)).toMatchObject({
       session_id: session.id, connection_id: 'one', client: 'client-one', activity_id: activities[1]!.id,
       kind: 'question', label: '  Pause  ', body: 'Keep it?', status: 'open',
-      range: { kind: 'free', composition_id: s.root().id, t_us: 2_000_000, end_t_us: null },
-      composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, state: 'visible',
+      range: { kind: 'edges', composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, start: { layer_id: s.clip, src_us: 3_000_000 }, end: null },
+      composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, state: 'visible', outdated: false, follows: { start: { layer_id: s.clip }, end: null },
     })
     expect(s.view(outside!)).toMatchObject({ session_id: null, connection_id: 'two', activity_id: activities[2]!.id })
   })
@@ -209,7 +209,8 @@ describe('project opening', () => {
 describe('delta publication', () => {
   it('publishes changed tacks and removed ids under the activity revision, and a reset', async () => {
     const s = setup()
-    const [a, b] = await s.create([s.input({ anchor_layer_id: s.clip }), s.input()])
+    // `b` is over a gap: it follows nothing.
+    const [a, b] = await s.create([s.input({ anchor_layer_id: s.clip }), s.input({ t_us: 7_000_000 })])
     await flush()
     expect(s.updates().flatMap(u => u.tacks.map(t => t.id)).sort()).toEqual([a, b].sort())
     expect(s.updates().flatMap(u => u.removed_tack_ids)).toEqual([])
@@ -230,5 +231,154 @@ describe('delta publication', () => {
     await flush()
     expect(s.updates().at(-1)).toMatchObject({ reset: true, tacks: [], removed_tack_ids: [] })
     expect(s.service.snapshot().tacks).toEqual([])
+  })
+})
+
+/** Two content tracks of a 30 fps root, one 10 s media item:
+ *
+ *    A roll  | A 0–2 | C 2–3 | B 3–5 |  gap  | D 6–8 |
+ *    B roll        | R 1–4          | S 5–7 |
+ *
+ *  Each clip shows its own source window, so a source instant names one place. */
+function multi() {
+  const ids = seededGen()
+  const p = blankProject(ids, 'edges')
+  p.media_pool[MEDIA] = mediaItemTemplate(MEDIA, 'Video', 10_000_000)
+  const [aRoll, bRoll] = rootComposition(p).tracks
+  const add = (track: string, src: number, from: number, to: number) => applyAddLayer(p, ids, track, videoClipParams(MEDIA, src, src + to - from), from, to)
+  const c = {
+    A: add(aRoll!.id, 0, 0, 2_000_000), C: add(aRoll!.id, 2_000_000, 2_000_000, 3_000_000), B: add(aRoll!.id, 3_000_000, 3_000_000, 5_000_000),
+    D: add(aRoll!.id, 6_000_000, 6_000_000, 8_000_000), R: add(bRoll!.id, 0, 1_000_000, 4_000_000), S: add(bRoll!.id, 4_000_000, 5_000_000, 7_000_000),
+  }
+  const actor = createActor({ initial: p, idGen: ids, clock: () => '<TS>' })
+  const service = new AgentActivityService(actor, vi.fn())
+  service.start()
+  stops.push(() => service.stop())
+  const tack = async (t_us: number, end_t_us: number | null = null) => (await service.run('one', 'client-one', 'create_tacks', {}, false, () =>
+    service.tacks.create([{ label: 'x', body: '', kind: 'note', t_us, end_t_us, anchor_layer_id: null, composition_id: null }])))[0]!
+  const mcp = (name: string, args: Record<string, unknown>) => {
+    const r = actor.mcpCall(name, JSON.stringify(args))
+    if (!r.ok) throw new Error(r.error.message)
+  }
+  const view = (id: string) => service.tacks.views().find(t => t.id === id)!
+  const follows = (id: string) => { const f = view(id).follows; return [f.start?.layer_id ?? null, f.end?.layer_id ?? null] }
+  return { actor, service, c, tack, mcp, view, follows }
+}
+
+describe('edge anchoring', () => {
+  it('ties each end to the clip under it: A roll first, the start’s clip kept for the end, an end closing on its clip', async () => {
+    const m = multi()
+    // R on the B roll spans the whole range, but the A roll is the material.
+    expect(m.follows(await m.tack(1_000_000, 4_000_000))).toEqual([m.c.A, m.c.B])
+    // An A-roll gap under the start: S starts it, and S also holds the end,
+    // so it keeps the end too rather than D on the A roll.
+    expect(m.follows(await m.tack(5_500_000, 6_500_000))).toEqual([m.c.S, m.c.S])
+    // An end on a clip's out point is that clip's, not the next one's.
+    expect(m.follows(await m.tack(500_000, 2_000_000))).toEqual([m.c.A, m.c.A])
+    // A point ties only its start; an end over a gap follows nothing.
+    expect(m.follows(await m.tack(1_000_000))).toEqual([m.c.A, null])
+    expect(m.follows(await m.tack(7_500_000, 9_000_000))).toEqual([m.c.D, null])
+    const point = await m.tack(1_000_000)
+    expect(m.view(point).range).toMatchObject({ kind: 'edges', start: { layer_id: m.c.A, src_us: 1_000_000 }, end: null })
+  })
+
+  it('stays free when neither end has a clip under it, and skips a disabled clip', async () => {
+    const m = multi()
+    const gap = await m.tack(8_500_000, 9_000_000)
+    expect(m.view(gap).range).toEqual({ kind: 'free', composition_id: m.actor.snapshot().root_id, t_us: 8_500_000, end_t_us: 9_000_000 })
+    expect(m.view(gap).follows).toEqual({ start: null, end: null })
+    m.mcp('set_layers_enabled', { layer_ids: [m.c.A], enabled: false })
+    expect(m.follows(await m.tack(1_500_000))).toEqual([m.c.R, null])
+  })
+
+  it('moves with a ripple upstream, unchanged in length and not outdated', async () => {
+    const m = multi()
+    const id = await m.tack(3_500_000, 4_500_000)
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 2_500_000, end_t_us: 3_500_000, outdated: false })
+  })
+
+  it('goes stale when its start’s clip is deleted, and comes back on undo', async () => {
+    const m = multi()
+    const id = await m.tack(500_000, 1_500_000)
+    m.mcp('delete_layers', { layer_ids: [m.c.A] })
+    expect(m.view(id)).toMatchObject({ state: 'stale', t_us: null, end_t_us: null, composition_id: null })
+    m.mcp('undo', {})
+    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 500_000, end_t_us: 1_500_000, outdated: false })
+  })
+
+  it('shrinks when a cut closes up inside a two-clip range, and reads outdated', async () => {
+    const m = multi()
+    const id = await m.tack(1_000_000, 4_000_000)
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 1_000_000, end_t_us: 3_000_000, outdated: true })
+  })
+
+  it('keeps its length from the start once the end’s clip is lost', async () => {
+    const m = multi()
+    const id = await m.tack(3_500_000, 6_500_000)
+    expect(m.follows(id)).toEqual([m.c.B, m.c.D])
+    m.mcp('delete_layers', { layer_ids: [m.c.D] })
+    expect(m.view(id)).toMatchObject({ t_us: 3_500_000, end_t_us: 6_500_000, state: 'visible', outdated: true })
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.view(id)).toMatchObject({ t_us: 2_500_000, end_t_us: 5_500_000 })
+  })
+
+  it('hibernates when a trim takes its start’s frame, as an anchored tack does', async () => {
+    const m = multi()
+    const id = await m.tack(3_500_000, 4_500_000)
+    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'in', new_t_us: 4_000_000 })
+    expect(m.view(id)).toMatchObject({ state: 'hibernating', t_us: null })
+  })
+})
+
+describe('outdated', () => {
+  it('is not raised by a pure shift, and is by a trim, a split or a param change — and cleared by undo', async () => {
+    const m = multi()
+    const id = await m.tack(3_500_000, 4_500_000)
+    m.mcp('move_layer', { layer_id: m.c.D, new_t_start_us: 6_500_000, new_track_id: m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[0]!.id })
+    expect(m.view(id).outdated).toBe(false)
+    for (const [name, args] of [
+      ['trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_800_000 }],
+      ['split_layer', { layer_id: m.c.B, at_t_us: [4_800_000] }],
+      ['update_layer_params', { layer_id: m.c.B, patch: { kind: 'VideoClip', flip_h: true } }],
+    ] as const) {
+      m.mcp(name, args)
+      expect(m.view(id).outdated, name).toBe(true)
+      m.mcp('undo', {})
+      expect(m.view(id).outdated, `${name} undone`).toBe(false)
+    }
+  })
+
+  it('covers the overlapping clips on the anchor’s track, not other tracks', async () => {
+    const m = multi()
+    const id = await m.tack(1_500_000, 2_500_000)
+    expect(m.follows(id)).toEqual([m.c.A, m.c.C])
+    m.mcp('update_layer_params', { layer_id: m.c.R, patch: { kind: 'VideoClip', flip_h: true } })
+    expect(m.view(id).outdated).toBe(false)
+    const pinned = await m.service.run('one', 'c', 'create_tacks', {}, false, () => m.service.tacks.create([
+      { label: 'x', body: '', kind: 'note', t_us: 1_500_000, end_t_us: 2_500_000, anchor_layer_id: m.c.A, composition_id: null }]))
+    m.mcp('update_layer_params', { layer_id: m.c.C, patch: { kind: 'VideoClip', flip_h: true } })
+    expect(m.view(id).outdated).toBe(true)
+    expect(m.view(pinned[0]!)).toMatchObject({ outdated: true, follows: { start: { layer_id: m.c.A }, end: { layer_id: m.c.A } } })
+  })
+})
+
+describe('feedback for the creating connection', () => {
+  it('reports only that connection’s open tacks the call changed, by the most serious change', async () => {
+    const m = multi()
+    const id = await m.tack(3_500_000, 4_500_000)
+    const watched = m.service.tacks.watch('one')!
+    expect(m.service.tacks.watch('two')).toBeNull()
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.service.tacks.affectedSince(watched)).toEqual([{ tack_id: id, label: 'x', change: 'moved' }])
+    const again = m.service.tacks.watch('one')!
+    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 3_800_000 })
+    expect(m.service.tacks.affectedSince(again)).toEqual([{ tack_id: id, label: 'x', change: 'outdated' }])
+    const before = m.service.tacks.watch('one')!
+    m.mcp('delete_layers', { layer_ids: [m.c.B] })
+    expect(m.service.tacks.affectedSince(before)).toEqual([{ tack_id: id, label: 'x', change: 'stale' }])
+    m.service.tacks.update(id, { status: 'resolved' })
+    expect(m.service.tacks.watch('one')).toBeNull()
   })
 })

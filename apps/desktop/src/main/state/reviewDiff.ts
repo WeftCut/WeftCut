@@ -217,6 +217,17 @@ function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAsp
   return { aspects: out, shift }
 }
 
+/** Whether layer `b` is `a` as it was, or `a` translated in time and nothing
+ *  else — the `shifted` rule of `diffProjects`, for one layer wherever it now
+ *  sits. An outdated tack (`main/agent/tacks.ts`) is one whose covered layer
+ *  fails this. */
+export function layerUnchangedOrShifted(a: Layer, b: Layer): boolean {
+  if (a === b) return true
+  const wrap = (layer: Layer): LayerEntity => ({ kind: 'Layer', id: layer.id, composition_id: '', track_id: '', layer })
+  const { aspects, shift } = compareLayers(wrap(a), wrap(b))
+  return aspects.size === 0 || shift !== null
+}
+
 function compareMarkers(a: MarkerEntity, b: MarkerEntity): { aspects: Set<ChangeAspect>; shift: number | null } {
   const out = new Set<ChangeAspect>()
   const ma = a.marker, mb = b.marker

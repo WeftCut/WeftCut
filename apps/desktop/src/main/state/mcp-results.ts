@@ -230,6 +230,35 @@ export function toolRecord(v: object): ToolResultJson {
   return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }], structuredContent: v as Record<string, unknown> }
 }
 
+/** `result` with one more top-level field — the host's word about a call
+ *  that ran (the tack feedback, `affected_tacks`). A JSON-object record gets
+ *  it in place: in `structuredContent` when that is an object, and in the
+ *  first text block that parses as a JSON object. A result with no such text
+ *  (plain text, an array, an image) keeps its content and gains a trailing
+ *  text block `{"<key>": …}`; its `structuredContent`, if any and not an
+ *  object, is left alone. Anything that is not a tool result comes back as is. */
+export function appendToolResultField<T>(result: T, key: string, value: unknown): T {
+  if (result === null || typeof result !== 'object') return result
+  const r = result as { content?: unknown; structuredContent?: unknown }
+  if (!Array.isArray(r.content)) return result
+  const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
+  const content = [...r.content] as Array<{ type?: string; text?: string }>
+  let placed = false
+  for (let i = 0; i < content.length && !placed; i++) {
+    const block = content[i]!
+    if (block.type !== 'text' || typeof block.text !== 'string' || !block.text.trimStart().startsWith('{')) continue
+    let parsed: unknown
+    try { parsed = JSON.parse(block.text) } catch { continue }
+    if (!isRecord(parsed)) continue
+    content[i] = { ...block, text: JSON.stringify({ ...parsed, [key]: value }) }
+    placed = true
+  }
+  if (!placed) content.push({ type: 'text', text: JSON.stringify({ [key]: value }) })
+  const out: Record<string, unknown> = { ...r, content }
+  if (isRecord(r.structuredContent)) out.structuredContent = { ...r.structuredContent, [key]: value }
+  return out as T
+}
+
 // ── Per-tool readers for the table-exec tools ───────────────────────────────
 
 export interface ResultCtx {

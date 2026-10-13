@@ -6,10 +6,12 @@ import type { EntityRef } from '../state/history'
 import { eachLayer } from '../state/model'
 import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../shared/agent-activity'
+import { appendToolResultField } from '../state/mcp-results'
 import { TackStore, type TackAttribution } from './tacks'
 
 const CAPACITY = 1000
-interface CallContext { workspace: string; activity: AgentActivity }
+/** `committed`: the call reached the actor's commit path at least once. */
+interface CallContext { workspace: string; activity: AgentActivity; committed: boolean }
 
 /** Bound diagnostic details before crossing IPC. Never retain binary/tool results. */
 export function activityDetails(value: unknown): unknown {
@@ -180,17 +182,28 @@ export class AgentActivityService {
       message: tool, affected, entity_labels: entityLabels, history_ids: [], effect: null,
       args: activityDetails(args), error: null,
     }
-    const ctx: CallContext = { workspace: this.workspace, activity }
+    const ctx: CallContext = { workspace: this.workspace, activity, committed: false }
     this.activities.push(activity)
     this.publish(activity)
+    // A mutating call answers with what it did to the caller's own open tacks
+    // (`affected_tacks`), so an agent learns its edit moved or outdated a tack
+    // it left. Read before the call starts; null — and nothing more to do —
+    // when this connection holds no open tack.
+    const watched = read ? null : this.tacks.watch(connection)
     return this.context.run(ctx, async () => {
       try {
-        const result = await fn()
+        let result = await fn()
         if (result && typeof result === 'object' && 'isError' in result && result.isError) {
           activity.state = 'error'
           const errorResult = result as { content?: Array<{ text?: string }> }
           activity.error = String(activityDetails(errorResult.content?.map(c => c.text ?? '').join('\n') || 'Tool failed'))
-        } else activity.state = 'done'
+        } else {
+          activity.state = 'done'
+          if (watched !== null && ctx.committed && ctx.workspace === this.workspace) {
+            const affected = this.tacks.affectedSince(watched)
+            if (affected.length) result = appendToolResultField(result, 'affected_tacks', affected)
+          }
+        }
         return result
       } catch (error) {
         activity.state = 'error'
@@ -300,6 +313,7 @@ export class AgentActivityService {
     if (e.summary === 'Replaced project state') { this.reset(); return }
     const ctx = this.context.getStore()
     if (ctx?.workspace === this.workspace) {
+      ctx.committed = true
       const entry = this.actor.historyView(1).ops.find(op => op.op_id === (e.history_op_id ?? e.op_id))
       const a = ctx.activity
       this.dirty.add(a.id)

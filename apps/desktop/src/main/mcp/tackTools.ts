@@ -9,7 +9,7 @@ import { mcpDef, McpArgError } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { toolErrorResult } from './toolResult.js'
 import { TackError, type TackInput, type TackPatch, type TackStore } from '../agent/tacks.js'
-import type { TackView } from '../../shared/agent-activity.js'
+import type { TackFollows, TackView } from '../../shared/agent-activity.js'
 
 export const TACK_TOOLS: ReadonlySet<string> = new Set(['create_tacks', 'update_tack', 'delete_tacks'])
 
@@ -23,7 +23,14 @@ function tackErrorResult(e: TackError): ServerResult {
 export function runTackTool(store: TackStore, name: string, args: Record<string, unknown>): ServerResult {
   try {
     const p = mcpDef(name).parseDedicated!(args)
-    if (name === 'create_tacks') return toolRecord({ tack_ids: store.create(p.tacks as TackInput[]) }) as unknown as ServerResult
+    if (name === 'create_tacks') {
+      const inputs = p.tacks as TackInput[]
+      const ids = store.create(inputs)
+      const views = store.viewsOf(new Set(ids))
+      const follows = ids.map((id) => views.find((v) => v.id === id)!.follows)
+      const hints = createTackHints(inputs, follows)
+      return toolRecord({ tack_ids: ids, follows, ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
+    }
     if (name === 'update_tack') return toolRecord(store.update(p.tack_id as string, p.patch as TackPatch)) as unknown as ServerResult
     const selector = typeof p.session_id === 'string' ? { session_id: p.session_id } : { tack_ids: p.tack_ids as string[] }
     return toolRecord({ deleted_tack_ids: store.delete(selector) }) as unknown as ServerResult
@@ -32,6 +39,30 @@ export function runTackTool(store: TackStore, name: string, args: Record<string,
     if (e instanceof McpArgError) return toolErrorResult(e.toJson())
     throw e
   }
+}
+
+// A clock reading in prose: `12:34`, `1:02.5`, `00:01:02:03`, `4s`, `4.5 s`,
+// `250 ms`, `3 min`, `2 seconds`, `4秒`, `250毫秒`, `3分钟`.
+const TIME_REFERENCE = new RegExp([
+  String.raw`\b\d{1,2}:\d{2}(?::\d{2})?(?:[:;.,]\d{1,3})?\b`,
+  String.raw`\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds?|mins?|minutes?)\b`,
+  String.raw`\d+(?:\.\d+)?\s?(?:毫秒|秒|分钟)`,
+].join('|'), 'i')
+
+/** Soft advice on a created batch — never a refusal. A label or body that
+ *  names a time goes stale as soon as an edit moves the material, while the
+ *  panel always shows where the tack is now; and a tack with no clip under
+ *  either end follows nothing. */
+export function createTackHints(inputs: readonly Pick<TackInput, 'label' | 'body' | 'anchor_layer_id'>[], follows: readonly TackFollows[]): string[] {
+  const hints: string[] = []
+  inputs.forEach((input, i) => {
+    const time = TIME_REFERENCE.exec(input.label) ?? TIME_REFERENCE.exec(input.body)
+    if (time) hints.push(`tacks[${i}] mentions a time ("${time[0]}"): the panel shows each tack's live place, which follows later edits, so describe the content (what is said or shown) instead — update_tack can rewrite it.`)
+    const f = follows[i]!
+    if (input.anchor_layer_id === null && f.start === null && f.end === null)
+      hints.push(`tacks[${i}] has no clip under either end, so it follows nothing and keeps its timeline time through later edits.`)
+  })
+  return hints
 }
 
 /** `read_project { view: "tacks", composition_id? }`: the same records the

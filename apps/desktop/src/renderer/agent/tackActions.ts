@@ -35,8 +35,11 @@ export async function convertTackToMarker(t: TackView): Promise<boolean> {
  *  view is for watching the preview. False when the tack has no place. */
 export function locateTack(t: TackView): boolean {
   if (t.state !== 'visible' || t.composition_id === null || t.t_us === null) return false
-  if (t.range.kind === 'anchored') {
-    if (!revealLayerWithoutSeek(t.range.layer_id)) return false
+  // A tack on a clip reveals that clip — for one following content, the clip
+  // its start follows — wherever it now lives; otherwise open its composition.
+  const followed = t.range.kind === 'anchored' ? t.range.layer_id : t.range.kind === 'edges' ? t.range.start?.layer_id ?? null : null
+  if (followed !== null) {
+    if (!revealLayerWithoutSeek(followed)) return false
   } else if (useCompositionAnchorStore.getState().focusedId !== t.composition_id && !openComposition(t.composition_id, null)) {
     return false
   }

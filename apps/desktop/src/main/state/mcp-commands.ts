@@ -2157,7 +2157,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Unrecorded.",
+    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when open tacks of the session are stale, hibernating or outdated. Unrecorded.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
@@ -2168,16 +2168,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    activity (`mcp/tackTools.ts`), not by the actor: they are not project
   //    state, record nothing and ignore the history lock. A bare actor refuses. ──
   { name: 'create_tacks', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. A tack is NOT a marker: it lives in the agent panel for this project opening only, never in the project, history or export, and the user resolves, dismisses or clears it. Use it instead of add_marker unless the user asked for markers. The whole batch is created or none. Free on a composition's timeline, or with `anchor_layer_id` it follows that clip's source frames like an anchored marker (`t_us` must lie on the clip). Returns `{ tack_ids }`; `TackLimit` past 1000 per opening. Unrecorded; works while history is locked.",
+    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only, and the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. Each end follows the clip under it (A roll first); a gap end keeps its time; `anchor_layer_id` pins one clip. Describe content, never times: the panel shows the live place. Returns `{ tack_ids, follows, hints? }`; your later edits report your moved or outdated tacks as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
     inputSchema: { type: 'object', properties: {
       tacks: { type: 'array', minItems: 1, description: 'The tacks to create, validated together: one refusal creates none.',
         items: { type: 'object', additionalProperties: false, required: ['label', 't_us'], properties: {
-          label: { type: 'string', maxLength: TACK_LABEL_LIMIT, description: 'A few words — the panel row and the timeline band show it.' },
+          label: { type: 'string', maxLength: TACK_LABEL_LIMIT, description: 'A few words naming the content — the panel row and the timeline band show it.' },
           body: { type: 'string', maxLength: TACK_BODY_LIMIT, description: 'Plain-text detail; default empty.' },
           kind: { type: 'string', enum: [...TACK_KINDS], description: 'note (default) informs; issue flags a problem; question asks the user to decide.' },
           t_us: US_SCHEMA('Start, on the composition timeline'),
           end_t_us: US_SCHEMA('Range end, timeline; omit for a point'),
-          anchor_layer_id: { type: 'string', description: 'A VideoClip, Audio or Group layer the tack should follow through moves and trims; t_us must lie on it. Omit for a free tack.' },
+          anchor_layer_id: { type: 'string', description: 'Pin the tack to this VideoClip, Audio or Group layer; t_us must lie on it. Omit to let each end follow the clip under it.' },
           composition_id: { type: 'string', description: "A Group's composition; omit for the root (or, anchored, the clip's own)." },
         } } },
     }, required: ['tacks'] },
