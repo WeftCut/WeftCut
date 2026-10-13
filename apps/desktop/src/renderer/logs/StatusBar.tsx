@@ -4,6 +4,8 @@ import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { renderLogMessage } from "./renderMessage";
 import { useAgentActivity } from "../agent/activityStore";
+import { useUnreviewedCount } from "../agent/reviewStore";
+import { getCommand } from "../commands/registry";
 import { useLogStore } from "./store";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } from "../ipc";
@@ -43,6 +45,9 @@ export function StatusBar({
   const agentRunningCount = useAgentActivity(s =>
     s.snapshot?.activities.filter(a => a.state === "running").length ?? 0,
   );
+  // Unreviewed agent changes (ADR 0115). The status bar is a review surface
+  // of its own: it keeps the Review view fresh while the editor shows.
+  const unreviewedCount = useUnreviewedCount();
   // Track identities: adopting a cached file emits completion without starting
   // processing, and must not decrement another media item's running job.
   const [derivativeJobs, setDerivativeJobs] = useState<ReadonlySet<string>>(() => new Set());
@@ -153,6 +158,21 @@ export function StatusBar({
             <span className="agent-running-spinner" aria-hidden="true" />
             {t("agent_mode.running_pill", { count: agentRunningCount })}
           </span>
+        )}
+        {unreviewedCount > 0 && (
+          <button
+            type="button"
+            className="status-bar-badge status-bar-badge-review"
+            data-testid="status-bar-review"
+            onClick={() => {
+              useAgentActivity.setState({ tab: "changes" });
+              void getCommand("openAgentPanel")?.run();
+            }}
+            title={t("changes.status_hint", { count: unreviewedCount })}
+            aria-label={t("changes.status_hint", { count: unreviewedCount })}
+          >
+            {t("changes.status", { count: unreviewedCount })}
+          </button>
         )}
         {errorCount > 0 && (
           <button

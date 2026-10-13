@@ -235,6 +235,10 @@ Notes:
 - Auto-updates on `Info+`. When an `Error` lands the line **sticks for
   10 s** before being overwritten.
 - Error badge pulses for ~1.5 s when the count increments, then settles.
+- While unreviewed agent changes exist (ADR 0115), an amber `N to review`
+  badge sits left of the error badge; clicking it opens the agent panel on
+  its Changes tab. Agent view hides the bar; the tab's badge carries the
+  count there.
 
 ### Console (expanded overlay)
 

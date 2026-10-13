@@ -56,7 +56,7 @@ describe('diffProjects — classes', () => {
     expect(added).toMatchObject({ class: 'added', kind: 'Layer', keys: [L(id)], aspects: [], ranges: [{ composition_id: before.root_id, t_start_us: 2 * S, t_end_us: 3 * S }] })
     const mid = a.snapshot()
     ok(a.dispatch('delete_layers', { layers: [id] }))
-    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ class: 'removed', keys: [L(id)], ranges: [{ t_start_us: 2 * S, t_end_us: 3 * S }] })
+    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ class: 'removed', keys: [L(id)], from: { composition_id: before.root_id, track_id: tA }, ranges: [{ t_start_us: 2 * S, t_end_us: 3 * S }] })
   })
 
   it('modified names its aspects: label, flags, params, keyframes, effects', () => {

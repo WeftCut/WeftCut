@@ -12,6 +12,8 @@ import { AppDialog } from '../components/AppDialog'
 import { AgentSection } from '../settings/AgentSection'
 import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
 import { TacksTab } from './TacksTab'
+import { ChangesTab } from './ChangesTab'
+import { useUnreviewedCount } from './reviewStore'
 import { buildActivitySections, type ActivityRow } from './activityRows'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
@@ -27,6 +29,9 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
   const toggle = useAgentActivity(s => s.toggle)
   const tab = useAgentActivity(s => s.tab)
   const openTacks = useAgentActivity(s => s.snapshot?.tacks.filter(x => x.status === 'open').length ?? 0)
+  // The panel reads the Review view while mounted: the Changes tab's badge
+  // counts it whichever tab is showing.
+  const unreviewed = useUnreviewedCount()
   const project = useProjectStore(s => s.summary)
   const layers = useProjectStore(s => s.layerById)
   const list = useRef<HTMLDivElement>(null)
@@ -111,8 +116,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     <button type="button" aria-expanded={expanded[`reads-${r.id}`] ?? false} onClick={() => toggle(`reads-${r.id}`)}>
       {expanded[`reads-${r.id}`] ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}{t('agent_panel.reads', { count: r.activities.length })}</button>
     {expanded[`reads-${r.id}`] && r.activities.map(entry)}</div>
-  /** A tab's count badge: the open tacks for Tacks; nothing for Activity. */
-  const badge = (id: AgentPanelTab) => id === 'tacks' ? openTacks : 0
+  /** A tab's count badge: open tacks, unreviewed changes; nothing for Activity. */
+  const badge = (id: AgentPanelTab) => id === 'tacks' ? openTacks : id === 'changes' ? unreviewed : 0
   return <div className="agent-panel agent-activity-panel">
     <header className="agent-connection-header"><button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
       <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
@@ -129,10 +134,10 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
         the connection, session and lock rows above it hold for every tab. */}
     <div className="agent-panel-tabs" role="tablist" aria-label={t('agent_panel.tabs')}>
       {AGENT_PANEL_TABS.map(id => <button type="button" role="tab" key={id} aria-selected={tab === id}
-        title={id === 'tacks' ? t('tacks.subtitle') : undefined}
-        onClick={() => useAgentActivity.setState({ tab: id })}>{t(`agent_panel.tab_${id}`)}{badge(id) > 0 && <span className="agent-panel-tab-count">{badge(id)}</span>}</button>)}
+        title={id === 'tacks' ? t('tacks.subtitle') : id === 'changes' ? t('changes.subtitle') : undefined}
+        onClick={() => useAgentActivity.setState({ tab: id })}>{t(`agent_panel.tab_${id}`)}{badge(id) > 0 && <span className={`agent-panel-tab-count tab-${id}`}>{badge(id)}</span>}</button>)}
     </div>
-    {tab === 'tacks' ? <TacksTab editor={editor} /> : <>
+    {tab === 'tacks' ? <TacksTab editor={editor} /> : tab === 'changes' ? <ChangesTab editor={editor} /> : <>
     <div className="agent-activity-toolbar" role="group" aria-label={t('agent_panel.filter')}>
       {(['all', 'errors'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => useAgentActivity.setState({ filter: value })}>{t(`agent_panel.filter_${value}`)}</button>)}
       {!following && <button type="button" onClick={() => useAgentActivity.setState({ following: true, anchor: null })}>{t('agent_panel.latest')}</button>}</div>

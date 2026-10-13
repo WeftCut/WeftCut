@@ -30,7 +30,8 @@ export interface Change {
   composition_id: string | null
   /** Every composition the change lives in, either side. */
   composition_ids: string[]
-  /** `moved` only: baseline and current location. */
+  /** `moved`: baseline and current location. `removed`: `from` alone, the
+   *  baseline location (where the editor timeline ghosts a removed layer). */
   from?: EntityLocation
   to?: EntityLocation
   /** `shifted` only: the translation, current − baseline. */

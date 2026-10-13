@@ -3,9 +3,8 @@ import { listen } from '@/bridge/events'
 import { invoke } from '@/bridge/ipc'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, type AgentActivitySnapshot, type AgentActivityUpdate } from '../../shared/agent-activity'
 
-/** The agent panel's tabs, in display order. A later tab (Changes, Part B of
- *  the review spec) is one more entry here and one more arm in `AgentPanel`. */
-export const AGENT_PANEL_TABS = ['activity', 'tacks'] as const
+/** The agent panel's tabs, in display order: Activity · Tacks · Changes. */
+export const AGENT_PANEL_TABS = ['activity', 'tacks', 'changes'] as const
 export type AgentPanelTab = (typeof AGENT_PANEL_TABS)[number]
 
 /** Expansion key of a tack row and of a tack group (work session, or `none`
@@ -27,7 +26,7 @@ interface AgentPanelState {
    *  Tacks tab. Cleared with the project opening. */
   selectedTack: string | null
   /** The editor timeline's Review overlay (tack bands in the marker lane; the
-   *  Changes decorations later). Runtime-only like the material it shows: on by
+   *  Changes decorations on clips and lanes, `timeline/ReviewMarks.tsx`). Runtime-only like the material it shows: on by
    *  default, kept across project openings within one app run, not persisted. */
   reviewOverlay: boolean
   receive: (snapshot: AgentActivitySnapshot) => void

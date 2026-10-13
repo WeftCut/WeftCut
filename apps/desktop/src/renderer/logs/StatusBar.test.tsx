@@ -4,6 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import "../i18n";
 import { MEDIA_JOB_EVENTS, type MediaJobEvent } from "../ipc";
 import { StatusBar } from "./StatusBar";
+import type { Change } from "../../shared/review";
 
 const handlers = vi.hoisted(() => new Map<string, (event: { payload: MediaJobEvent }) => void>());
 vi.mock("@/bridge/events", () => ({
@@ -12,6 +13,9 @@ vi.mock("@/bridge/events", () => ({
     return () => handlers.delete(name);
   }),
 }));
+// No backend under jsdom: IPC answers nothing (the review fetch keeps its last
+// view; a command's log row goes nowhere).
+vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 afterEach(() => { cleanup(); handlers.clear(); });
 
 it("cached completions do not hide another media item's running generation", async () => {
@@ -36,4 +40,28 @@ it("duplicate starts and terminal events cannot leave a phantom derivative", asy
     handlers.get(MEDIA_JOB_EVENTS.error)!({ payload });
   });
   expect(container.querySelector(".derivatives-pill")).toBeNull();
+});
+
+it("shows the unreviewed change count while there is one; a click opens the agent panel's Changes tab", async () => {
+  const { useReview, resetReviewForTests } = await import("../agent/reviewStore");
+  const { useAgentActivity } = await import("../agent/activityStore");
+  const { registerCommandProvider } = await import("../commands/registry");
+  resetReviewForTests();
+  const open = vi.fn();
+  const unregister = registerCommandProvider(() => [{ id: "openAgentPanel", run: open } as never]);
+  useAgentActivity.setState({ tab: "activity" });
+  const { container } = render(<StatusBar />);
+  await act(async () => {});
+  expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
+  const change = (id: `Layer:${string}`): Change => ({ id, class: "added", kind: "Layer", keys: [id], aspects: [], composition_id: "r", composition_ids: ["r"], ranges: [] });
+  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, unreviewed: [change("Layer:a"), change("Layer:b")], user: [], decorations: [] }); });
+  const badge = container.querySelector<HTMLElement>('[data-testid="status-bar-review"]')!;
+  expect(badge.textContent).toBe("2 to review");
+  act(() => badge.click());
+  expect(useAgentActivity.getState().tab).toBe("changes");
+  expect(open).toHaveBeenCalledTimes(1);
+  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 2 }, has_baseline: true, unreviewed: [], user: [], decorations: [] }); });
+  expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
+  unregister();
+  resetReviewForTests();
 });

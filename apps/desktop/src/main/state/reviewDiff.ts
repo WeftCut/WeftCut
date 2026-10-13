@@ -348,6 +348,8 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
       ranges: mergeRanges(ranges),
     }
     if (cls === 'moved' && lb && lc) { change.from = lb; change.to = lc }
+    // A removed entity's baseline place: where the timeline ghosts it.
+    else if (cls === 'removed' && lb) change.from = lb
     changes.push(change)
     return change
   }

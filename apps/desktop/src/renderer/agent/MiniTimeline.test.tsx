@@ -53,3 +53,24 @@ it("paints open tacks as a band of their own, apart from the marker pips", () =>
   expect(container.querySelectorAll(".mini-marker-pip")).toHaveLength(1);
   expect(container.querySelectorAll(".mini-tack.mini-marker-pip")).toHaveLength(0);
 });
+
+it("paints review change ranges as a second band, by class, apart from the tack band", () => {
+  const { container } = render(<MiniTimeline
+    durationUs={10_000_000}
+    markers={[]}
+    tacks={[{ id: "t", t_us: 2_000_000, end_t_us: 4_000_000, label: "Pause" }] as never}
+    changes={[
+      { changeId: "Layer:a", cls: "added", compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
+      { changeId: "Layer:m", cls: "modified", compositionId: "root", tStartUs: 2_000_000, tEndUs: 3_000_000 },
+      { changeId: "Layer:r", cls: "removed", compositionId: "root", tStartUs: 5_000_000, tEndUs: 6_000_000 },
+      { changeId: "Shift:root:1", cls: "shifted", compositionId: "root", tStartUs: 6_000_000, tEndUs: 9_000_000 },
+    ]}
+    onSeek={() => {}} fpsNum={30} fpsDen={1}
+  />);
+  const band = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
+  expect(band.map((b) => [b.dataset.changeClass, b.style.left, b.style.width])).toEqual([
+    ["added", "0%", "10%"], ["modified", "20%", "10%"], ["removed", "50%", "10%"], ["shifted", "60%", "30%"],
+  ]);
+  expect(band.every((b) => b.classList.contains("mini-change") && !b.classList.contains("mini-tack"))).toBe(true);
+  expect(container.querySelectorAll("[data-testid='mini-tack']")).toHaveLength(1);
+});

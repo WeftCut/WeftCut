@@ -203,7 +203,8 @@ export function ViewMenu({
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
       {/* The Review overlay (ADR 0115): agent review material painted on the
-          timeline — tack bands in the marker lane. Runtime state of the agent
+          timeline — tack bands in the marker lane, unreviewed changes on the
+          clips (edges, removed-clip ghosts, Group badges). Runtime state of the agent
           panel's store, like the material it shows; no binding. Last of the
           display toggles: it shows agent material, not the user's project. */}
       <MenuItem

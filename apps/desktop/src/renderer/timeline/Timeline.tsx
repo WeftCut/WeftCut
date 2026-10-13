@@ -205,6 +205,8 @@ import {
   type TransitionUpdateArgs,
 } from "./transitions";
 import { TransitionChipMenu } from "./TransitionChipMenu";
+import { useAgentActivity } from "../agent/activityStore";
+import { useReviewConsumer } from "../agent/reviewStore";
 
 interface TimelineProps {
   /// The composition this timeline renders — its Panel's own instance, never
@@ -283,6 +285,11 @@ export const Timeline = memo(function Timeline({
 }: TimelineProps) {
   const { t } = useTranslation();
   useUiScale(); // header column and row heights follow the layout theme
+  // The Review overlay's clip marks and ghosts read the Review view; a visible
+  // timeline under the overlay keeps it fresh (ADR 0115: computed only while a
+  // review surface shows). The leaves read their own slice of it.
+  const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
+  useReviewConsumer(visible && reviewOverlay);
   const headerColPx = headerColumnPx();
   // Right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.

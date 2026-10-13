@@ -18,6 +18,7 @@ import { TackBand } from "./TackBand";
 import { ScanEye } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useAgentActivity } from "../agent/activityStore";
+import { useReview } from "../agent/reviewStore";
 
 /// The project's markers, in a row of their own directly under the ruler.
 ///
@@ -283,7 +284,9 @@ export function MarkerLaneHeader() {
   // this project opening has review material to show — an idle switch would be
   // one more control on a row that exists for markers. The View menu carries
   // the same switch unconditionally.
-  const hasReview = useAgentActivity((s) => (s.snapshot?.tacks.length ?? 0) > 0);
+  const hasTacks = useAgentActivity((s) => (s.snapshot?.tacks.length ?? 0) > 0);
+  const hasChanges = useReview((s) => (s.view?.unreviewed.length ?? 0) > 0);
+  const hasReview = hasTacks || hasChanges;
   if (!markersVisible) return null;
   return (
     <div

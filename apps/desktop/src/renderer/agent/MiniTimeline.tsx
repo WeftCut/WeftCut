@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
+import type { ReviewRangeMark } from "./reviewHighlight";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 
@@ -22,6 +23,11 @@ interface MiniTimelineProps {
   /// band along the strip's foot — a separate row of ink from the marker pips,
   /// which run the strip's full height.
   tacks?: readonly TackView[];
+  /// Review change ranges on this composition (`useCompositionChangeRanges`),
+  /// painted as a second band along the strip's head — opposite the tack band,
+  /// so the two never read as one: added/modified/removed in their review
+  /// hues, shifted muted.
+  changes?: readonly ReviewRangeMark[];
   onSeek: (tUs: number) => void;
   fpsNum: number;
   fpsDen: number;
@@ -70,6 +76,7 @@ export function MiniTimeline({
   durationUs,
   markers,
   tacks = [],
+  changes = [],
   onSeek,
   fpsNum,
   fpsDen,
@@ -214,6 +221,19 @@ export function MiniTimeline({
               className={span > 0 ? "mini-tack mini-tack-region" : "mini-tack mini-tack-point"}
               style={span > 0 ? { left: `${left}%`, width: `${span}%` } : { left: `${left}%` }}
               title={tack.label}
+            />
+          );
+        })}
+        {durationUs > 0 && changes.map((c, i) => {
+          const left = (c.tStartUs / durationUs) * 100;
+          const span = ((c.tEndUs - c.tStartUs) / durationUs) * 100;
+          return (
+            <div
+              key={`${c.changeId}-${i}`}
+              data-testid="mini-change"
+              data-change-class={c.cls}
+              className={`mini-change mini-change-${c.cls}`}
+              style={{ left: `${left}%`, width: `${Math.max(0, span)}%` }}
             />
           );
         })}

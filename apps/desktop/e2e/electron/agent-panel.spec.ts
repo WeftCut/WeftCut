@@ -136,3 +136,47 @@ test('tacks: listed in the panel, banded in the marker lane, converted into one 
     await app.close()
   }
 })
+
+test('changes: an agent edit is listed, highlighted and counted until approved', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  let client: Client | null = null
+  try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-agent-changes-'), name: 'agent-changes', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+    const info = await page.evaluate(() => (window as any).api.mcp.getInfo()) as { url: string; bearer_token: string }
+    client = new Client({ name: 'Change test agent', version: '1.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
+    const call = (name: string, args: Record<string, unknown> = {}) => client!.callTool({ name, arguments: args })
+    const trackResource = await client.readResource({ uri: 'project://tracks' })
+    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
+
+    // The work session pins the Review baseline; the agent's clip is the one change.
+    expect((await call('begin_agent_session', { reason: 'Add a title card' })).isError).not.toBe(true)
+    await expect(page.locator('.agent-mode-shell')).toBeVisible()
+    expect((await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })).isError).not.toBe(true)
+    await expect(page.getByRole('tab', { name: /Changes/ })).toHaveText('Changes1')
+    await expect(page.getByTestId('mini-change')).toHaveCount(1)
+    await page.locator('.agent-exit-button').click()
+    await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
+
+    // Editor: the clip carries the added mark, and the status bar counts it.
+    await expect(page.locator('[data-testid="review-clip-mark"][data-review-mark="added"]')).toHaveCount(1)
+    const status = page.getByTestId('status-bar-review')
+    await expect(status).toHaveText('1 to review')
+    await status.click()
+    await expect(dockPanel(page, 'agent')).toHaveCount(1)
+    await expect(page.getByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.agent-change')).toHaveCount(1)
+    await expect(page.locator('.agent-change')).toContainText('Added')
+
+    // Approve all: the list, the highlight and the count go together.
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    await expect(page.locator('.agent-change')).toHaveCount(0)
+    await expect(page.getByTestId('review-clip-mark')).toHaveCount(0)
+    await expect(page.getByTestId('status-bar-review')).toHaveCount(0)
+  } finally {
+    await client?.close()
+    await app.close()
+  }
+})

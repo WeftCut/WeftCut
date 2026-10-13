@@ -113,6 +113,24 @@
   margin-left: -1px; /* fixed-px: centres the tick on its frame */
 }
 
+/* Review changes (ADR 0115): a band along the strip's head, opposite the tack
+   band at its foot. A point change (a marker) keeps a visible tick width. */
+.mini-change {
+  position: absolute;
+  top: 0;
+  height: calc(4 * var(--ui-px));
+  min-width: 2px; /* fixed-px: time-axis tick weight */
+  pointer-events: none;
+  border-radius: 1px;
+  opacity: 0.85;
+}
+
+.mini-change-added { background: var(--review-added); }
+.mini-change-modified,
+.mini-change-moved { background: var(--review-modified); }
+.mini-change-removed { background: var(--review-removed); }
+.mini-change-shifted { background: var(--review-shifted); opacity: 0.45; }
+
 .mini-playhead {
   position: absolute;
   top: calc(-2 * var(--ui-px));

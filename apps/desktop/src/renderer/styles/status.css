@@ -152,6 +152,13 @@
   color: var(--color-blue-300);
 }
 
+/* Unreviewed agent changes: opens the agent panel's Changes tab. */
+.status-bar-badge-review {
+  background: color-mix(in srgb, var(--review-modified) 12%, transparent);
+  border-color: color-mix(in srgb, var(--review-modified) 36%, transparent);
+  color: var(--review-modified);
+}
+
 /* A standing mode chip, not a button: the badges above open the log, this one
    only says which state the timeline is in. */
 .status-bar-chip {

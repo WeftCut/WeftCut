@@ -58,7 +58,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-spin { animation: agent-activity-spin 1.2s linear infinite; }
 @keyframes agent-activity-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-spin { animation: none; } }
-/* Tabs: Activity · Tacks (one entry per review surface, AGENT_PANEL_TABS). */
+/* Tabs: Activity · Tacks · Changes (one entry per review surface, AGENT_PANEL_TABS). */
 .agent-panel-tabs { display: flex; gap: calc(2 * var(--ui-px)); padding: 0 calc(10 * var(--ui-px)); border-bottom: 1px solid var(--border); }
 .agent-panel-tabs > button { border-radius: 0 !important; border-bottom: 2px solid transparent; color: var(--muted-foreground); padding-block: calc(7 * var(--ui-px)) !important; }
 .agent-panel-tabs > button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--selection); }
@@ -85,3 +85,21 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.status-dismissed .agent-activity-copy > span { text-decoration: line-through; }
 .agent-tack.state-stale .agent-activity-copy small, .agent-tack.state-hibernating .agent-activity-copy small { font-style: italic; }
 .agent-tack-body { margin: 0 0 calc(8 * var(--ui-px)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(220 * var(--ui-px)); overflow: auto; }
+/* Changes tab (ADR 0115): rows reuse the tack row layout; the class badge
+   carries the review hue, user-only rows ("show my changes") are muted. */
+.agent-panel-tab-count.tab-changes { background: color-mix(in srgb, var(--review-modified) 24%, transparent); }
+.agent-changes-approve-all { border: 1px solid var(--border); font-size: var(--font-size-caption); }
+.agent-change-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: calc(8 * var(--ui-px)); margin: 0; padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) calc(4 * var(--ui-px)); font-size: var(--font-size-body); font-weight: 500; }
+.agent-change-group-heading > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-change-group-heading > small { flex: none; }
+.agent-change { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.agent-change .agent-tack-row { align-items: center; padding-left: calc(7 * var(--ui-px)); }
+.agent-change-copy { padding-block: calc(4 * var(--ui-px)); }
+.agent-change-badge { flex: none; min-width: calc(58 * var(--ui-px)); padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px)); border-radius: var(--radius-control); font-size: var(--font-size-micro); text-align: center; border: 1px solid currentColor; }
+.agent-change-badge.class-added { color: var(--review-added); background: color-mix(in srgb, var(--review-added) 12%, transparent); }
+.agent-change-badge.class-modified, .agent-change-badge.class-moved { color: var(--review-modified); background: color-mix(in srgb, var(--review-modified) 12%, transparent); }
+.agent-change-badge.class-removed { color: var(--review-removed); background: color-mix(in srgb, var(--review-removed) 12%, transparent); }
+.agent-change-badge.class-shifted { color: var(--review-shifted); background: color-mix(in srgb, var(--review-shifted) 10%, transparent); }
+.agent-change.source-user { opacity: .7; }
+.agent-change.source-user .agent-change-badge { border-style: dashed; }
+.agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }

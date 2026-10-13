@@ -42,6 +42,7 @@ import {
   type MediaDropSnapOptions,
 } from "./mediaDrag";
 import { previewTrackId } from "./placement";
+import { ReviewGhosts } from "./ReviewMarks";
 
 export function TrackLane({
   track,
@@ -592,6 +593,16 @@ export function TrackLane({
           )}
         </div>
       )}
+      {/* Removed clips of this lane under the Review overlay (ADR 0115):
+          outlines at their baseline place, before the blocks so a clip now on
+          that stretch paints over them; pointer-events none, no height. */}
+      <ReviewGhosts
+        trackId={track.id}
+        pxPerSec={pxPerSec}
+        laneHeight={height}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
+      />
       {/* Eye-off feedback: dim + freeze the whole layer area. When the
           track is enabled the wrapper is `display: contents` (no box, no
           layout impact); when disabled it's an unpositioned plain div, so

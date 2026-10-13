@@ -60,6 +60,10 @@ the hue as an rgba literal.
 | `--warning` | `#f0a020` | Warming/attention states (bake-warming, meter amber). |
 | `--keyframe` | `#facc15` | Keyframe diamonds, armed stopwatches, pending badges. A domain accent, deliberately distinct from `--warning`. |
 | `--tack` | `#2dd4bf` | Tacks (agent review marks): the marker-lane band under the Review overlay, the mini timeline band, the agent panel's Tacks tab. Distinct from marker colours, selection and status hues. |
+| `--review-added` | `#4ade80` | Review: an added clip's edge on the editor timeline, added stretches of the mini timeline's change band, the Changes tab's `added` badge. |
+| `--review-modified` | `#fbbf24` | Review: a modified clip's edge, a moved clip's dashed edge, the Group "contains changes" badge, modified/moved stretches of the change band and their badges. |
+| `--review-removed` | `#f87171` | Review: a removed clip's ghost outline at its baseline place, removed stretches of the change band, the `removed` badge. Same hue as `--destructive`, separate role. |
+| `--review-shifted` | `#94a3b8` | Review: a shifted clip's muted tint, shifted stretches of the change band, the `shifted` badge — deliberately quiet so a ripple does not dominate. |
 
 One-off categorical palettes (log category pills, kind badges, motif card
 status badges) may stay literal or use the pinned `--color-*` Tailwind

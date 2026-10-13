@@ -34,6 +34,7 @@ import {
 } from "./geometry";
 import { AudioRegionBand } from "./AudioRegionBand";
 import { PauseBands } from "./PauseBands";
+import { ReviewClipMarkLayer, ReviewGroupBadge } from "./ReviewMarks";
 import { compUsFromSourceUs } from "./audioRegionGeometry";
 import { useArmedRegionSelect } from "./audioRegionArmStore";
 import { useAudioRegionDrag } from "./hooks/useAudioRegionDrag";
@@ -963,6 +964,10 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {/* Review overlay (ADR 0115): paint only, `pointer-events: none`, inside
+          this box — no hit-testing or geometry of the clip changes with it. A
+          duplicate ghost carries its source's id and stays unmarked. */}
+      {!previewOnly && <ReviewClipMarkLayer layerId={layer.id} />}
       {locked && !previewOnly && (
         <span
           data-testid="layer-lock-badge"
@@ -1131,6 +1136,9 @@ export function LayerBlock({
           clip a sliver, "is there anything in there" is the live question. */}
       {groupCompositionId !== null && !previewOnly && (
         <GroupMarkerBadge compositionId={groupCompositionId} layerId={layer.id} locked={locked} />
+      )}
+      {groupCompositionId !== null && !previewOnly && (
+        <ReviewGroupBadge layerId={layer.id} locked={locked} />
       )}
       {isEditing && showLabel ? (
         <AppInput
