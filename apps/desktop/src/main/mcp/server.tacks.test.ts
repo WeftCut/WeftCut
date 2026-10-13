@@ -201,7 +201,7 @@ describe('harness feedback', () => {
     expect(JSON.stringify(refused)).not.toContain('affected_tacks')
   })
 
-  it('end_agent_session lists the session’s open tacks that are stale, hibernating or outdated', async () => {
+  it('end_agent_session lists the client’s open tacks that are stale, hibernating or outdated', async () => {
     const h = host()
     await h.call('begin_agent_session', { reason: 'Pauses' })
     const [gone, resolved, fine] = (await h.call('create_tacks', { tacks: [
@@ -216,7 +216,14 @@ describe('harness feedback', () => {
     expect(ended.structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip', state: 'stale', outdated: false }])
     expect(fine).toBeDefined()
 
+    // A later session still hears about an earlier one's stranded tack — that
+    // is usually what stranded it — until it is resolved; another client never does.
     await h.call('begin_agent_session', { reason: 'Again' })
+    expect((await h.call('end_agent_session', {})).structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip', state: 'stale', outdated: false }])
+    await h.call('begin_agent_session', { reason: 'Theirs' }, 'two')
+    expect((await h.call('end_agent_session', {}, 'two')).structuredContent).not.toHaveProperty('tacks_to_review')
+    await h.call('update_tack', { tack_id: gone, patch: { status: 'resolved' } })
+    await h.call('begin_agent_session', { reason: 'Done' })
     expect((await h.call('end_agent_session', {})).structuredContent).not.toHaveProperty('tacks_to_review')
   })
 })

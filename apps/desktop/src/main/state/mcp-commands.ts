@@ -2157,7 +2157,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when open tacks of the session are stale, hibernating or outdated. Unrecorded.",
+    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when your open tacks are stale, hibernating or outdated. Unrecorded.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,

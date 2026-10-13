@@ -800,16 +800,17 @@ in the agent panel) — and its `status`, so an agent reading back sees what the
 user resolved or dismissed.
 
 **Feedback to the creating agent.** After any mutating call that committed,
-the open tacks of the CALLING connection that the call moved, resized, put out
-of place or outdated ride on its result as `affected_tacks: [{ tack_id, label,
+the open tacks of the CALLING client (by its declared name, so a reconnected
+agent still hears about its own) that the call moved, resized, put out of
+place or outdated ride on its result as `affected_tacks: [{ tack_id, label,
 change }]`, `change` one of `moved`, `resized`, `stale`, `hibernating`,
 `outdated` (the most serious when several apply). A JSON-object result gains
 the field in `structuredContent` and in its JSON text; a result with no JSON
 object text (plain text, an image) gains a trailing text block `{
 "affected_tacks": … }`. Reads, refusals and calls that changed none of the
 caller's tacks are unchanged. `end_agent_session` adds `tacks_to_review: [{
-tack_id, label, state, outdated }]` — the session's open tacks that are stale,
-hibernating or outdated — when there are any.
+tack_id, label, state, outdated }]` — the client's open tacks, from any of its
+sessions, that are stale, hibernating or outdated — when there are any.
 
 - `create_tacks { tacks: [{ label, body?, kind?, t_us, end_t_us?, anchor_layer_id?, composition_id? }] }` → `{ tack_ids, follows, hints? }` — a batch, because the canonical use (one per detected pause or shot) is many at once; every entry is validated before any is created, and the first refusal names its index (`tacks[3].t_us …`). `label` is a few words (at most 200 characters), `body` plain text (at most 4000), `kind` one of `note` (default), `issue`, `question`. Times land on the composition's frame grid as a marker's do; a region spans at least one frame and nothing starts before 0. Tacks go on the root unless `composition_id` names a Group. With `anchor_layer_id` the clip must have a source window (`WrongLayerKind` otherwise), sit in `composition_id` when that is given (`CrossCompositionSet`), and cover `t_us` (`InvalidArgument`); `end_t_us` may run past it. `follows` is each tack's, in input order. `hints` (omitted when empty) is soft advice, never a refusal: a label or body naming a time (`12:34`, `1:02.5`, `4s`, `250 ms`, `4秒` …) — the panel shows the live place, so describe the content — and a tack with no clip under either end. At most 1000 tacks per project opening: past that the whole batch is refused with `TackLimit` — the store never evicts, since a review item lost silently is worse than a refusal.
 - `update_tack { tack_id, patch: { label?, body?, kind?, status? } }` → the tack as `project://tacks` reads it. `status` is `open`, `resolved` or `dismissed`. A tack's place is fixed at creation; delete and re-create to move one. `TackNotFound` for an id this opening does not hold.

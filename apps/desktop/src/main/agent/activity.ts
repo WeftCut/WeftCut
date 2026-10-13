@@ -188,8 +188,8 @@ export class AgentActivityService {
     // A mutating call answers with what it did to the caller's own open tacks
     // (`affected_tacks`), so an agent learns its edit moved or outdated a tack
     // it left. Read before the call starts; null — and nothing more to do —
-    // when this connection holds no open tack.
-    const watched = read ? null : this.tacks.watch(connection)
+    // when this client holds no open tack.
+    const watched = read ? null : this.tacks.watch(client)
     return this.context.run(ctx, async () => {
       try {
         let result = await fn()

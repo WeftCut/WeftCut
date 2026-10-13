@@ -364,21 +364,21 @@ describe('outdated', () => {
   })
 })
 
-describe('feedback for the creating connection', () => {
-  it('reports only that connection’s open tacks the call changed, by the most serious change', async () => {
+describe('feedback for the creating client', () => {
+  it('reports only that client’s open tacks the call changed, by the most serious change', async () => {
     const m = multi()
     const id = await m.tack(3_500_000, 4_500_000)
-    const watched = m.service.tacks.watch('one')!
-    expect(m.service.tacks.watch('two')).toBeNull()
+    const watched = m.service.tacks.watch('client-one')!
+    expect(m.service.tacks.watch('client-two')).toBeNull()
     m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
     expect(m.service.tacks.affectedSince(watched)).toEqual([{ tack_id: id, label: 'x', change: 'moved' }])
-    const again = m.service.tacks.watch('one')!
+    const again = m.service.tacks.watch('client-one')!
     m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 3_800_000 })
     expect(m.service.tacks.affectedSince(again)).toEqual([{ tack_id: id, label: 'x', change: 'outdated' }])
-    const before = m.service.tacks.watch('one')!
+    const before = m.service.tacks.watch('client-one')!
     m.mcp('delete_layers', { layer_ids: [m.c.B] })
     expect(m.service.tacks.affectedSince(before)).toEqual([{ tack_id: id, label: 'x', change: 'stale' }])
     m.service.tacks.update(id, { status: 'resolved' })
-    expect(m.service.tacks.watch('one')).toBeNull()
+    expect(m.service.tacks.watch('client-one')).toBeNull()
   })
 })

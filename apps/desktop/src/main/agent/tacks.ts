@@ -264,12 +264,14 @@ export class TackStore {
     return out
   }
 
-  /** The placements of `connection`'s open tacks as they stand, for
+  /** The placements of `client`'s open tacks as they stand, for
    *  `affectedSince` once a call has run — or null when it holds none, which
-   *  is the common case and costs one pass over the records. */
-  watch(connection: string): ReadonlyMap<string, Placement> | null {
+   *  is the common case and costs one pass over the records. By client, not
+   *  connection: an agent that reconnects (a new chat, a restarted shim) is
+   *  still the one that left them. */
+  watch(client: string): ReadonlyMap<string, Placement> | null {
     const ids: string[] = []
-    for (const t of this.records.values()) if (t.connection_id === connection && t.status === 'open') ids.push(t.id)
+    for (const t of this.records.values()) if (t.client === client && t.status === 'open') ids.push(t.id)
     if (ids.length === 0) return null
     this.refresh()
     return new Map(ids.map((id) => [id, this.placed.get(id)!]))
@@ -289,13 +291,14 @@ export class TackStore {
     return out
   }
 
-  /** The open tacks of work session `sessionId` that no longer point where
-   *  they were made to: stale, hibernating or outdated. */
-  toReview(sessionId: string): TackToReview[] {
+  /** `client`'s open tacks that no longer point where they were made to:
+   *  stale, hibernating or outdated — from any of its sessions, since a later
+   *  session's edits are what usually strand an earlier session's tacks. */
+  toReview(client: string): TackToReview[] {
     this.refresh()
     const out: TackToReview[] = []
     for (const t of this.records.values()) {
-      if (t.session_id !== sessionId || t.status !== 'open') continue
+      if (t.client !== client || t.status !== 'open') continue
       const at = this.placed.get(t.id)!
       if (at.state !== 'visible' || at.outdated) out.push({ tack_id: t.id, label: t.label, state: at.state, outdated: at.outdated })
     }
