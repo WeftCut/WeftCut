@@ -23,8 +23,8 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
     let mut prompts = vec![PromptDef {
         name: NAME_CUT_PAUSES.into(),
         description: Some(
-            "Cut the pauses out of a clip and close the gaps, tightening it. Or mark \
-             them first, to review every pause on the ruler before any of it goes."
+            "Cut the pauses out of a clip and close the gaps, tightening it. Or tack \
+             them first, so the user reviews every pause before any of it goes."
                 .into(),
         ),
         arguments: vec![
@@ -188,14 +188,14 @@ A refusal is whole and lands before any write, so the clip comes back UNSPLIT wi
 
 REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
 1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
-2. For each pause, call `add_marker` with `t_us: <pause.t_start_us>`, `end_t_us: <pause.t_end_us>`, a short `label` (e.g. \"pause\") and a `color` (`{{ r, g, b, a }}`, 0..255) — both required; setting `end_t_us` is what makes it a REGION marker spanning the pause rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked pause hibernates that mark rather than stranding it somewhere it means nothing. One call per pause, each its own history entry.
-3. Report how many pauses were marked and their total duration, and leave what becomes of them to the human.
+2. Call `create_tacks` ONCE with `tacks: [...]`, one entry per pause: `t_us: <pause.t_start_us>`, `end_t_us: <pause.t_end_us>` and a short `label` (e.g. \"pause\") — setting `end_t_us` is what makes the tack a REGION spanning the pause rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` on each so the tack follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a pause hibernates that tack rather than stranding it somewhere it means nothing. Tacks are review marks, not project content: they record nothing, leave the user's markers alone, and the user resolves, dismisses or clears them in the agent panel. Do not use `add_marker` here — markers are the user's, created only when they ask for markers.
+3. Report how many pauses were tacked and their total duration, and leave what becomes of them to the human. Reading `project://tacks` later shows what they decided: a tack `resolved` or `dismissed` is their answer, `open` is still waiting.
 
 Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side (`remove_pauses` only); `detect_pauses` alone also takes bridge_us 80 ms (two pauses closer than that read as one) — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
         description: Some(
-            "Remove the pauses from a clip, closing each gap; or mark them to review first.".into(),
+            "Remove the pauses from a clip, closing each gap; or tack them to review first.".into(),
         ),
         messages: vec![PromptMessage {
             role: PromptRole::User,
@@ -326,19 +326,18 @@ mod tests {
         let body = message_text(&result.messages[0]);
         assert!(body.contains("`xyz-789`"));
         // Two recipes over one detection, and the prompt carries both: the cut
-        // is the answer it leads with, the mark is the review-first fallback.
+        // is the answer it leads with, the tack is the review-first fallback.
         assert!(body.contains("remove_pauses"));
         assert!(body.contains("detect_pauses"));
-        // `end_t_us` is what makes each mark a region spanning the pause rather
+        // `end_t_us` is what makes each tack a region spanning the pause rather
         // than a point at its start, and the anchor is what keeps it tied to the
-        // audio it describes. Drop either and the marks stop meaning what the
+        // audio it describes. Drop either and the tacks stop meaning what the
         // prompt says they mean.
-        assert!(body.contains("add_marker"));
+        assert!(body.contains("create_tacks"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
-        // The marker's two required fields are named where the step is.
+        // The tack's required label is named where the step is.
         assert!(body.contains("`label`"));
-        assert!(body.contains("`color`"));
     }
 
     /// Pad is what makes *Remove* keep part of each pause instead of erasing
@@ -367,8 +366,8 @@ mod tests {
     /// stood in for the missing primitive. `remove_pauses` is that primitive
     /// (ADR 0062), and every pin moves with it: the recipe cuts, the warning is
     /// gone, and the blurb may promise tightening because it now delivers it.
-    /// The marking recipe stays pinned as the review-first alternative, so
-    /// neither half can quietly drop out of the prompt.
+    /// The review-first alternative stays pinned too, so neither half can
+    /// quietly drop out of the prompt.
     #[test]
     fn cut_pauses_cuts_the_gaps_and_keeps_marking_as_the_alternative() {
         let a = args(&[("layer_id", json!("xyz"))]);
@@ -384,12 +383,9 @@ mod tests {
         );
         // The review-first half, intact.
         assert!(body.contains("detect_pauses"));
-        assert!(body.contains("add_marker"));
+        assert!(body.contains("create_tacks"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
-        // The marker's two required fields are named where the step is.
-        assert!(body.contains("`label`"));
-        assert!(body.contains("`color`"));
 
         let listed = catalog();
         let cs = listed
@@ -406,9 +402,37 @@ mod tests {
             "catalog blurb should promise what it now delivers: {desc}"
         );
         assert!(
-            desc.contains("mark"),
+            desc.contains("tack"),
             "catalog blurb must still offer the review-first half: {desc}"
         );
+    }
+
+    /// Review marks are tacks, not markers (ADR 0115): markers are the user's
+    /// content — persisted, recorded, exported — and an agent writes one only
+    /// when the user asks for markers. The review-first route places the
+    /// pauses as ONE `create_tacks` batch, and no prompt steers an agent to
+    /// `add_marker` as a way of pointing the user at something.
+    #[test]
+    fn review_first_points_with_tacks_never_with_markers() {
+        let a = args(&[("layer_id", json!("xyz"))]);
+        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
+        let body = message_text(&result.messages[0]);
+        let (_, review_half) = body.split_once("REVIEW FIRST").expect("both halves");
+        assert!(review_half.contains("Call `create_tacks` ONCE"));
+        assert!(review_half.contains("`anchor_layer_id: \"xyz\"`"));
+        assert!(
+            review_half.contains("resolved") && review_half.contains("dismissed"),
+            "the agent learns where the user's decision shows up"
+        );
+        assert!(
+            !review_half.contains("`color`"),
+            "a tack takes no colour; that was the marker's field"
+        );
+        assert!(
+            !body.contains("call `add_marker`"),
+            "no recipe may tell the agent to mark for review"
+        );
+        assert!(!body.contains("One call per pause"));
     }
 
     /// `pad_us` shapes the cut, not the detection, so it must reach

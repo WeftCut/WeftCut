@@ -99,9 +99,9 @@ descriptions:
   layer-local; other keyframe tools use timeline time.
 - Cut pauses: `remove_pauses` cuts every pause out of a clip and closes the
   gaps, as one undoable edit — `pad_us` of each pause stays at both ends, so
-  the speech either side keeps its breath (or mark them to review first:
-  `detect_pauses` → an anchored region `add_marker` per pause; both packaged
-  as the `/cut-pauses` prompt).
+  the speech either side keeps its breath (or let the user review them first:
+  `detect_pauses` → one `create_tacks` batch, an anchored region tack per
+  pause; both packaged as the `/cut-pauses` prompt).
 - Make room, or move the tail: `shift_layers` shifts every layer from a time
   (or a named set, link partners included) by one delta as one undoable edit —
   a positive delta from a time is the ripple insert; then place into the gap.
@@ -147,6 +147,22 @@ descriptions:
 - Going back further than one undo: read `project://history` and `jump_to` a row
   by its absolute index — the way back to a state that is neither one undo away
   nor a checkpoint.
+
+## Pointing the user at something
+
+Tacks are how you point the user at something to review — a pause to check, a
+shot to judge, a cut to decide. `create_tacks` places a whole batch in one
+call; anchor each to its clip so it follows the material. Tacks live in the
+agent panel for this project opening only — never in the project, its history
+or an export — so leaving them costs the user nothing.
+
+Markers are the user's content: saved, undoable, exported. Create one with
+`add_marker` only when the user asks for markers — never as a review mark.
+
+A tack's status tells you what the user decided: resolved (they acted on it) or
+dismissed (it does not matter), while open is still waiting. Read
+`project://tacks` before acting on your earlier tacks, and use `update_tack` to
+resolve one you fixed yourself.
 
 ## Motifs (animated overlays)
 

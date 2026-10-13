@@ -48,7 +48,7 @@
     },
     {
       "name": "detect_pauses",
-      "description": "Find the pauses in a clip's audio — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the write is `remove_pauses` (cut them) or `add_marker` (mark them). A pause is a run where every channel's peak stays below `threshold_amp` for at least `min_pause_us`; a loud run shorter than `bridge_us` inside it (a click, a cough) does not end it. Defaults `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000`, `bridge_us=80000` (must be below `min_pause_us`). `layer_id` is an Audio layer, or a VideoClip, which resolves to the Audio layer of its link (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_amp, peaks_source }`, timeline-absolute µs, sorted; `noise_floor_amp` is the 10th-percentile peak (a threshold reads well at the floor + 6 dB); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Errors until the waveform job finishes — wait for `media:job_complete` with `kind=waveform` and retry.",
+      "description": "Find the pauses in a clip's audio — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the write is `remove_pauses` (cut them) or `create_tacks` (point the user at them). A pause is a run where every channel's peak stays below `threshold_amp` for at least `min_pause_us`; a loud run shorter than `bridge_us` inside it (a click, a cough) does not end it. Defaults `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000`, `bridge_us=80000` (must be below `min_pause_us`). `layer_id` is an Audio layer, or a VideoClip, which resolves to the Audio layer of its link (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_amp, peaks_source }`, timeline-absolute µs, sorted; `noise_floor_amp` is the 10th-percentile peak (a threshold reads well at the floor + 6 dB); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Errors until the waveform job finishes — wait for `media:job_complete` with `kind=waveform` and retry.",
       "inputSchema": {
         "properties": {
           "bridge_us": {
@@ -392,7 +392,7 @@
   "prompts": [
     {
       "name": "cut-pauses",
-      "description": "Cut the pauses out of a clip and close the gaps, tightening it. Or mark them first, to review every pause on the ruler before any of it goes.",
+      "description": "Cut the pauses out of a clip and close the gaps, tightening it. Or tack them first, so the user reviews every pause before any of it goes.",
       "arguments": [
         {
           "name": "layer_id",
