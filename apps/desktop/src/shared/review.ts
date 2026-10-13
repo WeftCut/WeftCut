@@ -75,6 +75,24 @@ export interface ReviewView {
  *  as a unit). Unknown ids/keys are ignored — the view may be stale. */
 export interface ReviewApproveArgs { change_ids?: string[]; keys?: EntityKey[] }
 
+/** `review_activity_view` arguments: the history op ids of one activity row
+ *  (`AgentActivity.history_ids`). */
+export interface ReviewActivityArgs { history_ids: string[] }
+
+/** What one agent call did (`review_activity_view`; spec Part B, per-activity
+ *  highlight): each op's predecessor snapshot against its own, adjacent ops
+ *  folded into one diff. Independent of the Review baseline and of the undo
+ *  cursor. `available` is false — with no changes — once any op has left the
+ *  history window (ADR 0065's provenance horizon is wider than the stack, so
+ *  an activity can outlive its snapshots). `reverted`: every op is undone;
+ *  the changes still describe what the call did, not the current state. */
+export interface ReviewActivityView {
+  available: boolean
+  reverted: boolean
+  changes: Change[]
+  decorations: GroupDecoration[]
+}
+
 /** Main → renderer: the baseline changed (approval, attribution, re-pin,
  *  reset). Project edits arrive as `project:changed`; a review surface
  *  refetches `review_view` on either. Coalesced per microtask. */

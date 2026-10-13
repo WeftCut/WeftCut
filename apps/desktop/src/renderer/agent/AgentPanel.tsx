@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed } from 'lucide-react'
+import { Bot, Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X } from 'lucide-react'
 import { invoke } from '@/bridge/ipc'
 import type { AgentActivity, AgentConnectionSnapshot } from '../../shared/agent-activity'
 import { agentSessionEnd, projectRestoreCheckpoint, type HistoryEntityRef } from '../ipc'
@@ -13,7 +13,7 @@ import { AgentSection } from '../settings/AgentSection'
 import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
 import { TacksTab } from './TacksTab'
 import { ChangesTab } from './ChangesTab'
-import { useUnreviewedCount } from './reviewStore'
+import { clearActivityChanges, showActivityChanges, useActivityHighlightHost, useReview, useUnreviewedCount } from './reviewStore'
 import { buildActivitySections, type ActivityRow } from './activityRows'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
@@ -32,6 +32,10 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
   // The panel reads the Review view while mounted: the Changes tab's badge
   // counts it whichever tab is showing.
   const unreviewed = useUnreviewedCount()
+  // The selected row's own changes on the timelines (spec Part B,
+  // per-activity highlight); the store follows expansion and tab.
+  useActivityHighlightHost()
+  const shown = useReview(s => s.activity)
   const project = useProjectStore(s => s.summary)
   const layers = useProjectStore(s => s.layerById)
   const list = useRef<HTMLDivElement>(null)
@@ -107,6 +111,10 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
       {open && <div className="agent-activity-details"><dl>
         <dt>{t('agent_panel.client')}</dt><dd>{a.client || t('agent_panel.user')}</dd><dt>{t('agent_panel.tool')}</dt><dd>{a.tool}</dd>
         <dt>{t('agent_panel.time')}</dt><dd>{formatClock(a.started_at)}</dd></dl>
+        {a.history_ids.length > 0 && (shown?.activityId !== a.id
+          ? <button type="button" onClick={() => void showActivityChanges(a)}><AppIcon icon={Highlighter} size="body" /> {t('agent_panel.show_changes')}</button>
+          : shown.status === 'unavailable' ? <p className="agent-activity-note">{t('agent_panel.changes_unavailable')}</p>
+          : shown.status === 'ready' && shown.count === 0 ? <p className="agent-activity-note">{t('agent_panel.changes_none')}</p> : null)}
         {editor && refs.length > 0 && <button type="button" disabled={!canReveal} onClick={() => revealAffected(refs)}><AppIcon icon={LocateFixed} size="body" /> {canReveal ? t('agent_panel.locate') : t('agent_panel.object_missing')}</button>}
         <details><summary>{t('agent_panel.arguments')}</summary><pre>{JSON.stringify(a.args, null, 2)}</pre></details>
       </div>}
@@ -141,6 +149,9 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     <div className="agent-activity-toolbar" role="group" aria-label={t('agent_panel.filter')}>
       {(['all', 'errors'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => useAgentActivity.setState({ filter: value })}>{t(`agent_panel.filter_${value}`)}</button>)}
       {!following && <button type="button" onClick={() => useAgentActivity.setState({ following: true, anchor: null })}>{t('agent_panel.latest')}</button>}</div>
+    {shown?.status === 'ready' && <div className="agent-activity-highlight" role="status"><AppIcon icon={Highlighter} size="label" aria-hidden />
+      <span>{t(shown.reverted ? 'agent_panel.highlight_reverted' : 'agent_panel.highlight_active', { count: shown.count })}</span>
+      <button type="button" aria-label={t('agent_panel.highlight_clear')} title={t('agent_panel.highlight_clear')} onClick={clearActivityChanges}><AppIcon icon={X} size="label" /></button></div>}
     <div className="agent-activity-list" ref={list} onScroll={onScroll}>
       {!!snapshot?.evicted && <p className="agent-retention-note">{t('agent_panel.truncated', { count: snapshot.evicted })}</p>}
       {!sections.length && <p className="agent-empty">{t(!ready ? 'agent_panel.loading' : filter === 'errors' ? 'agent_panel.no_errors' : 'agent_panel.empty')}</p>}

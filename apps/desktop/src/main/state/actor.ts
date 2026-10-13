@@ -6,7 +6,7 @@ import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
-import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState } from './history'
+import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
 import type { EntityKey } from './reviewDiff'
 import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
@@ -194,6 +194,8 @@ export interface ActorHandle {
   /** Approvals record nothing, emit no project change and ignore the history
    *  lock. `approveReview` returns how many changes it approved. */
   approveReviewAll(): void
+  /** What the recorded ops `ids` did — `History.opDiff`; a read. */
+  reviewOpDiff(ids: readonly Uuid[]): OpDiff
   approveReview(sel: { change_ids?: readonly string[]; keys?: readonly EntityKey[] }): number
   /** Told the new baseline revision on every baseline change (initialize,
    *  re-pin, approval, attribution, reset) — synchronously, possibly inside a
@@ -2377,6 +2379,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     pinReviewBaseline: (checkpointId) =>
       history.pinReviewBaseline((checkpointId !== undefined ? history.checkpointSnapshot(checkpointId) : null) ?? current()),
     approveReviewAll: () => history.approveAll(),
+    reviewOpDiff: (ids) => history.opDiff(ids),
     approveReview: (sel) => (sel.change_ids?.length ? history.approveChanges(sel.change_ids) : 0) + (sel.keys?.length ? history.approveKeys(sel.keys) : 0),
     subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
     dryRun,

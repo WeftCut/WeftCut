@@ -36,7 +36,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
-import type { ReviewApproveArgs, ReviewView } from "../../shared/review";
+import type { ReviewActivityView, ReviewApproveArgs, ReviewView } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
 export type {
   Change as ReviewChange,
@@ -44,6 +44,7 @@ export type {
   ChangeClass as ReviewChangeClass,
   EntityKey as ReviewEntityKey,
   GroupDecoration as ReviewGroupDecoration,
+  ReviewActivityView,
   ReviewApproveArgs,
   ReviewChangedPayload,
   ReviewView,
@@ -1092,7 +1093,7 @@ export async function projectRestoreCheckpoint(checkpointId: string): Promise<vo
   return invoke<void>("project_restore_checkpoint", { checkpointId });
 }
 
-// ── Review (ADR 0115): one read + two approvals ─────────────────────────────
+// ── Review (ADR 0115): two reads + two approvals ─────────────────────────────
 
 /// The Review baseline against the current project: unreviewed (agent-touched)
 /// changes, user-only changes and Group decorations. Main computes it only
@@ -1100,6 +1101,14 @@ export async function projectRestoreCheckpoint(checkpointId: string): Promise<vo
 /// `REVIEW_CHANGED_EVENT` and on `project:changed`.
 export async function reviewView(): Promise<ReviewView> {
   return invoke<ReviewView>("review_view");
+}
+
+/// What one agent call did: the history ops of an activity row, each diffed
+/// against its predecessor snapshot (adjacent ops folded). Independent of the
+/// Review baseline and the undo cursor. `available: false` (no changes) once
+/// any op has left the history window.
+export async function reviewActivityView(historyIds: readonly string[]): Promise<ReviewActivityView> {
+  return invoke<ReviewActivityView>("review_activity_view", { history_ids: [...historyIds] });
 }
 
 /// Approve everything: the baseline becomes the current state. Changes nothing

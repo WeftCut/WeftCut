@@ -4,10 +4,9 @@
 // clip containing changes, and time ranges per composition for the mini
 // timeline's band.
 //
-// The input is deliberately just a change set. Today it is the Review view's
-// unreviewed list (`reviewStore.ts`); a per-activity highlight (ticket 07)
-// feeds the diff of one activity's ops through the same function and the same
-// surfaces.
+// The input is deliberately just a change set: the Review view's unreviewed
+// list, or one activity's own changes (`review_activity_view`) — both through
+// the same function onto the same surfaces (`reviewStore.ts`).
 import type { Change, ChangeClass, GroupDecoration } from '../../shared/review'
 
 /** How a CURRENT clip is decorated. `removed` has no current clip: it is a ghost. */

@@ -297,3 +297,75 @@ describe('Review baseline — memo and notification', () => {
     expect(heard.mock.calls.map(([r]) => r)).toEqual([1, 2, 3])
   })
 })
+
+// Per-activity highlight (ticket 07): what recorded ops did, each against its
+// predecessor snapshot — independent of the baseline and of the cursor.
+describe('opDiff — what one call did', () => {
+  const lastOp = (a: ActorHandle) => a.historyView(a.historyCapacity()).ops.at(-1)!.op_id
+
+  it('diffs an op against its predecessor, not against the baseline or the current state', () => {
+    const { a, tA } = setup()
+    const before = color(a, tA, 0, S, AGENT)
+    const x = color(a, tA, 2 * S, 3 * S, AGENT)
+    const op = lastOp(a)
+    label(a, before, 'later', AGENT)
+    expect(a.reviewOpDiff([op])).toMatchObject({ available: true, reverted: false, changes: [{ id: L(x), class: 'added' }] })
+  })
+
+  it('folds adjacent ops of one call into one diff and unions separate runs', () => {
+    const { a, tA } = setup()
+    const x = color(a, tA, 0, S, AGENT)
+    const add = lastOp(a)
+    label(a, x, 'named', AGENT)
+    const rename = lastOp(a)
+    const y = color(a, tA, 2 * S, 3 * S) // someone else's op in between
+    label(a, y, 'y', AGENT)
+    const later = lastOp(a)
+    // Add-then-rename reads as one `added`; the later rename is its own run.
+    const d = a.reviewOpDiff([add, rename, later])
+    expect(d.changes.map((c) => [c.id, c.class])).toEqual([[L(x), 'added'], [L(y), 'modified']])
+  })
+
+  it('an undone op still describes what it did, flagged reverted', () => {
+    const { a, tA } = setup()
+    const x = color(a, tA, 0, S, AGENT)
+    const op = lastOp(a)
+    ok(a.dispatch('undo', {}))
+    expect(a.reviewOpDiff([op])).toMatchObject({ available: true, reverted: true, changes: [{ id: L(x), class: 'added' }] })
+  })
+
+  it('a checkpoint restore op diffs the state it replaced against the restored one', () => {
+    const { a, tA } = setup()
+    const x = color(a, tA, 0, S)
+    const cp = a.checkpoint('before')
+    label(a, x, 'edited')
+    const y = color(a, tA, 2 * S, 3 * S)
+    ok(a.dispatch('restore_checkpoint', { checkpoint_id: cp }, AGENT))
+    const d = a.reviewOpDiff([lastOp(a)])
+    expect(d.available).toBe(true)
+    expect(d.changes.map((c) => [c.id, c.class]).sort()).toEqual([[L(x), 'modified'], [L(y), 'removed']])
+  })
+
+  it('is unavailable once an op leaves the history window, or was never on it', () => {
+    const { a, tA } = setup()
+    const x = color(a, tA, 0, S, AGENT)
+    const op = lastOp(a)
+    expect(a.reviewOpDiff([op, 'not-an-op'])).toEqual({ available: false, reverted: false, changes: [], decorations: [] })
+    expect(a.reviewOpDiff([])).toMatchObject({ available: false })
+    // Its predecessor goes first: as the oldest stored entry it has nothing to diff against.
+    for (let i = 0; i < a.historyCapacity() - 1; i++) label(a, x, `n${i}`)
+    expect(a.historyView(1).evicted).toBe(1)
+    expect(a.reviewOpDiff([op])).toMatchObject({ available: false, changes: [] })
+    label(a, x, 'gone')
+    expect(a.reviewOpDiff([op])).toMatchObject({ available: false, changes: [] })
+  })
+
+  it('an undone op truncated off the redo tail is no longer available', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S, AGENT)
+    const op = lastOp(a)
+    ok(a.dispatch('undo', {}))
+    color(a, tA, 2 * S, 3 * S)
+    expect(a.reviewOpDiff([op]).available).toBe(false)
+  })
+})

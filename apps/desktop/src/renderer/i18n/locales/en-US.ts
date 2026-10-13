@@ -1471,6 +1471,12 @@ const enUS = {
   "tab_activity": "Activity",
   "tab_tacks": "Tacks",
   "tab_changes": "Changes",
+  "show_changes": "Show its changes on the timeline",
+  "highlight_active": "Timeline shows this call's changes · {{count}}",
+  "highlight_reverted": "Timeline shows this call's changes · {{count}} (since undone)",
+  "highlight_clear": "Back to unreviewed changes",
+  "changes_unavailable": "Change detail is no longer available: this call has left the undo history.",
+  "changes_none": "This call made no project changes.",
   "tools": {
     "begin_agent_session": "Start work session",
     "open_project": "Open project",

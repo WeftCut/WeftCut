@@ -100,6 +100,16 @@ export interface ReviewState {
   decorations: GroupDecoration[]
 }
 
+/** What a set of recorded ops did — `History.opDiff`, served as
+ *  `review_activity_view` (shared/review.ts `ReviewActivityView`). */
+export interface OpDiff {
+  available: boolean
+  reverted: boolean
+  changes: Change[]
+  decorations: GroupDecoration[]
+}
+const unavailableOpDiff = (): OpDiff => ({ available: false, reverted: false, changes: [], decorations: [] })
+
 /** The 'Initial' entry's summary half — shared by the constructor and reset() so
  *  the seed row is spelled once. */
 function seed(initial: Project): Pick<HistoryEntry, 'summary' | 'label_key' | 'affected' | 'snapshot'> {
@@ -356,6 +366,44 @@ export class History {
     const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) }
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state
+  }
+
+  /** What the recorded ops `ids` did (spec Part B, per-activity highlight):
+   *  each op's predecessor snapshot against its own, independent of the
+   *  cursor and of the Review baseline — an undone op still describes what it
+   *  did. Ops adjacent on the stack fold into one run diffed end to end (a
+   *  call that adds a clip and then trims it reads as one `added`); separate
+   *  runs union, a later run's change replacing an earlier one with the same
+   *  id. `available` is false — and nothing else is returned — when any op is
+   *  no longer on the stack (evicted, truncated off a redo tail, never
+   *  recorded) or its predecessor is gone (the oldest stored entry). A
+   *  partial picture would read as the whole call. `reverted`: every op is
+   *  undone (effectStates). */
+  opDiff(ids: readonly Uuid[]): OpDiff {
+    const index = new Map(this.snapshots.map((e, i) => [e.op_id, i]))
+    const at: number[] = []
+    for (const id of new Set(ids)) {
+      const i = index.get(id)
+      if (i === undefined || i === 0) return unavailableOpDiff()
+      at.push(i)
+    }
+    if (at.length === 0) return unavailableOpDiff()
+    at.sort((a, b) => a - b)
+    const changes = new Map<string, Change>()
+    const decorations = new Map<string, GroupDecoration>()
+    for (let s = 0; s < at.length;) {
+      let e = s
+      while (e + 1 < at.length && at[e + 1] === at[e] + 1) e += 1
+      const after = this.snapshots[at[e]].snapshot
+      const run = diffProjects(this.snapshots[at[s] - 1].snapshot, after)
+      for (const c of run) { changes.delete(c.id); changes.set(c.id, c) }
+      for (const d of groupDecorations(run, after)) {
+        const held = decorations.get(d.layer_id)
+        decorations.set(d.layer_id, held ? { ...d, change_ids: [...new Set([...held.change_ids, ...d.change_ids])] } : d)
+      }
+      s = e + 1
+    }
+    return { available: true, reverted: this.effectStates(ids).every((x) => x === 'reverted'), changes: [...changes.values()], decorations: [...decorations.values()] }
   }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged

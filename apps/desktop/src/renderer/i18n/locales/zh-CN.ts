@@ -1287,6 +1287,12 @@ const zhCN: Resources = {
   "tab_activity": "活动",
   "tab_tacks": "批注",
   "tab_changes": "变更",
+  "show_changes": "在时间线上显示其变更",
+  "highlight_active": "时间线正在显示此次调用的变更 · {{count}}",
+  "highlight_reverted": "时间线正在显示此次调用的变更 · {{count}}（已回退）",
+  "highlight_clear": "返回待审阅的变更",
+  "changes_unavailable": "变更详情已不可用：此次调用已超出撤销历史范围。",
+  "changes_none": "此次调用未产生项目变更。",
   "tools": {
     "begin_agent_session": "开始工作会话",
     "open_project": "打开项目",

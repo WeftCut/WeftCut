@@ -4,7 +4,10 @@ import type { Change, ReviewView } from '../../shared/review'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
-import { acquireReview, approveAllChanges, approveChanges, isNewerReviewView, refreshReview, resetReviewForTests, useReview } from './reviewStore'
+import { act, renderHook } from '@testing-library/react'
+import { acquireReview, approveAllChanges, approveChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, selectHighlight, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
+import { useAgentActivity } from './activityStore'
+import type { AgentActivity, AgentActivitySnapshot } from '../../shared/agent-activity'
 import { buildReviewHighlight } from './reviewHighlight'
 import { useProjectStore } from '../state/projectStore'
 import { summaryFixture } from '../testing/summaryFixture'
@@ -124,5 +127,111 @@ describe('buildReviewHighlight', () => {
     // Only changes in the given set count: a decoration of user changes alone gets no badge.
     expect([...h.groups]).toEqual([['group-1', 1]])
     expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'shifted', 'removed'])
+  })
+})
+
+// Per-activity highlight (ticket 07): one call's own changes take over every
+// timeline surface while its row is selected.
+describe('activity highlight', () => {
+  const op = (id: string, patch: Partial<AgentActivity> = {}): AgentActivity => ({
+    id, session_id: null, connection_id: 'c', client: 'agent', tool: 'add_layer', kind: 'operation', started_at: '', ended_at: '', state: 'done',
+    duration_ms: 1, message: '', affected: [], entity_labels: [], history_ids: [`op-${id}`], effect: 'applied', args: {}, error: null, ...patch,
+  })
+  const seed = (activities: AgentActivity[], patch: Partial<AgentActivitySnapshot> = {}) => useAgentActivity.setState({
+    snapshot: { workspace_id: 'w', revision: 1, session: null, sessions: [], activities, evicted: 0, lock_reason: null, checkpoints: [], tacks: [], ...patch },
+    expanded: {}, tab: 'activity', reviewOverlay: true,
+  })
+  const mine = change({ id: 'Layer:mine', keys: ['Layer:mine'], class: 'modified' })
+  const answer = (available = true, reverted = false) => mocks.invoke.mockImplementation(async (channel: string) =>
+    channel === 'review_activity_view' ? { available, reverted, changes: available ? [mine] : [], decorations: [] } : view(1, 1))
+  beforeEach(() => { useReview.getState().apply(view(1, 1)); seed([op('a'), op('b'), op('read', { kind: 'read', history_ids: [], effect: null })]) })
+  afterEach(() => clearActivityChanges())
+
+  it('expanding a row highlights its changes in place of the unreviewed ones; collapsing restores them', async () => {
+    answer()
+    act(() => useAgentActivity.getState().toggle('a'))
+    expect(mocks.invoke).toHaveBeenCalledWith('review_activity_view', { history_ids: ['op-a'] })
+    await flush()
+    expect(useReview.getState().activity).toMatchObject({ activityId: 'a', status: 'ready', count: 1 })
+    expect(selectHighlight(useReview.getState()).layers.get('mine')).toBe('modified')
+    expect(selectHighlight(useReview.getState()).layers.has('a')).toBe(false)
+    act(() => useAgentActivity.getState().toggle('a'))
+    expect(useReview.getState().activity).toBeNull()
+    expect(selectHighlight(useReview.getState()).layers.get('a')).toBe('added')
+  })
+
+  it('another row replaces it; a row without history ops, a tab switch or a project change clears it', async () => {
+    answer()
+    act(() => useAgentActivity.getState().toggle('a'))
+    act(() => useAgentActivity.getState().toggle('b'))
+    await flush()
+    expect(useReview.getState().activity).toMatchObject({ activityId: 'b', status: 'ready' })
+    expect(mocks.invoke.mock.calls.filter(([c]) => c === 'review_activity_view')).toHaveLength(2)
+    act(() => useAgentActivity.getState().toggle('read'))
+    expect(useReview.getState().activity).toBeNull()
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    act(() => useAgentActivity.setState({ tab: 'changes' }))
+    expect(useReview.getState().activity).toBeNull()
+    act(() => useAgentActivity.setState({ tab: 'activity', expanded: {} }))
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    act(() => useAgentActivity.setState({ snapshot: { ...useAgentActivity.getState().snapshot!, workspace_id: 'other' } }))
+    expect(useReview.getState().activity).toBeNull()
+  })
+
+  it('a stale reply for a replaced selection is dropped', async () => {
+    const replies: Array<() => void> = []
+    mocks.invoke.mockImplementation((_channel: string, args: { history_ids: string[] }) => new Promise(r => replies.push(() =>
+      r({ available: true, reverted: false, changes: [change({ id: `Layer:${args.history_ids[0]}`, keys: [`Layer:${args.history_ids[0]}`] })], decorations: [] }))))
+    act(() => useAgentActivity.getState().toggle('a'))
+    act(() => useAgentActivity.getState().toggle('b'))
+    replies[1]!(); await flush()
+    replies[0]!(); await flush()
+    expect([...selectHighlight(useReview.getState()).layers.keys()]).toEqual(['op-b'])
+  })
+
+  it('the row\'s own button re-selects it after a clear; it holds only while the row is expanded', async () => {
+    answer()
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    clearActivityChanges()
+    expect(useReview.getState().activity).toBeNull()
+    await showActivityChanges(op('a'))
+    expect(useReview.getState().activity).toMatchObject({ activityId: 'a', status: 'ready' })
+  })
+
+  it('an op outside the history window: the row is marked unavailable and nothing is highlighted', async () => {
+    answer(false)
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    expect(useReview.getState().activity).toMatchObject({ activityId: 'a', status: 'unavailable' })
+    expect(selectHighlight(useReview.getState())).toBe(useReview.getState().highlight)
+  })
+
+  it('refetches when the selected call commits more or is undone', async () => {
+    answer()
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    answer(true, true)
+    const snap = useAgentActivity.getState().snapshot!
+    act(() => useAgentActivity.setState({ snapshot: { ...snap, revision: 2, activities: snap.activities.map(x => x.id === 'a' ? { ...x, effect: 'reverted' as const } : x) } }))
+    // The held highlight stays on screen until the reply lands.
+    expect(useReview.getState().activity).toMatchObject({ status: 'ready', reverted: false })
+    await flush()
+    expect(useReview.getState().activity).toMatchObject({ status: 'ready', reverted: true })
+  })
+
+  it('the editor timeline respects the Review overlay; the mini timeline band always shows it', async () => {
+    answer()
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    useAgentActivity.setState({ reviewOverlay: false })
+    const mark = renderHook(() => useLayerReviewMark('mine'))
+    const band = renderHook(() => useCompositionChangeRanges('root'))
+    expect(mark.result.current).toBeNull()
+    expect(band.result.current.map(r => r.changeId)).toEqual(['Layer:mine'])
+    act(() => useAgentActivity.setState({ reviewOverlay: true }))
+    expect(mark.result.current).toBe('modified')
   })
 })

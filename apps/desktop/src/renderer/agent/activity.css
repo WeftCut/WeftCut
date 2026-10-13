@@ -17,6 +17,11 @@
 .agent-session-header strong { grid-area: 2 / 1; color: var(--muted-foreground); font-size: var(--font-size-micro); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-session-header > button { grid-area: 1 / 2 / 3 / 3; align-self: center; font-size: var(--font-size-caption); }
 .agent-session-header > button, .agent-history-lock button, .agent-activity-actions button, .agent-activity-details > button { border: 1px solid var(--border); }
+/* The timeline is showing one call's changes (per-activity highlight). */
+.agent-activity-highlight { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px)); border: 1px solid var(--primary); border-radius: 4px; color: var(--foreground); font-size: var(--font-size-caption); }
+.agent-activity-highlight > svg { color: var(--primary); flex: none; }
+.agent-activity-highlight > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.agent-activity-note { margin: 0 0 calc(8 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); }
 .agent-history-lock { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); padding: calc(8 * var(--ui-px)) calc(12 * var(--ui-px)); border-block: 1px solid var(--border); }
 .agent-history-lock > span { flex: 1; overflow-wrap: anywhere; min-width: 0; }
 .agent-activity-toolbar { display: flex; align-items: center; gap: calc(3 * var(--ui-px)); padding: calc(6 * var(--ui-px)) calc(10 * var(--ui-px)); }

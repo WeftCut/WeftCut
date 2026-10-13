@@ -17,7 +17,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
-import { REVIEW_CHANGED_EVENT, type ReviewApproveArgs, type ReviewChangedPayload, type ReviewView } from '../../shared/review'
+import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewChangedPayload, type ReviewView } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -537,6 +537,14 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { version, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: s.user, decorations: s.decorations }
   }
 
+  /** What one activity's ops did (spec Part B, per-activity highlight). Like
+   *  `reviewView`, nothing to show with no project open. */
+  function reviewActivityView(ids: unknown): ReviewActivityView {
+    const wanted = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []
+    if (publishedDir === null || wanted.length === 0) return { available: false, reverted: false, changes: [], decorations: [] }
+    return actor.reviewOpDiff(wanted)
+  }
+
   // Baseline changes reach the renderer as one coalesced `review:changed` per
   // microtask: attribution fires inside a commit, and an approval of several
   // changes must not fan out into several refetches.
@@ -683,6 +691,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'review': {
         // Approvals answer with the fresh view: the surface that approved is
         // the one reading it, so the recompute is wanted, not speculative.
+        if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         if (channel === 'review_approve_all') actor.approveReviewAll()
         else if (channel === 'review_approve') {
           const a = args as ReviewApproveArgs

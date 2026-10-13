@@ -12,12 +12,33 @@
 import { useEffect, useMemo } from 'react'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
-import { REVIEW_CHANGED_EVENT, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
+import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
 import type { ReviewView } from '../../shared/review'
 import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
+import type { AgentActivity } from '../../shared/agent-activity'
 import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+
+/** One activity row's own changes (spec Part B, per-activity highlight):
+ *  what that call did, shown on the timelines in place of the unreviewed
+ *  changes while its row is selected. */
+export interface ActivityHighlight {
+  activityId: string
+  /** The ops asked about, and the row's effect then — a change to either
+   *  (the call committed more, an undo reverted it) refetches. */
+  historyIds: readonly string[]
+  effect: AgentActivity['effect']
+  /** `loading`: the first reply is pending (the review highlight still
+   *  shows). `unavailable`: an op has left the history window — the row says
+   *  so and nothing is highlighted. */
+  status: 'loading' | 'ready' | 'unavailable'
+  /** Every op is undone; the highlight still shows what the call did. */
+  reverted: boolean
+  /** How many changes the call made (listed-only ones included). */
+  count: number
+  highlight: ReviewHighlight
+}
 
 interface ReviewState {
   view: ReviewView | null
@@ -28,6 +49,9 @@ interface ReviewState {
   /** The Changes tab's "show my changes" filter: user-only differences are
    *  listed too. Off by default; runtime only, like the review itself. */
   showUser: boolean
+  /** The selected activity row's changes, preferred by every timeline surface
+   *  over `highlight` once ready. Null when no row is selected. */
+  activity: ActivityHighlight | null
   /** Take `next` unless it is older than the held view. True when applied. */
   apply: (next: ReviewView) => boolean
 }
@@ -47,6 +71,7 @@ export const useReview = create<ReviewState>((set, get) => ({
   view: null,
   highlight: EMPTY_HIGHLIGHT,
   showUser: false,
+  activity: null,
   apply: next => {
     if (!isNewerReviewView(next.version, get().view?.version ?? null)) return false
     set({ view: next, highlight: buildReviewHighlight(next.unreviewed, next.decorations) })
@@ -127,10 +152,11 @@ export function useUnreviewedCount(enabled = true): number {
 // ── Highlight reads ───────────────────────────────────────────────────────────
 //
 // Every timeline surface reads the highlight through `selectHighlight`: the one
-// place a different change set (one activity's diff, ticket 07) takes over
-// from the unreviewed list.
+// place a different change set — the selected activity row's own changes —
+// takes over from the unreviewed list.
 
-const selectHighlight = (s: ReviewState): ReviewHighlight => s.highlight
+export const selectHighlight = (s: Pick<ReviewState, 'highlight' | 'activity'>): ReviewHighlight =>
+  s.activity?.status === 'ready' ? s.activity.highlight : s.highlight
 const NO_GHOSTS: readonly ReviewGhost[] = []
 const NO_RANGES: readonly ReviewRangeMark[] = []
 
@@ -184,8 +210,74 @@ export function approveChanges(changeIds: readonly string[]): Promise<boolean> {
   return tryMutate(async () => { useReview.getState().apply(await reviewApprove({ change_ids: [...changeIds] })) }, 'review_approve')
 }
 
+// ── Per-activity highlight ────────────────────────────────────────────────────
+//
+// Selecting an activity row (expanding it) shows what that call did; the
+// selection follows the agent panel's state: expanding another row replaces it
+// (a row without history ops clears it), collapsing the row, switching tabs or
+// a project change clears it. The editor timeline still paints only under the
+// Review overlay; the agent view's mini timeline always does.
+
+/** Bumped on every selection change; a reply for an older one is dropped. */
+let activityToken = 0
+
+/** Highlight what activity `a` did. Refetching the same row keeps its current
+ *  highlight on screen until the reply lands. */
+export async function showActivityChanges(a: Pick<AgentActivity, 'id' | 'history_ids' | 'effect'>): Promise<void> {
+  if (a.history_ids.length === 0) { clearActivityChanges(); return }
+  const token = ++activityToken
+  const held = useReview.getState().activity
+  const base = held?.activityId === a.id && held.status !== 'loading' ? held : { status: 'loading' as const, reverted: false, count: 0, highlight: EMPTY_HIGHLIGHT }
+  useReview.setState({ activity: { ...base, activityId: a.id, historyIds: [...a.history_ids], effect: a.effect } })
+  try {
+    const v = await reviewActivityView(a.history_ids)
+    if (token !== activityToken) return
+    const cur = useReview.getState().activity!
+    useReview.setState({ activity: v.available
+      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.length, highlight: buildReviewHighlight(v.changes, v.decorations) }
+      : { ...cur, status: 'unavailable', reverted: false, count: 0, highlight: EMPTY_HIGHLIGHT } })
+  } catch {
+    if (token === activityToken) useReview.setState({ activity: null })
+  }
+}
+
+/** Back to the review highlight. */
+export function clearActivityChanges(): void {
+  activityToken += 1
+  if (useReview.getState().activity !== null) useReview.setState({ activity: null })
+}
+
+const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+
+/** The selection rules, driven by the agent panel's store. */
+useAgentActivity.subscribe((s, prev) => {
+  if (s.snapshot?.workspace_id !== prev.snapshot?.workspace_id || s.tab !== prev.tab) { clearActivityChanges(); return }
+  const activities = s.snapshot?.activities ?? []
+  if (s.expanded !== prev.expanded) {
+    const opened = activities.filter(a => s.expanded[a.id] && !prev.expanded[a.id])
+    const pick = opened.at(-1)
+    if (pick) { void showActivityChanges(pick); return }
+  }
+  const held = useReview.getState().activity
+  if (held === null) return
+  const a = activities.find(x => x.id === held.activityId)
+  if (!a || !s.expanded[a.id]) { clearActivityChanges(); return }
+  if (!sameIds(a.history_ids, held.historyIds) || a.effect !== held.effect) void showActivityChanges(a)
+})
+
+let activityHosts = 0
+/** The agent panel hosts the selection: when the last one unmounts, nothing
+ *  is left to show or clear it, so the highlight goes with it. */
+export function useActivityHighlightHost(): void {
+  useEffect(() => {
+    activityHosts += 1
+    return () => { activityHosts -= 1; if (activityHosts === 0) clearActivityChanges() }
+  }, [])
+}
+
 /** Test hook: forget every consumer and the held view. */
 export function resetReviewForTests(): void {
   teardown?.(); teardown = null; consumers = 0; pending = false; again = false
-  useReview.setState({ view: null, highlight: EMPTY_HIGHLIGHT, showUser: false })
+  activityToken += 1
+  useReview.setState({ view: null, highlight: EMPTY_HIGHLIGHT, showUser: false, activity: null })
 }

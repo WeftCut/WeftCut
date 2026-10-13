@@ -169,10 +169,12 @@ export function routeChannel(channel: string): Route {
     // every edit whether the panel is open or not (spec decision 5).
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
-    // Review: a read and two approvals. Approval folds changes into the Review
-    // baseline; it changes nothing in the project and records nothing, so it
+    // Review: two reads (the baseline view; what one activity's ops did) and
+    // two approvals. Approval folds changes into the Review baseline; it
+    // changes nothing in the project and records nothing, so it
     // is not a command and the history lock does not apply (ADR 0115).
     case 'review_view':
+    case 'review_activity_view':
     case 'review_approve_all':
     case 'review_approve': return { kind: 'review' }
     // The user's tack actions (resolve / dismiss / reopen / clear). Served by

@@ -11,6 +11,7 @@ vi.mock('../state/navigation', async (importActual) => ({
 vi.mock('../settings/AgentSection', () => ({ AgentSection: () => <div>Connection configuration</div> }))
 import { AgentPanel } from './AgentPanel'
 import { useAgentActivity } from './activityStore'
+import { resetReviewForTests, useReview } from './reviewStore'
 
 function activity(patch: Partial<AgentActivity> = {}): AgentActivity {
   return { id: 'a', session_id: null, connection_id: 'c', client: 'Test client', tool: 'analyze_clip', kind: 'read',
@@ -27,7 +28,7 @@ beforeEach(async () => {
   mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true)
   useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true, tab: 'activity', selectedTack: null })
 })
-afterEach(cleanup)
+afterEach(() => { cleanup(); resetReviewForTests() })
 
 describe('AgentPanel', () => {
   it('shows readable objects, failures, and connection facts without navigation in agent mode', async () => {
@@ -70,6 +71,48 @@ describe('AgentPanel', () => {
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('agent_session_end'))
     act(() => useAgentActivity.getState().receive({ ...useAgentActivity.getState().snapshot!, revision: 2, session: null, sessions: [{ ...session, ended_at: 'now', end_reason: 'user' }] }))
     expect(useAgentActivity.getState().mode).toBe('agent')
+  })
+})
+
+describe('AgentPanel — per-activity highlight', () => {
+  const edit = (patch: Partial<AgentActivity> = {}) => activity({ kind: 'operation', tool: 'add_video_layer', message: 'Add media clip', history_ids: ['op1'], effect: 'applied', ...patch })
+  const reply = (available: boolean) => mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_activity_view'
+    ? { available, reverted: false, decorations: [], changes: available ? [{ id: 'Layer:x', class: 'added', kind: 'Layer', keys: ['Layer:x'], aspects: [], composition_id: 'root', composition_ids: ['root'], ranges: [] }] : [] }
+    : { available: true, url: '', connections: [] })
+
+  it('selecting an operation row says the timeline shows its changes, with a way back', async () => {
+    reply(true)
+    seed([edit()])
+    render(<AgentPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /Add media clip/ }))
+    expect(await screen.findByText("Timeline shows this call's changes · 1")).toBeTruthy()
+    expect(mocks.invoke).toHaveBeenCalledWith('review_activity_view', { history_ids: ['op1'] })
+    fireEvent.click(screen.getByRole('button', { name: 'Back to unreviewed changes' }))
+    expect(screen.queryByText(/Timeline shows this call's changes/)).toBeNull()
+    // The expanded row offers it again.
+    fireEvent.click(screen.getByRole('button', { name: 'Show its changes on the timeline' }))
+    expect(await screen.findByText("Timeline shows this call's changes · 1")).toBeTruthy()
+    // Another tab clears it.
+    fireEvent.click(screen.getByRole('tab', { name: /Changes/ }))
+    expect(useReview.getState().activity).toBeNull()
+  })
+
+  it('an op that left the history says the detail is no longer available and highlights nothing', async () => {
+    reply(false)
+    seed([edit()])
+    render(<AgentPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /Add media clip/ }))
+    expect(await screen.findByText('Change detail is no longer available: this call has left the undo history.')).toBeTruthy()
+    expect(screen.queryByText(/Timeline shows this call's changes/)).toBeNull()
+    expect(useReview.getState().activity?.status).toBe('unavailable')
+  })
+
+  it('a read row has no changes to show', () => {
+    seed([activity()])
+    render(<AgentPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /Analyze clip/ }))
+    expect(screen.queryByRole('button', { name: 'Show its changes on the timeline' })).toBeNull()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('review_activity_view', expect.anything())
   })
 })
 

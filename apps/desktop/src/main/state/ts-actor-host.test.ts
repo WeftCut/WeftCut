@@ -565,6 +565,26 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
+  it('review_activity_view serves what one activity\'s ops did, and nothing with no project open', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      const op = host.actor.historyView(1).ops[0].op_id
+      const publication = host.publication().version
+      expect(await host.handleInvoke('review_activity_view', { history_ids: [op] }))
+        .toMatchObject({ available: true, reverted: false, changes: [{ class: 'added', kind: 'Track' }] })
+      // A read: no publication.
+      expect(host.publication().version).toEqual(publication)
+      expect(await host.handleInvoke('review_activity_view', { history_ids: ['gone', 3] })).toMatchObject({ available: false, changes: [] })
+      expect(await host.handleInvoke('review_activity_view', {})).toMatchObject({ available: false })
+      await host.handleInvoke('project_close', {})
+      expect(await host.handleInvoke('review_activity_view', { history_ids: [op] })).toMatchObject({ available: false, changes: [] })
+    } finally { host.stop() }
+  })
+
   it('project_jump_to moves the cursor through the host and broadcasts project:changed', async () => {
     const { deps, sent } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
