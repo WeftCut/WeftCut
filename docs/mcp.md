@@ -313,6 +313,7 @@ itself is an `isError` result whose text names the folder and the fix, with
 | `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
 | `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it, and undo, redo and a checkpoint restore put back the stamp of the state they return to, so compare it for change, not for order |
 | `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` — plus the project state: `project` (`{ name, dir }` of the project the user has open, `null` on the start screen or after Close Project), `recent_projects` (the start screen's Recents, `[{ name, path }]`, newest first) and `default_parent_folder` (where New Project would create one, or `null`). The one non-error read of whether a project is open, and what `open_project` / `create_project` draw on (see *No project open* below) |
+| `project://tacks` | every **tack** of this project opening, oldest first — the review ranges agents left for the user (see *Tacks* below). Each is the stored record — `{ id, kind, label, body, status, range, session_id, connection_id, client, activity_id, created_at }` — plus its placement derived at read time: `composition_id`, `t_us`, `end_t_us` and `state` (`visible` / `hibernating` / `stale`). `project://tacks?composition=<id>` keeps the tacks placed in that composition (`not_found` for an unknown id); unlike the per-composition reads, the bare URI is the whole project opening, because a stale tack is placed nowhere |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `composition://meter` | latest PREVIEW master-bus level — `{ live: true, rms_db, peak_db }` while something is playing, `{ live: false }` once nothing has for 2 seconds. The preview UI pushes this reading at about 2 Hz, so the liveness window is a few pushes wide and polling faster than that returns the same numbers. A tap on the preview mixer, so it answers "how loud is what the user is hearing right now" and nothing about a render; a stopped transport reports `live: false` rather than a stale reading. Master bus only — the per-role levels the Role Mixer draws are a renderer-side tap and reach no MCP surface ([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)) |
@@ -328,7 +329,7 @@ The parameterised families are advertised by `resources/templates/list`
 (RFC 6570; `{?composition}` is the optional query): `project://layers/{id}`,
 `project://composition{?composition}`, `project://tracks{?composition}`,
 `project://markers{?composition}`, `project://links{?composition}`,
-`project://transitions{?composition}`, `media://{id}/thumbnail`,
+`project://transitions{?composition}`, `project://tacks{?composition}`, `media://{id}/thumbnail`,
 `media://{id}/frame/{t_us}`, `media://{id}/waveform`, `media://{id}/analysis`,
 `media://{id}/description`. `?composition=` is the ONE query a `project://`
 read takes: an unknown key, or a scope on a project-wide read, is refused rather
@@ -338,7 +339,7 @@ A client that cannot read MCP resources has the same views as a tool:
 `read_project { view, id?, t_us?, composition_id? }` with `view` one of
 `current`, `composition`, `compositions`, `media`, `tracks`, `layer` (needs
 `id`), `markers`, `links`, `transitions`, `settings`, `history`, `session`,
-`effects` (the effects catalog), and the two picture views `media_thumbnail` / `media_frame` (`id` is the media
+`effects` (the effects catalog), `tacks` (the `project://tacks` records; `composition_id` narrows), and the two picture views `media_thumbnail` / `media_frame` (`id` is the media
 id, `media_frame` also takes `t_us`; both answer an image content block from
 the same reader the `media://` resources use). The JSON views are served by the
 same function as the resource, so the two never disagree; `composition`,
@@ -742,6 +743,40 @@ Motif authoring (see [motif-workspaces.md](motif-workspaces.md)):
 - `end_agent_session { force? }` — ends the calling connection’s work session and releases its owned undo lock. Another connection cannot end it (`AgentSessionOwnerMismatch`, naming the holder) — unless it passes `force: true`, the takeover for a holder that is gone: the session ends with `end_reason: 'forced'` and its lock releases whoever's connection took it. Repeating after end is safe. The user can also end work or unlock locally in the agent panel. Ending work keeps the current view and activity; it does not cancel running operations, disconnect MCP or prohibit later calls.
 - `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `add_audio_layer`, `add_text_layer`, `add_transition`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layers` (the lift only — `ripple: true` is refused). A rehearsed op runs under the same rule as the real call: an envelope time lands on the grid, and a start below 0 or a trim past the window is refused. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable.
 
+### Tacks
+
+A **tack** is how an agent points the user at a stretch of the film — a pause
+to check, a shot to judge, a cut to decide — without writing project content
+([ADR 0115](adr/0115-agent-review-lives-beside-the-project-not-in-it.md)).
+Markers are the user's: persisted, recorded, exported. A tack is runtime review
+state of the project opening, owned by the host beside agent activity: not in
+`Project`, not in history, not serialized or exported, untouched by `undo`,
+`redo`, checkpoint restore and `set_history_lock` (the tack verbs work while
+history is locked). None of the three verbs records a history entry or advances
+the project's revision, and opening, creating or reopening a project clears
+every tack, as it clears the activity stream; a call still running from the
+previous opening cannot create one in the new.
+
+A tack's `range` is **free** — `{ kind: "free", composition_id, t_us, end_t_us }`
+on a composition's clock — or **anchored** — `{ kind: "anchored", layer_id,
+src_us, src_end_us }` in a clip's SOURCE time, converted from timeline time at
+creation exactly as `add_marker` converts with `anchor_layer_id`. An anchored
+tack stores no timeline time: every read places it with the anchored-marker
+mapping (*Markers follow clips*), so it follows its clip through moves, trims,
+splits and into a Group. The derived `state` is `visible`; `hibernating` when
+the clip's source window no longer covers its start (a trim or split moved past
+it — undo or re-extend wakes it); or `stale` when its clip — or a free tack's
+composition — exists nowhere. A stale tack stays listed. `t_us` / `end_t_us` are
+null unless visible; an anchored range is drawn only as far as its clip runs.
+Every tack also carries who made it — `session_id` (the work session, null
+outside one), `connection_id`, `client`, `activity_id` (the creating call's row
+in the agent panel) — and its `status`, so an agent reading back sees what the
+user resolved or dismissed.
+
+- `create_tacks { tacks: [{ label, body?, kind?, t_us, end_t_us?, anchor_layer_id?, composition_id? }] }` → `{ tack_ids }` — a batch, because the canonical use (one per detected pause or shot) is many at once; every entry is validated before any is created, and the first refusal names its index (`tacks[3].t_us …`). `label` is a few words (at most 200 characters), `body` plain text (at most 4000), `kind` one of `note` (default), `issue`, `question`. Times land on the composition's frame grid as a marker's do; a region spans at least one frame and nothing starts before 0. Free tacks go on the root unless `composition_id` names a Group. With `anchor_layer_id` the clip must have a source window (`WrongLayerKind` otherwise), sit in `composition_id` when that is given (`CrossCompositionSet`), and cover `t_us` (`InvalidArgument`); `end_t_us` may run past it. At most 1000 tacks per project opening: past that the whole batch is refused with `TackLimit` — the store never evicts, since a review item lost silently is worse than a refusal.
+- `update_tack { tack_id, patch: { label?, body?, kind?, status? } }` → the tack as `project://tacks` reads it. `status` is `open`, `resolved` or `dismissed`. A tack's place is fixed at creation; delete and re-create to move one. `TackNotFound` for an id this opening does not hold.
+- `delete_tacks { tack_ids? , session_id? }` → `{ deleted_tack_ids }` — exactly one selector: the listed ids (all must exist, or none goes), or every tack created in that work session.
+
 ### Agent panel and lifecycle
 
 Manual entry and exit (View menu / command palette / Exit to editor) only switch
@@ -906,7 +941,7 @@ machine-readably for clients that forward it — `code` is the envelope code
 that is not the caller's), then `message`, then whatever the mapper attached:
 the `error` variant, the ids, `options[]`. Nothing may live only there.
 
-Two refusal families come from the MCP host rather than the actor, so they are
+Three refusal families come from the MCP host rather than the actor, so they are
 not `CommandError` variants and stay out of `mcp.error-vocabulary`'s union:
 
 | `error` | Raised by | `code` | Text |
@@ -914,6 +949,8 @@ not `CommandError` variants and stay out of `mcp.error-vocabulary`'s union:
 | `NoProjectOpen` | any project tool while no project is open (the start screen, or after Close Project) — see *Projects and the no-project rule* | `invalid_request` | the one fixed message, `NO_PROJECT_OPEN_MESSAGE` in `main/mcp/toolResult.ts`: no project is open and the app is on its start screen; if the user asked for a particular project, `open_project` it (`read_project { view: "session" }` lists `recent_projects`) or `create_project` it, otherwise ask the user which project to work in; nothing was changed. A resource read has no `isError` slot, so a gated `resources/read` is a JSON-RPC `InvalidRequest` error with the same message |
 | `ProjectFolderMissing`, `NotProjectFolder`, `ProjectFolderExists`, `ProjectNameRequired`, `InvalidCanvasPreset` | `open_project` / `create_project` — a wrong or taken path or name; another argument fixes it | `invalid_params` | as below |
 | `ProjectSchemaUnreadable`, `ProjectSchemaTooNew`, `ProjectFileUnreadable`, `ProjectInvalid` | `open_project` — the right folder, but it cannot be opened here; no argument fixes it, so a client that retries on `invalid_params` must not loop on these | `invalid_request` | names the folder and the way out — a missing folder points at `recent_projects`, a folder without `project.json` at the folder that holds one or `create_project`, an existing target at another name or `open_project`, a newer schema at the version needed — and ends "Nothing was changed." The variant's own fields (`found` / `supported`, `detail`) ride `structuredContent` beside `error` |
+| `TackLimit`, `NoCurrentCall` | `create_tacks` — the project opening already holds 1000 tacks, or the call began in a project opening that has since been replaced; no argument fixes either | `invalid_request` | the count held and the way out (`delete_tacks` resolved, dismissed or a finished session's tacks); nothing was created |
+| `TackNotFound`, and `InvalidArgument`, `CompositionNotFound`, `LayerNotFound`, `WrongLayerKind`, `CrossCompositionSet` for a tack | `create_tacks` / `update_tack` / `delete_tacks` — the `TackStore`'s own refusals, named like the actor's | `invalid_params` | names the entry (`tacks[2].t_us …`) or id and the fix; `field` rides `structuredContent` beside `error`; nothing was changed |
 
 `create_project` without `parent_folder` when no project has ever been created
 (no `default_parent_folder`) is an `invalid_params` refusal naming

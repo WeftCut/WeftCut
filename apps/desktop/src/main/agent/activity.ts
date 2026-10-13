@@ -5,7 +5,8 @@ import { resolveEntityLabels } from '../state/history-labels'
 import type { EntityRef } from '../state/history'
 import { eachLayer } from '../state/model'
 import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
-import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT } from '../../shared/agent-activity'
+import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../shared/agent-activity'
+import { TackStore, type TackAttribution } from './tacks'
 
 const CAPACITY = 1000
 interface CallContext { workspace: string; activity: AgentActivity }
@@ -62,18 +63,46 @@ export class AgentActivityService {
   private resetPending = false
   private publishedRevision = 0
   private unsubscribe: (() => void) | null = null
+  private dirtyTacks = new Set<string>()
+  private removedTacks: string[] = []
+  /** This project opening's tacks (ADR 0115): reset with the activity, and
+   *  published through the same deltas under the same workspace and revision. */
+  readonly tacks: TackStore
 
-  constructor(private actor: ActorHandle, private send: (event: string, payload: unknown) => void, private capacity = CAPACITY) {}
+  constructor(private actor: ActorHandle, private send: (event: string, payload: unknown) => void, private capacity = CAPACITY, tackCapacity = TACK_CAPACITY) {
+    this.tacks = new TackStore({
+      capacity: tackCapacity,
+      project: () => this.actor.snapshot(),
+      caller: () => this.currentCall(),
+      changed: (dirty, removed) => {
+        for (const id of dirty) this.dirtyTacks.add(id)
+        for (const id of removed) { this.dirtyTacks.delete(id); this.removedTacks.push(id) }
+        this.publish()
+      },
+    })
+  }
+
+  /** The MCP call running in this async context: its activity, connection and
+   *  work session. Null outside a call, and inside one that began in an earlier
+   *  project opening — its late results must not populate this one. */
+  currentCall(): TackAttribution | null {
+    const ctx = this.context.getStore()
+    if (!ctx || ctx.workspace !== this.workspace || ctx.activity.connection_id === null) return null
+    const a = ctx.activity
+    return { session_id: a.session_id, connection_id: a.connection_id!, client: a.client, activity_id: a.id }
+  }
 
   start(): void { this.unsubscribe ??= this.actor.subscribe(e => this.onChange(e)) }
   stop(): void { this.unsubscribe?.(); this.unsubscribe = null }
 
   snapshot(): AgentActivitySnapshot {
+    const tacks = this.tacks.views()
     return structuredClone({
       workspace_id: this.workspace, revision: this.revision, session: this.active,
       sessions: this.sessions, activities: this.activities, evicted: this.evicted,
       lock_reason: this.actor.historyStatus().lock_reason ?? null,
       checkpoints: this.actor.listCheckpoints().map(({ id, label }) => ({ id, label })),
+      tacks,
     })
   }
 
@@ -91,8 +120,10 @@ export class AgentActivityService {
         activities: this.activities.filter(a => this.dirty.has(a.id)), evicted: this.evicted,
         lock_reason: this.actor.historyStatus().lock_reason ?? null,
         checkpoints: this.actor.listCheckpoints().map(({ id, label }) => ({ id, label })),
+        tacks: this.tacks.viewsOf(this.dirtyTacks), removed_tack_ids: this.removedTacks,
       })
       this.dirty.clear(); this.removed = []; this.resetPending = false
+      this.dirtyTacks.clear(); this.removedTacks = []
       this.publishedRevision = this.revision
       this.send(AGENT_ACTIVITY_EVENT, update)
     })
@@ -105,11 +136,13 @@ export class AgentActivityService {
     this.activities = []
     this.evicted = 0
     this.lockOwner = null
+    this.tacks.clear()
     this.dirty.clear(); this.removed = []; this.resetPending = true
+    this.dirtyTacks.clear(); this.removedTacks = []
     this.publish()
   }
 
-  refresh(): void { this.refreshEffects(); this.publish() }
+  refresh(): void { this.refreshEffects(); this.tacks.refresh(); this.publish() }
 
   private trim(): void {
     // Running entries are never evicted. Capacity counts completed activities.
@@ -182,6 +215,7 @@ export class AgentActivityService {
     }
     if (!reason.trim()) throw new Error('Agent session reason must be non-empty')
     const checkpoint = this.actor.checkpoint(`Pre-agent: ${reason.trim()}`, { kind: 'Agent', client: ctx.activity.client })
+    this.actor.pinReviewBaseline(checkpoint)
     const session: AgentWorkSession = {
       id: randomUUID(), connection_id: connection, client: ctx.activity.client, reason: reason.trim(),
       started_at: new Date().toISOString(), ended_at: null, end_reason: null, checkpoint_id: checkpoint,
@@ -284,6 +318,8 @@ export class AgentActivityService {
       }
     }
     this.refreshEffects()
+    // Anchored tacks are placed from the project, so an edit can move them.
+    this.tacks.refresh()
     this.publish()
   }
 

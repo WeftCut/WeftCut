@@ -29,6 +29,8 @@ export const HOST_RESOURCE_DEFS = [
     description: 'Every effect kind `add_effect` takes — the visual kinds and the `audio.*` kinds — with each param\'s default and range (a unit or a sample region where it has one). The kinds are `add_effect`\'s enum, the params are `update_effect` keys and the `effects[<id>].params[<key>]` keyframe path.' },
   { uri: 'project://session', name: 'Work session', mimeType: APP_JSON,
     description: 'The active agent work session (or null): owner client, connection, reason, started_at, checkpoint — plus recent sessions and the history lock. Read it after AgentSessionBusy.' },
+  { uri: 'project://tacks', name: 'Tacks', mimeType: APP_JSON,
+    description: 'Every review tack of this project opening, oldest first — { id, label, body, kind, status, range, session_id, client, created_at } plus the placement derived now: composition_id, t_us, end_t_us and state (visible | hibernating | stale). status shows what the user resolved or dismissed. `?composition=<id>` keeps the tacks placed there.' },
 ]
 
 /** RFC 6570 templates for the parameterised resources. `{?composition}` is the
@@ -42,6 +44,8 @@ export const HOST_RESOURCE_TEMPLATES = [
     description: "A composition's tracks with layer envelopes; the root when the query is omitted." },
   { uriTemplate: 'project://markers{?composition}', name: 'Markers of a composition', mimeType: APP_JSON,
     description: "A composition's markers, sorted by t_us; the root when the query is omitted." },
+  { uriTemplate: 'project://tacks{?composition}', name: 'Tacks of a composition', mimeType: APP_JSON,
+    description: 'The review tacks placed in a composition; every tack of the project opening when the query is omitted.' },
   { uriTemplate: 'project://links{?composition}', name: 'Links of a composition', mimeType: APP_JSON,
     description: "A composition's links; the root when the query is omitted." },
   { uriTemplate: 'project://transitions{?composition}', name: 'Transitions of a composition', mimeType: APP_JSON,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
+import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession, TackView } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
@@ -8,7 +8,7 @@ import { useAgentActivity, wireAgentActivity } from './activityStore'
 
 const work: AgentWorkSession = { id: 'session', connection_id: 'c', client: 'Client', reason: 'Edit', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 function snapshot(revision: number, session: AgentWorkSession | null = null): AgentActivitySnapshot {
-  return { workspace_id: 'project', revision, session, sessions: session ? [session] : [], activities: [], evicted: 0, lock_reason: null, checkpoints: [] }
+  return { workspace_id: 'project', revision, session, sessions: session ? [session] : [], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [] }
 }
 beforeEach(() => {
   useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true })
@@ -59,6 +59,26 @@ describe('agent view and snapshot state', () => {
       expect(useAgentActivity.getState().snapshot?.activities).toEqual([b])
       expect(useAgentActivity.getState()).toMatchObject({ expanded: { b: true, connections: true }, following: false, anchor: { id: 'b', offset: 4 } })
       expect(useAgentActivity.getState().expanded.a).toBeUndefined()
+    } finally { stop() }
+  })
+
+  it('merges tack deltas in creation order and drops them on a reset', async () => {
+    const tack = (id: string, patch: Partial<TackView> = {}): TackView => ({ id, session_id: null, connection_id: 'c', client: 'Client',
+      activity_id: 'a', kind: 'note', label: id, body: '', status: 'open', created_at: '',
+      range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible', ...patch })
+    const delta = (revision: number, patch: Record<string, unknown>) => ({ payload: { ...snapshot(revision), from_revision: revision - 1, reset: false, removed_ids: [], removed_tack_ids: [], ...patch } })
+    mocks.invoke.mockResolvedValueOnce({ ...snapshot(1), tacks: [tack('a'), tack('b')] })
+    const stop = await wireAgentActivity()
+    try {
+      const changed = mocks.listeners.get('agent_activity:changed')!
+      changed(delta(2, { tacks: [tack('a', { status: 'resolved' }), tack('c')] }))
+      expect(useAgentActivity.getState().snapshot?.tacks.map(t => [t.id, t.status])).toEqual([['a', 'resolved'], ['b', 'open'], ['c', 'open']])
+      changed(delta(3, { removed_tack_ids: ['b'] }))
+      expect(useAgentActivity.getState().snapshot?.tacks.map(t => t.id)).toEqual(['a', 'c'])
+      changed(delta(4, { tacks: [tack('b', { state: 'stale', t_us: null, composition_id: null })], removed_tack_ids: ['a'] }))
+      expect(useAgentActivity.getState().snapshot?.tacks.map(t => [t.id, t.state])).toEqual([['c', 'visible'], ['b', 'stale']])
+      changed({ payload: { ...snapshot(5), workspace_id: 'reopened', from_revision: 0, reset: true, removed_ids: [], removed_tack_ids: [] } })
+      expect(useAgentActivity.getState().snapshot?.tacks).toEqual([])
     } finally { stop() }
   })
 

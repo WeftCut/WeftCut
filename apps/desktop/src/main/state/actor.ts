@@ -2105,6 +2105,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         // Work-session lifecycle is owned by the host; a bare actor has no session.
         case 'end_agent_session': return { ok: true, result: toolRecord({ ended: null }) }
+        // Tacks live in the host's TackStore beside agent activity (ADR 0115),
+        // not in project state: a bare actor checks the arguments and refuses.
+        case 'create_tacks': case 'update_tack': case 'delete_tacks': {
+          mcpDef(name).parseDedicated!(a)
+          return { ok: false, error: { code: 'invalid_params', message: `${name} is served by the MCP host, not by the state actor — tacks are not project state` } }
+        }
         case 'begin_agent_session': {
           const p = mcpDef('begin_agent_session').parseDedicated!(a)
           const reason = p.reason as string
@@ -2264,7 +2270,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // no snapshot. The work session and the two picture views live in the
           // MCP host, which answers them before a call reaches the actor.
           if (view === 'effects') return { ok: true, result: toolRecord(effectsCatalogView()) }
-          if (view === 'session' || view === 'media_thumbnail' || view === 'media_frame')
+          if (view === 'session' || view === 'tacks' || view === 'media_thumbnail' || view === 'media_frame')
             return { ok: false, error: { code: 'invalid_params', message: `view '${view}' is served by the MCP host, not by the state actor — call it over MCP, or read the matching resource` } }
           const compositionId = p.composition_id as string | null
           const scoped = compositionId !== null && SCOPED_PROJECT_VIEWS.has(view) ? `?composition=${compositionId}` : ''

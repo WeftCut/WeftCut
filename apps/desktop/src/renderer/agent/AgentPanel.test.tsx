@@ -16,7 +16,7 @@ function activity(patch: Partial<AgentActivity> = {}): AgentActivity {
     history_ids: [], effect: null, args: { layer_id: 'gone' }, error: null, ...patch }
 }
 function seed(activities: AgentActivity[], patch: Partial<AgentActivitySnapshot> = {}) {
-  useAgentActivity.getState().receive({ workspace_id: 'project', revision: 1, session: null, sessions: [], activities, evicted: 0, lock_reason: null, checkpoints: [], ...patch })
+  useAgentActivity.getState().receive({ workspace_id: 'project', revision: 1, session: null, sessions: [], activities, evicted: 0, lock_reason: null, checkpoints: [], tacks: [], ...patch })
 }
 beforeEach(async () => {
   await i18n.changeLanguage('en-US')

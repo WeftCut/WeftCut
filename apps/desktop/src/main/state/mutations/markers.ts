@@ -1,6 +1,7 @@
 import { contentAt, splitExact } from '../../../renderer/layerTiming'
 import { exactTime } from '../../../renderer/timeMapping'
-import type { Composition, Marker, MarkerAnchor, Project, Rgba, Uuid } from '../model'
+import type { Composition, Layer, Marker, MarkerAnchor, Project, Rgba, Uuid } from '../model'
+import type { ExactTime } from '../../../shared/timeMapping'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
 import { hasSourceWindow, requireLayer } from './helpers'
@@ -107,9 +108,9 @@ function retimeAnchor(p: Project, m: Marker, anchor: MarkerAnchor, tUs: number, 
   if (tUs < layer.t_start_us || tUs >= layer.t_end_us)
     throw new CommandFailure({ error: 'InvalidArgument', field: 't_us',
       detail: `marker ${m.id} at t_us ${tUs} is outside its anchoring layer ${anchor.layer}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
-  const time = splitExact(contentAt(layer.params, exactTime(tUs - layer.t_start_us)))
-  anchor.src_us = time.whole
-  if (time.fraction.num) anchor.src_fraction = time.fraction; else delete anchor.src_fraction
+  const at = sourceInstantAt(layer, tUs)
+  anchor.src_us = at.src_us
+  if (at.src_fraction) anchor.src_fraction = at.src_fraction; else delete anchor.src_fraction
 }
 
 /** Patch a marker; only provided fields apply. Re-sorts by t_us (stable) when a
@@ -184,8 +185,18 @@ export function applyAttachMarker(p: Project, markerId: Uuid, layerId: Uuid): vo
   if (m.t_us < layer.t_start_us || m.t_us >= layer.t_end_us)
     throw new CommandFailure({ error: 'InvalidArgument', field: 'layer',
       detail: `marker ${markerId} at t_us ${m.t_us} is outside layer ${layerId}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
-  const time = splitExact(contentAt(layer.params, exactTime(m.t_us - layer.t_start_us)))
-  m.anchor = { layer: layerId, src_us: time.whole, ...(time.fraction.num ? { src_fraction: time.fraction } : {}) }
+  m.anchor = { layer: layerId, ...sourceInstantAt(layer, m.t_us) }
+}
+
+/** The source instant timeline time `tUs` shows on `layer` — the ONE
+ *  timeline→source derivation every anchor writer uses: attaching a marker,
+ *  retiming an anchored one, and placing an anchored tack (ADR 0115). Whole
+ *  microseconds plus the exact remainder a retimed layer leaves, the pair a
+ *  `MarkerAnchor` stores. Callers have established the layer has a source
+ *  window (`hasSourceWindow`). */
+export function sourceInstantAt(layer: Layer, tUs: number): { src_us: number; src_fraction?: ExactTime } {
+  const time = splitExact(contentAt(layer.params, exactTime(tUs - layer.t_start_us)))
+  return time.fraction.num ? { src_us: time.whole, src_fraction: time.fraction } : { src_us: time.whole }
 }
 
 /** Cut a marker loose from its layer. `t_us` stays exactly where the last

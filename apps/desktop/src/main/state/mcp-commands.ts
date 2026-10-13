@@ -19,6 +19,7 @@ import { positionProblem } from '../../shared/position'
 import { sortKeys } from './canonical'
 import { CANVAS_MAX, CANVAS_MIN, DEFAULT_CANVAS, FPS_OPTIONS, canvasSizeError, validateProjectName } from '../../shared/newProject'
 import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
+import { TACK_BODY_LIMIT, TACK_KINDS, TACK_LABEL_LIMIT, TACK_STATUSES } from '../../shared/agent-activity'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
@@ -1424,7 +1425,7 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'media_thumbnail', 'media_frame'] as const
+export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'media_thumbnail', 'media_frame'] as const
 /** The views that take `composition_id` — the per-composition resources. */
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
 export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
@@ -2163,6 +2164,52 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session. Unrecorded.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'What this work session is for; shown to the user beside the busy badge.' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
+  // ── tacks (ADR 0115) — served by the MCP host's TackStore beside the agent
+  //    activity (`mcp/tackTools.ts`), not by the actor: they are not project
+  //    state, record nothing and ignore the history lock. A bare actor refuses. ──
+  { name: 'create_tacks', exec: 'dedicated', annotations: ANN_WRITE,
+    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. A tack is NOT a marker: it lives in the agent panel for this project opening only, never in the project, history or export, and the user resolves, dismisses or clears it. Use it instead of add_marker unless the user asked for markers. The whole batch is created or none. Free on a composition's timeline, or with `anchor_layer_id` it follows that clip's source frames like an anchored marker (`t_us` must lie on the clip). Returns `{ tack_ids }`; `TackLimit` past 1000 per opening. Unrecorded; works while history is locked.",
+    inputSchema: { type: 'object', properties: {
+      tacks: { type: 'array', minItems: 1, description: 'The tacks to create, validated together: one refusal creates none.',
+        items: { type: 'object', additionalProperties: false, required: ['label', 't_us'], properties: {
+          label: { type: 'string', maxLength: TACK_LABEL_LIMIT, description: 'A few words — the panel row and the timeline band show it.' },
+          body: { type: 'string', maxLength: TACK_BODY_LIMIT, description: 'Plain-text detail; default empty.' },
+          kind: { type: 'string', enum: [...TACK_KINDS], description: 'note (default) informs; issue flags a problem; question asks the user to decide.' },
+          t_us: US_SCHEMA('Start, on the composition timeline'),
+          end_t_us: US_SCHEMA('Range end, timeline; omit for a point'),
+          anchor_layer_id: { type: 'string', description: 'A VideoClip, Audio or Group layer the tack should follow through moves and trims; t_us must lie on it. Omit for a free tack.' },
+          composition_id: { type: 'string', description: "A Group's composition; omit for the root (or, anchored, the clip's own)." },
+        } } },
+    }, required: ['tacks'] },
+    parseDedicated: (a) => {
+      const list = asNonEmptyArray(a.tacks, 'tacks', 'send at least one tack') as unknown[]
+      return { tacks: list.map((v, i) => parseTackInput(v, `tacks[${i}]`)) }
+    } },
+  { name: 'update_tack', exec: 'dedicated', annotations: ANN_SET,
+    description: "Change a tack's label, body, kind or status — `resolved` once you fixed what it pointed at, `dismissed` when it no longer matters, `open` to raise it again. At least one field. Its place is fixed at creation; to move one, delete and create it again. Returns the tack as project://tacks reads it. Unrecorded.",
+    inputSchema: { type: 'object', properties: {
+      tack_id: ID_SCHEMA('Tack'),
+      patch: { type: 'object', additionalProperties: false, description: 'Only the fields you set apply.', properties: {
+        label: { type: 'string', maxLength: TACK_LABEL_LIMIT, description: 'A few words.' },
+        body: { type: 'string', maxLength: TACK_BODY_LIMIT, description: 'Plain-text detail.' },
+        kind: { type: 'string', enum: [...TACK_KINDS], description: 'note | issue | question.' },
+        status: { type: 'string', enum: [...TACK_STATUSES], description: 'open | resolved | dismissed.' },
+      } },
+    }, required: ['tack_id', 'patch'] },
+    parseDedicated: (a) => ({ tack_id: parseUuid(a.tack_id, 'tack_id'), patch: parseTackPatch(a.patch) }) },
+  { name: 'delete_tacks', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
+    description: "Remove tacks: the listed `tack_ids` (every one must exist, or none is removed), or every tack created in work session `session_id`. Exactly one of the two. Returns `{ deleted_tack_ids }`. Unrecorded.",
+    inputSchema: { type: 'object', properties: {
+      tack_ids: { type: 'array', items: { type: 'string', description: 'Tack id.' }, minItems: 1, description: 'The tacks to remove.' },
+      session_id: { type: 'string', description: 'A work session id (project://session); removes every tack created in it.' },
+    } },
+    parseDedicated: (a) => {
+      const hasIds = a.tack_ids !== undefined && a.tack_ids !== null
+      const hasSession = a.session_id !== undefined && a.session_id !== null
+      if (hasIds === hasSession) throw new McpArgError('delete_tacks takes exactly one of tack_ids or session_id', hasIds ? 'session_id' : 'tack_ids')
+      if (hasSession) return { session_id: parseUuid(a.session_id, 'session_id') }
+      return { tack_ids: asNonEmptyArray(a.tack_ids, 'tack_ids', 'name at least one tack, or pass session_id').map((v, i) => parseUuid(v, `tack_ids[${i}]`)) }
+    } },
   // ── hybrid defs (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),
   //    NOT actor.mcpCall arms. They live here (not the Rust catalog like the
   //    other hybrids) because their input computes in Rust — the shot report,
@@ -2195,7 +2242,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
-    description: "Read project state as a tool result — the same views the `project://*` resources serve, for a client that cannot read MCP resources. `view`: `current`, `composition`, `compositions`, `media`, `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata incl. `modified_at`), `history`, `session` (who holds the work session), `effects` (the effects catalog), `media_thumbnail` / `media_frame` (an IMAGE block; `id` is the media id, `media_frame` also takes `t_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views return the body as text.",
+    description: "Read project state as a tool result — the views the `project://*` resources serve, for a client without MCP resources. `view`: `current`, `composition`, `compositions`, `media`, `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the work session), `effects` (the effects catalog), `tacks` (every review tack, placed; `composition_id` narrows), `media_thumbnail` / `media_frame` (an IMAGE block; `id` is the media id, `media_frame` takes `t_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media_thumbnail` / `media_frame`.' },
@@ -2272,6 +2319,48 @@ function parseCreateProject(a: Record<string, unknown>): Record<string, unknown>
     }
   }
   return { name, parent_folder: parent, width, height, fps_num: fps.num, fps_den: fps.den }
+}
+
+/** One `create_tacks` entry: a closed key set, a label of a few words, and
+ *  the times as integers — what `TackStore` validates against the project. */
+function parseTackInput(v: unknown, field: string): Record<string, unknown> {
+  const o = parseObj(v, field)
+  const keys = ['label', 'body', 'kind', 't_us', 'end_t_us', 'anchor_layer_id', 'composition_id']
+  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new McpArgError(`${field}: unknown key '${k}'; expected ${keys.join(', ')}`, field)
+  return {
+    label: parseTackLabel(o.label, `${field}.label`),
+    body: o.body === undefined || o.body === null ? '' : parseTackBody(o.body, `${field}.body`),
+    kind: o.kind === undefined || o.kind === null ? 'note' : parseOneOf(o.kind, TACK_KINDS, `${field}.kind`),
+    t_us: parseIntNum(o.t_us, `${field}.t_us`),
+    end_t_us: o.end_t_us === undefined || o.end_t_us === null ? null : parseIntNum(o.end_t_us, `${field}.end_t_us`),
+    anchor_layer_id: o.anchor_layer_id === undefined || o.anchor_layer_id === null ? null : parseUuid(o.anchor_layer_id, `${field}.anchor_layer_id`),
+    composition_id: o.composition_id === undefined || o.composition_id === null ? null : parseUuid(o.composition_id, `${field}.composition_id`),
+  }
+}
+function parseTackLabel(v: unknown, field: string): string {
+  const label = parseStr(v, field).trim()
+  if (label === '') throw new McpArgError(`${field} must be non-empty — a few words naming what to review`, field)
+  if (label.length > TACK_LABEL_LIMIT) throw new McpArgError(`${field} is ${label.length} characters; at most ${TACK_LABEL_LIMIT} — put the detail in body`, field)
+  return label
+}
+function parseTackBody(v: unknown, field: string): string {
+  const body = parseStr(v, field)
+  if (body.length > TACK_BODY_LIMIT) throw new McpArgError(`${field} is ${body.length} characters; at most ${TACK_BODY_LIMIT}`, field)
+  return body
+}
+function parseTackPatch(v: unknown): Record<string, unknown> {
+  const o = parseObj(v, 'patch')
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(o)) {
+    if (o[k] === undefined || o[k] === null) continue
+    if (k === 'label') out.label = parseTackLabel(o.label, 'patch.label')
+    else if (k === 'body') out.body = parseTackBody(o.body, 'patch.body')
+    else if (k === 'kind') out.kind = parseOneOf(o.kind, TACK_KINDS, 'patch.kind')
+    else if (k === 'status') out.status = parseOneOf(o.status, TACK_STATUSES, 'patch.status')
+    else throw new McpArgError(`invalid patch: unknown key '${k}' — expected { label?, body?, kind?, status? }`, 'patch')
+  }
+  if (Object.keys(out).length === 0) throw new McpArgError('update_tack needs at least one of label, body, kind, status — nothing to change', 'patch')
+  return out
 }
 
 const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))

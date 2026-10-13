@@ -1,6 +1,6 @@
 import { enterClock, ROOT_CLOCK, type CompositionClock } from '../../renderer/render/compositionClock'
-import { layerRate, sourceIn, sourceOut, localAtContent, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
-import { addTime, approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
+import { layerRate, sourceIn, sourceOut, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
+import { approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
 import { TimeMappingError } from '../../shared/timeMapping'
 import { cropProblem } from '../../shared/crop'
@@ -21,7 +21,7 @@ import { hasSourceWindow } from './mutations/helpers'
 // and the reconcile cannot disagree about which markers are hibernating.
 // `summary.ts` is a projection module over model + helpers and reaches nothing
 // here, so the edge is one-way.
-import { markerHibernatingForLayer } from './summary'
+import { markerHibernatingForLayer, sourceInstantTimelineUs } from './summary'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
@@ -376,7 +376,7 @@ export function reconcileMarkers(p: Project): DroppedMarker[] {
       // in the moment between the mutation and the validate that refuses it.
       if (!hasSourceWindow(layer.params)) continue
       if (markerHibernatingForLayer(m, layer)) continue
-      const t = snapFrameRound(layer.t_start_us + approximateTime(localAtContent(layer.params, addTime(exactTime(anchor.src_us), anchor.src_fraction ?? ZERO_TIME))), c.fps.num, c.fps.den)
+      const t = sourceInstantTimelineUs(layer, anchor, c.fps)
       if (t === m.t_us) continue
       // A region carries its END by the same frame delta rather than a second
       // anchor: one tie means one mapping, and holding `end_t_us` still while

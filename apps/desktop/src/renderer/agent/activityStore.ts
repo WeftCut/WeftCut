@@ -62,7 +62,12 @@ export async function wireAgentActivity(): Promise<() => void> {
     const activities = new Map((update.reset ? [] : current?.activities ?? []).map(a => [a.id, a]))
     for (const id of update.removed_ids) activities.delete(id)
     for (const a of update.activities) activities.set(a.id, a)
-    useAgentActivity.getState().receive({ ...update, activities: [...activities.values()] })
+    // Tacks ride the same delta: changed records replace in place, new ones
+    // append, so the merged list stays in creation order.
+    const tacks = new Map((update.reset ? [] : current?.tacks ?? []).map(t => [t.id, t]))
+    for (const id of update.removed_tack_ids ?? []) tacks.delete(id)
+    for (const t of update.tacks ?? []) tacks.set(t.id, t)
+    useAgentActivity.getState().receive({ ...update, activities: [...activities.values()], tacks: [...tacks.values()] })
   })
   const stopView = await listen<{ workspace_id: string }>(AGENT_VIEW_EVENT, e => {
     if (!disposed && e.payload.workspace_id === useAgentActivity.getState().snapshot?.workspace_id) {

@@ -1,13 +1,14 @@
-import { sourceIn, sourceOut } from '../../renderer/layerTiming'
-import { addTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
+import { localAtContent, sourceIn, sourceOut } from '../../renderer/layerTiming'
+import { addTime, approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { layerRateNumber } from '../../renderer/layerTiming'
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop'
 import { positionView, type PositionAnimation } from '../../shared/position'
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rational, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
 import { hasSourceWindow } from './mutations/helpers'
+import { snapFrameRound } from './snap'
 import type { DecodeRoute } from '../../shared/decode-route'
 
 // ── per-kind view structs — the layer-params projection the renderer reads
@@ -149,9 +150,32 @@ export function markerHibernating(c: Composition, m: Marker): boolean {
  *  should repeat a layer search for every marker. No derived state is cached. */
 export function markerHibernatingForLayer(m: Marker, layer: Layer | undefined): boolean {
   if (m.anchor === null) return false
+  return sourceInstantHibernating(m.anchor, layer)
+}
+
+/** A source instant of a layer — a marker's anchor, or an anchored tack's
+ *  start (ADR 0115), which stores the same pair without being a marker. */
+export type SourceInstant = Pick<MarkerAnchor, 'src_us' | 'src_fraction'>
+
+/** The hibernation rule itself, over a bare source instant: outside the
+ *  layer's half-open `[src_in, src_out)` window, or no layer with a window at
+ *  all. `markerHibernatingForLayer` is this for a marker; the tack projection
+ *  (`main/agent/tacks.ts`) asks the same question, so a tack and a marker on one
+ *  frame always sleep and wake together. */
+export function sourceInstantHibernating(at: SourceInstant, layer: Layer | undefined): boolean {
   if (layer === undefined || !hasSourceWindow(layer.params)) return true
-  const time = addTime(exactTime(m.anchor.src_us), m.anchor.src_fraction ?? ZERO_TIME)
+  const time = addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)
   return compareTime(time, sourceIn(layer.params)) < 0 || compareTime(time, sourceOut(layer)) >= 0
+}
+
+/** The timeline time a source instant of `layer` reads at, on the frame grid
+ *  of the composition holding it — the ONE source→timeline derivation:
+ *  `reconcileMarkers` writes an anchored marker's `t_us` with it and the tack
+ *  projection places an anchored tack with it. Callers have established that
+ *  the layer has a source window (`hasSourceWindow`). */
+export function sourceInstantTimelineUs(layer: Layer, at: SourceInstant, fps: Rational): number {
+  const local = localAtContent(layer.params, addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME))
+  return snapFrameRound(layer.t_start_us + approximateTime(local), fps.num, fps.den)
 }
 
 /** The layer of `c` an anchor names, or `undefined` when it lives elsewhere or

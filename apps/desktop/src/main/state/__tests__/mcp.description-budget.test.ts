@@ -62,7 +62,10 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // null-reset semantics (ADR 0111). The encode controls need no prose guessing.
 // +8 KB: six app-level preset tools, typed portable create/update patches and
 // explicit preset selection for options/jobs (ADR 0113).
-const CATALOG_BYTE_BUDGET = 148_000
+// +3 KB: the three tack verbs and the `tacks` read (ADR 0115) — a batch item
+// schema with closed kind/status enums, so agents point at review ranges
+// without reaching for markers.
+const CATALOG_BYTE_BUDGET = 151_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
