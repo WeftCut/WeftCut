@@ -1026,3 +1026,32 @@ duration, error and actual history IDs. Reverted describes an edit's current
 effect, independently of whether its call completed or failed. The bounded
 activity stream retains running calls and does not restore from disk.
 _Avoid_: diagnostic log entry, history entry, permanent transcript
+
+**Tack**:
+A time range an agent points the user at for review — free on a composition,
+or anchored to a layer's source time and placed on read. Runtime-only within a
+project opening; not project content, not in history, never exported. The user
+resolves, dismisses or clears it, or converts it into an ordinary marker
+(ADR 0115). Named for the tailor's tack: a temporary thread mark pulled out
+once the seam is sewn. One letter from **Track** — never abbreviate either.
+UI word: Tack / 批注.
+_Avoid_: annotation, agent marker, review marker (it is not a marker), comment;
+标注 (the Motif callout overlay), 备注 (the marker's note field)
+
+**Review baseline**:
+The project state the user last accepted, against which agent changes are
+reviewed. Owned by history, reset when a project is opened, advanced only by
+approval. Not a checkpoint. UI word: Review baseline / 审阅基线.
+_Avoid_: base checkpoint, base commit, snapshot (unqualified)
+
+**Unreviewed change**:
+One entity-level difference between the review baseline and the current state
+that an agent-sourced commit touched since the baseline. A difference only the
+user caused is a user change and needs no review. UI word: Change / 变更.
+_Avoid_: diff entry, hunk, edit (that is the operation, not its result)
+
+**Approve**:
+Fold unreviewed changes into the review baseline — all at once or one change
+at a time. Changes nothing in the project and records nothing. UI word:
+Approve / 批准.
+_Avoid_: accept, commit, apply
