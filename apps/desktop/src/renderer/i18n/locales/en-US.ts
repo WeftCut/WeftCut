@@ -1217,7 +1217,9 @@ const enUS = {
   },
   timeline: {
     review_overlay: "Review overlay",
-    review_overlay_hint: "Review overlay: show the tacks agents left for your review in the marker lane, and their unreviewed changes on the clips",
+    review_overlay_hint: "Review overlay: show the tacks agents left for your review in a row under the markers, and their unreviewed changes on the clips",
+    // The Review lane's header cell (ReviewLane.tsx): the row of tack chips.
+    review_lane: "Tacks",
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
     empty_ab_roll:
       "No A/B-roll content here. Drop a clip on $t(tracks.roles.a-roll) or $t(tracks.roles.b-roll), or press {{key}} to switch to All Tracks.",
@@ -1644,6 +1646,9 @@ const enUS = {
     convert_hint: "Add an ordinary marker here with this label and note (undoable), then remove the tack",
     no_body: "No details.",
     band_tooltip: "Tack: {{label}} · {{time}}",
+    // The Review lane's "+n" badge: tacks that fit on neither of its two rows.
+    band_overflow_one: "{{count}} more tack here",
+    band_overflow_other: "{{count}} more tacks here",
     retention: "Tacks last for this project opening only. They are never saved or exported.",
   },
   changes: {

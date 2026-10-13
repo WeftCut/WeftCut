@@ -30,7 +30,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
   const ordinals = useMemo(() => summary ? groupOrdinals(summary.compositions, summary.root_id) : undefined, [summary])
   const closed = tacks.filter(x => x.status !== 'open').length
 
-  // A band click or a locate names a tack; bring its row into view.
+  // A chip click or a locate names a tack; bring its row into view.
   useEffect(() => {
     if (selected === null) return
     const row = list.current?.querySelector<HTMLElement>(`[data-tack-id="${CSS.escape(selected)}"]`)

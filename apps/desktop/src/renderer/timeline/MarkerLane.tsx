@@ -14,11 +14,6 @@ import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
 import { computeLaneMarkers, type LaneMarker } from "./rulerModel";
-import { TackBand } from "./TackBand";
-import { ScanEye } from "lucide-react";
-import { AppIcon } from "@/components/AppIcon";
-import { useAgentActivity } from "../agent/activityStore";
-import { useReview } from "../agent/reviewStore";
 
 /// The project's markers, in a row of their own directly under the ruler.
 ///
@@ -279,14 +274,6 @@ export function MarkerLaneHeader() {
   const { t } = useTranslation();
   const scale = useUiScale();
   const markersVisible = useMarkersVisible();
-  const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
-  // The Review overlay's switch sits on the row it paints into, and only while
-  // this project opening has review material to show — an idle switch would be
-  // one more control on a row that exists for markers. The View menu carries
-  // the same switch unconditionally.
-  const hasTacks = useAgentActivity((s) => (s.snapshot?.tacks.length ?? 0) > 0);
-  const hasChanges = useReview((s) => (s.view?.unreviewed.length ?? 0) > 0);
-  const hasReview = hasTacks || hasChanges;
   if (!markersVisible) return null;
   return (
     <div
@@ -301,21 +288,6 @@ export function MarkerLaneHeader() {
       <span className="truncate text-[length:var(--font-size-fine)] uppercase tracking-wide text-muted-foreground/70">
         {t("timeline.marker_lane", { defaultValue: "Markers" })}
       </span>
-      {hasReview && (
-        <button
-          type="button"
-          data-testid="timeline-review-overlay-toggle"
-          aria-pressed={reviewOverlay}
-          aria-label={t("timeline.review_overlay")}
-          title={t("timeline.review_overlay_hint")}
-          onClick={() => useAgentActivity.setState({ reviewOverlay: !reviewOverlay })}
-          className={`ml-auto flex flex-none items-center rounded-[2px] px-0.5 ${
-            reviewOverlay ? "text-[color:var(--tack)]" : "text-muted-foreground/70"
-          } hover:bg-[var(--hover-neutral)]`}
-        >
-          <AppIcon icon={ScanEye} size="micro" />
-        </button>
-      )}
     </div>
   );
 }
@@ -446,17 +418,6 @@ export function MarkerLane({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* The Review overlay's tack bands, BEHIND the marks: earlier in the
-            lane's stacking order, inside its box, so the overlay can never add
-            height or reflow the timeline. */}
-        <TackBand
-          compositionId={compositionId}
-          pxPerSec={pxPerSec}
-          scrollLeftPx={scrollLeftPx}
-          viewportWidthPx={viewportWidthPx}
-          fpsNum={fpsNum}
-          fpsDen={fpsDen}
-        />
         {/* Rendered only when it has marks, which is what makes an empty visible
             lane hold nothing: an empty wrapper would leave "painted
             transparently" and "not painted" indistinguishable. `inset-0` so its

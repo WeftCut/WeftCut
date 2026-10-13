@@ -94,7 +94,9 @@
 }
 
 /* Tacks (ADR 0115): a band along the strip's foot, below the marker pips'
-   full-height lines and region fills, in the one tack hue. */
+   full-height lines and region fills, in the one tack hue. The ranges arrive
+   merged (`tackCoverage`), so one opacity covers the band and an overlap never
+   darkens into a second shade. */
 .mini-tack {
   position: absolute;
   bottom: 0;
@@ -102,10 +104,15 @@
   background: var(--tack);
   pointer-events: none;
   border-radius: 1px;
+  opacity: 0.6;
 }
 
-.mini-tack-region {
-  opacity: 0.75;
+/* The agent panel's selected tack, over the union: full strength, a ring and a
+   little more height, so it stands out of a band already in its own hue. */
+.mini-tack-selected {
+  height: calc(7 * var(--ui-px));
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--foreground);
 }
 
 .mini-tack-point {
@@ -130,6 +137,85 @@
 .mini-change-moved { background: var(--review-modified); }
 .mini-change-removed { background: var(--review-removed); }
 .mini-change-shifted { background: var(--review-shifted); opacity: 0.45; }
+
+/* Review lane chips (ADR 0115, timeline/ReviewLane.tsx). Opaque: the fill is
+   the tack hue mixed into the lane's own surface, not laid over it at an
+   alpha, so a chip reads the same wherever it sits — and packing keeps chips
+   apart, so no two ever stack. The left edge is drawn in the full hue: it is
+   the tack's start, the one x a range chip states exactly. */
+.review-tack {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--ui-px));
+  padding: 0 calc(2 * var(--ui-px));
+  overflow: hidden;
+  border-radius: 2px;
+  box-shadow: inset 2px 0 0 var(--tack);
+  background: color-mix(in srgb, var(--tack) 26%, var(--card));
+  color: var(--foreground);
+  font-size: var(--font-size-fine);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.review-tack:hover {
+  background: color-mix(in srgb, var(--tack) 42%, var(--card));
+}
+
+.review-tack-icon {
+  flex: none;
+  color: var(--tack);
+}
+
+.review-tack-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Selected: the whole hue, dark ink and a light ring, raised over the rest.
+   The others step back while one is chosen, so the eye lands on it. */
+.review-tack[data-selected] {
+  z-index: 1;
+  background: var(--tack);
+  color: #0b1f1c;
+  box-shadow: 0 0 0 1px var(--foreground);
+}
+
+.review-tack[data-selected] .review-tack-icon {
+  color: inherit;
+}
+
+.review-lane[data-selecting] .review-tack:not([data-selected]) {
+  opacity: 0.55;
+}
+
+/* "+n": tacks that fit on neither sub-row. Above the second sub-row's chips
+   and drawn as a count, not a chip, so it never reads as one more tack. */
+.review-tack-overflow {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(2 * var(--ui-px));
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--tack);
+  background: var(--card);
+  color: var(--tack);
+  font-size: var(--font-size-fine);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.review-tack-overflow:hover,
+.review-tack-overflow[data-selected] {
+  background: color-mix(in srgb, var(--tack) 26%, var(--card));
+}
 
 .mini-playhead {
   position: absolute;

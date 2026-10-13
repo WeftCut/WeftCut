@@ -14,8 +14,12 @@ import {
   MARKER_MIN_REGION_PX,
   RULER_OVERSCAN_PX,
   RULER_SCROLL_QUANTUM_PX,
+  TACK_CHIP_GAP_PX,
   computeLaneMarkers,
   computeRulerModel,
+  packLaneTacks,
+  windowLaneTacks,
+  type LaneTackSource,
   type LaneMarkerSource,
   type RulerModel,
   type RulerModelInput,
@@ -703,5 +707,75 @@ describe("marker ordering and payload", () => {
       color: "#0a1b2c",
       tUs: 100_000,
     });
+  });
+});
+
+describe("review lane packing", () => {
+  const MIN = 13;
+  const tk = (id: string, t_us: number | null, end_t_us: number | null = null): LaneTackSource =>
+    ({ id, kind: "note", t_us, end_t_us, label: id });
+  const pack = (tacks: LaneTackSource[], pxPerSec = 100) => packLaneTacks({ tacks, pxPerSec, minChipPx: MIN });
+
+  /// A deterministic jumble of points, short and long ranges, many overlapping.
+  function jumble(n: number): LaneTackSource[] {
+    let seed = 7;
+    const next = () => (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648) / 2_147_483_648;
+    return Array.from({ length: n }, (_, i) => {
+      const t = Math.round(next() * 20_000_000);
+      const kind = next();
+      return tk(`t${i}`, t, kind < 0.3 ? null : t + Math.round(next() * (kind < 0.6 ? 50_000 : 3_000_000)));
+    });
+  }
+
+  it("never overlaps two chips on one sub-row, and accounts for every placed tack once", () => {
+    const tacks = [...jumble(200), tk("unplaced", null)];
+    const { chips, overflow } = pack(tacks);
+    for (const row of [0, 1]) {
+      const onRow = chips.filter((c) => c.row === row).sort((a, b) => a.xPx - b.xPx);
+      for (let i = 1; i < onRow.length; i++) {
+        expect(onRow[i]!.xPx).toBeGreaterThanOrEqual(onRow[i - 1]!.xPx + onRow[i - 1]!.widthPx + TACK_CHIP_GAP_PX);
+      }
+    }
+    expect(chips.every((c) => c.row === 0 || c.row === 1)).toBe(true);
+    const ids = [...chips.map((c) => c.id), ...overflow.flatMap((o) => o.ids)];
+    expect(ids.sort()).toEqual(tacks.filter((t) => t.t_us !== null).map((t) => t.id).sort());
+  });
+
+  it("is a function of the tack set, not of the order it arrives in", () => {
+    const tacks = jumble(60);
+    const reversed = [...tacks].reverse();
+    expect(pack(reversed)).toEqual(pack(tacks));
+    // Same start: id breaks the tie, whichever is listed first.
+    expect(pack([tk("b", 0, 1_000_000), tk("a", 0, 1_000_000)]).chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["b", 1]]);
+  });
+
+  it("gives a point and a too-short range the minimum chip width", () => {
+    const { chips } = pack([tk("point", 1_000_000), tk("short", 3_000_000, 3_010_000), tk("range", 5_000_000, 6_000_000)]);
+    expect(chips.map((c) => [c.id, c.xPx, c.widthPx, c.endTUs])).toEqual([
+      ["point", 100, MIN, null], ["short", 300, MIN, 3_010_000], ["range", 500, 100, 6_000_000],
+    ]);
+    // Packed by that visual width: a second point 5 px on would sit on the
+    // first's chip, so it drops to the second sub-row.
+    expect(pack([tk("p1", 1_000_000), tk("p2", 1_050_000)]).chips.map((c) => c.row)).toEqual([0, 1]);
+  });
+
+  it("clusters what fits on neither sub-row into one badge per overlapping run", () => {
+    const { chips, overflow } = pack([
+      tk("a", 0, 1_000_000), tk("b", 0, 1_000_000), tk("c", 0, 1_000_000), tk("d", 500_000, 1_500_000),
+      tk("e", 5_000_000, 6_000_000), tk("f", 5_000_000, 6_000_000), tk("g", 5_500_000, 6_500_000),
+    ]);
+    expect(chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["b", 1], ["e", 0], ["f", 1]]);
+    expect(overflow).toEqual([
+      { ids: ["c", "d"], xPx: 0, endPx: 150 },
+      { ids: ["g"], xPx: 550, endPx: 650 },
+    ]);
+  });
+
+  it("culls after packing, so a chip's sub-row does not change with the scroll", () => {
+    const packing = pack([tk("a", 0, 100_000_000), tk("b", 50_000_000, 51_000_000), tk("far", 90_000_000, 91_000_000)]);
+    const atStart = windowLaneTacks(packing, { scrollLeftPx: 0, viewportWidthPx: 1000, overscanPx: 0 });
+    const atEnd = windowLaneTacks(packing, { scrollLeftPx: 8500, viewportWidthPx: 1000, overscanPx: 0 });
+    expect(atStart.chips.map((c) => [c.id, c.row])).toEqual([["a", 0]]);
+    expect(atEnd.chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["far", 1]]);
   });
 });

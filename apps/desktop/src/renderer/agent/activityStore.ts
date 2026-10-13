@@ -22,10 +22,10 @@ interface AgentPanelState {
   anchor: { id: string; offset: number } | null
   following: boolean
   tab: AgentPanelTab
-  /** The tack a timeline band or a locate last pointed at; highlighted in the
+  /** The tack a Review lane chip or a locate last pointed at; highlighted in the
    *  Tacks tab. Cleared with the project opening. */
   selectedTack: string | null
-  /** The editor timeline's Review overlay (tack bands in the marker lane; the
+  /** The editor timeline's Review overlay (the Review lane of tack chips; the
    *  Changes decorations on clips and lanes, `timeline/ReviewMarks.tsx`).
    *  Runtime-only like the material it shows: on by default, kept across
    *  project openings within one app run, not persisted. */

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
 import type { ReviewRangeMark } from "./reviewHighlight";
+import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 
@@ -21,8 +22,14 @@ interface MiniTimelineProps {
   markers: MarkerSummary[];
   /// Open tacks placed on this composition (`paintableTacks`), painted as a
   /// band along the strip's foot — a separate row of ink from the marker pips,
-  /// which run the strip's full height.
+  /// which run the strip's full height. The band is too thin to pack, so it
+  /// paints the tacks' UNION (`tackCoverage`) at one opacity: overlapping
+  /// tacks must not darken into what reads as a different mark.
   tacks?: readonly TackView[];
+  /// The agent panel's selected tack (`selectedTack`). Drawn over the union at
+  /// full strength when it is one of `tacks`, so the tack the panel is showing
+  /// can be found on the strip.
+  selectedTackId?: string | null;
   /// Review change ranges on this composition (`useCompositionChangeRanges`),
   /// painted as a second band along the strip's head — opposite the tack band,
   /// so the two never read as one: added/modified/removed in their review
@@ -76,6 +83,7 @@ export function MiniTimeline({
   durationUs,
   markers,
   tacks = [],
+  selectedTackId = null,
   changes = [],
   onSeek,
   fpsNum,
@@ -147,6 +155,22 @@ export function MiniTimeline({
     }
   }
 
+  // Merged once per tack set: the union is what the band paints, so a strip
+  // under a dense review reads as covered, not as a stack of shades.
+  const tackBand = useMemo(() => tackCoverage(tacks), [tacks]);
+  const selectedTack =
+    selectedTackId === null ? undefined : tacks.find((tack) => tack.id === selectedTackId);
+  const selectedSpan =
+    selectedTack === undefined || selectedTack.t_us === null
+      ? null
+      : {
+          start: selectedTack.t_us,
+          end:
+            selectedTack.end_t_us !== null && selectedTack.end_t_us > selectedTack.t_us
+              ? selectedTack.end_t_us
+              : null,
+        };
+
   const playheadLeft =
     durationUs > 0
       ? (Math.max(0, Math.min(currentTimeUs, durationUs)) / durationUs) * width
@@ -207,23 +231,34 @@ export function MiniTimeline({
             />
           );
         })}
-        {durationUs > 0 && tacks.map((tack) => {
-          if (tack.t_us === null) return null;
-          const left = (tack.t_us / durationUs) * 100;
-          const span =
-            tack.end_t_us !== null && tack.end_t_us > tack.t_us
-              ? ((tack.end_t_us - tack.t_us) / durationUs) * 100
-              : 0;
-          return (
-            <div
-              key={tack.id}
-              data-testid="mini-tack"
-              className={span > 0 ? "mini-tack mini-tack-region" : "mini-tack mini-tack-point"}
-              style={span > 0 ? { left: `${left}%`, width: `${span}%` } : { left: `${left}%` }}
-              title={tack.label}
-            />
-          );
-        })}
+        {durationUs > 0 && tackBand.spans.map(([start, end]) => (
+          <div
+            key={`span-${start}`}
+            data-testid="mini-tack"
+            className="mini-tack mini-tack-region"
+            style={{ left: `${(start / durationUs) * 100}%`, width: `${((end - start) / durationUs) * 100}%` }}
+          />
+        ))}
+        {durationUs > 0 && tackBand.points.map((tUs) => (
+          <div
+            key={`point-${tUs}`}
+            data-testid="mini-tack"
+            className="mini-tack mini-tack-point"
+            style={{ left: `${(tUs / durationUs) * 100}%` }}
+          />
+        ))}
+        {durationUs > 0 && selectedSpan !== null && (
+          <div
+            data-testid="mini-tack-selected"
+            className={`mini-tack mini-tack-selected ${selectedSpan.end === null ? "mini-tack-point" : "mini-tack-region"}`}
+            style={{
+              left: `${(selectedSpan.start / durationUs) * 100}%`,
+              ...(selectedSpan.end === null
+                ? {}
+                : { width: `${((selectedSpan.end - selectedSpan.start) / durationUs) * 100}%` }),
+            }}
+          />
+        )}
         {durationUs > 0 && changes.map((c, i) => {
           const left = (c.tStartUs / durationUs) * 100;
           const span = ((c.tEndUs - c.tStartUs) / durationUs) * 100;

@@ -1065,7 +1065,9 @@ const zhCN: Resources = {
   },
   timeline: {
     review_overlay: "审阅叠加层",
-    review_overlay_hint: "审阅叠加层：在标记轨中显示代理留下、供你审阅的批注，并在片段上标出代理尚未审阅的变更",
+    review_overlay_hint: "审阅叠加层：在标记下方的独立一行中显示代理留下、供你审阅的批注，并在片段上标出代理尚未审阅的变更",
+    // 审阅行（ReviewLane.tsx）的表头名称：批注芯片所在的行。
+    review_lane: "批注",
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
     empty_ab_roll:
       "此处没有 A/B 轨内容。将片段拖到 $t(tracks.roles.a-roll) 或 $t(tracks.roles.b-roll)，或按 {{key}} 切换到全轨显示。",
@@ -1459,6 +1461,9 @@ const zhCN: Resources = {
     convert_hint: "在此处添加一个普通标记，以此批注的标题和内容作为标记的名称与备注（可撤销），然后移除该批注",
     no_body: "无详细内容。",
     band_tooltip: "批注：{{label}} · {{time}}",
+    // 审阅行的“+n”徽标：两行都放不下的批注。
+    band_overflow_one: "此处另有 {{count}} 条批注",
+    band_overflow_other: "此处另有 {{count}} 条批注",
     retention: "批注只保留在本次打开的项目中，不会保存或导出。",
   },
   changes: {

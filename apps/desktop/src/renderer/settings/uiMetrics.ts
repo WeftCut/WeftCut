@@ -90,6 +90,19 @@ export const UI_METRICS = {
       /** Line box of a marker name (`--font-size-fine`), for vertical centring. */
       labelLine: 9,
     },
+    review: {
+      /** Review lane under the marker lane: two sub-rows of tack chips, so
+       * `2 * chipHeight + rowGap + 2 * inset`. Fixed whatever the tack count. */
+      laneHeight: 32,
+      /** A chip holds a fine-role name, like a marker region's capsule. */
+      chipHeight: 13,
+      /** Space above the first sub-row and below the second. */
+      inset: 2,
+      rowGap: 2,
+      /** Least chip width: the kind icon (`--icon-size-fine`) plus its padding,
+       * so a point tack is still a target with its kind on it. */
+      chipMinWidth: 13,
+    },
   },
 
   /** Preview transform gizmo. Client pixels over the canvas: the affordances

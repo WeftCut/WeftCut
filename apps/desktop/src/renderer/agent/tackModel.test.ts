@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { TackView } from '../../shared/agent-activity'
-import { groupTacks, paintableTacks, tackMarkerArgs, tackUnplacedReason } from './tackModel'
+import type { AgentWorkSession, TackView } from '../../shared/agent-activity'
+import { groupTacks, paintableTacks, reviewLaneExists, tackCoverage, tackMarkerArgs, tackUnplacedReason } from './tackModel'
 
 const tack = (patch: Partial<TackView>): TackView => ({
   id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: 'B', status: 'open',
@@ -38,5 +38,25 @@ describe('tack model', () => {
     expect(tackMarkerArgs(tack({ state: 'hibernating', t_us: null }))).toBeNull()
     expect(tackUnplacedReason(tack({ state: 'stale' }))).toBe('tacks.stale_hint')
     expect(tackUnplacedReason(tack({}))).toBeNull()
+  })
+
+  it('holds the Review lane on the overlay and any review material, never on the open count', () => {
+    const session = { id: 's' } as AgentWorkSession
+    expect(reviewLaneExists(true, null)).toBe(false)
+    expect(reviewLaneExists(true, { sessions: [], tacks: [] })).toBe(false)
+    expect(reviewLaneExists(true, { sessions: [session], tacks: [] })).toBe(true)
+    // A closed or unplaced tack is still material: resolving the last open one
+    // must not take the row away under the user.
+    expect(reviewLaneExists(true, { sessions: [], tacks: [tack({ status: 'resolved' })] })).toBe(true)
+    expect(reviewLaneExists(true, { sessions: [], tacks: [tack({ state: 'stale', t_us: null })] })).toBe(true)
+    expect(reviewLaneExists(false, { sessions: [session], tacks: [tack({})] })).toBe(false)
+  })
+
+  it('merges tack ranges into disjoint spans and keeps only uncovered points', () => {
+    expect(tackCoverage([
+      tack({ t_us: 50, end_t_us: 60 }), tack({ t_us: 10, end_t_us: 20 }), tack({ t_us: 15, end_t_us: 30 }),
+      tack({ t_us: 30, end_t_us: 40 }), tack({ t_us: 25, end_t_us: null }), tack({ t_us: 45, end_t_us: 45 }),
+      tack({ t_us: 45, end_t_us: null }), tack({ t_us: null, end_t_us: null }),
+    ])).toEqual({ spans: [[10, 40], [50, 60]], points: [45] })
   })
 })

@@ -265,7 +265,7 @@
     /* Keyframe diamonds, armed stopwatches, and pending badges — a domain
        accent, not a warning; kept distinct from --warning on purpose. */
     --keyframe: #facc15;
-    /* Tacks — agent review marks (ADR 0115): the timeline band, the mini
+    /* Tacks — agent review marks (ADR 0115): the Review lane chips, the mini
        timeline band and the agent panel's Tacks tab. A hue no marker default,
        selection, playhead or status role uses, so a tack never reads as one. */
     --tack: #2dd4bf;

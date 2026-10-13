@@ -20,6 +20,7 @@ import {
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
+import { useAgentActivity } from "./activityStore";
 import { useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
@@ -70,6 +71,7 @@ export const AgentMode = forwardRef(function AgentMode(
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
   const tacks = useCompositionTacks(comp?.id ?? null);
+  const selectedTack = useAgentActivity((s) => s.selectedTack);
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
   const changes = useCompositionChangeRanges(comp?.id ?? null);
@@ -157,6 +159,7 @@ export const AgentMode = forwardRef(function AgentMode(
           durationUs={comp?.duration_us ?? 0}
           markers={comp?.markers ?? []}
           tacks={tacks}
+          selectedTackId={selectedTack}
           changes={changes}
           onSeek={onSeek}
           fpsNum={comp?.fps_num ?? 30}

@@ -95,9 +95,12 @@ compared, so a per-entity overlay suffices.
   content present; revisit if that lock changes.
 - Spatial tacks (regions on the frame) is deferred and will need its own
   decision about coordinates under transforms.
-- The tack band lives in the marker lane, whose row exists only while markers
-  are visible. With markers hidden, tacks show in the agent panel and the mini
-  timeline only.
+- Tacks paint in a Review lane of their own under the marker lane, not in it:
+  sharing the row mixed them with the user's markers and hid them with
+  markers. The lane exists while the Review overlay is on and the project
+  opening has had a work session or a tack — never by the open-tack count, so
+  an agent at work does not reflow the timeline — at a fixed two sub-rows of
+  packed chips; what fits in neither is counted in a "+n" badge.
 - Approval is refused when the view the user acted on is no longer current
   (an agent committed in between); nothing is approved and the fresh list is
   shown to review again.

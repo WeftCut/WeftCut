@@ -1041,6 +1041,15 @@ UI word: Tack / 批注.
 _Avoid_: annotation, agent marker, review marker (it is not a marker), comment;
 标注 (the Motif callout overlay), 备注 (the marker's note field)
 
+**Review lane**:
+The timeline row below the marker lane that carries tacks, packed into two
+fixed sub-rows. Exists while the review overlay is on and the project opening
+has seen agent review material, so an agent at work never reflows the
+timeline. Belongs to the ruler family like the marker lane; not a scrub
+surface. UI word: the header reads Tacks / 批注; the row is the review lane /
+审阅行.
+_Avoid_: tack track, tack band (the pre-lane rendering), review track
+
 **Review baseline**:
 The project state the user last accepted, against which agent changes are
 reviewed. Owned by history, reset when a project is opened, advanced only by

@@ -96,6 +96,7 @@ import {
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip, DropStripHeader, DropStripSeam } from "./DropStrip";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
+import { ReviewLane, ReviewLaneHeader } from "./ReviewLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineFixedRow } from "./TimelineFixedRow";
 import { TimelinePlayhead } from "./TimelinePlayhead";
@@ -1770,7 +1771,7 @@ export const Timeline = memo(function Timeline({
         <div
           ref={shellRef}
           data-testid="timeline-layout"
-          className={`relative grid min-h-0 min-w-0 w-full flex-1 grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden ${insideGroup ? "" : "bg-card"}`}
+          className={`relative grid min-h-0 min-w-0 w-full flex-1 grid-rows-[auto_auto_auto_auto_minmax(0,1fr)] overflow-hidden ${insideGroup ? "" : "bg-card"}`}
           // One step off the panel surface for every depth below the root, capped so
           // a deep nest cannot walk the background into the foreground. Resolve tints
           // a compound clip's timeline the same way, and it is the one signal that
@@ -1796,6 +1797,12 @@ export const Timeline = memo(function Timeline({
           </TimelineFixedRow>
           <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<MarkerLaneHeader />}>
             <MarkerLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
+              viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
+          </TimelineFixedRow>
+          {/* Under the marker lane (or the ruler, with markers hidden): agent
+              review material sits below the user's marks, above the tracks. */}
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<ReviewLaneHeader />}>
+            <ReviewLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
               viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
           </TimelineFixedRow>
           <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<DropStripHeader />}>

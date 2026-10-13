@@ -94,7 +94,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
   }
 })
 
-test('tacks: listed in the panel, banded in the marker lane, converted into one undoable marker', async () => {
+test('tacks: listed in the panel, chipped in the review lane, converted into one undoable marker', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   let client: Client | null = null
@@ -111,17 +111,25 @@ test('tacks: listed in the panel, banded in the marker lane, converted into one 
       return s.compositions[s.root_id]!.markers
     }
 
-    // The Review overlay paints the tack inside the marker lane without moving it.
-    const lane = page.getByTestId('timeline-marker-lane')
-    await expect(page.getByTestId('timeline-tack')).toHaveCount(1)
-    const before = await lane.boundingBox()
+    // The tack is a chip in the Review lane, a row of its own under the marker
+    // lane; the marker lane holds no tack.
+    const lane = page.getByTestId('timeline-review-lane')
+    await expect(lane.getByTestId('timeline-tack')).toHaveCount(1)
+    await expect(page.getByTestId('timeline-marker-lane').getByTestId('timeline-tack')).toHaveCount(0)
+    const markerBox = (await page.getByTestId('timeline-marker-lane').boundingBox())!
+    expect((await lane.boundingBox())!.y).toBeGreaterThanOrEqual(markerBox.y + markerBox.height - 1)
+    // The header switch turns the overlay off and takes the row with it; the
+    // View menu turns it back on.
     await page.getByTestId('timeline-review-overlay-toggle').click()
+    await expect(lane).toHaveCount(0)
     await expect(page.getByTestId('timeline-tack')).toHaveCount(0)
-    expect(await lane.boundingBox()).toEqual(before)
-    await page.getByTestId('timeline-review-overlay-toggle').click()
+    await page.locator('.menu-trigger').nth(2).click()
+    await page.locator('.app-menu-item').filter({ hasText: /^Review overlay$/ }).click()
+    await expect(lane.getByTestId('timeline-tack')).toHaveCount(1)
 
-    // A band click opens the Agent panel on its Tacks tab with the row selected.
+    // A chip click opens the Agent panel on its Tacks tab with the row selected.
     await page.getByTestId('timeline-tack').click()
+    await expect(page.getByTestId('timeline-tack')).toHaveAttribute('data-selected', 'true')
     await expect(dockPanel(page, 'agent')).toHaveCount(1)
     await expect(page.getByRole('tab', { name: /Tacks/ })).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.agent-tack[data-selected="true"]')).toContainText('Long pause')
