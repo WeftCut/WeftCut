@@ -133,6 +133,14 @@ npm run e2e -- --slice=overlap                   # one CI runner's share (slices
 The preflight always prints which tier it is running, so a smaller-than-expected
 test count is never a mystery.
 
+`mcp-editing-workflow.spec.ts` exercises a complete editing session through an
+authenticated SDK client: create a project and solid-color clips, trim both
+edges, move a clip to close a gap, read the timeline, and export. FFprobe checks
+the output duration and frame count; FFmpeg samples both sides of the cut to
+verify that the rendered file contains the edited sequence. It needs the normal
+export prerequisites above, but no source media of its own. Run it with
+`npm run e2e -- mcp-editing-workflow.spec.ts --retries=0`.
+
 ### Timing reports
 
 Every Playwright invocation writes a JSON report to `e2e-report/<project>.json`
