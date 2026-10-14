@@ -14,14 +14,14 @@
 // media pool, audio roles) — are never compared: a value patched everywhere
 // cannot differ, and an approved value that bypassed the patch must not show
 // up as a false difference either.
-import { contentAt, localAtContent } from '../../renderer/layerTiming'
-import { approximateTime, exactTime } from '../../renderer/timeMapping'
-import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
+import { contentAt, localAtContent, sourceIn } from '../../renderer/layerTiming'
+import { approximateTime, exactTime, subtractTime } from '../../renderer/timeMapping'
+import type { Composition, Effect, Layer, LayerParams, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
 import { hasSourceWindow } from './mutations/helpers'
-import { parseEntityKey, type Change, type ChangeAspect, type ChangeClass, type EntityKey, type EntityKind, type EntityLocation, type GroupDecoration, type TimeRange } from '../../shared/review'
+import { parseEntityKey, type Change, type ChangeAspect, type ChangeClass, type ChangeDetail, type EntityKey, type EntityKind, type EntityLocation, type GroupDecoration, type PlacedRange, type TimeRange } from '../../shared/review'
 
 export { parseEntityKey }
-export type { Change, ChangeAspect, ChangeClass, EntityKey, EntityKind, EntityLocation, GroupDecoration, TimeRange }
+export type { Change, ChangeAspect, ChangeClass, ChangeDetail, EntityKey, EntityKind, EntityLocation, GroupDecoration, PlacedRange, TimeRange }
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 
@@ -171,31 +171,51 @@ function isAnimated(v: unknown): v is { mode: 'Static' | 'Keyframed'; value: unk
   const m = (v as { mode?: unknown }).mode
   return (m === 'Static' || m === 'Keyframed') && 'value' in v
 }
-/** Classify a params subtree difference: an animated track that is keyframed
- *  on either side is `keyframes`; any other difference is `params`. */
-function paramAspects(a: unknown, b: unknown, out: Set<ChangeAspect>): void {
+/** The params whose value (`params`) or keyframes (`keyframes`) differ, by wire
+ *  key — insertion-ordered, deduped. */
+interface ParamKeys { params: Set<string>; keyframes: Set<string> }
+
+/** A params field's wire key under `parent` (`''` at the top), named flat the
+ *  way the inspector's param keys are: a transform track by its own name, the
+ *  position by `x`/`y`/`path_progress` (its mode or path as `position`), a font
+ *  or outline field as `font_size_px`/`outline_width`; anything deeper is its
+ *  top-level field (`crop`, `shadow`, `props`). */
+function paramKeyOf(parent: string, k: string): string {
+  if (parent === '') return k
+  if (parent === 'transform') return k
+  if (parent === 'position') return k === 'x' || k === 'y' ? k : k === 'progress' ? 'path_progress' : 'position'
+  if (parent === 'font' || parent === 'outline') return `${parent}_${k}`
+  return parent
+}
+
+/** Classify a params subtree difference under wire key `key`: an animated
+ *  track that is keyframed on either side is `keyframes`; any other difference
+ *  is `params`. */
+function paramChanges(a: unknown, b: unknown, key: string, out: ParamKeys): void {
   if (jsonEqual(a, b)) return
   if (isAnimated(a) || isAnimated(b)) {
     const bothStatic = isAnimated(a) && isAnimated(b) && a.mode === 'Static' && b.mode === 'Static'
-    out.add(bothStatic ? 'params' : 'keyframes')
+    ;(bothStatic ? out.params : out.keyframes).add(key)
     return
   }
   if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null && !Array.isArray(a) && !Array.isArray(b)) {
     const ra = a as Record<string, unknown>
     const rb = b as Record<string, unknown>
-    for (const k of new Set([...Object.keys(ra), ...Object.keys(rb)])) paramAspects(ra[k], rb[k], out)
+    for (const k of new Set([...Object.keys(ra), ...Object.keys(rb)])) paramChanges(ra[k], rb[k], paramKeyOf(key, k), out)
     return
   }
-  out.add('params')
+  out.params.add(key)
 }
 
 type LayerEntity = Extract<EntityValue, { kind: 'Layer' }>
 type MarkerEntity = Extract<EntityValue, { kind: 'Marker' }>
 
 /** Aspects of a layer difference, plus the translation if the difference is
- *  exactly a pure translation on the same track. */
-function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAspect>; shift: number | null } {
+ *  exactly a pure translation on the same track, and the params keys that
+ *  differ. */
+function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAspect>; shift: number | null; keys: ParamKeys } {
   const out = new Set<ChangeAspect>()
+  const keys: ParamKeys = { params: new Set(), keyframes: new Set() }
   const la = a.layer, lb = b.layer
   if (a.composition_id !== b.composition_id || a.track_id !== b.track_id) out.add('placement')
   if (la.t_start_us !== lb.t_start_us || la.t_end_us !== lb.t_end_us) out.add('timing')
@@ -212,12 +232,14 @@ function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAsp
         if (!jsonEqual(pa[k], pb[k])) { out.add('timing'); windowChanged = true }
       } else if (RETIME_PARAM_KEYS.has(k)) {
         if (!jsonEqual(pa[k], pb[k])) out.add('retime')
-      } else paramAspects(pa[k], pb[k], out)
+      } else paramChanges(pa[k], pb[k], k, keys)
     }
   }
+  if (keys.params.size > 0) out.add('params')
+  if (keys.keyframes.size > 0) out.add('keyframes')
   const delta = lb.t_start_us - la.t_start_us
   const shift = out.size === 1 && out.has('timing') && !windowChanged && delta !== 0 && lb.t_end_us - la.t_end_us === delta ? delta : null
-  return { aspects: out, shift }
+  return { aspects: out, shift, keys }
 }
 
 /** Whether layer `b` is `a` as it was, or `a` translated in time and nothing
@@ -286,6 +308,142 @@ function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
 function locationOf(v: EntityValue): EntityLocation | null {
   if (v.kind === 'Composition') return null
   return { composition_id: v.composition_id, track_id: v.kind === 'Layer' ? v.track_id : null }
+}
+
+// ── Details ───────────────────────────────────────────────────────────────────
+//
+// What a change did, as facts the renderer words (`ChangeDetail`). Each aspect
+// says what it can in aspect order; one with nothing more to say is named by
+// itself, so every aspect a change lists is in its details.
+
+/** Details per aspect, in order; `say` pushes an aspect's facts, or answers
+ *  true when another detail already says it (a composition move's timing). */
+function detailsOf(aspects: readonly ChangeAspect[], say: (aspect: ChangeAspect, out: ChangeDetail[]) => boolean | void): ChangeDetail[] {
+  const out: ChangeDetail[] = []
+  for (const aspect of aspects) {
+    const n = out.length
+    if (say(aspect, out) !== true && out.length === n) out.push({ type: 'aspect', aspect })
+  }
+  return out
+}
+
+/** An added or removed entity's length: a layer's, a ranged marker's, a
+ *  transition's. */
+function lengthDetails(v: EntityValue): ChangeDetail[] {
+  const d = v.kind === 'Layer' ? v.layer.t_end_us - v.layer.t_start_us
+    : v.kind === 'Marker' ? (v.marker.end_t_us === null ? null : v.marker.end_t_us - v.marker.t_us)
+      : v.kind === 'Transition' ? v.transition.duration_us : null
+  return d === null ? [] : [{ type: 'length', duration_us: d }]
+}
+
+/**
+ * How an entity's timing changed, read the way the timeline shows it. `ds` and
+ * `de` are how far its start and end edges moved; `content`, for a layer with
+ * a source window and an unchanged rate, how far its material moved on the
+ * timeline (`dc`) and its source window in source time (`slip`).
+ *
+ * - Both edges moved alike: a `shift`, and a `slip` when the material moved
+ *   within them.
+ * - Otherwise each edge is trimmed by how far it moved against the material —
+ *   cut (< 0) or added (> 0) at that end — and the whole moved (`shift dc`)
+ *   only when the material moved and the start edge went with it: a start that
+ *   stayed put means the clip did not move (a ripple head trim slides the
+ *   material under it). Without material to read, the edges alone are trimmed.
+ *
+ * `rebased`: the two sides are on different timelines (a move to another
+ * composition), so only edges against material are facts — no shift, and a
+ * layer without material is measured from its start.
+ */
+function timingDetails(ds: number, de: number, content: { dc: number; slip: number } | null, rebased: boolean): ChangeDetail[] {
+  const out: ChangeDetail[] = []
+  const shift = (d: number) => { if (d !== 0 && !rebased) out.push({ type: 'shift', delta_us: d }) }
+  const trim = (side: 'start' | 'end', d: number) => { if (d !== 0) out.push({ type: 'trim', side, delta_us: d }) }
+  if (ds === de) {
+    shift(ds)
+    if (content && content.dc !== ds && content.slip !== 0) out.push({ type: 'slip', delta_us: content.slip })
+    return out
+  }
+  const along = content ? content.dc : rebased ? ds : 0
+  if (content && ds !== 0) shift(content.dc)
+  trim('start', along - ds)
+  trim('end', de - along)
+  return out
+}
+
+/** A layer's `timingDetails`: content math only while the rate is unchanged
+ *  and both sides window a source. */
+function layerTimingDetails(a: Layer, b: Layer, retimed: boolean, rebased: boolean): ChangeDetail[] {
+  const ds = b.t_start_us - a.t_start_us, de = b.t_end_us - a.t_end_us
+  const windowed = !retimed && hasSourceWindow(a.params) && hasSourceWindow(b.params)
+  const content = windowed ? {
+    dc: Math.round(throughContent(a, b, a.t_start_us) - a.t_start_us),
+    slip: Math.round(approximateTime(subtractTime(sourceIn(b.params), sourceIn(a.params)))),
+  } : null
+  return timingDetails(ds, de, content, rebased)
+}
+
+/** A layer's constant playback rate; null for a time map that is not one. */
+function rateOf(p: LayerParams): number | null {
+  const map = 'time_map' in p ? p.time_map : undefined
+  if (!map) return 1
+  return map.kind === 'Affine' ? approximateTime(map.rate) : null
+}
+
+/** One detail per effect instance (by id) added, removed or changed. A
+ *  reorder alone says nothing here. */
+function effectDetails(a: readonly Effect[], b: readonly Effect[]): ChangeDetail[] {
+  const was = new Map(a.map((e) => [e.id, e]))
+  const now = new Set(b.map((e) => e.id))
+  const out: ChangeDetail[] = []
+  for (const e of b) {
+    const p = was.get(e.id)
+    if (!p) out.push({ type: 'effect', op: 'added', effect: e.kind })
+    else if (!jsonEqual(p, e)) out.push({ type: 'effect', op: 'changed', effect: e.kind })
+  }
+  for (const e of a) if (!now.has(e.id)) out.push({ type: 'effect', op: 'removed', effect: e.kind })
+  return out
+}
+
+function layerDetails(a: LayerEntity, b: LayerEntity, aspects: readonly ChangeAspect[], keys: ParamKeys): ChangeDetail[] {
+  const la = a.layer, lb = b.layer
+  const rebased = a.composition_id !== b.composition_id
+  return detailsOf(aspects, (aspect, out) => {
+    switch (aspect) {
+      case 'placement':
+        if (rebased) out.push({ type: 'composition', from: a.composition_id, to: b.composition_id })
+        else if (a.track_id !== b.track_id) out.push({ type: 'track', from: a.track_id, to: b.track_id })
+        return
+      case 'timing': out.push(...layerTimingDetails(la, lb, aspects.includes('retime'), rebased)); return rebased
+      case 'retime': { const from = rateOf(la.params), to = rateOf(lb.params); if (from !== to) out.push({ type: 'speed', from, to }); return }
+      case 'params': if (keys.params.size > 0) out.push({ type: 'params', keys: [...keys.params] }); return
+      case 'keyframes': if (keys.keyframes.size > 0) out.push({ type: 'keyframes', keys: [...keys.keyframes] }); return
+      case 'effects': out.push(...effectDetails(la.effects, lb.effects)); return
+      case 'label': out.push({ type: 'label' }); return
+      case 'flags':
+        if (la.enabled !== lb.enabled) out.push({ type: 'enabled', value: lb.enabled })
+        if (la.locked !== lb.locked) out.push({ type: 'locked', value: lb.locked })
+        return
+    }
+  })
+}
+
+function markerDetails(a: MarkerEntity, b: MarkerEntity, aspects: readonly ChangeAspect[]): ChangeDetail[] {
+  const ma = a.marker, mb = b.marker
+  const rebased = a.composition_id !== b.composition_id
+  return detailsOf(aspects, (aspect, out) => {
+    switch (aspect) {
+      case 'placement': if (rebased) out.push({ type: 'composition', from: a.composition_id, to: b.composition_id }); return
+      case 'timing': out.push(...timingDetails(mb.t_us - ma.t_us, (mb.end_t_us ?? mb.t_us) - (ma.end_t_us ?? ma.t_us), null, rebased)); return rebased
+      case 'label': out.push({ type: 'label' }); return
+      case 'params': if (!jsonEqual(ma.color, mb.color)) out.push({ type: 'params', keys: ['color'] }); return
+    }
+  })
+}
+
+/** Transitions, tracks, compositions, links: a label by itself, anything else
+ *  by its aspect. */
+function otherDetails(aspects: readonly ChangeAspect[]): ChangeDetail[] {
+  return detailsOf(aspects, (aspect, out) => { if (aspect === 'label') out.push({ type: 'label' }) })
 }
 
 // ── Footprints and ranges ─────────────────────────────────────────────────────
@@ -428,8 +586,18 @@ export function carryChangesTo(changes: readonly Change[], then: Project, curren
     if (!hit) surviving.set(compositionId, hit = survivingLayers(a, b, compositionId))
     return hit
   }
+  // A place a move left is carried by the content around it, less what moved
+  // on purpose: the call's own moves, and any layer gone to another track since.
+  const moved = new Set(changes.filter((c) => c.was).flatMap((c) => c.keys))
+  if (moved.size > 0) for (const v of a.values()) {
+    if (v.kind !== 'Layer') continue
+    const now = b.get(keyOf(v))
+    if (now?.kind === 'Layer' && now.track_id !== v.track_id) moved.add(keyOf(v))
+  }
+  const unmoved = memoSurvivors(survivors, moved)
   return changes.map((c) => {
     if (c.ranges.length === 0) return c
+    const was = c.was?.map((w): PlacedRange => ({ ...removedRangeNow(w, w.track_id, unmoved(w.composition_id)), track_id: w.track_id }))
     const out: TimeRange[] = []
     for (const k of c.keys) {
       const now = b.get(k)
@@ -443,7 +611,63 @@ export function carryChangesTo(changes: readonly Change[], then: Project, curren
     const single = c.keys.length === 1 ? a.get(c.keys[0]) : undefined
     const track = c.from?.track_id ?? (single?.kind === 'Layer' ? single.track_id : null)
     for (const r of c.ranges) if (!placed.has(r.composition_id)) out.push(removedRangeNow(r, track, survivors(r.composition_id)))
-    return { ...c, ranges: mergeRanges(out) }
+    return was ? { ...c, ranges: mergeRanges(out), was } : { ...c, ranges: mergeRanges(out) }
+  })
+}
+
+/** `survivors` less the layers `moved` names, memoized per composition. */
+function memoSurvivors(survivors: (compositionId: Uuid) => LayerPair[], moved: ReadonlySet<EntityKey>): (compositionId: Uuid) => LayerPair[] {
+  const memo = new Map<Uuid, LayerPair[]>()
+  return (compositionId) => {
+    let hit = memo.get(compositionId)
+    if (!hit) memo.set(compositionId, hit = survivors(compositionId).filter((p) => !moved.has(entityKey('Layer', p.base.id))))
+    return hit
+  }
+}
+
+/** A deliberate move: a layer or marker gone to another track or composition
+ *  (`placement` with both locations) or moved in time along with other edits
+ *  (a `shift` detail), or a translation group not carried. */
+function isDeliberateMove(c: Change): boolean {
+  if (c.class !== 'modified') return false
+  if (c.delta_us !== undefined) return !c.carried
+  if (c.kind !== 'Layer' && c.kind !== 'Marker') return false
+  return (c.from !== undefined && c.to !== undefined && c.aspects.includes('placement')) || c.details.some((d) => d.type === 'shift')
+}
+
+/** Sets `was` on every deliberate move in `changes` that lacks it: each moved
+ *  entity's baseline footprint, carried onto the current timeline by the
+ *  content around it (`removedRangeNow`) — without the moves themselves, or
+ *  the place would follow them to where they went. Returns new objects for the
+ *  changes it fills. */
+function placeMoves(changes: readonly Change[], before: EntityIndex, survivors: (compositionId: Uuid) => LayerPair[]): Change[] {
+  const moves = changes.filter(isDeliberateMove)
+  if (!moves.some((c) => !c.was)) return [...changes]
+  const unmoved = memoSurvivors(survivors, new Set(moves.flatMap((c) => c.keys)))
+  return changes.map((c) => {
+    if (c.was || !isDeliberateMove(c)) return c
+    const was: PlacedRange[] = []
+    for (const k of c.keys) {
+      const v = before.get(k)
+      const f = v && footprint(v, before)
+      if (!f) continue
+      const track = v!.kind === 'Layer' ? v!.track_id : null
+      was.push({ ...removedRangeNow(f, track, unmoved(f.composition_id)), track_id: track })
+    }
+    return { ...c, was }
+  })
+}
+
+/** `placeMoves` against a baseline: what History calls once a carried shift,
+ *  its carrier on the other list, is shown as the deliberate move it is. */
+export function placeDeliberateMoves(changes: readonly Change[], baseline: BaselineSource, current: Project): Change[] {
+  if (!changes.some((c) => !c.was && isDeliberateMove(c))) return [...changes]
+  const before = effectiveEntities(baseline), after = extractEntities(current)
+  const memo = new Map<Uuid, LayerPair[]>()
+  return placeMoves(changes, before, (id) => {
+    let hit = memo.get(id)
+    if (!hit) memo.set(id, hit = survivingLayers(before, after, id))
+    return hit
   })
 }
 
@@ -462,12 +686,12 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
 // ── Carried translations ──────────────────────────────────────────────────────
 
 /**
- * Whether a translation group is only content carried along by another change
+ * The change a translation group is only content carried along by, if any
  * — a ripple delete closing up, an insert or a longer clip making room, a trim
  * pulling the rest in. Both must hold:
  *
  * - On every track it touches, it is the TAIL from its first clip on: every
- *   clip that started at or after it there and still exists moved the same
+ *   clip that started at or after it there and is still there moved the same
  *   way at least as far (a second ripple further on carries the rest further).
  *   A clip that stayed behind means the group moved relative to its
  *   neighbours: a deliberate move.
@@ -477,8 +701,11 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
  * Anything else — a gap closed with nothing removed, a lone clip moved — is a
  * deliberate move, marked like any modification: what cannot be told apart is
  * shown, never hidden.
+ *
+ * Returns the carrier — of the changes ending there, a removal first (a
+ * ripple's seam), then a trim, then the first — or null.
  */
-function isCarried(compositionId: Uuid, delta: number, keys: readonly EntityKey[], before: EntityIndex, after: EntityIndex, others: readonly Change[], current: Project): boolean {
+function carrierOf(compositionId: Uuid, delta: number, keys: readonly EntityKey[], before: EntityIndex, after: EntityIndex, others: readonly Change[], current: Project): Change | null {
   const fps = current.compositions[compositionId]?.fps
   const tolerance = fps ? Math.ceil((1_000_000 * fps.den) / fps.num) : 1
   const sign = Math.sign(delta)
@@ -490,16 +717,17 @@ function isCarried(compositionId: Uuid, delta: number, keys: readonly EntityKey[
     firstOnTrack.set(b.track_id, Math.min(firstOnTrack.get(b.track_id) ?? Infinity, b.layer.t_start_us))
     newStart = Math.min(newStart, b.layer.t_start_us + delta)
   }
-  if (firstOnTrack.size === 0) return false
+  if (firstOnTrack.size === 0) return null
   for (const v of before.values()) {
     if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
     const from = firstOnTrack.get(v.track_id)
     if (from === undefined || v.layer.t_start_us < from) continue
     const c = after.get(keyOf(v))
-    if (c?.kind !== 'Layer') continue
-    if ((c.layer.t_start_us - v.layer.t_start_us) * sign < Math.abs(delta) - tolerance) return false
+    if (c?.kind !== 'Layer' || c.track_id !== v.track_id) continue // gone, or gone elsewhere
+    if ((c.layer.t_start_us - v.layer.t_start_us) * sign < Math.abs(delta) - tolerance) return null
   }
-  return others.some((o) => o.ranges.some((r) => r.composition_id === compositionId && Math.abs(r.t_end_us - newStart) <= tolerance))
+  const ending = others.filter((o) => o.ranges.some((r) => r.composition_id === compositionId && Math.abs(r.t_end_us - newStart) <= tolerance))
+  return ending.find((o) => o.class === 'removed') ?? ending.find((o) => o.details.some((d) => d.type === 'trim')) ?? ending[0] ?? null
 }
 
 // ── diffProjects ──────────────────────────────────────────────────────────────
@@ -512,7 +740,8 @@ function isCarried(compositionId: Uuid, delta: number, keys: readonly EntityKey[
  * layer or anchored marker whose ONLY difference is a pure translation of its
  * timing in place is `modified` with `timing` and `delta_us`, grouped per
  * composition and delta into one change — `carried` when it is the content
- * after another change closing up or making room (`isCarried`). A
+ * after another change closing up or making room (`carrierOf`), with that
+ * change's id as `carried_by`. A deliberate move gets `was` (`placeMoves`). A
  * composition added or removed carries its own tracks in the same change.
  * Ordered by listed composition (current root first), then by time; changes
  * with no footprint come after the timed ones of their composition.
@@ -541,7 +770,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     if (!hit) surviving.set(compositionId, hit = survivingLayers(before, after, compositionId))
     return hit
   }
-  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[], moved = false): Change => {
+  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[], details: ChangeDetail[], moved = false): Change => {
     const v = (c ?? b)!
     // The current footprint. Where the entity is no longer — removed, or moved
     // to another composition — its baseline one, carried onto that
@@ -555,7 +784,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     const lb = b && locationOf(b), lc = c && locationOf(c)
     const comps = [...new Set([lc?.composition_id, lb?.composition_id].filter((x): x is Uuid => x !== undefined))]
     const change: Change = {
-      id: keyOf(v), class: cls, kind: v.kind, keys: [keyOf(v)], aspects,
+      id: keyOf(v), class: cls, kind: v.kind, keys: [keyOf(v)], aspects, details,
       composition_id: lc?.composition_id ?? lb?.composition_id ?? null, composition_ids: comps,
       ranges: mergeRanges(ranges),
     }
@@ -573,13 +802,14 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
       const v = (b ?? c)!
       const cls = b ? 'removed' : 'added'
       if (v.kind === 'Track') { pendingTracks.push({ value: v, cls }); continue }
-      const ch = emit(cls, b, c, [])
+      const ch = emit(cls, b, c, [], lengthDetails(v))
       if (v.kind === 'Composition') compositionChanges.set(v.id, ch)
       continue
     }
     let aspects: Set<ChangeAspect>
     let shift: number | null = null
-    if (b.kind === 'Layer') ({ aspects, shift } = compareLayers(b, c as LayerEntity))
+    let params: ParamKeys | null = null
+    if (b.kind === 'Layer') ({ aspects, shift, keys: params } = compareLayers(b, c as LayerEntity))
     else if (b.kind === 'Marker') ({ aspects, shift } = compareMarkers(b, c as MarkerEntity))
     else aspects = compareOther(b, c)
     if (aspects.size === 0) continue // differs only in an uncompared field
@@ -596,14 +826,17 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     const lb = locationOf(b), lc = locationOf(c)
     const moved = lb !== null && lc !== null && (lb.composition_id !== lc.composition_id || lb.track_id !== lc.track_id)
     if (moved) aspects.add('placement')
-    emit('modified', b, c, orderedAspects(aspects), moved)
+    const ordered = orderedAspects(aspects)
+    const details = b.kind === 'Layer' ? layerDetails(b, c as LayerEntity, ordered, params!)
+      : b.kind === 'Marker' ? markerDetails(b, c as MarkerEntity, ordered) : otherDetails(ordered)
+    emit('modified', b, c, ordered, details, moved)
   }
 
   // A composition's tracks arrive and leave with it: fold them into its change.
   for (const { value, cls } of pendingTracks) {
     const owner = value.kind === 'Track' ? compositionChanges.get(value.composition_id) : undefined
     if (owner && owner.class === cls) owner.keys.push(keyOf(value))
-    else emit(cls, cls === 'removed' ? value : undefined, cls === 'added' ? value : undefined, [])
+    else emit(cls, cls === 'removed' ? value : undefined, cls === 'added' ? value : undefined, [], [])
   }
 
   const others = [...changes]
@@ -611,15 +844,18 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     g.keys.sort()
     const change: Change = {
       id: `Shift:${g.composition_id}:${g.delta}`, class: 'modified', kind: g.layers > 0 ? 'Layer' : 'Marker', keys: g.keys, aspects: ['timing'],
+      details: [{ type: 'shift', delta_us: g.delta }],
       composition_id: g.composition_id, composition_ids: [g.composition_id], delta_us: g.delta, ranges: mergeRanges(g.ranges),
     }
-    if (isCarried(g.composition_id, g.delta, g.keys, before, after, others, current)) change.carried = true
+    const carrier = carrierOf(g.composition_id, g.delta, g.keys, before, after, others, current)
+    if (carrier) { change.carried = true; change.carried_by = carrier.id }
     changes.push(change)
   }
+  const placed = placeMoves(changes, before, survivors)
 
   const rootId = current.root_id
   const rank = (c: Change): string => c.composition_id === null ? '\u0002' : c.composition_id === rootId ? '\u0000' : `\u0001${c.composition_id}`
-  changes.sort((x, y) => {
+  placed.sort((x, y) => {
     const rx = rank(x), ry = rank(y)
     if (rx !== ry) return rx < ry ? -1 : 1
     const tx = x.ranges.length > 0, ty = y.ranges.length > 0
@@ -627,7 +863,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     const d = tx ? (x.ranges[0].t_start_us - y.ranges[0].t_start_us) || (x.ranges[0].t_end_us - y.ranges[0].t_end_us) : 0
     return d || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)
   })
-  return changes
+  return placed
 }
 
 /** Ids of the compositions `current` shares by reference with the baseline's

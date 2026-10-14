@@ -24,6 +24,40 @@ export type ChangeClass = 'added' | 'removed' | 'modified'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
 export interface EntityLocation { composition_id: string; track_id: string | null }
+/** A range on one track (`track_id` null for a marker or transition). */
+export interface PlacedRange extends TimeRange { track_id: string | null }
+
+/** What a change did, as facts rather than words (ADR 0115): main derives them
+ *  from the two snapshots; the renderer words them (`changes.detail.*`) in the
+ *  editor's own vocabulary — the inspector's param names, the effect catalog's
+ *  names — never an MCP tool's. Durations are timeline microseconds. */
+export type ChangeDetail =
+  /** Added or removed: the entity's length (a removed one's, as it was). */
+  | { type: 'length'; duration_us: number }
+  /** Material cut from (`delta_us` < 0) or added to (> 0) one end. */
+  | { type: 'trim'; side: 'start' | 'end'; delta_us: number }
+  /** Moved in time on its own track: current − baseline. */
+  | { type: 'shift'; delta_us: number }
+  /** Same place, other source material: the source window moved by `delta_us`
+   *  (> 0: later in the source). */
+  | { type: 'slip'; delta_us: number }
+  /** Moved to another track of the same composition. */
+  | { type: 'track'; from: string | null; to: string | null }
+  /** Moved to another composition. */
+  | { type: 'composition'; from: string; to: string }
+  /** Playback rate; null where it is not a constant rate. */
+  | { type: 'speed'; from: number | null; to: number | null }
+  /** Params whose value changed, by wire key (`opacity`, `x`…). */
+  | { type: 'params'; keys: string[] }
+  /** Params whose keyframes changed, by wire key. */
+  | { type: 'keyframes'; keys: string[] }
+  /** One effect, by its catalog type (`blur`…). */
+  | { type: 'effect'; op: 'added' | 'removed' | 'changed'; effect: string }
+  | { type: 'label' }
+  | { type: 'enabled'; value: boolean }
+  | { type: 'locked'; value: boolean }
+  /** Any other difference, named by its aspect alone. */
+  | { type: 'aspect'; aspect: ChangeAspect }
 
 export interface Change {
   /** Stable for the same difference: the entity key, or `Shift:<composition>:<delta>`. */
@@ -55,6 +89,17 @@ export interface Change {
    *  approved with that edit; no timeline paints it, as a diff does not mark
    *  the lines a change above renumbered. */
   carried?: true
+  /** A carried change's carrier: the id of the change whose end its new start
+   *  sits at, in the same list. Approved with it; shown under its row. */
+  carried_by?: string
+  /** What it did, in order (`ChangeDetail`); empty for a listed-only change
+   *  nothing more can be said of. */
+  details: ChangeDetail[]
+  /** A deliberate move (`placement`, a `shift` detail, or a non-carried
+   *  `delta_us`): where each moved layer or marker was, carried onto the
+   *  CURRENT timeline the way a removed entity's range is. Drawn only while
+   *  the change is focused. */
+  was?: PlacedRange[]
   /** Where the change is on the CURRENT timeline, merged per composition: the
    *  current footprints; for a removed entity its baseline footprint carried
    *  over by the content around it — the seam a ripple delete left (main's

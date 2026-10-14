@@ -227,7 +227,39 @@ describe('Review baseline — carried translations', () => {
     ok(a.dispatch('ripple_delete_layers', { layers: [gone] }))
     const shift = a.reviewState().unreviewed.find((c) => c.delta_us !== undefined)!
     expect(shift.carried).toBeUndefined()
+    expect(shift.carried_by).toBeUndefined()
+    // Shown as the move it is, with the place it left.
+    expect(shift.was).toEqual([{ composition_id: a.snapshot().root_id, track_id: tA, t_start_us: 2 * S, t_end_us: 3 * S }])
     expect(a.reviewState().user.map((c) => c.class)).toEqual(['removed'])
+  })
+
+  it('a carried shift goes with its carrier, whatever else of its composition is left', () => {
+    const { a, tA } = setup()
+    const first = color(a, tA, 0, S)
+    const gone = color(a, tA, S, 2 * S)
+    color(a, tA, 2 * S, 3 * S)
+    a.pinReviewBaseline()
+    label(a, first, 'kept', AGENT)
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    const shift = a.reviewState().unreviewed.find((c) => c.delta_us !== undefined)!
+    expect(shift).toMatchObject({ carried: true, carried_by: L(gone) })
+    // The carried content alone: its edit stays to be reviewed.
+    expect(a.approveReview({ change_ids: [shift.id] })).toBe(1)
+    expect(ids(a).unreviewed).toEqual([L(first), L(gone)])
+    expect(a.approveReview({ keys: [L(gone)] })).toBe(1)
+    expect(ids(a).unreviewed).toEqual([L(first)])
+  })
+
+  it('approving the carrier approves what it carried, with the label beside it left', () => {
+    const { a, tA } = setup()
+    const first = color(a, tA, 0, S)
+    const gone = color(a, tA, S, 2 * S)
+    color(a, tA, 2 * S, 3 * S)
+    a.pinReviewBaseline()
+    label(a, first, 'kept', AGENT)
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    expect(a.approveReview({ keys: [L(gone)] })).toBe(2)
+    expect(ids(a).unreviewed).toEqual([L(first)])
   })
 })
 

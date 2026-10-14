@@ -70,6 +70,18 @@ through the clip that was under each end, else its track neighbours — so a
 ripple delete shows as the seam it closed. What one agent call did is diffed
 at its own moment and drawn on today's timeline the same way.
 
+A change says what it did as facts, not words: main derives structured
+details from the two snapshots — a trim of one end, a shift, a slip, a speed,
+the params by wire key, an effect by its catalog type — and the renderer words
+them in the editor's own vocabulary, never an MCP tool's. The facts read what
+the timeline shows: an edge that stayed put means the clip did not move, so a
+ripple head trim is a trim, not a trim and a shift. A carried translation names
+its carrier (`carried_by`), the change it is listed and approved with; one
+whose carrier is on the other list is shown as the move it is. A deliberate
+move also carries `was` — where it was, carried onto the current timeline like
+a removed entity's place, without the moved entities themselves — drawn only
+while that change is focused.
+
 ## Considered options
 
 **Agent-authored markers with a flag or a dedicated colour.** Rejected: still

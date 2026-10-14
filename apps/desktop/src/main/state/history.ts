@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
-import { ABSENT, carryChangesTo, carryDecorationsTo, diffProjects, entitiesEqual, extractEntities, groupDecorations, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
+import { ABSENT, carryChangesTo, carryDecorationsTo, diffProjects, entitiesEqual, extractEntities, groupDecorations, placeDeliberateMoves, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -330,12 +330,11 @@ export class History {
     const { unreviewed, user } = this.reviewState()
     const picked = [...unreviewed, ...user].filter(pick)
     if (picked.length === 0) return 0
-    // A carried translation goes with the edits it was carried by: once no
-    // other change of its composition is left in its list, it is approved too.
-    for (const list of [unreviewed, user]) {
-      const left = new Set(list.filter((c) => !c.carried && !picked.includes(c)).map((c) => c.composition_id))
-      for (const c of list) if (c.carried && !picked.includes(c) && !left.has(c.composition_id)) picked.push(c)
-    }
+    // A carried translation goes with the edit that carried it (its carrier
+    // is on its own list: `uncarryOrphans`). Not the other way: approving
+    // the carried content alone leaves its edit to be reviewed.
+    const ids = new Set(picked.map((c) => c.id))
+    for (const c of [...unreviewed, ...user]) if (c.carried_by !== undefined && ids.has(c.carried_by) && !ids.has(c.id)) { picked.push(c); ids.add(c.id) }
     const cur = extractEntities(this.current())
     const base = extractEntities(review.base)
     for (const change of picked) {
@@ -373,7 +372,11 @@ export class History {
     const changes = diffProjects(review, current)
     const unreviewed: Change[] = [], user: Change[] = []
     for (const c of changes) (c.keys.some((k) => review.agentTouched.has(k)) ? unreviewed : user).push(c)
-    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed: uncarryOrphans(unreviewed), user: uncarryOrphans(user), decorations: groupDecorations(changes, current) }
+    // A carried shift whose carrier is on the other list is the move it is,
+    // and gets the place it left like any deliberate move.
+    const lists = [uncarryOrphans(unreviewed), uncarryOrphans(user)]
+    const placed = lists[0] === unreviewed && lists[1] === user ? lists.flat() : placeDeliberateMoves(lists.flat(), review, current)
+    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed: placed.slice(0, lists[0].length), user: placed.slice(lists[0].length), decorations: groupDecorations(changes, current) }
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state
   }
@@ -543,13 +546,14 @@ export class History {
   }
 }
 
-/** A carried translation with nothing left in its list to be carried by — its
- *  edit approved already, or on the other list — is shown as the move it is. */
+/** A carried translation whose carrier is not in its list — on the other list
+ *  — is shown as the move it is. Returns `list` itself when none is. */
 function uncarryOrphans(list: Change[]): Change[] {
-  const causes = new Set(list.filter((c) => !c.carried).map((c) => c.composition_id))
+  const ids = new Set(list.map((c) => c.id))
+  if (list.every((c) => !c.carried || (c.carried_by !== undefined && ids.has(c.carried_by)))) return list
   return list.map((c) => {
-    if (!c.carried || causes.has(c.composition_id)) return c
-    const { carried: _, ...shown } = c
+    if (!c.carried || (c.carried_by !== undefined && ids.has(c.carried_by))) return c
+    const { carried: _, carried_by: __, ...shown } = c
     return shown
   })
 }
