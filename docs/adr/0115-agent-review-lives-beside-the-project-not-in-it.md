@@ -75,7 +75,9 @@ details from the two snapshots — a trim of one end, a shift, a slip, a speed,
 the params by wire key, an effect by its catalog type — and the renderer words
 them in the editor's own vocabulary, never an MCP tool's. The facts read what
 the timeline shows: an edge that stayed put means the clip did not move, so a
-ripple head trim is a trim, not a trim and a shift. A carried translation names
+ripple head trim is a trim, not a trim and a shift; an edge is trimmed only
+against the material at that end, so a retime that kept its material is its
+speed, not a cut. A carried translation names
 its carrier (`carried_by`), the change it is listed and approved with; one
 whose carrier is on the other list is shown as the move it is. A deliberate
 move also carries `was` — where it was, carried onto the current timeline like

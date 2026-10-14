@@ -35,7 +35,8 @@ export interface ActivityHighlight {
   status: 'loading' | 'ready' | 'unavailable'
   /** Every op is undone; the highlight still shows what the call did. */
   reverted: boolean
-  /** How many changes the call made (listed-only ones included). */
+  /** How many changes the call made (listed-only ones included; a carried
+   *  translation not, as in the Changes tab: it is its edit's). */
   count: number
   highlight: ReviewHighlight
 }
@@ -327,7 +328,7 @@ export async function showActivityChanges(a: Pick<AgentActivity, 'id' | 'history
     if (token !== activityToken) return
     const cur = useReview.getState().activity!
     useReview.setState({ activity: v.available
-      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.length, highlight: buildReviewHighlight(v.changes, v.decorations) }
+      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.filter(c => !c.carried).length, highlight: buildReviewHighlight(v.changes, v.decorations) }
       : { ...cur, status: 'unavailable', reverted: false, count: 0, highlight: EMPTY_HIGHLIGHT } })
   } catch {
     if (token === activityToken) useReview.setState({ activity: null })

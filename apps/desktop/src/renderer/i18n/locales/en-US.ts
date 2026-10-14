@@ -1702,7 +1702,7 @@ const enUS = {
     // relative amounts only, never a baseline timecode — the baseline timeline
     // is not on screen, so a time on it names nowhere. Verbs follow History.
     detail: {
-      length_added: "Added {{s}} s",
+      length_added: "{{s}} s long",
       length_removed: "Deleted {{s}} s",
       trim_start_cut: "Cut {{s}} s from the start",
       trim_start_extend: "Extended start by {{s}} s",

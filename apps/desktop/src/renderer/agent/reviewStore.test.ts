@@ -242,6 +242,16 @@ describe('activity highlight', () => {
     expect(selectHighlight(useReview.getState()).layers.get('a')).toBe('added')
   })
 
+  it('counts what the call did as the Changes tab does: a carried translation is its edit\'s', async () => {
+    const gone = change({ id: 'Layer:gone', keys: ['Layer:gone'], class: 'removed' })
+    const carried = change({ id: 'Shift:root:-1', keys: ['Layer:next'], class: 'modified', delta_us: -1, carried: true, carried_by: 'Layer:gone' })
+    mocks.invoke.mockImplementation(async (channel: string) =>
+      channel === 'review_activity_view' ? { available: true, reverted: false, changes: [gone, carried], decorations: [] } : view(1, 1))
+    act(() => useAgentActivity.getState().toggle('a'))
+    await flush()
+    expect(useReview.getState().activity).toMatchObject({ status: 'ready', count: 1 })
+  })
+
   it('another row replaces it; a row without history ops, a tab switch or a project change clears it', async () => {
     answer()
     act(() => useAgentActivity.getState().toggle('a'))

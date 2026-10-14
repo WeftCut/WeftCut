@@ -57,7 +57,7 @@ export function changeWordsContext(
 }
 
 /** Facts are joined with this, in either locale. */
-export const FACT_SEPARATOR = ' · '
+const FACT_SEPARATOR = ' · '
 /** How many param names a fact lists before "and N more". */
 const MAX_NAMES = 3
 
@@ -176,7 +176,7 @@ function formatRate(rate: number): string {
 
 /** One fact in words. Exhaustive: a new `ChangeDetail` type fails typecheck
  *  at the `never` until it is worded. */
-export function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composition_id'>, ctx: ChangeWordsContext): string {
+function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composition_id'>, ctx: ChangeWordsContext): string {
   const { t } = ctx
   switch (d.type) {
     case 'length':

@@ -30,7 +30,7 @@ const say = (t: Translate, details: ChangeDetail[], patch?: Partial<Change>) =>
 describe('describeChange', () => {
   it.each<[string, ChangeDetail[], Partial<Change>, string, string]>([
     ['removed length', [{ type: 'length', duration_us: 4 * S }], { class: 'removed' }, '删除 4.0 秒', 'Deleted 4.0 s'],
-    ['added length', [{ type: 'length', duration_us: 3 * S }], { class: 'added' }, '新增 3.0 秒', 'Added 3.0 s'],
+    ['added length', [{ type: 'length', duration_us: 3 * S }], { class: 'added' }, '时长 3.0 秒', '3.0 s long'],
     ['trim end cut', [{ type: 'trim', side: 'end', delta_us: -1_200_000 }], {}, '结尾剪掉 1.2 秒', 'Cut 1.2 s from the end'],
     ['trim start cut', [{ type: 'trim', side: 'start', delta_us: -500_000 }], {}, '开头剪掉 0.5 秒', 'Cut 0.5 s from the start'],
     ['trim end extend', [{ type: 'trim', side: 'end', delta_us: S }], {}, '结尾延长 1.0 秒', 'Extended end by 1.0 s'],

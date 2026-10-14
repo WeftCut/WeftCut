@@ -46,9 +46,9 @@ const window = (l: Layer, t0: number, t1: number, src0: number, src1: number) =>
 const detailsOf = (p: Project, q: Project, id: Uuid): ChangeDetail[] => diffProjects(p, q).find((c) => c.id === L(id))!.details
 
 /** The details that can stand for each aspect; a composition move's timing is
- *  said by the move itself. */
+ *  said by the move itself, a retime's new length by its speed. */
 const SAYS: Record<ChangeAspect, ReadonlyArray<ChangeDetail['type']>> = {
-  placement: ['track', 'composition'], timing: ['trim', 'shift', 'slip', 'composition'], retime: ['speed'], params: ['params'],
+  placement: ['track', 'composition'], timing: ['trim', 'shift', 'slip', 'composition', 'speed'], retime: ['speed'], params: ['params'],
   keyframes: ['keyframes'], effects: ['effect'], label: ['label'], flags: ['enabled', 'locked'],
 }
 /** Every aspect is said by a detail, and no fact is a zero. */
@@ -335,10 +335,14 @@ describe('diffProjects — details', () => {
     expect(detailsOf(before, both, x)).toEqual([{ type: 'trim', side: 'start', delta_us: -S / 2 }, { type: 'trim', side: 'end', delta_us: 2 * S }])
   })
 
-  it('a retime reads its edges and its speed', () => {
+  it('a retime is its speed: the material it kept is no trim', () => {
     const { a, v, before } = clip()
     ok(a.dispatch('retime_layers', { layers: [v], target: { kind: 'Rate', value: { num: 2, den: 1 } } }))
-    expect(detailsOf(before, a.snapshot(), v)).toEqual([{ type: 'trim', side: 'end', delta_us: -2 * S }, { type: 'speed', from: 1, to: 2 }])
+    const fast = a.snapshot()
+    expect(detailsOf(before, fast, v)).toEqual([{ type: 'speed', from: 1, to: 2 }])
+    // Retimed and its end cut: the cut is against the material at that end.
+    const cut = editLayer(fast, v, (l) => { l.t_end_us = 1.5 * S; Object.assign(l.params, { src_out_us: 3 * S }) })
+    expect(detailsOf(before, cut, v)).toEqual([{ type: 'trim', side: 'end', delta_us: -S / 2 }, { type: 'speed', from: 1, to: 2 }])
   })
 
   it('a move to another track: the track, then the shift', () => {

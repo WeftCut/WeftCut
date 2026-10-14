@@ -339,44 +339,53 @@ function lengthDetails(v: EntityValue): ChangeDetail[] {
 /**
  * How an entity's timing changed, read the way the timeline shows it. `ds` and
  * `de` are how far its start and end edges moved; `content`, for a layer with
- * a source window and an unchanged rate, how far its material moved on the
- * timeline (`dc`) and its source window in source time (`slip`).
+ * a source window, how far the material at its old start (`dc`) and old end
+ * (`dce`) moved on the timeline — the same unless the rate changed — and its
+ * source window in source time (`slip`).
  *
- * - Both edges moved alike: a `shift`, and a `slip` when the material moved
- *   within them.
- * - Otherwise each edge is trimmed by how far it moved against the material —
- *   cut (< 0) or added (> 0) at that end — and the whole moved (`shift dc`)
- *   only when the material moved and the start edge went with it: a start that
- *   stayed put means the clip did not move (a ripple head trim slides the
- *   material under it). Without material to read, the edges alone are trimmed.
+ * - Both edges moved alike with the material: a `shift`, and a `slip` when the
+ *   material moved within them.
+ * - Otherwise each edge is trimmed by how far it moved against the material
+ *   at that end — cut (< 0) or added (> 0) there — and the whole moved
+ *   (`shift dc`) only when the material moved and the start edge went with it:
+ *   a start that stayed put means the clip did not move (a ripple head trim
+ *   slides the material under it). A retime that kept its material trims
+ *   nothing: its speed says why it is shorter. Without material to read, the
+ *   edges alone are trimmed.
  *
  * `rebased`: the two sides are on different timelines (a move to another
  * composition), so only edges against material are facts — no shift, and a
  * layer without material is measured from its start.
  */
-function timingDetails(ds: number, de: number, content: { dc: number; slip: number } | null, rebased: boolean): ChangeDetail[] {
+function timingDetails(ds: number, de: number, content: { dc: number; dce: number; slip: number } | null, rebased: boolean): ChangeDetail[] {
   const out: ChangeDetail[] = []
   const shift = (d: number) => { if (d !== 0 && !rebased) out.push({ type: 'shift', delta_us: d }) }
   const trim = (side: 'start' | 'end', d: number) => { if (d !== 0) out.push({ type: 'trim', side, delta_us: d }) }
-  if (ds === de) {
+  if (ds === de && (!content || content.dce === content.dc)) {
     shift(ds)
     if (content && content.dc !== ds && content.slip !== 0) out.push({ type: 'slip', delta_us: content.slip })
     return out
   }
   const along = content ? content.dc : rebased ? ds : 0
+  const alongEnd = content ? content.dce : along
   if (content && ds !== 0) shift(content.dc)
   trim('start', along - ds)
-  trim('end', de - along)
+  trim('end', de - alongEnd)
   return out
 }
 
-/** A layer's `timingDetails`: content math only while the rate is unchanged
- *  and both sides window a source. */
-function layerTimingDetails(a: Layer, b: Layer, retimed: boolean, rebased: boolean): ChangeDetail[] {
+/** A layer's `timingDetails`: content math while both sides window a source —
+ *  at each end apart when the rate changed. A retimed layer with no window to
+ *  read says only where its start went: its speed says its length. */
+function layerTimingDetails(a: Layer, b: Layer, rebased: boolean): ChangeDetail[] {
   const ds = b.t_start_us - a.t_start_us, de = b.t_end_us - a.t_end_us
-  const windowed = !retimed && hasSourceWindow(a.params) && hasSourceWindow(b.params)
+  const windowed = hasSourceWindow(a.params) && hasSourceWindow(b.params)
+  const retimed = rateOf(a.params) !== rateOf(b.params)
+  if (retimed && !windowed) return timingDetails(ds, ds, null, rebased)
+  const dc = windowed ? Math.round(throughContent(a, b, a.t_start_us) - a.t_start_us) : 0
   const content = windowed ? {
-    dc: Math.round(throughContent(a, b, a.t_start_us) - a.t_start_us),
+    dc,
+    dce: retimed ? Math.round(throughContent(a, b, a.t_end_us) - a.t_end_us) : dc,
     slip: Math.round(approximateTime(subtractTime(sourceIn(b.params), sourceIn(a.params)))),
   } : null
   return timingDetails(ds, de, content, rebased)
@@ -413,7 +422,8 @@ function layerDetails(a: LayerEntity, b: LayerEntity, aspects: readonly ChangeAs
         if (rebased) out.push({ type: 'composition', from: a.composition_id, to: b.composition_id })
         else if (a.track_id !== b.track_id) out.push({ type: 'track', from: a.track_id, to: b.track_id })
         return
-      case 'timing': out.push(...layerTimingDetails(la, lb, aspects.includes('retime'), rebased)); return rebased
+      // A retime's new length is said by its speed.
+      case 'timing': out.push(...layerTimingDetails(la, lb, rebased)); return rebased || rateOf(la.params) !== rateOf(lb.params)
       case 'retime': { const from = rateOf(la.params), to = rateOf(lb.params); if (from !== to) out.push({ type: 'speed', from, to }); return }
       case 'params': if (keys.params.size > 0) out.push({ type: 'params', keys: [...keys.params] }); return
       case 'keyframes': if (keys.keyframes.size > 0) out.push({ type: 'keyframes', keys: [...keys.keyframes] }); return

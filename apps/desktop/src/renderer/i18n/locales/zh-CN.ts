@@ -1515,7 +1515,7 @@ const zhCN: Resources = {
     // 变更行的说明（ADR 0115）：由 main 给出的事实拼成，只说相对量，不写基线上的
     // 时间码——基线时间线不在屏幕上，那里的时间指不到任何地方。动词与「历史记录」一致。
     detail: {
-      length_added: "新增 {{s}} 秒",
+      length_added: "时长 {{s}} 秒",
       length_removed: "删除 {{s}} 秒",
       trim_start_cut: "开头剪掉 {{s}} 秒",
       trim_start_extend: "开头延长 {{s}} 秒",
