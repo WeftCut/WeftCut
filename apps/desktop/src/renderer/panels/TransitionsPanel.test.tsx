@@ -119,9 +119,19 @@ describe("TransitionsPanel", () => {
     render(<TransitionsPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
     const card = screen.getByTestId("transition-card-crossfade") as HTMLButtonElement;
     expect(card.disabled).toBe(true);
-    // The empty-state teaching line names the precondition for newcomers —
-    // the panel's whole audience.
-    expect(screen.getByText("Place two visual clips back-to-back on a track, then pick a style below.")).toBeTruthy();
+    // No hint paragraph above the cards: each disabled card's own tooltip
+    // names the precondition, the same sentence the strip button uses.
+    const panel = screen.getByTestId("transitions-panel");
+    expect(panel.querySelector("p")).toBeNull();
+    for (const disabled of panel.querySelectorAll<HTMLButtonElement>("button")) {
+      expect(disabled.disabled).toBe(true);
+      expect(disabled.title).toBe("No cut between two adjacent visual clips");
+    }
+    // …and the tooltip is reachable: the Button base makes disabled buttons
+    // pointer-transparent, which would hide the `title` entirely.
+    expect(card.className).toContain("disabled:pointer-events-auto");
+    expect(card.className).not.toContain("disabled:pointer-events-none");
+    fireEvent.click(card);
     expect(ipcMocks.addTransition).not.toHaveBeenCalled();
   });
 

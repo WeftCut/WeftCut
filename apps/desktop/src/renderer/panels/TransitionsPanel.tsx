@@ -115,11 +115,6 @@ export function TransitionsPanel({
 
   return (
     <div className="flex flex-col gap-3 p-2" data-testid="transitions-panel">
-      {!hasCut && (
-        <p className="text-xs text-muted-foreground">
-          {t("transitions.panel_no_target_hint")}
-        </p>
-      )}
       {GROUPS.map((group) => (
         <section key={group.kind} aria-label={t(group.labelKey)}>
           <h3 className="mb-1 text-xs font-medium text-muted-foreground">
@@ -133,7 +128,13 @@ export function TransitionsPanel({
                   key={cardTestId(card)}
                   variant="outline"
                   size="sm"
-                  className="h-auto flex-col gap-1 px-2 py-2"
+                  // `disabled:pointer-events-auto` overrides the Button
+                  // base's `none`: with no hint line above the cards, the
+                  // disabled tooltip is the panel's only explanation of the
+                  // precondition, and a pointer-transparent button never
+                  // shows its `title`. Native `disabled` still swallows the
+                  // click.
+                  className="h-auto flex-col gap-1 px-2 py-2 disabled:pointer-events-auto"
                   disabled={!hasCut}
                   data-testid={cardTestId(card)}
                   aria-label={label}

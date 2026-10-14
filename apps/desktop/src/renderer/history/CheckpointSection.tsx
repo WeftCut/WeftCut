@@ -99,11 +99,10 @@ export function CheckpointSection({
       <p className="checkpoint-session-note">
         {t("history_panel.checkpoints_note")}
       </p>
-      {checkpoints.length === 0 ? (
-        <p className="history-checkpoints-empty">
-          {t("history_panel.checkpoints_empty")}
-        </p>
-      ) : (
+      {/* No empty-state line: with zero checkpoints the section is just its
+          header and the note above, and the New button beside the title (with
+          its tooltip) already says what to do. */}
+      {checkpoints.length > 0 && (
         <ul className="history-checkpoint-list">
           {checkpoints.map((checkpoint) => {
             const client =

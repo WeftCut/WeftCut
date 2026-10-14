@@ -60,13 +60,6 @@
   font-size: var(--font-size-caption);
 }
 
-.history-checkpoints-empty {
-  margin: 0;
-  color: var(--color-gray-500);
-  font-size: var(--font-size-caption);
-  font-style: italic;
-}
-
 /* Capped: a session can accumulate many checkpoints and the stack below is the
    Panel's main event — the list scrolls rather than pushing it off-screen. */
 .history-checkpoint-list {

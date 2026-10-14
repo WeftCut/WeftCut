@@ -175,11 +175,16 @@ describe("checkpoint section", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("says something useful when there are no checkpoints", async () => {
+  it("collapses to its header and the session note when there are no checkpoints", async () => {
     await mountPanel(stackView([]));
+    const section = document.querySelector<HTMLElement>(
+      '[data-history-section="checkpoints"]',
+    )!;
+    // No empty-state line: the New button beside the title says it.
     expect(
-      screen.getByText("No checkpoints yet. Use New to save the current state."),
-    ).toBeTruthy();
+      Array.from(section.children).map((el) => el.className),
+    ).toEqual(["history-checkpoints-header", "checkpoint-session-note"]);
+    expect(section.querySelector(".history-checkpoint-list")).toBeNull();
     expect(rows()).toHaveLength(0);
   });
 
@@ -257,6 +262,12 @@ describe("checkpoint create", () => {
 
     fireEvent.click(button("New"));
     await settle();
+    // The prompt repeats the session-only warning: the command path can raise
+    // it without the Panel ever being visible.
+    expect(
+      document.querySelector(".new-project-panel .checkpoint-session-note")
+        ?.textContent,
+    ).toBe("This session only — checkpoints are cleared when the project closes.");
     const input = screen.getByLabelText("Name") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "  Before the recut  " } });
     fireEvent.click(button("Create"));

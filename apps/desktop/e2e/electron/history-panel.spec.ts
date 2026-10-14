@@ -131,8 +131,14 @@ test('History Panel navigates the edit stack and runs the checkpoint loop', asyn
     expect(c).not.toBe(d)
 
     // ── Checkpoint: create ────────────────────────────────────────────────
-    await expect(page.locator('.history-checkpoints-empty')).toBeVisible()
+    // Empty, the section is just its header and the note — no empty-state line.
+    await expect(checkpointRows(page)).toHaveCount(0)
+    await expect(page.locator('.history-checkpoint-list')).toHaveCount(0)
     await page.locator('.history-checkpoints button', { hasText: 'New' }).click()
+    // The prompt repeats the session-only warning.
+    await expect(page.locator('.new-project-panel .checkpoint-session-note')).toHaveText(
+      /This session only/,
+    )
     // Scoped to the prompt: the field label is now just 'Name'.
     await page
       .locator('.new-project-panel')
@@ -144,7 +150,6 @@ test('History Panel navigates the edit stack and runs the checkpoint loop', asyn
     // because the Panel refetches the view for itself.
     await expect(checkpointRows(page)).toHaveCount(1)
     await expect(checkpointRows(page)).toContainText('before the recut')
-    await expect(page.locator('.history-checkpoints-empty')).toHaveCount(0)
 
     // ── Checkpoint: edit past it, then restore ────────────────────────────
     const e = await invokeCmd<string>(page, 'add_color_layer', {
@@ -173,7 +178,7 @@ test('History Panel navigates the edit stack and runs the checkpoint loop', asyn
 
     // Same no-broadcast story as create: only the Panel's own refetch clears it.
     await expect(checkpointRows(page)).toHaveCount(0)
-    await expect(page.locator('.history-checkpoints-empty')).toBeVisible()
+    await expect(page.locator('.history-checkpoint-list')).toHaveCount(0)
     // Deleting a checkpoint is not an edit — the stack is untouched by it.
     await expect(entryRows(page)).toHaveCount(rowsBeforeRestore + 1)
   } finally {
