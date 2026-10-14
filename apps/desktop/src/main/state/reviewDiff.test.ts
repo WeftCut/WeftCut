@@ -84,19 +84,22 @@ describe('diffProjects — classes', () => {
     const before = a.snapshot()
     ok(a.dispatch('trim_layer', { layer: v, edge: 'end', new_t_us: 3 * S, escape_link: false }))
     const trim = only(diffProjects(before, a.snapshot()))
-    expect(trim).toMatchObject({ class: 'modified', aspects: ['timing'], ranges: [{ t_start_us: 0, t_end_us: 4 * S }] })
+    // Where the clip is now — not where it was as well, which is baseline time.
+    const now = root(a.snapshot()).tracks[0].layers.find((l) => l.id === v)!
+    expect(trim).toMatchObject({ class: 'modified', aspects: ['timing'], ranges: [{ t_start_us: now.t_start_us, t_end_us: now.t_end_us }] })
+    expect(now.t_end_us - now.t_start_us).toBe(S)
     const mid = a.snapshot()
     ok(a.dispatch('retime_layers', { layers: [v], target: { kind: 'Rate', value: { num: 2, den: 1 } } }))
     expect(only(diffProjects(mid, a.snapshot())).aspects).toContain('retime')
   })
 
-  it('a move to another track is moved, with both locations and the union footprint', () => {
+  it('a move to another track is moved, with both locations and the current footprint', () => {
     const { a, tA, tB } = setup()
     const id = color(a, tA, 0, S)
     const before = a.snapshot()
     ok(a.dispatch('move_layer', { layer: id, to_track: tB, t_start_us: S, escape_link: false }))
     const c = only(diffProjects(before, a.snapshot()))
-    expect(c).toMatchObject({ class: 'moved', from: { track_id: tA }, to: { track_id: tB }, ranges: [{ t_start_us: 0, t_end_us: 2 * S }] })
+    expect(c).toMatchObject({ class: 'moved', from: { track_id: tA }, to: { track_id: tB }, ranges: [{ t_start_us: S, t_end_us: 2 * S }] })
     expect(c.aspects).toEqual(['placement', 'timing'])
   })
 
@@ -110,7 +113,7 @@ describe('diffProjects — classes', () => {
     const c = only(diffProjects(before, a.snapshot()))
     expect(c).toMatchObject({ class: 'shifted', kind: 'Layer', delta_us: S, aspects: [] })
     expect(c.keys).toEqual([L(x), L(y), L(z)].sort())
-    expect(c.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[0, 2 * S], [3 * S, 5 * S], [6 * S, 8 * S]])
+    expect(c.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[S, 2 * S], [4 * S, 5 * S], [7 * S, 8 * S]])
   })
 
   it('an anchored marker rides its shifted layer into the same group; a free marker moved is a timing modification', () => {
@@ -143,6 +146,36 @@ describe('diffProjects — classes', () => {
     expect(cs[0].keys).toEqual([L(gone)])
     expect(cs[1]).toMatchObject({ delta_us: -S, keys: [L(y), L(z)].sort() })
     expect(cs.flatMap((c) => c.keys)).not.toContain(L(x))
+    // On the current timeline: the removal is the seam it closed, the shift
+    // where the shifted clips are now.
+    expect(cs[0].ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[S, S]])
+    expect(cs[1].ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[S, 2 * S], [3 * S, 4 * S]])
+  })
+
+  it('a removed clip is carried by its neighbours through a later ripple elsewhere', () => {
+    const { a, tA } = setup()
+    const first = color(a, tA, 0, 2 * S)
+    color(a, tA, 2 * S, 4 * S)
+    const lifted = color(a, tA, 4 * S, 5 * S)
+    color(a, tA, 5 * S, 6 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('delete_layers', { layers: [lifted] }))
+    ok(a.dispatch('ripple_delete_layers', { layers: [first] }))
+    const gone = diffProjects(before, a.snapshot()).find((c) => c.id === L(lifted))!
+    // The gap it left moved 2 s earlier with everything around it.
+    expect(gone.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[2 * S, 3 * S]])
+  })
+
+  it('a removed clip follows the material under it, cut short where that material was trimmed away', () => {
+    const { a, tA, tB } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const under = video(a, tA, 0, 8 * S)
+    const over = color(a, tB, 3 * S, 5 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('delete_layers', { layers: [over] }))
+    ok(a.dispatch('trim_layer', { layer: under, edge: 'out', new_t_us: 4 * S, escape_link: false }))
+    const gone = diffProjects(before, a.snapshot()).find((c) => c.id === L(over))!
+    expect(gone.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[3 * S, 4 * S]])
   })
 
   it('listed-only changes have no ranges: track label, link, composition label', () => {

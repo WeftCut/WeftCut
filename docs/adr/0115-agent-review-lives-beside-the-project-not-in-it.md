@@ -58,6 +58,12 @@ approvals) and the current state; preference-shaped fields are excluded.
 A difference is an Unreviewed change when any Agent-sourced commit since the
 baseline touched the entity — a later user edit does not clear it. Pure
 translations of timing are grouped as shifts so a ripple reads as one change.
+Where a change shows is its place on the CURRENT timeline: the entity's current
+footprint, never the baseline's, whose times a later ripple has moved. A
+removed entity's place is carried by the content around it, as a tack's is —
+through the clip that was under each end, else its track neighbours — so a
+ripple delete shows as the seam it closed. What one agent call did is diffed
+at its own moment and drawn on today's timeline the same way.
 
 ## Considered options
 

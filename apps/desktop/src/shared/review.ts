@@ -42,8 +42,11 @@ export interface Change {
   to?: EntityLocation
   /** `shifted` only: the translation, current − baseline. */
   delta_us?: number
-  /** Union of baseline and current footprints, merged per composition; empty
-   *  for listed-only changes (link, track, composition). */
+  /** Where the change is on the CURRENT timeline, merged per composition: the
+   *  current footprints; for a removed entity its baseline footprint carried
+   *  over by the content around it — the seam a ripple delete left (main's
+   *  `removedRangeNow`). Empty for listed-only changes (link, track,
+   *  composition). */
   ranges: TimeRange[]
 }
 

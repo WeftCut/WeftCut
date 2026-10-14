@@ -105,7 +105,8 @@ export function ReviewGroupBadge({
   );
 }
 
-/// Removed clips of one lane, outlined at their baseline place. Drawn before
+/// Removed clips of one lane, outlined on their baseline track where they were,
+/// carried onto the current timeline — the seam, after a ripple. Drawn before
 /// the lane's clips, so a clip now occupying the same stretch paints over its
 /// predecessor's ghost. The lane renders this only while the track still
 /// exists — a removed track has no lane, so its clips have nowhere to ghost.

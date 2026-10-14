@@ -326,6 +326,22 @@ describe('opDiff — what one call did', () => {
     expect(a.reviewOpDiff([op])).toMatchObject({ available: true, reverted: false, changes: [{ id: L(x), class: 'added' }] })
   })
 
+  it('draws what a call did on the current timeline, not where it was then', () => {
+    const { a, tA } = setup()
+    const first = color(a, tA, 0, 2 * S)
+    const x = color(a, tA, 4 * S, 5 * S, AGENT)
+    const addX = lastOp(a)
+    const gone = color(a, tA, 6 * S, 7 * S)
+    color(a, tA, 7 * S, 8 * S)
+    ok(a.dispatch('delete_layers', { layers: [gone] }, AGENT))
+    const lift = lastOp(a)
+    // A later ripple pulls everything 2 s earlier.
+    ok(a.dispatch('ripple_delete_layers', { layers: [first] }))
+    const span = (op: string) => a.reviewOpDiff([op]).changes[0]!.ranges.map((r) => [r.t_start_us, r.t_end_us])
+    expect(span(addX)).toEqual([[2 * S, 3 * S]])
+    expect(span(lift)).toEqual([[4 * S, 5 * S]])
+  })
+
   it('folds adjacent ops of one call into one diff and unions separate runs', () => {
     const { a, tA } = setup()
     const x = color(a, tA, 0, S, AGENT)

@@ -134,8 +134,13 @@ function wire(): () => void {
     .catch(() => { /* no bridge (tests, closed window): publications still refetch */ })
   // A project edit changes the diff without touching the baseline; the review
   // follows every publication the project store applies.
+  // So does a selected activity's highlight: it is drawn on the current
+  // timeline (main's `carryChangesTo`), which the edit just moved.
   const stopProject = useProjectStore.subscribe((s, prev) => {
-    if (s.summary !== prev.summary) void refreshReview()
+    if (s.summary === prev.summary) return
+    void refreshReview()
+    const held = useReview.getState().activity
+    if (held !== null && held.status !== 'loading') void showActivityChanges({ id: held.activityId, history_ids: [...held.historyIds], effect: held.effect })
   })
   void refreshReview()
   return () => { disposed = true; stopEvent?.(); stopProject() }

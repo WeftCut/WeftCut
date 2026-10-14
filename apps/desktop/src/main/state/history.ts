@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
-import { ABSENT, diffProjects, entitiesEqual, extractEntities, groupDecorations, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
+import { ABSENT, carryChangesTo, carryDecorationsTo, diffProjects, entitiesEqual, extractEntities, groupDecorations, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -393,15 +393,17 @@ export class History {
     }
     if (at.length === 0) return unavailableOpDiff()
     at.sort((a, b) => a - b)
+    const current = this.current()
     const changes = new Map<string, Change>()
     const decorations = new Map<string, GroupDecoration>()
     for (let s = 0; s < at.length;) {
       let e = s
       while (e + 1 < at.length && at[e + 1] === at[e] + 1) e += 1
       const after = this.snapshots[at[e]].snapshot
-      const run = diffProjects(this.snapshots[at[s] - 1].snapshot, after)
+      // Diffed at its own moment, drawn on the current timeline.
+      const run = carryChangesTo(diffProjects(this.snapshots[at[s] - 1].snapshot, after), after, current)
       for (const c of run) { changes.delete(c.id); changes.set(c.id, c) }
-      for (const d of groupDecorations(run, after)) {
+      for (const d of carryDecorationsTo(groupDecorations(run, after), current)) {
         const held = decorations.get(d.layer_id)
         decorations.set(d.layer_id, held ? { ...d, change_ids: [...new Set([...held.change_ids, ...d.change_ids])] } : d)
       }

@@ -12,7 +12,7 @@ import type { Change, ChangeClass, GroupDecoration } from '../../shared/review'
 /** How a CURRENT clip is decorated. `removed` has no current clip: it is a ghost. */
 export type ReviewClipMark = Exclude<ChangeClass, 'removed'>
 
-/** A removed layer, outlined at its baseline place on a track that still exists
+/** A removed layer, outlined where it was on a track that still exists
  *  (the surface checks the track; the model only knows the baseline id). */
 export interface ReviewGhost {
   changeId: string
@@ -62,8 +62,8 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
       if (!key.startsWith(LAYER_PREFIX)) continue
       const layerId = key.slice(LAYER_PREFIX.length)
       if (c.class !== 'removed') { layers.set(layerId, c.class); continue }
-      // A removed layer's change carries its baseline place; its single range
-      // is its baseline footprint.
+      // A removed layer's change carries its baseline track; its single range
+      // is where it was, on the current timeline (main's `removedRangeNow`).
       const r = c.ranges[0]
       if (c.from?.track_id && r) {
         ghosts.push({ changeId: c.id, layerId, compositionId: c.from.composition_id, trackId: c.from.track_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us })

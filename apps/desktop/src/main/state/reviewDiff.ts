@@ -14,7 +14,10 @@
 // media pool, audio roles) — are never compared: a value patched everywhere
 // cannot differ, and an approved value that bypassed the patch must not show
 // up as a false difference either.
+import { contentAt, localAtContent } from '../../renderer/layerTiming'
+import { approximateTime, exactTime } from '../../renderer/timeMapping'
 import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
+import { hasSourceWindow } from './mutations/helpers'
 import { parseEntityKey, type Change, type ChangeAspect, type ChangeClass, type EntityKey, type EntityKind, type EntityLocation, type GroupDecoration, type TimeRange } from '../../shared/review'
 
 export { parseEntityKey }
@@ -322,6 +325,140 @@ export function mergeRanges(ranges: readonly TimeRange[]): TimeRange[] {
   return out
 }
 
+// ── Removed entities on the current timeline ──────────────────────────────────
+//
+// Every range a change carries is drawn on the CURRENT timeline, so it is the
+// current footprint — the baseline one is in the baseline's time, which any
+// later ripple has moved out from under it. A removed entity has no current
+// footprint; its baseline one is carried over by the content around it, the
+// way a tack follows content (ADR 0115): each end through the clip that was
+// under it (A roll first, then track order) if that clip still shows that
+// material, else through the neighbour on its own track — the end of the clip
+// before it, the material of the clip after it — else where it was. A ripple
+// delete collapses the range to the seam it left.
+
+type LayerPair = { base: Layer; cur: Layer; track: Uuid }
+
+/** Where baseline instant `t` of `base`'s material now sits, through `cur`
+ *  (the same layer, current side). A layer with no source window carries its
+ *  start's delta. Unsnapped: a range is read, never edited. */
+function throughContent(base: Layer, cur: Layer, t: number): number {
+  if (!hasSourceWindow(base.params) || !hasSourceWindow(cur.params)) return t + cur.t_start_us - base.t_start_us
+  const content = contentAt(base.params, exactTime(t - base.t_start_us))
+  return cur.t_start_us + approximateTime(localAtContent(cur.params, content))
+}
+
+/** The baseline layers of a composition that still exist in it, A-roll tracks
+ *  first, then track order (the tack edge rule). */
+function survivingLayers(before: EntityIndex, after: EntityIndex, compositionId: Uuid): LayerPair[] {
+  const comp = before.get(entityKey('Composition', compositionId))
+  if (comp?.kind !== 'Composition') return []
+  const role = (track: Uuid) => { const t = before.get(entityKey('Track', track)); return t?.kind === 'Track' ? t.role : null }
+  const order = [...comp.track_order.filter((t) => role(t) === 'ARoll'), ...comp.track_order.filter((t) => role(t) !== 'ARoll')]
+  const rank = new Map(order.map((t, i) => [t, i]))
+  const out: LayerPair[] = []
+  for (const v of before.values()) {
+    if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
+    const c = after.get(keyOf(v))
+    if (c?.kind === 'Layer' && c.composition_id === compositionId) out.push({ base: v.layer, cur: c.layer, track: v.track_id })
+  }
+  return out.sort((a, b) => (rank.get(a.track) ?? Infinity) - (rank.get(b.track) ?? Infinity))
+}
+
+/** A removed entity's baseline footprint `r`, carried onto the current
+ *  timeline. `trackId` is the removed layer's track (null for a marker or a
+ *  transition), whose neighbours are the fallback. */
+export function removedRangeNow(r: TimeRange, trackId: Uuid | null, layers: readonly LayerPair[]): TimeRange {
+  const s = r.t_start_us, e = r.t_end_us
+  let start: number | null = null
+  let end: number | null = null
+  // Under: the clip that showed material at the instant, while it still shows
+  // some of it — clamped to what is left of it when that frame was trimmed off.
+  for (const p of layers) {
+    if (!(p.base.t_start_us <= s && s < p.base.t_end_us)) continue
+    const t = throughContent(p.base, p.cur, s)
+    if (t >= p.cur.t_end_us) continue
+    start = Math.max(t, p.cur.t_start_us)
+    break
+  }
+  if (e > s) for (const p of layers) {
+    if (!(p.base.t_start_us < e && e <= p.base.t_end_us)) continue
+    const t = throughContent(p.base, p.cur, e)
+    if (t <= p.cur.t_start_us) continue
+    end = Math.min(t, p.cur.t_end_us)
+    break
+  }
+  // Beside, on its own track: where the clip before it now ends, where the
+  // material of the clip after it now starts.
+  if (trackId !== null) {
+    const own = layers.filter((p) => p.track === trackId)
+    if (start === null) {
+      const before = own.filter((p) => p.base.t_end_us <= s).sort((a, b) => b.base.t_end_us - a.base.t_end_us)[0]
+      if (before) start = s + before.cur.t_end_us - before.base.t_end_us
+    }
+    if (end === null && e > s) {
+      const after = own.filter((p) => p.base.t_start_us >= e).sort((a, b) => a.base.t_start_us - b.base.t_start_us)[0]
+      if (after) end = e + throughContent(after.base, after.cur, after.base.t_start_us) - after.base.t_start_us
+    }
+  }
+  if (e <= s) { const t = start ?? s; return { composition_id: r.composition_id, t_start_us: t, t_end_us: t } }
+  // One end found: the other keeps the length — except that an end pulled in
+  // before where it was (the clip after it closed up) is the seam itself.
+  if (start === null && end === null) return { ...r }
+  if (start === null) start = Math.min(s, end!)
+  if (end === null) end = start + (e - s)
+  return { composition_id: r.composition_id, t_start_us: start, t_end_us: Math.max(start, end) }
+}
+
+/**
+ * Changes computed against an earlier project `then` — their ranges in its
+ * time — placed on `current`'s timeline instead: each entity still there at
+ * its current footprint; one gone since, and a range in a composition none of
+ * the change's entities is in now (a removal's seam, the place a move left),
+ * carried by the content around it (`removedRangeNow`). Everything else about
+ * a change stays: it says what was done then. What one agent call did
+ * (`History.opDiff`) is diffed at its own moment and drawn on today's timeline.
+ */
+export function carryChangesTo(changes: readonly Change[], then: Project, current: Project): Change[] {
+  if (then === current) return [...changes]
+  const a = extractEntities(then), b = extractEntities(current)
+  const surviving = new Map<Uuid, LayerPair[]>()
+  const survivors = (compositionId: Uuid) => {
+    let hit = surviving.get(compositionId)
+    if (!hit) surviving.set(compositionId, hit = survivingLayers(a, b, compositionId))
+    return hit
+  }
+  return changes.map((c) => {
+    if (c.ranges.length === 0) return c
+    const out: TimeRange[] = []
+    for (const k of c.keys) {
+      const now = b.get(k)
+      const f = now && footprint(now, b)
+      if (f) { out.push(f); continue }
+      const was = a.get(k)
+      const fw = was && footprint(was, a)
+      if (fw) out.push(removedRangeNow(fw, was!.kind === 'Layer' ? was!.track_id : null, survivors(fw.composition_id)))
+    }
+    const placed = new Set(out.map((r) => r.composition_id))
+    const single = c.keys.length === 1 ? a.get(c.keys[0]) : undefined
+    const track = c.from?.track_id ?? (single?.kind === 'Layer' ? single.track_id : null)
+    for (const r of c.ranges) if (!placed.has(r.composition_id)) out.push(removedRangeNow(r, track, survivors(r.composition_id)))
+    return { ...c, ranges: mergeRanges(out) }
+  })
+}
+
+/** Group decorations computed against `then`, on `current`: a Group clip
+ *  still there at its current footprint; one gone since is not drawn. */
+export function carryDecorationsTo(decorations: readonly GroupDecoration[], current: Project): GroupDecoration[] {
+  const b = extractEntities(current)
+  const out: GroupDecoration[] = []
+  for (const d of decorations) {
+    const v = b.get(entityKey('Layer', d.layer_id))
+    if (v?.kind === 'Layer') out.push({ ...d, composition_id: v.composition_id, t_start_us: v.layer.t_start_us, t_end_us: v.layer.t_end_us })
+  }
+  return out
+}
+
 // ── diffProjects ──────────────────────────────────────────────────────────────
 
 /**
@@ -353,13 +490,23 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
   const compositionChanges = new Map<Uuid, Change>()
   const pendingTracks: Array<{ value: EntityValue; cls: 'added' | 'removed' }> = []
 
+  const surviving = new Map<Uuid, LayerPair[]>()
+  const survivors = (compositionId: Uuid) => {
+    let hit = surviving.get(compositionId)
+    if (!hit) surviving.set(compositionId, hit = survivingLayers(before, after, compositionId))
+    return hit
+  }
   const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[]): Change => {
     const v = (c ?? b)!
+    // The current footprint. Where the entity is no longer — removed, or moved
+    // to another composition — its baseline one, carried onto that
+    // composition's current timeline (`removedRangeNow`).
     const ranges: TimeRange[] = []
-    const fb = b && footprint(b, before)
     const fc = c && footprint(c, after)
-    if (fb) ranges.push(fb)
+    const left = b && (!c || compositionOf(b) !== compositionOf(c))
+    const fb = left ? footprint(b!, before) : null
     if (fc) ranges.push(fc)
+    if (fb) ranges.push(removedRangeNow(fb, b!.kind === 'Layer' ? b!.track_id : null, survivors(fb.composition_id)))
     const lb = b && locationOf(b), lc = c && locationOf(c)
     const comps = [...new Set([lc?.composition_id, lb?.composition_id].filter((x): x is Uuid => x !== undefined))]
     const change: Change = {
@@ -398,7 +545,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
       if (!g) shifts.set(gk, g = { composition_id: comp, delta: shift, keys: [], ranges: [], layers: 0 })
       g.keys.push(key)
       if (b.kind === 'Layer') g.layers += 1
-      g.ranges.push(footprint(b, before)!, footprint(c, after)!)
+      g.ranges.push(footprint(c, after)!)
       continue
     }
     const lb = locationOf(b), lc = locationOf(c)
