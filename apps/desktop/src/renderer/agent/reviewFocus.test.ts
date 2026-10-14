@@ -13,7 +13,7 @@ const tack = (patch: Partial<TackView> = {}): TackView => ({
   state: 'visible', outdated: false, follows: { start: null, end: null }, ...patch,
 })
 const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
+  class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
 })
 const changes = [
   change({ id: 'Layer:a', ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }, { composition_id: 'grp', t_start_us: 5 * S, t_end_us: 6 * S }] }),

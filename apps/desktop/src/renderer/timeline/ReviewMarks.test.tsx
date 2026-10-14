@@ -43,7 +43,7 @@ const track: TrackSummary = {
 };
 const other: TrackSummary = { ...track, id: "track-2", role: null, label: "V2", layers: [] };
 const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: "added", kind: "Layer", keys: [patch.id as Change["keys"][number]], aspects: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+  class: "added", kind: "Layer", keys: [patch.id as Change["keys"][number]], aspects: [], details: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
 });
 const view: ReviewView = {
   version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0,

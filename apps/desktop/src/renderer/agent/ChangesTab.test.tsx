@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import i18n from '../i18n'
 import type { Change, ReviewView } from '../../shared/review'
 import type { LayerSummary, TrackSummary } from '../ipc'
+import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
@@ -24,15 +25,17 @@ const clip = (id: string, label: string, s: number, e: number): LayerSummary => 
 })
 const track = (id: string, layers: LayerSummary[]): TrackSummary => ({ id, kind: 'Video', label: 'V1', enabled: true, locked: false, muted: false, solo: false, role: null, transient: true, layers })
 const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: 'added', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+  class: 'added', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
 })
 const range = (s: number, e: number, composition_id = ROOT_ID) => [{ composition_id, t_start_us: s, t_end_us: e }]
 
 const unreviewed: Change[] = [
-  change({ id: 'Layer:late', class: 'modified', aspects: ['timing', 'params'], ranges: range(8 * S, 9 * S) }),
+  change({ id: 'Layer:late', class: 'modified', aspects: ['timing', 'params'], ranges: range(8 * S, 9 * S),
+    details: [{ type: 'trim', side: 'end', delta_us: -1_200_000 }, { type: 'params', keys: ['opacity', 'x'] }] }),
   change({ id: 'Layer:early', ranges: range(1 * S, 2 * S) }),
   change({ id: 'Layer:inner', class: 'removed', composition_id: 'grp', composition_ids: ['grp'], from: { composition_id: 'grp', track_id: 'gt' }, ranges: range(0, S, 'grp') }),
-  change({ id: 'Shift:comp-root:-2400000', class: 'modified', aspects: ['timing'], keys: ['Layer:a', 'Layer:b', 'Layer:c'], delta_us: -2_400_000, ranges: range(3 * S, 7 * S) }),
+  change({ id: 'Shift:comp-root:-2400000', class: 'modified', aspects: ['timing'], keys: ['Layer:a', 'Layer:b', 'Layer:c'], delta_us: -2_400_000, ranges: range(3 * S, 7 * S),
+    details: [{ type: 'shift', delta_us: -2_400_000 }] }),
 ]
 const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', aspects: ['label'], ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
@@ -73,8 +76,8 @@ describe('AgentPanel Changes tab', () => {
     expect(within(early!).getByText('Added')).toBeTruthy()
     expect(within(early!).getByText('Early clip')).toBeTruthy()
     expect(within(shift!).getByText('3 clips')).toBeTruthy()
-    expect(shift!.textContent).toContain('Moved −2.4 s')
-    expect(late!.textContent).toContain('Timing · Properties')
+    expect(shift!.textContent).toContain('Moved 2.4 s earlier')
+    expect(late!.textContent).toContain('Cut 1.2 s from the end · Opacity, Position X')
     // A removed clip has no current name: its kind stands in.
     expect(within(inner!).getByText('Removed')).toBeTruthy()
     expect(within(inner!).getAllByText(/^Clip/).length).toBeGreaterThan(0)
@@ -179,6 +182,45 @@ describe('AgentPanel Changes tab', () => {
     expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'change', id: 'Layer:mine' })
     fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
     expect(useAgentActivity.getState().reviewFocus).toBeNull()
+  })
+
+  it('folds a carried change under its carrier as a sub-line, not a row of its own', async () => {
+    const carried = change({
+      id: 'Shift:comp-root:-4000000', class: 'modified', aspects: ['timing'], carried: true, carried_by: 'Layer:early',
+      keys: ['Layer:c1', 'Layer:c2', 'Layer:c3', 'Layer:c4', 'Layer:c5', 'Marker:m1', 'Marker:m2'], delta_us: -4 * S,
+      details: [{ type: 'shift', delta_us: -4 * S }], ranges: range(2 * S, 9 * S),
+    })
+    // A carried change whose carrier is not listed stays a row (main demotes such orphans; a guard).
+    const orphan = change({ id: 'Shift:comp-root:-1000000', class: 'modified', aspects: ['timing'], carried: true, carried_by: 'Layer:gone',
+      keys: ['Layer:o1'], delta_us: -S, details: [{ type: 'shift', delta_us: -S }], ranges: range(10 * S, 11 * S) })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, carried, orphan], []) : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    expect(rows().map(r => r.dataset.changeId)).not.toContain(carried.id)
+    expect(rows().map(r => r.dataset.changeId)).toContain(orphan.id)
+    const early = rows().find(r => r.dataset.changeId === 'Layer:early')!
+    expect(early.querySelector('.agent-change-carried')?.textContent).toBe('5 clips and 2 markers after it moved 4.0 s earlier')
+    // Counts leave carried changes out, folded or not.
+    expect(screen.getByText('4 unreviewed')).toBeTruthy()
+  })
+
+  it('an agent row names the work session that last edited it; a user row does not', async () => {
+    useReview.setState({ showUser: true })
+    const op = (id: string, session_id: string, started_at: string, ids: string[]) => ({
+      id, session_id, kind: 'operation', started_at, affected: ids.map(x => ({ kind: 'Layer', id: x })),
+    })
+    useAgentActivity.setState({ snapshot: {
+      workspace_id: 'w', revision: 1, session: null, evicted: 0, lock_reason: null, checkpoints: [], tacks: [],
+      sessions: [{ id: 's1', reason: 'Tighten the intro' }, { id: 's2', reason: 'Fix the outro' }],
+      activities: [op('a1', 's1', '2026-10-14T10:00:00Z', ['early', 'mine']), op('a2', 's2', '2026-10-14T11:00:00Z', ['late'])],
+    } as unknown as AgentActivitySnapshot })
+    render(<AgentPanel editor />)
+    await flush()
+    const from = (id: string) => rows().find(r => r.dataset.changeId === id)!.querySelector('.agent-change-from')?.textContent ?? null
+    expect(from('Layer:early')).toBe('From: Tighten the intro')
+    expect(from('Layer:late')).toBe('From: Fix the outro')
+    expect(from('Layer:inner')).toBeNull()
+    expect(from('Layer:mine')).toBeNull()
   })
 
   it('a change focused elsewhere (a ghost, the mini timeline) opens the tab and scrolls its row into view', async () => {

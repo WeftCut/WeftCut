@@ -80,7 +80,7 @@ describe('AgentPanel', () => {
 describe('AgentPanel — per-activity highlight', () => {
   const edit = (patch: Partial<AgentActivity> = {}) => activity({ kind: 'operation', tool: 'add_video_layer', message: 'Add media clip', history_ids: ['op1'], effect: 'applied', ...patch })
   const reply = (available: boolean) => mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_activity_view'
-    ? { available, reverted: false, decorations: [], changes: available ? [{ id: 'Layer:x', class: 'added', kind: 'Layer', keys: ['Layer:x'], aspects: [], composition_id: 'root', composition_ids: ['root'], ranges: [] }] : [] }
+    ? { available, reverted: false, decorations: [], changes: available ? [{ id: 'Layer:x', class: 'added', kind: 'Layer', keys: ['Layer:x'], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'], ranges: [] }] : [] }
     : { available: true, url: '', connections: [] })
 
   it('selecting an operation row says the timeline shows its changes, with a way back', async () => {

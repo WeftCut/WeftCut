@@ -13,7 +13,7 @@ import { useProjectStore } from '../state/projectStore'
 import { summaryFixture } from '../testing/summaryFixture'
 
 const change = (patch: Partial<Change> = {}): Change => ({
-  id: 'Layer:a', class: 'added', kind: 'Layer', keys: ['Layer:a'], aspects: [], composition_id: 'root', composition_ids: ['root'],
+  id: 'Layer:a', class: 'added', kind: 'Layer', keys: ['Layer:a'], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'],
   ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: 1_000_000 }], ...patch,
 })
 const view = (revision: number, baseline: number, unreviewed: Change[] = [change()], session = 1): ReviewView => ({

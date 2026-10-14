@@ -8,7 +8,8 @@ import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { formatShiftSeconds, groupChanges, keyIds, type ChangeRow } from './changeModel'
+import { groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { changeWordsContext, describeCarried, describeChange } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
 
@@ -27,7 +28,11 @@ import { useAgentActivity } from './activityStore'
  *  A row's click focuses its change (the review focus, shared with the
  *  timelines: its range washed, its clips or ghost outlined, the others'
  *  marks stepping back); a second click lets it go. Hovering a row outlines
- *  its clips. Neither seeks — Locate does. */
+ *  its clips. Neither seeks — Locate does.
+ *
+ *  A row says what changed in relative words (`changeWords.ts`); the content
+ *  its edit carried along folds under it as a quiet sub-line, and an agent
+ *  row names the work session that made it ("From: …"). */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
@@ -41,6 +46,9 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const selected = focus?.kind === 'change' ? focus.id : null
   const setHover = useAgentActivity(s => s.setReviewHover)
   const list = useRef<HTMLDivElement>(null)
+  const activity = useAgentActivity(s => s.snapshot)
+  const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
+  const words = useMemo(() => changeWordsContext(t, summary, ordinals), [t, summary, ordinals])
   const unreviewed = view?.unreviewed ?? []
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
@@ -99,19 +107,6 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     }
   }
 
-  /** The one-line description of what changed. */
-  const describe = (c: Change): string => {
-    if (c.delta_us !== undefined) return t(c.carried ? 'changes.carried_by' : 'changes.moved_by', { delta: formatShiftSeconds(c.delta_us) })
-    const moved = c.from !== undefined && c.to !== undefined
-    const aspects = c.aspects.filter(a => !(moved && a === 'placement')).map(a => t(`changes.aspect_${a}`))
-    if (moved) {
-      const where = c.to!.composition_id !== c.from!.composition_id ? t('changes.moved_composition') : t('changes.moved_track')
-      return [where, ...aspects].join(' · ')
-    }
-    if (c.class === 'modified') return aspects.join(' · ')
-    return t(`changes.kind_${c.kind}`)
-  }
-
   const time = (c: Change): string | null => {
     const r = c.ranges.find(x => x.composition_id === c.composition_id) ?? c.ranges[0]
     const comp = r ? summary?.compositions[r.composition_id] : undefined
@@ -120,19 +115,22 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     return r.t_end_us > r.t_start_us ? `${start} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : start
   }
 
-  const row = ({ change: c, source }: ChangeRow) => {
+  const row = ({ change: c, source, carried }: ChangeRow) => {
     const when = time(c)
+    const reason = source === 'agent' ? sessionReason(c, reasons) : null
     const locatable = editor && canLocateChange(c)
     const focused = selected === c.id
     return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
-      className={`agent-change class-${c.class} source-${source}${c.carried ? ' carried' : ''}`}
+      className={`agent-change class-${c.class} source-${source}`}
       onMouseEnter={() => setHover({ kind: 'change', id: c.id })} onMouseLeave={() => setHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main agent-change-main" aria-pressed={focused}
           onClick={() => useAgentActivity.getState().setReviewFocus(focused ? null : { kind: 'change', id: c.id })}>
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
-            <small>{[describe(c), when].filter(Boolean).join(' · ')}</small></span>
+            <small>{[describeChange(c, words), when].filter(Boolean).join(' · ')}</small>
+            {carried.map(k => <small key={k.id} className="agent-change-carried">{describeCarried(k, t)}</small>)}
+            {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
         {editor && <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
