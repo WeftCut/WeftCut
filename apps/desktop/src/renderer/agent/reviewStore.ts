@@ -18,7 +18,7 @@ import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
-import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
  *  what that call did, shown on the timelines in place of the unreviewed
@@ -195,6 +195,7 @@ export function useUnreviewedCount(enabled = true): number {
 export const selectHighlight = (s: Pick<ReviewState, 'highlight' | 'activity'>): ReviewHighlight =>
   s.activity?.status === 'ready' ? s.activity.highlight : s.highlight
 const NO_GHOSTS: readonly ReviewGhost[] = []
+const NO_CUTS: readonly ReviewCut[] = []
 const NO_RANGES: readonly ReviewRangeMark[] = []
 
 /** The editor timeline paints review marks only under the Review overlay. */
@@ -204,6 +205,23 @@ const useOverlay = () => useAgentActivity(s => s.reviewOverlay)
 export function useLayerReviewMark(layerId: string): ReviewClipMark | null {
   const overlay = useOverlay()
   return useReview(s => (overlay ? selectHighlight(s).layers.get(layerId) ?? null : null))
+}
+
+/** The change that marks a clip on the editor timeline, or null — what its
+ *  tooltip words. Null `layerId` (a duplicate's in-flight clone) reads none. */
+export function useLayerReviewChange(layerId: string | null): Change | null {
+  const overlay = useOverlay()
+  return useReview(s => {
+    if (!overlay || layerId === null) return null
+    const h = selectHighlight(s)
+    const id = h.layerChanges.get(layerId)
+    return id === undefined ? null : h.changes.get(id) ?? null
+  })
+}
+
+/** A highlighted change by id — the words of a mark that names it. */
+export function useHighlightedChanges(): ReadonlyMap<string, Change> {
+  return useReview(s => selectHighlight(s).changes)
 }
 
 /** How many highlighted changes a Group clip contains (0: no badge). */
@@ -227,6 +245,19 @@ export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
     const mine = ghosts.filter(g => g.trackId === trackId)
     return mine.length === 0 ? NO_GHOSTS : mine
   }, [overlay, ghosts, trackId])
+}
+
+/** Cut marks on one track of the editor timeline, in time order: a seam on
+ *  the track it was cut from, a trimmed end on the clip's current lane. */
+export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
+  const overlay = useOverlay()
+  const cuts = useReview(s => selectHighlight(s).cuts)
+  const trackOf = useProjectStore(s => (cuts.length === 0 ? null : s.trackIdByLayerId))
+  return useMemo(() => {
+    if (!overlay || cuts.length === 0) return NO_CUTS
+    const mine = cuts.filter(c => (c.trackId ?? trackOf?.get(c.layerId)) === trackId)
+    return mine.length === 0 ? NO_CUTS : mine.sort((a, b) => a.tUs - b.tUs)
+  }, [overlay, cuts, trackOf, trackId])
 }
 
 /** Change ranges on one composition — the mini timeline's change band. Not

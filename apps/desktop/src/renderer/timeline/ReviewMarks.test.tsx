@@ -14,6 +14,7 @@ import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, layerIdsOf, currentSelection } from "../state/selectionStore";
 import { ROOT_ID, compositionFixture, groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
 import { Timeline } from "./Timeline";
+import { mergeCuts } from "./ReviewMarks";
 
 // The Review overlay's clip decorations (ADR 0115) are paint inside boxes that
 // already exist: turning them on must not move or size a clip or a lane, and
@@ -236,5 +237,111 @@ describe("Review focus on the editor timeline", () => {
     expect(viewport.scrollLeft).toBeLessThanOrEqual(left);
     expect(viewport.scrollLeft + viewport.clientWidth).toBeGreaterThan(left + width);
     expect(usePlayheadStore.getState()).toBe(playhead);
+  });
+});
+
+// Where geometry is lost — a ripple's seam, a trimmed end — a small ▼ says so;
+// what a deliberate move left behind and the content an edit carried show only
+// while that change is focused.
+describe("Cut marks, a move's old place and carried clips", () => {
+  const trim = change({ id: "Layer:edited", class: "modified", aspects: ["timing"], details: [{ type: "trim", side: "end", delta_us: -1.2 * S }],
+    ranges: [{ composition_id: ROOT_ID, t_start_us: S, t_end_us: 2 * S }] });
+  const carried = change({ id: "Shift:x:-1200000", class: "modified", aspects: ["timing"], keys: ["Layer:group-clip"], delta_us: -1.2 * S,
+    carried: true, carried_by: "Layer:edited", ranges: [{ composition_id: ROOT_ID, t_start_us: 6 * S, t_end_us: 8 * S }] });
+  const seam = (id: string, at: number, trackId: string) => change({ id, class: "removed", details: [{ type: "length", duration_us: 4 * S }],
+    from: { composition_id: ROOT_ID, track_id: trackId }, ranges: [{ composition_id: ROOT_ID, t_start_us: at, t_end_us: at }] });
+  const moved = change({ id: "Layer:moved", class: "modified", aspects: ["timing"], details: [{ type: "shift", delta_us: -2 * S }],
+    ranges: [{ composition_id: ROOT_ID, t_start_us: 2 * S, t_end_us: 3 * S }],
+    was: [{ composition_id: ROOT_ID, track_id: "track-2", t_start_us: 4 * S, t_end_us: 5 * S }, { composition_id: ROOT_ID, track_id: null, t_start_us: 0, t_end_us: 0 }] });
+  const cutView: ReviewView = { ...view, version: { ...view.version, revision: 2 },
+    unreviewed: [trim, carried, seam("Layer:cut", 2 * S + 1, "track-1"), seam("Layer:far", 7 * S, "track-2"), moved, view.unreviewed[3]!], decorations: [] };
+  beforeEach(() => {
+    useAgentActivity.setState({ reviewFocus: null, reviewHover: null, tab: "activity" });
+    useReview.getState().apply(cutView);
+  });
+  /** Cut marks by lane, V1 first (the timeline draws V2 above it). */
+  const cuts = (c: HTMLElement) => q(c, '[data-testid="review-cut"]').sort((a, b) => laneOf(a).localeCompare(laneOf(b)));
+  const laneOf = (e: HTMLElement) => e.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId!;
+  const pxPerSec = (c: HTMLElement) => parseFloat(q(c, '[data-layer-id="added"]')[0]!.style.width);
+
+  it("a seam and a trimmed end at one spot are one mark from the lane's top edge, its tooltip a line each", () => {
+    const { container } = renderTimeline();
+    const marks = cuts(container);
+    expect(marks.map((m) => [laneOf(m), m.dataset.count])).toEqual([["track-1", "2"], ["track-2", "1"]]);
+    const [mark] = marks;
+    expect(mark!.title).toBe("Cut 1.2 s from the end, the content after it moved earlier\nDeleted 4.0 s");
+    expect(mark!.getAttribute("aria-label")).toBe(mark!.title);
+    expect(marks[1]!.title).toBe("Deleted 4.0 s");
+    // Centred on the instant, flush with the top, above the blocks it sits on.
+    expect(parseFloat(mark!.style.left) + parseFloat(mark!.style.width) / 2).toBeCloseTo(2 * pxPerSec(container), 0);
+    expect(mark!.className.split(/\s+/)).toEqual(expect.arrayContaining(["top-0", "z-[3]"]));
+    for (const block of mark!.closest('[data-testid="track-lane"]')!.querySelectorAll("[data-layer-id]")) {
+      expect(block.compareDocumentPosition(mark!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // A ripple's seam is the mark, not a zero-width ghost.
+    expect(q(container, '[data-testid="review-ghost"]')).toHaveLength(0);
+  });
+
+  it("merges by the pixels between marks at the current zoom", () => {
+    const at = (tUs: number) => ({ changeId: `c${tUs}`, layerId: "l", compositionId: ROOT_ID, trackId: "t", tUs, kind: "seam" as const });
+    const list = [at(0), at(0.05 * S), at(0.1 * S), at(S)];
+    // 5 px apart chain into one group, drawn mid-span; zoomed in they part.
+    expect(mergeCuts(list, 100, 6).map((g) => [g.px, g.cuts.length])).toEqual([[5, 3], [100, 1]]);
+    expect(mergeCuts(list, 200, 6).map((g) => g.cuts.length)).toEqual([1, 1, 1, 1]);
+  });
+
+  it("a click focuses its first change and opens it; a mark steps back while another change is focused", () => {
+    const { container } = renderTimeline();
+    fireEvent.click(cuts(container)[0]!);
+    expect(useAgentActivity.getState()).toMatchObject({ tab: "changes", reviewFocus: { kind: "change", id: "Layer:edited" } });
+    expect(cuts(container).map((m) => m.dataset.recede ?? null)).toEqual([null, "true"]);
+    act(() => useAgentActivity.getState().selectChange("Layer:far"));
+    expect(cuts(container).map((m) => m.dataset.recede ?? null)).toEqual(["true", null]);
+  });
+
+  it("a focused move frames its old place behind the clips; hovered, it does not", () => {
+    const { container } = renderTimeline();
+    const frames = () => q(container, '[data-testid="review-was"]');
+    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:moved" }));
+    expect(frames()).toHaveLength(0);
+    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    const [frame] = frames();
+    expect(frames()).toHaveLength(1);
+    expect(laneOf(frame!)).toBe("track-2");
+    expect(frame!.className.split(/\s+/)).toContain("pointer-events-none");
+    expect(parseFloat(frame!.style.left)).toBeCloseTo(4 * pxPerSec(container));
+    act(() => useAgentActivity.getState().setReviewFocus(null));
+    expect(frames()).toHaveLength(0);
+  });
+
+  it("a focused edit outlines the clips it carried; hovering its row outlines only its own", () => {
+    const { container } = renderTimeline();
+    const outlines = () => Object.fromEntries(q(container, '[data-testid="review-focus-outline"]').map((o) => [o.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, o.dataset.focus]));
+    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:edited" }));
+    expect(outlines()).toEqual({ edited: "hover" });
+    act(() => useAgentActivity.getState().selectChange("Layer:edited"));
+    expect(outlines()).toEqual({ edited: "change", "group-clip": "change" });
+  });
+
+  it("a marked clip's tooltip says its class and what it did", () => {
+    const { container } = renderTimeline();
+    const title = (id: string) => q(container, `[data-layer-id="${id}"]`)[0]!.title.split("\n");
+    expect(title("edited").at(-1)).toBe("Modified: Cut 1.2 s from the end");
+    expect(title("shifted").at(-1)).toBe("Modified: Timing");
+    expect(title("added").some((l) => l.startsWith("Modified") || l.startsWith("Added"))).toBe(false);
+    act(() => useAgentActivity.setState({ reviewOverlay: false }));
+    expect(title("edited").some((l) => l.startsWith("Modified"))).toBe(false);
+  });
+
+  it("a selected activity's own changes get the same marks and words", () => {
+    useReview.getState().apply({ ...view, version: { ...view.version, revision: 3 } });
+    const { container } = renderTimeline();
+    expect(cuts(container)).toHaveLength(0);
+    act(() => useReview.setState({ activity: {
+      activityId: "a", historyIds: ["op"], effect: "applied", status: "ready", reverted: false, count: 2,
+      highlight: buildReviewHighlight([trim, carried], []),
+    } }));
+    expect(cuts(container).map((m) => m.title)).toEqual(["Cut 1.2 s from the end, the content after it moved earlier"]);
+    expect(q(container, '[data-layer-id="edited"]')[0]!.title.split("\n").at(-1)).toBe("Modified: Cut 1.2 s from the end");
   });
 });

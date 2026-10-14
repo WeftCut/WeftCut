@@ -26,6 +26,10 @@ export type FocusMark = 'tack' | 'change' | 'hover'
  *  the editor timeline's lanes. `endUs === startUs` for a point. */
 export interface FocusWash { kind: ReviewItem['kind']; compositionId: string; startUs: number; endUs: number }
 
+/** Where a focused deliberate move's clip was, on one track — carried onto
+ *  the current timeline (`Change.was`). */
+export interface FocusWas { trackId: string; compositionId: string; startUs: number; endUs: number }
+
 export interface FocusPaint {
   /** The focus this paint is for — the very object, so a fresh select of the
    *  same item still reads as a new one (a timeline reveals per select). */
@@ -35,11 +39,13 @@ export interface FocusPaint {
   /** Removed-change ghost (its change id) → its outline. */
   ghosts: ReadonlyMap<string, Exclude<FocusMark, 'tack'>>
   washes: readonly FocusWash[]
+  /** The focused move's old places, clips only (a marker's has no lane). */
+  was: readonly FocusWas[]
   /** A listed change is focused: the other review marks step back. */
   changeFocused: boolean
 }
 
-export const EMPTY_FOCUS_PAINT: FocusPaint = { focus: null, layers: new Map(), ghosts: new Map(), washes: [], changeFocused: false }
+export const EMPTY_FOCUS_PAINT: FocusPaint = { focus: null, layers: new Map(), ghosts: new Map(), washes: [], was: [], changeFocused: false }
 
 /** Where a tack is now, if it is anywhere: only a visible one has a place. */
 function tackWash(t: TackView): FocusWash | null {
@@ -51,9 +57,13 @@ function tackWash(t: TackView): FocusWash | null {
 /** Project the focus and the hover onto what the editor timeline paints. A
  *  tack outlines the clips it follows (either end; an anchored tack's one
  *  clip) and washes its current range; a change outlines its clips — or its
- *  ghost, removed — and washes every range it has. A hovered change row only
- *  outlines; a hovered tack row outlines its chip and mini mark, which read the
- *  hover themselves. An item no longer listed paints nothing. */
+ *  ghost, removed — and washes every range it has. A focused change also
+ *  outlines the clips it carried along and frames where a deliberate move's
+ *  clips were: what the timeline does not keep on screen, said only while the
+ *  change is looked at. A hovered change row only outlines its own clips; a
+ *  hovered tack row outlines its chip and mini mark, which read the hover
+ *  themselves. An item no longer listed paints nothing. `changes` is the list
+ *  as listed, carried changes included. */
 export function buildFocusPaint(
   focus: ReviewItem | null,
   hover: ReviewItem | null,
@@ -64,6 +74,7 @@ export function buildFocusPaint(
   const layers = new Map<string, FocusMark>()
   const ghosts = new Map<string, Exclude<FocusMark, 'tack'>>()
   const washes: FocusWash[] = []
+  const was: FocusWas[] = []
   const outline = (c: Change, mark: Exclude<FocusMark, 'tack'>) => {
     if (c.class === 'removed') { ghosts.set(c.id, mark); return }
     for (const id of keyIds(c, 'Layer')) layers.set(id, mark)
@@ -85,11 +96,15 @@ export function buildFocusPaint(
     const c = changes.find(x => x.id === focus.id)
     if (c) {
       changeFocused = true
+      for (const k of changes) if (k.carried_by === c.id) for (const id of keyIds(k, 'Layer')) layers.set(id, 'change')
       outline(c, 'change')
       for (const r of c.ranges) washes.push({ kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
+      for (const r of c.was ?? []) {
+        if (r.track_id !== null) was.push({ trackId: r.track_id, compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
+      }
     }
   }
-  return { focus, layers, ghosts, washes, changeFocused }
+  return { focus, layers, ghosts, washes, was, changeFocused }
 }
 
 // ── The derived store ─────────────────────────────────────────────────────────
@@ -100,6 +115,11 @@ const sameWashes = (a: readonly FocusWash[], b: readonly FocusWash[]) =>
   a.length === b.length && a.every((w, i) => {
     const o = b[i]!
     return w.kind === o.kind && w.compositionId === o.compositionId && w.startUs === o.startUs && w.endUs === o.endUs
+  })
+const sameWas = (a: readonly FocusWas[], b: readonly FocusWas[]) =>
+  a.length === b.length && a.every((w, i) => {
+    const o = b[i]!
+    return w.trackId === o.trackId && w.compositionId === o.compositionId && w.startUs === o.startUs && w.endUs === o.endUs
   })
 
 export const useFocusPaint = create<FocusPaint>(() => EMPTY_FOCUS_PAINT)
@@ -117,10 +137,11 @@ function refreshFocusPaint(): void {
     layers: sameMap(held.layers, next.layers) ? held.layers : next.layers,
     ghosts: sameMap(held.ghosts, next.ghosts) ? held.ghosts : next.ghosts,
     washes: sameWashes(held.washes, next.washes) ? held.washes : next.washes,
+    was: sameWas(held.was, next.was) ? held.was : next.was,
     changeFocused: next.changeFocused,
   }
   const same = merged.focus === held.focus && merged.layers === held.layers && merged.ghosts === held.ghosts &&
-    merged.washes === held.washes && merged.changeFocused === held.changeFocused
+    merged.washes === held.washes && merged.was === held.was && merged.changeFocused === held.changeFocused
   if (!same) useFocusPaint.setState(merged, true)
 }
 
@@ -154,6 +175,24 @@ export function useReviewMarksRecede(): boolean {
 export function useGhostFocus(): { ghosts: FocusPaint['ghosts']; recede: boolean } {
   const recede = useReviewMarksRecede()
   return { ghosts: useFocusPaint(s => s.ghosts), recede }
+}
+
+/** The focused change's id, or null — a cut mark of it does not step back. */
+export function useFocusedChangeId(): string | null {
+  const overlay = useOverlay()
+  return useFocusPaint(s => (overlay && s.focus?.kind === 'change' && s.changeFocused ? s.focus.id : null))
+}
+
+const NO_WAS: readonly FocusWas[] = []
+/** The focused move's old places on one track. */
+export function useTrackFocusWas(trackId: string): readonly FocusWas[] {
+  const overlay = useOverlay()
+  const was = useFocusPaint(s => s.was)
+  return useMemo(() => {
+    if (!overlay || was.length === 0) return NO_WAS
+    const mine = was.filter(w => w.trackId === trackId)
+    return mine.length === 0 ? NO_WAS : mine
+  }, [overlay, was, trackId])
 }
 
 const NO_WASHES: readonly FocusWash[] = []

@@ -82,6 +82,17 @@ move also carries `was` — where it was, carried onto the current timeline like
 a removed entity's place, without the moved entities themselves — drawn only
 while that change is focused.
 
+The editor timeline expresses intent with as little as says it. Three colours
+mark the changes — a new clip's edge, a changed one's, a removed clip's ghost
+where it left a gap — and one more shape marks what is gone where geometry
+lost it: a cut mark, a small red ▼ from the lane's top edge at a ripple's seam
+and at a trimmed end. A deliberate move's old place and the clips an edit
+carried along appear only while that change is focused, as the answers to
+"from where" and "what else moved"; standing, they would mark every clip a
+ripple touched. The words — what a change did, by how much — live in the
+panel row and in the tooltips of the clip and the cut mark, worded by one
+module over main's facts, so a change reads the same wherever it is pointed at.
+
 ## Considered options
 
 **Agent-authored markers with a flag or a dedicated colour.** Rejected: still

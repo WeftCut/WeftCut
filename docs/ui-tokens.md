@@ -62,8 +62,8 @@ the hue as an rgba literal.
 | `--tack` | `#2dd4bf` | Tacks (agent review marks): the Review lane chips under the Review overlay, the mini timeline band, the agent panel's Tacks tab. Distinct from marker colours, selection and status hues. |
 | `--review-added` | `#4ade80` | Review: an added clip's edge on the editor timeline, added stretches of the mini timeline's change band, the Changes tab's `added` badge. |
 | `--review-modified` | `#fbbf24` | Review: a modified clip's edge (a move to another track or time included), the Group "contains changes" badge, modified/moved stretches of the change band and their badges. |
-| `--review-removed` | `#f87171` | Review: a removed clip's ghost outline where it was (carried onto the current timeline), removed stretches of the change band, the `removed` badge. Same hue as `--destructive`, separate role. |
-| `--review-focus` | `#e2e8f0` | Review focus on a change: the translucent wash over its time range across the editor's lanes, the hairline inside its clips or removed ghost (fainter while its row is only hovered), its mark on the mini timeline. Neutral so it never reads as one more change class; a focused tack uses `--tack` for the same wash and the same neutral hairline. |
+| `--review-removed` | `#f87171` | Review: a removed clip's ghost outline where it was (carried onto the current timeline), the cut mark (▼) at a ripple's seam or a trimmed end, removed stretches of the change band, the `removed` badge. Same hue as `--destructive`, separate role. |
+| `--review-focus` | `#e2e8f0` | Review focus on a change: the translucent wash over its time range across the editor's lanes, the hairline inside its clips, the clips it carried along, or its removed ghost (fainter while its row is only hovered), the dashed frame where a focused move's clips were, its mark on the mini timeline. Neutral so it never reads as one more change class; a focused tack uses `--tack` for the same wash and the same neutral hairline. |
 
 One-off categorical palettes (log category pills, kind badges, motif card
 status badges) may stay literal or use the pinned `--color-*` Tailwind

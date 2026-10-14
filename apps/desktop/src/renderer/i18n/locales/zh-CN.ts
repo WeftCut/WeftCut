@@ -1559,6 +1559,11 @@ const zhCN: Resources = {
     group_badge: "包含 {{count}} 项待审阅的变更",
     group_badge_activity: "包含 {{count}} 处变更",
     ghost_label: "已删除的片段，{{start}} – {{end}}",
+    // 时间线上的剪切标记（▼）的提示：变更行的说明，若它带动了后面的内容再补一句。
+    cut_carried_earlier: "{{what}}，后面的内容随之前移",
+    cut_carried_later: "{{what}}，后面的内容随之后移",
+    // 片段提示中的一行：变更类别与说明。
+    clip_title: "{{cls}}：{{what}}",
     status: "{{count}} 项变更待审阅",
     status_hint: "{{count}} 项代理变更待审阅，点击打开「变更」标签页",
   },

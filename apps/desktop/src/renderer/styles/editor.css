@@ -315,10 +315,24 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-focus) 55%, transparent);
 }
 
+/* A focused move's old place: the focus's neutral hairline, dashed — a
+   frame, not a clip, and no change class's hue. Behind the clips. */
+.review-was {
+  border: 1px dashed var(--review-focus);
+  background: color-mix(in srgb, var(--review-focus) 4%, transparent);
+}
+
+/* A cut mark: the removed hue, nothing else — a ▼ from the lane's top edge
+   where material was taken out. */
+.review-cut path {
+  fill: var(--review-removed);
+}
+
 /* While a change is focused the other review marks step back — still there,
    no longer competing with the one being looked at. */
 .review-clip-mark[data-recede],
-.review-ghost[data-recede] {
+.review-ghost[data-recede],
+.review-cut[data-recede] {
   opacity: 0.45;
 }
 

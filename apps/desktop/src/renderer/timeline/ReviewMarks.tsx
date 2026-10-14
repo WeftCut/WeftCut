@@ -1,23 +1,33 @@
-import type { CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { formatTimecode } from "../frames";
+import type { Change } from "../../shared/review";
 import {
   useActivityHighlightShown,
   useGroupReviewCount,
+  useHighlightedChanges,
+  useLayerReviewChange,
   useLayerReviewMark,
+  useTrackReviewCuts,
   useTrackReviewGhosts,
 } from "../agent/reviewStore";
-import type { ReviewClipMark } from "../agent/reviewHighlight";
+import type { ReviewClipMark, ReviewCut } from "../agent/reviewHighlight";
 import { useAgentActivity } from "../agent/activityStore";
 import {
   useCompositionFocusWashes,
+  useFocusedChangeId,
   useGhostFocus,
   useLayerFocusMark,
   useReviewMarksRecede,
+  useTrackFocusWas,
 } from "../agent/reviewFocus";
+import { changeWordsContext, describeChange, type ChangeWordsContext } from "../agent/changeWords";
 import { getCommand } from "../commands/registry";
+import { uiPixels, useUiScale } from "../settings/layoutTheme";
+import { UI_METRICS } from "../settings/uiMetrics";
+import { useProjectStore } from "../state/projectStore";
 import { layerSliceRect } from "./geometry";
 
 /// The Review overlay's marks on the editor timeline (ADR 0115). Each is an
@@ -72,6 +82,23 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
       )}
     </>
   );
+}
+
+/// The words a clip's tooltip adds for its review mark: the class, then what
+/// the change did (`changeWords.ts`) — the panel row's words, so a clip reads
+/// the same pointed at from either side. The project is read only for a marked
+/// clip, so an unmarked block hears nothing of a publication from here.
+export function useLayerReviewTitle(layerId: string | null): string | null {
+  const { t } = useTranslation();
+  const change = useLayerReviewChange(layerId);
+  const summary = useProjectStore((s) => (change ? s.summary : null));
+  const ordinals = useProjectStore((s) => (change ? s.groupOrdinals : undefined));
+  return useMemo(() => {
+    if (change === null || change.class === "removed") return null;
+    const cls = t(`changes.class_${change.class}`);
+    const what = describeChange(change, changeWordsContext(t, summary, ordinals));
+    return what ? t("changes.clip_title", { cls, what }) : cls;
+  }, [change, summary, ordinals, t]);
 }
 
 /// The "contains changes" badge on a Group clip: how many highlighted changes
@@ -203,6 +230,140 @@ export function ReviewFocusWash({
               width: point ? undefined : ((w.endUs - w.startUs) / 1_000_000) * pxPerSec,
             }}
           />
+        );
+      })}
+    </>
+  );
+}
+
+/// Where a focused deliberate move's clips were, on this lane: a neutral
+/// dashed frame at each old place, carried onto the current timeline. Only
+/// while that change is focused (`buildFocusPaint`) — the move's amber edge
+/// says it moved, the panel says by how much; the frame answers "from where"
+/// when that is the question. Drawn before the blocks, so a clip now on that
+/// stretch paints over it; paint only.
+export function ReviewWasFrames({
+  trackId,
+  pxPerSec,
+  laneHeight,
+}: {
+  trackId: string;
+  pxPerSec: number;
+  laneHeight: number;
+}) {
+  const was = useTrackFocusWas(trackId);
+  if (was.length === 0) return null;
+  const band = layerSliceRect(laneHeight, "full");
+  return (
+    <>
+      {was.map((w, i) => (
+        <span
+          key={i}
+          data-testid="review-was"
+          aria-hidden="true"
+          className="review-was pointer-events-none absolute rounded"
+          style={{
+            left: (w.startUs / 1_000_000) * pxPerSec,
+            width: Math.max(2, ((w.endUs - w.startUs) / 1_000_000) * pxPerSec),
+            top: band.top,
+            height: band.height,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Cut marks of one lane that read as one at this zoom: neighbours closer than
+ *  `mergePx` chain into a group, drawn at the middle of its span — so two
+ *  groups' marks are never closer than that either. `cuts` in time order. */
+export function mergeCuts(
+  cuts: readonly ReviewCut[],
+  pxPerSec: number,
+  mergePx: number,
+): { px: number; cuts: ReviewCut[] }[] {
+  const out: { first: number; last: number; cuts: ReviewCut[] }[] = [];
+  for (const c of cuts) {
+    const px = (c.tUs / 1_000_000) * pxPerSec;
+    const open = out.at(-1);
+    if (open && px - open.last < mergePx) {
+      open.last = px;
+      open.cuts.push(c);
+    } else out.push({ first: px, last: px, cuts: [c] });
+  }
+  return out.map((g) => ({ px: (g.first + g.last) / 2, cuts: g.cuts }));
+}
+
+/** One cut's words: the change's own, and that the content after it moved
+ *  when the edit carried it along. */
+function cutWords(cut: ReviewCut, change: Change, words: ChangeWordsContext): string {
+  const what = describeChange(change, words) || words.t(`changes.class_${change.class}`, {});
+  return cut.carried ? words.t(`changes.cut_carried_${cut.carried}`, { what }) : what;
+}
+
+/// Cut marks: a small red ▼ hanging from the lane's top edge where material was
+/// taken out — the seam a ripple delete closed, the end a trim cut back. The
+/// three colours mark what is there; this marks what is no longer there where
+/// no geometry says so (a gap left by a plain delete has its ghost). It has
+/// no name in the UI; its tooltip says what was cut.
+///
+/// After the blocks and above them (`z-[3]`, later in the lane than a selected
+/// `z-[2]` block or a dragged `z-[3]` one), so a mark at a clip's edge stays
+/// visible; small, so a clip's name under it stays readable. Marks closer than
+/// a few pixels at the current zoom merge into one, its tooltip a line per
+/// change. Like a ghost it takes the click — focusing its (first) change in the
+/// agent panel — and nothing else: the press bubbles to the lane, which reads
+/// it as background.
+export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: number }) {
+  const { t } = useTranslation();
+  useUiScale();
+  const cuts = useTrackReviewCuts(trackId);
+  const changes = useHighlightedChanges();
+  const summary = useProjectStore((s) => (cuts.length > 0 ? s.summary : null));
+  const ordinals = useProjectStore((s) => (cuts.length > 0 ? s.groupOrdinals : undefined));
+  const recede = useReviewMarksRecede();
+  const focused = useFocusedChangeId();
+  if (cuts.length === 0) return null;
+  const metrics = UI_METRICS.timeline.review.cutMark;
+  const [width, height] = [uiPixels(metrics.width), uiPixels(metrics.height)];
+  const words = changeWordsContext(t, summary, ordinals);
+  return (
+    <>
+      {mergeCuts(cuts, pxPerSec, uiPixels(metrics.merge)).map((g) => {
+        const lines: string[] = [];
+        const seen = new Set<string>();
+        for (const c of g.cuts) {
+          const change = changes.get(c.changeId);
+          if (!change || seen.has(c.changeId)) continue;
+          seen.add(c.changeId);
+          lines.push(cutWords(c, change, words));
+        }
+        const label = lines.join("\n");
+        const first = g.cuts[0]!;
+        const mine = focused !== null && seen.has(focused);
+        return (
+          <span
+            key={`${first.changeId}:${first.kind}:${first.tUs}`}
+            data-testid="review-cut"
+            data-change-id={first.changeId}
+            data-cut-kind={first.kind}
+            data-count={g.cuts.length}
+            data-focus={mine ? "change" : undefined}
+            data-recede={(recede && !mine) || undefined}
+            role="img"
+            aria-label={label}
+            title={label}
+            onClick={() => {
+              useAgentActivity.getState().selectChange(first.changeId);
+              void getCommand("openAgentPanel")?.run();
+            }}
+            className="review-cut absolute top-0 z-[3] flex cursor-pointer"
+            style={{ left: g.px - width / 2, width, height }}
+          >
+            <svg viewBox="0 0 7 5" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
+              <path d="M0 0H7L3.5 5Z" />
+            </svg>
+          </span>
         );
       })}
     </>

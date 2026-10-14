@@ -102,6 +102,10 @@ export const UI_METRICS = {
       chipMinWidth: 13,
       /** Least group chip width: the kind icon plus a two-digit count. */
       groupMinWidth: 26,
+      /** The cut mark (▼) hanging from a track lane's top edge where material
+       * was taken out: small enough to leave a clip's name readable, and the
+       * distance under which two on one lane read as one. */
+      cutMark: { width: 7, height: 5, merge: 6 },
     },
   },
 

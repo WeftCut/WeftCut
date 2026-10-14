@@ -64,6 +64,24 @@ describe('buildFocusPaint', () => {
     expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { start: { layer_id: 'x' }, end: null } })], []).layers]).toEqual([])
   })
 
+  it('a focused move frames where its clips were, on their tracks — only while focused, never a marker', () => {
+    const moved = change({ id: 'Layer:m', aspects: ['placement'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
+      was: [{ composition_id: 'root', track_id: 'v2', t_start_us: 3 * S, t_end_us: 4 * S }, { composition_id: 'root', track_id: null, t_start_us: 5 * S, t_end_us: 5 * S }] })
+    const list = [...changes, moved]
+    expect(buildFocusPaint({ kind: 'change', id: 'Layer:m' }, null, [], list).was)
+      .toEqual([{ trackId: 'v2', compositionId: 'root', startUs: 3 * S, endUs: 4 * S }])
+    expect(buildFocusPaint(null, { kind: 'change', id: 'Layer:m' }, [], list).was).toEqual([])
+    expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).was).toEqual([])
+  })
+
+  it('a focused change outlines the clips it carried along; hovering its row does not', () => {
+    const carried = change({ id: 'Shift:root:-1', delta_us: -S, carried: true, carried_by: 'Layer:gone', keys: ['Layer:after1', 'Layer:after2', 'Marker:k'] })
+    const list = [...changes, carried]
+    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list).layers]).toEqual([['after1', 'change'], ['after2', 'change']])
+    expect([...buildFocusPaint(null, { kind: 'change', id: 'Layer:gone' }, [], list).layers]).toEqual([])
+    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).layers]).toEqual([['a', 'change']])
+  })
+
   it('an item no longer listed paints nothing and recedes nothing', () => {
     const p = buildFocusPaint({ kind: 'change', id: 'Layer:approved' }, null, [tack()], changes)
     expect([p.layers.size, p.ghosts.size, p.washes, p.changeFocused]).toEqual([0, 0, [], false])

@@ -34,7 +34,7 @@ import {
 } from "./geometry";
 import { AudioRegionBand } from "./AudioRegionBand";
 import { PauseBands } from "./PauseBands";
-import { ReviewClipMarkLayer, ReviewGroupBadge } from "./ReviewMarks";
+import { ReviewClipMarkLayer, ReviewGroupBadge, useLayerReviewTitle } from "./ReviewMarks";
 import { compUsFromSourceUs } from "./audioRegionGeometry";
 import { useArmedRegionSelect } from "./audioRegionArmStore";
 import { useAudioRegionDrag } from "./hooks/useAudioRegionDrag";
@@ -375,6 +375,9 @@ export function LayerBlock({
   const locked = layer.locked || trackLocked;
   const lockFeedback = useLockedClipFeedback(locked);
   const lockHint = t(trackLocked ? "timeline.clip_track_lock_hint" : "timeline.clip_lock_hint");
+  // Under the Review overlay a marked clip's tooltip says what its change did.
+  // A duplicate's clone carries its source's id and stays unmarked.
+  const reviewTitle = useLayerReviewTitle(previewOnly ? null : layer.id);
   // A duplicate leaves its sources where they are, so a source block draws as
   // if nothing were happening; the in-flight clone — one `previewOnly` block
   // per subject — is the only one that follows the pointer.
@@ -954,6 +957,7 @@ export function LayerBlock({
         layer.params.kind === "Text"
           ? textSnippet(layer.params.content, TEXT_NAME_MAX)
           : "",
+        reviewTitle ?? "",
       ]
         .filter(Boolean)
         .join("\n")}

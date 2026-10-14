@@ -1746,6 +1746,12 @@ const enUS = {
     group_badge: "Contains {{count}} unreviewed change(s)",
     group_badge_activity: "Contains {{count}} change(s)",
     ghost_label: "Removed clip, {{start}} – {{end}}",
+    // A cut mark's (▼) tooltip on the timeline: the change row's words, plus
+    // what happened to the content after it when the edit carried it along.
+    cut_carried_earlier: "{{what}}, the content after it moved earlier",
+    cut_carried_later: "{{what}}, the content after it moved later",
+    // A clip tooltip's line for its review mark: the class, then what it did.
+    clip_title: "{{cls}}: {{what}}",
     status: "{{count}} to review",
     status_hint: "{{count}} unreviewed agent change(s) — click to open the Changes tab",
   },

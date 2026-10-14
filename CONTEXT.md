@@ -1068,6 +1068,15 @@ with that edit, painted on no timeline. UI word: Change / 变更.
 _Avoid_: diff entry, hunk, edit (that is the operation, not its result);
 shifted / moved as classes of their own
 
+**Cut mark**:
+The small red ▼ hanging from a track lane's top edge on the editor timeline
+where material was taken out and nothing else shows it: a ripple delete's
+seam (in place of a removed clip's ghost, which would have no width) and a
+clip's trimmed end. A delete that left a gap has its ghost instead; a
+lengthened end has nothing. Marks a few pixels apart merge into one. It has no
+name in the UI; its tooltip says what was cut, and a click focuses its change.
+_Avoid_: cut marker, seam marker (it is not a marker); 剪切标记 as a UI label
+
 **Approve**:
 Fold unreviewed changes into the review baseline — all at once or one change
 at a time. Changes nothing in the project and records nothing. UI word:
