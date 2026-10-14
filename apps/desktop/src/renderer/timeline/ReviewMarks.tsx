@@ -197,7 +197,7 @@ export function ReviewFocusWash({
             data-kind={w.kind}
             data-point={point || undefined}
             aria-hidden="true"
-            className="review-focus-wash pointer-events-none absolute inset-y-0"
+            className="review-focus-wash pointer-events-none absolute inset-y-0 z-[2]"
             style={{
               left: (w.startUs / 1_000_000) * pxPerSec,
               width: point ? undefined : ((w.endUs - w.startUs) / 1_000_000) * pxPerSec,

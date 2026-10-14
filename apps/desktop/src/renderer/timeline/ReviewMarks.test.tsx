@@ -157,7 +157,7 @@ describe("Review focus on the editor timeline", () => {
   const washes = (c: HTMLElement) => q(c, '[data-testid="review-focus-wash"]');
   const outlines = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-focus-outline"]').map((o) => [o.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, o.dataset.focus]));
 
-  it("a focused tack washes its range across every lane, under the clips, and rings the clip it follows", () => {
+  it("a focused tack washes its range across every lane, over the clips, and rings the clip it follows", () => {
     const { container } = renderTimeline();
     const before = geometry(container);
     act(() => useAgentActivity.getState().selectTack("t1"));
@@ -165,8 +165,12 @@ describe("Review focus on the editor timeline", () => {
     expect(painted.map((w) => [w.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId, w.dataset.kind]).sort()).toEqual([["track-1", "tack"], ["track-2", "tack"]]);
     for (const w of painted) {
       expect(w.className.split(/\s+/)).toContain("pointer-events-none");
-      // First in its lane: everything the lane draws lies over it.
-      expect(w.parentElement!.firstElementChild).toBe(w);
+      // Over the blocks: after them in its lane, raised above a selected one.
+      const lane = w.closest<HTMLElement>('[data-testid="track-lane"]')!;
+      for (const block of lane.querySelectorAll("[data-layer-id]")) {
+        expect(block.compareDocumentPosition(w) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+      expect(w.className.split(/\s+/)).toContain("z-[2]");
       expect(parseFloat(w.style.width)).toBeCloseTo(parseFloat(w.style.left));
     }
     expect(outlines(container)).toEqual({ edited: "tack" });

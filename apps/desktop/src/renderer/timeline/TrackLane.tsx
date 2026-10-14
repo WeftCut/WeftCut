@@ -516,9 +516,6 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* The review focus's time range (ADR 0115), first so everything the
-          lane draws lies over it; paint only. */}
-      <ReviewFocusWash compositionId={compositionId} pxPerSec={pxPerSec} />
       {/* The selected gap (ADR 0069). It takes pointer events only to carry
           its tooltip; every press on it bubbles to the lane's own pointerdown
           and contextmenu, which resolve it as lane background: clicking a
@@ -704,6 +701,12 @@ export function TrackLane({
         return blocks;
       })()}
       </div>
+      {/* The review focus's time range (ADR 0115), over the blocks: a clip
+          fills its lane but for a 4 px margin, so a wash beneath one showed
+          only as a sliver along its edges. Above a selected block (`z-[2]`,
+          earlier in the DOM), below a dragged one and the height handle
+          (`z-[3]`); paint only. */}
+      <ReviewFocusWash compositionId={compositionId} pxPerSec={pxPerSec} />
       {/* Absolute positioning ends inside the 1px lane border. Anchor at its
           center, then translate by half the handle's theme-scaled height. */}
       <div

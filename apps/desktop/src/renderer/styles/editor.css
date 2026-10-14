@@ -266,8 +266,9 @@
 }
 
 /* The review focus across the editor's lanes (agent/reviewFocus.ts,
-   timeline/ReviewMarks.tsx). The wash lies under the clips, so it tints the
-   lane's empty stretches and the clips' edges, never their pictures; its two
+   timeline/ReviewMarks.tsx). The wash lies over the clips, faint enough to
+   leave their pictures and names readable — beneath them it showed only in
+   the margins a clip leaves in its lane, and read as a mark there; its two
    edges are drawn so a range on a busy lane still reads where it starts and
    ends. A point is the one line. */
 .review-focus-wash {
