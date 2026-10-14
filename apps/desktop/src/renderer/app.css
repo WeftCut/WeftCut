@@ -278,7 +278,6 @@
     --review-added: #4ade80;
     --review-modified: #fbbf24;
     --review-removed: #f87171;
-    --review-shifted: #94a3b8;
     /* The review focus on a change (agent/reviewFocus.ts): the wash over its
        time range, the ring round its clips or ghost, its mini timeline mark.
        Neutral on purpose — the class hues above already sit on those clips,

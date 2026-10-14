@@ -133,10 +133,8 @@
 }
 
 .mini-change-added { background: var(--review-added); }
-.mini-change-modified,
-.mini-change-moved { background: var(--review-modified); }
+.mini-change-modified { background: var(--review-modified); }
 .mini-change-removed { background: var(--review-removed); }
-.mini-change-shifted { background: var(--review-shifted); opacity: 0.45; }
 
 /* The review focus on the strip (agent/reviewFocus.ts): the focused change's
    ranges at full strength with a ring, as the selected tack is drawn; a row

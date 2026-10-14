@@ -146,7 +146,9 @@ describe('buildReviewHighlight', () => {
     const h = buildReviewHighlight([
       change(),
       change({ id: 'Layer:m', class: 'modified', keys: ['Layer:m'], aspects: ['params'] }),
-      change({ id: 'Shift:root:5', class: 'shifted', keys: ['Layer:s1', 'Layer:s2', 'Marker:k'], delta_us: 5 }),
+      change({ id: 'Shift:root:5', class: 'modified', aspects: ['timing'], keys: ['Layer:s1', 'Layer:s2', 'Marker:k'], delta_us: 5 }),
+      // Carried along by an edit: painted nowhere, counted nowhere.
+      change({ id: 'Shift:root:-9', class: 'modified', aspects: ['timing'], keys: ['Layer:c1'], delta_us: -9, carried: true, ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: 2 }] }),
       change({ id: 'Layer:gone', class: 'removed', keys: ['Layer:gone'], from: { composition_id: 'root', track_id: 'track-1' },
         ranges: [{ composition_id: 'root', t_start_us: 3, t_end_us: 9 }] }),
       change({ id: 'Track:t', class: 'removed', kind: 'Track', keys: ['Track:t'], ranges: [] }),
@@ -154,11 +156,11 @@ describe('buildReviewHighlight', () => {
       { layer_id: 'group-1', composition_id: 'root', t_start_us: 4, t_end_us: 7, change_ids: ['Layer:m', 'User:only'] },
       { layer_id: 'group-2', composition_id: 'root', t_start_us: 0, t_end_us: 1, change_ids: ['User:only'] },
     ])
-    expect([...h.layers]).toEqual([['a', 'added'], ['m', 'modified'], ['s1', 'shifted'], ['s2', 'shifted']])
+    expect([...h.layers]).toEqual([['a', 'added'], ['m', 'modified'], ['s1', 'modified'], ['s2', 'modified']])
     expect(h.ghosts).toEqual([{ changeId: 'Layer:gone', layerId: 'gone', compositionId: 'root', trackId: 'track-1', tStartUs: 3, tEndUs: 9 }])
     // Only changes in the given set count: a decoration of user changes alone gets no badge.
     expect([...h.groups]).toEqual([['group-1', 1]])
-    expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'shifted', 'removed', 'modified'])
+    expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'modified', 'removed', 'modified'])
     // A Group containing changes bands its own footprint on the timeline holding it.
     expect(h.ranges.at(-1)).toEqual({ changeId: 'Group:group-1', cls: 'modified', compositionId: 'root', tStartUs: 4, tEndUs: 7 })
   })

@@ -73,7 +73,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   /** What the row names: the clip, marker, track or Group as the rest of the
    *  app names it when it still exists; its kind when it is gone. */
   const title = (c: Change): string => {
-    if (c.class === 'shifted') {
+    if (c.delta_us !== undefined) {
       const clips = keyIds(c, 'Layer').length, marks = keyIds(c, 'Marker').length
       return [clips && t('changes.n_clips', { count: clips }), marks && t('changes.n_markers', { count: marks })].filter(Boolean).join(', ')
     }
@@ -101,10 +101,11 @@ export function ChangesTab({ editor }: { editor: boolean }) {
 
   /** The one-line description of what changed. */
   const describe = (c: Change): string => {
-    if (c.class === 'shifted') return t('changes.shifted_by', { delta: formatShiftSeconds(c.delta_us ?? 0) })
-    const aspects = c.aspects.filter(a => !(c.class === 'moved' && a === 'placement')).map(a => t(`changes.aspect_${a}`))
-    if (c.class === 'moved') {
-      const where = c.to && c.from && c.to.composition_id !== c.from.composition_id ? t('changes.moved_composition') : t('changes.moved_track')
+    if (c.delta_us !== undefined) return t(c.carried ? 'changes.carried_by' : 'changes.moved_by', { delta: formatShiftSeconds(c.delta_us) })
+    const moved = c.from !== undefined && c.to !== undefined
+    const aspects = c.aspects.filter(a => !(moved && a === 'placement')).map(a => t(`changes.aspect_${a}`))
+    if (moved) {
+      const where = c.to!.composition_id !== c.from!.composition_id ? t('changes.moved_composition') : t('changes.moved_track')
       return [where, ...aspects].join(' · ')
     }
     if (c.class === 'modified') return aspects.join(' · ')
@@ -124,7 +125,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     const locatable = editor && canLocateChange(c)
     const focused = selected === c.id
     return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
-      className={`agent-change class-${c.class} source-${source}`}
+      className={`agent-change class-${c.class} source-${source}${c.carried ? ' carried' : ''}`}
       onMouseEnter={() => setHover({ kind: 'change', id: c.id })} onMouseLeave={() => setHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main agent-change-main" aria-pressed={focused}
@@ -147,7 +148,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
     <p className="agent-tacks-subtitle">{t('changes.subtitle')}</p>
     <div className="agent-activity-toolbar">
-      <span className="agent-tacks-count">{t('changes.unreviewed_count', { count: unreviewed.length })}</span>
+      <span className="agent-tacks-count">{t('changes.unreviewed_count', { count: unreviewed.filter(c => !c.carried).length })}</span>
       <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
         onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>
       <button type="button" className="agent-changes-approve-all" disabled={busy || unreviewed.length === 0} title={t('changes.approve_all_hint')}
@@ -158,7 +159,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
       {!groups.length && <p className="agent-empty">{t(empty)}</p>}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{compositionName(g.compositionId)}</span>
-          <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent').length })}</small></h3>
+          <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent' && !r.change.carried).length })}</small></h3>
         {g.rows.map(row)}
       </section>)}
     </div>

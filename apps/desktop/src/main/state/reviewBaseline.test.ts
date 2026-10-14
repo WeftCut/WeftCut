@@ -164,7 +164,7 @@ describe('Review baseline — approval', () => {
     a.pinReviewBaseline()
     ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
     label(a, z, 'z', AGENT)
-    const shift = a.reviewState().unreviewed.find((c) => c.class === 'shifted')!
+    const shift = a.reviewState().unreviewed.find((c) => c.delta_us !== undefined)!
     expect(shift.keys).toEqual([L(x), L(y)].sort())
     expect(a.approveReview({ keys: [L(y)] })).toBe(1)
     expect(ids(a)).toEqual({ unreviewed: [L(z)], user: [] })
@@ -197,6 +197,37 @@ describe('Review baseline — approval', () => {
     color(a, tA, 0, S, AGENT)
     expect(a.approveReview({ change_ids: ['Layer:nope'], keys: ['Marker:nope'] })).toBe(0)
     expect(a.reviewState().unreviewed).toHaveLength(1)
+  })
+})
+
+describe('Review baseline — carried translations', () => {
+  it('a ripple’s carried shift is approved with the removal that carried it', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const gone = color(a, tA, S, 2 * S)
+    color(a, tA, 2 * S, 3 * S)
+    a.pinReviewBaseline()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    const { unreviewed } = a.reviewState()
+    expect(unreviewed.map((c) => [c.class, c.carried ?? false])).toEqual([['removed', false], ['modified', true]])
+    expect(a.approveReview({ keys: [L(gone)] })).toBe(2)
+    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
+  })
+
+  it('a carried shift with nothing in its list to be carried by is shown as the move it is', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const gone = color(a, tA, S, 2 * S)
+    const after = color(a, tA, 2 * S, 3 * S)
+    a.pinReviewBaseline()
+    // The agent touched the clip after (and put it back); the user's ripple
+    // then moved it. Its carrier is a user change, not on its list.
+    ok(a.dispatch('shift_layers', { layers: [after], delta_us: S }, AGENT))
+    ok(a.dispatch('shift_layers', { layers: [after], delta_us: -S }, AGENT))
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }))
+    const shift = a.reviewState().unreviewed.find((c) => c.delta_us !== undefined)!
+    expect(shift.carried).toBeUndefined()
+    expect(a.reviewState().user.map((c) => c.class)).toEqual(['removed'])
   })
 })
 
@@ -329,7 +360,7 @@ describe('opDiff — what one call did', () => {
   it('draws what a call did on the current timeline, not where it was then', () => {
     const { a, tA } = setup()
     const first = color(a, tA, 0, 2 * S)
-    const x = color(a, tA, 4 * S, 5 * S, AGENT)
+    color(a, tA, 4 * S, 5 * S, AGENT)
     const addX = lastOp(a)
     const gone = color(a, tA, 6 * S, 7 * S)
     color(a, tA, 7 * S, 8 * S)

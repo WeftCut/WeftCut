@@ -56,8 +56,13 @@ outlive a project opening — consistent with history and activity.
 entity-level between the effective baseline (base snapshot plus per-entity
 approvals) and the current state; preference-shaped fields are excluded.
 A difference is an Unreviewed change when any Agent-sourced commit since the
-baseline touched the entity — a later user edit does not clear it. Pure
-translations of timing are grouped as shifts so a ripple reads as one change.
+baseline touched the entity — a later user edit does not clear it. There
+are three classes, as a diff has: added, removed, modified. A move to another
+track or composition, or in time, is a modification. Pure translations of
+timing are grouped per delta so a ripple reads as one change. A translation
+that is only the tail after another change of its composition (starting where
+that change ends) is carried: it is approved with its edit and painted on no
+timeline, as a diff does not mark the lines an insertion above renumbered.
 Where a change shows is its place on the CURRENT timeline: the entity's current
 footprint, never the baseline's, whose times a later ripple has moved. A
 removed entity's place is carried by the content around it, as a tack's is —

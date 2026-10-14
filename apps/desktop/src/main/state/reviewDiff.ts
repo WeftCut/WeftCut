@@ -459,15 +459,60 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
   return out
 }
 
+// ── Carried translations ──────────────────────────────────────────────────────
+
+/**
+ * Whether a translation group is only content carried along by another change
+ * — a ripple delete closing up, an insert or a longer clip making room, a trim
+ * pulling the rest in. Both must hold:
+ *
+ * - On every track it touches, it is the TAIL from its first clip on: every
+ *   clip that started at or after it there and still exists moved the same
+ *   way at least as far (a second ripple further on carries the rest further).
+ *   A clip that stayed behind means the group moved relative to its
+ *   neighbours: a deliberate move.
+ * - Its new start is where another change of its composition now ends — the
+ *   seam a removal left, the end of what was inserted or trimmed.
+ *
+ * Anything else — a gap closed with nothing removed, a lone clip moved — is a
+ * deliberate move, marked like any modification: what cannot be told apart is
+ * shown, never hidden.
+ */
+function isCarried(compositionId: Uuid, delta: number, keys: readonly EntityKey[], before: EntityIndex, after: EntityIndex, others: readonly Change[], current: Project): boolean {
+  const fps = current.compositions[compositionId]?.fps
+  const tolerance = fps ? Math.ceil((1_000_000 * fps.den) / fps.num) : 1
+  const sign = Math.sign(delta)
+  const firstOnTrack = new Map<Uuid, number>()
+  let newStart = Infinity
+  for (const k of keys) {
+    const b = before.get(k)
+    if (b?.kind !== 'Layer') continue
+    firstOnTrack.set(b.track_id, Math.min(firstOnTrack.get(b.track_id) ?? Infinity, b.layer.t_start_us))
+    newStart = Math.min(newStart, b.layer.t_start_us + delta)
+  }
+  if (firstOnTrack.size === 0) return false
+  for (const v of before.values()) {
+    if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
+    const from = firstOnTrack.get(v.track_id)
+    if (from === undefined || v.layer.t_start_us < from) continue
+    const c = after.get(keyOf(v))
+    if (c?.kind !== 'Layer') continue
+    if ((c.layer.t_start_us - v.layer.t_start_us) * sign < Math.abs(delta) - tolerance) return false
+  }
+  return others.some((o) => o.ranges.some((r) => r.composition_id === compositionId && Math.abs(r.t_end_us - newStart) <= tolerance))
+}
+
 // ── diffProjects ──────────────────────────────────────────────────────────────
 
 /**
  * Entity-level differences between the (effective) baseline and `current`.
  *
- * Classes: `added`, `removed`, `moved` (layer track/composition, or any other
- * entity's composition, changed), `modified` (with aspects) and `shifted` (a
+ * Classes: `added`, `removed` and `modified` (with aspects). A move to another
+ * track or composition is `modified` with `placement` and both locations. A
  * layer or anchored marker whose ONLY difference is a pure translation of its
- * timing in place; grouped per composition and delta into one change). A
+ * timing in place is `modified` with `timing` and `delta_us`, grouped per
+ * composition and delta into one change — `carried` when it is the content
+ * after another change closing up or making room (`isCarried`). A
  * composition added or removed carries its own tracks in the same change.
  * Ordered by listed composition (current root first), then by time; changes
  * with no footprint come after the timed ones of their composition.
@@ -496,7 +541,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     if (!hit) surviving.set(compositionId, hit = survivingLayers(before, after, compositionId))
     return hit
   }
-  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[]): Change => {
+  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[], moved = false): Change => {
     const v = (c ?? b)!
     // The current footprint. Where the entity is no longer — removed, or moved
     // to another composition — its baseline one, carried onto that
@@ -514,7 +559,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
       composition_id: lc?.composition_id ?? lb?.composition_id ?? null, composition_ids: comps,
       ranges: mergeRanges(ranges),
     }
-    if (cls === 'moved' && lb && lc) { change.from = lb; change.to = lc }
+    if (moved && lb && lc) { change.from = lb; change.to = lc }
     // A removed entity's baseline place: where the timeline ghosts it.
     else if (cls === 'removed' && lb) change.from = lb
     changes.push(change)
@@ -551,7 +596,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     const lb = locationOf(b), lc = locationOf(c)
     const moved = lb !== null && lc !== null && (lb.composition_id !== lc.composition_id || lb.track_id !== lc.track_id)
     if (moved) aspects.add('placement')
-    emit(moved ? 'moved' : 'modified', b, c, orderedAspects(aspects))
+    emit('modified', b, c, orderedAspects(aspects), moved)
   }
 
   // A composition's tracks arrive and leave with it: fold them into its change.
@@ -561,12 +606,15 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     else emit(cls, cls === 'removed' ? value : undefined, cls === 'added' ? value : undefined, [])
   }
 
+  const others = [...changes]
   for (const g of shifts.values()) {
     g.keys.sort()
-    changes.push({
-      id: `Shift:${g.composition_id}:${g.delta}`, class: 'shifted', kind: g.layers > 0 ? 'Layer' : 'Marker', keys: g.keys, aspects: [],
+    const change: Change = {
+      id: `Shift:${g.composition_id}:${g.delta}`, class: 'modified', kind: g.layers > 0 ? 'Layer' : 'Marker', keys: g.keys, aspects: ['timing'],
       composition_id: g.composition_id, composition_ids: [g.composition_id], delta_us: g.delta, ranges: mergeRanges(g.ranges),
-    })
+    }
+    if (isCarried(g.composition_id, g.delta, g.keys, before, after, others, current)) change.carried = true
+    changes.push(change)
   }
 
   const rootId = current.root_id

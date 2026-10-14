@@ -1060,8 +1060,13 @@ _Avoid_: base checkpoint, base commit, snapshot (unqualified)
 **Unreviewed change**:
 One entity-level difference between the review baseline and the current state
 that an agent-sourced commit touched since the baseline. A difference only the
-user caused is a user change and needs no review. UI word: Change / 变更.
-_Avoid_: diff entry, hunk, edit (that is the operation, not its result)
+user caused is a user change and needs no review. Three classes, as a diff
+reads: added, removed, modified (新增 / 删除 / 修改) — a move to another track
+or time is a modification. A translation that is only the content after an
+edit closing up or making room is a **carried** change: listed and approved
+with that edit, painted on no timeline. UI word: Change / 变更.
+_Avoid_: diff entry, hunk, edit (that is the operation, not its result);
+shifted / moved as classes of their own
 
 **Approve**:
 Fold unreviewed changes into the review baseline — all at once or one change

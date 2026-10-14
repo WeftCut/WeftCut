@@ -102,9 +102,12 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-change-copy { padding-block: calc(4 * var(--ui-px)); }
 .agent-change-badge { flex: none; min-width: calc(58 * var(--ui-px)); padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px)); border-radius: var(--radius-control); font-size: var(--font-size-micro); text-align: center; border: 1px solid currentColor; }
 .agent-change-badge.class-added { color: var(--review-added); background: color-mix(in srgb, var(--review-added) 12%, transparent); }
-.agent-change-badge.class-modified, .agent-change-badge.class-moved { color: var(--review-modified); background: color-mix(in srgb, var(--review-modified) 12%, transparent); }
+.agent-change-badge.class-modified { color: var(--review-modified); background: color-mix(in srgb, var(--review-modified) 12%, transparent); }
 .agent-change-badge.class-removed { color: var(--review-removed); background: color-mix(in srgb, var(--review-removed) 12%, transparent); }
-.agent-change-badge.class-shifted { color: var(--review-shifted); background: color-mix(in srgb, var(--review-shifted) 10%, transparent); }
+/* A carried translation: listed with the edit that carried it, and quiet as
+   the timeline leaves it — no hue of its own, not counted. */
+.agent-change.carried { opacity: .6; }
+.agent-change.carried .agent-change-badge { color: var(--muted-foreground); background: transparent; }
 .agent-change.source-user { opacity: .7; }
 .agent-change.source-user .agent-change-badge { border-style: dashed; }
 .agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }

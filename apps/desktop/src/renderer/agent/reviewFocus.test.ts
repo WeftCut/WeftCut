@@ -18,7 +18,7 @@ const change = (patch: Partial<Change> & { id: string }): Change => ({
 const changes = [
   change({ id: 'Layer:a', ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }, { composition_id: 'grp', t_start_us: 5 * S, t_end_us: 6 * S }] }),
   change({ id: 'Layer:gone', class: 'removed', from: { composition_id: 'root', track_id: 'v1' }, ranges: [{ composition_id: 'root', t_start_us: 4 * S, t_end_us: 5 * S }] }),
-  change({ id: 'Shift:root:1', class: 'shifted', keys: ['Layer:b', 'Layer:c'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
+  change({ id: 'Shift:root:1', class: 'modified', delta_us: S, keys: ['Layer:b', 'Layer:c'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
 ]
 
 describe('buildFocusPaint', () => {

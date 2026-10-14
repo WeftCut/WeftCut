@@ -52,6 +52,9 @@ const LAYER_PREFIX = 'Layer:'
  *  changes than `changes` (the Review view's cover both lists); only the
  *  changes given count toward a Group's badge. */
 export function buildReviewHighlight(changes: readonly Change[], decorations: readonly GroupDecoration[]): ReviewHighlight {
+  // A carried translation paints nowhere: the edit that carried it is the
+  // mark, as a diff does not mark the lines a change above renumbered.
+  changes = changes.filter(c => !c.carried)
   if (changes.length === 0) return EMPTY_HIGHLIGHT
   const layers = new Map<string, ReviewClipMark>()
   const ghosts: ReviewGhost[] = []

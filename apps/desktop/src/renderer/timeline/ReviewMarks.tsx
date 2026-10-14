@@ -30,12 +30,11 @@ import { layerSliceRect } from "./geometry";
 /// per-activity highlight later feeds a different change set through.
 
 const EDGE: Record<ReviewClipMark, CSSProperties> = {
-  // A coloured edge for what is new or edited, a dashed one for what moved
-  // track or composition, and a tint (no edge) for a pure shift in time.
+  // A coloured edge: green for what is new, amber for what differs — a move
+  // to another track or time included. What it differs in is the panel's
+  // to say, in words, not one more hue here.
   added: { boxShadow: "inset 0 0 0 2px var(--review-added)" },
   modified: { boxShadow: "inset 0 0 0 2px var(--review-modified)" },
-  moved: { border: "2px dashed var(--review-modified)" },
-  shifted: { background: "color-mix(in srgb, var(--review-shifted) 28%, transparent)" },
 };
 
 /// A clip's review mark: drawn over the clip's body, under its selection

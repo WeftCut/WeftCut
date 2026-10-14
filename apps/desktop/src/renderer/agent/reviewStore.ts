@@ -179,10 +179,11 @@ export function useReviewView(enabled = true): ReviewView | null {
   return useReview(s => s.view)
 }
 
-/** The number of unreviewed changes, as a consumer. */
+/** The number of unreviewed changes, as a consumer. A carried translation is
+ *  not counted: it is approved with the edit that carried it. */
 export function useUnreviewedCount(enabled = true): number {
   useReviewConsumer(enabled)
-  return useReview(s => s.view?.unreviewed.length ?? 0)
+  return useReview(s => s.view?.unreviewed.reduce((n, c) => (c.carried ? n : n + 1), 0) ?? 0)
 }
 
 // ── Highlight reads ───────────────────────────────────────────────────────────

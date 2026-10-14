@@ -15,7 +15,12 @@ export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string }
   return { kind: key.slice(0, at) as EntityKind, id: key.slice(at + 1) }
 }
 
-export type ChangeClass = 'added' | 'removed' | 'modified' | 'moved' | 'shifted'
+/** Three, as a diff reads: what is new, what is gone, what differs. A move
+ *  to another track or composition is a `modified` with `placement`; a pure
+ *  translation in time is a `modified` with `timing` and `delta_us` — and,
+ *  when it is only the content after an edit closing up or making room,
+ *  `carried`, which no timeline marks (ADR 0115). */
+export type ChangeClass = 'added' | 'removed' | 'modified'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
 export interface EntityLocation { composition_id: string; track_id: string | null }
@@ -28,20 +33,28 @@ export interface Change {
   kind: EntityKind
   /** Every entity the change covers — approved as one unit. */
   keys: EntityKey[]
-  /** What differs. Empty for added/removed/shifted; `moved` always carries
-   *  `placement` plus whatever else changed with the move. */
+  /** What differs. Empty for added/removed; `placement` for a move to another
+   *  track or composition; `timing` alone for a translation (`delta_us`). */
   aspects: ChangeAspect[]
   /** The composition the change is listed under (current side, else baseline);
    *  null for a Composition entity. */
   composition_id: string | null
   /** Every composition the change lives in, either side. */
   composition_ids: string[]
-  /** `moved`: baseline and current location. `removed`: `from` alone, the
-   *  baseline location (where the editor timeline ghosts a removed layer). */
+  /** A move to another track or composition (`placement`): baseline and
+   *  current location. `removed`: `from` alone, the baseline location (where
+   *  the editor timeline ghosts a removed layer). */
   from?: EntityLocation
   to?: EntityLocation
-  /** `shifted` only: the translation, current − baseline. */
+  /** A translation only — the entities' timing moved, nothing else did —
+   *  grouped per composition and delta into one change: current − baseline. */
   delta_us?: number
+  /** A translation that is only the content after an edit closing up or making
+   *  room — the tail of every track it touches, starting where another change
+   *  of its composition ends (a ripple's seam, an insert, a trim). Listed and
+   *  approved with that edit; no timeline paints it, as a diff does not mark
+   *  the lines a change above renumbered. */
+  carried?: true
   /** Where the change is on the CURRENT timeline, merged per composition: the
    *  current footprints; for a removed entity its baseline footprint carried
    *  over by the content around it — the seam a ripple delete left (main's

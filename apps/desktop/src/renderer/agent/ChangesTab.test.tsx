@@ -32,7 +32,7 @@ const unreviewed: Change[] = [
   change({ id: 'Layer:late', class: 'modified', aspects: ['timing', 'params'], ranges: range(8 * S, 9 * S) }),
   change({ id: 'Layer:early', ranges: range(1 * S, 2 * S) }),
   change({ id: 'Layer:inner', class: 'removed', composition_id: 'grp', composition_ids: ['grp'], from: { composition_id: 'grp', track_id: 'gt' }, ranges: range(0, S, 'grp') }),
-  change({ id: 'Shift:comp-root:-2400000', class: 'shifted', keys: ['Layer:a', 'Layer:b', 'Layer:c'], delta_us: -2_400_000, ranges: range(3 * S, 7 * S) }),
+  change({ id: 'Shift:comp-root:-2400000', class: 'modified', aspects: ['timing'], keys: ['Layer:a', 'Layer:b', 'Layer:c'], delta_us: -2_400_000, ranges: range(3 * S, 7 * S) }),
 ]
 const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', aspects: ['label'], ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
@@ -73,7 +73,7 @@ describe('AgentPanel Changes tab', () => {
     expect(within(early!).getByText('Added')).toBeTruthy()
     expect(within(early!).getByText('Early clip')).toBeTruthy()
     expect(within(shift!).getByText('3 clips')).toBeTruthy()
-    expect(shift!.textContent).toContain('Shifted by −2.4 s')
+    expect(shift!.textContent).toContain('Moved −2.4 s')
     expect(late!.textContent).toContain('Timing · Properties')
     // A removed clip has no current name: its kind stands in.
     expect(within(inner!).getByText('Removed')).toBeTruthy()

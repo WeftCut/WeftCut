@@ -50,8 +50,8 @@ const view: ReviewView = {
   unreviewed: [
     change({ id: "Layer:added" }),
     change({ id: "Layer:edited", class: "modified", aspects: ["params"] }),
-    change({ id: "Layer:moved", class: "moved", aspects: ["placement"], from: { composition_id: ROOT_ID, track_id: "track-2" }, to: { composition_id: ROOT_ID, track_id: "track-1" } }),
-    change({ id: "Shift:x:5", class: "shifted", keys: ["Layer:shifted"], delta_us: 5 }),
+    change({ id: "Layer:moved", class: "modified", aspects: ["placement"], from: { composition_id: ROOT_ID, track_id: "track-2" }, to: { composition_id: ROOT_ID, track_id: "track-1" } }),
+    change({ id: "Shift:x:5", class: "modified", aspects: ["timing"], keys: ["Layer:shifted"], delta_us: 5 }),
     change({ id: "Layer:gone", class: "removed", from: { composition_id: ROOT_ID, track_id: "track-2" }, ranges: [{ composition_id: ROOT_ID, t_start_us: 3 * S, t_end_us: 4 * S }] }),
     change({ id: "Layer:inner", composition_id: "grp", composition_ids: ["grp"] }),
   ],
@@ -86,10 +86,10 @@ beforeEach(() => {
 afterEach(() => { cleanup(); resetReviewForTests(); });
 
 describe("Review overlay clip decorations", () => {
-  it("marks added, modified, moved and shifted clips, ghosts the removed one on its surviving track, badges the Group", () => {
+  it("marks added and modified clips — a move or a translation is a modification — ghosts the removed one on its surviving track, badges the Group", () => {
     const { container } = renderTimeline();
     const marks = Object.fromEntries(q(container, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.reviewMark]));
-    expect(marks).toEqual({ added: "added", edited: "modified", moved: "moved", shifted: "shifted" });
+    expect(marks).toEqual({ added: "added", edited: "modified", moved: "modified", shifted: "modified" });
     const ghosts = q(container, '[data-testid="review-ghost"]');
     expect(ghosts).toHaveLength(1);
     expect(ghosts[0]!.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId).toBe("track-2");
