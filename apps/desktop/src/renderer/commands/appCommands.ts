@@ -30,6 +30,7 @@ import {
   toggleSafeAreaGuides,
   toggleTailSnap,
 } from "../settings/appSettingsStore";
+import { useAgentActivity } from "../agent/activityStore";
 import { linkOverrideOn } from "../state/linkOverrideStore";
 import { focusedPlayheadUs } from "../state/playheadProjection";
 import { hasMarkedRange } from "../state/rangeStore";
@@ -180,6 +181,11 @@ const SELF_CONTAINED_COMMAND_IDS = [
   // the magnet's home in every NLE is a toolbar button, which is exactly what
   // being a no-binding command makes resolvable (`quickActions.ts`).
   "toggleTailSnap",
+  // The Review overlay (ADR 0115): the Review lane and the unreviewed-change
+  // marks on clips. Runtime state of the agent panel's store, like the material
+  // it shows. A no-binding command for the strip button and the palette — never
+  // a switch on the lane itself, which a switched-off overlay has removed.
+  "toggleReviewOverlay",
   // Preview playback resolution, in two shapes because two surfaces want
   // different things. The three ABSOLUTE setters are what the search palette
   // needs: idempotent, individually nameable, and one step from any current
@@ -216,6 +222,7 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   centerHorizontally: "actions.center_horizontally",
   centerVertically: "actions.center_vertically",
   toggleTailSnap: "actions.toggle_tail_snap",
+  toggleReviewOverlay: "actions.toggle_review_overlay",
   setPlaybackResolutionFull: "actions.playback_resolution_full",
   setPlaybackResolutionHalf: "actions.playback_resolution_half",
   setPlaybackResolutionQuarter: "actions.playback_resolution_quarter",
@@ -551,6 +558,10 @@ export function buildAppCommands(
     toggleTailSnap: {
       run: () => void toggleTailSnap(),
       checked: () => tailSnapEnabled(),
+    },
+    toggleReviewOverlay: {
+      run: () => useAgentActivity.setState((s) => ({ reviewOverlay: !s.reviewOverlay })),
+      checked: () => useAgentActivity.getState().reviewOverlay,
     },
     // `checked`, not `enabled`: the current value is always re-selectable, and
     // a greyed-out "Full" would say the mode is unavailable rather than

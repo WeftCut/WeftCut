@@ -559,6 +559,8 @@ const zhCN: Resources = {
     // 新加入本区的三个开关沿用同样的两态写法：按下态说明是哪一种状态，提示说明点击会做什么。
     snap_on_hint: "片段吸附已开启。点击关闭。",
     snap_off_hint: "片段吸附已关闭。点击开启。",
+    review_overlay_on_hint: "审阅叠加层已开启：时间线上显示批注和代理尚未审阅的变更。点击隐藏。",
+    review_overlay_off_hint: "审阅叠加层已关闭。点击在时间线上显示批注和代理尚未审阅的变更。",
     follow_on_hint: "时间线自动滚动已开启。点击关闭。",
     follow_off_hint: "时间线自动滚动已关闭。点击开启。",
     safe_area_on_hint: "当前显示安全框参考线。点击隐藏。",
@@ -884,6 +886,7 @@ const zhCN: Resources = {
     toggle_markers_visible: "切换时间线标记",
     toggle_safe_area_guides: "切换安全框参考线",
     toggle_tail_snap: "切换片段吸附",
+    toggle_review_overlay: "切换审阅叠加层",
     // 带前缀，不像设置里的单选那样只写"完整"/"1/2"：这些标签同时出现在搜索面板里，
     // 只写"1/2"根本说不清改的是什么。
     playback_resolution_full: "播放分辨率：完整",
@@ -1064,8 +1067,6 @@ const zhCN: Resources = {
     zoom_percent: "{{percent}}%",
   },
   timeline: {
-    review_overlay: "审阅叠加层",
-    review_overlay_hint: "审阅叠加层：在标记下方的独立一行中显示代理留下、供你审阅的批注，并在片段上标出代理尚未审阅的变更",
     // 审阅行（ReviewLane.tsx）的表头名称：批注芯片所在的行。
     review_lane: "批注",
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",

@@ -210,7 +210,7 @@ export function ViewMenu({
       <MenuItem
         label={t("view.review_overlay")}
         checked={reviewOverlay}
-        onSelect={() => useAgentActivity.setState({ reviewOverlay: !reviewOverlay })}
+        onSelect={() => void getCommand("toggleReviewOverlay")?.run()}
       />
       {/* The preview's view, with its own chrome. Fit only: the two stepping
           commands read as an errand from a menu, and the toolbar's zoom

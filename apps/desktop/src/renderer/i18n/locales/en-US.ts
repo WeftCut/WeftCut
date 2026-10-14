@@ -585,6 +585,8 @@ const enUS = {
     // pressed border says which state, the hint says what a click does.
     snap_on_hint: "Clip snapping on. Click to disable.",
     snap_off_hint: "Clip snapping off. Click to enable.",
+    review_overlay_on_hint: "Review overlay on: tacks and unreviewed agent changes show on the timeline. Click to hide.",
+    review_overlay_off_hint: "Review overlay off. Click to show tacks and unreviewed agent changes on the timeline.",
     follow_on_hint: "Timeline auto-scroll on. Click to disable.",
     follow_off_hint: "Timeline auto-scroll off. Click to enable.",
     safe_area_on_hint: "Showing safe-area guides. Click to hide.",
@@ -981,6 +983,7 @@ const enUS = {
     toggle_markers_visible: "Toggle timeline markers",
     toggle_safe_area_guides: "Toggle safe-area guides",
     toggle_tail_snap: "Toggle clip snapping",
+    toggle_review_overlay: "Toggle review overlay",
     // Prefixed, unlike the bare "Full" / "1/2" the Settings radio uses: these
     // labels also appear in the search palette, where a row reading just
     // "1/2" says nothing about what it would change.
@@ -1216,8 +1219,6 @@ const enUS = {
     zoom_percent: "{{percent}}%",
   },
   timeline: {
-    review_overlay: "Review overlay",
-    review_overlay_hint: "Review overlay: show the tacks agents left for your review in a row under the markers, and their unreviewed changes on the clips",
     // The Review lane's header cell (ReviewLane.tsx): the row of tack chips.
     review_lane: "Tacks",
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",

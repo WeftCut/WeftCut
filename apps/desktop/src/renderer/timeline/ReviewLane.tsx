@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { CircleHelp, ScanEye, StickyNote, TriangleAlert } from "lucide-react";
+import { CircleHelp, StickyNote, TriangleAlert } from "lucide-react";
 import type { TackKind } from "../../shared/agent-activity";
 import { AppIcon } from "@/components/AppIcon";
 import { formatTimecode } from "../frames";
@@ -50,10 +50,10 @@ const selectTack = (id: string) => {
   void getCommand("openAgentPanel")?.run();
 };
 
-/// The lane's sticky-header cell: what the row is, and the Review overlay's
-/// switch. The switch lives on the row it governs — turning it off removes
-/// this row with the clip decorations, and the View menu turns it back on.
-/// Reads the same existence rule as the lane, for the same reason the marker
+/// The lane's sticky-header cell: what the row is. The Review overlay's switch
+/// is not here — turning it off removes this row, so it lives where it stays
+/// reachable: the Quick Actions strip, the View menu and the palette
+/// (`toggleReviewOverlay`). Reads the same existence rule as the lane, for the same reason the marker
 /// lane's header does: a cell that outlived its row would slide every header
 /// below it out of line with its lane.
 export function ReviewLaneHeader() {
@@ -74,17 +74,6 @@ export function ReviewLaneHeader() {
       <span className="truncate text-[length:var(--font-size-fine)] uppercase tracking-wide text-muted-foreground/70">
         {t("timeline.review_lane")}
       </span>
-      <button
-        type="button"
-        data-testid="timeline-review-overlay-toggle"
-        aria-pressed={true}
-        aria-label={t("timeline.review_overlay")}
-        title={t("timeline.review_overlay_hint")}
-        onClick={() => useAgentActivity.setState({ reviewOverlay: false })}
-        className="ml-auto flex flex-none items-center rounded-[2px] px-0.5 text-[color:var(--tack)] hover:bg-[var(--hover-neutral)]"
-      >
-        <AppIcon icon={ScanEye} size="micro" />
-      </button>
     </div>
   );
 }

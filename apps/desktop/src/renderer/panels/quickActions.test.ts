@@ -57,6 +57,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     displayMode: "AbRoll",
     hasRange: false,
     markersVisible: true,
+    reviewOverlay: true,
     snapEnabled: true,
     followPlayhead: true,
     safeAreaGuides: false,
@@ -298,6 +299,7 @@ describe("quickActions catalogue", () => {
       ["toggleFollowPlayhead", "followPlayhead"],
       ["toggleSafeAreaGuides", "safeAreaGuides"],
       ["toggleLinkOverride", "linkOverride"],
+      ["toggleReviewOverlay", "reviewOverlay"],
     ] as const)("tracks %s with its setting", (id, field) => {
       expect(item(id).active?.(state({ [field]: true }))).toBe(true);
       expect(item(id).active?.(state({ [field]: false }))).toBe(false);
@@ -314,6 +316,7 @@ describe("quickActions catalogue", () => {
       "toggleFollowPlayhead",
       "toggleSafeAreaGuides",
       "toggleLinkOverride",
+      "toggleReviewOverlay",
     ])("puts %s in the independent-toggles section", (id) => {
       const section = QUICK_ACTION_SECTIONS.find((s) =>
         s.items.some((i) => i.id === id),

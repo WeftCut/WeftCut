@@ -118,9 +118,12 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
     await expect(page.getByTestId('timeline-marker-lane').getByTestId('timeline-tack')).toHaveCount(0)
     const markerBox = (await page.getByTestId('timeline-marker-lane').boundingBox())!
     expect((await lane.boundingBox())!.y).toBeGreaterThanOrEqual(markerBox.y + markerBox.height - 1)
-    // The header switch turns the overlay off and takes the row with it; the
-    // View menu turns it back on.
-    await page.getByTestId('timeline-review-overlay-toggle').click()
+    // The Quick Actions switch turns the overlay off and takes the row with it;
+    // the View menu turns it back on.
+    const overlaySwitch = page.locator('[data-quick-action="toggleReviewOverlay"]')
+    await expect(overlaySwitch).toHaveAttribute('aria-pressed', 'true')
+    await overlaySwitch.click()
+    await expect(overlaySwitch).toHaveAttribute('aria-pressed', 'false')
     await expect(lane).toHaveCount(0)
     await expect(page.getByTestId('timeline-tack')).toHaveCount(0)
     await page.locator('.menu-trigger').nth(2).click()

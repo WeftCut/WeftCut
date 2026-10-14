@@ -8,6 +8,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useCanEditCrop } from '../commands/cropCommands';
 import { useCropEditingStore } from '../state/cropEditingStore';
+import { useAgentActivity } from '../agent/activityStore';
 
 import {
   commandRegistryVersion,
@@ -282,6 +283,7 @@ export function QuickActionsPanel({
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
   const markersVisible = useMarkersVisible();
+  const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
   // The app-settings values the strip renders as pressed or armed: three
   // toggles and the modal playback resolution. Atomic selectors, one field
   // each — never a composite one
@@ -337,6 +339,7 @@ export function QuickActionsPanel({
     displayMode,
     hasRange,
     markersVisible,
+    reviewOverlay,
     snapEnabled,
     followPlayhead,
     safeAreaGuides,

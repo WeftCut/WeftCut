@@ -65,8 +65,9 @@ describe("Review lane", () => {
     expect(chips(container).map((b) => b.closest('[data-testid="timeline-review-lane"]'))).toEqual([lane]);
     expect(q(container, "timeline-marker-lane")!.querySelector('[data-testid="timeline-tack"]')).toBeNull();
     expect(q(container, "timeline-marker-lane")!.compareDocumentPosition(lane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The overlay switch moved here with the tacks; the marker lane is markers only.
-    expect(q(container, "timeline-marker-lane-header")!.querySelector('[data-testid="timeline-review-overlay-toggle"]')).toBeNull();
+    // Neither header carries the overlay switch: it lives where it outlasts the
+    // row it removes (Quick Actions, the View menu, the palette).
+    expect(container.querySelector('[data-testid="timeline-review-overlay-toggle"]')).toBeNull();
     expect(q(container, "timeline-review-lane-header")!.textContent).toBe("Tacks");
   });
 
@@ -99,11 +100,10 @@ describe("Review lane", () => {
     }
   });
 
-  it("the header switch turns the overlay off and takes the row with it", () => {
+  it("the overlay command turns the row off and back on", () => {
     seed([tack()]);
     const { container } = renderRows();
-    fireEvent.click(q(container, "timeline-review-overlay-toggle")!);
-    expect(useAgentActivity.getState().reviewOverlay).toBe(false);
+    act(() => useAgentActivity.setState({ reviewOverlay: false }));
     expect(q(container, "timeline-review-lane")).toBeNull();
     expect(q(container, "timeline-review-lane-header")).toBeNull();
     act(() => useAgentActivity.setState({ reviewOverlay: true }));

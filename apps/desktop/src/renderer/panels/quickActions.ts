@@ -25,6 +25,7 @@ import {
   Link2Off,
   Magnet,
   MousePointer2,
+  ScanEye,
   Scissors,
   SquareDashed,
   SquareSplitHorizontal,
@@ -86,6 +87,9 @@ export interface QuickActionState {
   /// so the strip takes no project-store subscription and the hint stays
   /// two-state.
   markersVisible: boolean;
+  /// Whether the Review overlay is on (ADR 0115): agent review material on
+  /// the timeline. Runtime state of the agent panel's store, not a setting.
+  reviewOverlay: boolean;
   /// Clip snapping — the magnet (`tail_snap_enabled`).
   snapEnabled: boolean;
   /// Whether the timeline pages itself to keep the playhead on screen.
@@ -271,6 +275,19 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.markersVisible
             ? "quick_actions.markers_shown_hint"
             : "quick_actions.markers_hidden_hint",
+      },
+      {
+        // Beside the marker toggle: both say what the timeline's rows above
+        // the tracks paint — the user's marks, the agent's review material.
+        // Here rather than on the Review lane, which the switch removes, so
+        // the one place to turn it back on would be the place it took away.
+        id: "toggleReviewOverlay",
+        icon: ScanEye,
+        active: (s) => s.reviewOverlay,
+        hint: (s) =>
+          s.reviewOverlay
+            ? "quick_actions.review_overlay_on_hint"
+            : "quick_actions.review_overlay_off_hint",
       },
       {
         // The magnet. Its home in every NLE is a toolbar button, and until this
