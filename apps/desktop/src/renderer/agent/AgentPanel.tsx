@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X } from 'lucide-react'
+import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X } from 'lucide-react'
 import { invoke } from '@/bridge/ipc'
 import type { AgentActivity, AgentConnectionSnapshot } from '../../shared/agent-activity'
 import { agentSessionEnd, projectRestoreCheckpoint, type HistoryEntityRef } from '../ipc'
@@ -140,19 +140,25 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     useAgentActivity.getState().setReviewFocus(null)
   }
   return <div className="agent-panel agent-activity-panel" onKeyDown={onKeyDown}>
-    <header className="agent-connection-header"><button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
-      <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
-      {expanded.connections ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>
+    {/* One status row: the service (its toggle opens the connection details),
+        then the active work session's reason — or, outside one, what is
+        running — and the session's End beside the settings. */}
+    <header className="agent-status-row">
+      <button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
+        <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
+        {expanded.connections ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>
+      <span className="agent-status-sep" aria-hidden>·</span>
+      <span className={`agent-live-state${session ? ' session' : ''}`} role="status" title={session ? `${session.client} · ${session.reason}` : undefined}>
+        {session ? session.reason : running ? t('agent_panel.running_count', { count: running }) : t('agent_panel.no_running')}</span>
+      {session && <button type="button" className="agent-session-end" disabled={busy !== null} aria-label={t('agent_panel.end_session')} title={t('agent_panel.end_hint')} aria-description={t('agent_panel.end_hint')}
+        onClick={() => void action('agent_session_end', agentSessionEnd)}>{t('agent_panel.end_short')}</button>}
       <button type="button" aria-label={t('agent_panel.connection_settings')} title={t('agent_panel.connection_settings')} onClick={() => setSettings(true)}><AppIcon icon={Settings} size="title" /></button></header>
     {expanded.connections && <div className="agent-connection-details"><code>{connections?.url ?? '—'}</code>
       {connections?.connections.length ? connections.connections.map(c => <div key={c.id}><strong>{c.client} {c.version}</strong><small>{t('agent_panel.last_activity', { time: formatClock(c.last_activity_at) })}</small></div>) : <p>{t('agent_panel.no_connections')}</p>}
       <small>{t('agent_panel.connection_note')}</small></div>}
-    <div className="agent-live-state" role="status"><AppIcon icon={Bot} size="title" /><span>{running ? t('agent_panel.running_count', { count: running }) : t('agent_panel.no_running')}</span></div>
-    {session && <section className="agent-session-header"><strong>{session.client}</strong><p>{session.reason}</p>
-      <button type="button" disabled={busy !== null} title={t('agent_panel.end_hint')} aria-description={t('agent_panel.end_hint')} onClick={() => void action('agent_session_end', agentSessionEnd)}>{t('agent_panel.end_session')}</button></section>}
-    {locked && <div className="agent-history-lock"><AppIcon icon={Lock} size="label" /><span>{snapshot?.lock_reason || t('agent_panel.locked')}</span><button type="button" disabled={busy !== null} onClick={() => void action('agent_unlock_history', () => invoke('agent_unlock_history'))}>{t('agent_panel.unlock')}</button></div>}
+    {locked && <div className="agent-history-lock"><AppIcon icon={Lock} size="label" /><span title={snapshot?.lock_reason || t('agent_panel.locked')}>{snapshot?.lock_reason || t('agent_panel.locked')}</span><button type="button" disabled={busy !== null} onClick={() => void action('agent_unlock_history', () => invoke('agent_unlock_history'))}>{t('agent_panel.unlock')}</button></div>}
     {/* One tab per review surface. Content below the bar belongs to the tab;
-        the connection, session and lock rows above it hold for every tab. */}
+        the status and lock rows above it hold for every tab. */}
     <div className="agent-panel-tabs" role="tablist" aria-label={t('agent_panel.tabs')}>
       {AGENT_PANEL_TABS.map(id => <button type="button" role="tab" key={id} aria-selected={tab === id}
         title={id === 'tacks' ? t('tacks.subtitle') : id === 'changes' ? t('changes.subtitle') : undefined}
@@ -181,8 +187,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
             {open ? <AppIcon icon={ChevronDown} size="title" /> : <AppIcon icon={ChevronRight} size="title" />}<span><strong>{work.reason}</strong><small>{work.client} · {t('agent_panel.operation_count', { count })}</small></span>
             {failure && <AppIcon icon={AlertCircle} size="label" className="agent-activity-error" />}<small>{t(work.end_reason === 'disconnected' ? 'agent_panel.disconnected' : work.ended_at ? 'agent_panel.session_ended' : 'agent_panel.session_active')}</small></button>
           {open && section.rows.map(row)}</section>
-      })}</div>
-    <footer className="agent-retention-note" title={t('agent_panel.retention')}>{t('agent_panel.retention')}</footer></>}
+      })}
+      <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p></div></>}
     {settings && <AppDialog title={t('agent_panel.connection_settings')} onClose={() => setSettings(false)} panelClassName="agent-connect-dialog"><div className="agent-connect-dialog-body"><AgentSection /></div></AppDialog>}
   </div>
 }

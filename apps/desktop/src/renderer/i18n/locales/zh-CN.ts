@@ -1255,6 +1255,7 @@ const zhCN: Resources = {
   "running_count": "{{count}} 项操作正在执行",
   "no_running": "暂无正在执行的操作",
   "end_session": "结束本轮会话",
+  "end_short": "结束",
   "end_hint": "结束会话并释放其撤销锁。已启动任务和后续代理调用仍可继续。",
   "locked": "撤销功能已锁定",
   "unlock": "解除撤销锁",
@@ -1433,7 +1434,6 @@ const zhCN: Resources = {
   // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
   tacks: {
     subtitle: "代理留下、供你审阅的批注",
-    open_count: "{{count}} 条待处理",
     clear_closed: "清除已解决和已忽略",
     clear_closed_hint: "从本次打开的项目中移除所有已解决或已忽略的批注",
     clear_session: "清除",
@@ -1477,12 +1477,13 @@ const zhCN: Resources = {
   },
   changes: {
     subtitle: "自上次批准以来代理所做的变更",
-    unreviewed_count: "{{count}} 项待审阅",
     approve: "批准",
     approve_hint: "接受此变更：它将移出列表，高亮随之消失。若要拒绝，请撤销或恢复检查点。",
     approve_all: "全部批准",
     approve_all_hint: "接受列出的全部代理变更，作为新的审阅基线",
     approval_stale: "变更已更新，请重新审阅。本次未批准任何变更。",
+    // Beside Approve all; the full sentence is its title.
+    approval_stale_short: "未批准：变更已更新",
     show_mine: "显示我的变更（{{count}}）",
     show_mine_hint: "同时列出仅由你做出的变更。这些变更无需批准。",
     mine: "我",

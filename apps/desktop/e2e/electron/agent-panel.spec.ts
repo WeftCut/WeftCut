@@ -36,10 +36,13 @@ test('agent panel separates views, work sessions and connection lifetime', async
     const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
     expect((await call('begin_agent_session', { reason: 'Interview rough cut' })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
-    await expect(page.locator('.agent-session-header')).toContainText('Interview rough cut')
+    // One status row: the session's reason is its live state, End beside it.
+    const statusRow = page.locator('.agent-status-row')
+    await expect(statusRow.getByRole('status')).toHaveText('Interview rough cut')
+    await expect(statusRow.getByRole('button', { name: 'End work session', exact: true })).toBeVisible()
     const first = (await snapshot()).session!
     await call('set_history_lock', { locked: true, reason: 'Rough cut batch' })
-    await expect(page.getByRole('button', { name: 'Unlock undo', exact: true })).toBeVisible()
+    await expect(page.locator('.agent-history-lock').getByRole('button', { name: 'Unlock undo', exact: true })).toBeVisible()
     await page.locator('.agent-exit-button').click()
     expect((await snapshot()).session?.id).toBe(first.id)
     expect((await snapshot()).lock_reason).toBe('Rough cut batch')

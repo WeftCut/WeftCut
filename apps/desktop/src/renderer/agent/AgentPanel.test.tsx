@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18n from '../i18n'
 import type { AgentActivity, AgentActivitySnapshot, TackView } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true) }))
@@ -70,10 +70,43 @@ describe('AgentPanel', () => {
     const session = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Cut interview', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
     seed([activity({ session_id: 'work' })], { session, sessions: [session] })
     render(<AgentPanel />)
-    fireEvent.click(screen.getByRole('button', { name: 'End work session' }))
+    // One status row: the session's reason stands in for the running count.
+    const row = document.querySelector<HTMLElement>('.agent-status-row')!
+    const live = within(row).getByRole('status')
+    expect(live.textContent).toBe('Cut interview')
+    expect(live.title).toBe('Client · Cut interview')
+    expect(within(row).getByRole('button', { name: 'MCP status unavailable' })).toBeTruthy()
+    expect(document.querySelectorAll('.agent-session-header, .agent-connection-header')).toHaveLength(0)
+    fireEvent.click(within(row).getByRole('button', { name: 'End work session' }))
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('agent_session_end'))
     act(() => useAgentActivity.getState().receive({ ...useAgentActivity.getState().snapshot!, revision: 2, session: null, sessions: [{ ...session, ended_at: 'now', end_reason: 'user' }] }))
     expect(useAgentActivity.getState().mode).toBe('agent')
+    expect(within(row).getByRole('status').textContent).toBe('No operations running')
+    expect(within(row).queryByRole('button', { name: 'End work session' })).toBeNull()
+  })
+
+  it('outside a work session the status row says what is running', () => {
+    seed([activity({ state: 'running', ended_at: null, duration_ms: null }), activity({ id: 'b', state: 'running', ended_at: null, duration_ms: null })])
+    render(<AgentPanel />)
+    const live = within(document.querySelector<HTMLElement>('.agent-status-row')!).getByRole('status')
+    expect(live.textContent).toBe('2 operations running')
+    expect(live.title).toBe('')
+  })
+
+  it('keeps the lock on one line: reason, its title, Unlock', () => {
+    seed([], { lock_reason: 'Rough cut batch' })
+    render(<AgentPanel />)
+    const lock = document.querySelector<HTMLElement>('.agent-history-lock')!
+    expect(within(lock).getByText('Rough cut batch').title).toBe('Rough cut batch')
+    expect(within(lock).getByRole('button', { name: 'Unlock undo' })).toBeTruthy()
+  })
+
+  it('closes the activity list with the retention note, inside the list', () => {
+    seed([activity()])
+    render(<AgentPanel />)
+    const list = document.querySelector('.agent-activity-list')!
+    expect(list.lastElementChild?.textContent).toBe('Recent activity from this project opening. Not restored after reopening.')
+    expect(document.querySelector('.agent-activity-panel > footer')).toBeNull()
   })
 })
 
@@ -130,19 +163,40 @@ const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c ===
 const openTacks = () => fireEvent.click(screen.getByRole('tab', { name: /Tacks/ }))
 
 describe('AgentPanel Tacks tab', () => {
-  it('is a second tab beside Activity, with the subtitle and an open count, grouped by work session', () => {
+  it('is a second tab beside Activity, its open count on the badge, grouped by work session', () => {
     seed([], { sessions: [work], tacks: [tack(), tack({ id: 't2', session_id: null, label: 'Loose end', status: 'resolved' })] })
     render(<AgentPanel />)
     expect(screen.getByRole('tab', { name: 'Activity' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: /Tacks/ }).textContent).toBe('Tacks1')
+    const tab = screen.getByRole('tab', { name: /Tacks/ })
+    expect(tab.textContent).toBe('Tacks1')
+    expect(tab.title).toBe('Notes the agent tacked on for your review')
     openTacks()
-    expect(screen.getByText('Notes the agent tacked on for your review')).toBeTruthy()
+    // The badge holds the count and the tab's title the subtitle: neither repeats above a list.
+    expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
+    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')!.textContent).toBe('Clear resolved & dismissed')
     expect(screen.getByText('Review pauses')).toBeTruthy()
     expect(screen.getByText('Long pause')).toBeTruthy()
     // A group with nothing open starts collapsed; its heading still says why.
     expect(screen.getByText('Outside a work session')).toBeTruthy()
     expect(screen.queryByText('Loose end')).toBeNull()
     expect(useAgentActivity.getState().tab).toBe('tacks')
+  })
+
+  it('shows the empty message alone, and closes the list with the retention note', () => {
+    seed([], { sessions: [work], tacks: [] })
+    const view = render(<AgentPanel />)
+    openTacks()
+    const empty = document.querySelector<HTMLElement>('.agent-tacks .agent-empty')!
+    expect(within(empty).getByText('Tacks an agent leaves for your review will appear here.')).toBeTruthy()
+    expect(within(empty).queryByText('Notes the agent tacked on for your review')).toBeNull()
+    const list = document.querySelector('.agent-tacks .agent-activity-list')!
+    expect(list.lastElementChild?.textContent).toBe('Tacks last for this project opening only. They are never saved or exported.')
+    expect(document.querySelector('.agent-tacks footer')).toBeNull()
+    view.unmount()
+    seed([], { revision: 2, sessions: [work], tacks: [tack()] })
+    render(<AgentPanel />)
+    expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
+    expect(document.querySelector('.agent-tacks .agent-activity-list')!.lastElementChild?.classList.contains('agent-list-footnote')).toBe(true)
   })
 
   it('resolves, dismisses, reopens and clears through the tack channels', async () => {
@@ -236,7 +290,8 @@ describe('AgentPanel Tacks tab', () => {
     seed([], { sessions: [work], tacks: [tack()] })
     const { container } = render(<AgentPanel />)
     fireEvent.click(screen.getByRole('tab', { name: /批注/ }))
-    expect(screen.getByText('代理留下、供你审阅的批注')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /批注/ }).title).toBe('代理留下、供你审阅的批注')
+    expect(screen.getByText('批注只保留在本次打开的项目中，不会保存或导出。')).toBeTruthy()
     expect(container.textContent).not.toMatch(/tack/i)
   })
 })

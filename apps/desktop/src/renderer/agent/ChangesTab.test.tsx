@@ -68,7 +68,10 @@ describe('AgentPanel Changes tab', () => {
     render(<AgentPanel editor />)
     await flush()
     expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Activity', 'Tacks', 'Changes4'])
-    expect(screen.getByText('4 unreviewed')).toBeTruthy()
+    // The badge is the count: the toolbar does not repeat it, nor the subtitle (the tab's title) the list.
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)Approve all')
+    expect(screen.queryByText('What agents changed since you last approved')).toBeNull()
+    expect(screen.getByRole('tab', { name: /Changes/ }).title).toBe('What agents changed since you last approved')
     const groups = [...document.querySelectorAll('.agent-change-group-heading > span')].map(e => e.textContent)
     expect(groups).toEqual(['Main timeline', 'Intro'])
     expect(rows().map(r => r.dataset.changeId)).toEqual(['Layer:early', 'Shift:comp-root:-2400000', 'Layer:late', 'Layer:inner'])
@@ -98,7 +101,12 @@ describe('AgentPanel Changes tab', () => {
     expect(calls('review_approve_all')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 3 }, include_user: false }])
     expect(rows()).toHaveLength(0)
     expect(useReview.getState().highlight.layers.size).toBe(0)
-    expect(screen.getByText('Nothing to review. Every agent change is approved.')).toBeTruthy()
+    const empty = document.querySelector<HTMLElement>('.agent-changes .agent-empty')!
+    expect(within(empty).getByText('Nothing to review. Every agent change is approved.')).toBeTruthy()
+    // Empty, the list says what the tab is for, and still ends with the retention note.
+    expect(within(empty).getByText('What agents changed since you last approved')).toBeTruthy()
+    expect(document.querySelector('.agent-changes .agent-activity-list')!.lastElementChild?.textContent)
+      .toBe('Approving records nothing in history. To reject a change, undo it or restore a checkpoint.')
     expect((screen.getByRole('button', { name: 'Approve all' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -117,10 +125,10 @@ describe('AgentPanel Changes tab', () => {
     expect(within(user).queryByRole('button', { name: 'Approve' })).toBeNull()
     // Interleaved by time within its composition; the unreviewed count is unchanged.
     expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Shift:comp-root:-2400000', 'Layer:mine', 'Layer:late'])
-    expect(screen.getByText('4 unreviewed')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes4')
   })
 
-  it('an approval made after the list changed approves nothing and says so above the fresh list', async () => {
+  it('an approval made after the list changed approves nothing and says so beside Approve all', async () => {
     render(<AgentPanel editor />)
     await flush()
     const fresh = { ...view(1, [...unreviewed, change({ id: 'Layer:new', ranges: range(0, S) })], []), version: { session: 1, revision: 2, baseline_revision: 1 } }
@@ -128,7 +136,16 @@ describe('AgentPanel Changes tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
     await flush()
     expect(rows()).toHaveLength(5)
-    expect(screen.getByText('The changes were updated — review again. Nothing was approved.').getAttribute('role')).toBe('status')
+    const note = screen.getByText('Nothing approved: the list changed')
+    expect(note.getAttribute('role')).toBe('status')
+    expect(note.title).toBe('The changes were updated — review again. Nothing was approved.')
+    expect(note.parentElement!.classList.contains('agent-activity-toolbar')).toBe(true)
+    expect(note.nextElementSibling?.textContent).toBe('Approve all')
+    // An approval that applies clears it.
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(4, []) } : fresh)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
+    await flush()
+    expect(screen.queryByText('Nothing approved: the list changed')).toBeNull()
   })
 
   it('locates in the editor only: reveals the clip and seeks to its footprint', async () => {
@@ -210,7 +227,7 @@ describe('AgentPanel Changes tab', () => {
     // The rider's own row says only its own edit.
     expect(rows().find(r => r.dataset.changeId === 'Layer:rider')!.textContent).not.toContain('earlier')
     // Counts leave carried changes out, folded or not; riders are rows and count.
-    expect(screen.getByText('6 unreviewed')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes6')
   })
 
   it('an agent row names the work session that last edited it; a user row does not', async () => {

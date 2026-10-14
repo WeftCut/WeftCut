@@ -118,9 +118,9 @@ export function TacksTab({ editor }: { editor: boolean }) {
   }
 
   return <div className="agent-tacks" role="tabpanel" aria-label={t('agent_panel.tab_tacks')}>
-    <p className="agent-tacks-subtitle">{t('tacks.subtitle')}</p>
+    {/* The open count is the tab's badge; the subtitle, its title — the
+        empty list's message already says what lands here. */}
     <div className="agent-activity-toolbar">
-      <span className="agent-tacks-count">{t('tacks.open_count', { count: tacks.filter(x => x.status === 'open').length })}</span>
       <button type="button" disabled={closed === 0} title={t('tacks.clear_closed_hint')}
         onClick={() => void deleteTacks({ statuses: ['resolved', 'dismissed'] })}>{t('tacks.clear_closed')}</button>
     </div>
@@ -147,7 +147,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
           </div>}
         </section>
       })}
+      <p className="agent-retention-note agent-list-footnote">{t('tacks.retention')}</p>
     </div>
-    <footer className="agent-retention-note" title={t('tacks.retention')}>{t('tacks.retention')}</footer>
   </div>
 }

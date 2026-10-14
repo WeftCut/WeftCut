@@ -1439,6 +1439,7 @@ const enUS = {
   "running_count": "{{count}} operations running",
   "no_running": "No operations running",
   "end_session": "End work session",
+  "end_short": "End",
   "end_hint": "Ends this session and releases its lock. Running tasks and later agent calls can continue.",
   "locked": "Undo is locked",
   "unlock": "Unlock undo",
@@ -1618,7 +1619,6 @@ const enUS = {
   // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
   tacks: {
     subtitle: "Notes the agent tacked on for your review",
-    open_count: "{{count}} open",
     clear_closed: "Clear resolved & dismissed",
     clear_closed_hint: "Remove every resolved or dismissed tack from this project opening",
     clear_session: "Clear",
@@ -1663,12 +1663,13 @@ const enUS = {
   },
   changes: {
     subtitle: "What agents changed since you last approved",
-    unreviewed_count: "{{count}} unreviewed",
     approve: "Approve",
     approve_hint: "Accept this change: it leaves the list and its highlight goes. To reject it, undo or restore a checkpoint.",
     approve_all: "Approve all",
     approve_all_hint: "Accept every listed agent change as the new review baseline",
     approval_stale: "The changes were updated — review again. Nothing was approved.",
+    // Beside Approve all; the full sentence is its title.
+    approval_stale_short: "Nothing approved: the list changed",
     show_mine: "Show my changes ({{count}})",
     show_mine_hint: "Also list the changes only you made. They need no approval.",
     mine: "You",

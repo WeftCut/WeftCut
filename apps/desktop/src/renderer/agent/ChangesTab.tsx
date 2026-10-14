@@ -23,7 +23,7 @@ import { useAgentActivity } from './activityStore'
  *  user's, and carry no approve button. Main sends them only while shown.
  *
  *  An approval names the list on screen; one made after an agent changed the
- *  list approves nothing and says so above the fresh list.
+ *  list approves nothing and says so beside Approve all, over the fresh list.
  *
  *  A row's click focuses its change (the review focus, shared with the
  *  timelines: its range washed, its clips or ghost outlined, the others'
@@ -147,23 +147,25 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const userCount = view?.user_count ?? 0
   const empty = !view ? 'agent_panel.loading' : !view.has_baseline ? 'changes.no_baseline' : 'changes.empty'
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
-    <p className="agent-tacks-subtitle">{t('changes.subtitle')}</p>
+    {/* The unreviewed count is the tab's badge; the subtitle, its title (and
+        the emptied list's: "no baseline yet" already says what lands here). */}
     <div className="agent-activity-toolbar">
-      <span className="agent-tacks-count">{t('changes.unreviewed_count', { count: unreviewed.filter(c => !c.carried).length })}</span>
       <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
         onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>
+      {stale && <span className="agent-changes-stale" role="status" title={t('changes.approval_stale')}>{t('changes.approval_stale_short')}</span>}
       <button type="button" className="agent-changes-approve-all" disabled={busy || unreviewed.length === 0} title={t('changes.approve_all_hint')}
         onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
     </div>
-    {stale && <p className="agent-tacks-subtitle" role="status">{t('changes.approval_stale')}</p>}
     <div className="agent-activity-list" ref={list}>
-      {!groups.length && <p className="agent-empty">{t(empty)}</p>}
+      {!groups.length && (view?.has_baseline
+        ? <div className="agent-empty"><p>{t(empty)}</p><p className="agent-empty-subtitle">{t('changes.subtitle')}</p></div>
+        : <p className="agent-empty">{t(empty)}</p>)}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{compositionName(g.compositionId)}</span>
           <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent' && !r.change.carried).length })}</small></h3>
         {g.rows.map(row)}
       </section>)}
+      <p className="agent-retention-note agent-list-footnote">{t('changes.retention')}</p>
     </div>
-    <footer className="agent-retention-note" title={t('changes.retention')}>{t('changes.retention')}</footer>
   </div>
 }
