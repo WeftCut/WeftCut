@@ -85,14 +85,14 @@ them in the editor's own vocabulary, never an MCP tool's. The facts read what
 the timeline shows: an edge that stayed put means the clip did not move, so a
 ripple head trim is a trim, not a trim and a shift; an edge is trimmed only
 against the material at that end, so a retime that kept its material is its
-speed, not a cut. A carried translation names
-its carrier (`carried_by`), the change it is listed and approved with; one
-whose carrier is on the other list is shown as the move it is, and a rider
-there keeps only its own edits. Once a carrier is approved, the motion it
-caused is accepted: the content it moved is read where it was, so what it
-carried still says only its own edits. A deliberate move also carries `was` —
-its place as far as the content around it went, on the current timeline —
-drawn only while that change is focused.
+speed, not a cut. A carried translation names its carrier (`carried_by`),
+the change it is listed and approved with; one whose carrier is on the other
+list is shown as the move it is, and a rider there keeps only its own edits.
+Once a carrier is approved, the motion it caused is accepted: the content it
+moved is read where it was, so what it carried still says only its own edits,
+and what was approved with it moves from where it was approved. A deliberate
+move also carries `was` — its place as far as the content around it went, on
+the current timeline — drawn only while that change is focused.
 
 The editor timeline expresses intent with as little as says it. Three colours
 mark the changes — a new clip's edge, a changed one's, a removed clip's ghost

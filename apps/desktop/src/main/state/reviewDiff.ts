@@ -707,7 +707,7 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
 //   it still overlaps it, at its start — and the reference that layer was
 //   itself measured from; with layers removed after that one, the seam a
 //   ripple of them closed (or the gap they left); with layers added between,
-//   the room they made;
+//   the room they made (less that seam: a replace);
 // - under it, off the A roll: the A-roll clip its start sat over, as a tack's
 //   end follows it; with none, the A-roll content before it;
 // - an anchored marker: its layer's own reference; a free one: the material
@@ -717,7 +717,8 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
 // source. Otherwise its own movement is its displacement less its primary
 // reference — the material under it off the A roll, else the content before
 // it; of those, the one nearest — and its details and `was` are read from that
-// carried place. One that did not move is measured from where it was.
+// carried place. One that did not move — or, with no material to read, kept
+// an edge where it was — is measured from where it was.
 
 /** Where a reference displacement came from: the id of the change that moved
  *  that content (in the same list), `APPROVED` for motion an approval already
@@ -761,6 +762,23 @@ function displacementAt(base: Layer, cur: Layer, t: number): number {
   return cur.t_start_us - base.t_start_us
 }
 
+/** A track's baseline layers, latest end first (then latest start) — the
+ *  order the content before an instant is looked for in — and the longest. */
+interface Lane { xs: LayerEntity[]; longest: number }
+function sortLane(lane: Lane): Lane {
+  lane.xs.sort((x, y) => y.layer.t_end_us - x.layer.t_end_us || y.layer.t_start_us - x.layer.t_start_us)
+  lane.longest = lane.xs.reduce((n, x) => Math.max(n, x.layer.t_end_us - x.layer.t_start_us), 0)
+  return lane
+}
+/** The first index of `lane` whose layer may start before `s`: every one
+ *  ending later than `s` plus the longest starts after it. */
+function firstBefore(lane: Lane, s: number): number {
+  const bound = s + lane.longest
+  let lo = 0, hi = lane.xs.length
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (lane.xs[mid].layer.t_end_us > bound) lo = mid + 1; else hi = mid }
+  return lo
+}
+
 /** `v` moved `d` in time — its carried place, from which its own edits read. */
 function translated<T extends LayerEntity | MarkerEntity>(v: T, d: number): T {
   if (d === 0) return v
@@ -788,17 +806,21 @@ function matchRef(measures: readonly number[], refs: readonly Ref[], tol: number
   return null
 }
 
-/** The baseline references are read in: the effective one, except that a
- *  layer approved at the value it still has (or approved gone and still gone)
- *  reads from the base — the content around it is measured as it was, and its
- *  motion since is accepted (`APPROVED`): approving a ripple approves the move
- *  of what it carried, a clip edited since included. */
-function referenceBaseline(baseline: BaselineSource, before: EntityIndex, after: EntityIndex): { geo: EntityIndex; accepted: Set<EntityKey> } {
-  const accepted = new Set<EntityKey>()
-  if (!isOverlay(baseline) || baseline.approved.size === 0) return { geo: before, accepted }
+/** The baselines references are read in. `geo`: the effective one, except
+ *  that a layer approved at the value it still has (or approved gone and
+ *  still gone) reads from the base — the content around it is measured as it
+ *  was, and its motion since is accepted (`APPROVED`): approving a ripple
+ *  approves the move of what it carried, a clip edited since included. A
+ *  change whose own baseline is an approved value (`approved`) was placed
+ *  after that motion, so it reads the effective baseline (`before`) instead. */
+interface ReferenceBaseline { geo: EntityIndex; accepted: Set<EntityKey>; approved: Set<EntityKey>; before: EntityIndex }
+function referenceBaseline(baseline: BaselineSource, before: EntityIndex, after: EntityIndex): ReferenceBaseline {
+  const accepted = new Set<EntityKey>(), approved = new Set<EntityKey>()
+  if (!isOverlay(baseline) || baseline.approved.size === 0) return { geo: before, accepted, approved, before }
   const base = extractEntities(baseline.base)
   let geo: Map<EntityKey, EntityValue> | null = null
   for (const [k, v] of baseline.approved) {
+    if (v !== ABSENT && (v.kind === 'Layer' || v.kind === 'Marker')) approved.add(k)
     const was = base.get(k)
     if (was?.kind !== 'Layer') continue
     const now = after.get(k)
@@ -806,51 +828,62 @@ function referenceBaseline(baseline: BaselineSource, before: EntityIndex, after:
     ;(geo ??= new Map(before)).set(k, was)
     accepted.add(k)
   }
-  return { geo: geo ?? before, accepted }
+  return { geo: geo ?? before, accepted, approved, before }
 }
 
 /**
  * How each of `moving` — the changed layers and markers staying in one
  * composition — moved, against the content around it. Resolved in the order
  * references are read: A-roll tracks first, then track order, each in
- * baseline time order; markers last. `geo` and `accepted` are
- * `referenceBaseline`'s; `tol` is half a frame.
+ * baseline time order; markers last. `rb` is `referenceBaseline`'s; `tol` is
+ * half a frame.
  */
-function resolveMotion(compositionId: Uuid, moving: readonly Moving[], geo: EntityIndex, after: EntityIndex, accepted: ReadonlySet<EntityKey>, tol: number): Map<EntityKey, Motion> {
+function resolveMotion(compositionId: Uuid, moving: readonly Moving[], rb: ReferenceBaseline, after: EntityIndex, tol: number): Map<EntityKey, Motion> {
   const out = new Map<EntityKey, Motion>()
-  const comp = geo.get(entityKey('Composition', compositionId))
+  const comp = rb.geo.get(entityKey('Composition', compositionId))
   const trackOrder = comp?.kind === 'Composition' ? comp.track_order : []
-  const role = (t: Uuid) => { const v = geo.get(entityKey('Track', t)); return v?.kind === 'Track' ? v.role : null }
+  const role = (t: Uuid) => { const v = rb.geo.get(entityKey('Track', t)); return v?.kind === 'Track' ? v.role : null }
   const aRoll = trackOrder.filter((t) => role(t) === 'ARoll')
-  // Baseline layers per track, latest end first (then latest start): the
-  // order the content before an instant is looked for in.
-  const byTrack = new Map<Uuid, LayerEntity[]>()
-  // Layers on each track now that were not there: what an insert made room with.
-  const arrived = new Map<Uuid, Layer[]>()
-  for (const v of geo.values()) if (v.kind === 'Layer' && v.composition_id === compositionId) {
-    let list = byTrack.get(v.track_id)
-    if (!list) byTrack.set(v.track_id, list = [])
-    list.push(v)
-  }
-  for (const list of byTrack.values()) list.sort((x, y) => y.layer.t_end_us - x.layer.t_end_us || y.layer.t_start_us - x.layer.t_start_us)
-  for (const v of after.values()) {
-    if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
-    const g = geo.get(keyOf(v))
-    if (g?.kind === 'Layer' && g.composition_id === compositionId && g.track_id === v.track_id) continue
-    let list = arrived.get(v.track_id)
-    if (!list) arrived.set(v.track_id, list = [])
-    list.push(v.layer)
-  }
   const now = (k: EntityKey): LayerEntity | null => { const v = after.get(k); return v?.kind === 'Layer' && v.composition_id === compositionId ? v : null }
+
+  /** One baseline references are read in: its layers per track (`Lane`),
+   *  the A-roll tracks' together, and the layers on each track now that were
+   *  not there, what an insert made room with. */
+  interface Frame { index: EntityIndex; accepted: ReadonlySet<EntityKey>; byTrack: Map<Uuid, Lane>; aRoll: Lane | null; arrived: Map<Uuid, Layer[]> }
+  const frameOf = (index: EntityIndex, accepted: ReadonlySet<EntityKey>): Frame => {
+    const byTrack = new Map<Uuid, Lane>()
+    const arrived = new Map<Uuid, Layer[]>()
+    for (const v of index.values()) if (v.kind === 'Layer' && v.composition_id === compositionId) {
+      let lane = byTrack.get(v.track_id)
+      if (!lane) byTrack.set(v.track_id, lane = { xs: [], longest: 0 })
+      lane.xs.push(v)
+    }
+    for (const lane of byTrack.values()) sortLane(lane)
+    for (const v of after.values()) {
+      if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
+      const g = index.get(keyOf(v))
+      if (g?.kind === 'Layer' && g.composition_id === compositionId && g.track_id === v.track_id) continue
+      let list = arrived.get(v.track_id)
+      if (!list) arrived.set(v.track_id, list = [])
+      list.push(v.layer)
+    }
+    return { index, accepted, byTrack, aRoll: null, arrived }
+  }
+  const geo = frameOf(rb.geo, rb.accepted)
+  let effective: Frame | null = null
+  /** The frame a change reads: the effective baseline when its own baseline
+   *  is an approved value (accepted content has not moved since). */
+  const frameFor = (k: EntityKey): Frame =>
+    rb.accepted.size > 0 && rb.approved.has(k) ? (effective ??= frameOf(rb.before, new Set())) : geo
 
   /** What baseline layer `v` (still in the composition) says of the content
    *  at baseline instant `t`: how far it moved and what moved it — and the
    *  reference it was itself measured from, which the content after it may
    *  have stayed with when it moved on its own. */
-  const refsOf = (v: LayerEntity, t: number): Ref[] => {
+  const refsOf = (f: Frame, v: LayerEntity, t: number): Ref[] => {
     const k = keyOf(v)
     const m = out.get(k)
-    if (!m && !accepted.has(k)) return [NO_REF]
+    if (!m && !f.accepted.has(k)) return [NO_REF]
     const d = displacementAt(v.layer, now(k)!.layer, t)
     if (!m) return [{ d, source: d === 0 ? null : APPROVED }]
     const source = m.carried && Math.abs(d - m.ref.d) <= tol ? m.ref.source : d === 0 ? null : m.id
@@ -861,21 +894,22 @@ function resolveMotion(compositionId: Uuid, moving: readonly Moving[], geo: Enti
 
   /** The references the content before baseline instant `s` on `tracks`
    *  gives a layer (`self`) now starting at `nowStart`. */
-  const contentBefore = (tracks: readonly Uuid[], s: number, self: EntityKey, nowStart: number): Ref[] => {
-    const lists = tracks.map((t) => byTrack.get(t) ?? [])
-    const xs = lists.length === 1 ? lists[0] : lists.flat().sort((x, y) => y.layer.t_end_us - x.layer.t_end_us || y.layer.t_start_us - x.layer.t_start_us)
+  const contentBefore = (f: Frame, tracks: readonly Uuid[], s: number, self: EntityKey, nowStart: number): Ref[] => {
+    // One track, or the A-roll ones together.
+    const lane = tracks.length === 1 ? f.byTrack.get(tracks[0]) : (f.aRoll ??= sortLane({ xs: aRoll.flatMap((t) => f.byTrack.get(t)?.xs ?? []), longest: 0 }))
     // Removed (or gone elsewhere) after the last layer still there, nearest
     // first: each its length and its change.
     const run: Ref[] = []
     let p: LayerEntity | null = null
-    for (const x of xs) {
+    for (let i = lane ? firstBefore(lane, s) : 0; lane && i < lane.xs.length; i++) {
+      const x = lane.xs[i]
       if (x.layer.t_start_us >= s) continue
       const k = keyOf(x)
       if (k === self) continue
       if (now(k)?.track_id === x.track_id) { p = x; break }
-      run.push({ d: x.layer.t_end_us - x.layer.t_start_us, source: accepted.has(k) ? APPROVED : k })
+      run.push({ d: x.layer.t_end_us - x.layer.t_start_us, source: f.accepted.has(k) ? APPROVED : k })
     }
-    const base = p ? refsOf(p, Math.min(p.layer.t_end_us, s)) : [NO_REF]
+    const base = p ? refsOf(f, p, Math.min(p.layer.t_end_us, s)) : [NO_REF]
     const refs = [...base]
     // The seam a ripple of the nearest or the farthest of them closed.
     for (let i = 1; i <= run.length; i++) {
@@ -884,50 +918,56 @@ function resolveMotion(compositionId: Uuid, moving: readonly Moving[], geo: Enti
         for (const b of base) refs.push({ d: b.d - len, source: part[0].source })
       }
     }
-    // The room layers that arrived between it and that content made.
+    // The room layers that arrived between it and that content made — after
+    // a seam closed, too (a replace).
     const from = p ? now(keyOf(p))!.layer.t_end_us - tol : -Infinity
-    const room = tracks.flatMap((t) => arrived.get(t) ?? []).filter((l) => l.t_start_us >= from && l.t_end_us <= nowStart + tol)
+    const room = tracks.flatMap((t) => f.arrived.get(t) ?? []).filter((l) => l.t_start_us >= from && l.t_end_us <= nowStart + tol)
     if (room.length > 0) {
       const len = room.reduce((n, l) => n + l.t_end_us - l.t_start_us, 0)
       const last = room.reduce((x, y) => (y.t_end_us > x.t_end_us ? y : x))
-      for (const b of base) refs.push({ d: b.d + len, source: entityKey('Layer', last.id) })
+      for (const r of refs.slice()) refs.push({ d: r.d + len, source: entityKey('Layer', last.id) })
     }
     return refs
   }
 
   /** The references of the A-roll material at baseline instant `s`, or null
    *  when no A-roll clip still in the composition was there. */
-  const under = (s: number): Ref[] | null => {
-    for (const t of aRoll) for (const v of byTrack.get(t) ?? []) {
-      if (v.layer.t_start_us <= s && s < v.layer.t_end_us && now(keyOf(v))) return refsOf(v, s)
+  const under = (f: Frame, s: number): Ref[] | null => {
+    for (const t of aRoll) {
+      const lane = f.byTrack.get(t)
+      for (let i = lane ? firstBefore(lane, s) : 0; lane && i < lane.xs.length && s < lane.xs[i].layer.t_end_us; i++) {
+        const v = lane.xs[i]
+        if (v.layer.t_start_us <= s && now(keyOf(v))) return refsOf(f, v, s)
+      }
     }
     return null
   }
 
   const resolve = ({ key, b, c, shift }: Moving): void => {
+    const f = frameFor(key)
     let measures: number[]
     let refs: () => { all: Ref[]; primary: Ref[] }
     if (b.kind === 'Layer') {
       const cl = (c as LayerEntity).layer, s = b.layer.t_start_us
       measures = layerMeasures(b.layer, cl)
       refs = () => {
-        const own = contentBefore([b.track_id], s, key, cl.t_start_us)
+        const own = contentBefore(f, [b.track_id], s, key, cl.t_start_us)
         if (aRoll.includes(b.track_id)) return { all: own, primary: own }
-        const u = under(s)
+        const u = under(f, s)
         if (u) return { all: [...u, ...own], primary: u }
-        return { all: aRoll.length > 0 ? [...own, ...contentBefore(aRoll, s, key, cl.t_start_us)] : own, primary: own }
+        return { all: aRoll.length > 0 ? [...own, ...contentBefore(f, aRoll, s, key, cl.t_start_us)] : own, primary: own }
       }
     } else {
       const mb = b.marker
       measures = [(c as MarkerEntity).marker.t_us - mb.t_us]
       refs = () => {
-        const anchor = mb.anchor ? geo.get(entityKey('Layer', mb.anchor.layer)) : undefined
+        const anchor = mb.anchor ? f.index.get(entityKey('Layer', mb.anchor.layer)) : undefined
         if (anchor?.kind === 'Layer' && anchor.composition_id === compositionId && now(keyOf(anchor))) {
           const m = out.get(keyOf(anchor))
-          const own = m ? [m.ref] : refsOf(anchor, Math.min(Math.max(mb.t_us, anchor.layer.t_start_us), anchor.layer.t_end_us))
+          const own = m ? [m.ref] : refsOf(f, anchor, Math.min(Math.max(mb.t_us, anchor.layer.t_start_us), anchor.layer.t_end_us))
           return { all: own, primary: own }
         }
-        const u = under(mb.t_us) ?? [NO_REF]
+        const u = under(f, mb.t_us) ?? [NO_REF]
         return { all: u, primary: u }
       }
     }
@@ -940,13 +980,14 @@ function resolveMotion(compositionId: Uuid, moving: readonly Moving[], geo: Enti
       out.set(key, { ref, carried: true, id: shift !== null ? `Shift:${compositionId}:${hit.m}:${hit.ref.source}` : key, accepted: false })
       return
     }
-    const ref = hit ? NO_REF : nearest(primary, m0)
+    // An edge without material that stayed put: trimmed there, not moved.
+    const ref = hit || measures.includes(0) ? NO_REF : nearest(primary, m0)
     out.set(key, { ref, carried: false, id: shift !== null ? `Shift:${compositionId}:${shift - ref.d}` : key, accepted: hit !== null })
   }
 
   const byKey = new Map(moving.map((x) => [x.key, x]))
   for (const t of [...aRoll, ...trackOrder.filter((t) => !aRoll.includes(t))]) {
-    const list = [...byTrack.get(t) ?? []].sort((x, y) => x.layer.t_start_us - y.layer.t_start_us || x.layer.t_end_us - y.layer.t_end_us)
+    const list = [...geo.byTrack.get(t)?.xs ?? []].sort((x, y) => x.layer.t_start_us - y.layer.t_start_us || x.layer.t_end_us - y.layer.t_end_us)
     for (const v of list) { const x = byKey.get(keyOf(v)); if (x && x.b.kind === 'Layer') resolve(x) }
   }
   for (const x of moving) if (x.b.kind === 'Layer' && !out.has(x.key)) resolve(x)
@@ -1070,7 +1111,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     else emit(cls, cls === 'removed' ? value : undefined, cls === 'added' ? value : undefined, [], [])
   }
 
-  const { geo, accepted } = referenceBaseline(baseline, before, after)
+  const rb = referenceBaseline(baseline, before, after)
   type Group = { composition_id: Uuid; delta: number; carrier: string | null; keys: EntityKey[]; ranges: TimeRange[]; was: PlacedRange[]; layers: number }
   const groups = new Map<string, Group>()
   /** Where `b` would be had it only gone with the content around it, on the
@@ -1080,7 +1121,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
   for (const [compositionId, list] of moving) {
     const fps = current.compositions[compositionId]?.fps
     const tol = fps ? Math.ceil((500_000 * fps.den) / fps.num) : 1
-    const motion = resolveMotion(compositionId, list, geo, after, accepted, tol)
+    const motion = resolveMotion(compositionId, list, rb, after, tol)
     for (const { key, b, c, shift, aspects, params } of list) {
       const m = motion.get(key)!
       const rho = m.ref.d

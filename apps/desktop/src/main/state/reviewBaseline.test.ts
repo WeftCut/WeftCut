@@ -298,6 +298,17 @@ describe('Review baseline — carried translations', () => {
     expect([left.carried_by, left.carried_us, left.was]).toEqual([undefined, undefined, undefined])
   })
 
+  it('a clip approved with the ripple that carried it, then moved, says only that move, from where it was approved', () => {
+    const { a, gone, b } = aroll()
+    a.pinReviewBaseline()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    expect(a.approveReview({ keys: [L(gone)] })).toBe(2)
+    ok(a.dispatch('shift_layers', { layers: [b], delta_us: S }, AGENT))
+    const [row] = a.reviewState().unreviewed
+    expect(row).toMatchObject({ keys: [L(b)], delta_us: S, details: [{ type: 'shift', delta_us: S }] })
+    expect(row.was?.map((w) => [w.t_start_us, w.t_end_us])).toEqual([[12 * S, 16 * S]])
+  })
+
   it('a clip carried and edited whose carrier is on the other list keeps only its own edits', () => {
     const { a, gone, tail, b } = aroll()
     a.pinReviewBaseline()

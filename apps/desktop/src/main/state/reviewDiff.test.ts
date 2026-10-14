@@ -529,6 +529,33 @@ describe('diffProjects — movement against the content around it', () => {
     expect(new Set(carried.map((c) => c.id)).size).toBe(2)
   })
 
+  it('a clip without material that kept an edge where it was was trimmed there, whatever moved under it', () => {
+    const { a, tA, tB } = setup()
+    const x = color(a, tA, 0, 10 * S)
+    const b = color(a, tB, 2 * S, 6 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('shift_layers', { layers: [x], delta_us: 2 * S }))
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'in', new_t_us: 3 * S, escape_link: false }))
+    const row = diffProjects(before, a.snapshot()).find((c) => c.id === L(b))!
+    expect(row.details).toEqual([{ type: 'trim', side: 'start', delta_us: -S }])
+    expect([row.carried_by, row.was]).toEqual([undefined, undefined])
+  })
+
+  it('a clip removed and a longer one put in its place carry what is after it by the difference, by the insert', () => {
+    const { a, tA, tB } = setup()
+    color(a, tA, 0, S)
+    const gone = color(a, tA, S, 5 * S)
+    const n = color(a, tA, 5 * S, 6 * S)
+    const b = color(a, tB, 5 * S, 6 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }))
+    ok(a.dispatch('shift_layers', { from_t_us: S, tracks: null, delta_us: 6 * S }))
+    const ins = color(a, tA, S, 7 * S)
+    const cs = diffProjects(before, a.snapshot())
+    expect(cs.map((c) => [c.id, c.carried ?? false])).toEqual([[L(gone), false], [L(ins), false], [`Shift:${before.root_id}:${2 * S}:${L(ins)}`, true]])
+    expect(cs[2].keys).toEqual([L(n), L(b)].sort())
+  })
+
   it('two ripples on one track: between them carried by the first, after the second by the second, all the way', () => {
     const { a, tA } = setup()
     color(a, tA, 0, S)
@@ -857,7 +884,7 @@ describe('diffProjects — properties', () => {
       const ids = new Set(cs.map((c) => c.id))
       // A carrier is in the list, carried changes and riders alike; only a
       // carried change has no details of its own beyond its shift.
-      return cs.every((c) => detailsCover(c) && (c.carried_by === undefined || (ids.has(c.carried_by) && c.carried_by !== c.id))
+      return ids.size === cs.length && cs.every((c) => detailsCover(c) && (c.carried_by === undefined || (ids.has(c.carried_by) && c.carried_by !== c.id))
         && (c.carried_us === undefined || (c.carried === undefined && c.carried_by !== undefined && !c.details.some((d) => d.type === 'shift'))))
     }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
   })
