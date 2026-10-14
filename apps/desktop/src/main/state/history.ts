@@ -332,9 +332,10 @@ export class History {
     if (picked.length === 0) return 0
     // A carried translation goes with the edit that carried it (its carrier
     // is on its own list: `uncarryOrphans`). Not the other way: approving
-    // the carried content alone leaves its edit to be reviewed.
+    // the carried content alone leaves its edit to be reviewed. A rider — an
+    // edit of its own that was also carried — stays to be reviewed.
     const ids = new Set(picked.map((c) => c.id))
-    for (const c of [...unreviewed, ...user]) if (c.carried_by !== undefined && ids.has(c.carried_by) && !ids.has(c.id)) { picked.push(c); ids.add(c.id) }
+    for (const c of [...unreviewed, ...user]) if (c.carried && c.carried_by !== undefined && ids.has(c.carried_by) && !ids.has(c.id)) { picked.push(c); ids.add(c.id) }
     const cur = extractEntities(this.current())
     const base = extractEntities(review.base)
     for (const change of picked) {
@@ -546,14 +547,17 @@ export class History {
   }
 }
 
-/** A carried translation whose carrier is not in its list — on the other list
- *  — is shown as the move it is. Returns `list` itself when none is. */
+/** A change carried by one not in its list — on the other list — loses its
+ *  carrier: a carried translation is shown as the move it is (History places
+ *  it: `placeDeliberateMoves`), a rider as its own edits alone. Returns `list`
+ *  itself when none is. */
 function uncarryOrphans(list: Change[]): Change[] {
   const ids = new Set(list.map((c) => c.id))
-  if (list.every((c) => !c.carried || (c.carried_by !== undefined && ids.has(c.carried_by)))) return list
+  const orphan = (c: Change) => c.carried_by !== undefined && !ids.has(c.carried_by)
+  if (!list.some(orphan)) return list
   return list.map((c) => {
-    if (!c.carried || (c.carried_by !== undefined && ids.has(c.carried_by))) return c
-    const { carried: _, carried_by: __, ...shown } = c
+    if (!orphan(c)) return c
+    const { carried: _, carried_by: __, carried_us: ___, ...shown } = c
     return shown
   })
 }

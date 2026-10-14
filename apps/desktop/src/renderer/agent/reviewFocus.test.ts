@@ -82,6 +82,12 @@ describe('buildFocusPaint', () => {
     expect([...buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).layers]).toEqual([['a', 'change']])
   })
 
+  it('a focused change outlines the clips it carried that were edited too: they moved along', () => {
+    const rider = change({ id: 'Layer:rider', carried_by: 'Layer:gone', carried_us: -S, keys: ['Layer:rider'] })
+    const list = [...changes, rider]
+    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list).layers]).toEqual([['rider', 'change']])
+  })
+
   it('an item no longer listed paints nothing and recedes nothing', () => {
     const p = buildFocusPaint({ kind: 'change', id: 'Layer:approved' }, null, [tack()], changes)
     expect([p.layers.size, p.ghosts.size, p.washes, p.changeFocused]).toEqual([0, 0, [], false])

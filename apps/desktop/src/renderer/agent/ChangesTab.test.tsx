@@ -193,15 +193,24 @@ describe('AgentPanel Changes tab', () => {
     // A carried change whose carrier is not listed stays a row (main demotes such orphans; a guard).
     const orphan = change({ id: 'Shift:comp-root:-1000000', class: 'modified', aspects: ['timing'], carried: true, carried_by: 'Layer:gone',
       keys: ['Layer:o1'], delta_us: -S, details: [{ type: 'shift', delta_us: -S }], ranges: range(10 * S, 11 * S) })
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, carried, orphan], []) : { available: true, url: '', connections: [] })
+    // A clip it carried that was edited too: a row of its own, counted in the carrier's sub-lines.
+    const rider = change({ id: 'Layer:rider', class: 'modified', aspects: ['label'], carried_by: 'Layer:early', carried_us: -4 * S,
+      details: [{ type: 'label' }], ranges: range(12 * S, 13 * S) })
+    const farther = change({ id: 'Layer:farther', class: 'modified', aspects: ['label'], carried_by: 'Layer:early', carried_us: -5 * S,
+      details: [{ type: 'label' }], ranges: range(14 * S, 15 * S) })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, carried, orphan, rider, farther], []) : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()
     expect(rows().map(r => r.dataset.changeId)).not.toContain(carried.id)
     expect(rows().map(r => r.dataset.changeId)).toContain(orphan.id)
+    expect(rows().map(r => r.dataset.changeId)).toEqual(expect.arrayContaining(['Layer:rider', 'Layer:farther']))
     const early = rows().find(r => r.dataset.changeId === 'Layer:early')!
-    expect(early.querySelector('.agent-change-carried')?.textContent).toBe('5 clips and 2 markers after it moved 4.0 s earlier')
-    // Counts leave carried changes out, folded or not.
-    expect(screen.getByText('4 unreviewed')).toBeTruthy()
+    expect([...early.querySelectorAll('.agent-change-carried')].map(n => n.textContent))
+      .toEqual(['6 clips and 2 markers after it moved 4.0 s earlier', '1 clip after it moved 5.0 s earlier'])
+    // The rider's own row says only its own edit.
+    expect(rows().find(r => r.dataset.changeId === 'Layer:rider')!.textContent).not.toContain('earlier')
+    // Counts leave carried changes out, folded or not; riders are rows and count.
+    expect(screen.getByText('6 unreviewed')).toBeTruthy()
   })
 
   it('an agent row names the work session that last edited it; a user row does not', async () => {

@@ -263,9 +263,9 @@ function compareMarkers(a: MarkerEntity, b: MarkerEntity): { aspects: Set<Change
   if (!jsonEqual(ma.anchor, mb.anchor)) out.add('placement')
   const delta = mb.t_us - ma.t_us
   const endsShift = ma.end_t_us === null ? mb.end_t_us === null : mb.end_t_us !== null && mb.end_t_us - ma.end_t_us === delta
-  // Only an ANCHORED marker shifts: it rides its layer. A free marker that
-  // moved was moved on purpose and reads as a timing modification.
-  const shift = out.size === 1 && out.has('timing') && ma.anchor !== null && delta !== 0 && endsShift ? delta : null
+  // Anchored or free, a translation is read against the content around it
+  // (`resolveMotion`): its anchor's, or the material under it.
+  const shift = out.size === 1 && out.has('timing') && delta !== 0 && endsShift ? delta : null
   return { aspects: out, shift }
 }
 
@@ -636,8 +636,8 @@ function memoSurvivors(survivors: (compositionId: Uuid) => LayerPair[], moved: R
 }
 
 /** A deliberate move: a layer or marker gone to another track or composition
- *  (`placement` with both locations) or moved in time along with other edits
- *  (a `shift` detail), or a translation group not carried. */
+ *  (`placement` with both locations) or moved in time on its own along with
+ *  other edits (a `shift` detail), or a translation group not carried. */
 function isDeliberateMove(c: Change): boolean {
   if (c.class !== 'modified') return false
   if (c.delta_us !== undefined) return !c.carried
@@ -645,11 +645,12 @@ function isDeliberateMove(c: Change): boolean {
   return (c.from !== undefined && c.to !== undefined && c.aspects.includes('placement')) || c.details.some((d) => d.type === 'shift')
 }
 
-/** Sets `was` on every deliberate move in `changes` that lacks it: each moved
- *  entity's baseline footprint, carried onto the current timeline by the
- *  content around it (`removedRangeNow`) — without the moves themselves, or
- *  the place would follow them to where they went. Returns new objects for the
- *  changes it fills. */
+/** Sets `was` on every deliberate move in `changes` that lacks it — one to
+ *  another composition, a demoted carried change: each moved entity's
+ *  baseline footprint, carried onto the current timeline by the content
+ *  around it (`removedRangeNow`) — without the moves themselves, or the place
+ *  would follow them to where they went. Returns new objects for the changes
+ *  it fills. */
 function placeMoves(changes: readonly Change[], before: EntityIndex, survivors: (compositionId: Uuid) => LayerPair[]): Change[] {
   const moves = changes.filter(isDeliberateMove)
   if (!moves.some((c) => !c.was)) return [...changes]
@@ -693,51 +694,265 @@ export function carryDecorationsTo(decorations: readonly GroupDecoration[], curr
   return out
 }
 
-// ── Carried translations ──────────────────────────────────────────────────────
+// ── Movement against the content around it ────────────────────────────────────
+//
+// A changed layer or marker's movement is measured against where the content
+// around it took it, not against the baseline. Its displacement (`measures`:
+// where its baseline start's material now sits, as `timingDetails` reads it)
+// is matched against reference displacements — how far the content around it
+// was carried, each with the change that carried it:
+//
+// - before it on its own track: the baseline layer that started before it and
+//   ends last (a co-starting A/V partner never counts), at its end — or where
+//   it still overlaps it, at its start — and the reference that layer was
+//   itself measured from; with layers removed after that one, the seam a
+//   ripple of them closed (or the gap they left); with layers added between,
+//   the room they made;
+// - under it, off the A roll: the A-roll clip its start sat over, as a tack's
+//   end follows it; with none, the A-roll content before it;
+// - an anchored marker: its layer's own reference; a free one: the material
+//   under it.
+//
+// Within half a frame of a reference with a source, it was CARRIED by that
+// source. Otherwise its own movement is its displacement less its primary
+// reference — the material under it off the A roll, else the content before
+// it; of those, the one nearest — and its details and `was` are read from that
+// carried place. One that did not move is measured from where it was.
+
+/** Where a reference displacement came from: the id of the change that moved
+ *  that content (in the same list), `APPROVED` for motion an approval already
+ *  accepted, null for content that did not move. */
+const APPROVED = '\u0000approved'
+interface Ref { d: number; source: string | null }
+
+/** How one changed layer or marker moved. `ref` is what it is measured from:
+ *  its carried displacement and carrier when `carried`, else its primary
+ *  reference. `id` is the change it is listed in. `accepted`: a pure
+ *  translation that only moved with content an approval accepted — shown as
+ *  the move it is, placed like a demoted orphan (`placeMoves`). */
+interface Motion { ref: Ref; carried: boolean; id: string; accepted: boolean }
+
+/** A changed layer or marker that stays in its composition. `shift`: the
+ *  delta of a pure translation, else null. */
+interface Moving { key: EntityKey; b: LayerEntity | MarkerEntity; c: LayerEntity | MarkerEntity; shift: number | null; aspects: Set<ChangeAspect>; params: ParamKeys | null }
+
+const NO_REF: Ref = { d: 0, source: null }
+
+/** The displacements a layer's movement is read from, in order: its edges
+ *  when they moved alike, else the material at its start — none when its
+ *  start stayed put (a ripple head trim slides the material; the clip did not
+ *  move) — and, with no material to read, either edge. As `timingDetails`. */
+function layerMeasures(a: Layer, b: Layer): number[] {
+  const ds = b.t_start_us - a.t_start_us, de = b.t_end_us - a.t_end_us
+  const windowed = hasSourceWindow(a.params) && hasSourceWindow(b.params)
+  const retimed = rateOf(a.params) !== rateOf(b.params)
+  if (!windowed) return ds === de || retimed ? [ds] : [ds, de]
+  const dc = Math.round(throughContent(a, b, a.t_start_us) - a.t_start_us)
+  const dce = retimed ? Math.round(throughContent(a, b, a.t_end_us) - a.t_end_us) : dc
+  if (ds === de && dce === dc) return [ds]
+  return ds !== 0 ? [dc] : []
+}
+
+/** How far the content of baseline layer `base` (`cur` now) at baseline
+ *  instant `t` moved: its material inside it, its edge at its end. */
+function displacementAt(base: Layer, cur: Layer, t: number): number {
+  if (t >= base.t_end_us) return cur.t_end_us - base.t_end_us
+  if (hasSourceWindow(base.params) && hasSourceWindow(cur.params)) return Math.round(throughContent(base, cur, t) - t)
+  return cur.t_start_us - base.t_start_us
+}
+
+/** `v` moved `d` in time — its carried place, from which its own edits read. */
+function translated<T extends LayerEntity | MarkerEntity>(v: T, d: number): T {
+  if (d === 0) return v
+  if (v.kind === 'Layer') return { ...v, layer: { ...v.layer, t_start_us: v.layer.t_start_us + d, t_end_us: v.layer.t_end_us + d } }
+  const m = (v as MarkerEntity).marker
+  return { ...v, marker: { ...m, t_us: m.t_us + d, end_t_us: m.end_t_us === null ? null : m.end_t_us + d } }
+}
+
+/** The reference of `refs` nearest `m` (the first of equals). */
+function nearest(refs: readonly Ref[], m: number): Ref {
+  let best = refs[0] ?? NO_REF
+  for (const r of refs) if (Math.abs(m - r.d) < Math.abs(m - best.d)) best = r
+  return best
+}
+
+/** The first measure within `tol` of a reference with a source, and the
+ *  nearest such reference; null when none is. */
+function matchRef(measures: readonly number[], refs: readonly Ref[], tol: number): { m: number; ref: Ref } | null {
+  for (const m of measures) {
+    if (m === 0) continue
+    let best: Ref | null = null
+    for (const r of refs) if (r.source !== null && Math.abs(m - r.d) <= tol && (!best || Math.abs(m - r.d) < Math.abs(m - best.d))) best = r
+    if (best) return { m, ref: best }
+  }
+  return null
+}
+
+/** The baseline references are read in: the effective one, except that a
+ *  layer approved at the value it still has (or approved gone and still gone)
+ *  reads from the base — the content around it is measured as it was, and its
+ *  motion since is accepted (`APPROVED`): approving a ripple approves the move
+ *  of what it carried, a clip edited since included. */
+function referenceBaseline(baseline: BaselineSource, before: EntityIndex, after: EntityIndex): { geo: EntityIndex; accepted: Set<EntityKey> } {
+  const accepted = new Set<EntityKey>()
+  if (!isOverlay(baseline) || baseline.approved.size === 0) return { geo: before, accepted }
+  const base = extractEntities(baseline.base)
+  let geo: Map<EntityKey, EntityValue> | null = null
+  for (const [k, v] of baseline.approved) {
+    const was = base.get(k)
+    if (was?.kind !== 'Layer') continue
+    const now = after.get(k)
+    if (v === ABSENT ? now !== undefined : !entitiesEqual(v, now)) continue
+    ;(geo ??= new Map(before)).set(k, was)
+    accepted.add(k)
+  }
+  return { geo: geo ?? before, accepted }
+}
 
 /**
- * The change a translation group is only content carried along by, if any
- * — a ripple delete closing up, an insert or a longer clip making room, a trim
- * pulling the rest in. Both must hold:
- *
- * - On every track it touches, it is the TAIL from its first clip on: every
- *   clip that started at or after it there and is still there moved the same
- *   way at least as far (a second ripple further on carries the rest further).
- *   A clip that stayed behind means the group moved relative to its
- *   neighbours: a deliberate move.
- * - Its new start is where another change of its composition now ends — the
- *   seam a removal left, the end of what was inserted or trimmed.
- *
- * Anything else — a gap closed with nothing removed, a lone clip moved — is a
- * deliberate move, marked like any modification: what cannot be told apart is
- * shown, never hidden.
- *
- * Returns the carrier — of the changes ending there, a removal first (a
- * ripple's seam), then a trim, then the first — or null.
+ * How each of `moving` — the changed layers and markers staying in one
+ * composition — moved, against the content around it. Resolved in the order
+ * references are read: A-roll tracks first, then track order, each in
+ * baseline time order; markers last. `geo` and `accepted` are
+ * `referenceBaseline`'s; `tol` is half a frame.
  */
-function carrierOf(compositionId: Uuid, delta: number, keys: readonly EntityKey[], before: EntityIndex, after: EntityIndex, others: readonly Change[], current: Project): Change | null {
-  const fps = current.compositions[compositionId]?.fps
-  const tolerance = fps ? Math.ceil((1_000_000 * fps.den) / fps.num) : 1
-  const sign = Math.sign(delta)
-  const firstOnTrack = new Map<Uuid, number>()
-  let newStart = Infinity
-  for (const k of keys) {
-    const b = before.get(k)
-    if (b?.kind !== 'Layer') continue
-    firstOnTrack.set(b.track_id, Math.min(firstOnTrack.get(b.track_id) ?? Infinity, b.layer.t_start_us))
-    newStart = Math.min(newStart, b.layer.t_start_us + delta)
+function resolveMotion(compositionId: Uuid, moving: readonly Moving[], geo: EntityIndex, after: EntityIndex, accepted: ReadonlySet<EntityKey>, tol: number): Map<EntityKey, Motion> {
+  const out = new Map<EntityKey, Motion>()
+  const comp = geo.get(entityKey('Composition', compositionId))
+  const trackOrder = comp?.kind === 'Composition' ? comp.track_order : []
+  const role = (t: Uuid) => { const v = geo.get(entityKey('Track', t)); return v?.kind === 'Track' ? v.role : null }
+  const aRoll = trackOrder.filter((t) => role(t) === 'ARoll')
+  // Baseline layers per track, latest end first (then latest start): the
+  // order the content before an instant is looked for in.
+  const byTrack = new Map<Uuid, LayerEntity[]>()
+  // Layers on each track now that were not there: what an insert made room with.
+  const arrived = new Map<Uuid, Layer[]>()
+  for (const v of geo.values()) if (v.kind === 'Layer' && v.composition_id === compositionId) {
+    let list = byTrack.get(v.track_id)
+    if (!list) byTrack.set(v.track_id, list = [])
+    list.push(v)
   }
-  if (firstOnTrack.size === 0) return null
-  for (const v of before.values()) {
+  for (const list of byTrack.values()) list.sort((x, y) => y.layer.t_end_us - x.layer.t_end_us || y.layer.t_start_us - x.layer.t_start_us)
+  for (const v of after.values()) {
     if (v.kind !== 'Layer' || v.composition_id !== compositionId) continue
-    const from = firstOnTrack.get(v.track_id)
-    if (from === undefined || v.layer.t_start_us < from) continue
-    const c = after.get(keyOf(v))
-    if (c?.kind !== 'Layer' || c.track_id !== v.track_id) continue // gone, or gone elsewhere
-    if ((c.layer.t_start_us - v.layer.t_start_us) * sign < Math.abs(delta) - tolerance) return null
+    const g = geo.get(keyOf(v))
+    if (g?.kind === 'Layer' && g.composition_id === compositionId && g.track_id === v.track_id) continue
+    let list = arrived.get(v.track_id)
+    if (!list) arrived.set(v.track_id, list = [])
+    list.push(v.layer)
   }
-  const ending = others.filter((o) => o.ranges.some((r) => r.composition_id === compositionId && Math.abs(r.t_end_us - newStart) <= tolerance))
-  return ending.find((o) => o.class === 'removed') ?? ending.find((o) => o.details.some((d) => d.type === 'trim')) ?? ending[0] ?? null
+  const now = (k: EntityKey): LayerEntity | null => { const v = after.get(k); return v?.kind === 'Layer' && v.composition_id === compositionId ? v : null }
+
+  /** What baseline layer `v` (still in the composition) says of the content
+   *  at baseline instant `t`: how far it moved and what moved it — and the
+   *  reference it was itself measured from, which the content after it may
+   *  have stayed with when it moved on its own. */
+  const refsOf = (v: LayerEntity, t: number): Ref[] => {
+    const k = keyOf(v)
+    const m = out.get(k)
+    if (!m && !accepted.has(k)) return [NO_REF]
+    const d = displacementAt(v.layer, now(k)!.layer, t)
+    if (!m) return [{ d, source: d === 0 ? null : APPROVED }]
+    const source = m.carried && Math.abs(d - m.ref.d) <= tol ? m.ref.source : d === 0 ? null : m.id
+    const refs: Ref[] = [{ d, source }]
+    if (m.ref.source !== null && (m.ref.d !== d || m.ref.source !== source)) refs.push(m.ref)
+    return refs
+  }
+
+  /** The references the content before baseline instant `s` on `tracks`
+   *  gives a layer (`self`) now starting at `nowStart`. */
+  const contentBefore = (tracks: readonly Uuid[], s: number, self: EntityKey, nowStart: number): Ref[] => {
+    const lists = tracks.map((t) => byTrack.get(t) ?? [])
+    const xs = lists.length === 1 ? lists[0] : lists.flat().sort((x, y) => y.layer.t_end_us - x.layer.t_end_us || y.layer.t_start_us - x.layer.t_start_us)
+    // Removed (or gone elsewhere) after the last layer still there, nearest
+    // first: each its length and its change.
+    const run: Ref[] = []
+    let p: LayerEntity | null = null
+    for (const x of xs) {
+      if (x.layer.t_start_us >= s) continue
+      const k = keyOf(x)
+      if (k === self) continue
+      if (now(k)?.track_id === x.track_id) { p = x; break }
+      run.push({ d: x.layer.t_end_us - x.layer.t_start_us, source: accepted.has(k) ? APPROVED : k })
+    }
+    const base = p ? refsOf(p, Math.min(p.layer.t_end_us, s)) : [NO_REF]
+    const refs = [...base]
+    // The seam a ripple of the nearest or the farthest of them closed.
+    for (let i = 1; i <= run.length; i++) {
+      for (const part of i === run.length ? [run] : [run.slice(0, i), run.slice(run.length - i)]) {
+        const len = part.reduce((n, r) => n + r.d, 0)
+        for (const b of base) refs.push({ d: b.d - len, source: part[0].source })
+      }
+    }
+    // The room layers that arrived between it and that content made.
+    const from = p ? now(keyOf(p))!.layer.t_end_us - tol : -Infinity
+    const room = tracks.flatMap((t) => arrived.get(t) ?? []).filter((l) => l.t_start_us >= from && l.t_end_us <= nowStart + tol)
+    if (room.length > 0) {
+      const len = room.reduce((n, l) => n + l.t_end_us - l.t_start_us, 0)
+      const last = room.reduce((x, y) => (y.t_end_us > x.t_end_us ? y : x))
+      for (const b of base) refs.push({ d: b.d + len, source: entityKey('Layer', last.id) })
+    }
+    return refs
+  }
+
+  /** The references of the A-roll material at baseline instant `s`, or null
+   *  when no A-roll clip still in the composition was there. */
+  const under = (s: number): Ref[] | null => {
+    for (const t of aRoll) for (const v of byTrack.get(t) ?? []) {
+      if (v.layer.t_start_us <= s && s < v.layer.t_end_us && now(keyOf(v))) return refsOf(v, s)
+    }
+    return null
+  }
+
+  const resolve = ({ key, b, c, shift }: Moving): void => {
+    let measures: number[]
+    let refs: () => { all: Ref[]; primary: Ref[] }
+    if (b.kind === 'Layer') {
+      const cl = (c as LayerEntity).layer, s = b.layer.t_start_us
+      measures = layerMeasures(b.layer, cl)
+      refs = () => {
+        const own = contentBefore([b.track_id], s, key, cl.t_start_us)
+        if (aRoll.includes(b.track_id)) return { all: own, primary: own }
+        const u = under(s)
+        if (u) return { all: [...u, ...own], primary: u }
+        return { all: aRoll.length > 0 ? [...own, ...contentBefore(aRoll, s, key, cl.t_start_us)] : own, primary: own }
+      }
+    } else {
+      const mb = b.marker
+      measures = [(c as MarkerEntity).marker.t_us - mb.t_us]
+      refs = () => {
+        const anchor = mb.anchor ? geo.get(entityKey('Layer', mb.anchor.layer)) : undefined
+        if (anchor?.kind === 'Layer' && anchor.composition_id === compositionId && now(keyOf(anchor))) {
+          const m = out.get(keyOf(anchor))
+          const own = m ? [m.ref] : refsOf(anchor, Math.min(Math.max(mb.t_us, anchor.layer.t_start_us), anchor.layer.t_end_us))
+          return { all: own, primary: own }
+        }
+        const u = under(mb.t_us) ?? [NO_REF]
+        return { all: u, primary: u }
+      }
+    }
+    const m0 = measures.find((m) => m !== 0)
+    if (m0 === undefined) { out.set(key, { ref: NO_REF, carried: false, id: key, accepted: false }); return }
+    const { all, primary } = refs()
+    const hit = matchRef(measures, all, tol)
+    if (hit && !(shift !== null && hit.ref.source === APPROVED)) {
+      const ref = { d: hit.m, source: hit.ref.source }
+      out.set(key, { ref, carried: true, id: shift !== null ? `Shift:${compositionId}:${hit.m}:${hit.ref.source}` : key, accepted: false })
+      return
+    }
+    const ref = hit ? NO_REF : nearest(primary, m0)
+    out.set(key, { ref, carried: false, id: shift !== null ? `Shift:${compositionId}:${shift - ref.d}` : key, accepted: hit !== null })
+  }
+
+  const byKey = new Map(moving.map((x) => [x.key, x]))
+  for (const t of [...aRoll, ...trackOrder.filter((t) => !aRoll.includes(t))]) {
+    const list = [...byTrack.get(t) ?? []].sort((x, y) => x.layer.t_start_us - y.layer.t_start_us || x.layer.t_end_us - y.layer.t_end_us)
+    for (const v of list) { const x = byKey.get(keyOf(v)); if (x && x.b.kind === 'Layer') resolve(x) }
+  }
+  for (const x of moving) if (x.b.kind === 'Layer' && !out.has(x.key)) resolve(x)
+  const markers = moving.filter((x) => x.b.kind === 'Marker').sort((x, y) => (x.b as MarkerEntity).marker.t_us - (y.b as MarkerEntity).marker.t_us)
+  for (const x of markers) resolve(x)
+  return out
 }
 
 // ── diffProjects ──────────────────────────────────────────────────────────────
@@ -747,14 +962,22 @@ function carrierOf(compositionId: Uuid, delta: number, keys: readonly EntityKey[
  *
  * Classes: `added`, `removed` and `modified` (with aspects). A move to another
  * track or composition is `modified` with `placement` and both locations. A
- * layer or anchored marker whose ONLY difference is a pure translation of its
- * timing in place is `modified` with `timing` and `delta_us`, grouped per
- * composition and delta into one change — `carried` when it is the content
- * after another change closing up or making room (`carrierOf`), with that
- * change's id as `carried_by`. A deliberate move gets `was` (`placeMoves`). A
- * composition added or removed carries its own tracks in the same change.
- * Ordered by listed composition (current root first), then by time; changes
- * with no footprint come after the timed ones of their composition.
+ * layer or marker moving within its composition is measured against the
+ * content around it (`resolveMotion`):
+ *
+ * - a pure translation CARRIED by another change is grouped per composition,
+ *   carrier and delta into one `carried` change (`carried_by`);
+ * - a pure translation of its own is grouped per composition and own delta,
+ *   `delta_us` that delta, `was` its carried place;
+ * - carried and edited besides, it is a change of its own whose details leave
+ *   the carried move out, with `carried_by` and `carried_us`;
+ * - moved on its own and edited, its `shift` is its own movement and `was` its
+ *   carried place.
+ *
+ * A move to another composition is placed by `placeMoves`. A composition
+ * added or removed carries its own tracks in the same change. Ordered by
+ * listed composition (current root first), then by time; changes with no
+ * footprint come after the timed ones of their composition.
  */
 export function diffProjects(baseline: BaselineSource, current: Project): Change[] {
   const before = effectiveEntities(baseline)
@@ -770,9 +993,9 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     for (const c of Object.values(p.compositions)) if (!shared.has(c.id)) for (const v of compositionEntities(c)) keys.add(keyOf(v))
   if (isOverlay(baseline)) for (const k of baseline.approved.keys()) keys.add(k)
   const changes: Change[] = []
-  const shifts = new Map<string, { composition_id: Uuid; delta: number; keys: EntityKey[]; ranges: TimeRange[]; layers: number }>()
   const compositionChanges = new Map<Uuid, Change>()
   const pendingTracks: Array<{ value: EntityValue; cls: 'added' | 'removed' }> = []
+  const moving = new Map<Uuid, Moving[]>()
 
   const surviving = new Map<Uuid, LayerPair[]>()
   const survivors = (compositionId: Uuid) => {
@@ -823,14 +1046,12 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     else if (b.kind === 'Marker') ({ aspects, shift } = compareMarkers(b, c as MarkerEntity))
     else aspects = compareOther(b, c)
     if (aspects.size === 0) continue // differs only in an uncompared field
-    if (shift !== null) {
-      const comp = (c as LayerEntity | MarkerEntity).composition_id
-      const gk = `${comp}|${shift}`
-      let g = shifts.get(gk)
-      if (!g) shifts.set(gk, g = { composition_id: comp, delta: shift, keys: [], ranges: [], layers: 0 })
-      g.keys.push(key)
-      if (b.kind === 'Layer') g.layers += 1
-      g.ranges.push(footprint(c, after)!)
+    // Staying in its composition, a layer or marker is read against the
+    // content around it once every such one is known.
+    if ((b.kind === 'Layer' || b.kind === 'Marker') && b.composition_id === (c as LayerEntity | MarkerEntity).composition_id) {
+      let list = moving.get(b.composition_id)
+      if (!list) moving.set(b.composition_id, list = [])
+      list.push({ key, b, c: c as LayerEntity | MarkerEntity, shift, aspects, params })
       continue
     }
     const lb = locationOf(b), lc = locationOf(c)
@@ -849,16 +1070,56 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     else emit(cls, cls === 'removed' ? value : undefined, cls === 'added' ? value : undefined, [], [])
   }
 
-  const others = [...changes]
-  for (const g of shifts.values()) {
+  const { geo, accepted } = referenceBaseline(baseline, before, after)
+  type Group = { composition_id: Uuid; delta: number; carrier: string | null; keys: EntityKey[]; ranges: TimeRange[]; was: PlacedRange[]; layers: number }
+  const groups = new Map<string, Group>()
+  /** Where `b` would be had it only gone with the content around it, on the
+   *  current timeline: its place carried by `d`. */
+  const carriedPlace = (b: LayerEntity | MarkerEntity, d: number): PlacedRange =>
+    ({ ...footprint(translated(b, d), before)!, track_id: b.kind === 'Layer' ? b.track_id : null })
+  for (const [compositionId, list] of moving) {
+    const fps = current.compositions[compositionId]?.fps
+    const tol = fps ? Math.ceil((500_000 * fps.den) / fps.num) : 1
+    const motion = resolveMotion(compositionId, list, geo, after, accepted, tol)
+    for (const { key, b, c, shift, aspects, params } of list) {
+      const m = motion.get(key)!
+      const rho = m.ref.d
+      if (shift !== null) {
+        const carrier = m.carried ? m.ref.source : null
+        const delta = m.carried ? rho : shift - rho
+        let g = groups.get(m.id)
+        if (!g) groups.set(m.id, g = { composition_id: compositionId, delta, carrier, keys: [], ranges: [], was: [], layers: 0 })
+        g.keys.push(key)
+        if (b.kind === 'Layer') g.layers += 1
+        g.ranges.push(footprint(c, after)!)
+        if (!m.carried && !m.accepted) g.was.push(carriedPlace(b, rho))
+        continue
+      }
+      const moved = b.kind === 'Layer' && b.track_id !== (c as LayerEntity).track_id
+      if (moved) aspects.add('placement')
+      let ordered = orderedAspects(aspects)
+      let details = b.kind === 'Layer' ? layerDetails(translated(b, rho), c as LayerEntity, ordered, params!) : markerDetails(translated(b, rho), c as MarkerEntity, ordered)
+      // Carried, its timing is the carrier's to say: what is left is its own.
+      const unsaid = (d: ChangeDetail) => d.type === 'aspect' && d.aspect === 'timing'
+      if (m.carried && ordered.length > 1 && details.some(unsaid)) {
+        ordered = ordered.filter((a) => a !== 'timing')
+        details = details.filter((d) => !unsaid(d))
+      }
+      const change = emit('modified', b, c, ordered, details, moved)
+      if (m.carried && m.ref.source !== APPROVED) { change.carried_by = m.ref.source!; change.carried_us = rho }
+      if (moved || details.some((d) => d.type === 'shift')) change.was = [carriedPlace(b, rho)]
+    }
+  }
+  for (const g of groups.values()) {
     g.keys.sort()
     const change: Change = {
-      id: `Shift:${g.composition_id}:${g.delta}`, class: 'modified', kind: g.layers > 0 ? 'Layer' : 'Marker', keys: g.keys, aspects: ['timing'],
+      id: g.carrier !== null ? `Shift:${g.composition_id}:${g.delta}:${g.carrier}` : `Shift:${g.composition_id}:${g.delta}`,
+      class: 'modified', kind: g.layers > 0 ? 'Layer' : 'Marker', keys: g.keys, aspects: ['timing'],
       details: [{ type: 'shift', delta_us: g.delta }],
       composition_id: g.composition_id, composition_ids: [g.composition_id], delta_us: g.delta, ranges: mergeRanges(g.ranges),
     }
-    const carrier = carrierOf(g.composition_id, g.delta, g.keys, before, after, others, current)
-    if (carrier) { change.carried = true; change.carried_by = carrier.id }
+    if (g.carrier !== null) { change.carried = true; change.carried_by = g.carrier }
+    else if (g.was.length > 0) change.was = g.was
     changes.push(change)
   }
   const placed = placeMoves(changes, before, survivors)

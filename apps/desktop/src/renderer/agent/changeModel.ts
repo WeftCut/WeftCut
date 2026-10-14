@@ -14,6 +14,9 @@ export interface ChangeRow {
    *  content its edit moved along, worded as the row's sub-lines, never rows
    *  of their own. */
   carried: Change[]
+  /** The riders it carried (`carried_by` its id, `carried_us` set): changes
+   *  of their own, listed as rows, whose movement its sub-lines count. */
+  riders: Change[]
 }
 export interface ChangeGroup {
   /** The composition the rows are listed under; null for changes of whole
@@ -41,10 +44,11 @@ function byTime(a: ChangeRow, b: ChangeRow): number {
 export function groupChanges(unreviewed: readonly Change[], user: readonly Change[], rootId: string | null): ChangeGroup[] {
   const groups = new Map<string | null, ChangeGroup>()
   const addList = (list: readonly Change[], source: ChangeSource) => {
-    const rows = new Map(list.map(change => [change.id, { change, source, carried: [] as Change[] }]))
+    const rows = new Map(list.map(change => [change.id, { change, source, carried: [] as Change[], riders: [] as Change[] }]))
     for (const row of rows.values()) {
-      const carrier = row.change.carried && row.change.carried_by !== undefined ? rows.get(row.change.carried_by) : undefined
-      if (carrier && carrier !== row) { carrier.carried.push(row.change); continue }
+      const carrier = row.change.carried_by !== undefined ? rows.get(row.change.carried_by) : undefined
+      if (carrier && carrier !== row && row.change.carried) { carrier.carried.push(row.change); continue }
+      if (carrier && carrier !== row && row.change.carried_us !== undefined) carrier.riders.push(row.change)
       const key = row.change.composition_id
       let g = groups.get(key)
       if (!g) groups.set(key, g = { compositionId: key, rows: [] })
@@ -57,6 +61,24 @@ export function groupChanges(unreviewed: readonly Change[], user: readonly Chang
   return [...groups.values()]
     .sort((a, b) => rank(a) - rank(b))
     .map(g => ({ ...g, rows: [...g.rows].sort(byTime) }))
+}
+
+/** What a carrier moved along, by amount: its carried changes (`delta_us`)
+ *  and its riders (`carried_us`), clips and markers counted per amount, in
+ *  the order first met — one sub-line each. */
+export interface CarriedAlong { delta_us: number; clips: number; markers: number }
+export function carriedAlong(row: Pick<ChangeRow, 'carried' | 'riders'>): CarriedAlong[] {
+  const out = new Map<number, CarriedAlong>()
+  const count = (c: Change, delta: number | undefined) => {
+    if (delta === undefined) return
+    let g = out.get(delta)
+    if (!g) out.set(delta, g = { delta_us: delta, clips: 0, markers: 0 })
+    g.clips += keyIds(c, 'Layer').length
+    g.markers += keyIds(c, 'Marker').length
+  }
+  for (const c of row.carried) count(c, c.delta_us ?? c.details.find(d => d.type === 'shift')?.delta_us)
+  for (const c of row.riders) count(c, c.carried_us)
+  return [...out.values()]
 }
 
 /** The ids of every key of `kind` a change covers. */

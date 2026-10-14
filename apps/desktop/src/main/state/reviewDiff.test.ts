@@ -130,20 +130,19 @@ describe('diffProjects — classes', () => {
 
   it('a pure translation in place is a timing modification, and same-delta translations group into one change', () => {
     const { a, tA, tB } = setup()
-    const x = color(a, tA, 0, S)
-    const y = color(a, tB, 3 * S, 4 * S)
-    const z = color(a, tA, 6 * S, 7 * S)
+    const y = color(a, tB, 0, S)
+    const x = color(a, tA, 3 * S, 4 * S)
     const before = a.snapshot()
-    ok(a.dispatch('shift_layers', { layers: [x, y, z], delta_us: S }))
+    ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }))
     const c = only(diffProjects(before, a.snapshot()))
-    expect(c).toMatchObject({ class: 'modified', kind: 'Layer', delta_us: S, aspects: ['timing'] })
+    expect(c).toMatchObject({ id: `Shift:${before.root_id}:${S}`, class: 'modified', kind: 'Layer', delta_us: S, aspects: ['timing'] })
     // Moved on purpose, with nothing it was carried by.
     expect(c.carried).toBeUndefined()
-    expect(c.keys).toEqual([L(x), L(y), L(z)].sort())
-    expect(c.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[S, 2 * S], [4 * S, 5 * S], [7 * S, 8 * S]])
+    expect(c.keys).toEqual([L(x), L(y)].sort())
+    expect(c.ranges.map((r) => [r.t_start_us, r.t_end_us])).toEqual([[S, 2 * S], [4 * S, 5 * S]])
   })
 
-  it('an anchored marker rides its shifted layer into the same group; a free marker moved is a timing modification', () => {
+  it('an anchored marker rides its shifted layer into the same group; a free marker moved on its own is its own shift', () => {
     const { a, tA } = setup()
     ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
     const x = video(a, tA, 0, S)
@@ -156,8 +155,9 @@ describe('diffProjects — classes', () => {
     expect(c).toMatchObject({ class: 'modified', delta_us: 2 * S })
     expect(c.keys).toEqual([L(x), entityKey('Marker', m)].sort())
     const mid = a.snapshot()
+    // A free marker moved with nothing under it moved on its own.
     ok(a.dispatch('update_marker', { marker: free, patch: { t_us: 6 * S } }))
-    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ class: 'modified', kind: 'Marker', aspects: ['timing'] })
+    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ class: 'modified', kind: 'Marker', aspects: ['timing'], delta_us: S, keys: [entityKey('Marker', free)] })
   })
 
   it('a ripple delete is one removed change and one shift group', () => {
@@ -198,26 +198,14 @@ describe('diffProjects — classes', () => {
     void broll
     const carried = (cs: Change[]) => cs.filter((c) => c.delta_us !== undefined).map((c) => [c.delta_us, c.carried ?? false])
     expect(carried(diffProjects(before, a.snapshot()))).toEqual([[-S, true]])
-    // A gap closed with nothing removed: nothing to be carried by.
+    // A gap closed with nothing removed: the first clip after it moved on
+    // its own, and carried the rest — B roll included — along.
     const mid = a.snapshot()
     ok(a.dispatch('shift_layers', { from_t_us: 4 * S, tracks: null, delta_us: -S }))
-    expect(carried(diffProjects(mid, a.snapshot()))).toEqual([[-S, false]])
+    const cs = diffProjects(mid, a.snapshot())
+    expect(carried(cs)).toEqual([[-S, false], [-S, true]])
+    expect(cs[1]).toMatchObject({ carried_by: cs[0].id, keys: [L(broll)] })
     void head
-  })
-
-  it('a translation that left a neighbour behind on its track is a deliberate move, seam or not', () => {
-    const { a, tA } = setup()
-    color(a, tA, 0, S)
-    const lifted = color(a, tA, S, 2 * S)
-    const next = color(a, tA, 2 * S, 3 * S)
-    color(a, tA, 5 * S, 6 * S)
-    const before = a.snapshot()
-    // Lifted, then only the next clip pulled into the hole: it starts at the
-    // seam, but the clip after it stayed where it was.
-    ok(a.dispatch('delete_layers', { layers: [lifted] }))
-    ok(a.dispatch('shift_layers', { layers: [next], delta_us: -S }))
-    const shift = diffProjects(before, a.snapshot()).find((c) => c.delta_us !== undefined)!
-    expect(shift.carried).toBeUndefined()
   })
 
   it('a removed clip is carried by its neighbours through a later ripple elsewhere', () => {
@@ -379,7 +367,7 @@ describe('diffProjects — details', () => {
     const step = (patch: object): ChangeDetail[] => {
       const before = a.snapshot()
       ok(a.dispatch('update_marker', { marker: m, patch }))
-      return diffProjects(before, a.snapshot()).find((c) => c.id === M)!.details
+      return diffProjects(before, a.snapshot()).find((c) => c.keys.includes(M))!.details
     }
     expect(step({ t_us: 2 * S, end_t_us: 3 * S })).toEqual([{ type: 'shift', delta_us: S }])
     expect(step({ end_t_us: 4 * S })).toEqual([{ type: 'trim', side: 'end', delta_us: S }])
@@ -396,6 +384,165 @@ describe('diffProjects — details', () => {
     const shift = diffProjects(before, a.snapshot()).find((c) => c.delta_us !== undefined)!
     expect(shift).toMatchObject({ carried: true, carried_by: L(gone), details: [{ type: 'shift', delta_us: -S }] })
     expect(shift.was).toBeUndefined()
+  })
+})
+
+describe('diffProjects — movement against the content around it', () => {
+  const span = (c: Change) => c.ranges.map((r) => [r.t_start_us, r.t_end_us])
+  const byKey = (cs: Change[], id: Uuid) => cs.find((c) => c.keys.includes(L(id)))!
+  /** A-roll footage around a 4 s clip `gone`, B roll `b` over the footage after it. */
+  function aroll() {
+    const { a, tA, tB } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const head = video(a, tA, 0, 10 * S)
+    const gone = video(a, tA, 10 * S, 14 * S)
+    const tail = video(a, tA, 14 * S, 30 * S)
+    const b = video(a, tB, 16 * S, 20 * S)
+    return { a, tA, tB, head, gone, tail, b, before: a.snapshot() }
+  }
+
+  it('a ripple delete on the A roll carries its tail and the B roll over it, all by the removal', () => {
+    const { a, tB, gone, tail, b, before } = aroll()
+    const late = color(a, tB, 31 * S, 32 * S) // over no A roll: the A-roll content before it
+    const base = a.snapshot()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }))
+    const cs = diffProjects(base, a.snapshot())
+    expect(cs.map((c) => [c.class, c.carried ?? false])).toEqual([['removed', false], ['modified', true]])
+    expect(cs[1]).toMatchObject({ id: `Shift:${before.root_id}:${-4 * S}:${L(gone)}`, carried_by: L(gone), delta_us: -4 * S, details: [{ type: 'shift', delta_us: -4 * S }] })
+    expect(cs[1].keys).toEqual([L(tail), L(b), L(late)].sort())
+    expect(cs[1].was).toBeUndefined()
+  })
+
+  it('carried by a ripple and then trimmed: its own edits only, carried by the removal', () => {
+    const { a, gone, tail, b, before } = aroll()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }))
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'in', new_t_us: 12.2 * S, escape_link: false }))
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'out', new_t_us: 15.7 * S, escape_link: false }))
+    const cs = diffProjects(before, a.snapshot())
+    const row = cs.find((c) => c.id === L(b))!
+    expect(row).toMatchObject({ class: 'modified', aspects: ['timing'], carried_by: L(gone), carried_us: -4 * S })
+    expect(row.details).toEqual([{ type: 'trim', side: 'start', delta_us: -0.2 * S }, { type: 'trim', side: 'end', delta_us: -0.3 * S }])
+    expect(row.carried).toBeUndefined()
+    expect(row.was).toBeUndefined()
+    // The A roll it sat over still goes with the removal alone.
+    expect(byKey(cs, tail)).toMatchObject({ carried: true, carried_by: L(gone), keys: [L(tail)] })
+  })
+
+  it('carried, then moved again on its own: its own movement, from the carried place', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const gone = color(a, tA, S, 2 * S)
+    const b = color(a, tA, 4 * S, 5 * S)
+    const c = color(a, tA, 7 * S, 8 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] })) // b → 3 s, c → 6 s
+    ok(a.dispatch('shift_layers', { layers: [b], delta_us: -S })) // b → 2 s
+    const cs = diffProjects(before, a.snapshot())
+    const own = byKey(cs, b)
+    expect(own).toMatchObject({ id: `Shift:${before.root_id}:${-S}`, delta_us: -S, details: [{ type: 'shift', delta_us: -S }], keys: [L(b)] })
+    expect(own.carried).toBeUndefined()
+    expect(own.was).toEqual([{ composition_id: before.root_id, track_id: tA, t_start_us: 3 * S, t_end_us: 4 * S }])
+    // The clip after it stayed with the ripple, not with it.
+    expect(byKey(cs, c)).toMatchObject({ carried: true, carried_by: L(gone), delta_us: -S })
+    // Moved on its own and edited: a row that says its own shift, placed the same.
+    ok(a.dispatch('update_layer', { layer: b, patch: { label: 'b' } }))
+    const row = diffProjects(before, a.snapshot()).find((x) => x.id === L(b))!
+    expect(row.details).toEqual([{ type: 'shift', delta_us: -S }, { type: 'label' }])
+    expect(row.was).toEqual(own.was)
+    expect(row.carried_by).toBeUndefined()
+  })
+
+  it('a gap closed with nothing removed: the first clip after it (and its sound) moved on its own and carried the rest', () => {
+    const { a, tA } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: true }))
+    const sound = (s0: number, e0: number) => ok(a.dispatch('add_layer', { track: tA, kind: 'audio', media: AV, src_in_us: 0, src_out_us: e0 - s0, t_start_us: s0, t_end_us: e0 })) as Uuid
+    video(a, tA, 0, S); sound(0, S)
+    const v2 = video(a, tA, 3 * S, 4 * S), a2 = sound(3 * S, 4 * S)
+    const v3 = video(a, tA, 4 * S, 5 * S), a3 = sound(4 * S, 5 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('ripple_delete_gap', { track: tA, s: S, e: 3 * S }))
+    const cs = diffProjects(before, a.snapshot())
+    expect(cs).toHaveLength(2)
+    const id = `Shift:${before.root_id}:${-2 * S}`
+    expect(cs[0]).toMatchObject({ id, delta_us: -2 * S, keys: [L(v2), L(a2)].sort() })
+    expect(cs[0].carried).toBeUndefined()
+    expect(cs[0].was).toEqual([v2, a2].map(() => ({ composition_id: before.root_id, track_id: tA, t_start_us: 3 * S, t_end_us: 4 * S })))
+    expect(cs[1]).toMatchObject({ carried: true, carried_by: id, delta_us: -2 * S, keys: [L(v3), L(a3)].sort() })
+  })
+
+  it('a lone clip moved into a gap, its neighbours untouched, moved on its own', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const b = color(a, tA, 3 * S, 4 * S)
+    color(a, tA, 6 * S, 7 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('shift_layers', { layers: [b], delta_us: S }))
+    const c = only(diffProjects(before, a.snapshot()))
+    expect(c).toMatchObject({ delta_us: S, keys: [L(b)] })
+    expect(c.carried).toBeUndefined()
+    expect(c.carried_by).toBeUndefined()
+    expect(c.was).toEqual([{ composition_id: before.root_id, track_id: tA, t_start_us: 3 * S, t_end_us: 4 * S }])
+  })
+
+  it('an end trimmed with ripple carries what is after it', () => {
+    const { a, tA } = setup()
+    const t = color(a, tA, 0, 2 * S)
+    const n = color(a, tA, 2 * S, 3 * S)
+    const m = color(a, tA, 3 * S, 4 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('trim_layer', { layer: t, edge: 'out', new_t_us: S, escape_link: false }))
+    ok(a.dispatch('shift_layers', { from_t_us: 2 * S, tracks: null, delta_us: -S }))
+    const cs = diffProjects(before, a.snapshot())
+    expect(cs.map((c) => c.id)).toEqual([L(t), `Shift:${before.root_id}:${-S}:${L(t)}`])
+    expect(cs[0].details).toEqual([{ type: 'trim', side: 'end', delta_us: -S }])
+    expect(cs[0].was).toBeUndefined()
+    expect(cs[1]).toMatchObject({ carried: true, carried_by: L(t), keys: [L(n), L(m)].sort() })
+  })
+
+  it('an insert that made room carries what is after it', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, 2 * S)
+    const b = color(a, tA, 2 * S, 4 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('shift_layers', { from_t_us: 2 * S, tracks: null, delta_us: S }))
+    const ins = color(a, tA, 2 * S, 3 * S)
+    const cs = diffProjects(before, a.snapshot())
+    expect(cs.map((c) => [c.id, c.class])).toEqual([[L(ins), 'added'], [`Shift:${before.root_id}:${S}:${L(ins)}`, 'modified']])
+    expect(cs[1]).toMatchObject({ carried: true, carried_by: L(ins), keys: [L(b)] })
+  })
+
+  it('two ripples on two tracks by the same amount are two carried groups, each by its own removal', () => {
+    const { a, tA, tB } = setup()
+    color(a, tA, 0, S)
+    const g1 = color(a, tA, S, 2 * S)
+    const b = color(a, tA, 2 * S, 3 * S)
+    color(a, tB, 4 * S, 5 * S)
+    const g2 = color(a, tB, 5 * S, 6 * S)
+    const q = color(a, tB, 6 * S, 7 * S)
+    const before = a.snapshot()
+    // Each track closed up on its own (no single command does both).
+    let after = editLayer(before, b, (l) => { l.t_start_us = S; l.t_end_us = 2 * S })
+    after = editLayer(after, q, (l) => { l.t_start_us = 5 * S; l.t_end_us = 6 * S })
+    for (const t of root(after).tracks) t.layers = t.layers.filter((l) => l.id !== g1 && l.id !== g2)
+    const carried = diffProjects(before, after).filter((c) => c.carried)
+    expect(carried.map((c) => [c.carried_by, c.delta_us, c.keys])).toEqual([[L(g1), -S, [L(b)]], [L(g2), -S, [L(q)]]])
+    expect(new Set(carried.map((c) => c.id)).size).toBe(2)
+  })
+
+  it('two ripples on one track: between them carried by the first, after the second by the second, all the way', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const g1 = color(a, tA, S, 2 * S)
+    const b = color(a, tA, 2 * S, 3 * S)
+    const g2 = color(a, tA, 3 * S, 4 * S)
+    const c = color(a, tA, 4 * S, 5 * S)
+    const before = a.snapshot()
+    ok(a.dispatch('ripple_delete_layers', { layers: [g1] }))
+    ok(a.dispatch('ripple_delete_layers', { layers: [g2] }))
+    const cs = diffProjects(before, a.snapshot())
+    expect(byKey(cs, b)).toMatchObject({ carried: true, carried_by: L(g1), delta_us: -S })
+    expect(byKey(cs, c)).toMatchObject({ carried: true, carried_by: L(g2), delta_us: -2 * S })
+    expect(span(byKey(cs, c))).toEqual([[2 * S, 3 * S]])
   })
 })
 
@@ -708,7 +855,10 @@ describe('diffProjects — properties', () => {
       for (const o of edits) apply(a, o)
       const cs = diffProjects(before, a.snapshot())
       const ids = new Set(cs.map((c) => c.id))
-      return cs.every((c) => detailsCover(c) && (c.carried_by === undefined || (c.carried === true && ids.has(c.carried_by))))
+      // A carrier is in the list, carried changes and riders alike; only a
+      // carried change has no details of its own beyond its shift.
+      return cs.every((c) => detailsCover(c) && (c.carried_by === undefined || (ids.has(c.carried_by) && c.carried_by !== c.id))
+        && (c.carried_us === undefined || (c.carried === undefined && c.carried_by !== undefined && !c.details.some((d) => d.type === 'shift'))))
     }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
   })
 })

@@ -8,7 +8,7 @@ import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { carriedAlong, groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changeWordsContext, describeCarried, describeChange } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
@@ -31,8 +31,10 @@ import { useAgentActivity } from './activityStore'
  *  its clips. Neither seeks — Locate does.
  *
  *  A row says what changed in relative words (`changeWords.ts`); the content
- *  its edit carried along folds under it as a quiet sub-line, and an agent
- *  row names the work session that made it ("From: …"). */
+ *  its edit carried along folds under it as quiet sub-lines, one per amount —
+ *  counting the clips it carried that were edited too, which keep rows of
+ *  their own — and an agent row names the work session that made it
+ *  ("From: …"). */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
@@ -115,7 +117,8 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     return r.t_end_us > r.t_start_us ? `${start} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : start
   }
 
-  const row = ({ change: c, source, carried }: ChangeRow) => {
+  const row = (r: ChangeRow) => {
+    const { change: c, source } = r
     const when = time(c)
     const reason = source === 'agent' ? sessionReason(c, reasons) : null
     const locatable = editor && canLocateChange(c)
@@ -129,7 +132,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
             <small>{[describeChange(c, words), when].filter(Boolean).join(' · ')}</small>
-            {carried.map(k => <small key={k.id} className="agent-change-carried">{describeCarried(k, t)}</small>)}
+            {carriedAlong(r).map(k => <small key={k.delta_us} className="agent-change-carried">{describeCarried(k, t)}</small>)}
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}

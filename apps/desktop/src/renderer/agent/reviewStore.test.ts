@@ -209,6 +209,14 @@ describe('buildReviewHighlight', () => {
       expect(h.cuts).toEqual([{ changeId: 'Layer:r', layerId: 'r', compositionId: 'root', trackId: 'track-1', tUs: 5, kind: 'seam', carried: 'earlier' }])
       expect(buildReviewHighlight([trimmed('end', -3), carried('Layer:t', 3)], []).cuts.map(c => c.carried)).toEqual(['later'])
     })
+
+    it('a rider paints as its own edit, and its carrier says which way it moved it', () => {
+      const rider = change({ id: 'Layer:b', class: 'modified', aspects: ['label'], keys: ['Layer:b'], carried_by: 'Layer:r', carried_us: -4,
+        details: [{ type: 'label' }], ranges: [{ composition_id: 'root', t_start_us: 30, t_end_us: 40 }] })
+      const h = buildReviewHighlight([removed('Layer:r', 5, 5), rider], [])
+      expect(h.cuts.map(c => [c.changeId, c.carried])).toEqual([['Layer:r', 'earlier']])
+      expect([...h.layers]).toEqual([['b', 'modified']])
+    })
   })
 })
 

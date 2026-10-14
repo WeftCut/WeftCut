@@ -158,8 +158,8 @@ describe('Review baseline — approval', () => {
 
   it('a shift group approves as a unit, even when asked by one member key', () => {
     const { a, tA, tB } = setup()
-    const x = color(a, tA, 0, S)
-    const y = color(a, tB, 2 * S, 3 * S)
+    const y = color(a, tB, 0, S)
+    const x = color(a, tA, 2 * S, 3 * S)
     const z = color(a, tA, 5 * S, 6 * S)
     a.pinReviewBaseline()
     ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
@@ -261,6 +261,55 @@ describe('Review baseline — carried translations', () => {
     expect(a.approveReview({ keys: [L(gone)] })).toBe(2)
     expect(ids(a).unreviewed).toEqual([L(first)])
   })
+
+  /** A-roll footage around a 4 s clip `gone`, B roll `b` over the footage after it. */
+  function aroll() {
+    const { a, tA, tB } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const clip = (track: Uuid, s: number, e: number) =>
+      ok(a.dispatch('add_layer', { track, kind: 'video', media: AV, src_in_us: 0, src_out_us: e - s, t_start_us: s, t_end_us: e })) as Uuid
+    clip(tA, 0, 10 * S)
+    const gone = clip(tA, 10 * S, 14 * S)
+    const tail = clip(tA, 14 * S, 30 * S)
+    const b = clip(tB, 16 * S, 20 * S)
+    return { a, gone, tail, b }
+  }
+  const trimB = (a: ActorHandle, b: Uuid, by?: Actor) => {
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'in', new_t_us: 12.2 * S, escape_link: false }, by))
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'out', new_t_us: 15.7 * S, escape_link: false }, by))
+  }
+  const TRIMS = [{ type: 'trim', side: 'start', delta_us: -0.2 * S }, { type: 'trim', side: 'end', delta_us: -0.3 * S }]
+
+  it('approving a ripple approves what it only carried, not a clip it carried that was edited too', () => {
+    const { a, gone, tail, b } = aroll()
+    a.pinReviewBaseline()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    trimB(a, b, AGENT)
+    const row = a.reviewState().unreviewed.find((c) => c.id === L(b))!
+    expect(row).toMatchObject({ carried_by: L(gone), carried_us: -4 * S, details: TRIMS })
+    expect(row.was).toBeUndefined()
+    expect(a.approveReview({ keys: [L(gone)] })).toBe(2)
+    expect(ids(a).unreviewed).toEqual([L(b)])
+    expect(a.reviewState().unreviewed.map((c) => c.keys)).not.toContainEqual([L(tail)])
+    // Its carrier approved, the clip still says only what was its own: the
+    // move went with the approval.
+    const left = a.reviewState().unreviewed[0]
+    expect(left).toMatchObject({ id: L(b), details: TRIMS })
+    expect([left.carried_by, left.carried_us, left.was]).toEqual([undefined, undefined, undefined])
+  })
+
+  it('a clip carried and edited whose carrier is on the other list keeps only its own edits', () => {
+    const { a, gone, tail, b } = aroll()
+    a.pinReviewBaseline()
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] })) // the user's
+    trimB(a, b, AGENT)
+    const { unreviewed, user } = a.reviewState()
+    expect(unreviewed).toHaveLength(1)
+    expect(unreviewed[0]).toMatchObject({ id: L(b), details: TRIMS })
+    expect([unreviewed[0].carried_by, unreviewed[0].carried_us, unreviewed[0].was]).toEqual([undefined, undefined, undefined])
+    // The user's list keeps the ripple and what it carried.
+    expect(user.map((c) => [c.class, c.carried ?? false, c.keys])).toEqual([['removed', false, [L(gone)]], ['modified', true, [L(tail)]]])
+  })
 })
 
 describe('Review baseline — preference patches, checkpoints, reset', () => {
@@ -327,7 +376,8 @@ describe('Review baseline — preference patches, checkpoints, reset', () => {
     ok(a.dispatch('set_composition', { fps: { num: 24, den: 1 } }))
     const moved = root(a.snapshot()).markers[0].t_us
     expect(moved).not.toBe(100_000)
-    expect(ids(a)).toEqual({ unreviewed: [], user: [entityKey('Marker', m)] })
+    const { unreviewed, user } = a.reviewState()
+    expect([unreviewed, user.map((c) => c.keys)]).toEqual([[], [[entityKey('Marker', m)]]])
   })
 })
 
@@ -437,6 +487,31 @@ describe('opDiff — what one call did', () => {
     const d = a.reviewOpDiff([lastOp(a)])
     expect(d.available).toBe(true)
     expect(d.changes.map((c) => [c.id, c.class]).sort()).toEqual([[L(x), 'modified'], [L(y), 'removed']])
+  })
+
+  it('a ripple call: what it carried, by it; a later call that edits a carried clip makes it a rider when read with the ripple', () => {
+    const { a, tA, tB } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const clip = (track: Uuid, s: number, e: number) =>
+      ok(a.dispatch('add_layer', { track, kind: 'video', media: AV, src_in_us: 0, src_out_us: e - s, t_start_us: s, t_end_us: e })) as Uuid
+    clip(tA, 0, 10 * S)
+    const gone = clip(tA, 10 * S, 14 * S)
+    const tail = clip(tA, 14 * S, 30 * S)
+    const b = clip(tB, 16 * S, 20 * S)
+    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
+    const ripple = lastOp(a)
+    const d = a.reviewOpDiff([ripple])
+    expect(d.changes.map((c) => [c.id, c.carried_by ?? null])).toEqual([[L(gone), null], [`Shift:${a.snapshot().root_id}:${-4 * S}:${L(gone)}`, L(gone)]])
+    expect(d.changes[1].keys).toEqual([L(tail), L(b)].sort())
+    ok(a.dispatch('trim_layer', { layer: b, edge: 'in', new_t_us: 12.2 * S, escape_link: false }, AGENT))
+    const trim = lastOp(a)
+    // Alone, the later call trimmed a clip where it was.
+    expect(a.reviewOpDiff([trim]).changes).toMatchObject([{ id: L(b), details: [{ type: 'trim', side: 'start', delta_us: -0.2 * S }] }])
+    expect(a.reviewOpDiff([trim]).changes[0].carried_by).toBeUndefined()
+    // Read with the ripple, the clip is a rider: its trim, carried by the removal.
+    const both = a.reviewOpDiff([ripple, trim]).changes
+    expect(both.find((c) => c.id === L(b))).toMatchObject({ carried_by: L(gone), carried_us: -4 * S, details: [{ type: 'trim', side: 'start', delta_us: -0.2 * S }] })
+    expect(both.find((c) => c.carried)).toMatchObject({ carried_by: L(gone), keys: [L(tail)] })
   })
 
   it('is unavailable once an op leaves the history window, or was never on it', () => {

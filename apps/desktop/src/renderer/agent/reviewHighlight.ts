@@ -79,11 +79,12 @@ const LAYER_PREFIX = 'Layer:'
 export function buildReviewHighlight(changes: readonly Change[], decorations: readonly GroupDecoration[]): ReviewHighlight {
   // A carried translation paints nowhere: the edit that carried it is the
   // mark, as a diff does not mark the lines a change above renumbered. Its
-  // carrier's cut mark says the content after it moved.
+  // carrier's cut mark says the content after it moved — a rider's moving
+  // too (it paints as the edit of its own it also is).
   const carries = new Map<string, 'earlier' | 'later'>()
   for (const c of changes) {
-    if (!c.carried || c.carried_by === undefined || carries.has(c.carried_by)) continue
-    const delta = c.delta_us ?? c.details.find(d => d.type === 'shift')?.delta_us ?? 0
+    if ((!c.carried && c.carried_us === undefined) || c.carried_by === undefined || carries.has(c.carried_by)) continue
+    const delta = c.carried ? c.delta_us ?? c.details.find(d => d.type === 'shift')?.delta_us ?? 0 : c.carried_us!
     carries.set(c.carried_by, delta < 0 ? 'earlier' : 'later')
   }
   changes = changes.filter(c => !c.carried)

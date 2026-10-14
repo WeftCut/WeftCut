@@ -88,12 +88,11 @@ describe('describeChange', () => {
 })
 
 describe('describeCarried', () => {
-  const carried = (keys: Change['keys'], delta_us: number) => change([{ type: 'shift', delta_us }], { keys, delta_us, carried: true, carried_by: 'Layer:x' })
   it('counts the clips (and markers) the edit carried, and which way', () => {
-    const five = carried(['Layer:a', 'Layer:b', 'Layer:c', 'Layer:d', 'Layer:e'], -4 * S)
+    const five = { delta_us: -4 * S, clips: 5, markers: 0 }
     expect(describeCarried(five, tZh)).toBe('后面 5 个片段随之前移 4.0 秒')
     expect(describeCarried(five, tEn)).toBe('5 clips after it moved 4.0 s earlier')
-    const mixed = carried(['Layer:a', 'Marker:m', 'Marker:n'], 1_500_000)
+    const mixed = { delta_us: 1_500_000, clips: 1, markers: 2 }
     expect(describeCarried(mixed, tZh)).toBe('后面 1 个片段和 2 个标记随之后移 1.5 秒')
     expect(describeCarried(mixed, tEn)).toBe('1 clip and 2 markers after it moved 1.5 s later')
   })

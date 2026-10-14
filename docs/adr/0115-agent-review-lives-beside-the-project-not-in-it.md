@@ -58,11 +58,19 @@ approvals) and the current state; preference-shaped fields are excluded.
 A difference is an Unreviewed change when any Agent-sourced commit since the
 baseline touched the entity — a later user edit does not clear it. There
 are three classes, as a diff has: added, removed, modified. A move to another
-track or composition, or in time, is a modification. Pure translations of
-timing are grouped per delta so a ripple reads as one change. A translation
-that is only the tail after another change of its composition (starting where
-that change ends) is carried: it is approved with its edit and painted on no
-timeline, as a diff does not mark the lines an insertion above renumbered.
+track or composition, or in time, is a modification. Movement is measured
+against where the content around an entity took it, not against the baseline:
+the clip before it on its track, the A-roll material under it off the A roll,
+an anchored marker's clip — each with the change that moved that content (a
+ripple's seam, an insert's room, a trimmed end, a move of its own). One that
+went just as far was carried by that change; otherwise its own movement is
+what is left, and its old place is the carried one. Pure translations are
+grouped per carrier and delta, or per own delta, so a ripple reads as one
+change. A carried translation is approved with its carrier and painted on no
+timeline, as a diff does not mark the lines an insertion above renumbered. One
+carried and edited besides — a rider — is a change of its own that says only
+its own edits; its carrier's row counts it among what it moved, and approving
+the carrier leaves it to review.
 Where a change shows is its place on the CURRENT timeline: the entity's current
 footprint, never the baseline's, whose times a later ripple has moved. A
 removed entity's place is carried by the content around it, as a tack's is —
@@ -79,10 +87,12 @@ ripple head trim is a trim, not a trim and a shift; an edge is trimmed only
 against the material at that end, so a retime that kept its material is its
 speed, not a cut. A carried translation names
 its carrier (`carried_by`), the change it is listed and approved with; one
-whose carrier is on the other list is shown as the move it is. A deliberate
-move also carries `was` — where it was, carried onto the current timeline like
-a removed entity's place, without the moved entities themselves — drawn only
-while that change is focused.
+whose carrier is on the other list is shown as the move it is, and a rider
+there keeps only its own edits. Once a carrier is approved, the motion it
+caused is accepted: the content it moved is read where it was, so what it
+carried still says only its own edits. A deliberate move also carries `was` —
+its place as far as the content around it went, on the current timeline —
+drawn only while that change is focused.
 
 The editor timeline expresses intent with as little as says it. Three colours
 mark the changes — a new clip's edge, a changed one's, a removed clip's ghost

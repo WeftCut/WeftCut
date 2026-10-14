@@ -18,7 +18,7 @@ export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string }
 /** Three, as a diff reads: what is new, what is gone, what differs. A move
  *  to another track or composition is a `modified` with `placement`; a pure
  *  translation in time is a `modified` with `timing` and `delta_us` — and,
- *  when it is only the content after an edit closing up or making room,
+ *  when it only went where another edit carried the content around it,
  *  `carried`, which no timeline marks (ADR 0115). */
 export type ChangeClass = 'added' | 'removed' | 'modified'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
@@ -36,7 +36,8 @@ export type ChangeDetail =
   | { type: 'length'; duration_us: number }
   /** Material cut from (`delta_us` < 0) or added to (> 0) one end. */
   | { type: 'trim'; side: 'start' | 'end'; delta_us: number }
-  /** Moved in time on its own track: current − baseline. */
+  /** Moved in time on its own: current − where the content around it was
+   *  carried (the baseline place when nothing carried it). */
   | { type: 'shift'; delta_us: number }
   /** Same place, other source material: the source window moved by `delta_us`
    *  (> 0: later in the source). */
@@ -60,7 +61,9 @@ export type ChangeDetail =
   | { type: 'aspect'; aspect: ChangeAspect }
 
 export interface Change {
-  /** Stable for the same difference: the entity key, or `Shift:<composition>:<delta>`. */
+  /** Stable for the same difference: the entity key; `Shift:<composition>:<delta>`
+   *  for a translation group of its own, `Shift:<composition>:<delta>:<carrier id>`
+   *  for a carried one. */
   id: string
   class: ChangeClass
   /** The entity kind; a shift group mixing layers and markers reports `Layer`. */
@@ -81,24 +84,33 @@ export interface Change {
   from?: EntityLocation
   to?: EntityLocation
   /** A translation only — the entities' timing moved, nothing else did —
-   *  grouped per composition and delta into one change: current − baseline. */
+   *  grouped per composition and delta into one change. Carried: how far the
+   *  content carried them (current − baseline). Otherwise their OWN movement:
+   *  current − where the content around them was carried. */
   delta_us?: number
-  /** A translation that is only the content after an edit closing up or making
-   *  room — the tail of every track it touches, starting where another change
-   *  of its composition ends (a ripple's seam, an insert, a trim). Listed and
-   *  approved with that edit; no timeline paints it, as a diff does not mark
-   *  the lines a change above renumbered. */
+  /** A translation that only went where another change carried the content
+   *  around it — the clip before it on its track, the A-roll material under
+   *  it, a marker's clip: a ripple closing up, an insert or a longer clip
+   *  making room, a trim pulling the rest in. Listed and approved with that
+   *  change; no timeline paints it, as a diff does not mark the lines a change
+   *  above renumbered. */
   carried?: true
-  /** A carried change's carrier: the id of the change whose end its new start
-   *  sits at, in the same list. Approved with it; shown under its row. */
+  /** The change that carried this one's movement, in the same list: a
+   *  `carried` change's (approved with it, folded under its row), or a rider's
+   *  (`carried_us`). */
   carried_by?: string
+  /** A change that also differs in its own right but whose movement was
+   *  carried by `carried_by`: how far. Its own row does not say it, the
+   *  carrier's does; approving the carrier does not approve it. */
+  carried_us?: number
   /** What it did, in order (`ChangeDetail`); empty for a listed-only change
    *  nothing more can be said of. */
   details: ChangeDetail[]
   /** A deliberate move (`placement`, a `shift` detail, or a non-carried
-   *  `delta_us`): where each moved layer or marker was, carried onto the
-   *  CURRENT timeline the way a removed entity's range is. Drawn only while
-   *  the change is focused. */
+   *  `delta_us`): where each moved layer or marker was on the CURRENT
+   *  timeline — its baseline place carried as far as the content around it
+   *  went, the place its own movement is measured from. Drawn only while the
+   *  change is focused. */
   was?: PlacedRange[]
   /** Where the change is on the CURRENT timeline, merged per composition: the
    *  current footprints; for a removed entity its baseline footprint carried

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentActivity, AgentWorkSession } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
-import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
+import { carriedAlong, formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
 
 const change = (patch: Partial<Change> & { id: string }): Change => ({
   class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [],
@@ -24,6 +24,19 @@ describe('groupChanges folding', () => {
     expect(g!.rows.map(r => [r.change.id, r.carried.map(c => c.id)])).toEqual([
       ['Layer:cut', ['Shift:root:-5']], ['Shift:root:-7', []], ['Layer:mine', []],
     ])
+  })
+
+  it('keeps a rider a row of its own, and its carrier counts it', () => {
+    const carrier = change({ id: 'Layer:cut', class: 'removed' })
+    const carried = change({ id: 'Shift:root:-5:Layer:cut', keys: ['Layer:a', 'Marker:m'], delta_us: -5, carried: true, carried_by: 'Layer:cut' })
+    const rider = change({ id: 'Layer:b', carried_by: 'Layer:cut', carried_us: -5, details: [{ type: 'label' }] })
+    const far = change({ id: 'Layer:c', carried_by: 'Layer:cut', carried_us: -8, details: [{ type: 'label' }] })
+    const [g] = groupChanges([carrier, carried, rider, far], [], 'root')
+    expect(g!.rows.map(r => [r.change.id, r.carried.map(c => c.id), r.riders.map(c => c.id)])).toEqual([
+      ['Layer:cut', ['Shift:root:-5:Layer:cut'], ['Layer:b', 'Layer:c']], ['Layer:b', [], []], ['Layer:c', [], []],
+    ])
+    // One sub-line per amount, riders counted with what moved as far.
+    expect(carriedAlong(g!.rows[0]!)).toEqual([{ delta_us: -5, clips: 2, markers: 1 }, { delta_us: -8, clips: 1, markers: 0 }])
   })
 })
 

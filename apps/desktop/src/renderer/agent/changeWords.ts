@@ -14,7 +14,7 @@ import type { ProjectSummary } from '../ipc'
 import { animatableParams } from '../keyframe/descriptors'
 import { groupDisplayName } from '../lib/layerName'
 import { trackDisplayName } from '../lib/trackName'
-import { formatSeconds, keyIds } from './changeModel'
+import { formatSeconds, type CarriedAlong } from './changeModel'
 
 /** Structurally typed so `useTranslation().t` passes straight through (as
  *  `layerDisplayName` does). */
@@ -231,11 +231,9 @@ export function describeChange(change: Change, ctx: ChangeWordsContext): string 
   return change.aspects.map(a => ctx.t(`changes.aspect_${a}`, {})).join(FACT_SEPARATOR)
 }
 
-/** The content a carried change moved along with its carrier, as the
- *  carrier's sub-line: "后面 5 个片段随之前移 4.0 秒". */
-export function describeCarried(carried: Change, t: Translate): string {
-  const delta = carried.delta_us ?? carried.details.find(d => d.type === 'shift')?.delta_us ?? 0
-  const clips = keyIds(carried, 'Layer').length, marks = keyIds(carried, 'Marker').length
+/** What a carrier moved along by one amount (`carriedAlong`), as one of its
+ *  sub-lines: "后面 5 个片段随之前移 4.0 秒". */
+export function describeCarried({ delta_us: delta, clips, markers: marks }: CarriedAlong, t: Translate): string {
   const clipWords = t('changes.n_clips', { count: clips }), markWords = t('changes.n_markers', { count: marks })
   const what = clips && marks ? t('changes.detail.clips_and_markers', { clips: clipWords, markers: markWords }) : marks ? markWords : clipWords
   return t(delta < 0 ? 'changes.detail.carried_earlier' : 'changes.detail.carried_later', { what, s: formatSeconds(delta) })
