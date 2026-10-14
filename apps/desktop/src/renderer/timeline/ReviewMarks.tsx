@@ -40,10 +40,10 @@ const EDGE: Record<ReviewClipMark, CSSProperties> = {
 
 /// A clip's review mark: drawn over the clip's body, under its selection
 /// outline (`z-[3]`), in the clip's own rounded box. And the review focus's
-/// outline (`agent/reviewFocus.ts`): a ring just OUTSIDE the box, beyond the
-/// selection outline, so it never covers the mark's own edge or the selection
-/// — a clip can be all three at once. While a change is focused, the marks of
-/// the others step back.
+/// outline (`agent/reviewFocus.ts`), inside that box too, so it never leaves
+/// the lane or lands on a neighbour: one neutral hairline inside the mark's own
+/// edge, whatever is focused (`.review-focus-outline`). While a change is
+/// focused, the marks of the others step back.
 export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const mark = useLayerReviewMark(layerId);

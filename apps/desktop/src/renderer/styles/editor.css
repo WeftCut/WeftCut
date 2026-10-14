@@ -291,29 +291,30 @@
   box-shadow: none;
 }
 
-/* A clip the focus names: a ring just outside the block, clear of its review
-   mark's inset edge and of its selection outline (-1px), so all three read at
-   once. Hover is the thinner ring. */
+/* A clip the focus names: one neutral hairline INSIDE its own box, just
+   inside a review mark's 2px edge. A ring outside the box ran over the lane's
+   edge and onto the clip next door, and left a gap that read as one more
+   shape; a coloured edge would be one more hue beside the change classes
+   (the tack's teal is a near twin of `added`). The wash says which kind is
+   focused, and for a change the other marks step back, which is most of the
+   signal. The row under the pointer gets a fainter line. */
 .review-focus-outline {
-  inset: -4px; /* fixed-px: past the selection outline's 2px border */
-  border-radius: 6px;
-  box-shadow: 0 0 0 2px var(--tack), 0 0 0 3px rgb(0 0 0 / 0.5);
-}
-
-.review-focus-outline[data-focus="change"] {
-  box-shadow: 0 0 0 2px var(--review-focus), 0 0 0 3px rgb(0 0 0 / 0.5);
+  inset: 2px; /* fixed-px: inside the review mark's 2px edge */
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--review-focus);
 }
 
 .review-focus-outline[data-focus="hover"] {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--review-focus) 80%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-focus) 55%, transparent);
 }
 
+/* A removed clip's ghost: the same hairline, inside its dashed edge. */
 .review-ghost[data-focus="change"] {
-  box-shadow: 0 0 0 2px var(--review-focus), 0 0 0 3px rgb(0 0 0 / 0.5);
+  box-shadow: inset 0 0 0 2px var(--review-focus);
 }
 
 .review-ghost[data-focus="hover"] {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--review-focus) 80%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-focus) 55%, transparent);
 }
 
 /* While a change is focused the other review marks step back — still there,
