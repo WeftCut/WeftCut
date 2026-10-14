@@ -27,8 +27,9 @@ export function runTackTool(store: TackStore, name: string, args: Record<string,
       const inputs = p.tacks as TackInput[]
       const ids = store.create(inputs)
       const views = store.viewsOf(new Set(ids))
-      const follows = ids.map((id) => views.find((v) => v.id === id)!.follows)
-      const hints = createTackHints(inputs, follows)
+      const created = ids.map((id) => views.find((v) => v.id === id)!)
+      const follows = created.map((v) => v.follows)
+      const hints = [...createTackHints(inputs, follows), ...samePlaceHints(created, store.views())]
       return toolRecord({ tack_ids: ids, follows, ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
     }
     if (name === 'update_tack') return toolRecord(store.update(p.tack_id as string, p.patch as TackPatch)) as unknown as ServerResult
@@ -61,6 +62,32 @@ export function createTackHints(inputs: readonly Pick<TackInput, 'label' | 'body
     const f = follows[i]!
     if (input.anchor_layer_id === null && f.start === null && f.end === null)
       hints.push(`tacks[${i}] has no clip under either end, so it follows nothing and keeps its timeline time through later edits.`)
+  })
+  return hints
+}
+
+/** Two tacks this close at both ends are one place on the timeline. */
+const SAME_PLACE_US = 250_000
+
+const samePlace = (a: TackView, b: TackView) =>
+  a.composition_id === b.composition_id && a.t_us !== null && b.t_us !== null &&
+  Math.abs(a.t_us - b.t_us) <= SAME_PLACE_US &&
+  (a.end_t_us === null || b.end_t_us === null ? a.end_t_us === b.end_t_us : Math.abs(a.end_t_us - b.end_t_us) <= SAME_PLACE_US)
+
+/** A created tack at the place of one of the same client's open tacks — an
+ *  earlier one or one before it in the batch. The Review lane draws tacks in
+ *  one place as one group chip the user must open to tell apart, so one tack
+ *  saying both things reads better than two. Soft, like the rest: two
+ *  separate questions about one shot are still two tacks. */
+export function samePlaceHints(created: readonly TackView[], all: readonly TackView[]): string[] {
+  const hints: string[] = []
+  const batch = new Set(created.map((v) => v.id))
+  created.forEach((tack, i) => {
+    if (tack.state !== 'visible') return
+    const earlier = new Set(created.slice(0, i).map((v) => v.id))
+    const other = all.find((v) => v.id !== tack.id && v.client === tack.client && v.status === 'open' && v.state === 'visible' &&
+      (!batch.has(v.id) || earlier.has(v.id)) && samePlace(v, tack))
+    if (other) hints.push(`tacks[${i}] sits where open tack ${other.id} ("${other.label}") does: the user sees tacks in one place as one group to open, so unless they are separate matters, put both in one tack (update_tack its body) and delete_tacks the other.`)
   })
   return hints
 }

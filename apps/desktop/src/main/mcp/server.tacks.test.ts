@@ -160,7 +160,7 @@ describe('harness feedback', () => {
     const out = await h.call('create_tacks', { tacks: [
       { label: 'Breath before the answer', t_us: 2_000_000, end_t_us: 3_000_000 },
       { label: 'Pause at 0:12', t_us: 2_000_000 },
-      { label: 'Breath', body: '大约4秒的停顿', t_us: 2_000_000 },
+      { label: 'Breath', body: '大约4秒的停顿', t_us: 2_500_000 },
       { label: 'Music in?', t_us: 7_000_000, end_t_us: 8_000_000 },
     ] })
     expect(out.structuredContent).toMatchObject({ follows: [
@@ -172,8 +172,26 @@ describe('harness feedback', () => {
     expect(hints[0]).toMatch(/^tacks\[1\] mentions a time \("0:12"\).*describe the content/)
     expect(hints[1]).toMatch(/^tacks\[2\] mentions a time \("4秒"\)/)
     expect(hints[2]).toMatch(/^tacks\[3\] has no clip under either end/)
-    const clean = await h.call('create_tacks', { tacks: [{ label: 'Two shots of the same take', body: 'Keep the 4K one?', t_us: 2_000_000 }] })
+    const clean = await h.call('create_tacks', { tacks: [{ label: 'Two shots of the same take', body: 'Keep the 4K one?', t_us: 2_900_000 }] })
     expect(clean.structuredContent).not.toHaveProperty('hints')
+  })
+
+  it('create_tacks hints when a tack sits where one of the same client’s open tacks does', async () => {
+    const h = host()
+    const first = await h.call('create_tacks', { tacks: [
+      { label: 'Breath before the answer', t_us: 2_000_000, end_t_us: 3_000_000 },
+      { label: 'Same breath', t_us: 2_100_000, end_t_us: 2_900_000 },
+      { label: 'A point inside it', t_us: 2_100_000 },
+    ] })
+    const [a] = first.structuredContent!.tack_ids as string[]
+    // The second matches the first within the batch; a point never matches a range.
+    expect(first.structuredContent!.hints).toEqual([expect.stringMatching(new RegExp(`^tacks\\[1\\] sits where open tack ${a} \\("Breath before the answer"\\)`))])
+    // Across calls, against the caller's open tacks only.
+    const again = await h.call('create_tacks', { tacks: [{ label: 'Again', t_us: 2_000_000, end_t_us: 3_000_000 }] })
+    expect(again.structuredContent!.hints).toEqual([expect.stringMatching(/^tacks\[0\] sits where open tack/)])
+    await h.call('update_tack', { tack_id: a, patch: { status: 'resolved' } })
+    const apart = await h.call('create_tacks', { tacks: [{ label: 'Later', t_us: 2_400_000, end_t_us: 3_000_000 }] })
+    expect(apart.structuredContent).not.toHaveProperty('hints')
   })
 
   it('a committing call reports the caller’s own changed open tacks, and nothing otherwise', async () => {

@@ -91,17 +91,17 @@ export const UI_METRICS = {
       labelLine: 9,
     },
     review: {
-      /** Review lane under the marker lane: two sub-rows of tack chips, so
-       * `2 * chipHeight + rowGap + 2 * inset`. Fixed whatever the tack count. */
-      laneHeight: 32,
+      /** Review lane under the marker lane: one row of tack chips, the marker
+       * lane's height. Overlapping tacks share one group chip, so no tack
+       * set needs a taller row. */
+      laneHeight: 20,
       /** A chip holds a fine-role name, like a marker region's capsule. */
       chipHeight: 13,
-      /** Space above the first sub-row and below the second. */
-      inset: 2,
-      rowGap: 2,
       /** Least chip width: the kind icon (`--icon-size-fine`) plus its padding,
        * so a point tack is still a target with its kind on it. */
       chipMinWidth: 13,
+      /** Least group chip width: the kind icon plus a two-digit count. */
+      groupMinWidth: 26,
     },
   },
 

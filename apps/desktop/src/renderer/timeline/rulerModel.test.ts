@@ -17,7 +17,7 @@ import {
   TACK_CHIP_GAP_PX,
   computeLaneMarkers,
   computeRulerModel,
-  packLaneTacks,
+  groupLaneTacks,
   windowLaneTacks,
   type LaneTackSource,
   type LaneMarkerSource,
@@ -710,11 +710,14 @@ describe("marker ordering and payload", () => {
   });
 });
 
-describe("review lane packing", () => {
+describe("review lane grouping", () => {
   const MIN = 13;
-  const tk = (id: string, t_us: number | null, end_t_us: number | null = null): LaneTackSource =>
-    ({ id, kind: "note", t_us, end_t_us, label: id });
-  const pack = (tacks: LaneTackSource[], pxPerSec = 100) => packLaneTacks({ tacks, pxPerSec, minChipPx: MIN });
+  const GROUP = 26;
+  const tk = (id: string, t_us: number | null, end_t_us: number | null = null, kind: LaneTackSource["kind"] = "note"): LaneTackSource =>
+    ({ id, kind, t_us, end_t_us, label: id });
+  const group = (tacks: LaneTackSource[], pxPerSec = 100) =>
+    groupLaneTacks({ tacks, pxPerSec, minChipPx: MIN, minGroupPx: GROUP });
+  const ids = (groups: ReturnType<typeof group>) => groups.map((g) => g.members.map((m) => m.id));
 
   /// A deterministic jumble of points, short and long ranges, many overlapping.
   function jumble(n: number): LaneTackSource[] {
@@ -727,55 +730,60 @@ describe("review lane packing", () => {
     });
   }
 
-  it("never overlaps two chips on one sub-row, and accounts for every placed tack once", () => {
+  it("never lets two chips touch, and accounts for every placed tack once", () => {
     const tacks = [...jumble(200), tk("unplaced", null)];
-    const { chips, overflow } = pack(tacks);
-    for (const row of [0, 1]) {
-      const onRow = chips.filter((c) => c.row === row).sort((a, b) => a.xPx - b.xPx);
-      for (let i = 1; i < onRow.length; i++) {
-        expect(onRow[i]!.xPx).toBeGreaterThanOrEqual(onRow[i - 1]!.xPx + onRow[i - 1]!.widthPx + TACK_CHIP_GAP_PX);
-      }
+    const groups = group(tacks);
+    for (let i = 1; i < groups.length; i++) {
+      expect(groups[i]!.xPx).toBeGreaterThanOrEqual(groups[i - 1]!.xPx + groups[i - 1]!.widthPx + TACK_CHIP_GAP_PX);
     }
-    expect(chips.every((c) => c.row === 0 || c.row === 1)).toBe(true);
-    const ids = [...chips.map((c) => c.id), ...overflow.flatMap((o) => o.ids)];
-    expect(ids.sort()).toEqual(tacks.filter((t) => t.t_us !== null).map((t) => t.id).sort());
+    // Each chip covers every member it stands for.
+    for (const g of groups) for (const m of g.members) expect(m.xPx + m.widthPx).toBeLessThanOrEqual(g.xPx + g.widthPx + 1e-9);
+    expect(ids(groups).flat().sort()).toEqual(tacks.filter((t) => t.t_us !== null).map((t) => t.id).sort());
   });
 
   it("is a function of the tack set, not of the order it arrives in", () => {
     const tacks = jumble(60);
-    const reversed = [...tacks].reverse();
-    expect(pack(reversed)).toEqual(pack(tacks));
+    expect(group([...tacks].reverse())).toEqual(group(tacks));
     // Same start: id breaks the tie, whichever is listed first.
-    expect(pack([tk("b", 0, 1_000_000), tk("a", 0, 1_000_000)]).chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["b", 1]]);
+    expect(ids(group([tk("b", 0, 1_000_000), tk("a", 0, 1_000_000)]))).toEqual([["a", "b"]]);
   });
 
   it("gives a point and a too-short range the minimum chip width", () => {
-    const { chips } = pack([tk("point", 1_000_000), tk("short", 3_000_000, 3_010_000), tk("range", 5_000_000, 6_000_000)]);
-    expect(chips.map((c) => [c.id, c.xPx, c.widthPx, c.endTUs])).toEqual([
-      ["point", 100, MIN, null], ["short", 300, MIN, 3_010_000], ["range", 500, 100, 6_000_000],
+    const groups = group([tk("point", 1_000_000), tk("short", 3_000_000, 3_010_000), tk("range", 5_000_000, 6_000_000)]);
+    expect(groups.map((g) => [ids([g])[0], g.xPx, g.widthPx, g.members[0]!.endTUs])).toEqual([
+      [["point"], 100, MIN, null], [["short"], 300, MIN, 3_010_000], [["range"], 500, 100, 6_000_000],
     ]);
-    // Packed by that visual width: a second point 5 px on would sit on the
-    // first's chip, so it drops to the second sub-row.
-    expect(pack([tk("p1", 1_000_000), tk("p2", 1_050_000)]).chips.map((c) => c.row)).toEqual([0, 1]);
+    // Grouped by that visual width: a second point 5 px on would sit on the
+    // first's chip, so the two share one.
+    expect(ids(group([tk("p1", 1_000_000), tk("p2", 1_050_000)]))).toEqual([["p1", "p2"]]);
+    // Zoomed in far enough, the same two part.
+    expect(ids(group([tk("p1", 1_000_000), tk("p2", 1_050_000)], 1000))).toEqual([["p1"], ["p2"]]);
   });
 
-  it("clusters what fits on neither sub-row into one badge per overlapping run", () => {
-    const { chips, overflow } = pack([
-      tk("a", 0, 1_000_000), tk("b", 0, 1_000_000), tk("c", 0, 1_000_000), tk("d", 500_000, 1_500_000),
-      tk("e", 5_000_000, 6_000_000), tk("f", 5_000_000, 6_000_000), tk("g", 5_500_000, 6_500_000),
+  it("groups overlapping runs over their union, wearing the most pressing kind", () => {
+    const groups = group([
+      tk("whole", 0, 4_000_000, "note"), tk("inner", 1_000_000, 2_000_000, "question"), tk("tail", 3_500_000, 5_000_000, "issue"),
+      tk("apart", 8_000_000, 9_000_000, "question"),
     ]);
-    expect(chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["b", 1], ["e", 0], ["f", 1]]);
-    expect(overflow).toEqual([
-      { ids: ["c", "d"], xPx: 0, endPx: 150 },
-      { ids: ["g"], xPx: 550, endPx: 650 },
+    expect(groups.map((g) => [ids([g])[0], g.kind, g.xPx, g.widthPx])).toEqual([
+      [["whole", "inner", "tail"], "issue", 0, 500],
+      [["apart"], "question", 800, 100],
     ]);
   });
 
-  it("culls after packing, so a chip's sub-row does not change with the scroll", () => {
-    const packing = pack([tk("a", 0, 100_000_000), tk("b", 50_000_000, 51_000_000), tk("far", 90_000_000, 91_000_000)]);
-    const atStart = windowLaneTacks(packing, { scrollLeftPx: 0, viewportWidthPx: 1000, overscanPx: 0 });
-    const atEnd = windowLaneTacks(packing, { scrollLeftPx: 8500, viewportWidthPx: 1000, overscanPx: 0 });
-    expect(atStart.chips.map((c) => [c.id, c.row])).toEqual([["a", 0]]);
-    expect(atEnd.chips.map((c) => [c.id, c.row])).toEqual([["a", 0], ["far", 1]]);
+  it("widens a group to fit its count, taking in what that width reaches", () => {
+    // Two points 1 px apart: their union is MIN + 1 wide, the group GROUP.
+    // A third point inside that width joins rather than touching it.
+    const groups = group([tk("a", 0), tk("b", 10_000), tk("c", 200_000)]);
+    expect(ids(groups)).toEqual([["a", "b", "c"]]);
+    expect(groups[0]!.widthPx).toBe(Math.max(GROUP, 20 + MIN));
+  });
+
+  it("culls after grouping, so what joins a group does not change with the scroll", () => {
+    const groups = group([tk("a", 0, 100_000_000), tk("b", 50_000_000, 51_000_000), tk("far", 120_000_000, 121_000_000)]);
+    const atStart = windowLaneTacks(groups, { scrollLeftPx: 0, viewportWidthPx: 1000, overscanPx: 0 });
+    const atFar = windowLaneTacks(groups, { scrollLeftPx: 11_500, viewportWidthPx: 1000, overscanPx: 0 });
+    expect(ids(atStart)).toEqual([["a", "b"]]);
+    expect(ids(atFar)).toEqual([["far"]]);
   });
 });

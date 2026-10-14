@@ -1469,9 +1469,10 @@ const zhCN: Resources = {
     convert_hint: "在此处添加一个普通标记，以此批注的标题和内容作为标记的名称与备注（可撤销），然后移除该批注",
     no_body: "无详细内容。",
     band_tooltip: "批注：{{label}} · {{time}}",
-    // 审阅行的“+n”徽标：两行都放不下的批注。
-    band_overflow_one: "此处另有 {{count}} 条批注",
-    band_overflow_other: "此处另有 {{count}} 条批注",
+    // 审阅行的组块：互相重叠的批注合成一块，悬停提示首行与菜单各行。
+    band_group_one: "此处有 {{count}} 条批注",
+    band_group_other: "此处有 {{count}} 条批注",
+    group_item: "{{kind}} · {{label}}",
     retention: "批注只保留在本次打开的项目中，不会保存或导出。",
   },
   changes: {

@@ -1654,9 +1654,11 @@ const enUS = {
     convert_hint: "Add an ordinary marker here with this label and note (undoable), then remove the tack",
     no_body: "No details.",
     band_tooltip: "Tack: {{label}} · {{time}}",
-    // The Review lane's "+n" badge: tacks that fit on neither of its two rows.
-    band_overflow_one: "{{count}} more tack here",
-    band_overflow_other: "{{count}} more tacks here",
+    // The Review lane's group chip: tacks that would overlap, as one chip — its
+    // hover title's first line, and each row of its menu.
+    band_group_one: "{{count}} tack here",
+    band_group_other: "{{count}} tacks here",
+    group_item: "{{kind}} · {{label}}",
     retention: "Tacks last for this project opening only. They are never saved or exported.",
   },
   changes: {

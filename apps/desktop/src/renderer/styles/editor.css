@@ -176,8 +176,8 @@
 
 /* Review lane chips (ADR 0115, timeline/ReviewLane.tsx). Opaque: the fill is
    the tack hue mixed into the lane's own surface, not laid over it at an
-   alpha, so a chip reads the same wherever it sits — and packing keeps chips
-   apart, so no two ever stack. The left edge is drawn in the full hue: it is
+   alpha, so a chip reads the same wherever it sits — and tacks that would
+   overlap share one group chip, so no two ever stack. The left edge is drawn in the full hue: it is
    the tack's start, the one x a range chip states exactly. */
 .review-tack {
   position: absolute;
@@ -229,34 +229,39 @@
   opacity: 0.55;
 }
 
-/* "+n": tacks that fit on neither sub-row. Above the second sub-row's chips
-   and drawn as a count, not a chip, so it never reads as one more tack. */
-.review-tack-overflow {
-  position: absolute;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 calc(2 * var(--ui-px));
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1px var(--tack);
-  background: var(--card);
-  color: var(--tack);
-  font-size: var(--font-size-fine);
-  font-weight: 600;
-  line-height: 1;
+/* A group chip: tacks that would overlap, drawn once with their count (the
+   kind icon is the most pressing member's). A button, so the chip's own
+   styling has to undo the button's. */
+.review-tack-group {
+  border: 0;
+  text-align: left;
   cursor: pointer;
 }
 
-.review-tack-overflow:hover,
-.review-tack-overflow[data-selected] {
-  background: color-mix(in srgb, var(--tack) 26%, var(--card));
+.review-tack-group[data-open]:not([data-selected]) {
+  background: color-mix(in srgb, var(--tack) 42%, var(--card));
+}
+
+.review-tack-count {
+  flex: none;
+  min-width: calc(9 * var(--ui-px));
+  padding: 0 calc(2 * var(--ui-px));
+  border-radius: 2px;
+  background: var(--tack);
+  color: #0b1f1c;
+  font-weight: 600;
+  text-align: center;
+  line-height: calc(11 * var(--ui-px));
+}
+
+.review-tack[data-selected] .review-tack-count {
+  background: #0b1f1c;
+  color: var(--tack);
 }
 
 /* The Tacks tab row under the pointer names its chip: a ring, no fill, so it
    never reads as the selection. */
-.review-tack[data-hovered]:not([data-selected]),
-.review-tack-overflow[data-hovered]:not([data-selected]) {
+.review-tack[data-hovered]:not([data-selected]) {
   box-shadow: inset 2px 0 0 var(--tack), 0 0 0 1px var(--tack);
 }
 

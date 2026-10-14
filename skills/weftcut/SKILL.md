@@ -155,7 +155,8 @@ shot to judge, a cut to decide. Create them once the session's edits are done:
 `create_tacks` places a whole batch in one call. Each end follows the clip
 under it automatically; pass `anchor_layer_id` only to pin one to a specific
 clip. Describe the content in label and body, never a timecode — the panel
-shows each tack's live place. Tacks live in the agent panel for this project
+shows each tack's live place. One place, one tack: several things to say
+about the same shot go in one tack's body, not one tack each. Tacks live in the agent panel for this project
 opening only — never in the project, its history or an export — so leaving
 them costs the user nothing.
 

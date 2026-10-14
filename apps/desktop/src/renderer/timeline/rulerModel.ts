@@ -382,20 +382,20 @@ export function computeLaneMarkers(input: LaneMarkerInput): LaneMarker[] {
 
 // ===== Review lane chips (ADR 0115) =========================================
 //
-// Tacks paint as chips in a lane of their own, never stacked: a range drawn at
-// 20 % over another 20 % range reads as a third colour, and a third colour
-// reads as a third kind of thing. So overlap is resolved by LAYOUT, not by
-// alpha — every chip gets a sub-row in which nothing else covers it, and what
-// fits in no sub-row is counted, not painted.
+// Tacks paint as chips in a lane of their own, one row high, never stacked: a
+// range drawn at 20 % over another 20 % range reads as a third colour, and a
+// third colour reads as a third kind of thing. Tacks whose chips would touch
+// are drawn as ONE group chip with a count instead — the place is on the
+// timeline, which tack is which is the list's (the group's menu, the Tacks
+// tab), as comment pins cluster on a zoomed-out canvas. Zooming in parts a
+// group whose tacks only met on screen.
 
-/// Sub-rows of the review lane. Fixed, so the lane's height never follows the
-/// number of tacks an agent leaves (a row that grew mid-session would reflow
-/// the tracks under the pointer).
-export const TACK_LANE_ROWS = 2;
-
-/// Clear space kept after a chip before the next one may start on the same
-/// sub-row, in time-axis px — two chips edge to edge read as one.
+/// Clear space kept after a chip before the next one may start, in time-axis
+/// px — two chips edge to edge read as one.
 export const TACK_CHIP_GAP_PX = 2;
+
+/// Which kind a group chip wears: the one asking most of the user.
+const KIND_WEIGHT: Record<TackKind, number> = { issue: 2, question: 1, note: 0 };
 
 /// The fields of a placed tack this model reads (a `TackView` that is visible).
 export interface LaneTackSource {
@@ -406,62 +406,55 @@ export interface LaneTackSource {
   label: string;
 }
 
-/// One packed chip, in the same row coordinates as `LaneMarker`.
+/// One placed tack, in the same row coordinates as `LaneMarker`.
 export interface LaneTack {
   id: string;
   kind: TackKind;
-  /// 0 or 1: which sub-row the chip sits on.
-  row: number;
   xPx: number;
-  /// The chip's PAINTED width — the range's, or `minChipPx` when the range is
-  /// narrower (a point tack has none) — so a click target never shrinks to a
-  /// hairline.
+  /// The tack's own PAINTED width — the range's, or `minChipPx` when the range
+  /// is narrower (a point tack has none) — so a click target never shrinks to
+  /// a hairline.
   widthPx: number;
   label: string;
   tUs: number;
   endTUs: number | null;
 }
 
-/// Tacks that fit on neither sub-row and overlap each other: one "+n" badge at
-/// the cluster's start, which selects its first tack.
-export interface LaneTackOverflow {
-  /// The cluster's tacks in packing order; `ids[0]` is the one a click selects.
-  ids: string[];
+/// One chip on the lane: a single tack, or the tacks whose chips would touch.
+export interface LaneTackGroup {
+  /// Start order, id on a tie. One member is a plain chip.
+  members: LaneTack[];
+  /// The single member's kind, or the group's most pressing (`KIND_WEIGHT`).
+  kind: TackKind;
   xPx: number;
-  /// Right edge of the cluster's furthest chip, as it would have painted.
-  endPx: number;
+  /// Painted width: the members' union, and for a group at least
+  /// `minGroupPx`, room for its kind icon and count.
+  widthPx: number;
 }
 
-export interface LaneTackPacking {
-  chips: LaneTack[];
-  overflow: LaneTackOverflow[];
-}
-
-/// Greedy interval packing of a composition's tacks into the lane's sub-rows.
+/// Sweep a composition's tacks into the lane's chips, in start order.
 ///
-/// Over EVERY placed tack, not the viewport's: a chip's sub-row must be a fact
-/// about the tack set and the zoom, or scrolling would shuffle chips between
-/// rows as their neighbours entered and left the window. Culling is
+/// Over EVERY placed tack, not the viewport's: what joins a group must be a
+/// fact about the tack set and the zoom, or scrolling would merge and part
+/// chips as neighbours entered and left the window. Culling is
 /// `windowLaneTacks`'s job, after this.
 ///
-/// Packs VISUAL extents — a point is as wide as its chip — so two chips are
-/// disjoint on screen, which is the whole guarantee. Start order, id on a tie,
-/// so one tack set has exactly one layout whatever order the snapshot listed it
-/// in. Each tack takes the first sub-row whose last chip (plus the gap) ends at
-/// or before its start; a tack with none overflows, and overflowed tacks that
-/// overlap one another share one badge.
-export function packLaneTacks(input: {
+/// Groups by VISUAL extent — a point is as wide as its chip, a group as wide
+/// as its count needs — so two chips are disjoint on screen, which is the
+/// whole guarantee. Start order, id on a tie, so one tack set has exactly one
+/// layout whatever order the snapshot listed it in.
+export function groupLaneTacks(input: {
   tacks: readonly LaneTackSource[];
   pxPerSec: number;
   /// Least painted chip width, in px — what the kind icon needs.
   minChipPx: number;
+  /// Least painted group width, in px — the icon plus its count.
+  minGroupPx: number;
   gapPx?: number;
-  rows?: number;
-}): LaneTackPacking {
-  const { tacks, pxPerSec, minChipPx } = input;
+}): LaneTackGroup[] {
+  const { tacks, pxPerSec, minChipPx, minGroupPx } = input;
   const gapPx = input.gapPx ?? TACK_CHIP_GAP_PX;
-  const rows = input.rows ?? TACK_LANE_ROWS;
-  if (!(pxPerSec > 0)) return { chips: [], overflow: [] };
+  if (!(pxPerSec > 0)) return [];
   const placed: LaneTack[] = [];
   for (const t of tacks) {
     if (t.t_us === null) continue;
@@ -471,7 +464,6 @@ export function packLaneTacks(input: {
     placed.push({
       id: t.id,
       kind: t.kind,
-      row: -1,
       xPx,
       widthPx: Math.max(rangePx, minChipPx),
       label: t.label,
@@ -480,45 +472,34 @@ export function packLaneTacks(input: {
     });
   }
   placed.sort((a, b) => a.tUs - b.tUs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const rowEnds = new Array<number>(rows).fill(-Infinity);
-  const chips: LaneTack[] = [];
-  const overflow: LaneTackOverflow[] = [];
-  for (const chip of placed) {
-    const row = rowEnds.findIndex((end) => end <= chip.xPx);
-    const reach = chip.xPx + chip.widthPx + gapPx;
-    if (row >= 0) {
-      rowEnds[row] = reach;
-      chips.push({ ...chip, row });
+  const groups: LaneTackGroup[] = [];
+  for (const tack of placed) {
+    const last = groups.at(-1);
+    if (last !== undefined && tack.xPx < last.xPx + last.widthPx + gapPx) {
+      last.members.push(tack);
+      if (KIND_WEIGHT[tack.kind] > KIND_WEIGHT[last.kind]) last.kind = tack.kind;
+      // A group's floor widens it, which can reach the next tack: that tack
+      // joins too, so no two chips ever touch.
+      last.widthPx = Math.max(last.widthPx, tack.xPx + tack.widthPx - last.xPx, minGroupPx);
       continue;
     }
-    // Same overlap test the sub-rows use: a tack joins the open cluster when
-    // it would have collided with it on a row of its own.
-    const last = overflow.at(-1);
-    if (last !== undefined && chip.xPx < last.endPx + gapPx) {
-      last.ids.push(chip.id);
-      last.endPx = Math.max(last.endPx, chip.xPx + chip.widthPx);
-    } else {
-      overflow.push({ ids: [chip.id], xPx: chip.xPx, endPx: chip.xPx + chip.widthPx });
-    }
+    groups.push({ members: [tack], kind: tack.kind, xPx: tack.xPx, widthPx: tack.widthPx });
   }
-  return { chips, overflow };
+  return groups;
 }
 
-/// The packed chips and badges the lane paints at one scroll offset, windowed
-/// by the very interval the ticks and markers use — a chip that popped in at a
-/// different offset than the tick under it would read as a different place.
-/// Painted extents, interval overlap: a chip wider than the window still paints.
+/// The chips the lane paints at one scroll offset, windowed by the very
+/// interval the ticks and markers use — a chip that popped in at a different
+/// offset than the tick under it would read as a different place. Painted
+/// extents, interval overlap: a chip wider than the window still paints.
 export function windowLaneTacks(
-  packing: LaneTackPacking,
+  groups: readonly LaneTackGroup[],
   view: { scrollLeftPx: number; viewportWidthPx: number; overscanPx?: number },
-): LaneTackPacking {
+): LaneTackGroup[] {
   const { x0, x1 } = paintedWindowPx(
     view.scrollLeftPx,
     view.viewportWidthPx,
     view.overscanPx ?? RULER_OVERSCAN_PX,
   );
-  return {
-    chips: packing.chips.filter((c) => c.xPx + c.widthPx >= x0 && c.xPx <= x1),
-    overflow: packing.overflow.filter((o) => o.endPx >= x0 && o.xPx <= x1),
-  };
+  return groups.filter((g) => g.xPx + g.widthPx >= x0 && g.xPx <= x1);
 }

@@ -17,7 +17,7 @@ import { ReviewLane, ReviewLaneHeader } from "./ReviewLane";
 
 // The Review lane (ADR 0115): tacks as chips in a row of their own under the
 // marker lane. It exists by the overlay and the opening's review material,
-// never by the open-tack count, and its height never follows its contents.
+// never by the open-tack count, and its one row never follows its contents.
 
 const PX_PER_SEC = 100;
 const REVIEW = UI_METRICS.timeline.review;
@@ -118,27 +118,51 @@ describe("Review lane", () => {
       tack({ id: "asleep", state: "hibernating", t_us: null, end_t_us: null }),
     ]);
     const { container } = renderRows();
-    expect(chips(container).map((b) => [b.dataset.tackId, b.dataset.kind, b.dataset.row, b.style.left, b.style.width, b.textContent])).toEqual([
-      ["t1", "issue", "0", "200px", "100px", "Pause"],
+    expect(chips(container).map((b) => [b.dataset.tackId, b.dataset.kind, b.style.left, b.style.width, b.textContent])).toEqual([
+      ["t1", "issue", "200px", "100px", "Pause"],
       // A point gets the icon's width, not a hairline.
-      ["point", "note", "0", "500px", `${REVIEW.chipMinWidth}px`, "Check"],
+      ["point", "note", "500px", `${REVIEW.chipMinWidth}px`, "Check"],
     ]);
-    expect(chips(container)[0]!.style.height).toBe(`${REVIEW.chipHeight}px`);
+    // One row, centred in a lane the marker lane's height.
+    expect(REVIEW.laneHeight).toBe(UI_METRICS.timeline.marker.laneHeight);
+    expect([chips(container)[0]!.style.height, chips(container)[0]!.style.top]).toEqual([
+      `${REVIEW.chipHeight}px`, `${(REVIEW.laneHeight - REVIEW.chipHeight) / 2}px`,
+    ]);
     expect(chips(container)[0]!.title).toMatch(/Pause/);
   });
 
-  it("packs overlaps onto the second sub-row and counts the rest in one badge", () => {
-    seed(["a", "b", "c", "d"].map((id) => tack({ id })));
-    const { container } = renderRows();
-    expect(chips(container).map((b) => [b.dataset.tackId, b.dataset.row, b.style.top])).toEqual([
-      ["a", "0", `${REVIEW.inset}px`],
-      ["b", "1", `${REVIEW.inset + REVIEW.chipHeight + REVIEW.rowGap}px`],
+  it("draws overlapping tacks as one group chip whose menu focuses the one chosen", () => {
+    seed([
+      tack({ id: "a", kind: "note", label: "Whole take" }),
+      tack({ id: "b", kind: "issue", label: "Jump cut", t_us: 2_500_000, end_t_us: 2_800_000 }),
+      tack({ id: "c", kind: "question", label: "", t_us: 2_900_000, end_t_us: 3_500_000 }),
+      tack({ id: "apart", t_us: 6_000_000, end_t_us: 7_000_000 }),
     ]);
-    const badge = q(container, "timeline-tack-overflow")!;
-    expect([badge.textContent, badge.style.left, badge.style.top]).toEqual(["+2", "200px", `${REVIEW.inset + REVIEW.chipHeight + REVIEW.rowGap}px`]);
-    fireEvent.click(badge);
-    expect(useAgentActivity.getState()).toMatchObject({ tab: "tacks", reviewFocus: { kind: "tack", id: "c" } });
-    expect(badge.dataset.selected).toBe("true");
+    const { container } = renderRows();
+    expect(chips(container).map((b) => b.dataset.tackId)).toEqual(["apart"]);
+    const group = q(container, "timeline-tack-group")!;
+    // The union, the most pressing kind, the count, and what is there.
+    expect([group.dataset.tackIds, group.dataset.kind, group.style.left, group.style.width, group.textContent]).toEqual([
+      "a b c", "issue", "200px", "150px", "3Whole take · Jump cut",
+    ]);
+    expect(group.title.split("\n")).toHaveLength(4);
+    fireEvent.click(group);
+    const items = () => [...document.querySelectorAll<HTMLElement>('[data-testid="timeline-tack-group-item"]')];
+    expect(items().map((i) => i.textContent)).toEqual(["Note · Whole take", "Issue · Jump cut", "Question"]);
+    fireEvent.click(items()[1]!);
+    expect(useAgentActivity.getState()).toMatchObject({ tab: "tacks", reviewFocus: { kind: "tack", id: "b" } });
+    expect(group.dataset.selected).toBe("true");
+    expect(q(container, "timeline-review-lane")!.dataset.selecting).toBe("true");
+    // Reopened, the menu says which of its tacks is the focused one.
+    fireEvent.click(group);
+    expect(items().map((i) => i.querySelector(".app-menu-item-check")!.childElementCount)).toEqual([0, 1, 0]);
+  });
+
+  it("rings a group when the hovered Tacks tab row is one of its tacks", () => {
+    seed([tack({ id: "a" }), tack({ id: "b" })]);
+    const { container } = renderRows();
+    act(() => useAgentActivity.getState().setReviewHover({ kind: "tack", id: "b" }));
+    expect(q(container, "timeline-tack-group")!.dataset.hovered).toBe("true");
   });
 
   it("a chip click selects the tack; the rest dim only while the selection is on this lane", () => {

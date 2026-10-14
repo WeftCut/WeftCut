@@ -99,8 +99,12 @@ compared, so a per-entity overlay suffices.
   sharing the row mixed them with the user's markers and hid them with
   markers. The lane exists while the Review overlay is on and the project
   opening has had a work session or a tack — never by the open-tack count, so
-  an agent at work does not reflow the timeline — at a fixed two sub-rows of
-  packed chips; what fits in neither is counted in a "+n" badge.
+  an agent at work does not reflow the timeline — one row high. Tacks whose
+  chips would overlap are one group chip with a count, its menu listing them,
+  as comment pins cluster on a zoomed-out canvas: the timeline says where,
+  the list says which. Sub-rows were tried and dropped — a second row sat
+  empty most of the time, and a long tack still buried the short ones inside
+  it under a badge.
 - Approval is refused when the view the user acted on is no longer current
   (an agent committed in between); nothing is approved and the fresh list is
   shown to review again.

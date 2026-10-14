@@ -1042,8 +1042,9 @@ _Avoid_: annotation, agent marker, review marker (it is not a marker), comment;
 标注 (the Motif callout overlay), 备注 (the marker's note field)
 
 **Review lane**:
-The timeline row below the marker lane that carries tacks, packed into two
-fixed sub-rows. Exists while the review overlay is on and the project opening
+The timeline row below the marker lane that carries tacks, one row the marker
+lane's height; tacks whose chips would overlap share one group chip with a
+count, whose menu lists them. Exists while the review overlay is on and the project opening
 has seen agent review material, so an agent at work never reflows the
 timeline. Belongs to the ruler family like the marker lane; not a scrub
 surface. UI word: the header reads Tacks / 批注; the row is the review lane /

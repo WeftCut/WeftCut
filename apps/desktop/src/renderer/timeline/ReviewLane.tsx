@@ -1,8 +1,11 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { useTranslation } from "react-i18next";
 import { CircleHelp, StickyNote, TriangleAlert } from "lucide-react";
 import type { TackKind } from "../../shared/agent-activity";
 import { AppIcon } from "@/components/AppIcon";
+import { AppMenuPositioner } from "../components/PopupPositioner";
+import { MenuItem, closeContextMenuOn } from "../menu/Menu";
 import { formatTimecode } from "../frames";
 import { getCommand } from "../commands/registry";
 import { useUiScale } from "../settings/layoutTheme";
@@ -12,7 +15,8 @@ import { selectFocusedTack, useAgentActivity } from "../agent/activityStore";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
 import { locateTack } from "../agent/tackActions";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
-import { packLaneTacks, windowLaneTacks } from "./rulerModel";
+import { groupLaneTacks, windowLaneTacks, type LaneTack, type LaneTackGroup } from "./rulerModel";
+import { useCloseOnAnchorMove } from "./contextMenuAnchor";
 
 /// The Review lane (ADR 0115): the tacks agents left for the user, as chips in
 /// a row of their own between the marker lane and the drop strip.
@@ -27,12 +31,14 @@ import { packLaneTacks, windowLaneTacks } from "./rulerModel";
 /// x. It EXISTS by `reviewLaneExists` — the overlay on and agent review
 /// material seen in this project opening — never by how many tacks are open,
 /// so an agent resolving or adding tacks mid-session cannot reflow the tracks.
-/// And its height is fixed at two sub-rows of chips whatever it holds.
+/// One row high, the marker lane's height, whatever it holds: tacks whose chips
+/// would touch share one group chip with a count (`groupLaneTacks`).
 ///
 /// Never a scrub surface: the ruler stays the sole one. A chip click focuses
 /// its tack (the review focus, shared with the agent panel) and shows its row;
 /// a double-click locates it — the panel's Locate, and the one press here that
-/// seeks. A click on bare lane lets the focus go.
+/// seeks. A group click lists its tacks to choose from. A click on bare lane
+/// lets the focus go.
 const REVIEW = UI_METRICS.timeline.review;
 
 /// One icon per kind, the same the Tacks tab draws, so a chip and its panel
@@ -100,45 +106,53 @@ export function ReviewLane({
   const selected = useAgentActivity(selectFocusedTack);
   // The Tacks tab row under the pointer, so the chip it names can be found.
   const hovered = useAgentActivity((s) => (s.reviewHover?.kind === "tack" ? s.reviewHover.id : null));
+  // The group chip whose menu is open, and the element it hangs from.
+  const [menu, setMenu] = useState<{ group: LaneTackGroup; anchor: HTMLElement } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  useCloseOnAnchorMove(menu?.anchor ?? null, closeMenu);
   // `compositionId` null names the root, as everywhere on the timeline; tacks
   // carry the concrete id.
   const resolvedId = useComposition(compositionId)?.id ?? null;
   const tacks = useCompositionTacks(exists ? resolvedId : null);
-  // Packed once per tack set and zoom, not per scroll block: the sub-row a
-  // chip sits on must not depend on which neighbours are on screen.
-  const packing = useMemo(
-    () => packLaneTacks({ tacks, pxPerSec, minChipPx: REVIEW.chipMinWidth * scale }),
+  // Grouped once per tack set and zoom, not per scroll block: what joins a
+  // group must not depend on which neighbours are on screen.
+  const groups = useMemo(
+    () =>
+      groupLaneTacks({
+        tacks,
+        pxPerSec,
+        minChipPx: REVIEW.chipMinWidth * scale,
+        minGroupPx: REVIEW.groupMinWidth * scale,
+      }),
     [tacks, pxPerSec, scale],
   );
-  // Hover text composed per window, like the marker lane's: each title is a
+  // Hover text composed per window, like the marker lane's: each line is a
   // pair of `formatTimecode` calls through the wasm frame grid.
   const painted = useMemo(() => {
-    const { chips, overflow } = windowLaneTacks(packing, { scrollLeftPx, viewportWidthPx });
-    return {
-      chips: chips.map((chip) => ({
-        chip,
-        title: t("tacks.band_tooltip", {
-          label: chip.label,
-          time:
-            formatTimecode(chip.tUs, fpsNum, fpsDen) +
-            (chip.endTUs === null ? "" : ` – ${formatTimecode(chip.endTUs, fpsNum, fpsDen)}`),
-        }),
-      })),
-      overflow,
-    };
-  }, [packing, scrollLeftPx, viewportWidthPx, fpsNum, fpsDen, t]);
+    const line = (m: LaneTack) =>
+      t("tacks.band_tooltip", {
+        label: m.label,
+        time:
+          formatTimecode(m.tUs, fpsNum, fpsDen) +
+          (m.endTUs === null ? "" : ` – ${formatTimecode(m.endTUs, fpsNum, fpsDen)}`),
+      });
+    return windowLaneTacks(groups, { scrollLeftPx, viewportWidthPx }).map((group) => ({
+      group,
+      title:
+        group.members.length === 1
+          ? line(group.members[0]!)
+          : [t("tacks.band_group", { count: group.members.length }), ...group.members.map(line)].join("\n"),
+    }));
+  }, [groups, scrollLeftPx, viewportWidthPx, fpsNum, fpsDen, t]);
   // Dim the rest only while the selection is ON this lane: a selected tack
   // that is resolved, hibernating or on another composition paints nowhere
   // here, and dimming every chip for it would point at nothing.
-  const selectionHere =
-    selected !== null &&
-    (packing.chips.some((c) => c.id === selected) ||
-      packing.overflow.some((o) => o.ids.includes(selected)));
+  const selectionHere = selected !== null && groups.some((g) => g.members.some((m) => m.id === selected));
 
   // The row itself, not merely its contents — see `reviewLaneExists`.
   if (!exists) return null;
 
-  const rowTop = (row: number) => (REVIEW.inset + row * (REVIEW.chipHeight + REVIEW.rowGap)) * scale;
+  const top = ((REVIEW.laneHeight - REVIEW.chipHeight) / 2) * scale;
   return (
     // `overflow-hidden` for the marker lane's reason: a chip running past
     // widthPx must not inflate the parent's scrollWidth.
@@ -152,62 +166,105 @@ export function ReviewLane({
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
-        // Bare lane, not a chip or badge: nothing is pointed at any more.
+        // Bare lane, not a chip: nothing is pointed at any more.
         if (e.target === e.currentTarget) useAgentActivity.getState().setReviewFocus(null);
       }}
     >
-      {painted.chips.map(({ chip, title }) => (
-        <div
-          key={chip.id}
-          data-testid="timeline-tack"
-          data-tack-id={chip.id}
-          data-kind={chip.kind}
-          data-row={chip.row}
-          data-selected={selected === chip.id ? "true" : undefined}
-          data-hovered={hovered === chip.id ? "true" : undefined}
-          title={title}
-          className="review-tack"
-          style={{
-            left: chip.xPx,
-            width: chip.widthPx,
-            top: rowTop(chip.row),
-            height: REVIEW.chipHeight * scale,
-          }}
-          onClick={() => selectTack(chip.id)}
-          onDoubleClick={() => {
-            const tack = tacks.find((x) => x.id === chip.id);
-            if (tack) locateTack(tack);
-          }}
-        >
-          <AppIcon icon={KIND_ICON[chip.kind]} size="fine" className="review-tack-icon" />
-          {chip.label.trim() !== "" && <span className="review-tack-label">{chip.label}</span>}
-        </div>
-      ))}
-      {/* Tacks that fit on neither sub-row: counted, not painted — a third
-          stacked chip is exactly the overlap this lane exists to avoid. On the
-          second sub-row, over its chips, so the count is never hidden. */}
-      {painted.overflow.map((o) => (
-        <button
-          key={o.ids[0]}
-          type="button"
-          data-testid="timeline-tack-overflow"
-          data-tack-id={o.ids[0]}
-          data-count={o.ids.length}
-          data-selected={selected !== null && o.ids.includes(selected) ? "true" : undefined}
-          data-hovered={hovered !== null && o.ids.includes(hovered) ? "true" : undefined}
-          title={t("tacks.band_overflow", { count: o.ids.length })}
-          className="review-tack-overflow"
-          style={{
-            left: o.xPx,
-            minWidth: REVIEW.chipMinWidth * scale,
-            top: rowTop(1),
-            height: REVIEW.chipHeight * scale,
-          }}
-          onClick={() => selectTack(o.ids[0]!)}
-        >
-          +{o.ids.length}
-        </button>
-      ))}
+      {painted.map(({ group, title }) => {
+        const style = { left: group.xPx, width: group.widthPx, top, height: REVIEW.chipHeight * scale };
+        if (group.members.length === 1) {
+          const chip = group.members[0]!;
+          return (
+            <div
+              key={chip.id}
+              data-testid="timeline-tack"
+              data-tack-id={chip.id}
+              data-kind={chip.kind}
+              data-selected={selected === chip.id ? "true" : undefined}
+              data-hovered={hovered === chip.id ? "true" : undefined}
+              title={title}
+              className="review-tack"
+              style={style}
+              onClick={() => selectTack(chip.id)}
+              onDoubleClick={() => {
+                const tack = tacks.find((x) => x.id === chip.id);
+                if (tack) locateTack(tack);
+              }}
+            >
+              <AppIcon icon={KIND_ICON[chip.kind]} size="fine" className="review-tack-icon" />
+              {chip.label.trim() !== "" && <span className="review-tack-label">{chip.label}</span>}
+            </div>
+          );
+        }
+        const ids = group.members.map((m) => m.id);
+        // Labels in start order, so the chip still says what is there.
+        const labels = group.members.map((m) => m.label.trim()).filter((l) => l !== "").join(" · ");
+        return (
+          <button
+            key={ids[0]}
+            type="button"
+            data-testid="timeline-tack-group"
+            data-tack-ids={ids.join(" ")}
+            data-kind={group.kind}
+            data-count={ids.length}
+            data-selected={selected !== null && ids.includes(selected) ? "true" : undefined}
+            data-hovered={hovered !== null && ids.includes(hovered) ? "true" : undefined}
+            data-open={menu?.group.members[0]?.id === ids[0] ? "true" : undefined}
+            aria-haspopup="menu"
+            title={title}
+            className="review-tack review-tack-group"
+            style={style}
+            onClick={(e) => setMenu({ group, anchor: e.currentTarget })}
+          >
+            <AppIcon icon={KIND_ICON[group.kind]} size="fine" className="review-tack-icon" />
+            <span className="review-tack-count">{ids.length}</span>
+            {labels !== "" && <span className="review-tack-label">{labels}</span>}
+          </button>
+        );
+      })}
+      {menu && <TackGroupMenu group={menu.group} anchor={menu.anchor} selected={selected} onClose={closeMenu} />}
     </div>
+  );
+}
+
+/// A group chip's tacks, one row each in start order: choosing one focuses it
+/// as a chip click would. The focused one is checked, so a group the panel
+/// pointed into says which of its tacks that was.
+function TackGroupMenu({
+  group,
+  anchor,
+  selected,
+  onClose,
+}: {
+  group: LaneTackGroup;
+  anchor: HTMLElement;
+  selected: string | null;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <MenuPrimitive.Root open modal={false} onOpenChange={closeContextMenuOn(onClose)}>
+      <MenuPrimitive.Portal>
+        <AppMenuPositioner anchor={anchor} side="bottom" align="start" sideOffset={2} className="app-popup-positioner">
+          <MenuPrimitive.Popup className="app-menu-list" data-testid="timeline-tack-group-menu">
+            {group.members.map((m) => {
+              const kind = t(`tacks.kind_${m.kind}`);
+              return (
+                <MenuItem
+                  key={m.id}
+                  testId="timeline-tack-group-item"
+                  label={m.label.trim() === "" ? kind : t("tacks.group_item", { kind, label: m.label })}
+                  checked={selected === m.id}
+                  onSelect={() => {
+                    onClose();
+                    selectTack(m.id);
+                  }}
+                />
+              );
+            })}
+          </MenuPrimitive.Popup>
+        </AppMenuPositioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
   );
 }
