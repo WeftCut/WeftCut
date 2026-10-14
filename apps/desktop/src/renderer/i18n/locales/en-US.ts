@@ -1364,10 +1364,6 @@ const enUS = {
     // Why the apply surfaces (strip button, panel cards) are disabled —
     // shared so every outlet explains the same precondition the same way.
     no_target: "No cut between two adjacent visual clips",
-    // The Transitions panel's empty-state teaching line: the panel exists for
-    // users who don't know the feature, so the precondition is spelled out.
-    panel_no_target_hint:
-      "Place two visual clips back-to-back on a track, then pick a style below.",
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   playhead_panel: {
@@ -1619,7 +1615,8 @@ const enUS = {
   // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
   tacks: {
     subtitle: "Notes the agent tacked on for your review",
-    clear_closed: "Clear resolved & dismissed",
+    clear_closed_one: "Clear {{count}} closed tack",
+    clear_closed_other: "Clear {{count}} closed tacks",
     clear_closed_hint: "Remove every resolved or dismissed tack from this project opening",
     clear_session: "Clear",
     clear_session_hint: "Remove every tack from this group",
@@ -3004,7 +3001,6 @@ const enUS = {
     // persistence.ts and `replace_state` clears them, so a user reading them as
     // durable saves loses work.
     checkpoints_note: "This session only — checkpoints are cleared when the project closes.",
-    checkpoints_empty: "No checkpoints yet. Use New to save the current state.",
     checkpoint_create: "New",
     checkpoint_create_hint: "Save the current state as a checkpoint",
     checkpoint_create_title: "New Checkpoint",

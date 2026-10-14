@@ -1181,9 +1181,6 @@ const zhCN: Resources = {
     // 应用入口（快捷条按钮、面板卡片）禁用时的原因说明——各出口共用，
     // 保证同一个前置条件在所有表面用同一句话解释。
     no_target: "没有两个相邻可视片段之间的剪切点",
-    // 转场面板的空态教学文案：面板就是给不知道此功能的用户准备的，
-    // 所以把前置条件写明白。
-    panel_no_target_hint: "先在同一轨道上首尾相接放置两个可视片段，再在下方选择样式。",
     // 失败文案已迁移至 `errors.*`（errors/formatCommandError.ts）。
   },
   playhead_panel: {
@@ -1434,7 +1431,8 @@ const zhCN: Resources = {
   // 批注 everywhere and never shows "Tack" (not 标注, not 备注).
   tacks: {
     subtitle: "代理留下、供你审阅的批注",
-    clear_closed: "清除已解决和已忽略",
+    clear_closed_one: "清除 {{count}} 条已处理的批注",
+    clear_closed_other: "清除 {{count}} 条已处理的批注",
     clear_closed_hint: "从本次打开的项目中移除所有已解决或已忽略的批注",
     clear_session: "清除",
     clear_session_hint: "移除本组的全部批注",
@@ -2709,7 +2707,6 @@ const zhCN: Resources = {
     aggregate_item: "{{label}} ×{{count}}",
     checkpoints_title: "检查点",
     checkpoints_note: "仅限当前会话，关闭项目后自动清空",
-    checkpoints_empty: "未创建检查点，点击右侧新建保存当前状态",
     checkpoint_create: "新建",
     checkpoint_create_hint: "保存当前状态为检查点",
     checkpoint_create_title: "新建检查点",

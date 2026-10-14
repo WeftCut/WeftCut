@@ -173,7 +173,7 @@ describe('AgentPanel Tacks tab', () => {
     openTacks()
     // The badge holds the count and the tab's title the subtitle: neither repeats above a list.
     expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
-    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')!.textContent).toBe('Clear resolved & dismissed')
+    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')!.textContent).toBe('Clear 1 closed tack')
     expect(screen.getByText('Review pauses')).toBeTruthy()
     expect(screen.getByText('Long pause')).toBeTruthy()
     // A group with nothing open starts collapsed; its heading still says why.
@@ -196,6 +196,8 @@ describe('AgentPanel Tacks tab', () => {
     seed([], { revision: 2, sessions: [work], tacks: [tack()] })
     render(<AgentPanel />)
     expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
+    // Nothing closed, nothing to clear: no toolbar row at all.
+    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')).toBeNull()
     expect(document.querySelector('.agent-tacks .agent-activity-list')!.lastElementChild?.classList.contains('agent-list-footnote')).toBe(true)
   })
 
@@ -208,7 +210,7 @@ describe('AgentPanel Tacks tab', () => {
     await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toEqual([{ tack_ids: ['t1'], status: 'resolved' }, { tack_ids: ['t2'], status: 'open' }]))
     fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!)
     await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toContainEqual({ tack_ids: ['t1'], status: 'dismissed' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Clear resolved & dismissed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear 1 closed tack' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     await vi.waitFor(() => expect(calls('agent_tacks_delete')).toEqual([{ statuses: ['resolved', 'dismissed'] }, { session_id: 'work' }]))
   })

@@ -119,11 +119,12 @@ export function TacksTab({ editor }: { editor: boolean }) {
 
   return <div className="agent-tacks" role="tabpanel" aria-label={t('agent_panel.tab_tacks')}>
     {/* The open count is the tab's badge; the subtitle, its title — the
-        empty list's message already says what lands here. */}
-    <div className="agent-activity-toolbar">
-      <button type="button" disabled={closed === 0} title={t('tacks.clear_closed_hint')}
-        onClick={() => void deleteTacks({ statuses: ['resolved', 'dismissed'] })}>{t('tacks.clear_closed')}</button>
-    </div>
+        empty list's message already says what lands here. The toolbar's one
+        action shows only while there is something to clear. */}
+    {closed > 0 && <div className="agent-activity-toolbar">
+      <button type="button" title={t('tacks.clear_closed_hint')}
+        onClick={() => void deleteTacks({ statuses: ['resolved', 'dismissed'] })}>{t('tacks.clear_closed', { count: closed })}</button>
+    </div>}
     <div className="agent-activity-list" ref={list}>
       {!groups.length && <p className="agent-empty">{t(ready ? 'tacks.empty' : 'agent_panel.loading')}</p>}
       {groups.map(g => {
