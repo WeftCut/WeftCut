@@ -23,7 +23,7 @@ import { eachLayer } from '../state/model'
 import { CommandFailure } from '../state/errors'
 import { hasSourceWindow } from '../state/mutations/helpers'
 import { snapMarkerTimes, sourceInstantAt } from '../state/mutations/markers'
-import { layerUnchangedOrShifted } from '../state/reviewDiff'
+import { layerUnchangedOrShifted } from '../state/reviewEntities'
 import { sourceEndInstantLost, sourceInstantHibernating, sourceInstantTimelineUs, sourceRegionShownEndUs } from '../state/summary'
 import {
   TACK_CAPACITY, type AffectedTack, type Tack, type TackEdgeAnchor, type TackFollows, type TackKind, type TackRange, type TackStatus,

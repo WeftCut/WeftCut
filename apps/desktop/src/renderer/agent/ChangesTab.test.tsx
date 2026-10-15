@@ -31,11 +31,11 @@ const range = (s: number, e: number, composition_id = ROOT_ID) => [{ composition
 
 const unreviewed: Change[] = [
   change({ id: 'Layer:late', class: 'modified', aspects: ['timing', 'params'], ranges: range(8 * S, 9 * S),
-    details: [{ type: 'trim', side: 'end', delta_us: -1_200_000 }, { type: 'params', keys: ['opacity', 'x'] }] }),
+    details: [{ type: 'time', field: 'end', from_us: 3_200_000, to_us: 2 * S }, { type: 'params', keys: ['opacity', 'x'] }] }),
   change({ id: 'Layer:early', ranges: range(1 * S, 2 * S) }),
   change({ id: 'Layer:inner', class: 'removed', composition_id: 'grp', composition_ids: ['grp'], from: { composition_id: 'grp', track_id: 'gt' }, ranges: range(0, S, 'grp') }),
-  change({ id: 'Shift:comp-root:-2400000', class: 'modified', aspects: ['timing'], keys: ['Layer:a', 'Layer:b', 'Layer:c'], delta_us: -2_400_000, ranges: range(3 * S, 7 * S),
-    details: [{ type: 'shift', delta_us: -2_400_000 }] }),
+  change({ id: 'Layer:a', class: 'modified', aspects: ['timing'], keys: ['Layer:a'], ranges: range(3 * S, 7 * S),
+    details: [{ type: 'time', field: 'start', from_us: 5_400_000, to_us: 3 * S }] }),
 ]
 const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', aspects: ['label'], ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
@@ -74,13 +74,13 @@ describe('AgentPanel Changes tab', () => {
     expect(screen.getByRole('tab', { name: /Changes/ }).title).toBe('What agents changed since you last approved')
     const groups = [...document.querySelectorAll('.agent-change-group-heading > span')].map(e => e.textContent)
     expect(groups).toEqual(['Main timeline', 'Intro'])
-    expect(rows().map(r => r.dataset.changeId)).toEqual(['Layer:early', 'Shift:comp-root:-2400000', 'Layer:late', 'Layer:inner'])
+    expect(rows().map(r => r.dataset.changeId)).toEqual(['Layer:early', 'Layer:a', 'Layer:late', 'Layer:inner'])
     const [early, shift, late, inner] = rows()
     expect(within(early!).getByText('Added')).toBeTruthy()
     expect(within(early!).getByText('Early clip')).toBeTruthy()
-    expect(within(shift!).getByText('3 clips')).toBeTruthy()
-    expect(shift!.textContent).toContain('Moved 2.4 s earlier')
-    expect(late!.textContent).toContain('Cut 1.2 s from the end · Opacity, Position X')
+    expect(within(shift!).getByText('Clip')).toBeTruthy()
+    expect(shift!.textContent).toContain('Start 5.4 → 3.0 s')
+    expect(late!.textContent).toContain('End 3.2 → 2.0 s · Opacity, Position X')
     // A removed clip has no current name: its kind stands in.
     expect(within(inner!).getByText('Removed')).toBeTruthy()
     expect(within(inner!).getAllByText(/^Clip/).length).toBeGreaterThan(0)
@@ -124,7 +124,7 @@ describe('AgentPanel Changes tab', () => {
     expect(within(user).getByText('You')).toBeTruthy()
     expect(within(user).queryByRole('button', { name: 'Approve' })).toBeNull()
     // Interleaved by time within its composition; the unreviewed count is unchanged.
-    expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Shift:comp-root:-2400000', 'Layer:mine', 'Layer:late'])
+    expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Layer:a', 'Layer:mine', 'Layer:late'])
     expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes4')
   })
 
@@ -158,6 +158,18 @@ describe('AgentPanel Changes tab', () => {
     fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Locate on the timeline' }))
     expect(mocks.reveal).toHaveBeenCalledWith('early')
     expect(mocks.jump).toHaveBeenCalledWith(S)
+  })
+
+  it('labels and locates a removed entity at its baseline position without claiming a current range', async () => {
+    const removed = change({ id: 'Layer:gone', class: 'removed', ranges: [],
+      before_ranges: [{ composition_id: ROOT_ID, track_id: 'v1', t_start_us: 4 * S, t_end_us: 5 * S }] })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [removed], []) : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    expect(rows()[0]!.textContent).toContain('Baseline position:')
+    fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Locate on the timeline' }))
+    expect(mocks.jump).toHaveBeenCalledWith(4 * S)
+    expect(mocks.reveal).not.toHaveBeenCalled()
   })
 
   it('a row click focuses its change without seeking; a second click lets it go; hover names it', async () => {
@@ -201,34 +213,16 @@ describe('AgentPanel Changes tab', () => {
     expect(useAgentActivity.getState().reviewFocus).toBeNull()
   })
 
-  it('folds a carried change under its carrier as a sub-line, not a row of its own', async () => {
-    const carried = change({
-      id: 'Shift:comp-root:-4000000', class: 'modified', aspects: ['timing'], carried: true, carried_by: 'Layer:early',
-      keys: ['Layer:c1', 'Layer:c2', 'Layer:c3', 'Layer:c4', 'Layer:c5', 'Marker:m1', 'Marker:m2'], delta_us: -4 * S,
-      details: [{ type: 'shift', delta_us: -4 * S }], ranges: range(2 * S, 9 * S),
-    })
-    // A carried change whose carrier is not listed stays a row (main demotes such orphans; a guard).
-    const orphan = change({ id: 'Shift:comp-root:-1000000', class: 'modified', aspects: ['timing'], carried: true, carried_by: 'Layer:gone',
-      keys: ['Layer:o1'], delta_us: -S, details: [{ type: 'shift', delta_us: -S }], ranges: range(10 * S, 11 * S) })
-    // A clip it carried that was edited too: a row of its own, counted in the carrier's sub-lines.
-    const rider = change({ id: 'Layer:rider', class: 'modified', aspects: ['label'], carried_by: 'Layer:early', carried_us: -4 * S,
-      details: [{ type: 'label' }], ranges: range(12 * S, 13 * S) })
-    const farther = change({ id: 'Layer:farther', class: 'modified', aspects: ['label'], carried_by: 'Layer:early', carried_us: -5 * S,
-      details: [{ type: 'label' }], ranges: range(14 * S, 15 * S) })
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, carried, orphan, rider, farther], []) : { available: true, url: '', connections: [] })
+  it('lists and approves each changed entity independently', async () => {
+    const moved = change({ id: 'Layer:next', class: 'modified', aspects: ['timing'], keys: ['Layer:next'],
+      details: [{ type: 'time', field: 'start', from_us: 4 * S, to_us: 3 * S }], ranges: range(3 * S, 4 * S) })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, moved], []) : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()
-    expect(rows().map(r => r.dataset.changeId)).not.toContain(carried.id)
-    expect(rows().map(r => r.dataset.changeId)).toContain(orphan.id)
-    expect(rows().map(r => r.dataset.changeId)).toEqual(expect.arrayContaining(['Layer:rider', 'Layer:farther']))
-    const early = rows().find(r => r.dataset.changeId === 'Layer:early')!
-    expect([...early.querySelectorAll('.agent-change-carried')].map(n => n.textContent))
-      .toEqual(['6 clips and 2 markers after it moved 4.0 s earlier', '1 clip after it moved 5.0 s earlier'])
-    // The rider's own row says only its own edit.
-    expect(rows().find(r => r.dataset.changeId === 'Layer:rider')!.textContent).not.toContain('earlier')
-    // Counts leave carried changes out, folded or not; riders are rows and count.
-    expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes6')
+    expect(rows().map(r => r.dataset.changeId)).toContain('Layer:next')
+    expect(rows().find(r => r.dataset.changeId === 'Layer:next')!.textContent).toContain('Start 4.0 → 3.0 s')
   })
+
 
   it('an agent row names the work session that last edited it; a user row does not', async () => {
     useReview.setState({ showUser: true })

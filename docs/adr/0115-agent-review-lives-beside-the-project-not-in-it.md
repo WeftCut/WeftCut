@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+The movement inference, carried changes, grouped approval and cut-mark rules
+below are superseded by [ADR 0116](0116-review-diff-compares-entities-without-causal-inference.md).
+The baseline, attribution, approval version guard and Tack lifecycle remain in force.
+
 ## Context
 
 Agents pointed users at material by writing markers. Markers are the user's

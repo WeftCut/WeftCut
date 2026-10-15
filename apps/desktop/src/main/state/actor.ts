@@ -7,7 +7,7 @@ import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpo
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
-import type { EntityKey } from './reviewDiff'
+import type { EntityKey } from '../../shared/review'
 import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'

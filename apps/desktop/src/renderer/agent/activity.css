@@ -114,10 +114,8 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-change-badge.class-added { color: var(--review-added); background: color-mix(in srgb, var(--review-added) 12%, transparent); }
 .agent-change-badge.class-modified { color: var(--review-modified); background: color-mix(in srgb, var(--review-modified) 12%, transparent); }
 .agent-change-badge.class-removed { color: var(--review-removed); background: color-mix(in srgb, var(--review-removed) 12%, transparent); }
-/* Under the description: the content the edit carried along (a translation
-   no timeline marks, so it is no row of its own), then the work session that
-   made the change — both quiet. */
-.agent-change-copy small.agent-change-carried, .agent-change-copy small.agent-change-from { color: var(--muted-foreground); font-size: var(--font-size-micro); }
+/* The work session that made the change. */
+.agent-change-copy small.agent-change-from { color: var(--muted-foreground); font-size: var(--font-size-micro); }
 .agent-change.source-user { opacity: .7; }
 .agent-change.source-user .agent-change-badge { border-style: dashed; }
 .agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }

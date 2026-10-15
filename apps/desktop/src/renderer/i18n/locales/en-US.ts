@@ -1696,20 +1696,18 @@ const enUS = {
     aspect_effects: "Effects",
     aspect_label: "Name",
     aspect_flags: "Enabled / locked",
-    // A change row's description (ADR 0115), worded from main's facts:
-    // relative amounts only, never a baseline timecode — the baseline timeline
-    // is not on screen, so a time on it names nowhere. Verbs follow History.
+    // Snapshot facts, with explicit before/after timing values (ADR 0116).
     detail: {
       length_added: "{{s}} s long",
       length_removed: "Deleted {{s}} s",
+      time_start: "Start {{from}} → {{to}} s",
       trim_start_cut: "Cut {{s}} s from the start",
       trim_start_extend: "Extended start by {{s}} s",
       trim_end_cut: "Cut {{s}} s from the end",
       trim_end_extend: "Extended end by {{s}} s",
-      shift_earlier: "Moved {{s}} s earlier",
-      shift_later: "Moved {{s}} s later",
-      slip_earlier: "Slipped source {{s}} s earlier",
-      slip_later: "Slipped source {{s}} s later",
+      time_end: "End {{from}} → {{to}} s",
+      time_source_start: "Source start {{from}} → {{to}} s",
+      time_source_end: "Source end {{from}} → {{to}} s",
       track_from_to: "Moved from {{from}} to {{to}}",
       track_to: "Moved to {{to}}",
       track_other: "Moved to another track",
@@ -1731,10 +1729,6 @@ const enUS = {
       disabled: "Disabled",
       locked: "Locked",
       unlocked: "Unlocked",
-      // Content an edit carried along folds under that edit's row as a sub-line.
-      carried_earlier: "{{what}} after it moved {{s}} s earlier",
-      carried_later: "{{what}} after it moved {{s}} s later",
-      clips_and_markers: "{{clips}} and {{markers}}",
     },
     from_session: "From: {{reason}}",
     n_clips_one: "{{count}} clip",
@@ -1743,11 +1737,8 @@ const enUS = {
     n_markers_other: "{{count}} markers",
     group_badge: "Contains {{count}} unreviewed change(s)",
     group_badge_activity: "Contains {{count}} change(s)",
-    ghost_label: "Removed clip, {{start}} – {{end}}",
-    // A cut mark's (▼) tooltip on the timeline: the change row's words, plus
-    // what happened to the content after it when the edit carried it along.
-    cut_carried_earlier: "{{what}}, the content after it moved earlier",
-    cut_carried_later: "{{what}}, the content after it moved later",
+    ghost_label: "Removed clip, baseline position {{start}} – {{end}}",
+    before_label: "Baseline position",
     // A clip tooltip's line for its review mark: the class, then what it did.
     clip_title: "{{cls}}: {{what}}",
     status: "{{count}} to review",

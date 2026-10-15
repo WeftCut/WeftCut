@@ -1062,23 +1062,16 @@ One entity-level difference between the review baseline and the current state
 that an agent-sourced commit touched since the baseline. A difference only the
 user caused is a user change and needs no review. Three classes, as a diff
 reads: added, removed, modified (新增 / 删除 / 修改) — a move to another track
-or time is a modification. Movement is read against the content around a
-clip or marker: one that only went where an edit took that content (a ripple
-closing up, an insert making room) is a **carried** change — listed and
-approved with that edit, painted on no timeline; one also edited in its own
-right stays a change of its own that says only its own edits. UI word:
-Change / 变更.
-_Avoid_: diff entry, hunk, edit (that is the operation, not its result);
+or time is a modification. Each entity is listed and approved independently,
+even when several moved by the same amount. Timing is the entity's own
+before/after values; trim descriptions and edge marks additionally show that
+layer's own measured window cuts/extensions. Review infers no operation
+sequence or causal relationship between entities.
+Current footprints and historical baseline footprints are separate. Removed
+entities have only a labelled historical footprint, never a guessed current
+position or ripple seam. See ADR 0116. UI word: Change / 变更.
+_Avoid_: diff entry, hunk, carried change, carrier, shift group;
 shifted / moved as classes of their own
-
-**Cut mark**:
-The small red ▼ hanging from a track lane's top edge on the editor timeline
-where material was taken out and nothing else shows it: a ripple delete's
-seam (in place of a removed clip's ghost, which would have no width) and a
-clip's trimmed end. A delete that left a gap has its ghost instead; a
-lengthened end has nothing. Marks a few pixels apart merge into one. It has no
-name in the UI; its tooltip says what was cut, and a click focuses its change.
-_Avoid_: cut marker, seam marker (it is not a marker); 剪切标记 as a UI label
 
 **Approve**:
 Fold unreviewed changes into the review baseline — all at once or one change
@@ -1091,6 +1084,7 @@ The one tack or change the agent panel and the timelines point at together —
 chosen from a panel row, a review lane chip, a removed clip's ghost or the mini
 timeline's bands. Its row is highlighted, its chip solid, its time range washed
 across the editor's lanes and the clips it covers or follows outlined; the
-editor timeline scrolls it into view but never seeks (Locate does). One for
+editor timeline scrolls it into view but never seeks (Locate does). Historical
+footprints are shown and located explicitly as baseline positions. One for
 both kinds, runtime-only, gone with its item. No UI word of its own.
 _Avoid_: selection (that is clips'), highlight (the per-activity highlight)

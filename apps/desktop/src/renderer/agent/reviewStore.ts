@@ -35,8 +35,7 @@ export interface ActivityHighlight {
   status: 'loading' | 'ready' | 'unavailable'
   /** Every op is undone; the highlight still shows what the call did. */
   reverted: boolean
-  /** How many changes the call made (listed-only ones included; a carried
-   *  translation not, as in the Changes tab: it is its edit's). */
+  /** Number of entity differences, including ones without a timeline range. */
   count: number
   highlight: ReviewHighlight
 }
@@ -180,11 +179,10 @@ export function useReviewView(enabled = true): ReviewView | null {
   return useReview(s => s.view)
 }
 
-/** The number of unreviewed changes, as a consumer. A carried translation is
- *  not counted: it is approved with the edit that carried it. */
+/** The number of unreviewed entity differences. */
 export function useUnreviewedCount(enabled = true): number {
   useReviewConsumer(enabled)
-  return useReview(s => s.view?.unreviewed.reduce((n, c) => (c.carried ? n : n + 1), 0) ?? 0)
+  return useReview(s => s.view?.unreviewed.length ?? 0)
 }
 
 // ── Highlight reads ───────────────────────────────────────────────────────────
@@ -248,8 +246,7 @@ export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
   }, [overlay, ghosts, trackId])
 }
 
-/** Cut marks on one track of the editor timeline, in time order: a seam on
- *  the track it was cut from, a trimmed end on the clip's current lane. */
+/** Trim cut marks on the clip's current lane, in time order. */
 export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
   const overlay = useOverlay()
   const cuts = useReview(s => selectHighlight(s).cuts)
@@ -299,7 +296,7 @@ export function approveAllChanges(): Promise<boolean> {
   return approve((version, include_user) => reviewApproveAll({ version, include_user }), 'review_approve_all')
 }
 
-/** Approve the given changes of the held view (a shift group approves as one). */
+/** Approve the given changes of the held view. */
 export function approveChanges(changeIds: readonly string[]): Promise<boolean> {
   return approve((version, include_user) => reviewApprove({ version, include_user, change_ids: [...changeIds] }), 'review_approve')
 }
@@ -328,7 +325,7 @@ export async function showActivityChanges(a: Pick<AgentActivity, 'id' | 'history
     if (token !== activityToken) return
     const cur = useReview.getState().activity!
     useReview.setState({ activity: v.available
-      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.filter(c => !c.carried).length, highlight: buildReviewHighlight(v.changes, v.decorations) }
+      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.length, highlight: buildReviewHighlight(v.changes, v.decorations) }
       : { ...cur, status: 'unavailable', reverted: false, count: 0, highlight: EMPTY_HIGHLIGHT } })
   } catch {
     if (token === activityToken) useReview.setState({ activity: null })

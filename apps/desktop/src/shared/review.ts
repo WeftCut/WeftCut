@@ -15,11 +15,7 @@ export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string }
   return { kind: key.slice(0, at) as EntityKind, id: key.slice(at + 1) }
 }
 
-/** Three, as a diff reads: what is new, what is gone, what differs. A move
- *  to another track or composition is a `modified` with `placement`; a pure
- *  translation in time is a `modified` with `timing` and `delta_us` — and,
- *  when it only went where another edit carried the content around it,
- *  `carried`, which no timeline marks (ADR 0115). */
+/** Net structural differences, without operation or causal inference. */
 export type ChangeClass = 'added' | 'removed' | 'modified'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
@@ -34,14 +30,11 @@ export interface PlacedRange extends TimeRange { track_id: string | null }
 export type ChangeDetail =
   /** Added or removed: the entity's length (a removed one's, as it was). */
   | { type: 'length'; duration_us: number }
-  /** Material cut from (`delta_us` < 0) or added to (> 0) one end. */
+  /** Direct values in each side's composition or source clock. */
+  | { type: 'time'; field: 'start' | 'end' | 'source_start' | 'source_end'; from_us: number; to_us: number }
+  /** This layer's window edge changed: negative removes, positive extends.
+   *  Measured in timeline microseconds; never describes another entity. */
   | { type: 'trim'; side: 'start' | 'end'; delta_us: number }
-  /** Moved in time on its own: current − where the content around it was
-   *  carried (the baseline place when nothing carried it). */
-  | { type: 'shift'; delta_us: number }
-  /** Same place, other source material: the source window moved by `delta_us`
-   *  (> 0: later in the source). */
-  | { type: 'slip'; delta_us: number }
   /** Moved to another track of the same composition. */
   | { type: 'track'; from: string | null; to: string | null }
   /** Moved to another composition. */
@@ -61,17 +54,15 @@ export type ChangeDetail =
   | { type: 'aspect'; aspect: ChangeAspect }
 
 export interface Change {
-  /** Stable for the same difference: the entity key; `Shift:<composition>:<delta>`
-   *  for a translation group of its own, `Shift:<composition>:<delta>:<carrier id>`
-   *  for a carried one. */
+  /** Stable entity key; independent of displacement and surrounding content. */
   id: string
   class: ChangeClass
-  /** The entity kind; a shift group mixing layers and markers reports `Layer`. */
+  /** The entity kind; each difference describes one entity. */
   kind: EntityKind
-  /** Every entity the change covers — approved as one unit. */
-  keys: EntityKey[]
+  /** Exactly one entity; approvals never expand to related entities. */
+  keys: readonly [EntityKey]
   /** What differs. Empty for added/removed; `placement` for a move to another
-   *  track or composition; `timing` alone for a translation (`delta_us`). */
+   *  track or composition; `timing` for changed timeline or source time values. */
   aspects: ChangeAspect[]
   /** The composition the change is listed under (current side, else baseline);
    *  null for a Composition entity. */
@@ -83,40 +74,11 @@ export interface Change {
    *  the editor timeline ghosts a removed layer). */
   from?: EntityLocation
   to?: EntityLocation
-  /** A translation only — the entities' timing moved, nothing else did —
-   *  grouped per composition and delta into one change. Carried: how far the
-   *  content carried them (current − baseline). Otherwise their OWN movement:
-   *  current − where the content around them was carried. */
-  delta_us?: number
-  /** A translation that only went where another change carried the content
-   *  around it — the clip before it on its track, the A-roll material under
-   *  it, a marker's clip: a ripple closing up, an insert or a longer clip
-   *  making room, a trim pulling the rest in. Listed and approved with that
-   *  change; no timeline paints it, as a diff does not mark the lines a change
-   *  above renumbered. */
-  carried?: true
-  /** The change that carried this one's movement, in the same list: a
-   *  `carried` change's (approved with it, folded under its row), or a rider's
-   *  (`carried_us`). */
-  carried_by?: string
-  /** A change that also differs in its own right but whose movement was
-   *  carried by `carried_by`: how far. Its own row does not say it, the
-   *  carrier's does; approving the carrier does not approve it. */
-  carried_us?: number
-  /** What it did, in order (`ChangeDetail`); empty for a listed-only change
-   *  nothing more can be said of. */
+  /** Measured changes to this entity, without an inferred cause. */
   details: ChangeDetail[]
-  /** A deliberate move (`placement`, a `shift` detail, or a non-carried
-   *  `delta_us`): where each moved layer or marker was on the CURRENT
-   *  timeline — its baseline place carried as far as the content around it
-   *  went, the place its own movement is measured from. Drawn only while the
-   *  change is focused. */
-  was?: PlacedRange[]
-  /** Where the change is on the CURRENT timeline, merged per composition: the
-   *  current footprints; for a removed entity its baseline footprint carried
-   *  over by the content around it — the seam a ripple delete left (main's
-   *  `removedRangeNow`). Empty for listed-only changes (link, track,
-   *  composition). */
+  /** Historical footprints in the comparison baseline. Never current coordinates. */
+  before_ranges?: PlacedRange[]
+  /** Current footprints by entity identity. Removed entities have none. */
   ranges: TimeRange[]
 }
 
@@ -164,8 +126,7 @@ export interface ReviewView {
 export interface ReviewApproveAllArgs extends ReviewViewArgs { version: ReviewVersion }
 
 /** `review_approve` arguments: change ids from the view the user acted on,
- *  and/or entity keys. A key approves the whole change that holds it (a shift
- *  group approves as a unit). Unknown ids/keys are ignored. */
+ *  and/or entity keys. A key selects that entity’s change. Unknown ids/keys are ignored. */
 export interface ReviewApproveArgs extends ReviewApproveAllArgs { change_ids?: string[]; keys?: EntityKey[] }
 
 /** What an approval answers: whether it was applied — false when `version`

@@ -398,7 +398,7 @@ export const Timeline = memo(function Timeline({
       const root = rootRef.current;
       if (s.focus === prev.focus || s.focus === null || !root) return;
       const here = compositionId ?? useProjectStore.getState().summary?.root_id ?? null;
-      const mine = s.washes.filter((w) => w.compositionId === here);
+      const mine = s.reveal.filter((w) => w.compositionId === here);
       if (mine.length === 0) return;
       const pxPerUs = pxPerSecForScrollRef.current / 1_000_000;
       const next = focusRevealScrollLeft(

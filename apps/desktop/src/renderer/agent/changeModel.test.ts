@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentActivity, AgentWorkSession } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
-import { carriedAlong, formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
+import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
 
 const change = (patch: Partial<Change> & { id: string }): Change => ({
   class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [],
@@ -14,29 +14,15 @@ describe('formatSeconds', () => {
   })
 })
 
-describe('groupChanges folding', () => {
-  it('folds a carried change under its carrier in the same list only', () => {
-    const carrier = change({ id: 'Layer:cut', class: 'removed' })
-    const carried = change({ id: 'Shift:root:-5', keys: ['Layer:a'], delta_us: -5, carried: true, carried_by: 'Layer:cut' })
-    const orphan = change({ id: 'Shift:root:-7', keys: ['Layer:b'], delta_us: -7, carried: true, carried_by: 'Layer:mine' })
+describe('groupChanges', () => {
+  it('keeps every entity as an independent row, in its composition and source', () => {
+    const removed = change({ id: 'Layer:gone', class: 'removed' })
+    const moved = change({ id: 'Layer:moved' })
     const mine = change({ id: 'Layer:mine' })
-    const [g] = groupChanges([carrier, carried, orphan], [mine], 'root')
-    expect(g!.rows.map(r => [r.change.id, r.carried.map(c => c.id)])).toEqual([
-      ['Layer:cut', ['Shift:root:-5']], ['Shift:root:-7', []], ['Layer:mine', []],
+    const [group] = groupChanges([removed, moved], [mine], 'root')
+    expect(group!.rows.map(r => [r.change.id, r.source])).toEqual([
+      ['Layer:gone', 'agent'], ['Layer:moved', 'agent'], ['Layer:mine', 'user'],
     ])
-  })
-
-  it('keeps a rider a row of its own, and its carrier counts it', () => {
-    const carrier = change({ id: 'Layer:cut', class: 'removed' })
-    const carried = change({ id: 'Shift:root:-5:Layer:cut', keys: ['Layer:a', 'Marker:m'], delta_us: -5, carried: true, carried_by: 'Layer:cut' })
-    const rider = change({ id: 'Layer:b', carried_by: 'Layer:cut', carried_us: -5, details: [{ type: 'label' }] })
-    const far = change({ id: 'Layer:c', carried_by: 'Layer:cut', carried_us: -8, details: [{ type: 'label' }] })
-    const [g] = groupChanges([carrier, carried, rider, far], [], 'root')
-    expect(g!.rows.map(r => [r.change.id, r.carried.map(c => c.id), r.riders.map(c => c.id)])).toEqual([
-      ['Layer:cut', ['Shift:root:-5:Layer:cut'], ['Layer:b', 'Layer:c']], ['Layer:b', [], []], ['Layer:c', [], []],
-    ])
-    // One sub-line per amount, riders counted with what moved as far.
-    expect(carriedAlong(g!.rows[0]!)).toEqual([{ delta_us: -5, clips: 2, markers: 1 }, { delta_us: -8, clips: 1, markers: 0 }])
   })
 })
 
@@ -59,7 +45,7 @@ describe('sessionReason', () => {
   it('is the most recent session whose operation touched any of the keys', () => {
     expect(sessionReason({ keys: ['Layer:x'] }, index)).toBe('Tighten the intro')
     expect(sessionReason({ keys: ['Marker:m'] }, index)).toBe('Tighten the intro')
-    expect(sessionReason({ keys: ['Layer:x', 'Layer:y'] }, index)).toBe('Fix the outro')
+    expect(sessionReason({ keys: ['Layer:y'] }, index)).toBe('Fix the outro')
   })
   it('is null when no session operation names the change', () => {
     expect(sessionReason({ keys: ['Layer:z'] }, index)).toBeNull()

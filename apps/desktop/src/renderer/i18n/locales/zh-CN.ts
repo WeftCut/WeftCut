@@ -1511,19 +1511,18 @@ const zhCN: Resources = {
     aspect_effects: "效果",
     aspect_label: "名称",
     aspect_flags: "启用 / 锁定",
-    // 变更行的说明（ADR 0115）：由 main 给出的事实拼成，只说相对量，不写基线上的
-    // 时间码——基线时间线不在屏幕上，那里的时间指不到任何地方。动词与「历史记录」一致。
+    // 两个状态之间的事实，明确展示时间字段的前后值（ADR 0116）。
     detail: {
       length_added: "时长 {{s}} 秒",
       length_removed: "删除 {{s}} 秒",
+      time_start: "起点 {{from}} → {{to}} 秒",
       trim_start_cut: "开头剪掉 {{s}} 秒",
       trim_start_extend: "开头延长 {{s}} 秒",
       trim_end_cut: "结尾剪掉 {{s}} 秒",
       trim_end_extend: "结尾延长 {{s}} 秒",
-      shift_earlier: "前移 {{s}} 秒",
-      shift_later: "后移 {{s}} 秒",
-      slip_earlier: "素材选段前移 {{s}} 秒",
-      slip_later: "素材选段后移 {{s}} 秒",
+      time_end: "终点 {{from}} → {{to}} 秒",
+      time_source_start: "素材起点 {{from}} → {{to}} 秒",
+      time_source_end: "素材终点 {{from}} → {{to}} 秒",
       track_from_to: "从 {{from}} 移到 {{to}}",
       track_to: "移到 {{to}}",
       track_other: "移到其他轨道",
@@ -1545,10 +1544,6 @@ const zhCN: Resources = {
       disabled: "禁用",
       locked: "锁定",
       unlocked: "解锁",
-      // 被带动的内容折叠在带动它的那一行下面，作为一行小字。
-      carried_earlier: "后面 {{what}}随之前移 {{s}} 秒",
-      carried_later: "后面 {{what}}随之后移 {{s}} 秒",
-      clips_and_markers: "{{clips}}和 {{markers}}",
     },
     from_session: "来自：{{reason}}",
     n_clips_one: "{{count}} 个片段",
@@ -1557,10 +1552,8 @@ const zhCN: Resources = {
     n_markers_other: "{{count}} 个标记",
     group_badge: "包含 {{count}} 项待审阅的变更",
     group_badge_activity: "包含 {{count}} 处变更",
-    ghost_label: "已删除的片段，{{start}} – {{end}}",
-    // 时间线上的剪切标记（▼）的提示：变更行的说明，若它带动了后面的内容再补一句。
-    cut_carried_earlier: "{{what}}，后面的内容随之前移",
-    cut_carried_later: "{{what}}，后面的内容随之后移",
+    ghost_label: "已删除的片段，基线位置 {{start}} – {{end}}",
+    before_label: "基线位置",
     // 片段提示中的一行：变更类别与说明。
     clip_title: "{{cls}}：{{what}}",
     status: "{{count}} 项变更待审阅",

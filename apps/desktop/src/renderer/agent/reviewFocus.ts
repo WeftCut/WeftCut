@@ -26,8 +26,7 @@ export type FocusMark = 'tack' | 'change' | 'hover'
  *  the editor timeline's lanes. `endUs === startUs` for a point. */
 export interface FocusWash { kind: ReviewItem['kind']; compositionId: string; startUs: number; endUs: number }
 
-/** Where a focused deliberate move's clip was, on one track — carried onto
- *  the current timeline (`Change.was`). */
+/** Historical baseline footprint of the focused entity on one track. */
 export interface FocusWas { trackId: string; compositionId: string; startUs: number; endUs: number }
 
 export interface FocusPaint {
@@ -39,13 +38,15 @@ export interface FocusPaint {
   /** Removed-change ghost (its change id) → its outline. */
   ghosts: ReadonlyMap<string, Exclude<FocusMark, 'tack'>>
   washes: readonly FocusWash[]
+  /** Scroll targets; historical positions are used only without a current range. */
+  reveal: readonly FocusWash[]
   /** The focused move's old places, clips only (a marker's has no lane). */
   was: readonly FocusWas[]
   /** A listed change is focused: the other review marks step back. */
   changeFocused: boolean
 }
 
-export const EMPTY_FOCUS_PAINT: FocusPaint = { focus: null, layers: new Map(), ghosts: new Map(), washes: [], was: [], changeFocused: false }
+export const EMPTY_FOCUS_PAINT: FocusPaint = { focus: null, layers: new Map(), ghosts: new Map(), washes: [], reveal: [], was: [], changeFocused: false }
 
 /** Where a tack is now, if it is anywhere: only a visible one has a place. */
 function tackWash(t: TackView): FocusWash | null {
@@ -57,13 +58,9 @@ function tackWash(t: TackView): FocusWash | null {
 /** Project the focus and the hover onto what the editor timeline paints. A
  *  tack outlines the clips it follows (either end; an anchored tack's one
  *  clip) and washes its current range; a change outlines its clips — or its
- *  ghost, removed — and washes every range it has. A focused change also
- *  outlines the clips it carried along and frames where a deliberate move's
- *  clips were: what the timeline does not keep on screen, said only while the
- *  change is looked at. A hovered change row only outlines its own clips; a
- *  hovered tack row outlines its chip and mini mark, which read the hover
- *  themselves. An item no longer listed paints nothing. `changes` is the list
- *  as listed, carried changes included. */
+ *  ghost, removed — and washes its current range. Historical footprints of a
+ *  modified entity are shown as separate baseline frames. Other entities are
+ *  never selected through spatial or causal relationships. */
 export function buildFocusPaint(
   focus: ReviewItem | null,
   hover: ReviewItem | null,
@@ -74,6 +71,7 @@ export function buildFocusPaint(
   const layers = new Map<string, FocusMark>()
   const ghosts = new Map<string, Exclude<FocusMark, 'tack'>>()
   const washes: FocusWash[] = []
+  const historical: FocusWash[] = []
   const was: FocusWas[] = []
   const outline = (c: Change, mark: Exclude<FocusMark, 'tack'>) => {
     if (c.class === 'removed') { ghosts.set(c.id, mark); return }
@@ -96,15 +94,17 @@ export function buildFocusPaint(
     const c = changes.find(x => x.id === focus.id)
     if (c) {
       changeFocused = true
-      for (const k of changes) if (k.carried_by === c.id) for (const id of keyIds(k, 'Layer')) layers.set(id, 'change')
       outline(c, 'change')
       for (const r of c.ranges) washes.push({ kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
-      for (const r of c.was ?? []) {
+      for (const r of c.before_ranges ?? []) historical.push({ kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: r.t_end_us })
+      for (const r of c.class === 'modified' ? c.before_ranges ?? [] : []) {
+        if (!c.from && c.ranges.some(now => now.composition_id === r.composition_id && now.t_start_us === r.t_start_us && now.t_end_us === r.t_end_us)) continue
         if (r.track_id !== null) was.push({ trackId: r.track_id, compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
       }
     }
   }
-  return { focus, layers, ghosts, washes, was, changeFocused }
+  const reveal = [...washes, ...historical.filter(r => !washes.some(w => w.compositionId === r.compositionId))]
+  return { focus, layers, ghosts, washes, reveal, was, changeFocused }
 }
 
 // ── The derived store ─────────────────────────────────────────────────────────
@@ -137,11 +137,12 @@ function refreshFocusPaint(): void {
     layers: sameMap(held.layers, next.layers) ? held.layers : next.layers,
     ghosts: sameMap(held.ghosts, next.ghosts) ? held.ghosts : next.ghosts,
     washes: sameWashes(held.washes, next.washes) ? held.washes : next.washes,
+    reveal: sameWashes(held.reveal, next.reveal) ? held.reveal : next.reveal,
     was: sameWas(held.was, next.was) ? held.was : next.was,
     changeFocused: next.changeFocused,
   }
   const same = merged.focus === held.focus && merged.layers === held.layers && merged.ghosts === held.ghosts &&
-    merged.washes === held.washes && merged.was === held.was && merged.changeFocused === held.changeFocused
+    merged.washes === held.washes && merged.reveal === held.reveal && merged.was === held.was && merged.changeFocused === held.changeFocused
   if (!same) useFocusPaint.setState(merged, true)
 }
 

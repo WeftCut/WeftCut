@@ -8,8 +8,8 @@ import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { carriedAlong, groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
-import { changeWordsContext, describeCarried, describeChange } from './changeWords'
+import { groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { changeWordsContext, describeChange } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
 
@@ -30,11 +30,8 @@ import { useAgentActivity } from './activityStore'
  *  marks stepping back); a second click lets it go. Hovering a row outlines
  *  its clips. Neither seeks — Locate does.
  *
- *  A row says what changed in relative words (`changeWords.ts`); the content
- *  its edit carried along folds under it as quiet sub-lines, one per amount —
- *  counting the clips it carried that were edited too, which keep rows of
- *  their own — and an agent row names the work session that made it
- *  ("From: …"). */
+ *  Each row describes one entity and identifies its work session.
+ */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
@@ -83,10 +80,6 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   /** What the row names: the clip, marker, track or Group as the rest of the
    *  app names it when it still exists; its kind when it is gone. */
   const title = (c: Change): string => {
-    if (c.delta_us !== undefined) {
-      const clips = keyIds(c, 'Layer').length, marks = keyIds(c, 'Marker').length
-      return [clips && t('changes.n_clips', { count: clips }), marks && t('changes.n_markers', { count: marks })].filter(Boolean).join(', ')
-    }
     const id = keyIds(c, c.kind)[0]
     const fallback = t(`changes.kind_${c.kind}`)
     if (id === undefined || !summary) return fallback
@@ -110,11 +103,13 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   }
 
   const time = (c: Change): string | null => {
-    const r = c.ranges.find(x => x.composition_id === c.composition_id) ?? c.ranges[0]
+    const ranges = c.ranges.length ? c.ranges : c.before_ranges ?? []
+    const r = ranges.find(x => x.composition_id === c.composition_id) ?? ranges[0]
     const comp = r ? summary?.compositions[r.composition_id] : undefined
     if (!r || !comp) return null
     const start = formatTimecode(r.t_start_us, comp.fps_num, comp.fps_den)
-    return r.t_end_us > r.t_start_us ? `${start} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : start
+    const span = r.t_end_us > r.t_start_us ? `${start} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : start
+    return c.ranges.length ? span : `${t('changes.before_label')}: ${span}`
   }
 
   const row = (r: ChangeRow) => {
@@ -132,7 +127,6 @@ export function ChangesTab({ editor }: { editor: boolean }) {
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
             <small>{[describeChange(c, words), when].filter(Boolean).join(' · ')}</small>
-            {carriedAlong(r).map(k => <small key={k.delta_us} className="agent-change-carried">{describeCarried(k, t)}</small>)}
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
@@ -162,7 +156,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         : <p className="agent-empty">{t(empty)}</p>)}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{compositionName(g.compositionId)}</span>
-          <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent' && !r.change.carried).length })}</small></h3>
+          <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent').length })}</small></h3>
         {g.rows.map(row)}
       </section>)}
       <p className="agent-retention-note agent-list-footnote">{t('changes.retention')}</p>

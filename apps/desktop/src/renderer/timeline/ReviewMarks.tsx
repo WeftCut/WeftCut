@@ -131,8 +131,7 @@ export function ReviewGroupBadge({
   );
 }
 
-/// Removed clips of one lane, outlined on their baseline track where they were,
-/// carried onto the current timeline — the seam, after a ripple. Drawn before
+/// Removed clips at their historical baseline position, explicitly labelled. Drawn before
 /// the lane's clips, so a clip now occupying the same stretch paints over its
 /// predecessor's ghost. The lane renders this only while the track still
 /// exists — a removed track has no lane, so its clips have nowhere to ghost.
@@ -236,8 +235,7 @@ export function ReviewFocusWash({
   );
 }
 
-/// Where a focused deliberate move's clips were, on this lane: a neutral
-/// dashed frame at each old place, carried onto the current timeline. Only
+/// A focused change's historical baseline footprint on this lane. Only
 /// while that change is focused (`buildFocusPaint`) — the move's amber edge
 /// says it moved, the panel says by how much; the frame answers "from where"
 /// when that is the question. Drawn before the blocks, so a clip now on that
@@ -251,6 +249,7 @@ export function ReviewWasFrames({
   pxPerSec: number;
   laneHeight: number;
 }) {
+  const { t } = useTranslation();
   const was = useTrackFocusWas(trackId);
   if (was.length === 0) return null;
   const band = layerSliceRect(laneHeight, "full");
@@ -260,7 +259,7 @@ export function ReviewWasFrames({
         <span
           key={i}
           data-testid="review-was"
-          aria-hidden="true"
+          title={t("changes.before_label")}
           className="review-was pointer-events-none absolute rounded"
           style={{
             left: (w.startUs / 1_000_000) * pxPerSec,
@@ -294,15 +293,13 @@ export function mergeCuts(
   return out.map((g) => ({ px: (g.first + g.last) / 2, cuts: g.cuts }));
 }
 
-/** One cut's words: the change's own, and that the content after it moved
- *  when the edit carried it along. */
-function cutWords(cut: ReviewCut, change: Change, words: ChangeWordsContext): string {
-  const what = describeChange(change, words) || words.t(`changes.class_${change.class}`, {});
-  return cut.carried ? words.t(`changes.cut_carried_${cut.carried}`, { what }) : what;
+/** A trim mark uses the same change description as the panel. */
+function cutWords(change: Change, words: ChangeWordsContext): string {
+  return describeChange(change, words) || words.t(`changes.class_${change.class}`, {});
 }
 
 /// Cut marks: a small red ▼ hanging from the lane's top edge where material was
-/// taken out — the seam a ripple delete closed, the end a trim cut back. The
+/// taken out — the end a trim cut back. The
 /// three colours mark what is there; this marks what is no longer there where
 /// no geometry says so (a gap left by a plain delete has its ghost). It has
 /// no name in the UI; its tooltip says what was cut.
@@ -336,7 +333,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
           const change = changes.get(c.changeId);
           if (!change || seen.has(c.changeId)) continue;
           seen.add(c.changeId);
-          lines.push(cutWords(c, change, words));
+          lines.push(cutWords(change, words));
         }
         const label = lines.join("\n");
         const first = g.cuts[0]!;

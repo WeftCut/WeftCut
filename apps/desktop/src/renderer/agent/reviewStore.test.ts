@@ -104,9 +104,9 @@ describe('review consumers', () => {
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? approved(view(1, 3, [])) : view(1, 1))
     const release = acquireReview()
     await flush()
-    expect(await approveChanges(['Shift:root:-2400000'])).toBe(true)
+    expect(await approveChanges(['Layer:moved'])).toBe(true)
     expect(mocks.invoke).toHaveBeenCalledWith('review_approve', {
-      version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Shift:root:-2400000'],
+      version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Layer:moved'],
     })
     expect(useReview.getState().view?.unreviewed).toEqual([])
     expect(useReview.getState().approvalStale).toBe(false)
@@ -142,81 +142,19 @@ describe('review consumers', () => {
 })
 
 describe('buildReviewHighlight', () => {
-  it('marks current clips, ghosts removed ones on their baseline track, counts Group contents', () => {
-    const h = buildReviewHighlight([
-      change(),
-      change({ id: 'Layer:m', class: 'modified', keys: ['Layer:m'], aspects: ['params'] }),
-      change({ id: 'Shift:root:5', class: 'modified', aspects: ['timing'], keys: ['Layer:s1', 'Layer:s2', 'Marker:k'], delta_us: 5 }),
-      // Carried along by an edit: painted nowhere, counted nowhere.
-      change({ id: 'Shift:root:-9', class: 'modified', aspects: ['timing'], keys: ['Layer:c1'], delta_us: -9, carried: true, ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: 2 }] }),
-      change({ id: 'Layer:gone', class: 'removed', keys: ['Layer:gone'], from: { composition_id: 'root', track_id: 'track-1' },
-        ranges: [{ composition_id: 'root', t_start_us: 3, t_end_us: 9 }] }),
-      change({ id: 'Track:t', class: 'removed', kind: 'Track', keys: ['Track:t'], ranges: [] }),
-    ], [
-      { layer_id: 'group-1', composition_id: 'root', t_start_us: 4, t_end_us: 7, change_ids: ['Layer:m', 'User:only'] },
-      { layer_id: 'group-2', composition_id: 'root', t_start_us: 0, t_end_us: 1, change_ids: ['User:only'] },
+  it('marks each current entity and uses only explicit baseline footprints for removal ghosts', () => {
+    const gone = change({ id: 'Layer:gone', class: 'removed', keys: ['Layer:gone'], ranges: [],
+      before_ranges: [{ composition_id: 'root', track_id: 'track-1', t_start_us: 3, t_end_us: 9 }] })
+    const moved = change({ id: 'Layer:moved', class: 'modified', keys: ['Layer:moved'] })
+    const h = buildReviewHighlight([change(), moved, gone], [
+      { layer_id: 'group', composition_id: 'root', t_start_us: 4, t_end_us: 7, change_ids: ['Layer:moved', 'Layer:user'] },
     ])
-    expect([...h.layers]).toEqual([['a', 'added'], ['m', 'modified'], ['s1', 'modified'], ['s2', 'modified']])
+    expect([...h.layers]).toEqual([['a', 'added'], ['moved', 'modified']])
     expect(h.ghosts).toEqual([{ changeId: 'Layer:gone', layerId: 'gone', compositionId: 'root', trackId: 'track-1', tStartUs: 3, tEndUs: 9 }])
-    // Only changes in the given set count: a decoration of user changes alone gets no badge.
-    expect([...h.groups]).toEqual([['group-1', 1]])
-    expect(h.ranges.map(r => r.cls)).toEqual(['added', 'modified', 'modified', 'removed', 'modified'])
-    // A Group containing changes bands its own footprint on the timeline holding it.
-    expect(h.ranges.at(-1)).toEqual({ changeId: 'Group:group-1', cls: 'modified', compositionId: 'root', tStartUs: 4, tEndUs: 7 })
-    // Each marked clip names its change, for its tooltip; carried ones are not painted.
-    expect([...h.layerChanges]).toEqual([['a', 'Layer:a'], ['m', 'Layer:m'], ['s1', 'Shift:root:5'], ['s2', 'Shift:root:5']])
-    expect([...h.changes.keys()]).toEqual(['Layer:a', 'Layer:m', 'Shift:root:5', 'Layer:gone', 'Track:t'])
-  })
-
-  describe('cut marks', () => {
-    const removed = (id: string, start: number, end: number, patch: Partial<Change> = {}) => change({
-      id, class: 'removed', keys: [id as Change['keys'][number]], from: { composition_id: 'root', track_id: 'track-1' },
-      details: [{ type: 'length', duration_us: 4 }], ranges: [{ composition_id: 'root', t_start_us: start, t_end_us: end }], ...patch,
-    })
-    const trimmed = (side: 'start' | 'end', delta: number) => change({
-      id: 'Layer:t', class: 'modified', keys: ['Layer:t'], aspects: ['timing'], details: [{ type: 'trim', side, delta_us: delta }],
-      ranges: [{ composition_id: 'root', t_start_us: 10, t_end_us: 20 }],
-    })
-
-    it('a ripple delete is a seam on its baseline track, in place of a zero-width ghost', () => {
-      const h = buildReviewHighlight([removed('Layer:r', 5, 5)], [])
-      expect(h.ghosts).toEqual([])
-      expect(h.cuts).toEqual([{ changeId: 'Layer:r', layerId: 'r', compositionId: 'root', trackId: 'track-1', tUs: 5, kind: 'seam' }])
-    })
-
-    it('a delete that left a gap keeps its ghost and has no cut', () => {
-      const h = buildReviewHighlight([removed('Layer:g', 5, 9)], [])
-      expect(h.ghosts).toHaveLength(1)
-      expect(h.cuts).toEqual([])
-    })
-
-    it('a trim that cut material marks the end it cut back to, on the clip (its lane resolved where drawn)', () => {
-      expect(buildReviewHighlight([trimmed('end', -3)], []).cuts)
-        .toEqual([{ changeId: 'Layer:t', layerId: 't', compositionId: 'root', trackId: null, tUs: 20, kind: 'trim' }])
-      expect(buildReviewHighlight([trimmed('start', -3)], []).cuts.map(c => c.tUs)).toEqual([10])
-    })
-
-    it('an extension has no cut', () => {
-      expect(buildReviewHighlight([trimmed('end', 3)], []).cuts).toEqual([])
-    })
-
-    it('a carried change is never a cut, but its carrier says which way it moved the rest', () => {
-      const carried = (by: string, delta: number) => change({
-        id: `Shift:root:${delta}`, class: 'modified', aspects: ['timing'], keys: ['Layer:after'], delta_us: delta, carried: true, carried_by: by,
-        details: [{ type: 'trim', side: 'end', delta_us: -1 }], ranges: [{ composition_id: 'root', t_start_us: 30, t_end_us: 40 }],
-      })
-      const h = buildReviewHighlight([removed('Layer:r', 5, 5), carried('Layer:r', -4)], [])
-      expect(h.cuts).toEqual([{ changeId: 'Layer:r', layerId: 'r', compositionId: 'root', trackId: 'track-1', tUs: 5, kind: 'seam', carried: 'earlier' }])
-      expect(buildReviewHighlight([trimmed('end', -3), carried('Layer:t', 3)], []).cuts.map(c => c.carried)).toEqual(['later'])
-    })
-
-    it('a rider paints as its own edit, and its carrier says which way it moved it', () => {
-      const rider = change({ id: 'Layer:b', class: 'modified', aspects: ['label'], keys: ['Layer:b'], carried_by: 'Layer:r', carried_us: -4,
-        details: [{ type: 'label' }], ranges: [{ composition_id: 'root', t_start_us: 30, t_end_us: 40 }] })
-      const h = buildReviewHighlight([removed('Layer:r', 5, 5), rider], [])
-      expect(h.cuts.map(c => [c.changeId, c.carried])).toEqual([['Layer:r', 'earlier']])
-      expect([...h.layers]).toEqual([['b', 'modified']])
-    })
+    expect([...h.groups]).toEqual([['group', 1]])
+    expect(h.ranges.some(r => r.changeId === 'Layer:gone')).toBe(false)
+    expect([...h.layerChanges]).toEqual([['a', 'Layer:a'], ['moved', 'Layer:moved']])
+    expect(buildReviewHighlight([{ ...gone, before_ranges: [] }], []).ghosts).toEqual([])
   })
 })
 
@@ -250,14 +188,14 @@ describe('activity highlight', () => {
     expect(selectHighlight(useReview.getState()).layers.get('a')).toBe('added')
   })
 
-  it('counts what the call did as the Changes tab does: a carried translation is its edit\'s', async () => {
+  it('counts each changed entity in the activity', async () => {
     const gone = change({ id: 'Layer:gone', keys: ['Layer:gone'], class: 'removed' })
-    const carried = change({ id: 'Shift:root:-1', keys: ['Layer:next'], class: 'modified', delta_us: -1, carried: true, carried_by: 'Layer:gone' })
+    const moved = change({ id: 'Layer:next', keys: ['Layer:next'], class: 'modified' })
     mocks.invoke.mockImplementation(async (channel: string) =>
-      channel === 'review_activity_view' ? { available: true, reverted: false, changes: [gone, carried], decorations: [] } : view(1, 1))
+      channel === 'review_activity_view' ? { available: true, reverted: false, changes: [gone, moved], decorations: [] } : view(1, 1))
     act(() => useAgentActivity.getState().toggle('a'))
     await flush()
-    expect(useReview.getState().activity).toMatchObject({ status: 'ready', count: 1 })
+    expect(useReview.getState().activity).toMatchObject({ status: 'ready', count: 2 })
   })
 
   it('another row replaces it; a row without history ops, a tab switch or a project change clears it', async () => {

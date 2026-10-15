@@ -19,7 +19,7 @@ export function canLocateChange(c: Change): boolean {
   const { summary, compositionIdByTrackId } = useProjectStore.getState()
   if (!summary) return false
   if (currentLayer(c) !== null) return true
-  if (c.ranges.some(r => summary.compositions[r.composition_id] !== undefined)) return true
+  if ([...c.ranges, ...c.before_ranges ?? []].some(r => summary.compositions[r.composition_id] !== undefined)) return true
   if (keyIds(c, 'Track').some(id => compositionIdByTrackId.has(id))) return true
   return keyIds(c, 'Composition').some(id => summary.compositions[id] !== undefined)
 }
@@ -37,7 +37,8 @@ export function locateChange(c: Change): boolean {
     if (!revealLayerWithoutSeek(layerId)) return false
     compositionId = compositionIdByLayerId.get(layerId) ?? null
   }
-  const range = c.ranges.find(r => (compositionId === null ? summary.compositions[r.composition_id] !== undefined : r.composition_id === compositionId))
+  const ranges = c.ranges.length ? c.ranges : c.before_ranges ?? []
+  const range = ranges.find(r => (compositionId === null ? summary.compositions[r.composition_id] !== undefined : r.composition_id === compositionId))
   if (layerId === null) {
     if (range) {
       if (useCompositionAnchorStore.getState().focusedId !== range.composition_id && !openComposition(range.composition_id, null)) return false

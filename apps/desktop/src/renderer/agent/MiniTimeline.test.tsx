@@ -90,7 +90,7 @@ it("paints review change ranges as a second band, by class, apart from the tack 
       { changeId: "Layer:a", cls: "added", compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
       { changeId: "Layer:m", cls: "modified", compositionId: "root", tStartUs: 2_000_000, tEndUs: 3_000_000 },
       { changeId: "Layer:r", cls: "removed", compositionId: "root", tStartUs: 5_000_000, tEndUs: 6_000_000 },
-      { changeId: "Shift:root:1", cls: "modified", compositionId: "root", tStartUs: 6_000_000, tEndUs: 9_000_000 },
+      { changeId: "Layer:moved", cls: "modified", compositionId: "root", tStartUs: 6_000_000, tEndUs: 9_000_000 },
     ]}
     onSeek={() => {}} fpsNum={30} fpsDen={1}
   />);

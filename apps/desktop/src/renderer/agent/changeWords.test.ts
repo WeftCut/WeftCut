@@ -6,7 +6,7 @@ import zh from '../i18n/locales/zh-CN'
 import type { Change, ChangeDetail } from '../../shared/review'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
 import type { TrackSummary } from '../ipc'
-import { DETAIL_KEYS, changeWordsContext, describeCarried, describeChange, paramName, type Translate } from './changeWords'
+import { DETAIL_KEYS, changeWordsContext, describeChange, paramName, type Translate } from './changeWords'
 
 const S = 1_000_000
 const track = (id: string, label: string | null): TrackSummary => ({ id, kind: 'Video', label, enabled: true, locked: false, muted: false, solo: false, role: null, transient: false, layers: [] })
@@ -28,16 +28,20 @@ const say = (t: Translate, details: ChangeDetail[], patch?: Partial<Change>) =>
   describeChange(change(details, patch), changeWordsContext(t, summary, new Map([['grp', 1]])))
 
 describe('describeChange', () => {
+  it('does not hide a microsecond difference or drop a time value sign', () => {
+    expect(say(tEn, [{ type: 'time', field: 'start', from_us: -1, to_us: 1 }])).toBe('Start -0.000001 → 0.000001 s')
+  })
   it.each<[string, ChangeDetail[], Partial<Change>, string, string]>([
     ['removed length', [{ type: 'length', duration_us: 4 * S }], { class: 'removed' }, '删除 4.0 秒', 'Deleted 4.0 s'],
     ['added length', [{ type: 'length', duration_us: 3 * S }], { class: 'added' }, '时长 3.0 秒', '3.0 s long'],
-    ['trim end cut', [{ type: 'trim', side: 'end', delta_us: -1_200_000 }], {}, '结尾剪掉 1.2 秒', 'Cut 1.2 s from the end'],
-    ['trim start cut', [{ type: 'trim', side: 'start', delta_us: -500_000 }], {}, '开头剪掉 0.5 秒', 'Cut 0.5 s from the start'],
-    ['trim end extend', [{ type: 'trim', side: 'end', delta_us: S }], {}, '结尾延长 1.0 秒', 'Extended end by 1.0 s'],
-    ['shift earlier', [{ type: 'shift', delta_us: -2 * S }], {}, '前移 2.0 秒', 'Moved 2.0 s earlier'],
-    ['shift later', [{ type: 'shift', delta_us: 1_250_000 }], {}, '后移 1.25 秒', 'Moved 1.25 s later'],
-    ['slip later', [{ type: 'slip', delta_us: 400_000 }], {}, '素材选段后移 0.4 秒', 'Slipped source 0.4 s later'],
-    ['slip earlier', [{ type: 'slip', delta_us: -400_000 }], {}, '素材选段前移 0.4 秒', 'Slipped source 0.4 s earlier'],
+    ['trim head', [{ type: 'trim', side: 'start', delta_us: -S }], {}, '开头剪掉 1.0 秒', 'Cut 1.0 s from the start'],
+    ['trim tail', [{ type: 'trim', side: 'end', delta_us: -S }], {}, '结尾剪掉 1.0 秒', 'Cut 1.0 s from the end'],
+    ['extend head', [{ type: 'trim', side: 'start', delta_us: S }], {}, '开头延长 1.0 秒', 'Extended start by 1.0 s'],
+    ['extend tail', [{ type: 'trim', side: 'end', delta_us: S }], {}, '结尾延长 1.0 秒', 'Extended end by 1.0 s'],
+    ['start', [{ type: 'time', field: 'start', from_us: 2 * S, to_us: S }], {}, '起点 2.0 → 1.0 秒', 'Start 2.0 → 1.0 s'],
+    ['end', [{ type: 'time', field: 'end', from_us: 3 * S, to_us: 4 * S }], {}, '终点 3.0 → 4.0 秒', 'End 3.0 → 4.0 s'],
+    ['source start', [{ type: 'time', field: 'source_start', from_us: 0, to_us: S }], {}, '素材起点 0.0 → 1.0 秒', 'Source start 0.0 → 1.0 s'],
+    ['source end', [{ type: 'time', field: 'source_end', from_us: S, to_us: 2 * S }], {}, '素材终点 1.0 → 2.0 秒', 'Source end 1.0 → 2.0 s'],
     ['track', [{ type: 'track', from: 't1', to: 't2' }], {}, '从 轨道 1 移到 轨道 2', 'Moved from Track 1 to Track 2'],
     ['track from gone', [{ type: 'track', from: 'gone', to: 't2' }], {}, '移到 轨道 2', 'Moved to Track 2'],
     ['track both gone', [{ type: 'track', from: null, to: 'gone' }], {}, '移到其他轨道', 'Moved to another track'],
@@ -57,7 +61,6 @@ describe('describeChange', () => {
     ['locked', [{ type: 'locked', value: true }], {}, '锁定', 'Locked'],
     ['unlocked', [{ type: 'locked', value: false }], {}, '解锁', 'Unlocked'],
     ['aspect', [{ type: 'aspect', aspect: 'placement' }], {}, '位置', 'Placement'],
-    ['facts joined', [{ type: 'shift', delta_us: -2 * S }, { type: 'label' }], {}, '前移 2.0 秒 · 重命名', 'Moved 2.0 s earlier · Renamed'],
   ])('%s', (_name, details, patch, zhText, enText) => {
     expect(say(tZh, details, patch)).toBe(zhText)
     expect(say(tEn, details, patch)).toBe(enText)
@@ -87,20 +90,9 @@ describe('describeChange', () => {
   })
 })
 
-describe('describeCarried', () => {
-  it('counts the clips (and markers) the edit carried, and which way', () => {
-    const five = { delta_us: -4 * S, clips: 5, markers: 0 }
-    expect(describeCarried(five, tZh)).toBe('后面 5 个片段随之前移 4.0 秒')
-    expect(describeCarried(five, tEn)).toBe('5 clips after it moved 4.0 s earlier')
-    const mixed = { delta_us: 1_500_000, clips: 1, markers: 2 }
-    expect(describeCarried(mixed, tZh)).toBe('后面 1 个片段和 2 个标记随之后移 1.5 秒')
-    expect(describeCarried(mixed, tEn)).toBe('1 clip and 2 markers after it moved 1.5 s later')
-  })
-})
-
 describe('change wording locale coverage', () => {
   const at = (loc: unknown, dotted: string): unknown => dotted.split('.').reduce<any>((acc, k) => acc?.[k], loc)
-  const extra = ['changes.detail.carried_earlier', 'changes.detail.carried_later', 'changes.detail.clips_and_markers', 'changes.from_session']
+  const extra = ['changes.from_session', 'changes.before_label', 'changes.ghost_label']
   it.each([['en-US', en], ['zh-CN', zh]] as const)('every fact type has its words in %s', (_name, loc) => {
     const keys = [...Object.values(DETAIL_KEYS).flat(), ...extra]
     expect(keys.filter(k => { const v = at(loc, k); return typeof v !== 'string' || v.trim() === '' })).toEqual([])

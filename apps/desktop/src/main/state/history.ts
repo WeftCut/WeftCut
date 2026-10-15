@@ -1,7 +1,9 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
-import { ABSENT, carryChangesTo, carryDecorationsTo, diffProjects, entitiesEqual, extractEntities, groupDecorations, placeDeliberateMoves, touchedEntityKeys, type Absent, type Change, type EntityKey, type EntityValue, type GroupDecoration } from './reviewDiff'
+import { diffProjects, groupDecorations, locateChanges } from './reviewDiff'
+import { ABSENT, entitiesEqual, extractEntities, touchedEntityKeys, type Absent, type EntityValue } from './reviewEntities'
+import type { Change, EntityKey, GroupDecoration } from '../../shared/review'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -311,13 +313,13 @@ export class History {
     this.bumpReview()
   }
 
-  /** Approve the changes that hold any of `keys`: each of a change's entities
-   *  takes its current value in the overlay (a shift group approves as a unit)
+  /** Approve the changes that hold any of `keys`: the selected entity
+   *  takes its current value in the overlay
    *  and leaves `agentTouched`. A key in no change is ignored. Returns how
    *  many changes were approved. */
   approveKeys(keys: Iterable<EntityKey>): number {
     const wanted = new Set(keys)
-    return this.approveWhere((c) => c.keys.some((k) => wanted.has(k)))
+    return this.approveWhere((c) => wanted.has(c.keys[0]))
   }
   /** As approveKeys, by change id from the current review state. */
   approveChanges(ids: Iterable<string>): number {
@@ -330,23 +332,14 @@ export class History {
     const { unreviewed, user } = this.reviewState()
     const picked = [...unreviewed, ...user].filter(pick)
     if (picked.length === 0) return 0
-    // A carried translation goes with the edit that carried it (its carrier
-    // is on its own list: `uncarryOrphans`). Not the other way: approving
-    // the carried content alone leaves its edit to be reviewed. A rider — an
-    // edit of its own that was also carried — stays to be reviewed.
-    const ids = new Set(picked.map((c) => c.id))
-    for (const c of [...unreviewed, ...user]) if (c.carried && c.carried_by !== undefined && ids.has(c.carried_by) && !ids.has(c.id)) { picked.push(c); ids.add(c.id) }
     const cur = extractEntities(this.current())
     const base = extractEntities(review.base)
     for (const change of picked) {
-      for (const k of change.keys) {
-        const v = cur.get(k)
-        // An approval equal to the base value needs no overlay entry; keeping
-        // the overlay minimal keeps its values off the unpatched path.
-        if (v === undefined ? !base.has(k) : entitiesEqual(base.get(k), v)) review.approved.delete(k)
-        else review.approved.set(k, v ?? ABSENT)
-        review.agentTouched.delete(k)
-      }
+      const k = change.keys[0], v = cur.get(k)
+      // Keep the overlay minimal when approval returns to the base value.
+      if (v === undefined ? !base.has(k) : entitiesEqual(base.get(k), v)) review.approved.delete(k)
+      else review.approved.set(k, v ?? ABSENT)
+      review.agentTouched.delete(k)
     }
     this.bumpReview()
     return picked.length
@@ -372,12 +365,8 @@ export class History {
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
     const changes = diffProjects(review, current)
     const unreviewed: Change[] = [], user: Change[] = []
-    for (const c of changes) (c.keys.some((k) => review.agentTouched.has(k)) ? unreviewed : user).push(c)
-    // A carried shift whose carrier is on the other list is the move it is,
-    // and gets the place it left like any deliberate move.
-    const lists = [uncarryOrphans(unreviewed), uncarryOrphans(user)]
-    const placed = lists[0] === unreviewed && lists[1] === user ? lists.flat() : placeDeliberateMoves(lists.flat(), review, current)
-    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed: placed.slice(0, lists[0].length), user: placed.slice(lists[0].length), decorations: groupDecorations(changes, current) }
+    for (const c of changes) (review.agentTouched.has(c.keys[0]) ? unreviewed : user).push(c)
+    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) }
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state
   }
@@ -405,21 +394,16 @@ export class History {
     at.sort((a, b) => a - b)
     const current = this.current()
     const changes = new Map<string, Change>()
-    const decorations = new Map<string, GroupDecoration>()
     for (let s = 0; s < at.length;) {
       let e = s
       while (e + 1 < at.length && at[e + 1] === at[e] + 1) e += 1
       const after = this.snapshots[at[e]].snapshot
-      // Diffed at its own moment, drawn on the current timeline.
-      const run = carryChangesTo(diffProjects(this.snapshots[at[s] - 1].snapshot, after), after, current)
+      const run = diffProjects(this.snapshots[at[s] - 1].snapshot, after)
       for (const c of run) { changes.delete(c.id); changes.set(c.id, c) }
-      for (const d of carryDecorationsTo(groupDecorations(run, after), current)) {
-        const held = decorations.get(d.layer_id)
-        decorations.set(d.layer_id, held ? { ...d, change_ids: [...new Set([...held.change_ids, ...d.change_ids])] } : d)
-      }
       s = e + 1
     }
-    return { available: true, reverted: this.effectStates(ids).every((x) => x === 'reverted'), changes: [...changes.values()], decorations: [...decorations.values()] }
+    const located = locateChanges([...changes.values()], current)
+    return { available: true, reverted: this.effectStates(ids).every((x) => x === 'reverted'), changes: located, decorations: groupDecorations(located, current) }
   }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
@@ -545,19 +529,4 @@ export class History {
     if (this.lockReasonStr !== null) s.lock_reason = this.lockReasonStr
     return s
   }
-}
-
-/** A change carried by one not in its list — on the other list — loses its
- *  carrier: a carried translation is shown as the move it is (History places
- *  it: `placeDeliberateMoves`), a rider as its own edits alone. Returns `list`
- *  itself when none is. */
-function uncarryOrphans(list: Change[]): Change[] {
-  const ids = new Set(list.map((c) => c.id))
-  const orphan = (c: Change) => c.carried_by !== undefined && !ids.has(c.carried_by)
-  if (!list.some(orphan)) return list
-  return list.map((c) => {
-    if (!orphan(c)) return c
-    const { carried: _, carried_by: __, carried_us: ___, ...shown } = c
-    return shown
-  })
 }

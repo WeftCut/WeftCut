@@ -18,7 +18,7 @@ const change = (patch: Partial<Change> & { id: string }): Change => ({
 const changes = [
   change({ id: 'Layer:a', ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }, { composition_id: 'grp', t_start_us: 5 * S, t_end_us: 6 * S }] }),
   change({ id: 'Layer:gone', class: 'removed', from: { composition_id: 'root', track_id: 'v1' }, ranges: [{ composition_id: 'root', t_start_us: 4 * S, t_end_us: 5 * S }] }),
-  change({ id: 'Shift:root:1', class: 'modified', delta_us: S, keys: ['Layer:b', 'Layer:c'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
+  change({ id: 'Layer:b', class: 'modified', keys: ['Layer:b'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
 ]
 
 describe('buildFocusPaint', () => {
@@ -43,8 +43,8 @@ describe('buildFocusPaint', () => {
   })
 
   it('a change washes every range it has, outlines its clips, and makes the rest recede', () => {
-    const p = buildFocusPaint({ kind: 'change', id: 'Shift:root:1' }, null, [], changes)
-    expect([...p.layers]).toEqual([['b', 'change'], ['c', 'change']])
+    const p = buildFocusPaint({ kind: 'change', id: 'Layer:b' }, null, [], changes)
+    expect([...p.layers]).toEqual([['b', 'change']])
     expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 7 * S, endUs: 9 * S }])
     expect(p.changeFocused).toBe(true)
     expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], changes).washes.map(w => w.compositionId)).toEqual(['root', 'grp'])
@@ -66,7 +66,7 @@ describe('buildFocusPaint', () => {
 
   it('a focused move frames where its clips were, on their tracks — only while focused, never a marker', () => {
     const moved = change({ id: 'Layer:m', aspects: ['placement'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
-      was: [{ composition_id: 'root', track_id: 'v2', t_start_us: 3 * S, t_end_us: 4 * S }, { composition_id: 'root', track_id: null, t_start_us: 5 * S, t_end_us: 5 * S }] })
+      before_ranges: [{ composition_id: 'root', track_id: 'v2', t_start_us: 3 * S, t_end_us: 4 * S }, { composition_id: 'root', track_id: null, t_start_us: 5 * S, t_end_us: 5 * S }] })
     const list = [...changes, moved]
     expect(buildFocusPaint({ kind: 'change', id: 'Layer:m' }, null, [], list).was)
       .toEqual([{ trackId: 'v2', compositionId: 'root', startUs: 3 * S, endUs: 4 * S }])
@@ -74,18 +74,11 @@ describe('buildFocusPaint', () => {
     expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).was).toEqual([])
   })
 
-  it('a focused change outlines the clips it carried along; hovering its row does not', () => {
-    const carried = change({ id: 'Shift:root:-1', delta_us: -S, carried: true, carried_by: 'Layer:gone', keys: ['Layer:after1', 'Layer:after2', 'Marker:k'] })
-    const list = [...changes, carried]
-    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list).layers]).toEqual([['after1', 'change'], ['after2', 'change']])
-    expect([...buildFocusPaint(null, { kind: 'change', id: 'Layer:gone' }, [], list).layers]).toEqual([])
-    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).layers]).toEqual([['a', 'change']])
-  })
-
-  it('a focused change outlines the clips it carried that were edited too: they moved along', () => {
-    const rider = change({ id: 'Layer:rider', carried_by: 'Layer:gone', carried_us: -S, keys: ['Layer:rider'] })
-    const list = [...changes, rider]
-    expect([...buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list).layers]).toEqual([['rider', 'change']])
+  it('focusing a removal never outlines neighbouring changed clips', () => {
+    const list = [...changes, change({ id: 'Layer:after' })]
+    const focused = buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list)
+    expect([...focused.layers]).toEqual([])
+    expect([...focused.ghosts]).toEqual([['Layer:gone', 'change']])
   })
 
   it('an item no longer listed paints nothing and recedes nothing', () => {

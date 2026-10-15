@@ -5,8 +5,7 @@
 // describes a change (the Changes tab's rows, the timeline's tooltips), so a
 // change reads the same wherever it is pointed at.
 //
-// Amounts are relative ("前移 2.0 秒"), never the baseline's timecodes: the
-// baseline timeline is not on screen, so a time on it names nowhere.
+// Time details show measured before/after values.
 import { AUDIO_EFFECTS } from '../../shared/audioEffects/catalog'
 import { VISUAL_EFFECT_PARAMS } from '../../shared/effects/params'
 import type { Change, ChangeAspect, ChangeDetail } from '../../shared/review'
@@ -14,7 +13,7 @@ import type { ProjectSummary } from '../ipc'
 import { animatableParams } from '../keyframe/descriptors'
 import { groupDisplayName } from '../lib/layerName'
 import { trackDisplayName } from '../lib/trackName'
-import { formatSeconds, type CarriedAlong } from './changeModel'
+import { formatSeconds } from './changeModel'
 
 /** Structurally typed so `useTranslation().t` passes straight through (as
  *  `layerDisplayName` does). */
@@ -66,9 +65,8 @@ const MAX_NAMES = 3
  *  it has words. */
 export const DETAIL_KEYS: Record<ChangeDetail['type'], readonly string[]> = {
   length: ['changes.detail.length_added', 'changes.detail.length_removed'],
+  time: ['changes.detail.time_start', 'changes.detail.time_end', 'changes.detail.time_source_start', 'changes.detail.time_source_end'],
   trim: ['changes.detail.trim_start_cut', 'changes.detail.trim_start_extend', 'changes.detail.trim_end_cut', 'changes.detail.trim_end_extend'],
-  shift: ['changes.detail.shift_earlier', 'changes.detail.shift_later'],
-  slip: ['changes.detail.slip_earlier', 'changes.detail.slip_later'],
   track: ['changes.detail.track_from_to', 'changes.detail.track_to', 'changes.detail.track_other'],
   composition: ['changes.detail.composition_to', 'changes.detail.composition_other'],
   speed: ['changes.detail.speed', 'changes.detail.speed_changed'],
@@ -172,6 +170,12 @@ function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(1).replace(/\.0$/, '')}%`
 }
 
+/** Preserve signs and microseconds in before/after values. */
+function formatTimeValue(us: number): string {
+  const value = (us / 1_000_000).toFixed(6).replace(/0+$/, '')
+  return value.endsWith('.') ? `${value}0` : value
+}
+
 // ---- facts -----------------------------------------------------------------
 
 /** One fact in words. Exhaustive: a new `ChangeDetail` type fails typecheck
@@ -181,12 +185,10 @@ function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composi
   switch (d.type) {
     case 'length':
       return t(change.class === 'removed' ? 'changes.detail.length_removed' : 'changes.detail.length_added', { s: formatSeconds(d.duration_us) })
+    case 'time':
+      return t('changes.detail.time_' + d.field, { from: formatTimeValue(d.from_us), to: formatTimeValue(d.to_us) })
     case 'trim':
-      return t(`changes.detail.trim_${d.side}_${d.delta_us < 0 ? 'cut' : 'extend'}`, { s: formatSeconds(d.delta_us) })
-    case 'shift':
-      return t(d.delta_us < 0 ? 'changes.detail.shift_earlier' : 'changes.detail.shift_later', { s: formatSeconds(d.delta_us) })
-    case 'slip':
-      return t(d.delta_us < 0 ? 'changes.detail.slip_earlier' : 'changes.detail.slip_later', { s: formatSeconds(d.delta_us) })
+      return t(`changes.detail.trim_${d.side}_${d.delta_us < 0 ? 'cut' : 'extend'}`, { s: formatTimeValue(Math.abs(d.delta_us)) })
     case 'track': {
       const from = d.from === null ? null : ctx.trackName(d.from, change.composition_id)
       const to = d.to === null ? null : ctx.trackName(d.to, change.composition_id)
@@ -229,12 +231,4 @@ export function describeChange(change: Change, ctx: ChangeWordsContext): string 
   const facts = change.details.map(d => describeDetail(d, change, ctx))
   if (facts.length) return facts.join(FACT_SEPARATOR)
   return change.aspects.map(a => ctx.t(`changes.aspect_${a}`, {})).join(FACT_SEPARATOR)
-}
-
-/** What a carrier moved along by one amount (`carriedAlong`), as one of its
- *  sub-lines: "后面 5 个片段随之前移 4.0 秒". */
-export function describeCarried({ delta_us: delta, clips, markers: marks }: CarriedAlong, t: Translate): string {
-  const clipWords = t('changes.n_clips', { count: clips }), markWords = t('changes.n_markers', { count: marks })
-  const what = clips && marks ? t('changes.detail.clips_and_markers', { clips: clipWords, markers: markWords }) : marks ? markWords : clipWords
-  return t(delta < 0 ? 'changes.detail.carried_earlier' : 'changes.detail.carried_later', { what, s: formatSeconds(delta) })
 }
