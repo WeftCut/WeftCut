@@ -16,6 +16,7 @@ import { root } from './__tests__/fixtures/project'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../shared/fonts'
 import { EDIT_TRACE_ARG, EDIT_TRACE_PREFIX } from '../../shared/editTrace'
 import { applyDerivativesEvent } from './jobs-writeback'
+import { ExportJobs } from '../exportJobs'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the project:changed payload shape, refs included', () => {
@@ -87,6 +88,65 @@ describe('createTsActorHost — persistence-route integration', () => {
   }
 
   const publicationProject = { parentFolder: '/projects', name: 'Publication', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+
+  function makeExportSessionHost() {
+    const fixture = makeInMemoryDeps()
+    const sessions: Array<ReturnType<ExportJobs['rendererSession']>> = []
+    const jobs = new ExportJobs({
+      host: () => host,
+      native: async () => null,
+      send: event => {
+        // The renderer responds to this event by querying and announcing its
+        // session. Exercise that handshake against the real lifecycle owner.
+        if (event !== 'export:session_ready') return
+        const session = jobs.rendererSession()
+        jobs.rendererReady('renderer', session.root_id, session.generation)
+        sessions.push(session)
+      },
+    })
+    const host = createTsActorHost({ ...fixture.deps, exportJobs: jobs,
+      onWorkspaceChanging: () => jobs.forgetRenderer(),
+    })
+    return { ...fixture, host, jobs, sessions }
+  }
+
+  it('saves and closes without requesting an export session, then restores readiness on reopen and Save As', async () => {
+    const { host, sessions, vfs } = makeExportSessionHost()
+    host.start()
+    try {
+      const dir = await host.handleInvoke('project_new_workspace', publicationProject)
+      expect(sessions).toHaveLength(1)
+      const marker = await host.handleInvoke('add_marker', { tUs: 1_000_000 })
+      await host.published(() => host.handleInvoke('project_close', {}))
+      expect(host.openedProject()).toBeNull()
+      expect(host.publication().summary).toBeNull()
+      expect(sessions).toHaveLength(1)
+      const saved = JSON.parse(vfs[`${dir}/project.json`]!)
+      expect(saved.compositions[saved.root_id].markers).toEqual([expect.objectContaining({ id: marker })])
+
+      await host.handleInvoke('project_open', { path: dir })
+      expect(sessions).toHaveLength(2)
+      expect(sessions[1]?.root_id).toBe(host.actor.snapshot().root_id)
+      await host.handleInvoke('project_save_as', { path: '/projects/Copy' })
+      expect(sessions).toHaveLength(3)
+      await host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
+      expect(sessions).toHaveLength(4)
+      expect(sessions[3]?.root_id).toBe(host.actor.snapshot().root_id)
+      expect(sessions[3]?.root_id).not.toBe(sessions[0]?.root_id)
+    } finally { host.stop() }
+  })
+
+  it('restores export readiness for the retained project when saving on close fails', async () => {
+    const { deps, host, jobs, sessions } = makeExportSessionHost()
+    try {
+      const dir = await host.handleInvoke('project_new_workspace', publicationProject)
+      deps.fs.writeFile = () => { throw new Error('disk full') }
+      await expect(host.handleInvoke('project_close', {})).rejects.toThrow('disk full')
+      expect(host.openedProject()).toEqual({ dir })
+      expect(sessions).toHaveLength(2)
+      expect(sessions[1]).toEqual(jobs.rendererSession())
+    } finally { host.stop() }
+  })
 
   it('publishes versioned full views and receipts without changing raw results or MCP payloads', async () => {
     const { deps, sent } = makeInMemoryDeps()

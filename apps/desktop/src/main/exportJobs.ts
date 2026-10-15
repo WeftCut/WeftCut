@@ -70,7 +70,11 @@ export class ExportJobs {
   private session(h: TsActorHost) { return `${h.openedProject()!.dir}\n${h.actor.snapshot().root_id}\n${this.deps.generation?.() ?? 0}`; }
   rendererSession() { const h = this.host(); return { root_id: h.actor.snapshot().root_id, generation: this.deps.generation?.() ?? 0 }; }
   forgetRenderer() { this.ready = undefined; }
-  workspaceSettled() { this.deps.send('export:session_ready', {}); }
+  workspaceSettled() {
+    // Close also settles a workspace transition, but its renderer may not have
+    // unmounted yet. Only invite a readiness handshake for an open project.
+    if (this.deps.host()?.openedProject()) this.deps.send('export:session_ready', {});
+  }
   private composition(h: TsActorHost) {
     const c = rootComposition(h.actor.snapshot());
     return { width: c.width, height: c.height, fps_num: c.fps.num, fps_den: c.fps.den, duration_us: c.duration_us };
