@@ -83,9 +83,10 @@ export function TacksTab({ editor }: { editor: boolean }) {
         <button type="button" className="agent-tack-main" aria-expanded={open}
           onClick={() => { toggle(tackRowKey(x.id)); focusThis() }}>
           <AppIcon icon={KIND_ICON[x.kind]} size="title" className={`agent-tack-kind kind-${x.kind}`} aria-label={t(`tacks.kind_${x.kind}`)} />
-          <span className="agent-activity-copy"><span>{x.label}</span><small title={why ?? undefined}>{place(x)}</small></span>
+          {/* A closed tack's status leads its place line, leaving the label the row's width. */}
+          <span className="agent-activity-copy"><span>{x.label}</span><small title={why ?? undefined}>
+            {x.status !== 'open' && <><span className="agent-tack-status">{t(`tacks.status_${x.status}`)}</span> · </>}{place(x)}</small></span>
           {x.outdated && x.status === 'open' && <span className="agent-tack-outdated" title={t('tacks.outdated_hint')}>{t('tacks.outdated')}</span>}
-          {x.status !== 'open' && <span className="agent-tack-status">{t(`tacks.status_${x.status}`)}</span>}
           {open ? <AppIcon icon={ChevronDown} size="body" /> : <AppIcon icon={ChevronRight} size="body" />}
         </button>
         {editor ? <button type="button" aria-label={t('tacks.locate')} title={why ?? t('tacks.locate')} disabled={reason !== null}
@@ -96,12 +97,8 @@ export function TacksTab({ editor }: { editor: boolean }) {
             onClick={() => void setTackStatus([x.id], 'resolved')}><AppIcon icon={Check} size="body" /></button>
           <button type="button" aria-label={t('tacks.dismiss')} title={t('tacks.dismiss_hint')}
             onClick={() => void setTackStatus([x.id], 'dismissed')}><AppIcon icon={X} size="body" /></button>
-        </> : <>
-          {/* Holds the Resolve column, so Locate lines up with open rows'. */}
-          <span className="agent-tack-slot" aria-hidden><AppIcon icon={Check} size="body" /></span>
-          <button type="button" aria-label={t('tacks.reopen')} title={t('tacks.reopen')}
-            onClick={() => void setTackStatus([x.id], 'open')}><AppIcon icon={RotateCcw} size="body" /></button>
-        </>}
+        </> : <button type="button" aria-label={t('tacks.reopen')} title={t('tacks.reopen')}
+          onClick={() => void setTackStatus([x.id], 'open')}><AppIcon icon={RotateCcw} size="body" /></button>}
       </div>
       {open && <div className="agent-activity-details">
         <p className="agent-tack-body">{x.body.trim() || t('tacks.no_body')}</p>

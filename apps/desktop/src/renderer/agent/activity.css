@@ -93,8 +93,6 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack-closed-heading { display: flex; align-items: center; justify-content: space-between; gap: calc(4 * var(--ui-px)); padding-left: calc(20 * var(--ui-px)); }
 .agent-tack-closed-heading > button { flex: none; gap: calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); padding-block: calc(3 * var(--ui-px)) !important; }
 .agent-tack-closed > .agent-tack { margin-left: calc(20 * var(--ui-px)); }
-/* An empty action column, as wide as an icon button. */
-.agent-tack-slot { flex: none; display: inline-flex; padding: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)); visibility: hidden; }
 .agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
 .agent-tack[data-selected="true"] { background: var(--selection-bg); box-shadow: inset 2px 0 0 var(--selection); }
 .agent-tack-row { display: flex; align-items: flex-start; gap: calc(2 * var(--ui-px)); }
@@ -104,7 +102,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack-kind { color: var(--tack); }
 .agent-tack-kind.kind-issue { color: var(--warning); }
 .agent-tack-kind.kind-note { color: var(--muted-foreground); }
-.agent-tack-status { color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; margin-top: calc(2 * var(--ui-px)); }
+.agent-tack-status { white-space: nowrap; }
 .agent-tack.status-resolved .agent-activity-copy > span, .agent-tack.status-dismissed .agent-activity-copy > span { color: var(--muted-foreground); }
 .agent-tack.status-dismissed .agent-activity-copy > span { text-decoration: line-through; }
 .agent-tack.unplaced .agent-activity-copy small { font-style: italic; }
