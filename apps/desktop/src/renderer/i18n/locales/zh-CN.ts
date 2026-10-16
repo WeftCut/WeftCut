@@ -1242,6 +1242,8 @@ const zhCN: Resources = {
       "播放头 ±{{window}} 范围内没有位于隐藏轨道上的片段。可移动播放头，或在上方扩大范围。",
   },
   agent_panel: {
+  "jump": "预览跳到这里",
+  "jump_elsewhere": "不在预览显示的时间线上，请在编辑器里定位",
   "service_unknown": "MCP 状态暂不可用",
   "service_ready": "MCP 服务可用",
   "service_offline": "MCP 服务已关闭",

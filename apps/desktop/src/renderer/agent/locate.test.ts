@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
-import { locateTarget, type LocateIndex } from './locate'
+import { locateTarget, placeOn, type LocateIndex } from './locate'
 
 const S = 1_000_000
 /** The root and Group `grp`; clip `v` on the root, `inner` in `grp`; track `t1` on the root. */
@@ -51,6 +51,23 @@ describe('locateTarget — a tack', () => {
   it('is nowhere without a place, or with its composition gone', () => {
     expect(of(tack({ composition_id: null, t_us: null }))).toBeNull()
     expect(of(tack({ composition_id: 'deleted' }))).toBeNull()
+  })
+})
+
+describe('placeOn — where the agent view jumps', () => {
+  const on = (item: Change | TackView, composition: string) =>
+    placeOn('class' in item ? { kind: 'change', change: item } : { kind: 'tack', tack: item }, index, composition)
+  it('is the item’s time on the composition shown, and nothing elsewhere', () => {
+    expect(on(tack({ follows: { layer_id: 'v', t_us: 2 * S } }), ROOT_ID)).toBe(2 * S)
+    expect(on(tack(), 'grp')).toBeNull()
+    expect(on(change({ id: 'Layer:v', ranges: at(ROOT_ID, 3 * S) }), ROOT_ID)).toBe(3 * S)
+    // Its clip lives in the Group: no place on the root, though a footprint names it.
+    expect(on(change({ id: 'Layer:inner', ranges: at(ROOT_ID, 3 * S) }), ROOT_ID)).toBeNull()
+    expect(on(change({ id: 'Layer:gone', class: 'removed', before_ranges: at(ROOT_ID, S) }), ROOT_ID)).toBe(S)
+  })
+  it('has no time for a track or a composition as a whole', () => {
+    expect(on(change({ id: 'Track:t1' }), ROOT_ID)).toBeNull()
+    expect(on(change({ id: 'Composition:grp', composition_id: null }), 'grp')).toBeNull()
   })
 })
 

@@ -1,17 +1,18 @@
 // Locating a review item — a change or a tack — on the editor timeline
-// (ADR 0115). Editor only, as every object navigation is (ADR 0065): the agent
-// view is for watching.
+// (ADR 0115). Object navigation is the editor's alone (ADR 0065). The agent
+// view, which is for watching, only jumps its preview to the item's time
+// (`jump`): no selection, no composition entered, no other timeline opened.
 //
 // One pure resolver says where an item can be found in the project as it is
-// now (`locateTarget`); whether Locate is offered and what it does both read
-// that one answer, so the button is never enabled for a place the press
-// cannot reach.
+// now (`locateTarget`); whether Locate or Jump is offered and what it does
+// all read that one answer, so a button is never enabled for a place the
+// press cannot reach.
 import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
 import { openComposition, useCompositionAnchorStore } from '../state/compositionAnchorStore'
 import { jumpToTimeUs, revealLayerWithoutSeek, revealTrackWithoutSelection } from '../state/navigation'
-import { focusedRootUs } from '../state/playheadProjection'
-import { useProjectStore, type ProjectStoreState } from '../state/projectStore'
+import { focusedRootUs, seekLocalUs } from '../state/playheadProjection'
+import { compositionOrRoot, useProjectStore, type ProjectStoreState } from '../state/projectStore'
 import { entityIdOf } from './changeModel'
 
 export type LocateItem = { kind: 'change'; change: Change } | { kind: 'tack'; tack: TackView }
@@ -91,5 +92,37 @@ export function locate(item: LocateItem): boolean {
   // The composition holding the place is focused now; its own clock projects
   // into the film's through the anchor that open gave it.
   if (target.t_us !== null) jumpToTimeUs(focusedRootUs(target.t_us))
+  return true
+}
+
+/** Where on composition `compositionId`'s own clock `item` sits: its clip's
+ *  place, or its own, when that is on this composition. Null when it has none
+ *  here — inside a Group, or on a track or composition as a whole. Pure. */
+export function placeOn(item: LocateItem, index: LocateIndex, compositionId: string): number | null {
+  const target = locateTarget(item, index)
+  if (target?.kind === 'layer') return target.t_us !== null && index.compositionIdByLayerId.get(target.layer_id) === compositionId ? target.t_us : null
+  if (target?.kind === 'time') return target.composition_id === compositionId ? target.t_us : null
+  return null
+}
+
+/** The composition the preview shows: the open one. */
+function shown(): string | null {
+  return compositionOrRoot(useProjectStore.getState().summary, useCompositionAnchorStore.getState().focusedId)?.id ?? null
+}
+
+/** Whether the agent view can jump its preview to `item`: it sits on the
+ *  composition shown. */
+export function canJump(item: LocateItem): boolean {
+  const c = shown()
+  return c !== null && placeOn(item, useProjectStore.getState(), c) !== null
+}
+
+/** Move the preview to `item`'s time on the composition shown, and nothing
+ *  else; playback does not start. False when it has no place there. */
+export function jump(item: LocateItem): boolean {
+  const c = shown()
+  const t = c === null ? null : placeOn(item, useProjectStore.getState(), c)
+  if (t === null) return false
+  seekLocalUs(c, t)
   return true
 }

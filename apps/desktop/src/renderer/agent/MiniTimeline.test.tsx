@@ -193,6 +193,17 @@ describe("review focus on the strip", () => {
     expect(onSeek).toHaveBeenLastCalledWith(8_500_000);
   });
 
+  it("a double press on a band item jumps to its start, a press beyond the film's end to the end", () => {
+    const { band, onSeek } = strip();
+    fireEvent.doubleClick(band("mini-tack-band"), { clientX: 125 });
+    expect(onSeek).toHaveBeenLastCalledWith(tacks.find((x) => x.id === "short")!.t_us);
+    fireEvent.doubleClick(band("mini-change-band"), { clientX: 300 });
+    expect(onSeek).toHaveBeenLastCalledWith(changes.find((x) => x.changeId === "Layer:m")!.tStartUs);
+    onSeek.mockClear();
+    fireEvent.doubleClick(band("mini-change-band"), { clientX: 425 }); // a Group footprint names nothing
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
   it("bare band falls through to the seek, and hovering a band names what is under it", () => {
     const { band, onSeek, onFocus } = strip();
     fireEvent.pointerDown(band("mini-tack-band"), { button: 0, pointerId: 1, clientX: 350 }); // 7 s

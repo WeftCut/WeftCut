@@ -7,6 +7,7 @@ import { approveAllChanges, approveChanges, setShowUser, useChangeWords, useRevi
 import { groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changePlace, changeTitle, describeChange } from './changeWords'
 import { canLocate, locate } from './locate'
+import { JumpButton } from './JumpButton'
 import { useAgentActivity } from './activityStore'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
@@ -87,8 +88,9 @@ export function ChangesTab({ editor }: { editor: boolean }) {
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
-        {editor && <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
-          onClick={() => locate({ kind: 'change', change: c })}><AppIcon icon={LocateFixed} size="body" /></button>}
+        {editor ? <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
+          onClick={() => locate({ kind: 'change', change: c })}><AppIcon icon={LocateFixed} size="body" /></button>
+          : <JumpButton item={{ kind: 'change', change: c }} onJump={() => setReviewFocus({ kind: 'change', source: 'review', id: c.id })} />}
         {source === 'agent' && <button type="button" aria-label={t('changes.approve')} title={t('changes.approve_hint')} disabled={busy}
           onClick={() => void approve(() => approveChanges([c.id]))}><AppIcon icon={Check} size="body" /></button>}
       </div>

@@ -13,6 +13,7 @@ import {
   type ProjectSummary,
 } from "../ipc";
 import { useOpenComposition } from "../state/projectStore";
+import { seekLocalUs } from "../state/playheadProjection";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -38,7 +39,6 @@ import { UI_METRICS } from '../settings/uiMetrics';
 /// agent mode the record panel IS the surface for activity.
 interface AgentModeProps {
   summary: ProjectSummary | null;
-  onSeek: (tUs: number) => void;
   /// Switch the renderer layout back to the editor.
   onExit: () => void;
 }
@@ -65,8 +65,6 @@ function clampRecordWidth(width: number, viewportWidth: number, scale: number): 
 export const AgentMode = forwardRef(function AgentMode(
   {
     summary,
-
-    onSeek,
     onExit,
   }: AgentModeProps,
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
@@ -173,7 +171,9 @@ export const AgentMode = forwardRef(function AgentMode(
           // A band press focuses its item and shows its row in the panel
           // beside the strip (tab, group and row opened; the tab scrolls to it).
           onFocus={focusReviewItem}
-          onSeek={onSeek}
+          // The strip is the open composition's own clock, as its ticks and
+          // playhead are: a press there names that composition's moment.
+          onSeek={(t) => seekLocalUs(comp?.id ?? null, t)}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}
         />

@@ -11,6 +11,7 @@ import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 import { groupTacks, tackUnplacedReason } from './tackModel'
 import { convertTackToMarker, deleteTacks, setTackStatus } from './tackActions'
 import { locate } from './locate'
+import { JumpButton } from './JumpButton'
 
 const KIND_ICON: Record<TackKind, typeof StickyNote> = { note: StickyNote, issue: TriangleAlert, question: CircleHelp }
 const NO_TACKS: TackView[] = []
@@ -81,8 +82,9 @@ export function TacksTab({ editor }: { editor: boolean }) {
           <span className="agent-tack-status">{t(`tacks.status_${x.status}`)}</span>
           {open ? <AppIcon icon={ChevronDown} size="body" /> : <AppIcon icon={ChevronRight} size="body" />}
         </button>
-        {editor && <button type="button" aria-label={t('tacks.locate')} title={why ?? t('tacks.locate')} disabled={reason !== null}
-          onClick={() => { focusThis(); locate({ kind: 'tack', tack: x }) }}><AppIcon icon={LocateFixed} size="body" /></button>}
+        {editor ? <button type="button" aria-label={t('tacks.locate')} title={why ?? t('tacks.locate')} disabled={reason !== null}
+          onClick={() => { focusThis(); locate({ kind: 'tack', tack: x }) }}><AppIcon icon={LocateFixed} size="body" /></button>
+          : <JumpButton item={{ kind: 'tack', tack: x }} why={why} onJump={focusThis} />}
         <button type="button" aria-pressed={x.status === 'resolved'} aria-label={t(x.status === 'resolved' ? 'tacks.reopen' : 'tacks.resolve')}
           title={t(x.status === 'resolved' ? 'tacks.reopen' : 'tacks.resolve')} onClick={() => statusToggle('resolved')}><AppIcon icon={Check} size="body" /></button>
         <button type="button" aria-pressed={x.status === 'dismissed'} aria-label={t(x.status === 'dismissed' ? 'tacks.reopen' : 'tacks.dismiss')}

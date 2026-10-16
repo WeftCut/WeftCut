@@ -1154,7 +1154,6 @@ export function App({ onCloseProject }: AppProps) {
         <AgentMode
           ref={previewRef}
           summary={summary}
-          onSeek={seekTo}
           onExit={exitAgentMode}
         />
       </ShortcutBindingsProvider>

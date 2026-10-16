@@ -50,7 +50,11 @@ anchors. Quick successful reads fold together; slow calls, writes and failures
 remain visible individually. Current sessions open by default; ended sessions
 with running tasks remain open. Checkpoint restore is an explicit action gated
 by live checkpoint availability, lock state and pending restore. Object location
-is available only in the editor; agent view remains for watching the preview.
+is available only in the editor; agent view remains for watching the preview. The agent
+view may jump its preview to a review item's time — a tack's or a change's place on
+the composition the preview shows, by a row's Jump or a double press on the mini
+timeline's band. That moves the moment only: nothing is selected, no composition is
+entered or opened, and playback does not start.
 The editor's agent-running indicator also reads structured activity.
 
 The MCP host exposes listening availability and registered connection metadata

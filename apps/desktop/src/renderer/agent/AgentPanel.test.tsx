@@ -3,10 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18n from '../i18n'
 import type { AgentActivity, AgentActivitySnapshot, TackView } from '../../shared/agent-activity'
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true) }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true), seekLocal: vi.fn() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('../state/navigation', async (importActual) => ({
   ...await importActual<typeof import('../state/navigation')>(), jumpToTimeUs: mocks.jump, revealLayerWithoutSeek: mocks.reveal,
+}))
+vi.mock('../state/playheadProjection', async (importActual) => ({
+  ...await importActual<typeof import('../state/playheadProjection')>(), seekLocalUs: mocks.seekLocal,
 }))
 vi.mock('../settings/AgentSection', () => ({ AgentSection: () => <div>Connection configuration</div> }))
 import { AgentPanel } from './AgentPanel'
@@ -29,7 +32,7 @@ function seed(activities: AgentActivity[], patch: Partial<AgentActivitySnapshot>
 beforeEach(async () => {
   await i18n.changeLanguage('en-US')
   mocks.invoke.mockReset().mockResolvedValue({ available: true, url: 'http://127.0.0.1:1234/mcp', connections: [] })
-  mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true)
+  mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true); mocks.seekLocal.mockReset()
   useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true, tab: 'activity' })
  
 useReviewFocus.setState({ focus: null, hover: null })
@@ -278,6 +281,20 @@ describe('AgentPanel Tacks tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Locate on the timeline' }))
     expect(mocks.reveal).toHaveBeenCalledWith('clip')
     expect(mocks.jump).toHaveBeenCalledWith(2_000_000)
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'tack', id: 't1' })
+  })
+
+  it('jumps the preview in the agent view: its time only, no clip revealed', () => {
+    useProjectStore.getState().apply(summaryFixture({ root: { id: 'root' } }))
+    seed([], { sessions: [work], tacks: [tack(), tack({ id: 't2', label: 'Elsewhere', composition_id: 'grp' })] })
+    render(<AgentPanel />)
+    openTacks()
+    const [here, elsewhere] = screen.getAllByRole('button', { name: 'Jump the preview here' })
+    expect(elsewhere!.hasAttribute('disabled')).toBe(true)
+    expect(elsewhere!.getAttribute('title')).toBe('Not on the timeline the preview shows — locate it in the editor')
+    fireEvent.click(here!)
+    expect(mocks.seekLocal).toHaveBeenCalledWith('root', 2_000_000)
+    expect(mocks.reveal).not.toHaveBeenCalled()
     expect(useReviewFocus.getState().focus).toEqual({ kind: 'tack', id: 't1' })
   })
 

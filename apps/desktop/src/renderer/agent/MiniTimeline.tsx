@@ -212,6 +212,7 @@ export function MiniTimeline({
   );
   const changeItems = useMemo(() => changeBandItems(changes.filter((c) => !c.historical)), [changes]);
   const historyItems = useMemo(() => changeBandItems(changes.filter((c) => c.historical)), [changes]);
+  const changeBandAll = useMemo(() => [...changeItems, ...historyItems], [changeItems, historyItems]);
   // The focused and hovered tack, drawn over the union: the selection solid,
   // the hover ringed (a hover on the selection adds nothing).
   const tackSpan = (item: ReviewTarget | null) =>
@@ -228,7 +229,7 @@ export function MiniTimeline({
   // A band press names the item under it — the tack or change whose range
   // holds that moment — and focuses it; on bare band it falls through to the
   // strip's seek. Measured on the hit row itself, which spans the strip.
-  const bandItemAt = (items: readonly BandItem[], e: React.PointerEvent<HTMLElement>): string | null => {
+  const bandItemAt = (items: readonly BandItem[], e: React.MouseEvent<HTMLElement>): string | null => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || durationUs <= 0) return null;
     const tUs = ((e.clientX - rect.left) / rect.width) * extentUs;
@@ -236,15 +237,18 @@ export function MiniTimeline({
   };
   // The change band holds two rows; the one pressed is asked first, so a
   // removal's footprint under a current change is reachable from its own row.
-  const changeAt = (e: React.PointerEvent<HTMLElement>): string | null => {
+  const changeAt = (e: React.MouseEvent<HTMLElement>): string | null => {
     const lower = e.clientY - e.currentTarget.getBoundingClientRect().top >= uiPixels(HISTORY_ROW_TOP);
     const [first, second] = lower ? [historyItems, changeItems] : [changeItems, historyItems];
     return bandItemAt(first, e) ?? bandItemAt(second, e);
   };
+  // A double press jumps to the item's start on this strip — the first press
+  // already focused it — and only moves the moment, as the strip's seek does.
   const bandHandlers = (
     kind: ReviewTarget["kind"],
-    itemAt: (e: React.PointerEvent<HTMLElement>) => string | null,
+    itemAt: (e: React.MouseEvent<HTMLElement>) => string | null,
     label: (id: string) => string,
+    items: readonly BandItem[],
   ) => ({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || onFocus === undefined) return;
@@ -259,6 +263,13 @@ export function MiniTimeline({
     onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
       const id = itemAt(e);
       e.currentTarget.title = id === null ? "" : label(id);
+    },
+    onDoubleClick: (e: React.MouseEvent<HTMLDivElement>) => {
+      const id = itemAt(e);
+      const item = id === null ? undefined : items.find((x) => x.id === id);
+      if (item === undefined) return;
+      e.stopPropagation();
+      onSeek(Math.min(durationUs, item.startUs));
     },
   });
 
@@ -383,7 +394,7 @@ export function MiniTimeline({
               const c = changes.find((x) => x.changeId === id);
               if (c === undefined) return "";
               return changeLabel ? changeLabel(c) : t(`changes.class_${c.cls}`);
-            })}
+            }, changeBandAll)}
           />
         )}
         {durationUs > 0 && onFocus !== undefined && tackItems.length > 0 && (
@@ -393,7 +404,7 @@ export function MiniTimeline({
             {...bandHandlers("tack", (e) => bandItemAt(tackItems, e), (id) => {
               const tack = tacks.find((x) => x.id === id);
               return tack === undefined ? "" : tack.label.trim() || t(`tacks.kind_${tack.kind}`);
-            })}
+            }, tackItems)}
           />
         )}
         <div className="mini-playhead" style={{ left: playheadLeft }} />
