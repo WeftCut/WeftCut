@@ -5,7 +5,7 @@
 // current project, and the IPC view the renderer reads. Main computes them
 // (main/state/reviewDiff.ts, History's baseline); the renderer only displays.
 
-export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transition' | 'Link'
+export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transition' | 'Link' | 'AudioRole' | 'Media'
 /** `Layer:<id>`, `Marker:<id>` … — stable across snapshots, unique project-wide. */
 export type EntityKey = `${EntityKind}:${string}`
 
@@ -30,6 +30,7 @@ export interface PlacedRange extends TimeRange { track_id: string | null }
  *  editor's own vocabulary — the inspector's param names, the effect catalog's
  *  names — never an MCP tool's. Durations are timeline microseconds. */
 export type ChangeDetail =
+  | { type: 'gain'; from_db: number; to_db: number }
   /** Added or removed: the entity's length (a removed one's, as it was). */
   | { type: 'length'; duration_us: number }
   /** Direct values in each side's composition or source clock. */
@@ -62,7 +63,7 @@ export interface Change {
   id: EntityKey
   class: ChangeClass
   /** The composition the change is listed under (current side, else baseline);
-   *  null for a Composition entity. */
+   *  null for a Composition, AudioRole or Media entity. */
   composition_id: string | null
   /** Measured changes to this entity, without an inferred cause. Empty for
    *  added/removed except a length; every compared difference has one. */

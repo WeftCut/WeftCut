@@ -23,15 +23,15 @@
 // built once, on first read. Immer keeps an unedited object's identity across
 // commits, so a commit re-derives only what it touched, however many tacks
 // read it, and a replay costs a binary search per track.
-import type { Composition, Layer, LayerParams, Project, Rational, Track, Transition } from '../state/model'
-import { shiftKeyframes } from '../state/mutations/animated'
-import { hasSourceWindow, shiftLayerKeyframes } from '../state/mutations/helpers'
+import type { Composition, Layer, Project, Track, Transition } from '../state/model'
+import { hasSourceWindow } from '../state/mutations/helpers'
 import { sourceInstantAt } from '../state/mutations/markers'
 import { jsonEqual, transitionEqual } from '../state/reviewEntities'
-import { sourceInstantTimelineUs, type SourceInstant } from '../state/summary'
-import { sourceIn, sourceOut } from '../../renderer/layerTiming'
-import { addTime, compareTime, exactTime, ZERO_TIME } from '../../renderer/timeMapping'
+import type { SourceInstant } from '../state/summary'
+import { localAtContent, sourceIn, sourceOut } from '../../renderer/layerTiming'
+import { addTime, approximateTime, compareTime, exactTime, ZERO_TIME } from '../../renderer/timeMapping'
 import type { TackFollows } from '../../shared/agent-activity'
+import { playbackValues } from './playbackValues'
 
 /** One layer as it plays inside a range: the part of it the range covers, as
  *  offsets from the range's start, and the content time that part starts on.
@@ -44,6 +44,8 @@ interface Played {
   to: number
   /** How far into the layer the part starts, on its own timeline clock. */
   offset: number
+  /** Recorded mix gain of this audio layer's role; preferences stay excluded. */
+  role_gain_db: number
   at: SourceInstant
   /** What plays over that part in a Group's composition; null for other kinds. */
   nested: Content | null
@@ -85,17 +87,20 @@ function instantAt(layer: Layer, tUs: number): SourceInstant {
   return at
 }
 
-/** Where `layer` shows the recorded content time `at` now, on a `fps` grid —
+/** Where `layer` shows the recorded content time `at` now —
  *  null when it no longer shows it — kept per layer object and recorded
  *  instant. */
-const places = new WeakMap<Layer, WeakMap<SourceInstant, { fps: Rational; t_us: number | null }>>()
-function placeOf(layer: Layer, at: SourceInstant, fps: Rational): number | null {
+const places = new WeakMap<Layer, WeakMap<SourceInstant, number | null>>()
+function placeOf(layer: Layer, at: SourceInstant): number | null {
   let byAt = places.get(layer)
   if (!byAt) places.set(layer, byAt = new WeakMap())
   const kept = byAt.get(at)
-  if (kept && kept.fps.num === fps.num && kept.fps.den === fps.den) return kept.t_us
-  const t_us = shows(layer, at) ? sourceInstantTimelineUs(layer, at, fps) : null
-  byAt.set(at, { fps, t_us })
+  if (kept !== undefined) return kept
+  // A tack follows displacement, not a marker's frame-snapped source anchor.
+  // Snapping the covered clip's start shifts a just-created range over audio
+  // whose sample-grid start falls between video frames.
+  const t_us = shows(layer, at) ? Math.round(layer.t_start_us + approximateTime(localAtContent(layer.params, addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)))) : null
+  byAt.set(at, t_us)
   return t_us
 }
 
@@ -132,7 +137,7 @@ function overlapping(track: Track, tUs: number, endTUs: number | null): Layer[] 
 /** A composition's transitions by the layers they join, as indexes into its
  *  list — so the ones a range plays keep the list's order. */
 const transitionIndexes = new WeakMap<readonly Transition[], Map<string, number[]>>()
-function transitionsOf(c: Composition, layerIds: ReadonlySet<string>): Transition[] {
+function transitionsOf(c: Composition, layerIds: ReadonlySet<string>, covered: ReadonlyMap<string, Layer>, t: number, end: number | null): Transition[] {
   if (c.transitions.length === 0 || layerIds.size === 0) return []
   let index = transitionIndexes.get(c.transitions)
   if (!index) {
@@ -144,7 +149,11 @@ function transitionsOf(c: Composition, layerIds: ReadonlySet<string>): Transitio
   }
   const at = new Set<number>()
   for (const id of layerIds) for (const i of index.get(id) ?? []) at.add(i)
-  return [...at].sort((a, b) => a - b).map((i) => c.transitions[i]!)
+  return [...at].sort((a, b) => a - b).map((i) => c.transitions[i]!).filter(tr => {
+    const incoming = covered.get(tr.to_layer), outgoing = covered.get(tr.from_layer)
+    const start = incoming?.t_start_us ?? (outgoing!.t_end_us - tr.duration_us)
+    return start + tr.duration_us > t && (end === null ? start <= t : start < end)
+  })
 }
 
 function contentIn(p: Project, c: Composition, tUs: number, endTUs: number | null, depth: number): Content {
@@ -160,10 +169,11 @@ function contentIn(p: Project, c: Composition, tUs: number, endTUs: number | nul
       nested = !inner || depth >= MAX_NESTING ? { played: [], transitions: [] }
         : contentIn(p, inner, at.src_us, endTUs === null ? null : instantAt(layer, end).src_us, depth + 1)
     }
-    played.push({ track_id: track.id, layer, from: start - tUs, to: end - tUs, offset: start - layer.t_start_us, at, nested })
+    const role_gain_db = layer.params.kind === 'Audio' ? p.audio_roles[layer.params.role]?.gain_db ?? 0 : 0
+    played.push({ track_id: track.id, layer, from: start - tUs, to: end - tUs, offset: start - layer.t_start_us, role_gain_db, at, nested })
     ids.add(layer.id)
   }
-  return { played, transitions: transitionsOf(c, ids) }
+  return { played, transitions: transitionsOf(c, ids, new Map(played.map(x => [x.layer.id, x.layer])), tUs, endTUs) }
 }
 
 /** Record what plays in `[tUs, endTUs)` of composition `compositionId` — or
@@ -174,38 +184,27 @@ export function recordPlayback(p: Project, compositionId: string, tUs: number, e
   return { composition_id: compositionId, t_us: tUs, end_t_us: endTUs, content: contentIn(p, c, tUs, endTUs, 0) }
 }
 
-/** The layer's values that affect what plays, keyframes timed from the part's
- *  start, `offset` into the layer. Built only when two snapshots hold
- *  different objects for one layer. */
-function playedValues(l: Layer, offset: number): unknown {
-  const params = structuredClone(l.params) as LayerParams & Record<string, unknown>
-  shiftLayerKeyframes(params, -offset)
-  for (const k of ['src_in_us', 'src_out_us', 'content_window', 'source_phase']) delete params[k]
-  const effects = structuredClone(l.effects)
-  for (const effect of effects) for (const track of Object.values(effect.params)) shiftKeyframes(track, -offset)
-  return { kind: l.params.kind, enabled: l.enabled, metadata: l.metadata, params, effects }
-}
-
 /** Whether two objects of one layer play the same values, `aOffset` and
  *  `bOffset` into each — kept per pair of objects: a recorded layer edited in
  *  a way that plays nothing (a rename) is compared once, not on every commit. */
 const verdicts = new WeakMap<Layer, WeakMap<Layer, Map<string, boolean>>>()
-function sameValues(a: Layer, aOffset: number, b: Layer, bOffset: number): boolean {
-  if (a === b) return true
+function sameValues(a: Layer, aOffset: number, b: Layer, bOffset: number, duration: number): boolean {
+  if (a === b && aOffset === bOffset) return true
   let byB = verdicts.get(a)
   if (!byB) verdicts.set(a, byB = new WeakMap())
   let byOffsets = byB.get(b)
   if (!byOffsets) byB.set(b, byOffsets = new Map())
-  const key = `${aOffset}:${bOffset}`
+  const key = `${aOffset}:${bOffset}:${duration}`
   let same = byOffsets.get(key)
-  if (same === undefined) byOffsets.set(key, same = jsonEqual(playedValues(a, aOffset), playedValues(b, bOffset)))
+  if (same === undefined) byOffsets.set(key, same = jsonEqual(playbackValues(a, aOffset, duration), playbackValues(b, bOffset, duration)))
   return same
 }
 
 function samePlayed(a: Played, b: Played): boolean {
   return a.track_id === b.track_id && a.layer.id === b.layer.id && a.from === b.from && a.to === b.to
+    && a.role_gain_db === b.role_gain_db
     && (a.at === b.at || (a.at.src_us === b.at.src_us && jsonEqual(a.at.src_fraction, b.at.src_fraction)))
-    && sameValues(a.layer, a.offset, b.layer, b.offset)
+    && sameValues(a.layer, a.offset, b.layer, b.offset, a.to - a.from)
     && (a.nested === null ? b.nested === null : b.nested !== null && sameContent(a.nested, b.nested))
 }
 
@@ -249,12 +248,14 @@ function layerIndex(p: Project): Map<string, { layer: Layer; composition: Compos
  *  composition. */
 interface LastReplay {
   composition_id: string; t: number; end: number | null
+  roles: Project['audio_roles']
   tracks: readonly Track[]; layers: Layer[][]; transitions: readonly Transition[]; same: boolean
 }
 const lastReplays = new WeakMap<Playback, LastReplay>()
 
-function sameAsLast(last: LastReplay | undefined, c: Composition, t: number, end: number | null): boolean {
+function sameAsLast(last: LastReplay | undefined, p: Project, c: Composition, t: number, end: number | null): boolean {
   if (!last || last.composition_id !== c.id || last.t !== t || last.end !== end
+    || last.roles !== p.audio_roles
     || last.transitions !== c.transitions || last.tracks.length !== c.tracks.length) return false
   if (last.tracks === c.tracks) return true
   for (let i = 0; i < c.tracks.length; i++) {
@@ -274,7 +275,7 @@ export function replay(p: Project, pb: Playback): Replay | null {
   const layers = pb.content.played.length ? layerIndex(p) : null
   for (const x of pb.content.played) {
     const found = layers!.get(x.layer.id)
-    const now = found ? placeOf(found.layer, x.at, found.composition.fps) : null
+    const now = found ? placeOf(found.layer, x.at) : null
     if (now === null || !found) continue
     composition = found.composition
     t = Math.max(0, now - x.from)
@@ -288,13 +289,13 @@ export function replay(p: Project, pb: Playback): Replay | null {
   const end = pb.end_t_us === null ? null : t + pb.end_t_us - pb.t_us
   const last = lastReplays.get(pb)
   let same: boolean
-  if (sameAsLast(last, composition, t, end)) same = last!.same
+  if (sameAsLast(last, p, composition, t, end)) same = last!.same
   else {
     const content = contentIn(p, composition, t, end, 0)
     same = sameContent(pb.content, content)
     const layers = composition.tracks.map((track) => content.played.filter((x) => x.track_id === track.id).map((x) => x.layer))
     if (content.played.some((x) => x.nested !== null)) lastReplays.delete(pb)
-    else lastReplays.set(pb, { composition_id: composition.id, t, end, tracks: composition.tracks, layers, transitions: composition.transitions, same })
+    else lastReplays.set(pb, { composition_id: composition.id, t, end, roles: p.audio_roles, tracks: composition.tracks, layers, transitions: composition.transitions, same })
   }
   return { composition_id: composition.id, t_us: t, end_t_us: end, same, follows }
 }

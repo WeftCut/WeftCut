@@ -362,14 +362,13 @@ describe('diffProjects — track order', () => {
 })
 
 describe('diffProjects — exclusions', () => {
-  it('track mute/solo/lock/enable, composition envelope, settings and media pool produce nothing', () => {
+  it('track mute/solo/lock/enable, composition envelope and settings produce nothing', () => {
     const { a, tA } = setup()
     color(a, tA, 0, S)
     const before = a.snapshot()
     ok(a.dispatch('update_track_flags', { track: tA, patch: { muted: true, solo: true, locked: true, enabled: false } }))
     ok(a.dispatch('set_composition', { width: 1280, height: 720, background: { r: 9, g: 9, b: 9, a: 255 } }))
     ok(a.dispatch('update_project_settings', { patch: { prefer_proxies: true } }))
-    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
     const after = a.snapshot()
     expect(after).not.toBe(before)
     expect(diffProjects(before, after)).toEqual([])

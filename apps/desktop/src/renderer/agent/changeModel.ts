@@ -72,7 +72,6 @@ export function sessionReasonIndex(snapshot: Pick<AgentActivitySnapshot, 'activi
     // the order they started.
     const at = Date.parse(a.started_at) || 0
     for (const ref of a.affected) {
-      if (ref.kind === 'Media') continue // media is no review entity
       const key = entityKey(ref.kind, ref.id)
       const seen = out.get(key)
       if (!seen || at >= seen.at) out.set(key, { at, reason })

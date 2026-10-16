@@ -170,8 +170,8 @@ export function sourceInstantHibernating(at: SourceInstant, layer: Layer | undef
 
 /** The timeline time a source instant of `layer` reads at, on the frame grid
  *  of the composition holding it — the ONE source→timeline derivation:
- *  `reconcileMarkers` writes an anchored marker's `t_us` with it and the tack
- *  projection places a tack's followed instant with it. Callers have established that
+ *  `reconcileMarkers` writes an anchored marker's `t_us` with it. Tacks
+ *  follow displacement without this marker-specific frame snap. Callers have established that
  *  the layer has a source window (`hasSourceWindow`). */
 export function sourceInstantTimelineUs(layer: Layer, at: SourceInstant, fps: Rational): number {
   const local = localAtContent(layer.params, addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME))

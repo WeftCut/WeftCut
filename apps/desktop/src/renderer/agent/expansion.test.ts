@@ -56,8 +56,8 @@ describe('settleExpanded — tacks', () => {
 })
 
 describe('settleExpanded — activity sessions', () => {
-  const work = (ended: boolean): AgentWorkSession => ({ id: 'w', connection_id: 'c', client: 'Client', reason: 'Pass', started_at: '', ended_at: ended ? 'later' : null, end_reason: ended ? 'ended' : null, checkpoint_id: 'cp' })
-  const call = (id: string, state: AgentActivity['state'] = 'success') => ({ id, session_id: 'w', state }) as AgentActivity
+  const work = (ended: boolean): AgentWorkSession => ({ id: 'w', connection_id: 'c', client: 'Client', reason: 'Pass', started_at: '', ended_at: ended ? 'later' : null, end_reason: ended ? 'agent' : null, checkpoint_id: 'cp' })
+  const call = (id: string, state: AgentActivity['state'] = 'done') => ({ id, session_id: 'w', state }) as AgentActivity
 
   it('keeps a session open on screen when it ends', () => {
     const next = settleExpanded(snap([], [work(false)], [call('a1')]), snap([], [work(true)], [call('a1')]), {})

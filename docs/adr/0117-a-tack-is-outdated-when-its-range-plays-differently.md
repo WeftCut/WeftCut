@@ -41,6 +41,18 @@ neither are the preference-shaped track toggles review already excludes.
 `main/agent/rangePlayback.ts` owns this comparison; the tack store only
 records and replays it.
 
+The covered playback includes the gain of each audio layer's role. A role
+change must invalidate replay's memo even when every composition object is
+shared. Animation dependencies are the interpolation segments intersecting
+the covered interval, including their boundary keys and the handles they
+read. Transitions contribute only where their half-open overlap intersects
+the interval. Fade ramps depend on the layer-local time and total duration,
+so a trim outside the interval can still change its fade inside it.
+`playbackValues.ts` owns these layer-local dependencies. Non-hold animation
+extrapolation conservatively retains its curve when the interval reaches
+outside the keys; the comparison does not claim symbolic equivalence of
+different authored curves or sample them on a frame/half-frame grid.
+
 **Two states.** A tack is *current* while its range, where it now sits, plays
 what it played at creation, and *outdated* (内容已修改) otherwise. Nothing else:
 there is no stale, no hibernating, no shrinking. A deleted clip, a trim into
@@ -61,6 +73,10 @@ layer still shows its content the range stays at its created position, and is
 outdated, since what it covered is gone. Only a tack whose composition no
 longer exists has no place: it is listed, outdated, and cannot be located or
 converted.
+
+Placement uses the content's displacement in microseconds, without a marker's
+video-frame snap. Audio can start on its sample grid between video frames;
+creating a tack there must preserve its requested position and keep it current.
 
 Undo that restores the content restores the tack to current: the state is
 derived on read, never latched.

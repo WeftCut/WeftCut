@@ -1,5 +1,5 @@
 // Internal entity comparison shared by history and diff.
-import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
+import type { AudioRole, Composition, Layer, Link, Marker, MediaItem, Project, Track, TrackRole, Transition, Uuid } from './model'
 import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
 
 // ── Entities ──────────────────────────────────────────────────────────────────
@@ -11,6 +11,8 @@ import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
  *  composition. Layer/Marker/Transition/Link hold the model object itself
  *  (shared with the snapshot, never copied). */
 export type EntityValue =
+  | { kind: 'AudioRole'; id: AudioRole; gain_db: number }
+  | { kind: 'Media'; id: Uuid; media: MediaItem }
   | { kind: 'Composition'; id: Uuid; label: string | null; track_order: readonly Uuid[] }
   | { kind: 'Track'; id: Uuid; composition_id: Uuid; label: string | null; role: TrackRole | null }
   | { kind: 'Layer'; id: Uuid; composition_id: Uuid; track_id: Uuid; layer: Layer }
@@ -42,11 +44,23 @@ function compositionEntities(c: Composition): readonly EntityValue[] {
 }
 
 const projectMemo = new WeakMap<Project, EntityIndex>()
+const AUDIO_ROLES = ['dialogue', 'music', 'sfx', 'voiceover'] as const satisfies readonly AudioRole[]
+/** Recorded project fields outside compositions. Media compares membership
+ *  only: imports and derivative/path/hash updates patch every snapshot, while
+ *  force-removal is recorded with its deleted clips. Missing role rows mean
+ *  the same default 0 dB bus, not an added or removed bus. */
+function projectEntities(p: Project): EntityValue[] {
+  return [
+    ...AUDIO_ROLES.map(id => ({ kind: 'AudioRole' as const, id, gain_db: p.audio_roles[id]?.gain_db ?? 0 })),
+    ...Object.values(p.media_pool).map(media => ({ kind: 'Media' as const, id: media.id, media })),
+  ]
+}
 /** Every compared entity of `p`, by key. Memoized on project identity. */
 export function extractEntities(p: Project): EntityIndex {
   const hit = projectMemo.get(p)
   if (hit) return hit
   const out = new Map<EntityKey, EntityValue>()
+  for (const v of projectEntities(p)) out.set(keyOf(v), v)
   for (const c of Object.values(p.compositions)) {
     const values = compositionEntities(c), keys = compositionKeys(c)
     for (let i = 0; i < values.length; i++) out.set(keys[i]!, values[i]!)
@@ -97,6 +111,8 @@ export function entitiesEqual(a: EntityValue | undefined, b: EntityValue | undef
   if (a === b) return true
   if (!a || !b || a.kind !== b.kind || a.id !== b.id) return false
   switch (a.kind) {
+    case 'AudioRole': return a.gain_db === (b as typeof a).gain_db
+    case 'Media': return true // pool membership, not derived resource metadata
     case 'Composition': { const c = b as typeof a; return a.label === c.label && trackOrderEqual(a.track_order, c.track_order) }
     case 'Track': { const t = b as typeof a; return a.composition_id === t.composition_id && a.label === t.label && a.role === t.role }
     case 'Layer': { const l = b as typeof a; return a.composition_id === l.composition_id && a.track_id === l.track_id && jsonEqual(a.layer, l.layer) }
@@ -118,7 +134,12 @@ export function entitiesEqual(a: EntityValue | undefined, b: EntityValue | undef
  */
 export function touchedEntityKeys(before: Project, after: Project): Set<EntityKey> {
   const out = new Set<EntityKey>()
-  if (before === after || before.compositions === after.compositions) return out
+  if (before === after) return out
+  if (before.audio_roles !== after.audio_roles) for (const id of AUDIO_ROLES)
+    if ((before.audio_roles[id]?.gain_db ?? 0) !== (after.audio_roles[id]?.gain_db ?? 0)) out.add(entityKey('AudioRole', id))
+  if (before.media_pool !== after.media_pool) for (const id of new Set([...Object.keys(before.media_pool), ...Object.keys(after.media_pool)]))
+    if ((before.media_pool[id] === undefined) !== (after.media_pool[id] === undefined)) out.add(entityKey('Media', id))
+  if (before.compositions === after.compositions) return out
   for (const id of new Set([...Object.keys(before.compositions), ...Object.keys(after.compositions)])) {
     const a = before.compositions[id], b = after.compositions[id]
     if (a === b) continue
@@ -191,9 +212,12 @@ export function compareEntities(baseline: Project, current: Project): { before: 
   const before = extractEntities(baseline)
   const after = extractEntities(current)
   if (before === after) return { before, after, keys: new Set() }
-  // Only the keys of compositions that may differ: one immer shared between
-  // the two sides holds the very same entity values on both and cannot.
+  // Only keys whose owner may differ: an immer object shared between the
+  // two sides holds the very same entity values on both and cannot.
   const keys = new Set<EntityKey>()
+  if (baseline.audio_roles !== current.audio_roles) for (const id of AUDIO_ROLES) keys.add(entityKey('AudioRole', id))
+  if (baseline.media_pool !== current.media_pool) for (const p of [baseline, current])
+    for (const id of Object.keys(p.media_pool)) keys.add(entityKey('Media', id))
   for (const p of [baseline, current])
     for (const c of Object.values(p.compositions)) if (current.compositions[c.id] !== baseline.compositions[c.id]) for (const k of compositionKeys(c)) keys.add(k)
   return { before, after, keys }

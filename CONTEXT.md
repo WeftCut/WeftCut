@@ -1070,6 +1070,9 @@ several moved by the same amount; the list is settled as a whole. Timing is the 
 before/after values; trim descriptions and edge marks additionally show that
 layer's own measured window cuts/extensions. Review infers no operation
 sequence or causal relationship between entities.
+Project-wide entities include an audio role's gain and media-pool membership
+changed by a recorded operation. They have no timeline footprint; unrecorded
+imports, derived media updates and preferences remain outside the diff.
 Current footprints and historical baseline footprints are separate. Removed
 entities have only a labelled historical footprint, never a guessed current
 position or ripple seam. See ADR 0116. UI word: Change / 变更.

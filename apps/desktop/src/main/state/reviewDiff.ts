@@ -9,7 +9,8 @@
 //
 // Preference-shaped fields — the ones History patches into every snapshot
 // (track enabled/muted/solo/locked/height, the composition envelope, settings,
-// media pool) — are never compared: a value patched everywhere cannot differ.
+// media derivatives) — are never compared: a value patched everywhere cannot differ.
+// Role gain and media membership can change in recorded commits too.
 import { layerRate, sourceIn, sourceOut } from '../../renderer/layerTiming'
 import { approximateTime, compareTime, divideTime, subtractTime } from '../../renderer/timeMapping'
 import type { Composition, Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } from './model'
@@ -136,6 +137,7 @@ function compareMarkers(a: MarkerEntity, b: MarkerEntity): { aspects: Set<Change
 function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
   const out = new Set<ChangeAspect>()
   switch (a.kind) {
+    case 'AudioRole': if (a.gain_db !== (b as typeof a).gain_db) out.add('params'); break
     case 'Composition': {
       const c = b as typeof a
       if (!trackOrderEqual(a.track_order, c.track_order)) out.add('placement')
@@ -170,9 +172,9 @@ function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
 }
 
 /** Where an entity lives: its composition and, for a layer, its track. Null
- *  for a composition. */
+ *  for project-level entities. */
 function locationOf(v: EntityValue): { composition_id: Uuid; track_id: Uuid | null } | null {
-  if (v.kind === 'Composition') return null
+  if (v.kind === 'Composition' || v.kind === 'AudioRole' || v.kind === 'Media') return null
   return { composition_id: v.composition_id, track_id: v.kind === 'Layer' ? v.track_id : null }
 }
 
@@ -320,7 +322,7 @@ function otherDetails(aspects: readonly ChangeAspect[]): ChangeDetail[] {
  *  first: a clip's label, else its media's or its text's, a Group clip's
  *  composition label; a marker's, track's or composition's label. Undefined
  *  when it has none — the surface then names its kind. `index` is the same
- *  snapshot's entities; `media` the pool (never compared, the same on both). */
+ *  snapshot's entities and media pool, including a force-removed source. */
 function nameOf(v: EntityValue, index: EntityIndex, media: Record<Uuid, MediaItem>): string | undefined {
   const name = (() => {
     switch (v.kind) {
@@ -333,6 +335,7 @@ function nameOf(v: EntityValue, index: EntityIndex, media: Record<Uuid, MediaIte
         if (p.kind === 'CompositionRef') { const c = index.get(entityKey('Composition', p.composition)); return c?.kind === 'Composition' ? c.label ?? undefined : undefined }
         return undefined
       }
+      case 'Media': return mediaLabel(v.media)
       case 'Marker': return v.marker.label
       case 'Track': case 'Composition': return v.label ?? undefined
       default: return undefined
@@ -418,7 +421,7 @@ export function diffProjects(baseline: Project, current: Project): Change[] {
     }
     if (fb) change.before_ranges = [fb]
     // Gone from the current project, it can be named only from the baseline.
-    if (cls === 'removed' && b) { const name = nameOf(b, before, current.media_pool); if (name) change.before_name = name }
+    if (cls === 'removed' && b) { const name = nameOf(b, before, baseline.media_pool); if (name) change.before_name = name }
     changes.push(change)
     return change
   }
@@ -445,7 +448,8 @@ export function diffProjects(baseline: Project, current: Project): Change[] {
     if (moved) aspects.add('placement')
     const ordered = orderedAspects(aspects)
     const details = b.kind === 'Layer' ? layerDetails(b, c as LayerEntity, ordered, params!)
-      : b.kind === 'Marker' ? markerDetails(b, c as MarkerEntity, ordered) : otherDetails(ordered)
+      : b.kind === 'Marker' ? markerDetails(b, c as MarkerEntity, ordered)
+      : b.kind === 'AudioRole' ? [{ type: 'gain' as const, from_db: b.gain_db, to_db: (c as typeof b).gain_db }] : otherDetails(ordered)
     keepModification(b, c, emit('modified', b, c, details))
   }
 

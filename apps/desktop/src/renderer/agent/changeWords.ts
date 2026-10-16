@@ -37,6 +37,7 @@ export interface ChangeWordsContext {
   compositionName: (compositionId: string) => string | null
   /** A clip's display name, or null when it is gone. */
   layerName: (layerId: string) => string | null
+  mediaName: (mediaId: string) => string | null
   /** A marker's label in `compositionId`, or null when it is gone or has none. */
   markerLabel: (compositionId: string, markerId: string) => string | null
   /** A composition's frame rate, or null when it is gone. */
@@ -57,6 +58,7 @@ export function changeWordsContext(t: Translate, project: WordsProject, frame: C
   return {
     t,
     frame,
+    mediaName: id => summary?.media.find(m => m.id === id)?.label || null,
     layerName: id => {
       const l = layerById?.get(id)
       return l ? layerDisplayName(l, t, ordinals) : null
@@ -104,6 +106,7 @@ export function framedWords(ctx: Pick<ChangeWordsContext, 't' | 'frame'>, key: F
  *  reads it, and the `Record` makes a new fact type fail typecheck here until
  *  it has words. */
 export const DETAIL_KEYS: Record<ChangeDetail['type'], readonly string[]> = {
+  gain: ['changes.detail.gain'],
   length: ['changes.detail.length_added', 'changes.detail.length_removed'],
   time: ['changes.detail.time_start', 'changes.detail.time_end', 'changes.detail.time_source_start', 'changes.detail.time_source_end'],
   trim: ['changes.detail.trim_start_cut', 'changes.detail.trim_start_extend', 'changes.detail.trim_end_cut', 'changes.detail.trim_end_extend'],
@@ -232,6 +235,7 @@ function formatExactSeconds(us: number): string {
 function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composition_id'>, ctx: ChangeWordsContext): string {
   const { t } = ctx
   switch (d.type) {
+    case 'gain': return t('changes.detail.gain', { from: d.from_db, to: d.to_db })
     case 'length':
       return t(change.class === 'removed' ? 'changes.detail.length_removed' : 'changes.detail.length_added', { s: formatSeconds(d.duration_us) })
     case 'time':
@@ -316,6 +320,8 @@ export function changeTitle(c: Change, ctx: ChangeWordsContext): string {
   const fallback = t(`changes.kind_${kind}`, {})
   if (c.class === 'removed') return kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
   switch (kind) {
+    case 'AudioRole': return t('changes.role_title', { name: t(`audio_roles.${id}`, {}) })
+    case 'Media': return ctx.mediaName(id) ?? fallback
     case 'Layer': return ctx.layerName(id) ?? fallback
     case 'Marker': return (c.composition_id ? ctx.markerLabel(c.composition_id, id) : null) || fallback
     case 'Track': { const name = ctx.trackName(id, c.composition_id); return name ? t('changes.track_title', { name }) : fallback }

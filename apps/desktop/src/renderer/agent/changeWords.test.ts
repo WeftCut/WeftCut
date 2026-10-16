@@ -28,6 +28,15 @@ const say = (t: Translate, details: ChangeDetail[], patch?: Partial<Change>) =>
   describeChange(change(details, patch), changeWordsContext(t, { summary, groupOrdinals: new Map([['grp', 1]]) }))
 
 describe('describeChange', () => {
+  it('names a global role and its gain in both locales without a timeline footprint', () => {
+    const c = change([{ type: 'gain', from_db: 0, to_db: -24 }], { id: 'AudioRole:music', composition_id: null })
+    const en = changeWordsContext(tEn, { summary }), zh = changeWordsContext(tZh, { summary })
+    expect(changeTitle(c, en)).toBe('Music mix')
+    expect(changeTitle(c, zh)).toBe('音乐混音')
+    expect(describeChange(c, en)).toBe('Gain 0 → -24 dB')
+    expect(describeChange(c, zh)).toBe('增益 0 → -24 dB')
+    expect(changePlace(c, en)).toBeNull()
+  })
   it('does not hide a microsecond difference or drop a time value sign', () => {
     expect(say(tEn, [{ type: 'time', field: 'start', from_us: -1, to_us: 1 }])).toBe('Start -0.000001 → 0.000001 s')
   })

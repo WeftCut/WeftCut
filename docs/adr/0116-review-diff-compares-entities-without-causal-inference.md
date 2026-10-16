@@ -28,6 +28,16 @@ untying or re-tying is placement. Approval selects only those entities.
 Commit-source attribution, preference exclusions and version-checked approval
 remain as defined in ADR 0115.
 
+The entity index also includes recorded edits outside `compositions`:
+`AudioRole` compares only `gain_db` (an absent bus is 0 dB), and `Media`
+compares pool membership. A force-removal records both a source's removal
+and its deleted clips. Ordinary import, unused-source removal, relinking and
+derivative updates patch every history snapshot and the baseline, so they
+produce no review change. Role mute/solo, project settings and composition
+setup remain preferences; project identity/schema, modification timestamps
+and the next-group counter are bookkeeping, not separate review entities.
+Global changes have no timeline footprint and are listed under Project.
+
 Timing details report start, end, source start and source end before/after
 values. Rates, parameter keys, effect differences and flags are also computed
 from the entity's own values. Trim descriptions additionally measure the

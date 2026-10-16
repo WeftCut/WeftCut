@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n";
 import { MiniTimeline } from "./MiniTimeline";
 import type { ReviewRangeMark } from "./reviewHighlight";
+import type { TackView } from "../../shared/agent-activity";
 
 beforeEach(() => vi.stubGlobal("ResizeObserver", class {
   observe() {}
@@ -108,7 +109,7 @@ describe("review focus on the strip", () => {
     { id: "long", t_us: 1_000_000, end_t_us: 6_000_000, label: "Long", kind: "note" },
     { id: "short", t_us: 2_000_000, end_t_us: 3_000_000, label: "Short", kind: "issue" },
     { id: "point", t_us: 8_000_000, end_t_us: null, label: "", kind: "question" },
-  ] as never;
+  ] as TackView[];
   const changes = [
     { changeId: "Layer:a", cls: "added" as const, compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
     { changeId: "Layer:m", cls: "modified" as const, compositionId: "root", tStartUs: 5_000_000, tEndUs: 7_000_000 },
