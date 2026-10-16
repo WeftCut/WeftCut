@@ -11,6 +11,8 @@ export type AgentPanelTab = (typeof AGENT_PANEL_TABS)[number]
  *  for tacks created outside one). Prefixed so activity eviction keeps them. */
 export const tackRowKey = (id: string) => `tack-${id}`
 export const tackGroupKey = (sessionId: string | null) => `tacks-session-${sessionId ?? 'none'}`
+/** A tack group's "closed" section: its resolved and dismissed tacks. */
+export const tackClosedKey = (sessionId: string | null) => `tacks-closed-${sessionId ?? 'none'}`
 
 interface AgentPanelState {
   snapshot: AgentActivitySnapshot | null

@@ -22,7 +22,7 @@ import { create } from 'zustand'
 import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
 import { useProjectStore } from '../state/projectStore'
-import { tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
+import { tackClosedKey, tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
 import { entityIdOf } from './changeModel'
 import { listedChanges, useReview } from './reviewStore'
 
@@ -79,12 +79,13 @@ export function setReviewHover(item: ReviewItem | null): void {
 }
 
 /** Focus one tack and show it in the Tacks tab: switch to it, expand its
- *  group and row. */
+ *  group (and, for a closed tack, the group's closed section) and its row. */
 export function selectTack(id: string): void {
   const a = useAgentActivity.getState()
   const tack = a.snapshot?.tacks.find(t => t.id === id)
   if (!tack) return
-  useAgentActivity.setState({ tab: 'tacks', expanded: { ...a.expanded, [tackGroupKey(tack.session_id)]: true, [tackRowKey(id)]: true } })
+  const closed = tack.status === 'open' ? {} : { [tackClosedKey(tack.session_id)]: true }
+  useAgentActivity.setState({ tab: 'tacks', expanded: { ...a.expanded, [tackGroupKey(tack.session_id)]: true, ...closed, [tackRowKey(id)]: true } })
   setReviewFocus({ kind: 'tack', id })
 }
 

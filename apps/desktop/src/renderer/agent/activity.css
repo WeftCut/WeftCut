@@ -83,12 +83,16 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tacks { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .agent-tack-group-heading { display: flex; align-items: flex-start; gap: calc(4 * var(--ui-px)); }
 .agent-tack-group-heading > .agent-work-heading { flex: 1; min-width: 0; }
-.agent-tack-clear { margin-top: calc(6 * var(--ui-px)); font-size: var(--font-size-caption); border: 1px solid var(--border); flex: none; }
+.agent-tack-group-action { margin-top: calc(6 * var(--ui-px)); gap: calc(4 * var(--ui-px)); font-size: var(--font-size-caption); border: 1px solid var(--border); flex: none; }
+/* A group's resolved and dismissed tacks, under their own toggle at its foot. */
+.agent-tack-closed { margin-top: calc(2 * var(--ui-px)); }
+.agent-tack-closed-heading { display: flex; align-items: center; gap: calc(4 * var(--ui-px)); }
+.agent-tack-closed-heading > .agent-tack-group-action { margin-top: 0; }
+.agent-tack-closed-toggle { flex: 1; min-width: 0; gap: calc(4 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); padding-block: calc(6 * var(--ui-px)) !important; }
 .agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
 .agent-tack[data-selected="true"] { background: var(--selection-bg); box-shadow: inset 2px 0 0 var(--selection); }
 .agent-tack-row { display: flex; align-items: flex-start; gap: calc(2 * var(--ui-px)); }
 .agent-tack-row > button:not(.agent-tack-main) { flex: none; color: var(--muted-foreground); }
-.agent-tack-row > button[aria-pressed="true"] { color: var(--foreground); background: var(--active-neutral); }
 .agent-tack-main { flex: 1; min-width: 0; align-items: flex-start !important; }
 .agent-tack-main > svg { flex: none; margin-top: calc(2 * var(--ui-px)); }
 .agent-tack-kind { color: var(--tack); }

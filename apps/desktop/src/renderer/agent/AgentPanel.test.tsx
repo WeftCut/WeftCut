@@ -167,6 +167,7 @@ function tack(patch: Partial<TackView> = {}): TackView {
 const work = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Review pauses', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)
 const openTacks = () => fireEvent.click(screen.getByRole('tab', { name: /Tacks/ }))
+const tackRow = (id: string) => document.querySelector<HTMLElement>(`[data-tack-id="${id}"]`)!
 
 describe('AgentPanel Tacks tab', () => {
   it('is a second tab beside Activity, its open count on the badge, grouped by work session', () => {
@@ -179,7 +180,8 @@ describe('AgentPanel Tacks tab', () => {
     openTacks()
     // The badge holds the count and the tab's title the subtitle: neither repeats above a list.
     expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
-    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')!.textContent).toBe('Clear 1 closed tack')
+    // Clearing is tidying up inside a group, not a tab-wide last step: no toolbar.
+    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')).toBeNull()
     expect(screen.getByText('Review pauses')).toBeTruthy()
     expect(screen.getByText('Long pause')).toBeTruthy()
     // A group with nothing open starts collapsed; its heading still says why.
@@ -202,23 +204,47 @@ describe('AgentPanel Tacks tab', () => {
     seed([], { revision: 2, sessions: [work], tacks: [tack()] })
     render(<AgentPanel />)
     expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
-    // Nothing closed, nothing to clear: no toolbar row at all.
-    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')).toBeNull()
     expect(document.querySelector('.agent-tacks .agent-activity-list')!.lastElementChild?.classList.contains('agent-list-footnote')).toBe(true)
   })
 
-  it('resolves, dismisses, reopens and clears through the tack channels', async () => {
+  it('resolves and dismisses as decisions; a closed tack waits in its group\'s closed section to be reopened or cleared', async () => {
     seed([], { sessions: [work], tacks: [tack(), tack({ id: 't2', status: 'dismissed', label: 'Done' })] })
     render(<AgentPanel />)
     openTacks()
-    fireEvent.click(screen.getAllByRole('button', { name: 'Resolve' })[0]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
-    await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toEqual([{ tack_ids: ['t1'], status: 'resolved' }, { tack_ids: ['t2'], status: 'open' }]))
-    fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!)
-    await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toContainEqual({ tack_ids: ['t1'], status: 'dismissed' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Clear 1 closed tack' }))
+    const open = tackRow('t1')
+    // An open row has actions, not toggles, and no status word.
+    expect(open.querySelector('[aria-pressed]')).toBeNull()
+    expect(open.querySelector('.agent-tack-status')).toBeNull()
+    expect(within(open).queryByRole('button', { name: 'Reopen' })).toBeNull()
+    // The group still has an open tack: its closed section starts collapsed.
+    const toggle = screen.getByRole('button', { name: 'Closed 1' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelector('[data-tack-id="t2"]')).toBeNull()
+    fireEvent.click(within(open).getByRole('button', { name: 'Resolve' }))
+    fireEvent.click(within(open).getByRole('button', { name: 'Dismiss' }))
+    fireEvent.click(toggle)
+    const closed = tackRow('t2')
+    expect(closed.querySelector('.agent-tack-status')!.textContent).toBe('Dismissed')
+    expect(within(closed).queryByRole('button', { name: 'Resolve' })).toBeNull()
+    fireEvent.click(within(closed).getByRole('button', { name: 'Reopen' }))
+    await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toEqual([
+      { tack_ids: ['t1'], status: 'resolved' }, { tack_ids: ['t1'], status: 'dismissed' }, { tack_ids: ['t2'], status: 'open' }]))
+    // The group resolves its open tacks at once, and clears only its closed ones.
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve all' }))
+    await vi.waitFor(() => expect(calls('agent_tacks_set_status')).toContainEqual({ tack_ids: ['t1'], status: 'resolved' }))
+    expect(calls('agent_tacks_set_status')).toHaveLength(4)
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
-    await vi.waitFor(() => expect(calls('agent_tacks_delete')).toEqual([{ statuses: ['resolved', 'dismissed'] }, { session_id: 'work' }]))
+    await vi.waitFor(() => expect(calls('agent_tacks_delete')).toEqual([{ tack_ids: ['t2'] }]))
+  })
+
+  it('a group with nothing open shows its closed tacks once expanded, without Resolve all', () => {
+    seed([], { sessions: [work], tacks: [tack({ status: 'resolved' })] })
+    useAgentActivity.setState({ expanded: { 'tacks-session-work': true } })
+    render(<AgentPanel />)
+    openTacks()
+    expect(screen.getByRole('button', { name: 'Closed 1' }).getAttribute('aria-expanded')).toBe('true')
+    expect(tackRow('t1').querySelector('.agent-tack-status')!.textContent).toBe('Resolved')
+    expect(screen.queryByRole('button', { name: 'Resolve all' })).toBeNull()
   })
 
   it('converts into one recorded marker carrying label, note and anchor, then removes the tack', async () => {
@@ -298,8 +324,8 @@ describe('AgentPanel Tacks tab', () => {
     expect(useReviewFocus.getState().focus).toEqual({ kind: 'tack', id: 't1' })
   })
 
-  it('selectTack opens the tab, its group and its row', () => {
-    seed([], { sessions: [work], tacks: [tack({ status: 'dismissed' })] })
+  it('selectTack opens the tab, its group, a closed tack\'s section and its row', () => {
+    seed([], { sessions: [work], tacks: [tack({ id: 't0', label: 'Still open' }), tack({ status: 'dismissed' })] })
     render(<AgentPanel />)
     act(() => selectTack('t1'))
     expect(screen.getByRole('tab', { name: /Tacks/ }).getAttribute('aria-selected')).toBe('true')
@@ -333,7 +359,7 @@ describe('AgentPanel Tacks tab — states and the review focus', () => {
 
   it('badges an open outdated tack, explaining why, and only while it is open', () => {
     seed([], { sessions: [work], tacks: [placed({ outdated: true }), placed({ id: 't2', label: 'Closed', outdated: true, status: 'resolved' })] })
-    useAgentActivity.setState({ expanded: { 'tacks-session-work': true } })
+    useAgentActivity.setState({ expanded: { 'tacks-session-work': true, 'tacks-closed-work': true } })
     render(<AgentPanel />)
     openTacks()
     const badge = row('t1').querySelector<HTMLElement>('.agent-tack-outdated')!
