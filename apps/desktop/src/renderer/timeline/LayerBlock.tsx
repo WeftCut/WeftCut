@@ -1059,7 +1059,7 @@ export function LayerBlock({
       )}
       {dragIsInvalid && (
         <span
-          className={`pointer-events-none absolute inset-0 z-[1] rounded ${
+          className={`pointer-events-none absolute inset-0 z-[1] rounded-[inherit] ${
             dragValidity === "collision" ? "bg-red-500/30" : "bg-amber-500/25"
           }`}
           aria-hidden="true"
@@ -1075,10 +1075,15 @@ export function LayerBlock({
           {dragInvalidLabel}
         </span>
       )}
+      {/* The kind's accent IS the block's top edge: laid over the border box
+          with the block's own radius, so it bends round the corners instead of
+          poking square ends past them, and replaces the faint border line
+          rather than sitting a pixel below it. A sliced block's flat corners
+          come through `inherit` as well. */}
       {layer.params.kind !== "Color" && (
         <span
-          className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-0.5 opacity-90"
-          style={{ backgroundColor: layerTheme.accent }}
+          className="pointer-events-none absolute -inset-px z-[1] rounded-[inherit] border-t-2 opacity-90"
+          style={{ borderTopColor: layerTheme.accent }}
           aria-hidden="true"
         />
       )}
@@ -1089,7 +1094,7 @@ export function LayerBlock({
       {sourceTail.overhangFromFraction !== null && (
         <span
           data-testid="layer-overhang-tail"
-          className="pointer-events-none absolute inset-y-0 right-0 z-[1] rounded-r"
+          className="pointer-events-none absolute inset-y-0 right-0 z-[1] rounded-r-[inherit]"
           style={{
             left: `${sourceTail.overhangFromFraction * 100}%`,
             backgroundImage:
