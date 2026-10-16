@@ -109,7 +109,9 @@ export function TacksTab({ editor }: { editor: boolean }) {
         onClick={() => void deleteTacks({ statuses: ['resolved', 'dismissed'] })}>{t('tacks.clear_closed', { count: closed })}</button>
     </div>}
     <div className="agent-activity-list" ref={list}>
-      {!groups.length && <p className="agent-empty">{t(ready ? 'tacks.empty' : 'agent_panel.loading')}</p>}
+      {!groups.length && (ready
+        ? <div className="agent-empty"><p>{t('tacks.empty')}</p><p className="agent-empty-subtitle">{t('tacks.retention')}</p></div>
+        : <p className="agent-empty">{t('agent_panel.loading')}</p>)}
       {groups.map(g => {
         const defaultOpen = g.tacks.some(x => x.status === 'open')
         const open = expanded[g.key] ?? defaultOpen
@@ -126,7 +128,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
           {open && g.tacks.map(row)}
         </section>
       })}
-      <p className="agent-retention-note agent-list-footnote">{t('tacks.retention')}</p>
+      {groups.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('tacks.retention')}</p>}
     </div>
   </div>
 }

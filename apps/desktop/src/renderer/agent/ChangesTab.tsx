@@ -99,26 +99,29 @@ export function ChangesTab({ editor }: { editor: boolean }) {
 
   const userCount = view?.user_count ?? 0
   const empty = !view ? 'agent_panel.loading' : !view.has_baseline ? 'changes.no_baseline' : 'changes.empty'
+  const canShowUser = userCount > 0
+  const toolbar = canShowUser || stale || unreviewed.length > 0
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
-    {/* The unreviewed count is the tab's badge; the subtitle, its title (and
-        the emptied list's: "no baseline yet" already says what lands here). */}
-    <div className="agent-activity-toolbar">
-      <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
-        onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>
+    {/* The unreviewed count is the tab's badge; the subtitle, its title. The
+        toolbar holds only what can act: Approve all while something awaits
+        approval, the user's filter while they have changes. */}
+    {toolbar && <div className="agent-activity-toolbar">
+      {canShowUser && <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
+        onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>}
       {stale && <span className="agent-changes-stale" role="status" title={t('changes.approval_stale')}>{t('changes.approval_stale_short')}</span>}
-      <button type="button" className="agent-changes-approve-all" disabled={busy || unreviewed.length === 0} title={t('changes.approve_all_hint')}
-        onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
-    </div>
+      {unreviewed.length > 0 && <button type="button" className="agent-changes-approve-all" disabled={busy} title={t('changes.approve_all_hint')}
+        onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>}
+    </div>}
     <div className="agent-activity-list" ref={list}>
-      {!groups.length && (view?.has_baseline
-        ? <div className="agent-empty"><p>{t(empty)}</p><p className="agent-empty-subtitle">{t('changes.subtitle')}</p></div>
+      {!groups.length && (view
+        ? <div className="agent-empty"><p>{t(empty)}</p><p className="agent-empty-subtitle">{t('changes.retention')}</p></div>
         : <p className="agent-empty">{t(empty)}</p>)}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{heading(g.compositionId)}</span>
           <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent').length })}</small></h3>
         {g.rows.map(row)}
       </section>)}
-      <p className="agent-retention-note agent-list-footnote">{t('changes.retention')}</p>
+      {groups.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('changes.retention')}</p>}
     </div>
   </div>
 }

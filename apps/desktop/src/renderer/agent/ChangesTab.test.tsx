@@ -106,11 +106,15 @@ describe('AgentPanel Changes tab', () => {
     expect(useReview.getState().highlight.layers.size).toBe(0)
     const empty = document.querySelector<HTMLElement>('.agent-changes .agent-empty')!
     expect(within(empty).getByText('Nothing to review. Every agent change is approved.')).toBeTruthy()
-    // Empty, the list says what the tab is for, and still ends with the retention note.
-    expect(within(empty).getByText('What agents changed since you last approved')).toBeTruthy()
-    expect(document.querySelector('.agent-changes .agent-activity-list')!.lastElementChild?.textContent)
-      .toBe('Approving records nothing in history. To reject a change, undo it or restore a checkpoint.')
-    expect((screen.getByRole('button', { name: 'Approve all' }) as HTMLButtonElement).disabled).toBe(true)
+    // Empty, the list is one block: the message, then the retention note — no footnote below it.
+    expect(within(empty).getByText('Approving records nothing in history. To reject a change, undo it or restore a checkpoint.')).toBeTruthy()
+    expect(within(empty).queryByText('What agents changed since you last approved')).toBeNull()
+    expect(document.querySelector('.agent-changes .agent-list-footnote')).toBeNull()
+    // Nothing awaits approval: Approve all leaves; the user's filter stays while they have changes.
+    expect(screen.queryByRole('button', { name: 'Approve all' })).toBeNull()
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)')
+    act(() => { useReview.getState().apply(view(5, [], [])) })
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')).toBeNull()
   })
 
   it('"show my changes" lists user-only changes, marked and without approve', async () => {
@@ -129,6 +133,20 @@ describe('AgentPanel Changes tab', () => {
     // Interleaved by time within its composition; the unreviewed count is unchanged.
     expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Layer:a', 'Layer:mine', 'Layer:late'])
     expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes4')
+  })
+
+  it('"show my changes" switches itself off once an undo takes the user\'s changes back', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
+    await flush()
+    expect(useReview.getState().showUser).toBe(true)
+    act(() => { useReview.getState().apply(view(5, unreviewed, []), true) })
+    expect(useReview.getState().showUser).toBe(false)
+    expect(screen.queryByRole('button', { name: /Show my changes/ })).toBeNull()
+    expect(document.querySelector('[data-source="user"]')).toBeNull()
+    // Approve all still has its row, alone.
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Approve all')
   })
 
   it('an approval made after the list changed approves nothing and says so beside Approve all', async () => {

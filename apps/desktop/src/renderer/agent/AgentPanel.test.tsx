@@ -188,15 +188,15 @@ describe('AgentPanel Tacks tab', () => {
     expect(useAgentActivity.getState().tab).toBe('tacks')
   })
 
-  it('shows the empty message alone, and closes the list with the retention note', () => {
+  it('shows the empty message with the retention note beneath it, and closes a list with it', () => {
     seed([], { sessions: [work], tacks: [] })
     const view = render(<AgentPanel />)
     openTacks()
     const empty = document.querySelector<HTMLElement>('.agent-tacks .agent-empty')!
     expect(within(empty).getByText('Tacks an agent leaves for your review will appear here.')).toBeTruthy()
     expect(within(empty).queryByText('Notes the agent tacked on for your review')).toBeNull()
-    const list = document.querySelector('.agent-tacks .agent-activity-list')!
-    expect(list.lastElementChild?.textContent).toBe('Tacks last for this project opening only. They are never saved or exported.')
+    expect(within(empty).getByText('Tacks last for this project opening only. They are never saved or exported.')).toBeTruthy()
+    expect(document.querySelector('.agent-tacks .agent-list-footnote')).toBeNull()
     expect(document.querySelector('.agent-tacks footer')).toBeNull()
     view.unmount()
     seed([], { revision: 2, sessions: [work], tacks: [tack()] })

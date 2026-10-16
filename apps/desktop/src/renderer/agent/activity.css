@@ -62,8 +62,9 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-read-group > article { margin-left: calc(12 * var(--ui-px)); }
 .agent-empty { padding: calc(28 * var(--ui-px)) calc(12 * var(--ui-px)); text-align: center; color: var(--muted-foreground); line-height: 1.7; }
 .agent-empty > p { margin: 0; }
-/* A tab's subtitle shows only while its list is empty; its tab carries it as a title. */
-.agent-empty > .agent-empty-subtitle { margin-top: calc(4 * var(--ui-px)); font-size: var(--font-size-caption); }
+/* An empty list is one block: what lands here, then the retention note the
+   list would close with — which a non-empty list keeps as its footnote. */
+.agent-empty > .agent-empty-subtitle { max-width: calc(280 * var(--ui-px)); margin: calc(6 * var(--ui-px)) auto 0; font-size: var(--font-size-caption); line-height: 1.5; }
 .agent-retention-note { margin: 0; padding: calc(7 * var(--ui-px)) calc(12 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); line-height: 1.5; }
 /* The retention note closes the list and scrolls with it. */
 .agent-retention-note.agent-list-footnote { padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) 0; }

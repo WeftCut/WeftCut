@@ -174,7 +174,9 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
       <button type="button" aria-label={t('agent_panel.highlight_clear')} title={t('agent_panel.highlight_clear')} onClick={clearActivityChanges}><AppIcon icon={X} size="label" /></button></div>}
     <div className="agent-activity-list" ref={list} onScroll={onScroll}>
       {!!snapshot?.evicted && <p className="agent-retention-note">{t('agent_panel.truncated', { count: snapshot.evicted })}</p>}
-      {!sections.length && <p className="agent-empty">{t(!ready ? 'agent_panel.loading' : filter === 'errors' ? 'agent_panel.no_errors' : 'agent_panel.empty')}</p>}
+      {!sections.length && (ready
+        ? <div className="agent-empty"><p>{t(filter === 'errors' ? 'agent_panel.no_errors' : 'agent_panel.empty')}</p><p className="agent-empty-subtitle">{t('agent_panel.retention')}</p></div>
+        : <p className="agent-empty">{t('agent_panel.loading')}</p>)}
       {sections.map(section => {
         const work = snapshot?.sessions.find(s => s.id === section.sessionId)
         if (!work) return <div key={section.id}>{section.rows.map(row)}</div>
@@ -189,7 +191,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
             {failure && <AppIcon icon={AlertCircle} size="label" className="agent-activity-error" />}<small>{t(work.end_reason === 'disconnected' ? 'agent_panel.disconnected' : work.ended_at ? 'agent_panel.session_ended' : 'agent_panel.session_active')}</small></button>
           {open && section.rows.map(row)}</section>
       })}
-      <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p></div></>}
+      {sections.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p>}</div></>}
     {settings && <AppDialog title={t('agent_panel.connection_settings')} onClose={() => setSettings(false)} panelClassName="agent-connect-dialog"><div className="agent-connect-dialog-body"><AgentSection /></div></AppDialog>}
   </div>
 }

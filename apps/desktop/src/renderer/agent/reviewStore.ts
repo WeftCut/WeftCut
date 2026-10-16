@@ -50,7 +50,9 @@ interface ReviewState {
   highlight: ReviewHighlight
   /** The Changes tab's "show my changes" filter: user-only differences are
    *  listed too. Off by default; runtime only, like the review itself. Main
-   *  sends that list only while it is on (`setShowUser`). */
+   *  sends that list only while it is on (`setShowUser`). It turns itself off
+   *  when a view says the user has no changes left (an undo took them back):
+   *  the filter is offered only while there is something to show. */
   showUser: boolean
   /** Whether `view` was asked for with the user-only list. */
   viewListsUser: boolean
@@ -92,6 +94,10 @@ export function listedChanges(s: Pick<ReviewState, 'view' | 'showUser'>): readon
 const sameVersion = (a: ReviewVersion, b: ReviewVersion): boolean =>
   a.session === b.session && a.revision === b.revision && a.baseline_revision === b.baseline_revision
 
+/** A view with no user changes switches "show my changes" off. */
+const noUserLeft = (next: { user_count: number }): Partial<ReviewState> =>
+  next.user_count === 0 ? { showUser: false } : {}
+
 export const useReview = create<ReviewState>((set, get) => ({
   view: null,
   highlight: EMPTY_HIGHLIGHT,
@@ -103,13 +109,13 @@ export const useReview = create<ReviewState>((set, get) => ({
     const held = get()
     const fillsUser = listsUser && !held.viewListsUser && held.view !== null && sameVersion(next.version, held.view.version)
     if (!fillsUser && !isNewerReviewView(next.version, held.view?.version ?? null)) return false
-    set({ view: next, viewListsUser: listsUser, highlight: fillsUser ? held.highlight : buildReviewHighlight(next.unreviewed, next.decorations) })
+    set({ view: next, viewListsUser: listsUser, highlight: fillsUser ? held.highlight : buildReviewHighlight(next.unreviewed, next.decorations), ...noUserLeft(next) })
     return true
   },
   applyUnchanged: (next) => {
     const held = get().view
     if (held === null || held.version.session !== next.version.session || held.content_revision !== next.content_revision) return false
-    if (isNewerReviewView(next.version, held.version)) set({ view: { ...held, version: next.version, has_baseline: next.has_baseline, user_count: next.user_count } })
+    if (isNewerReviewView(next.version, held.version)) set({ view: { ...held, version: next.version, has_baseline: next.has_baseline, user_count: next.user_count }, ...noUserLeft(next) })
     return true
   },
 }))
