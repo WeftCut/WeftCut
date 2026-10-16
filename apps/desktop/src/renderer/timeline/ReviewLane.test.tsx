@@ -11,8 +11,8 @@ import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useAgentActivity } from "../agent/activityStore";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
-const actions = vi.hoisted(() => ({ locateTack: vi.fn(() => true) }));
-vi.mock("../agent/tackActions", () => actions);
+const actions = vi.hoisted(() => ({ locate: vi.fn(() => true) }));
+vi.mock("../agent/locate", () => actions);
 import { ReviewLane, ReviewLaneHeader } from "./ReviewLane";
 import { selectTack, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
 
@@ -185,13 +185,13 @@ describe("Review lane", () => {
 
   it("a chip click expands the tack's row in its group; a double-click also locates it", () => {
     seed([tack({ session_id: "s1" })], [session]);
-    actions.locateTack.mockClear();
+    actions.locate.mockClear();
     const { container } = renderRows();
     fireEvent.click(chips(container)[0]!);
     expect(useAgentActivity.getState().expanded).toMatchObject({ "tacks-session-s1": true, "tack-t1": true });
-    expect(actions.locateTack).not.toHaveBeenCalled();
+    expect(actions.locate).not.toHaveBeenCalled();
     fireEvent.doubleClick(chips(container)[0]!);
-    expect(actions.locateTack).toHaveBeenCalledWith(expect.objectContaining({ id: "t1" }));
+    expect(actions.locate).toHaveBeenCalledWith({ kind: "tack", tack: expect.objectContaining({ id: "t1" }) });
   });
 
   it("a click on bare lane lets the focus go; one on a chip's contents keeps it", () => {

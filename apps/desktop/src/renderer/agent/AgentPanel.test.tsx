@@ -265,6 +265,10 @@ describe('AgentPanel Tacks tab', () => {
 
   it('locates in the editor only: seek, and reveal the followed clip', () => {
     const anchored = tack({ follows: { layer_id: 'clip', src_us: 5_000_000, t_us: 2_000_000 } })
+    const clip: LayerSummary = { id: 'clip', label: 'Clip', t_start_us: 0, t_end_us: 4_000_000, kind: 'Color', color_hint: '#448', enabled: true, locked: false,
+      params: { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 1 } }, width: 1920, height: 1080 }, effects: [] }
+    useProjectStore.getState().apply(summaryFixture({ root: { id: 'root', tracks: [{ id: 'v1', kind: 'Video', label: 'V1', enabled: true, locked: false,
+      muted: false, solo: false, role: null, transient: false, layers: [clip] }] } }))
     seed([], { sessions: [work], tacks: [anchored] })
     const agentView = render(<AgentPanel />)
     openTacks()

@@ -1,6 +1,6 @@
 // Renderer-side reading of review changes for the Changes tab (ADR 0115):
 // grouping by composition, row order, and the words a row is made of. Pure —
-// the store lives in `reviewStore.ts`, locate in `changeActions.ts`.
+// the store lives in `reviewStore.ts`, locate in `locate.ts`.
 import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 import { entityKey, parseEntityKey, type Change, type EntityKind } from '../../shared/review'
 

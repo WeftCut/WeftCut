@@ -1,13 +1,10 @@
 // The user's tack actions (ADR 0115). Status and clearing go to main's
 // TackStore; conversion is the one path into project content — an ordinary
-// recorded marker — and locate is editor navigation (ADR 0065).
+// recorded marker. Locate is `locate.ts`, shared with changes.
 import type { TackDeleteSelector, TackStatus, TackView } from '../../shared/agent-activity'
 import { agentTacksDelete, agentTacksSetStatus } from '../ipc'
 import { addMarkerIn } from '../ipc/compositionScoped'
 import { tryMutate } from '../errors/tryMutate'
-import { openComposition, useCompositionAnchorStore } from '../state/compositionAnchorStore'
-import { revealLayerWithoutSeek, jumpToTimeUs } from '../state/navigation'
-import { focusedRootUs } from '../state/playheadProjection'
 import { tackMarkerArgs } from './tackModel'
 
 export const setTackStatus = (ids: readonly string[], status: TackStatus) =>
@@ -27,24 +24,5 @@ export async function convertTackToMarker(t: TackView): Promise<boolean> {
   // The marker exists either way; a tack an agent removed meanwhile is gone
   // already, which is the outcome this delete was for.
   try { await agentTacksDelete({ tack_ids: [t.id] }) } catch { /* already gone */ }
-  return true
-}
-
-/** Seek to a tack and, for one following a clip, reveal and select it —
- *  entering the composition it sits in first. Editor only (ADR 0065): agent
- *  view is for watching the preview. False when the tack has no place. */
-export function locateTack(t: TackView): boolean {
-  if (t.composition_id === null || t.t_us === null) return false
-  // A tack following a clip reveals that clip wherever it now lives; otherwise
-  // open its composition.
-  const followed = t.follows?.layer_id ?? null
-  if (followed !== null) {
-    if (!revealLayerWithoutSeek(followed)) return false
-  } else if (useCompositionAnchorStore.getState().focusedId !== t.composition_id && !openComposition(t.composition_id, null)) {
-    return false
-  }
-  // The composition holding the tack is focused now, so its own clock projects
-  // into the film's through the anchor that open gave it.
-  jumpToTimeUs(focusedRootUs(t.t_us))
   return true
 }

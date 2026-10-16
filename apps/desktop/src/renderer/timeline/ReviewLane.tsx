@@ -13,7 +13,7 @@ import { UI_METRICS } from "../settings/uiMetrics";
 import { useComposition } from "../state/projectStore";
 import { releaseFocus, selectTack as focusTack, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
-import { locateTack } from "../agent/tackActions";
+import { locate } from "../agent/locate";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
 import { groupLaneTacks, windowLaneTacks, type LaneTack, type LaneTackGroup } from "./rulerModel";
 import { useCloseOnAnchorMove } from "./contextMenuAnchor";
@@ -188,7 +188,7 @@ export function ReviewLane({
               onClick={() => selectTack(chip.id)}
               onDoubleClick={() => {
                 const tack = tacks.find((x) => x.id === chip.id);
-                if (tack) locateTack(tack);
+                if (tack) locate({ kind: "tack", tack });
               }}
             >
               <AppIcon icon={KIND_ICON[chip.kind]} size="fine" className="review-tack-icon" />

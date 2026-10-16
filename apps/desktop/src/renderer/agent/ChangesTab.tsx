@@ -6,7 +6,7 @@ import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useChangeWords, useReview, useReviewView } from './reviewStore'
 import { groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changePlace, changeTitle, describeChange } from './changeWords'
-import { canLocateChange, locateChange } from './changeActions'
+import { canLocate, locate } from './locate'
 import { useAgentActivity } from './activityStore'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
@@ -73,7 +73,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     const { change: c, source } = r
     const when = changePlace(c, words)
     const reason = source === 'agent' ? sessionReason(c, reasons) : null
-    const locatable = editor && canLocateChange(c)
+    const locatable = editor && canLocate({ kind: 'change', change: c })
     const focused = selected === c.id
     return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
       className={`agent-change class-${c.class} source-${source}`}
@@ -88,7 +88,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
         {editor && <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
-          onClick={() => locateChange(c)}><AppIcon icon={LocateFixed} size="body" /></button>}
+          onClick={() => locate({ kind: 'change', change: c })}><AppIcon icon={LocateFixed} size="body" /></button>}
         {source === 'agent' && <button type="button" aria-label={t('changes.approve')} title={t('changes.approve_hint')} disabled={busy}
           onClick={() => void approve(() => approveChanges([c.id]))}><AppIcon icon={Check} size="body" /></button>}
       </div>
