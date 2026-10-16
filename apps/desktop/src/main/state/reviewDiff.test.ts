@@ -10,7 +10,7 @@ import { root } from './__tests__/fixtures/project'
 import { PBT_RUNS, PBT_SEED } from './__tests__/pbt/harness'
 import { diffProjects, locateChanges, groupDecorations } from './reviewDiff'
 import { mediaLabel } from './summary'
-import { ABSENT, entityKey, extractEntities, touchedEntityKeys, type EntityValue } from './reviewEntities'
+import { entityKey, touchedEntityKeys } from './reviewEntities'
 import { changeKind, parseEntityKey, type Change, type ChangeDetail, type EntityKey } from '../../shared/review'
 
 const S = 1_000_000
@@ -464,36 +464,6 @@ describe('diffProjects — compositions and Groups', () => {
   })
 })
 
-describe('diffProjects — effective baseline overlay', () => {
-  it('an approved value hides its change; ABSENT approves a removal; other changes remain', () => {
-    const { a, tA } = setup()
-    const x = color(a, tA, 0, S)
-    const y = color(a, tA, 2 * S, 3 * S)
-    const base = a.snapshot()
-    ok(a.dispatch('update_layer', { layer: x, patch: { label: 'edited' } }))
-    ok(a.dispatch('delete_layers', { layers: [y] }))
-    const cur = a.snapshot()
-    expect(diffProjects(base, cur).map((c) => c.id)).toEqual([L(x), L(y)])
-    const approved = new Map<EntityKey, EntityValue | typeof ABSENT>([[L(x), extractEntities(cur).get(L(x))!]])
-    expect(diffProjects({ base, approved }, cur).map((c) => c.id)).toEqual([L(y)])
-    approved.set(L(y), ABSENT)
-    expect(diffProjects({ base, approved }, cur)).toEqual([])
-    // Editing an approved entity again reappears against the approved value.
-    ok(a.dispatch('update_layer', { layer: x, patch: { label: 'again' } }))
-    expect(only(diffProjects({ base, approved }, a.snapshot()))).toMatchObject({ id: L(x), class: 'modified', details: [{ type: 'label' }] })
-  })
-
-  it('an approved value inside a composition both sides share still differs from it', () => {
-    const { a, tA } = setup()
-    const x = color(a, tA, 0, S)
-    const first = a.snapshot()
-    ok(a.dispatch('update_layer', { layer: x, patch: { label: 'approved' } }))
-    const approved = new Map<EntityKey, EntityValue | typeof ABSENT>([[L(x), extractEntities(a.snapshot()).get(L(x))!]])
-    // Undone back to `first`: the base and current root are one object.
-    expect(only(diffProjects({ base: first, approved }, first))).toMatchObject({ id: L(x), class: 'modified', details: [{ type: 'label' }] })
-  })
-})
-
 describe('touchedEntityKeys', () => {
   it('is empty for one snapshot and names exactly the edited entity', () => {
     const { a, tA, tB } = setup()
@@ -595,8 +565,6 @@ describe('diffProjects — properties', () => {
       const after = a.snapshot()
       // A deep copy shares nothing, so it takes the full walk.
       expect(diffProjects(before, after)).toEqual(diffProjects(structuredClone(before), after))
-      const approved = new Map([...touchedEntityKeys(before, after)].slice(0, 1).map((k) => [k, extractEntities(after).get(k) ?? ABSENT] as const))
-      expect(diffProjects({ base: before, approved }, after)).toEqual(diffProjects({ base: structuredClone(before), approved }, after))
     }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
   })
 

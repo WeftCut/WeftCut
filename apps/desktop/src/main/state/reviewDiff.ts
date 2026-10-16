@@ -4,16 +4,12 @@
 // project, and its projection onto per-composition time ranges (spec
 // `.scratch/agent-review/spec.md` Part B — Diff; ADR 0115).
 //
-// Pure: no I/O, no actor. The baseline side is either a plain `Project` or a
-// `base` project plus a per-entity `approved` overlay — the representation
-// History keeps (ticket 05), so partial approval never needs a synthetic
-// project (ADR 0115 rejects building one: it need not validate).
+// Pure: no I/O, no actor. Both sides are whole projects — the baseline is the
+// snapshot History keeps.
 //
 // Preference-shaped fields — the ones History patches into every snapshot
 // (track enabled/muted/solo/locked/height, the composition envelope, settings,
-// media pool) — are never compared: a value patched everywhere
-// cannot differ, and an approved value that bypassed the patch must not show
-// up as a false difference either.
+// media pool) — are never compared: a value patched everywhere cannot differ.
 import { layerRate, sourceIn, sourceOut } from '../../renderer/layerTiming'
 import { approximateTime, compareTime, divideTime, subtractTime } from '../../renderer/timeMapping'
 import type { Composition, Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } from './model'
@@ -22,7 +18,7 @@ import { mediaLabel } from './summary'
 import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
 import { changeKind, type Change, type ChangeAspect, type ChangeClass, type ChangeDetail, type EntityKind, type GroupDecoration, type PlacedRange } from '../../shared/review'
 
-import { compareEntities, trackOrderEqual, linkLabel, entitiesEqual, entityKey, extractEntities, jsonEqual, type BaselineSource, type EntityIndex, type EntityValue } from './reviewEntities'
+import { compareEntities, trackOrderEqual, linkLabel, entitiesEqual, entityKey, extractEntities, jsonEqual, type EntityIndex, type EntityValue } from './reviewEntities'
 
 // ── Changes ───────────────────────────────────────────────────────────────────
 
@@ -407,7 +403,7 @@ function keepModification(b: EntityValue, c: EntityValue, change: Change | null)
 }
 
 /** Net values only; one stable change per entity. */
-export function diffProjects(baseline: BaselineSource, current: Project): Change[] {
+export function diffProjects(baseline: Project, current: Project): Change[] {
   const { before, after, keys } = compareEntities(baseline, current)
   const changes: Change[] = []
 

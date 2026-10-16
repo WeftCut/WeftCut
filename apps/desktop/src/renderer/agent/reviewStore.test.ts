@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
 import { act, renderHook } from '@testing-library/react'
-import { acquireReview, approveAllChanges, approveChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, selectHighlight, setShowUser, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
+import { acquireReview, approveAllChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, revertAllChanges, selectHighlight, setShowUser, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity, AgentActivitySnapshot } from '../../shared/agent-activity'
 import { buildReviewHighlight } from './reviewHighlight'
@@ -136,27 +136,29 @@ describe('review consumers', () => {
     release()
   })
 
-  it('approves one change by id against the held view and applies the returned view', async () => {
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? approved(view(1, 3, [])) : view(1, 1))
+  it('reverts all against the held view and applies the returned view', async () => {
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_revert_all' ? approved(view(2, 1, [])) : view(1, 1))
     const release = acquireReview()
     await flush()
-    expect(await approveChanges(['Layer:moved'])).toBe(true)
-    expect(mocks.invoke).toHaveBeenCalledWith('review_approve', {
-      version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Layer:moved'],
+    expect(await revertAllChanges()).toBe(true)
+    expect(mocks.invoke).toHaveBeenCalledWith('review_revert_all', {
+      version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false,
     })
     expect(useReview.getState().view?.unreviewed).toEqual([])
-    expect(useReview.getState().approvalStale).toBe(false)
+    expect(useReview.getState().actionStale).toBeNull()
     release()
   })
 
-  it('a refused approval (the view moved on) shows the fresh list and says so', async () => {
+  it('a refused action (the view moved on) shows the fresh list and names what did not happen', async () => {
     const fresh = view(2, 1, [change(), change({ id: 'Layer:new' })])
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? approved(fresh, false) : view(1, 1))
+    mocks.invoke.mockImplementation(async (channel: string) => channel.startsWith('review_') && channel.endsWith('_all') ? approved(fresh, false) : view(1, 1))
     const release = acquireReview()
     await flush()
     expect(await approveAllChanges()).toBe(false)
     expect(useReview.getState().view).toBe(fresh)
-    expect(useReview.getState().approvalStale).toBe(true)
+    expect(useReview.getState().actionStale).toBe('approve')
+    expect(await revertAllChanges()).toBe(false)
+    expect(useReview.getState().actionStale).toBe('revert')
     release()
   })
 

@@ -5,6 +5,7 @@ import { uuidV7Gen } from './ids'
 import { blankProject, eachLayer, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
+import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
@@ -17,7 +18,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
-import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewApproveResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
+import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewActionArgs, type ReviewActionResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -531,8 +532,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   /** The Review view: the actor's state now, named by the latest publication.
    *  The two can differ only while a replacement defers the actor's events —
-   *  the state may then be ahead of what was published — and an approval is
-   *  refused then (`reviewViewCurrent`), so no view of that window is ever
+   *  the state may then be ahead of what was published — and an approval or
+   *  revert is refused then (`reviewViewCurrent`), so no view of that window is ever
    *  acted on. */
   function reviewView(includeUser = false): ReviewView {
     const s = actor.reviewState()
@@ -554,7 +555,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { unchanged: true, version: view.version, content_revision: view.content_revision, has_baseline: view.has_baseline, user_count: view.user_count }
   }
 
-  /** Is `held` — the version of the view the user approved from — still the
+  /** Is `held` — the version of the view the user acted on — still the
    *  current view's? Any commit moves the publication revision and any
    *  baseline change its revision; mid-replacement the actor may hold
    *  changes no publication shows yet, so nothing is current then. */
@@ -574,8 +575,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   // Baseline changes reach the renderer as one coalesced `review:changed` per
-  // microtask: attribution fires inside a commit, and an approval of several
-  // changes must not fan out into several refetches.
+  // microtask: attribution fires inside a commit and must not fan out into
+  // several refetches.
   let reviewNotifyQueued = false
   let reviewRevision = 0
   actor.subscribeReview((revision) => {
@@ -722,17 +723,18 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true
         if (channel === 'review_view') return reviewViewSince(includeUser, (args as ReviewViewArgs).held_content)
-        // An approval applies only to the view the user acted on; a stale one
-        // approves nothing. Either way it answers with the fresh view: the
-        // surface that approved is the one reading it, so the recompute is
-        // wanted, not speculative.
-        const a = args as Partial<ReviewApproveArgs>
-        const applied = reviewViewCurrent(a.version)
+        // Approve all and revert all apply only to the view the user acted
+        // on; a stale one does nothing. Either way it answers with the fresh
+        // view: the surface that acted is the one reading it, so the
+        // recompute is wanted, not speculative. A refused revert (history
+        // lock) rejects as a command does.
+        const applied = reviewViewCurrent((args as Partial<ReviewActionArgs>).version)
         if (applied && channel === 'review_approve_all') actor.approveReviewAll()
-        else if (applied) {
-          actor.approveReview(Array.isArray(a.change_ids) ? a.change_ids.filter((x) => typeof x === 'string') : [])
+        else if (applied && channel === 'review_revert_all') {
+          try { actor.revertReviewAll() }
+          catch (e) { if (e instanceof CommandFailure) throw new Error(JSON.stringify(e.err)); throw e }
         }
-        return { applied, view: reviewView(includeUser) } satisfies ReviewApproveResult
+        return { applied, view: reviewView(includeUser) } satisfies ReviewActionResult
       }
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)

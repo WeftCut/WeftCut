@@ -1055,7 +1055,9 @@ _Avoid_: tack track, tack band (the pre-lane rendering), review track
 **Review baseline**:
 The project state the user last accepted, against which agent changes are
 reviewed. Owned by history, reset when a project is opened, advanced only by
-approval. Not a checkpoint. UI word: Review baseline / 审阅基线.
+approval; Revert all restores it. One whole snapshot, in effect a private
+checkpoint, but not a checkpoint: never listed, named or deleted. UI word:
+Review baseline / 审阅基线.
 _Avoid_: base checkpoint, base commit, snapshot (unqualified)
 
 **Unreviewed change**:
@@ -1063,8 +1065,8 @@ One entity-level difference between the review baseline and the current state
 that an agent-sourced commit touched since the baseline. A difference only the
 user caused is a user change and needs no review. Three classes, as a diff
 reads: added, removed, modified (新增 / 删除 / 修改) — a move to another track
-or time is a modification. Each entity is listed and approved independently,
-even when several moved by the same amount. Timing is the entity's own
+or time is a modification. Each entity is listed independently, even when
+several moved by the same amount; the list is settled as a whole. Timing is the entity's own
 before/after values; trim descriptions and edge marks additionally show that
 layer's own measured window cuts/extensions. Review infers no operation
 sequence or causal relationship between entities.
@@ -1075,10 +1077,20 @@ _Avoid_: diff entry, hunk, carried change, carrier, shift group;
 shifted / moved as classes of their own
 
 **Approve**:
-Fold unreviewed changes into the review baseline — all at once or one change
-at a time. Changes nothing in the project and records nothing. UI word:
-Approve / 批准.
+Make the current state the review baseline — all at once, the user's own
+differences with the agent's; there is no per-change approval (ADR 0119).
+Changes nothing in the project and records nothing. UI word: Approve all /
+全部批准.
 _Avoid_: accept, commit, apply
+
+**Revert all**:
+Restore the review baseline as the current state: one recorded, undoable
+commit by the user, under the history lock like a checkpoint restore. Takes
+the user's own differences since the baseline with the agent's; the baseline
+stays, so undoing it lists the same changes again. Dropping a single change is
+an edit (undo it, or edit it back), not a review action. UI word: Revert all /
+全部撤回.
+_Avoid_: reject, discard, rollback
 
 **Review focus**:
 The one tack or change the agent panel and the timelines point at together —

@@ -590,7 +590,7 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
-  it('review_view / review_approve / review_approve_all serve the Review baseline and announce review:changed', async () => {
+  it('review_view / review_approve_all serve the Review baseline and announce review:changed', async () => {
     const { deps, sent } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
     host.start()
@@ -608,18 +608,17 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(view).toMatchObject({ has_baseline: true, version: { ...host.publication().version } })
       expect(view.unreviewed).toHaveLength(2)
       const before = host.publication().version
-      const historyBefore = host.actor.historyStatus()
-      const { applied, view: approved } = await host.handleInvoke('review_approve', { version: view.version, change_ids: [view.unreviewed[0].id, 'Layer:stale'] }) as Approved
-      expect(applied).toBe(true)
-      expect(approved.unreviewed.map((c) => c.id)).toEqual([view.unreviewed[1].id])
-      expect(approved.version.baseline_revision).toBeGreaterThan(view.version.baseline_revision)
       host.actor.lockHistory('agent at work')
-      expect(await host.handleInvoke('review_approve_all', { version: approved.version })).toMatchObject({ applied: true, view: { unreviewed: [], user: [] } })
+      const historyBefore = host.actor.historyStatus()
+      const { applied, view: approved } = await host.handleInvoke('review_approve_all', { version: view.version }) as Approved
+      expect(applied).toBe(true)
+      expect(approved).toMatchObject({ unreviewed: [], user: [] })
+      expect(approved.version.baseline_revision).toBeGreaterThan(view.version.baseline_revision)
       // Approval is not a project write: no publication, no history entry.
       expect(host.publication().version).toEqual(before)
-      expect(host.actor.historyStatus()).toEqual({ ...historyBefore, lock_reason: 'agent at work' })
+      expect(host.actor.historyStatus()).toEqual(historyBefore)
       await Promise.resolve()
-      expect(sent.filter((s) => s.event === 'review:changed').at(-1)?.payload).toEqual({ baseline_revision: approved.version.baseline_revision + 1 })
+      expect(sent.filter((s) => s.event === 'review:changed').at(-1)?.payload).toEqual({ baseline_revision: approved.version.baseline_revision })
       // Closing accepts silently: nothing to review without an open project.
       expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
       await host.handleInvoke('project_close', {})
@@ -627,7 +626,31 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
-  it('an approval applies only to the view the user acted on: a commit landing in between approves nothing', async () => {
+  it('review_revert_all restores the baseline as one recorded commit, refused under the history lock', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      type View = { version: { session: number; revision: number; baseline_revision: number }; unreviewed: Array<{ id: string }> }
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      const view = await host.handleInvoke('review_view', {}) as View
+      expect(view.unreviewed).toHaveLength(1)
+      host.actor.lockHistory('agent at work')
+      const locked = host.actor.historyStatus()
+      await expect(host.handleInvoke('review_revert_all', { version: view.version })).rejects.toThrow(/HistoryLocked/)
+      expect(host.actor.historyStatus()).toEqual(locked)
+      host.actor.unlockHistory()
+      const before = host.publication().version
+      const len = host.actor.historyStatus().len
+      expect(await host.handleInvoke('review_revert_all', { version: view.version })).toMatchObject({ applied: true })
+      expect(host.actor.historyStatus().len).toBe(len + 1)
+      expect(host.publication().version.revision).toBeGreaterThan(before.revision)
+      expect(await host.handleInvoke('review_view', {})).toMatchObject({ unreviewed: [] })
+    } finally { host.stop() }
+  })
+
+  it('approve all and revert all apply only to the view the user acted on: a commit landing in between does nothing', async () => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
     host.start()
@@ -640,19 +663,22 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(seen.unreviewed).toHaveLength(1)
       // The agent commits again between what the user saw and the click.
       expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
-      for (const [channel, args] of [['review_approve_all', {}], ['review_approve', { change_ids: [seen.unreviewed[0].id] }]] as const) {
-        const r = await host.handleInvoke(channel, { ...args, version: seen.version }) as Approved
+      const len = host.actor.historyStatus().len
+      for (const channel of ['review_approve_all', 'review_revert_all']) {
+        const r = await host.handleInvoke(channel, { version: seen.version }) as Approved
         expect(r.applied).toBe(false)
         expect(r.view.unreviewed).toHaveLength(2)
         expect(r.view.version.revision).toBeGreaterThan(seen.version.revision)
       }
+      expect(host.actor.historyStatus().len).toBe(len)
       // No version at all is no view the user acted on.
       expect(await host.handleInvoke('review_approve_all', {})).toMatchObject({ applied: false })
+      expect(await host.handleInvoke('review_revert_all', {})).toMatchObject({ applied: false })
       const fresh = await host.handleInvoke('review_view', {}) as View
       expect(fresh.version.baseline_revision).toBe(seen.version.baseline_revision + 1)
       // Against the current view it applies.
-      const r = await host.handleInvoke('review_approve', { version: fresh.version, change_ids: [fresh.unreviewed[0].id] }) as Approved
-      expect(r).toMatchObject({ applied: true, view: { unreviewed: [{ id: fresh.unreviewed[1].id }] } })
+      const r = await host.handleInvoke('review_approve_all', { version: fresh.version }) as Approved
+      expect(r).toMatchObject({ applied: true, view: { unreviewed: [] } })
     } finally { host.stop() }
   })
 

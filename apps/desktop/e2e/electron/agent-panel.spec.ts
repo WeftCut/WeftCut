@@ -168,7 +168,7 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
   }
 })
 
-test('changes: an agent edit is listed, highlighted and counted until approved', async () => {
+test('changes: an agent edit is listed, highlighted and counted until reverted or approved', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   let client: Client | null = null
@@ -207,6 +207,17 @@ test('changes: an agent edit is listed, highlighted and counted until approved',
     const ring = page.locator('[data-layer-id] [data-testid="review-focus-outline"][data-focus="change"]')
     await expect(ring).toHaveCount(1)
     await expect(page.locator('[data-testid="review-focus-wash"][data-kind="change"]').first()).toBeAttached()
+
+    // Revert all: the clip leaves the project in one undoable step, and the
+    // list, the mark and the count with it.
+    await page.getByRole('button', { name: 'Revert all' }).click()
+    await expect(page.locator('.agent-change')).toHaveCount(0)
+    await expect(page.getByTestId('review-clip-mark')).toHaveCount(0)
+    await expect(page.getByTestId('status-bar-review')).toHaveCount(0)
+    // Undo brings the clip back, unreviewed as before.
+    await invokeCmd(page, 'project_undo', {})
+    await expect(page.locator('.agent-change')).toHaveCount(1)
+    await expect(page.locator('[data-testid="review-clip-mark"][data-review-mark="added"]')).toHaveCount(1)
 
     // Approve all: the list, the highlight and the count go together.
     await page.getByRole('button', { name: 'Approve all' }).click()

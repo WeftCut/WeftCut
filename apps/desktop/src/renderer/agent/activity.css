@@ -115,8 +115,11 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 /* Changes tab (ADR 0115): rows reuse the tack row layout; the class badge
    carries the review hue, user-only rows ("show my changes") are muted. */
 .agent-panel-tab-count.tab-changes { background: color-mix(in srgb, var(--review-modified) 24%, transparent); }
-.agent-changes-approve-all { border: 1px solid var(--border); font-size: var(--font-size-caption); flex: none; }
-/* An approval that named a list since changed: said beside Approve all. */
+.agent-changes-approve-all, .agent-changes-revert-all { border: 1px solid var(--border); font-size: var(--font-size-caption); flex: none; }
+/* Revert all and Approve all sit together at the toolbar's end. */
+.agent-activity-toolbar .agent-changes-revert-all { margin-left: auto; }
+.agent-activity-toolbar .agent-changes-revert-all + button.agent-changes-approve-all:last-child { margin-left: 0; }
+/* An approve or revert all that named a list since changed: said in the toolbar. */
 .agent-changes-stale { flex: 1; min-width: 0; text-align: right; color: var(--muted-foreground); font-size: var(--font-size-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-change-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: calc(8 * var(--ui-px)); margin: 0; padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) calc(4 * var(--ui-px)); font-size: var(--font-size-body); font-weight: 500; }
 .agent-change-group-heading > span { min-width: 0; overflow-wrap: anywhere; }

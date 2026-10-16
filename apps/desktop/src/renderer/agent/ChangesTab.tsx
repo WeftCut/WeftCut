@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, CheckCheck, LocateFixed } from 'lucide-react'
+import { CheckCheck, LocateFixed, Undo2 } from 'lucide-react'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
-import { approveAllChanges, approveChanges, setShowUser, useChangeWords, useReview, useReviewView } from './reviewStore'
+import { approveAllChanges, revertAllChanges, setShowUser, useChangeWords, useReview, useReviewView } from './reviewStore'
 import { groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changePlace, changeTitle, describeChange } from './changeWords'
 import { canLocate, locate } from './locate'
@@ -13,15 +13,21 @@ import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
  *  Review baseline because an agent touched it, grouped by composition and in
- *  timeline order. Approve one or all; locate is the editor's alone (ADR 0065).
+ *  timeline order; locate is the editor's alone (ADR 0065).
+ *
+ *  The list is settled as a whole, never row by row: Approve all makes the
+ *  current state the baseline, Revert all restores the baseline as one
+ *  undoable commit (as a checkpoint restore does, so not under the history
+ *  lock). Both compare whole states, so both take the user's own differences
+ *  with the agent's.
  *
  *  "Show my changes" lists the differences only the user made, too. They need
  *  no approval — the baseline is what the user accepted, and their own edits
- *  are accepted by making them — so their rows are muted, marked as the
- *  user's, and carry no approve button. Main sends them only while shown.
+ *  are accepted by making them — so their rows are muted and marked as the
+ *  user's. Main sends them only while shown.
  *
- *  An approval names the list on screen; one made after an agent changed the
- *  list approves nothing and says so beside Approve all, over the fresh list.
+ *  Either action names the list on screen; one made after an agent changed
+ *  the list does nothing and says so in the toolbar, over the fresh list.
  *
  *  A row's click focuses its change (the review focus, shared with the
  *  timelines: its range washed, its clips or ghost outlined, the others'
@@ -34,7 +40,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const view = useReviewView()
   const showUser = useReview(s => s.showUser)
-  const stale = useReview(s => s.approvalStale)
+  const stale = useReview(s => s.actionStale)
   const summary = useProjectStore(s => s.summary)
   const [busy, setBusy] = useState(false)
   const focus = useReviewFocus(s => s.focus)
@@ -59,7 +65,8 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     if (useReviewFocus.getState().hover?.kind === 'change') setReviewHover(null)
   }, [])
 
-  const approve = async (run: () => Promise<boolean>) => {
+  const locked = activity?.lock_reason != null
+  const settle = async (run: () => Promise<boolean>) => {
     if (busy) return
     setBusy(true)
     try { await run() } finally { setBusy(false) }
@@ -91,8 +98,6 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         {editor ? <button type="button" aria-label={t('changes.locate')} title={t('changes.locate')} disabled={!locatable}
           onClick={() => locate({ kind: 'change', change: c })}><AppIcon icon={LocateFixed} size="body" /></button>
           : <JumpButton item={{ kind: 'change', change: c }} onJump={() => setReviewFocus({ kind: 'change', source: 'review', id: c.id })} />}
-        {source === 'agent' && <button type="button" aria-label={t('changes.approve')} title={t('changes.approve_hint')} disabled={busy}
-          onClick={() => void approve(() => approveChanges([c.id]))}><AppIcon icon={Check} size="body" /></button>}
       </div>
     </article>
   }
@@ -103,14 +108,19 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const toolbar = canShowUser || stale || unreviewed.length > 0
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
     {/* The unreviewed count is the tab's badge; the subtitle, its title. The
-        toolbar holds only what can act: Approve all while something awaits
-        approval, the user's filter while they have changes. */}
+        toolbar holds only what can act: Approve all and Revert all while
+        something awaits review, the user's filter while they have changes. */}
     {toolbar && <div className="agent-activity-toolbar">
       {canShowUser && <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
         onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>}
-      {stale && <span className="agent-changes-stale" role="status" title={t('changes.approval_stale')}>{t('changes.approval_stale_short')}</span>}
-      {unreviewed.length > 0 && <button type="button" className="agent-changes-approve-all" disabled={busy} title={t('changes.approve_all_hint')}
-        onClick={() => void approve(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>}
+      {stale && <span className="agent-changes-stale" role="status" title={t(`changes.${stale}_stale`)}>{t(`changes.${stale}_stale_short`)}</span>}
+      {unreviewed.length > 0 && <>
+        <button type="button" className="agent-changes-revert-all" disabled={busy || locked}
+          title={locked ? t('changes.revert_all_locked') : t('changes.revert_all_hint')}
+          onClick={() => void settle(revertAllChanges)}><AppIcon icon={Undo2} size="body" />{t('changes.revert_all')}</button>
+        <button type="button" className="agent-changes-approve-all" disabled={busy} title={t('changes.approve_all_hint')}
+          onClick={() => void settle(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
+      </>}
     </div>}
     <div className="agent-activity-list" ref={list}>
       {!groups.length && (view

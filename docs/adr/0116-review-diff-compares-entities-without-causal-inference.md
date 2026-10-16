@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Per-change approval, and with it the approval overlay and approval isolation
+below, is superseded by [ADR 0119](0119-review-is-settled-as-a-whole.md):
+review is settled as a whole.
+
 ## Context
 
 ADR 0115 inferred which edit moved surrounding content. Equal translations

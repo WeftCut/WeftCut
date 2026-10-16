@@ -58,7 +58,7 @@ export type ChangeDetail =
 export interface Change {
   /** The entity's key (`Layer:<id>`…): stable across snapshots, independent of
    *  displacement and surrounding content. Each change describes exactly one
-   *  entity, and approving it never expands to related entities. */
+   *  entity, never expanded to related entities. */
   id: EntityKey
   class: ChangeClass
   /** The composition the change is listed under (current side, else baseline);
@@ -142,19 +142,16 @@ export interface ReviewViewUnchanged {
   user_count: number
 }
 
-/** `review_approve_all` arguments. `version` is the view the user acted on:
- *  main approves only while it is still the current one, so a commit landing
- *  between what the user saw and their click is never approved unseen. */
-export interface ReviewApproveAllArgs extends ReviewViewArgs { version: ReviewVersion }
+/** `review_approve_all` / `review_revert_all` arguments. `version` is the
+ *  view the user acted on: main acts only while it is still the current one,
+ *  so a commit landing between what the user saw and their click is never
+ *  approved or reverted unseen. */
+export interface ReviewActionArgs extends ReviewViewArgs { version: ReviewVersion }
 
-/** `review_approve` arguments: change ids from the view the user acted on.
- *  Unknown ids are ignored. */
-export interface ReviewApproveArgs extends ReviewApproveAllArgs { change_ids: string[] }
-
-/** What an approval answers: whether it was applied — false when `version`
- *  is no longer the current view, and then nothing was approved — and the
- *  fresh view either way. */
-export interface ReviewApproveResult { applied: boolean; view: ReviewView }
+/** What a review action answers: whether it was applied — false when
+ *  `version` is no longer the current view, and then nothing happened — and
+ *  the fresh view either way. */
+export interface ReviewActionResult { applied: boolean; view: ReviewView }
 
 /** `review_activity_view` arguments: the history op ids of one activity row
  *  (`AgentActivity.history_ids`). */

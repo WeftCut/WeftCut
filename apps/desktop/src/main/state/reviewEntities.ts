@@ -1,12 +1,11 @@
-// Internal entity comparison and approval representation shared by history and diff.
+// Internal entity comparison shared by history and diff.
 import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
 import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 
 /** One entity's compared value plus where it lives. Composition and Track
- *  values are slim (only compared fields), so an approved overlay entry never
- *  pins a whole track's layers. A composition's `track_order` (its tracks'
+ *  values are slim (only compared fields). A composition's `track_order` (its tracks'
  *  ids, top of the list first) is compared because it is the z-order: a
  *  `move_track` reorder is a reviewable `placement` change of the
  *  composition. Layer/Marker/Transition/Link hold the model object itself
@@ -19,24 +18,10 @@ export type EntityValue =
   | { kind: 'Transition'; id: Uuid; composition_id: Uuid; transition: Transition }
   | { kind: 'Link'; id: Uuid; composition_id: Uuid; link: Link }
 
-/** Overlay sentinel: "approved as not existing" (an approved removal). */
-export const ABSENT: unique symbol = Symbol('Absent')
-export type Absent = typeof ABSENT
-
 export type EntityIndex = ReadonlyMap<EntityKey, EntityValue>
-
-/** The effective baseline: `approved.get(key) ?? valueIn(base, key)`, with
- *  `ABSENT` meaning the entity is approved as gone. */
-export interface BaselineOverlay {
-  base: Project
-  approved: ReadonlyMap<EntityKey, EntityValue | Absent>
-}
-export type BaselineSource = Project | BaselineOverlay
 
 export { entityKey }
 function keyOf(v: EntityValue): EntityKey { return entityKey(v.kind, v.id) }
-/** The composition an entity lives in — its own id for a Composition. */
-function compositionOf(v: EntityValue): Uuid { return v.kind === 'Composition' ? v.id : v.composition_id }
 
 // Per-composition memo: immer shares untouched compositions between snapshots,
 // so walking a history of snapshots extracts each composition object once.
@@ -67,23 +52,6 @@ export function extractEntities(p: Project): EntityIndex {
     for (let i = 0; i < values.length; i++) out.set(keys[i]!, values[i]!)
   }
   projectMemo.set(p, out)
-  return out
-}
-
-function isOverlay(src: BaselineSource): src is BaselineOverlay {
-  return (src as BaselineOverlay).approved instanceof Map && 'base' in src
-}
-
-/** The effective baseline entity index: base entities with approved values
- *  laid over them. */
-function effectiveEntities(src: BaselineSource): EntityIndex {
-  if (!isOverlay(src)) return extractEntities(src)
-  if (src.approved.size === 0) return extractEntities(src.base)
-  const out = new Map(extractEntities(src.base))
-  for (const [k, v] of src.approved) {
-    if (v === ABSENT) out.delete(k)
-    else out.set(k, v)
-  }
   return out
 }
 
@@ -210,23 +178,6 @@ function touchedTracks(a: readonly Track[], b: readonly Track[], out: Set<Entity
   for (const id of layersAfter.keys()) if (!layersBefore.has(id)) out.add(entityKey('Layer', id))
 }
 
-/** Ids of the compositions `current` shares by reference with the baseline's
- *  base project, less every one an approved overlay entry lives in on either
- *  side — the compositions `diffProjects` can skip. */
-function sharedCompositions(baseline: BaselineSource, current: Project): Set<Uuid> {
-  const base = isOverlay(baseline) ? baseline.base : baseline
-  const out = new Set<Uuid>()
-  for (const [id, c] of Object.entries(current.compositions)) if (base.compositions[id] === c) out.add(id)
-  if (out.size === 0 || !isOverlay(baseline) || baseline.approved.size === 0) return out
-  const inBase = extractEntities(base)
-  for (const [k, v] of baseline.approved) {
-    if (v !== ABSENT) out.delete(compositionOf(v))
-    const b = inBase.get(k)
-    if (b) out.delete(compositionOf(b))
-  }
-  return out
-}
-
 /** A composition's entity keys, kept per composition object. */
 const compositionKeyMemo = new WeakMap<Composition, readonly EntityKey[]>()
 function compositionKeys(c: Composition): readonly EntityKey[] {
@@ -235,19 +186,15 @@ function compositionKeys(c: Composition): readonly EntityKey[] {
   return keys
 }
 
-/** Comparison indexes and candidate keys; snapshot sharing and approvals stay private. */
-export function compareEntities(baseline: BaselineSource, current: Project): { before: EntityIndex; after: EntityIndex; keys: ReadonlySet<EntityKey> } {
-  const before = effectiveEntities(baseline)
+/** Comparison indexes and candidate keys; snapshot sharing stays private. */
+export function compareEntities(baseline: Project, current: Project): { before: EntityIndex; after: EntityIndex; keys: ReadonlySet<EntityKey> } {
+  const before = extractEntities(baseline)
   const after = extractEntities(current)
   if (before === after) return { before, after, keys: new Set() }
   // Only the keys of compositions that may differ: one immer shared between
-  // the two sides, with no approval reaching into it, holds the very same
-  // entity values on both and cannot.
-  const base = isOverlay(baseline) ? baseline.base : baseline
-  const shared = sharedCompositions(baseline, current)
+  // the two sides holds the very same entity values on both and cannot.
   const keys = new Set<EntityKey>()
-  for (const p of [base, current])
-    for (const c of Object.values(p.compositions)) if (!shared.has(c.id)) for (const k of compositionKeys(c)) keys.add(k)
-  if (isOverlay(baseline)) for (const k of baseline.approved.keys()) keys.add(k)
+  for (const p of [baseline, current])
+    for (const c of Object.values(p.compositions)) if (current.compositions[c.id] !== baseline.compositions[c.id]) for (const k of compositionKeys(c)) keys.add(k)
   return { before, after, keys }
 }

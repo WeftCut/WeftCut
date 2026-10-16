@@ -192,14 +192,15 @@ export interface ActorHandle {
    *  Initializes when there is none; re-pins only when nothing is unreviewed.
    *  Returns whether the baseline was (re)pinned. */
   pinReviewBaseline(checkpointId?: Uuid): boolean
-  /** Approvals record nothing, emit no project change and ignore the history
-   *  lock. */
+  /** Approval records nothing, emits no project change and ignores the
+   *  history lock. */
   approveReviewAll(): void
+  /** Restore the Review baseline as one recorded commit — a revert path, so
+   *  under the history lock like restore_checkpoint (`HistoryLocked`);
+   *  `InvalidArgument` without a baseline. Burns restore's two ids. */
+  revertReviewAll(): void
   /** What the recorded ops `ids` did — `History.opDiff`; a read. */
   reviewOpDiff(ids: readonly Uuid[]): OpDiff
-  /** Approve the changes `ids`, as `approveReviewAll` does for everything.
-   *  Returns how many changes it approved. */
-  approveReview(ids: readonly string[]): number
   /** Told the new baseline revision on every baseline change (initialize,
    *  re-pin, approval, attribution, reset) — synchronously, possibly inside a
    *  commit; a consumer should defer its own work. */
@@ -688,6 +689,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const opId = idGen() // entry op_id — minted FIRST
     const snap = history.restoreCheckpoint(id, opId, clock(), who())!
     broadcastUnrecorded(`Restored checkpoint ${id}`, snap, { kind: 'Coarse' }, opId) // +1 broadcast id (the SECOND id)
+  }
+  function revertReviewAll(): void {
+    opts.assertWritable?.()
+    const reason = history.lockReason()
+    if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
+    if (history.reviewBaseline() === null) throw new CommandFailure({ error: 'InvalidArgument', field: 'review', detail: 'no review baseline' }) // 0 ids
+    const opId = idGen()
+    const snap = history.revertToReviewBaseline(opId, clock(), who())!
+    broadcastUnrecorded('Reverted unreviewed changes', snap, { kind: 'Coarse' }, opId)
   }
   /** Drop a checkpoint. Absent id → CheckpointNotFound, burning ZERO ids (same
    *  peek-before-mint convention restoreCheckpoint follows) — and here nothing is
@@ -2380,11 +2390,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
     listCheckpoints,
     reviewState: () => history.reviewState(),
     reviewRevision: () => history.reviewRevision(),
-    pinReviewBaseline: (checkpointId) =>
-      history.pinReviewBaseline((checkpointId !== undefined ? history.checkpointSnapshot(checkpointId) : null) ?? current()),
+    pinReviewBaseline: (checkpointId) => history.pinReviewBaseline(checkpointId),
     approveReviewAll: () => history.approveAll(),
+    revertReviewAll,
     reviewOpDiff: (ids) => history.opDiff(ids),
-    approveReview: (ids) => history.approveChanges(ids),
     subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
     dryRun,
     setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },

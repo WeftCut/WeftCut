@@ -8,13 +8,13 @@
 // subscribes to `review:changed` and to project publications and fetches, the
 // last one to leave unsubscribes. Replies older than the view held — by project
 // publication or by baseline revision — are dropped, so a fetch that started
-// before an approval can never paint the approved changes back.
+// before an approval or a revert can never paint those changes back.
 import { useCallback, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
-import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
-import type { Change, ReviewApproveResult, ReviewVersion, ReviewView, ReviewViewUnchanged } from '../../shared/review'
+import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApproveAll, reviewRevertAll, reviewView } from '../ipc'
+import type { Change, ReviewActionResult, ReviewVersion, ReviewView, ReviewViewUnchanged } from '../../shared/review'
 import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
@@ -56,10 +56,11 @@ interface ReviewState {
   showUser: boolean
   /** Whether `view` was asked for with the user-only list. */
   viewListsUser: boolean
-  /** The last approval was refused: the view it was made from had moved on
-   *  (an agent committed meanwhile), so nothing was approved and the fresh
-   *  list is on screen. Cleared by the next approval. */
-  approvalStale: boolean
+  /** The last approve all or revert all was refused: the view it was made
+   *  from had moved on (an agent committed meanwhile), so nothing happened
+   *  and the fresh list is on screen. Names the refused action; cleared by
+   *  the next one. */
+  actionStale: ReviewAction | null
   /** The selected activity row's changes, preferred by every timeline surface
    *  over `highlight` once ready. Null when no row is selected. */
   activity: ActivityHighlight | null
@@ -103,7 +104,7 @@ export const useReview = create<ReviewState>((set, get) => ({
   highlight: EMPTY_HIGHLIGHT,
   showUser: false,
   viewListsUser: false,
-  approvalStale: false,
+  actionStale: null,
   activity: null,
   apply: (next, listsUser = false) => {
     const held = get()
@@ -338,15 +339,18 @@ export function useCompositionChangeRanges(compositionId: string | null): readon
   }, [ranges, compositionId])
 }
 
-// ── Approval ──────────────────────────────────────────────────────────────────
+// ── Approve all / revert all ──────────────────────────────────────────────────
 
-/** Run one approval against the held view. It names that view's version:
- *  main approves only while it is still current, so a change committed after
- *  the list on screen is never approved unseen. The reply is the fresh view
- *  either way and lands in the store straight away, so the tab updates and
- *  every highlight goes in the same render. True when the approval applied. */
-async function approve(
-  run: (version: ReviewVersion, includeUser: boolean) => Promise<ReviewApproveResult>,
+export type ReviewAction = 'approve' | 'revert'
+
+/** Run one review action against the held view. It names that view's
+ *  version: main acts only while it is still current, so a change committed
+ *  after the list on screen is never approved or reverted unseen. The reply
+ *  is the fresh view either way and lands in the store straight away, so the
+ *  tab updates and every highlight goes in the same render. True when the
+ *  action applied. */
+async function act(action: ReviewAction,
+  run: (version: ReviewVersion, includeUser: boolean) => Promise<ReviewActionResult>,
   context: string,
 ): Promise<boolean> {
   let applied = false
@@ -356,19 +360,19 @@ async function approve(
     const r = await run(view.version, showUser)
     useReview.getState().apply(r.view, showUser)
     applied = r.applied
-    useReview.setState({ approvalStale: !r.applied })
+    useReview.setState({ actionStale: r.applied ? null : action })
   }, context)
   return ok && applied
 }
 
-/** Approve every unreviewed change of the held view. */
+/** Approve the held view: the baseline becomes the current state. */
 export function approveAllChanges(): Promise<boolean> {
-  return approve((version, include_user) => reviewApproveAll({ version, include_user }), 'review_approve_all')
+  return act('approve', (version, include_user) => reviewApproveAll({ version, include_user }), 'review_approve_all')
 }
 
-/** Approve the given changes of the held view. */
-export function approveChanges(changeIds: readonly string[]): Promise<boolean> {
-  return approve((version, include_user) => reviewApprove({ version, include_user, change_ids: [...changeIds] }), 'review_approve')
+/** Revert the held view: the baseline is restored, undoably. */
+export function revertAllChanges(): Promise<boolean> {
+  return act('revert', (version, include_user) => reviewRevertAll({ version, include_user }), 'review_revert_all')
 }
 
 // ── Per-activity highlight ────────────────────────────────────────────────────
@@ -440,5 +444,5 @@ export function useActivityHighlightHost(): void {
 export function resetReviewForTests(): void {
   teardown?.(); teardown = null; consumers = 0; pending = false; again = false
   activityToken += 1
-  useReview.setState({ view: null, viewListsUser: false, approvalStale: false, highlight: EMPTY_HIGHLIGHT, showUser: false, activity: null })
+  useReview.setState({ view: null, viewListsUser: false, actionStale: null, highlight: EMPTY_HIGHLIGHT, showUser: false, activity: null })
 }

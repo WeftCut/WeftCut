@@ -12,7 +12,7 @@ export type Route =
   | { kind: 'command' }       // actor.command(channel, args)
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
-  | { kind: 'review' }        // Review baseline read + approvals (ADR 0115) — never a project write
+  | { kind: 'review' }        // Review baseline reads, approve all, revert all (ADR 0115)
   | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
@@ -169,14 +169,16 @@ export function routeChannel(channel: string): Route {
     // every edit whether the panel is open or not (spec decision 5).
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
-    // Review: two reads (the baseline view; what one activity's ops did) and
-    // two approvals. Approval folds changes into the Review baseline; it
-    // changes nothing in the project and records nothing, so it
-    // is not a command and the history lock does not apply (ADR 0115).
+    // Review: two reads (the baseline view; what one activity's ops did),
+    // approve all and revert all, both checked against the view the user
+    // acted on. Approval folds the current state into the Review baseline; it
+    // changes nothing in the project and records nothing, so the history lock
+    // does not apply. Revert all restores the baseline as a recorded commit,
+    // under the lock like restore_checkpoint (ADR 0115).
     case 'review_view':
     case 'review_activity_view':
     case 'review_approve_all':
-    case 'review_approve': return { kind: 'review' }
+    case 'review_revert_all': return { kind: 'review' }
     // The user's tack actions (resolve / dismiss / reopen / clear). Served by
     // the TackStore beside agent activity, like the MCP tack verbs: not project
     // content, so not a command, never recorded, not under the history lock.

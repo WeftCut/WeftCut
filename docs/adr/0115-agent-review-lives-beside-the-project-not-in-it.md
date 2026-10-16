@@ -7,6 +7,9 @@ below are superseded by [ADR 0116](0116-review-diff-compares-entities-without-ca
 Tack placement and lifecycle — edge anchoring, the stale and hibernating
 states, shrinking ranges and the covered-clip outdating — are superseded by
 [ADR 0117](0117-a-tack-is-outdated-when-its-range-plays-differently.md).
+Per-change approval and the per-entity approval overlay are superseded by
+[ADR 0119](0119-review-is-settled-as-a-whole.md): review is settled as a
+whole, by Approve all and Revert all.
 The baseline, attribution, approval version guard and the Tack as runtime
 review state beside the project remain in force.
 

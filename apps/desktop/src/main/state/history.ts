@@ -2,7 +2,7 @@
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 import { diffProjects, groupDecorations, locateChanges } from './reviewDiff'
-import { ABSENT, entitiesEqual, extractEntities, jsonEqual, touchedEntityKeys, type Absent, type EntityValue } from './reviewEntities'
+import { jsonEqual, touchedEntityKeys } from './reviewEntities'
 import type { Change, EntityKey, GroupDecoration } from '../../shared/review'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
@@ -81,16 +81,17 @@ export interface HistoryStatus {
 const DEFAULT_CAP = 200
 
 /** The Review baseline (ADR 0115; spec Part B): the state the user last
- *  accepted. `base` is patched by every `*Everywhere` preference patch exactly
- *  like a checkpoint; `approved` overlays per-entity approvals on it
- *  (`ABSENT` = approved as gone); `agentTouched` holds every entity an
- *  Agent-sourced recorded commit touched since. */
+ *  accepted — one whole snapshot, patched by every `*Everywhere` preference
+ *  patch exactly like a checkpoint, but never listed, deleted or named.
+ *  `agentTouched` holds every entity an Agent-sourced recorded commit touched
+ *  since. */
 export interface ReviewBaseline {
   readonly base: Project
-  readonly approved: ReadonlyMap<EntityKey, EntityValue | Absent>
   readonly agentTouched: ReadonlySet<EntityKey>
 }
-interface MutableBaseline { base: Project; approved: Map<EntityKey, EntityValue | Absent>; agentTouched: Set<EntityKey> }
+/** `effects`: the op lineage `base` carries, so a revert to it reads its
+ *  agent ops as reverted (effectStates), as a checkpoint restore does. */
+interface MutableBaseline { base: Project; effects: ReadonlySet<Uuid>; agentTouched: Set<EntityKey> }
 
 /** The baseline compared against `current()`: unreviewed changes (any key an
  *  agent touched) and user-only ones, plus Group decorations for both. */
@@ -299,7 +300,7 @@ export class History {
   private attribute(predecessor: Project, entry: HistoryEntry): void {
     if (entry.actor.kind !== 'Agent') return
     let changed = false
-    if (this.review === null) { this.review = { base: predecessor, approved: new Map(), agentTouched: new Set() }; changed = true }
+    if (this.review === null) { this.review = this.pinned(predecessor, this.effectLineage.get(this.snapshots[this.cursor])); changed = true }
     const touched = this.review.agentTouched
     for (const k of touchedEntityKeys(predecessor, entry.snapshot)) {
       if (!touched.has(k)) { touched.add(k); changed = true }
@@ -320,62 +321,47 @@ export class History {
   onReviewChange(cb: ((revision: number) => void) | null): void { this.reviewListener = cb }
   reviewBaseline(): ReviewBaseline | null { return this.review }
 
-  /** A checkpoint's stored snapshot (a work session's `Pre-agent` one is what
-   *  the baseline pins to), or null when it is gone. */
-  checkpointSnapshot(id: Uuid): Project | null { return this.checkpoints.get(id)?.snapshot ?? null }
+  /** A fresh baseline at `base`: nothing touched since. */
+  private pinned(base: Project, effects: ReadonlySet<Uuid> | undefined): MutableBaseline {
+    return { base, effects: effects ?? new Set(), agentTouched: new Set() }
+  }
 
-  /** Work session begin: initialize from `snapshot` when there is no baseline;
-   *  re-pin to it only when nothing is unreviewed, otherwise keep
-   *  accumulating. Returns whether the baseline now IS `snapshot`. */
-  pinReviewBaseline(snapshot: Project): boolean {
+  /** Work session begin: initialize from the checkpoint `checkpointId` (the
+   *  session's `Pre-agent` one; the current state when absent or gone) when
+   *  there is no baseline; re-pin to it only when nothing is unreviewed,
+   *  otherwise keep accumulating. Returns whether the baseline now IS that
+   *  state. */
+  pinReviewBaseline(checkpointId?: Uuid): boolean {
     if (this.review !== null && this.reviewState().unreviewed.length > 0) return false
-    this.review = { base: snapshot, approved: new Map(), agentTouched: new Set() }
+    const cp = checkpointId !== undefined ? this.checkpoints.get(checkpointId) : undefined
+    this.review = cp ? this.pinned(cp.snapshot, this.effectLineage.get(cp)) : this.pinned(this.current(), this.effectLineage.get(this.snapshots[this.cursor]))
     this.bumpReview()
     return true
   }
 
-  /** Approve all: the baseline becomes the current state. Records nothing and
-   *  ignores the history lock (approval changes no project state). No-op
-   *  without a baseline. */
+  /** Approve all: the baseline becomes the current state — the user's own
+   *  differences with the agent's. Records nothing and ignores the history
+   *  lock (approval changes no project state). No-op without a baseline. */
   approveAll(): void {
     if (this.review === null) return
-    this.review = { base: this.current(), approved: new Map(), agentTouched: new Set() }
+    this.review = this.pinned(this.current(), this.effectLineage.get(this.snapshots[this.cursor]))
     this.bumpReview()
   }
 
-  /** Approve the changes `ids` (entity keys) of the current review state:
-   *  each entity takes its current value in the overlay and leaves
-   *  `agentTouched`. An id in no change is ignored. Returns how many changes
-   *  were approved. */
-  approveChanges(ids: Iterable<string>): number {
+  /** Revert all: record the baseline as the current state — a checkpoint
+   *  restore to it, the user's own differences going with the agent's. The
+   *  baseline and what agents touched stay, so undoing the revert lists the
+   *  same changes again. Null (and nothing recorded) without a baseline. */
+  revertToReviewBaseline(opId: Uuid, timestamp: string, actor: Actor): Project | null {
     const review = this.review
-    if (review === null) return 0
-    const wanted = new Set(ids)
-    const { unreviewed, user } = this.reviewState()
-    const picked = [...unreviewed, ...user].filter((c) => wanted.has(c.id))
-    if (picked.length === 0) return 0
-    const cur = extractEntities(this.current())
-    const base = extractEntities(review.base)
-    for (const change of picked) {
-      const k = change.id, v = cur.get(k)
-      // Keep the overlay minimal when approval returns to the base value.
-      if (v === undefined ? !base.has(k) : entitiesEqual(base.get(k), v)) review.approved.delete(k)
-      else review.approved.set(k, v ?? ABSENT)
-      review.agentTouched.delete(k)
-    }
-    this.bumpReview()
-    return picked.length
+    if (review === null) return null
+    const s = HISTORY_SUMMARY.reviewRevert
+    this.record({ op_id: opId, actor, timestamp, summary: s.text, label_key: s.key, affected: [], snapshot: review.base }, review.effects)
+    return review.base
   }
 
   /** The baseline against the current state, memoized on (baseline revision,
-   *  base and current snapshot identity) — computed only when asked.
-   *
-   *  Known caveat: approved overlay values bypass the `*Everywhere` patches.
-   *  The fps re-snap (replaceCompositionEverywhere) moves markers in every
-   *  snapshot and in `base` but not in `approved`; the re-snapped marker's key
-   *  is not in `agentTouched`, so the difference surfaces only as a user
-   *  change (hidden by default). The re-snap is refused while any layer
-   *  exists (`FpsLockedByContent`), so only bare markers can be affected. */
+   *  base and current snapshot identity) — computed only when asked. */
   reviewState(): ReviewState {
     const review = this.review
     const current = this.current()
@@ -385,7 +371,7 @@ export class History {
     }
     const m = this.reviewMemo
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
-    const changes = diffProjects(review, current)
+    const changes = diffProjects(review.base, current)
     const unreviewed: Change[] = [], user: Change[] = []
     for (const c of changes) (review.agentTouched.has(c.id) ? unreviewed : user).push(c)
     const state = this.stamped({ baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) })

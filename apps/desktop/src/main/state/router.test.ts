@@ -29,7 +29,7 @@ const ALL_CHANNELS: readonly string[] = [
   // router special-cases (summary / history read / settings / persistence seam / agent-session)
   'project_summary', 'project_publication', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
-  'review_view', 'review_activity_view', 'review_approve_all', 'review_approve',
+  'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer',
@@ -109,7 +109,7 @@ describe('router partition gate', () => {
       'project_open', 'project_save', 'project_save_as', 'project_new_workspace',
       'project_summary', 'project_history_view', 'get_project_settings',
       'agent_session_end', 'agent_session_begin',
-      'review_view', 'review_activity_view', 'review_approve_all', 'review_approve',
+      'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
       'agent_tacks_set_status', 'agent_tacks_delete',
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
@@ -157,8 +157,8 @@ describe('routeChannel', () => {
     for (const ch of ['project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint'])
       expect(routeChannel(ch), ch).toEqual({ kind: 'command' })
   })
-  it('routes the review read and approvals to their own kind, never command', () => {
-    for (const ch of ['review_view', 'review_activity_view', 'review_approve_all', 'review_approve']) {
+  it('routes the review reads, approve all and revert all to their own kind, never command', () => {
+    for (const ch of ['review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all']) {
       expect(routeChannel(ch)).toEqual({ kind: 'review' })
       expect(PRODUCTION_OPS.has(ch)).toBe(false)
     }

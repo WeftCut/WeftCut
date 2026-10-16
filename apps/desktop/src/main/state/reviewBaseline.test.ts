@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/reviewBaseline.test.ts
 // The Review baseline History owns: initialize / re-pin / keep, attribution,
-// approval, preference patches, reset (spec .scratch/agent-review/spec.md
+// approve all, revert all, preference patches, reset (spec .scratch/agent-review/spec.md
 // Part B — Review baseline, Attribution; ADR 0115; ticket 05).
 import { describe, it, expect, vi } from 'vitest'
 import { createActor, type ActorHandle } from './actor'
@@ -128,48 +128,8 @@ describe('Review baseline — attribution', () => {
   })
 })
 
-describe('Review baseline — approval', () => {
-  it('approving one change leaves the rest; a later agent edit reappears; editing back to the approved value removes it', () => {
-    const { a, tA, tB } = setup()
-    a.pinReviewBaseline()
-    const x = color(a, tA, 0, S, AGENT)
-    const y = color(a, tB, 0, S, AGENT)
-    expect(a.approveReview([L(x)])).toBe(1)
-    expect(ids(a)).toEqual({ unreviewed: [L(y)], user: [] })
-    label(a, x, 'first', AGENT)
-    a.approveReview([L(x)]) // the approved value is now labelled 'first'
-    expect(ids(a).unreviewed).toEqual([L(y)])
-    label(a, x, 'renamed', AGENT)
-    expect(a.reviewState().unreviewed.find((c) => c.id === L(x))).toMatchObject({ class: 'modified', details: [{ type: 'label' }] })
-    label(a, x, 'first') // back to the approved value — by the user, even
-    expect(ids(a)).toEqual({ unreviewed: [L(y)], user: [] })
-  })
-
-  it('an approved removal (ABSENT) and an edit back to the baseline value', () => {
-    const { a, tA } = setup()
-    const x = color(a, tA, 0, S)
-    a.pinReviewBaseline()
-    ok(a.dispatch('delete_layers', { layers: [x] }, AGENT))
-    expect(ids(a).unreviewed).toEqual([L(x)])
-    a.approveReview([L(x)])
-    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
-    ok(a.dispatch('undo', {})) // the layer is back: differs from the approved removal
-    expect(ids(a)).toEqual({ unreviewed: [], user: [L(x)] })
-  })
-
-  it('same-delta translations approve independently', () => {
-    const { a, tA, tB } = setup()
-    const y = color(a, tB, 0, S)
-    const x = color(a, tA, 2 * S, 3 * S)
-    const z = color(a, tA, 5 * S, 6 * S)
-    a.pinReviewBaseline()
-    ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
-    label(a, z, 'z', AGENT)
-    expect(a.approveReview([L(y)])).toBe(1)
-    expect(ids(a)).toEqual({ unreviewed: [L(x), L(z)], user: [] })
-  })
-
-  it('approve all folds everything in; approvals record nothing, emit no change and ignore the history lock', () => {
+describe('Review baseline — approve all', () => {
+  it('folds everything in; records nothing, emits no change and ignores the history lock', () => {
     const { a, tA } = setup()
     a.pinReviewBaseline()
     const x = color(a, tA, 0, S, AGENT)
@@ -178,7 +138,6 @@ describe('Review baseline — approval', () => {
     const status = a.historyStatus()
     const events = vi.fn()
     a.subscribe(events)
-    a.approveReview([L(x)])
     a.approveReviewAll()
     expect(ids(a)).toEqual({ unreviewed: [], user: [] })
     expect(a.historyStatus()).toEqual(status)
@@ -188,39 +147,79 @@ describe('Review baseline — approval', () => {
     expect(ids(a)).toEqual({ unreviewed: [], user: [L(x)] })
   })
 
-  it('unknown ids and keys are ignored; with no baseline nothing happens', () => {
-    const { a, tA } = setup()
-    expect(a.approveReview(['Layer:nope'])).toBe(0)
+  it('takes the user\'s own differences with the agent\'s: the baseline is the whole current state', () => {
+    const { a, tA, tB } = setup()
+    a.pinReviewBaseline()
+    color(a, tA, 0, S, AGENT)
+    color(a, tB, 0, S)
+    expect(a.reviewState().user).toHaveLength(1)
+    a.approveReviewAll()
+    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
+  })
+
+  it('with no baseline nothing happens', () => {
+    const { a } = setup()
     a.approveReviewAll()
     expect(a.reviewState().has_baseline).toBe(false)
-    color(a, tA, 0, S, AGENT)
-    expect(a.approveReview(['Layer:nope', 'Marker:nope'])).toBe(0)
-    expect(a.reviewState().unreviewed).toHaveLength(1)
   })
 })
 
-describe('Review baseline — independent changes', () => {
-  it('approving a removal leaves every moved entity to review', () => {
+describe('Review baseline — revert all', () => {
+  const lastOp = (a: ActorHandle) => a.historyView(1).ops[0].op_id
+
+  it('restores the baseline as one recorded commit, the user\'s differences included; undo lists the same changes again', () => {
     const { a, tA, tB } = setup()
-    const gone = color(a, tA, 0, S), tail = color(a, tA, S, 2 * S), overlay = color(a, tB, 3 * S, 4 * S)
+    const kept = color(a, tA, 0, S)
     a.pinReviewBaseline()
-    ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
-    expect(new Set(ids(a).unreviewed)).toEqual(new Set([L(gone), L(tail), L(overlay)]))
-    expect(a.approveReview([L(gone)])).toBe(1)
-    expect(new Set(ids(a).unreviewed)).toEqual(new Set([L(tail), L(overlay)]))
-    const tailBefore = a.reviewState().unreviewed.find(c => c.id === L(tail))!.before_ranges
-    a.approveReview([L(overlay)])
-    expect(a.reviewState().unreviewed[0].before_ranges).toEqual(tailBefore)
+    const x = color(a, tA, 2 * S, 3 * S, AGENT)
+    label(a, kept, 'agent', AGENT)
+    const mine = color(a, tB, 0, S)
+    const before = ids(a)
+    const len = a.historyStatus().len
+    a.revertReviewAll()
+    expect(a.historyStatus().len).toBe(len + 1)
+    expect(a.historyView(1).ops[0]).toMatchObject({ actor: { kind: 'User' }, label_key: 'history.review.revert' })
+    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
+    const layers = root(a.snapshot()).tracks.flatMap((t) => t.layers)
+    expect(layers.map((l) => l.id)).toEqual([kept])
+    expect(layers[0].label ?? null).toBeNull()
+    ok(a.dispatch('undo', {}))
+    expect(ids(a)).toEqual(before)
+    expect(new Set(before.unreviewed)).toEqual(new Set([L(x), L(kept)]))
+    expect(before.user).toEqual([L(mine)])
   })
-  it('approving one moved entity resets only its own comparison values', () => {
-    const { a, tA, tB } = setup()
-    const x = color(a, tA, 0, S), y = color(a, tB, 0, S)
+
+  it('reads the agent ops it took back as reverted, as a checkpoint restore does', () => {
+    const { a, tA } = setup()
+    color(a, tA, 0, S)
+    const userOp = lastOp(a)
     a.pinReviewBaseline()
-    ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
-    a.approveReview([L(x)])
-    ok(a.dispatch('shift_layers', { layers: [x], delta_us: S }, AGENT))
-    expect(a.reviewState().unreviewed.find(c => c.id === L(x))!.before_ranges![0].t_start_us).toBe(S)
-    expect(a.reviewState().unreviewed.find(c => c.id === L(y))!.before_ranges![0].t_start_us).toBe(0)
+    color(a, tA, 2 * S, 3 * S, AGENT)
+    const agentOp = lastOp(a)
+    a.revertReviewAll()
+    expect(a.historyEffects([userOp, agentOp])).toEqual(['applied', 'reverted'])
+  })
+
+  it('leaves the baseline where it is, so the next work session re-pins', () => {
+    const { a, tA } = setup()
+    a.pinReviewBaseline()
+    color(a, tA, 0, S, AGENT)
+    const rev = a.reviewRevision()
+    a.revertReviewAll()
+    expect(a.reviewRevision()).toBe(rev)
+    expect(a.pinReviewBaseline()).toBe(true)
+  })
+
+  it('is refused under the history lock and without a baseline, recording nothing', () => {
+    const { a, tA } = setup()
+    expect(() => a.revertReviewAll()).toThrow(/InvalidArgument/)
+    a.pinReviewBaseline()
+    color(a, tA, 0, S, AGENT)
+    a.lockHistory('agent at work')
+    const status = a.historyStatus()
+    expect(() => a.revertReviewAll()).toThrow(/HistoryLocked/)
+    expect(a.historyStatus()).toEqual(status)
+    expect(a.reviewState().unreviewed).toHaveLength(1)
   })
 })
 
@@ -277,19 +276,16 @@ describe('Review baseline — preference patches, checkpoints, reset', () => {
     expect(after.baseline_revision).toBeGreaterThan(rev)
   })
 
-  it('known caveat: an fps re-snap does not reach approved overlay values — it surfaces as a user change only', () => {
+  it('an fps re-snap reaches the approved baseline as it does every snapshot: no change', () => {
     const { a } = setup()
     a.pinReviewBaseline()
-    const m = ok(a.dispatch('add_marker', { t_us: 100_000 }, AGENT)) as Uuid
-    a.approveReview([entityKey('Marker', m)])
-    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
+    ok(a.dispatch('add_marker', { t_us: 100_000 }, AGENT))
+    a.approveReviewAll()
     // No layer anywhere, so the rate is free; the marker re-snaps to 24 fps in
-    // every snapshot and in the base, but not in the approved overlay.
+    // every snapshot and in the base alike.
     ok(a.dispatch('set_composition', { fps: { num: 24, den: 1 } }))
-    const moved = root(a.snapshot()).markers[0].t_us
-    expect(moved).not.toBe(100_000)
-    const { unreviewed, user } = a.reviewState()
-    expect([unreviewed, user.map((c) => c.id)]).toEqual([[], [entityKey('Marker', m)]])
+    expect(root(a.snapshot()).markers[0].t_us).not.toBe(100_000)
+    expect(ids(a)).toEqual({ unreviewed: [], user: [] })
   })
 })
 

@@ -36,7 +36,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
-import type { ReviewActivityView, ReviewApproveAllArgs, ReviewApproveArgs, ReviewApproveResult, ReviewView, ReviewViewArgs, ReviewViewUnchanged } from "../../shared/review";
+import type { ReviewActivityView, ReviewActionArgs, ReviewActionResult, ReviewView, ReviewViewArgs, ReviewViewUnchanged } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
 export type {
   Change as ReviewChange,
@@ -45,9 +45,8 @@ export type {
   EntityKey as ReviewEntityKey,
   GroupDecoration as ReviewGroupDecoration,
   ReviewActivityView,
-  ReviewApproveAllArgs,
-  ReviewApproveArgs,
-  ReviewApproveResult,
+  ReviewActionArgs,
+  ReviewActionResult,
   ReviewChangedPayload,
   ReviewVersion,
   ReviewView,
@@ -1121,14 +1120,16 @@ export async function reviewActivityView(historyIds: readonly string[]): Promise
 /// in the project, records nothing, and is allowed under the history lock.
 /// Applied only while `version` (the view the user acted on) is still current;
 /// answers with whether it was, and the fresh view.
-export async function reviewApproveAll(args: ReviewApproveAllArgs): Promise<ReviewApproveResult> {
-  return invoke<ReviewApproveResult>("review_approve_all", { ...args });
+export async function reviewApproveAll(args: ReviewActionArgs): Promise<ReviewActionResult> {
+  return invoke<ReviewActionResult>("review_approve_all", { ...args });
 }
 
-/// Approve changes by id (from the view). Unknown ids are ignored. Applied only while `version` is still the current view;
+/// Revert everything: the baseline is restored as one recorded, undoable
+/// commit — the user's own differences with the agent's. Rejects under the
+/// history lock. Applied only while `version` is still the current view;
 /// answers with whether it was, and the fresh view.
-export async function reviewApprove(args: ReviewApproveArgs): Promise<ReviewApproveResult> {
-  return invoke<ReviewApproveResult>("review_approve", { ...args });
+export async function reviewRevertAll(args: ReviewActionArgs): Promise<ReviewActionResult> {
+  return invoke<ReviewActionResult>("review_revert_all", { ...args });
 }
 
 // ============================================================

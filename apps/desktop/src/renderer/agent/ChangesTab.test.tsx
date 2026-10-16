@@ -53,7 +53,7 @@ beforeEach(async () => {
   mocks.listeners.clear(); mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true)
   mocks.invoke.mockReset().mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
     channel === 'review_view' ? served(view(1), args)
-      : channel.startsWith('review_approve') ? { applied: true, view: served(view(2, []), args) } : { available: true, url: '', connections: [] })
+      : channel === 'review_approve_all' || channel === 'review_revert_all' ? { applied: true, view: served(view(2, []), args) } : { available: true, url: '', connections: [] })
   useProjectStore.getState().apply(summaryFixture({
     root: { tracks: [track('t1', [clip('late', 'Late clip', 8 * S, 9 * S), clip('early', 'Early clip', S, 2 * S)])] },
     groups: [compositionFixture({ id: 'grp', label: 'Intro', tracks: [track('gt', [])] })],
@@ -72,7 +72,7 @@ describe('AgentPanel Changes tab', () => {
     await flush()
     expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Activity', 'Tacks', 'Changes4'])
     // The badge is the count: the toolbar does not repeat it, nor the subtitle (the tab's title) the list.
-    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)Approve all')
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)Revert allApprove all')
     expect(screen.queryByText('What agents changed since you last approved')).toBeNull()
     expect(screen.getByRole('tab', { name: /Changes/ }).title).toBe('What agents changed since you last approved')
     const groups = [...document.querySelectorAll('.agent-change-group-heading > span')].map(e => e.textContent)
@@ -89,35 +89,48 @@ describe('AgentPanel Changes tab', () => {
     expect(within(inner!).getAllByText(/^Clip/).length).toBeGreaterThan(0)
   })
 
-  it('approves one change by id, and approve-all empties the tab in one update', async () => {
+  it('settles the list as a whole: rows carry no approve; approve-all empties the tab in one update', async () => {
     render(<AgentPanel editor />)
     await flush()
-    fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Approve' }))
-    await flush()
-    expect(calls('review_approve')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false, change_ids: ['Layer:early'] }])
-    // That reply was the empty view; reseed and approve all.
-    act(() => { useReview.getState().apply(view(3)) })
-    expect(rows()).toHaveLength(4)
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(4, []) } : view(1))
+    expect(rows().every(r => within(r).queryByRole('button', { name: /Approve/ }) === null)).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
     await flush()
-    expect(calls('review_approve_all')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 3 }, include_user: false }])
+    expect(calls('review_approve_all')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false }])
     expect(rows()).toHaveLength(0)
     expect(useReview.getState().highlight.layers.size).toBe(0)
     const empty = document.querySelector<HTMLElement>('.agent-changes .agent-empty')!
-    expect(within(empty).getByText('Nothing to review. Every agent change is approved.')).toBeTruthy()
+    expect(within(empty).getByText('Nothing to review.')).toBeTruthy()
     // Empty, the list is one block: the message, then the retention note — no footnote below it.
-    expect(within(empty).getByText('Approving records nothing in history. To reject a change, undo it or restore a checkpoint.')).toBeTruthy()
+    expect(within(empty).getByText('Approving records nothing in history; reverting is one step you can undo. To drop a single change, undo it or edit it back.')).toBeTruthy()
     expect(within(empty).queryByText('What agents changed since you last approved')).toBeNull()
     expect(document.querySelector('.agent-changes .agent-list-footnote')).toBeNull()
-    // Nothing awaits approval: Approve all leaves; the user's filter stays while they have changes.
+    // Nothing awaits review: both actions leave; the user's filter stays while they have changes.
     expect(screen.queryByRole('button', { name: 'Approve all' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Revert all' })).toBeNull()
     expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)')
     act(() => { useReview.getState().apply(view(5, [], [])) })
     expect(document.querySelector('.agent-changes .agent-activity-toolbar')).toBeNull()
   })
 
-  it('"show my changes" lists user-only changes, marked and without approve', async () => {
+  it('revert all names the held view and empties the tab; it waits while history is locked', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    const revert = screen.getByRole('button', { name: 'Revert all' })
+    expect(revert.title).toBe('Restore the project to the review baseline, your own changes since included. Undo brings it all back.')
+    act(() => useAgentActivity.setState({ snapshot: {
+      workspace_id: 'w', revision: 1, session: null, sessions: [], activities: [], evicted: 0, lock_reason: 'agent at work', checkpoints: [], tacks: [],
+    } as AgentActivitySnapshot }))
+    expect(revert).toHaveProperty('disabled', true)
+    expect(revert.title).toBe('History is locked — unlock it to revert')
+    act(() => useAgentActivity.setState({ snapshot: { ...useAgentActivity.getState().snapshot!, lock_reason: null } }))
+    expect(revert).toHaveProperty('disabled', false)
+    fireEvent.click(revert)
+    await flush()
+    expect(calls('review_revert_all')).toEqual([{ version: { session: 1, revision: 1, baseline_revision: 1 }, include_user: false }])
+    expect(rows()).toHaveLength(0)
+  })
+
+  it('"show my changes" lists user-only changes, marked as the user\'s', async () => {
     render(<AgentPanel editor />)
     await flush()
     const filter = screen.getByRole('button', { name: 'Show my changes (1)' })
@@ -129,7 +142,6 @@ describe('AgentPanel Changes tab', () => {
     const user = document.querySelector<HTMLElement>('[data-source="user"]')!
     expect(user.dataset.changeId).toBe('Layer:mine')
     expect(within(user).getByText('You')).toBeTruthy()
-    expect(within(user).queryByRole('button', { name: 'Approve' })).toBeNull()
     // Interleaved by time within its composition; the unreviewed count is unchanged.
     expect(rows().map(r => r.dataset.changeId).slice(0, 4)).toEqual(['Layer:early', 'Layer:a', 'Layer:mine', 'Layer:late'])
     expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes4')
@@ -145,11 +157,11 @@ describe('AgentPanel Changes tab', () => {
     expect(useReview.getState().showUser).toBe(false)
     expect(screen.queryByRole('button', { name: /Show my changes/ })).toBeNull()
     expect(document.querySelector('[data-source="user"]')).toBeNull()
-    // Approve all still has its row, alone.
-    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Approve all')
+    // Revert all and Approve all still have their row, alone.
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Revert allApprove all')
   })
 
-  it('an approval made after the list changed approves nothing and says so beside Approve all', async () => {
+  it('an approval made after the list changed approves nothing and says so in the toolbar', async () => {
     render(<AgentPanel editor />)
     await flush()
     const fresh = { ...view(1, [...unreviewed, change({ id: 'Layer:new', ranges: range(0, S) })], []), version: { session: 1, revision: 2, baseline_revision: 1 } }
@@ -161,7 +173,7 @@ describe('AgentPanel Changes tab', () => {
     expect(note.getAttribute('role')).toBe('status')
     expect(note.title).toBe('The changes were updated — review again. Nothing was approved.')
     expect(note.parentElement!.classList.contains('agent-activity-toolbar')).toBe(true)
-    expect(note.nextElementSibling?.textContent).toBe('Approve all')
+    expect(note.nextElementSibling?.textContent).toBe('Revert all')
     // An approval that applies clears it.
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(4, []) } : fresh)
     fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
@@ -245,8 +257,8 @@ describe('AgentPanel Changes tab', () => {
     act(() => useReviewFocus.setState({ focus: { kind: 'change', source: 'review', id: 'Layer:early' }, hover: { kind: 'change', source: 'review', id: 'Layer:late' } }))
     act(() => { useReview.getState().apply(view(2, unreviewed.filter(c => c.id !== 'Layer:late'))) })
     expect(useReviewFocus.getState()).toMatchObject({ focus: { kind: 'change', source: 'review', id: 'Layer:early' }, hover: null })
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? { applied: true, view: view(3, []) } : view(2))
-    fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Approve' }))
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(3, []) } : view(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
     await flush()
     expect(useReviewFocus.getState().focus).toBeNull()
   })
@@ -262,7 +274,7 @@ describe('AgentPanel Changes tab', () => {
     expect(useReviewFocus.getState().focus).toBeNull()
   })
 
-  it('lists and approves each changed entity independently', async () => {
+  it('lists each changed entity independently', async () => {
     const moved = change({ id: 'Layer:next', class: 'modified',       details: [{ type: 'time', field: 'start', from_us: 4 * S, to_us: 3 * S }], ranges: range(3 * S, 4 * S) })
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, moved], []) : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)

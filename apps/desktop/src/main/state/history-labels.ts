@@ -97,6 +97,9 @@ export const HISTORY_SUMMARY = {
 
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
   captionMerge: { key: 'history.caption.merge', text: 'Merged captions' },
+
+  /** Revert all from the Changes tab: the Review baseline restored. */
+  reviewRevert: { key: 'history.review.revert', text: 'Reverted unreviewed changes' },
 } satisfies Record<string, HistorySummary>
 
 // ── templated summaries — the phrase embeds runtime data, so the text is built
