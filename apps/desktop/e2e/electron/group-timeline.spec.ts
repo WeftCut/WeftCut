@@ -115,10 +115,13 @@ const clickCentre = async (page: Page, target: Locator) => {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 };
 
-const doubleClickCentre = async (page: Page, target: Locator) => {
+const doubleClickCentre = async (target: Locator) => {
   const box = await target.boundingBox();
   if (!box) throw new Error("target has no layout box");
-  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  // A tab can publish its composition before the always-mounted panel is
+  // ready to receive input. Keep the centre hit, but wait for actionability
+  // instead of sending raw coordinates into the previous panel's paint.
+  await target.dblclick({ position: { x: box.width / 2, y: box.height / 2 } });
 };
 
 /// Add a clip to the selection the way the user does — `Shift` toggles
@@ -242,7 +245,7 @@ test.describe("Group on the timeline", () => {
       // ── Double-click enters; a second tab appears beside the first ───────
       const rootId = s2.root_id;
       await expect.poll(() => timelineTabIds(page)).toEqual([rootId]);
-      await doubleClickCentre(page, groupClip);
+      await doubleClickCentre(groupClip);
       await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
       await expect.poll(() => timelineTabIds(page)).toEqual([rootId, groupId].sort());
       // What each tab says: the composition's name, and the route it was
@@ -269,7 +272,7 @@ test.describe("Group on the timeline", () => {
       // `Ctrl+Z` would then go to the text field, exactly as it should.
       await timelineTab(page, rootId).click();
       await expect.poll(() => openComposition(page)).toMatchObject({ id: rootId });
-      await doubleClickCentre(page, groupClip);
+      await doubleClickCentre(groupClip);
       await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
       await expect.poll(() => timelineTabIds(page)).toEqual([rootId, groupId].sort());
 
