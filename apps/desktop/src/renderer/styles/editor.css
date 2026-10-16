@@ -399,13 +399,29 @@
 
 /* A focused move's old place: the focus's neutral hairline, dashed — a
    frame, not a clip, and no change class's hue. Over the clips, so no fill. */
-/* A focused change's baseline stretch: a dashed bracket hung from the lane's
-   top edge, short ticks at its two ends — never a box whose sides would stand
-   inside the clip now there. */
+/* A focused change's baseline place: a dashed box the shape of a clip — a
+   place, not a thing — its "before" name in its corner. The rest of the
+   timeline has dimmed (`.review-spotlight-dim`), so its edge reads as a layer
+   over a dimmed neighbour rather than a cut through it. */
 .review-was {
-  height: calc(6 * var(--ui-px));
-  border: 2px dashed var(--review-focus);
-  border-bottom: none;
+  border: 1.5px dashed var(--review-focus);
+}
+.review-was-label {
+  position: absolute;
+  left: calc(3 * var(--ui-px));
+  top: calc(2 * var(--ui-px));
+  padding: 0 calc(3 * var(--ui-px));
+  border-radius: calc(2 * var(--ui-px));
+  background: var(--review-focus);
+  color: #101014;
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+/* While a change is focused, every clip but its own steps back. */
+.review-spotlight-dim {
+  background: rgba(10, 12, 16, 0.62);
 }
 
 /* A cut mark: the removed hue, nothing else — a ▼ from the lane's top edge

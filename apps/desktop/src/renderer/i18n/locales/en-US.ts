@@ -1749,6 +1749,8 @@ const enUS = {
     before_span: "Baseline position {{start}} – {{end}} s",
     before_point: "Baseline position {{t}} s",
     track_title: "Track “{{name}}”",
+    was_label: "Before {{start}} – {{end}} s",
+    was_label_activity: "Before this call {{start}} – {{end}} s",
     marker_ghost_label: "Removed marker “{{label}}”, baseline position {{at}}",
     marker_ghost_label_activity: "Removed marker “{{label}}”, position before this call {{at}}",
     // A clip tooltip's line for its review mark: the class, then what it did.

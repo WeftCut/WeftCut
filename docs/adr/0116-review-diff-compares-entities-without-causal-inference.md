@@ -77,10 +77,15 @@ its authored colour alone, and a removed one leaves a faded trace in the
 removed hue at its baseline place, its baseline name struck through, under the
 live marks; a click on the trace focuses its change. A marker gets no
 historical bracket — its row says where it was.
-Focus selects only the entity, with a historical bracket when its footprint
-changed: a dashed bracket hung from its lane's top edge over its baseline
-stretch, never a full-height box whose sides would stand inside the clip now
-there and read as a cut through it. Group badges follow explicit composition references.
+Focus selects only the entity, and every other clip dims while a change is
+focused, so the focused clip is the one lit thing. When its footprint changed,
+its baseline place is a dashed box the shape of a clip in the neutral focus
+hue, named "before" (with its seconds) in its corner, over the dimmed
+neighbours — a layer over the timeline rather than a cut through the clip now
+there. Because the rest is dimmed, the focus ends with the look: approving the
+change or a press on the lanes anywhere but the focused clip lets it go; a
+press on the focused clip keeps it, so it can still be selected and trimmed.
+Esc on the timeline is left to its existing owners. Group badges follow explicit composition references.
 
 Activity comparisons retain their historical facts. Only surviving entities'
 current footprints are resolved by identity; later edits never rewrite a

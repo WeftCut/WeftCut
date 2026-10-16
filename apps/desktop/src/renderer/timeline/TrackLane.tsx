@@ -606,7 +606,7 @@ export function TrackLane({
       />
       {/* A focused change's old places on this lane: over the blocks
           (`z-[3]`), so the clip now there cannot hide them. */}
-      <ReviewWasFrames trackId={track.id} pxPerSec={pxPerSec} />
+      <ReviewWasFrames trackId={track.id} pxPerSec={pxPerSec} laneHeight={height} />
       {/* Eye-off feedback: dim + freeze the whole layer area. When the
           track is enabled the wrapper is `display: contents` (no box, no
           layout impact); when disabled it's an unpositioned plain div, so

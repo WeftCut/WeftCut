@@ -206,6 +206,7 @@ import {
   type TransitionUpdateArgs,
 } from "./transitions";
 import { TransitionChipMenu } from "./TransitionChipMenu";
+import { ReviewFocusExit } from "./ReviewMarks";
 import { useAgentActivity } from "../agent/activityStore";
 import { useReviewConsumer } from "../agent/reviewStore";
 import { focusRevealScrollLeft, useFocusPaint } from "../agent/reviewFocus";
@@ -1971,6 +1972,7 @@ export const Timeline = memo(function Timeline({
               ))}
               <div className="grid min-h-4 flex-1" style={{ gridTemplateColumns: `${headerColPx}px ${widthPx}px` }}>
                 <div data-testid="timeline-track-header-background" className="sticky left-0 z-10 border-r border-border bg-card" />
+                <ReviewFocusExit />
                 <div data-testid="timeline-track-background" onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}>
                   {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
                 </div>

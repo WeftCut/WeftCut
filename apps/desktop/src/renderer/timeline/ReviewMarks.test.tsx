@@ -273,7 +273,7 @@ describe("Review focus on the editor timeline", () => {
     expect(q(container, '[data-testid="review-ghost"]')[0]!.title).toBe("Removed clip, position before this call 00:00:03:00 – 00:00:04:00");
   });
 
-  it("a ghost click focuses its change; a clip click still only selects the clip", () => {
+  it("a ghost click focuses its change; a clip click selects that clip and lets the focus go", () => {
     const { container } = renderTimeline();
     fireEvent.click(q(container, '[data-testid="review-ghost"]')[0]!);
     expect(useAgentActivity.getState()).toMatchObject({ tab: "changes", reviewFocus: { kind: "change", id: "Layer:gone" } });
@@ -282,7 +282,7 @@ describe("Review focus on the editor timeline", () => {
     fireEvent.pointerUp(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
     fireEvent.click(block);
     expect([...layerIdsOf(currentSelection())]).toEqual(["added"]);
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Layer:gone" });
+    expect(useAgentActivity.getState().reviewFocus).toBeNull();
   });
 
   it("brings a focused range into view by scrolling, never by moving the playhead", () => {
@@ -346,6 +346,26 @@ describe("Pure change marks", () => {
     act(() => useReview.getState().apply({ ...view, version: { ...view.version, revision: 3 }, unreviewed: [] }));
     expect(cuts()).toHaveLength(0);
   });
+  it("a focused change dims every other clip; a press elsewhere on the lanes ends the focus, one on its clip keeps it", () => {
+    const { container } = renderTimeline();
+    const dimmed = () => q(container, '[data-testid="review-spotlight-dim"]').map((d) => d.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId).sort();
+    expect(dimmed()).toEqual([]);
+    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    expect(dimmed()).toEqual(["added", "edited", "group-clip", "shifted"]);
+    // A tack's focus or a hover dims nothing.
+    act(() => useAgentActivity.setState({ reviewFocus: null, reviewHover: { kind: "change", id: "Layer:moved" } }));
+    expect(dimmed()).toEqual([]);
+    act(() => useAgentActivity.setState({ reviewHover: null }));
+    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    fireEvent.pointerDown(q(container, '[data-layer-id="moved"]')[0]!);
+    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Layer:moved" });
+    fireEvent.pointerDown(q(container, '[data-layer-id="added"]')[0]!);
+    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+    expect(dimmed()).toEqual([]);
+    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    fireEvent.pointerDown(q(container, '[data-testid="track-lane"]')[0]!);
+    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+  });
   it("keeps the original pixel clustering and midpoint at each zoom", () => {
     const at = (tUs: number) => ({ changeId: `c${tUs}`, layerId: 'l', compositionId: ROOT_ID, trackId: null, tUs, kind: 'trim' as const });
     const list = [at(0), at(0.05 * S), at(0.1 * S), at(S)];
@@ -363,9 +383,9 @@ describe("Pure change marks", () => {
     act(() => useAgentActivity.getState().selectChange("Layer:moved"));
     const frames = q(container, '[data-testid="review-was"]');
     expect(frames).toHaveLength(1);
-    // A bracket on the lane's top edge over the clip now in its place, as paint only.
-    expect(frames[0]!.className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "z-[3]", "top-0"]));
-    expect(frames[0]!.style.height).toBe("");
+    // Over the clip now in its place, as paint only, named as the place it was.
+    expect(frames[0]!.className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "z-[3]"]));
+    expect(frames[0]!.textContent).toBe("Before 4.0 – 5.0 s");
     expect(frames[0]!.getAttribute("aria-hidden")).toBe("true");
     expect(frames[0]!.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId).toBe("track-2");
     expect(q(container, '[data-testid="review-cut"]')).toHaveLength(0);

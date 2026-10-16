@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
@@ -22,7 +22,9 @@ import {
   useLayerFocusMark,
   useReviewMarksRecede,
   useTrackFocusWas,
+  useFocusPaint,
 } from "../agent/reviewFocus";
+import { formatSeconds } from "../agent/changeModel";
 import { changeWordsContext, describeChange, type ChangeWordsContext } from "../agent/changeWords";
 import { getCommand } from "../commands/registry";
 import { uiPixels, useUiScale } from "../settings/layoutTheme";
@@ -57,10 +59,19 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const mark = useLayerReviewMark(layerId);
   const focus = useLayerFocusMark(layerId);
-  const recede = useReviewMarksRecede() && focus !== "change";
-  if (mark === null && focus === null) return null;
+  // While a change is focused every other clip dims (`ReviewFocusExit` ends it).
+  const dim = useReviewMarksRecede() && focus !== "change";
+  const recede = dim;
+  if (mark === null && focus === null && !dim) return null;
   return (
     <>
+      {dim && (
+        <span
+          data-testid="review-spotlight-dim"
+          aria-hidden="true"
+          className="review-spotlight-dim pointer-events-none absolute inset-0 z-[2] rounded-[inherit]"
+        />
+      )}
       {mark !== null && (
         <span
           data-testid="review-clip-mark"
@@ -261,21 +272,27 @@ export function ReviewFocusWash({
   );
 }
 
-/// A focused change's historical baseline footprint on this lane. Only
-/// while that change is focused (`buildFocusPaint`) — the move's amber edge
-/// says it moved, the panel says by how much; the bracket answers "from where"
-/// when that is the question. Along the lane's top edge, over the blocks
-/// (`z-[3]`), as the removed edge is: a full-height box would stand its sides
-/// inside whatever clip now sits there and read as a cut through it. Paint only.
+/// A focused change's historical baseline footprint on this lane: a dashed
+/// box the shape of a clip, named "before" in its corner, lifted over the
+/// blocks (`z-[3]`) — the clip that now sits there would otherwise hide it.
+/// Only while that change is focused (`buildFocusPaint`), when every other
+/// clip has dimmed: the box crossing a dimmed neighbour reads as a layer over
+/// the timeline, not a cut through that clip. Dashed, as a place and not a
+/// thing; neutral, never the removed hue. Paint only.
 export function ReviewWasFrames({
   trackId,
   pxPerSec,
+  laneHeight,
 }: {
   trackId: string;
   pxPerSec: number;
+  laneHeight: number;
 }) {
+  const { t } = useTranslation();
   const was = useTrackFocusWas(trackId);
+  const activity = useActivityHighlightShown();
   if (was.length === 0) return null;
+  const band = layerSliceRect(laneHeight, "full");
   return (
     <>
       {was.map((w, i) => (
@@ -283,15 +300,46 @@ export function ReviewWasFrames({
           key={i}
           data-testid="review-was"
           aria-hidden="true"
-          className="review-was pointer-events-none absolute top-0 z-[3]"
+          className="review-was pointer-events-none absolute z-[3] overflow-hidden rounded"
           style={{
             left: (w.startUs / 1_000_000) * pxPerSec,
             width: Math.max(2, ((w.endUs - w.startUs) / 1_000_000) * pxPerSec),
+            top: band.top,
+            height: band.height,
           }}
-        />
+        >
+          <span className="review-was-label">
+            {t(activity ? "changes.was_label_activity" : "changes.was_label", {
+              start: formatSeconds(w.startUs),
+              end: formatSeconds(w.endUs),
+            })}
+          </span>
+        </span>
       ))}
     </>
   );
+}
+
+/// A focused change dims the rest of the timeline, so the focus ends with the
+/// look: a press on the lanes anywhere but a clip of the focused change lets
+/// it go (approving it already does). A press on the focused clip keeps it, so
+/// it can still be selected and trimmed. Not Esc — on the timeline Esc already
+/// ends blade and region arms, and one key ending two things is a surprise.
+export function ReviewFocusExit() {
+  const active = useReviewMarksRecede();
+  useEffect(() => {
+    if (!active) return;
+    const onDown = (e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (!el?.closest('[data-testid="track-lane"]')) return;
+      const layerId = el.closest<HTMLElement>("[data-layer-id]")?.dataset.layerId;
+      if (layerId !== undefined && useFocusPaint.getState().layers.get(layerId) === "change") return;
+      useAgentActivity.getState().setReviewFocus(null);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [active]);
+  return null;
 }
 
 /** Cut marks of one lane that read as one at this zoom: neighbours closer than
