@@ -3,8 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TackView } from '../../shared/agent-activity'
 import type { Change, ReviewView } from '../../shared/review'
 import { useAgentActivity } from './activityStore'
+import type { AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { resetReviewForTests, useReview } from './reviewStore'
-import { EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, useFocusPaint } from './reviewFocus'
+import {
+  EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, selectChange, selectTack, setReviewFocus, setReviewHover, useFocusPaint, useReviewFocus,
+} from './reviewFocus'
+import { EMPTY_HIGHLIGHT } from './reviewHighlight'
+import { tackGroupKey, tackRowKey } from './activityStore'
 
 const S = 1_000_000
 const tack = (patch: Partial<TackView> = {}): TackView => ({
@@ -21,14 +26,17 @@ const changes = [
   change({ id: 'Layer:b', class: 'modified', keys: ['Layer:b'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
 ]
 
+/** Resolve a focused change from one list, as the store resolves it from its set. */
+const of = (list: readonly Change[]) => (item: { id: string }) => list.find(c => c.id === item.id)
+
 describe('buildFocusPaint', () => {
   it('paints nothing with nothing pointed at', () => {
-    expect(buildFocusPaint(null, null, [tack()], changes)).toBe(EMPTY_FOCUS_PAINT)
+    expect(buildFocusPaint(null, null, [tack()], of(changes))).toBe(EMPTY_FOCUS_PAINT)
   })
 
   it('a tack washes its current range and outlines the clip its range follows', () => {
     const focus = { kind: 'tack' as const, id: 't' }
-    const p = buildFocusPaint(focus, null, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], changes)
+    const p = buildFocusPaint(focus, null, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], of(changes))
     expect(p.focus).toBe(focus)
     expect(p.washes).toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 3 * S }])
     expect([...p.layers]).toEqual([['x', 'tack']])
@@ -36,42 +44,42 @@ describe('buildFocusPaint', () => {
   })
 
   it('a point tack washes one instant; a tack with no place washes nothing', () => {
-    expect(buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ end_t_us: null })], []).washes)
+    expect(buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ end_t_us: null })], of([])).washes)
       .toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 2 * S }])
-    const p = buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ composition_id: null, t_us: null, end_t_us: null, outdated: true })], [])
+    const p = buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ composition_id: null, t_us: null, end_t_us: null, outdated: true })], of([]))
     expect([p.washes, [...p.layers]]).toEqual([[], []])
   })
 
   it('a change washes every range it has, outlines its clips, and makes the rest recede', () => {
-    const p = buildFocusPaint({ kind: 'change', id: 'Layer:b' }, null, [], changes)
+    const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:b' }, null, [], of(changes))
     expect([...p.layers]).toEqual([['b', 'change']])
     expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 7 * S, endUs: 9 * S }])
     expect(p.changeFocused).toBe(true)
-    expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], changes).washes.map(w => w.compositionId)).toEqual(['root', 'grp'])
+    expect(buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:a' }, null, [], of(changes)).washes.map(w => w.compositionId)).toEqual(['root', 'grp'])
   })
 
   it('a removed change outlines its ghost, not a clip', () => {
-    const p = buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], changes)
+    const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:gone' }, null, [], of(changes))
     expect([[...p.layers], [...p.ghosts]]).toEqual([[], [['Layer:gone', 'change']]])
   })
 
   it('a hovered change row only outlines, and the focus wins on a clip both name', () => {
-    const hover = buildFocusPaint(null, { kind: 'change', id: 'Layer:a' }, [], changes)
+    const hover = buildFocusPaint(null, { kind: 'change', source: 'review', id: 'Layer:a' }, [], of(changes))
     expect([[...hover.layers], hover.washes, hover.changeFocused]).toEqual([[['a', 'hover']], [], false])
-    const both = buildFocusPaint({ kind: 'change', id: 'Layer:a' }, { kind: 'change', id: 'Layer:a' }, [], changes)
+    const both = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:a' }, { kind: 'change', source: 'review', id: 'Layer:a' }, [], of(changes))
     expect([...both.layers]).toEqual([['a', 'change']])
     // A hovered tack row has no clip outline: its chip and mini mark read the hover.
-    expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], []).layers]).toEqual([])
+    expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], of([])).layers]).toEqual([])
   })
 
   it('a focused move frames where its clips were, on their tracks — only while focused, never a marker', () => {
     const moved = change({ id: 'Layer:m', aspects: ['placement'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
       before_ranges: [{ composition_id: 'root', track_id: 'v2', t_start_us: 3 * S, t_end_us: 4 * S }, { composition_id: 'root', track_id: null, t_start_us: 5 * S, t_end_us: 5 * S }] })
     const list = [...changes, moved]
-    expect(buildFocusPaint({ kind: 'change', id: 'Layer:m' }, null, [], list).was)
+    expect(buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:m' }, null, [], of(list)).was)
       .toEqual([{ trackId: 'v2', compositionId: 'root', startUs: 3 * S, endUs: 4 * S }])
-    expect(buildFocusPaint(null, { kind: 'change', id: 'Layer:m' }, [], list).was).toEqual([])
-    expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).was).toEqual([])
+    expect(buildFocusPaint(null, { kind: 'change', source: 'review', id: 'Layer:m' }, [], of(list)).was).toEqual([])
+    expect(buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:a' }, null, [], of(list)).was).toEqual([])
   })
 
   it('a focused removal washes its baseline footprint as historical — a marker\'s too, which has no ghost', () => {
@@ -79,33 +87,33 @@ describe('buildFocusPaint', () => {
       before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 2 * S, t_end_us: 3 * S }] })
     const mark = change({ id: 'Marker:m', kind: 'Marker', class: 'removed', ranges: [],
       before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 6 * S, t_end_us: 6 * S }] })
-    const p = buildFocusPaint({ kind: 'change', id: 'Layer:ripple' }, null, [], [gone, mark])
+    const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:ripple' }, null, [], of([gone, mark]))
     // Held to the lane the clip was on.
     expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 2 * S, endUs: 3 * S, historical: true, trackId: 'v1' }])
     expect(p.reveal).toEqual(p.washes)
     expect(p.was).toEqual([])
-    const m = buildFocusPaint({ kind: 'change', id: 'Marker:m' }, null, [], [gone, mark])
+    const m = buildFocusPaint({ kind: 'change', source: 'review', id: 'Marker:m' }, null, [], of([gone, mark]))
     expect([m.washes, [...m.ghosts]]).toEqual([[{ kind: 'change', compositionId: 'root', startUs: 6 * S, endUs: 6 * S, historical: true }], [['Marker:m', 'change']]])
     // Hovering a removal's row outlines its ghost only; it washes nothing.
-    expect(buildFocusPaint(null, { kind: 'change', id: 'Layer:ripple' }, [], [gone]).washes).toEqual([])
+    expect(buildFocusPaint(null, { kind: 'change', source: 'review', id: 'Layer:ripple' }, [], of([gone])).washes).toEqual([])
   })
 
   it('a modified change washes its current range only; its baseline place is a frame, never a historical wash', () => {
     const moved = change({ id: 'Layer:m', aspects: ['timing'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
       before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 3 * S, t_end_us: 4 * S }] })
-    const p = buildFocusPaint({ kind: 'change', id: 'Layer:m' }, null, [], [moved])
+    const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:m' }, null, [], of([moved]))
     expect(p.washes.some(w => w.historical)).toBe(false)
   })
 
   it('focusing a removal never outlines neighbouring changed clips', () => {
     const list = [...changes, change({ id: 'Layer:after' })]
-    const focused = buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list)
+    const focused = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:gone' }, null, [], of(list))
     expect([...focused.layers]).toEqual([])
     expect([...focused.ghosts]).toEqual([['Layer:gone', 'change']])
   })
 
   it('an item no longer listed paints nothing and recedes nothing', () => {
-    const p = buildFocusPaint({ kind: 'change', id: 'Layer:approved' }, null, [tack()], changes)
+    const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:approved' }, null, [tack()], of(changes))
     expect([p.layers.size, p.ghosts.size, p.washes, p.changeFocused]).toEqual([0, 0, [], false])
   })
 })
@@ -116,13 +124,14 @@ describe('useFocusPaint', () => {
   })
   beforeEach(() => {
     resetReviewForTests()
-    useAgentActivity.setState({ snapshot: null, reviewFocus: null, reviewHover: null, tab: 'changes' })
+    useAgentActivity.setState({ snapshot: null, tab: 'changes' })
+    useReviewFocus.setState({ focus: null, hover: null })
   })
   afterEach(() => resetReviewForTests())
 
   it('follows the focus and the Review view, keeping unchanged parts by identity', () => {
     useReview.getState().apply(view(changes))
-    useAgentActivity.getState().selectChange('Layer:a')
+    selectChange('Layer:a')
     const first = useFocusPaint.getState()
     expect([...first.layers]).toEqual([['a', 'change']])
     // A view that still lists it with the same footprint: same maps, same washes.
@@ -131,17 +140,116 @@ describe('useFocusPaint', () => {
     expect(useFocusPaint.getState().washes).toBe(first.washes)
     // Approved: the focus goes, and the paint with it.
     useReview.getState().apply(view([], 3))
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
     expect(useFocusPaint.getState().layers.size).toBe(0)
   })
 
   it('carries a fresh focus per select, so a timeline can reveal the same item again', () => {
     useReview.getState().apply(view(changes))
-    useAgentActivity.getState().selectChange('Layer:a')
+    selectChange('Layer:a')
     const first = useFocusPaint.getState().focus
-    useAgentActivity.getState().selectChange('Layer:a')
+    selectChange('Layer:a')
     expect(useFocusPaint.getState().focus).not.toBe(first)
     expect(useFocusPaint.getState().focus).toEqual(first)
+  })
+})
+
+describe('the review focus rule: an item stays while its list shows it', () => {
+  const work: AgentWorkSession = { id: 'session', connection_id: 'c', client: 'Client', reason: 'Edit', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
+  const snapshot = (revision: number, tacks: TackView[], workspace = 'project'): AgentActivitySnapshot =>
+    ({ workspace_id: workspace, revision, session: work, sessions: [work], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks })
+  const t = (id: string, patch: Partial<TackView> = {}) => tack({ id, session_id: 'session', ...patch })
+  const view = (unreviewed: Change[], baseline = 1): ReviewView => ({
+    version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
+  })
+  const focus = () => useReviewFocus.getState().focus
+  const hover = () => useReviewFocus.getState().hover
+  /** Expand an activity row whose call changed `ids`, its highlight ready. */
+  const showActivity = (ids: string[]) => {
+    useAgentActivity.setState({ tab: 'activity' })
+    useReview.setState({ activity: { activityId: 'a1', historyIds: ['h1'], effect: 'applied', status: 'ready', reverted: false, count: ids.length,
+      highlight: { ...EMPTY_HIGHLIGHT, changes: new Map(ids.map(id => [id, change({ id })])) } } })
+  }
+  beforeEach(() => {
+    resetReviewForTests()
+    useAgentActivity.setState({ snapshot: null, tab: 'activity', expanded: {} })
+    useReviewFocus.setState({ focus: null, hover: null })
+    useAgentActivity.getState().receive(snapshot(1, [t('t1'), t('t2')]))
+  })
+  afterEach(() => resetReviewForTests())
+
+  it('is one focus for tacks and changes: choosing one kind lets the other go', () => {
+    selectTack('t1')
+    expect([useAgentActivity.getState().tab, focus()]).toEqual(['tacks', { kind: 'tack', id: 't1' }])
+    expect(useAgentActivity.getState().expanded).toMatchObject({ [tackGroupKey('session')]: true, [tackRowKey('t1')]: true })
+    selectChange('Layer:x')
+    expect([useAgentActivity.getState().tab, focus()]).toEqual(['changes', { kind: 'change', source: 'review', id: 'Layer:x' }])
+  })
+
+  it('makes a fresh focus per select, and keeps the hover object while it names the same row', () => {
+    selectTack('t1')
+    const first = focus()
+    selectTack('t1')
+    expect(focus()).toEqual(first)
+    expect(focus()).not.toBe(first)
+    setReviewHover({ kind: 'tack', id: 't2' })
+    const held = hover()
+    setReviewHover({ kind: 'tack', id: 't2' })
+    expect(hover()).toBe(held)
+  })
+
+  it('goes with its tack, and with a new project opening', () => {
+    selectTack('t1')
+    setReviewHover({ kind: 'tack', id: 't2' })
+    useAgentActivity.getState().receive(snapshot(2, [t('t1', { status: 'resolved' }), t('t2')]))
+    expect([focus(), hover()]).toEqual([{ kind: 'tack', id: 't1' }, { kind: 'tack', id: 't2' }])
+    useAgentActivity.getState().receive(snapshot(3, [t('t2')]))
+    expect([focus(), hover()]).toEqual([null, { kind: 'tack', id: 't2' }])
+    useAgentActivity.getState().receive(snapshot(4, [t('t2')], 'reopened'))
+    expect([focus(), hover()]).toEqual([null, null])
+  })
+
+  it('lets go on a tab that does not list it, and drops the hover on any tab switch', () => {
+    selectTack('t1')
+    setReviewHover({ kind: 'tack', id: 't1' })
+    useAgentActivity.setState({ tab: 'activity' })
+    expect([focus(), hover()]).toEqual([null, null])
+    selectChange('Layer:x')
+    useAgentActivity.setState({ tab: 'tacks' })
+    expect(focus()).toBeNull()
+  })
+
+  it('goes with its change from the Review view, and never focuses one the view does not list', () => {
+    useReview.getState().apply(view([change({ id: 'Layer:a' })]))
+    selectChange('Layer:a')
+    expect(focus()).toEqual({ kind: 'change', source: 'review', id: 'Layer:a' })
+    useReview.getState().apply(view([], 2))
+    expect(focus()).toBeNull()
+    selectChange('Layer:a')
+    expect(focus()).toBeNull()
+    setReviewFocus({ kind: 'change', source: 'review', id: 'Layer:a' })
+    expect(focus()).toBeNull()
+  })
+
+  it('focuses a change named on a timeline within a selected call’s highlight, keeping the tab and the highlight', () => {
+    useReview.getState().apply(view([change({ id: 'Layer:a' })]))
+    showActivity(['Layer:a'])
+    selectChange('Layer:a')
+    expect([useAgentActivity.getState().tab, focus()]).toEqual(['activity', { kind: 'change', source: 'activity', id: 'Layer:a' }])
+    expect(useReview.getState().activity).not.toBeNull()
+    // Its paint reads the call's own change, not the Review view's of that entity.
+    expect(useFocusPaint.getState().changeFocused).toBe(true)
+    // The highlight goes (the row collapsed, another row, a tab): so does the focus.
+    useReview.setState({ activity: null })
+    expect(focus()).toBeNull()
+  })
+
+  it('falls back to the Review view for a change the selected call did not make', () => {
+    useReview.getState().apply(view([change({ id: 'Layer:b' })]))
+    showActivity(['Layer:a'])
+    selectChange('Layer:b')
+    expect([useAgentActivity.getState().tab, focus()]).toEqual(['changes', { kind: 'change', source: 'review', id: 'Layer:b' }])
+    expect(useReview.getState().activity).toBeNull()
   })
 })
 

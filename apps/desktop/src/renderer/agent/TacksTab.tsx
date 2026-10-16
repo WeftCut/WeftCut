@@ -7,6 +7,7 @@ import { groupDisplayName, groupOrdinals } from '../lib/layerName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
+import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 import { groupTacks, tackUnplacedReason } from './tackModel'
 import { convertTackToMarker, deleteTacks, locateTack, setTackStatus } from './tackActions'
 
@@ -28,9 +29,8 @@ export function TacksTab({ editor }: { editor: boolean }) {
   const ready = useAgentActivity(s => s.ready)
   const expanded = useAgentActivity(s => s.expanded)
   const toggle = useAgentActivity(s => s.toggle)
-  const focus = useAgentActivity(s => s.reviewFocus)
+  const focus = useReviewFocus(s => s.focus)
   const selected = focus?.kind === 'tack' ? focus.id : null
-  const setHover = useAgentActivity(s => s.setReviewHover)
   const summary = useProjectStore(s => s.summary)
   const list = useRef<HTMLDivElement>(null)
   const groups = useMemo(() => groupTacks(tacks, sessions ?? [], tackGroupKey), [tacks, sessions])
@@ -47,7 +47,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
   }, [focus])
   // A row unmounted under the pointer never hears it leave.
   useEffect(() => () => {
-    if (useAgentActivity.getState().reviewHover?.kind === 'tack') useAgentActivity.getState().setReviewHover(null)
+    if (useReviewFocus.getState().hover?.kind === 'tack') setReviewHover(null)
   }, [])
 
   const placeAt = (compositionId: string, tUs: number, endTUs: number | null): string | null => {
@@ -67,10 +67,10 @@ export function TacksTab({ editor }: { editor: boolean }) {
     const reason = tackUnplacedReason(x)
     const why = reason ? t(reason) : null
     const statusToggle = (status: 'resolved' | 'dismissed') => void setTackStatus([x.id], x.status === status ? 'open' : status)
-    const focusThis = () => useAgentActivity.getState().setReviewFocus({ kind: 'tack', id: x.id })
+    const focusThis = () => setReviewFocus({ kind: 'tack', id: x.id })
     return <article key={x.id} data-tack-id={x.id} data-selected={selected === x.id ? 'true' : undefined}
       className={`agent-tack status-${x.status}${reason ? ' unplaced' : ''}`}
-      onMouseEnter={() => setHover({ kind: 'tack', id: x.id })} onMouseLeave={() => setHover(null)}>
+      onMouseEnter={() => setReviewHover({ kind: 'tack', id: x.id })} onMouseLeave={() => setReviewHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main" aria-expanded={open}
           onClick={() => { toggle(tackRowKey(x.id)); focusThis() }}>

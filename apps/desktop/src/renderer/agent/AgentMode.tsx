@@ -20,7 +20,7 @@ import {
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
-import { useAgentActivity, type ReviewItem } from "./activityStore";
+import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./reviewFocus";
 import { useActivityHighlightShown, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
@@ -46,10 +46,9 @@ interface AgentModeProps {
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
 const AGENT = UI_METRICS.agent;
 
-const focusReviewItem = (item: ReviewItem) => {
-  const s = useAgentActivity.getState();
-  if (item.kind === "tack") s.selectTack(item.id);
-  else s.selectChange(item.id);
+const focusReviewItem = (item: ReviewTarget) => {
+  if (item.kind === "tack") selectTack(item.id);
+  else selectChange(item.id);
 };
 
 function clampRecordWidth(width: number, viewportWidth: number, scale: number): number {
@@ -77,8 +76,8 @@ export const AgentMode = forwardRef(function AgentMode(
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
   const tacks = useCompositionTacks(comp?.id ?? null);
-  const focus = useAgentActivity((s) => s.reviewFocus);
-  const hover = useAgentActivity((s) => s.reviewHover);
+  const focus = useReviewFocus((s) => s.focus);
+  const hover = useReviewFocus((s) => s.hover);
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
   const changes = useCompositionChangeRanges(comp?.id ?? null);

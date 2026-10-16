@@ -11,7 +11,7 @@ import { getCommand } from "../commands/registry";
 import { useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useComposition } from "../state/projectStore";
-import { selectFocusedTack, useAgentActivity } from "../agent/activityStore";
+import { releaseFocus, selectTack as focusTack, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
 import { locateTack } from "../agent/tackActions";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
@@ -52,7 +52,7 @@ const KIND_ICON: Record<TackKind, typeof StickyNote> = {
 /// Focus the tack and show its row: the panel opens on the Tacks tab with the
 /// row expanded and scrolled to (`TacksTab`).
 const selectTack = (id: string) => {
-  useAgentActivity.getState().selectTack(id);
+  focusTack(id);
   void getCommand("openAgentPanel")?.run();
 };
 
@@ -103,9 +103,9 @@ export function ReviewLane({
   const scale = useUiScale();
   const exists = useReviewLaneExists();
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
-  const selected = useAgentActivity(selectFocusedTack);
+  const selected = useReviewFocus((s) => (s.focus?.kind === "tack" ? s.focus.id : null));
   // The Tacks tab row under the pointer, so the chip it names can be found.
-  const hovered = useAgentActivity((s) => (s.reviewHover?.kind === "tack" ? s.reviewHover.id : null));
+  const hovered = useReviewFocus((s) => (s.hover?.kind === "tack" ? s.hover.id : null));
   // The group chip whose menu is open, and the element it hangs from.
   const [menu, setMenu] = useState<{ group: LaneTackGroup; anchor: HTMLElement } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -167,7 +167,7 @@ export function ReviewLane({
       onClick={(e) => {
         e.stopPropagation();
         // Bare lane, not a chip: nothing is pointed at any more.
-        if (e.target === e.currentTarget) useAgentActivity.getState().setReviewFocus(null);
+        if (e.target === e.currentTarget) releaseFocus();
       }}
     >
       {painted.map(({ group, title }) => {

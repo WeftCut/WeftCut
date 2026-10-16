@@ -15,6 +15,7 @@ import { resetReviewForTests, useReview } from './reviewStore'
 import { useProjectStore } from '../state/projectStore'
 import { ROOT_ID, summaryFixture } from '../testing/summaryFixture'
 import type { LayerSummary } from '../ipc'
+import { selectTack, useReviewFocus } from './reviewFocus'
 
 function activity(patch: Partial<AgentActivity> = {}): AgentActivity {
   return { id: 'a', session_id: null, connection_id: 'c', client: 'Test client', tool: 'analyze_clip', kind: 'read',
@@ -29,7 +30,9 @@ beforeEach(async () => {
   await i18n.changeLanguage('en-US')
   mocks.invoke.mockReset().mockResolvedValue({ available: true, url: 'http://127.0.0.1:1234/mcp', connections: [] })
   mocks.jump.mockReset(); mocks.reveal.mockReset().mockReturnValue(true)
-  useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true, tab: 'activity', reviewFocus: null, reviewHover: null })
+  useAgentActivity.setState({ snapshot: null, ready: false, mode: 'editor', seenSession: null, expanded: {}, filter: 'all', anchor: null, following: true, tab: 'activity' })
+ 
+useReviewFocus.setState({ focus: null, hover: null })
 })
 afterEach(() => { cleanup(); resetReviewForTests() })
 
@@ -271,13 +274,13 @@ describe('AgentPanel Tacks tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Locate on the timeline' }))
     expect(mocks.reveal).toHaveBeenCalledWith('clip')
     expect(mocks.jump).toHaveBeenCalledWith(2_000_000)
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'tack', id: 't1' })
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'tack', id: 't1' })
   })
 
   it('selectTack opens the tab, its group and its row', () => {
     seed([], { sessions: [work], tacks: [tack({ status: 'dismissed' })] })
     render(<AgentPanel />)
-    act(() => useAgentActivity.getState().selectTack('t1'))
+    act(() => selectTack('t1'))
     expect(screen.getByRole('tab', { name: /Tacks/ }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByText('Keep the breath?')).toBeTruthy()
     expect(document.querySelector('[data-tack-id="t1"]')?.getAttribute('data-selected')).toBe('true')
@@ -342,25 +345,25 @@ describe('AgentPanel Tacks tab — states and the review focus', () => {
     render(<AgentPanel />)
     openTacks()
     fireEvent.mouseEnter(row('t1'))
-    expect(useAgentActivity.getState().reviewHover).toEqual({ kind: 'tack', id: 't1' })
+    expect(useReviewFocus.getState().hover).toEqual({ kind: 'tack', id: 't1' })
     fireEvent.mouseLeave(row('t1'))
-    expect(useAgentActivity.getState().reviewHover).toBeNull()
+    expect(useReviewFocus.getState().hover).toBeNull()
     const main = screen.getByRole('button', { name: /Long pause/ })
     fireEvent.click(main)
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'tack', id: 't1' })
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'tack', id: 't1' })
     expect(row('t1').dataset.selected).toBe('true')
     expect(main.getAttribute('aria-expanded')).toBe('true')
     fireEvent.keyDown(main, { key: 'Escape' })
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
     expect(row('t1').dataset.selected).toBeUndefined()
   })
 
   it('a tab that does not list tacks lets the tack focus go', () => {
     seed([], { sessions: [work], tacks: [placed()] })
     render(<AgentPanel />)
-    act(() => useAgentActivity.getState().selectTack('t1'))
+    act(() => selectTack('t1'))
     fireEvent.click(screen.getByRole('tab', { name: 'Activity' }))
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
   })
 })
 

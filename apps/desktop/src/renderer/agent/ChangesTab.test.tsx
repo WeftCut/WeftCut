@@ -17,6 +17,7 @@ import { useAgentActivity } from './activityStore'
 import { resetReviewForTests, useReview } from './reviewStore'
 import { useProjectStore } from '../state/projectStore'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
+import { selectChange, useReviewFocus } from './reviewFocus'
 
 const S = 1_000_000
 const clip = (id: string, label: string, s: number, e: number): LayerSummary => ({
@@ -57,7 +58,9 @@ beforeEach(async () => {
     root: { tracks: [track('t1', [clip('late', 'Late clip', 8 * S, 9 * S), clip('early', 'Early clip', S, 2 * S)])] },
     groups: [compositionFixture({ id: 'grp', label: 'Intro', tracks: [track('gt', [])] })],
   }))
-  useAgentActivity.setState({ snapshot: null, ready: true, tab: 'changes', expanded: {}, reviewFocus: null, reviewHover: null })
+  useAgentActivity.setState({ snapshot: null, ready: true, tab: 'changes', expanded: {} })
+ 
+useReviewFocus.setState({ focus: null, hover: null })
 })
 afterEach(() => { cleanup(); resetReviewForTests() })
 
@@ -205,40 +208,40 @@ describe('AgentPanel Changes tab', () => {
     await flush()
     const early = rows()[0]!
     fireEvent.mouseEnter(early)
-    expect(useAgentActivity.getState().reviewHover).toEqual({ kind: 'change', id: 'Layer:early' })
+    expect(useReviewFocus.getState().hover).toEqual({ kind: 'change', source: 'review', id: 'Layer:early' })
     fireEvent.mouseLeave(early)
-    expect(useAgentActivity.getState().reviewHover).toBeNull()
+    expect(useReviewFocus.getState().hover).toBeNull()
     const main = within(early).getByRole('button', { name: /Early clip/ })
     fireEvent.click(main)
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'change', id: 'Layer:early' })
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'change', source: 'review', id: 'Layer:early' })
     expect([early.dataset.selected, main.getAttribute('aria-pressed')]).toEqual(['true', 'true'])
     expect(mocks.jump).not.toHaveBeenCalled()
     expect(mocks.reveal).not.toHaveBeenCalled()
     fireEvent.click(main)
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
   })
 
   it('an approved change takes the focus and the hover with it; one still listed keeps them', async () => {
     render(<AgentPanel editor />)
     await flush()
-    act(() => useAgentActivity.setState({ reviewFocus: { kind: 'change', id: 'Layer:early' }, reviewHover: { kind: 'change', id: 'Layer:late' } }))
+    act(() => useReviewFocus.setState({ focus: { kind: 'change', source: 'review', id: 'Layer:early' }, hover: { kind: 'change', source: 'review', id: 'Layer:late' } }))
     act(() => { useReview.getState().apply(view(2, unreviewed.filter(c => c.id !== 'Layer:late'))) })
-    expect(useAgentActivity.getState()).toMatchObject({ reviewFocus: { kind: 'change', id: 'Layer:early' }, reviewHover: null })
+    expect(useReviewFocus.getState()).toMatchObject({ focus: { kind: 'change', source: 'review', id: 'Layer:early' }, hover: null })
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve' ? { applied: true, view: view(3, []) } : view(2))
     fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Approve' }))
     await flush()
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
   })
 
   it('a user change stays focusable only while "show my changes" lists it', async () => {
     useReview.setState({ showUser: true })
     render(<AgentPanel editor />)
     await flush()
-    act(() => useAgentActivity.getState().selectChange('Layer:mine'))
+    act(() => selectChange('Layer:mine'))
     act(() => { useReview.getState().apply(view(2), true) })
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: 'change', id: 'Layer:mine' })
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'change', source: 'review', id: 'Layer:mine' })
     fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
-    expect(useAgentActivity.getState().reviewFocus).toBeNull()
+    expect(useReviewFocus.getState().focus).toBeNull()
   })
 
   it('lists and approves each changed entity independently', async () => {
@@ -279,7 +282,7 @@ describe('AgentPanel Changes tab', () => {
     try {
       render(<AgentPanel editor />)
       await flush()
-      act(() => useAgentActivity.getState().selectChange('Layer:late'))
+      act(() => selectChange('Layer:late'))
       await flush()
       expect(screen.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')).toBe('true')
       expect(scrolled).toContain('Layer:late')

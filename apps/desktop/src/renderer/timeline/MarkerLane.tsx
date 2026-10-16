@@ -13,8 +13,7 @@ import {
   useCompositionMarkerGhosts,
   useMarkerReviewMark,
 } from "../agent/reviewStore";
-import { useFocusedChangeId, useReviewMarksRecede } from "../agent/reviewFocus";
-import { useAgentActivity } from "../agent/activityStore";
+import { selectChange, useFocusedChangeId, useReviewMarksRecede } from "../agent/reviewFocus";
 import { getCommand } from "../commands/registry";
 import { useMarkerDrag } from "./hooks/useMarkerDrag";
 import { MarkerContextMenu } from "./MarkerContextMenu";
@@ -341,7 +340,7 @@ function ReviewMarkerGhosts({
         });
         const recede = (recedeAll && focusedId !== g.changeId) || undefined;
         const focus = () => {
-          useAgentActivity.getState().selectChange(g.changeId);
+          selectChange(g.changeId);
           void getCommand("openAgentPanel")?.run();
         };
         const region = g.endUs !== null && ((g.endUs - g.tUs) / 1_000_000) * pxPerSec >= L_WIDTH_PX;

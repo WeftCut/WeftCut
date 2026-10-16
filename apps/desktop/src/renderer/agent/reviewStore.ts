@@ -374,20 +374,6 @@ useAgentActivity.subscribe((s, prev) => {
   if (!sameIds(a.history_ids, held.historyIds) || a.effect !== held.effect) void showActivityChanges(a)
 })
 
-// A focused or hovered change leaves with its row: approved, undone, folded
-// into a different shift, or a user change whose list was hidden. A view not
-// fetched yet names nothing either way, so it drops nothing.
-useReview.subscribe((s, prev) => {
-  if (s.view === null || (s.view === prev.view && s.showUser === prev.showUser)) return
-  const { reviewFocus, reviewHover } = useAgentActivity.getState()
-  if (reviewFocus?.kind !== 'change' && reviewHover?.kind !== 'change') return
-  const ids = new Set(listedChanges(s).map(c => c.id))
-  const gone = (item: typeof reviewFocus) => item?.kind === 'change' && !ids.has(item.id)
-  if (gone(reviewFocus) || gone(reviewHover)) {
-    useAgentActivity.setState({ ...(gone(reviewFocus) ? { reviewFocus: null } : {}), ...(gone(reviewHover) ? { reviewHover: null } : {}) })
-  }
-})
-
 let activityHosts = 0
 /** The agent panel hosts the selection: when the last one unmounts, nothing
  *  is left to show or clear it, so the highlight goes with it. */

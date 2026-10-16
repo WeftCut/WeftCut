@@ -17,6 +17,7 @@ import { Timeline } from "./Timeline";
 import { mergeCuts } from "./ReviewMarks";
 import { uiPixels } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
+import { selectChange, selectTack, setReviewFocus, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
 
 // The Review overlay's clip decorations (ADR 0115) are paint inside boxes that
 // already exist: turning them on must not move or size a clip or a lane, and
@@ -154,8 +155,9 @@ describe("Review focus on the editor timeline", () => {
   beforeEach(() => {
     useAgentActivity.setState({
       snapshot: { workspace_id: "w", revision: 1, session: null, sessions: [], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [tack()] },
-      reviewFocus: null, reviewHover: null, tab: "activity",
+      tab: "activity",
     });
+    useReviewFocus.setState({ focus: null, hover: null });
   });
   const washes = (c: HTMLElement) => q(c, '[data-testid="review-focus-wash"]');
   const outlines = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-focus-outline"]').map((o) => [o.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, o.dataset.focus]));
@@ -163,7 +165,7 @@ describe("Review focus on the editor timeline", () => {
   it("a focused tack washes its range across every lane, over the clips, and rings the clip it follows", () => {
     const { container } = renderTimeline();
     const before = geometry(container);
-    act(() => useAgentActivity.getState().selectTack("t1"));
+    act(() => selectTack("t1"));
     const painted = washes(container);
     expect(painted.map((w) => [w.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId, w.dataset.kind]).sort()).toEqual([["track-1", "tack"], ["track-2", "tack"]]);
     for (const w of painted) {
@@ -183,7 +185,7 @@ describe("Review focus on the editor timeline", () => {
   it("a point tack is a line; the overlay switched off takes wash and ring with it", () => {
     useAgentActivity.setState((s) => ({ snapshot: { ...s.snapshot!, tacks: [tack({ end_t_us: null })] } }));
     const { container } = renderTimeline();
-    act(() => useAgentActivity.getState().selectTack("t1"));
+    act(() => selectTack("t1"));
     expect(washes(container).every((w) => w.dataset.point === "true" && w.style.width === "")).toBe(true);
     act(() => useAgentActivity.setState({ reviewOverlay: false }));
     expect(washes(container)).toHaveLength(0);
@@ -194,7 +196,7 @@ describe("Review focus on the editor timeline", () => {
     useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 },
       unreviewed: view.unreviewed.map((c) => (c.id === "Layer:edited" ? { ...c, ranges: [{ composition_id: ROOT_ID, t_start_us: S, t_end_us: 2 * S }] } : c)) });
     const { container } = renderTimeline();
-    act(() => useAgentActivity.getState().selectChange("Layer:edited"));
+    act(() => selectChange("Layer:edited"));
     expect(outlines(container)).toEqual({ edited: "change" });
     expect(washes(container).map((w) => w.dataset.kind)).toEqual(["change", "change"]);
     const recede = Object.fromEntries(q(container, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.recede ?? null]));
@@ -204,10 +206,12 @@ describe("Review focus on the editor timeline", () => {
 
   it("a hovered change row rings its clips thinly; a focused removal rings its ghost", () => {
     const { container } = renderTimeline();
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:shifted" }));
+    // The hovered row is in the Changes tab.
+    act(() => useAgentActivity.setState({ tab: "changes" }));
+    act(() => setReviewHover({ kind: "change", source: "review", id: "Layer:shifted" }));
     expect(outlines(container)).toEqual({ shifted: "hover" });
     expect(washes(container)).toHaveLength(0);
-    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    act(() => selectChange("Layer:gone"));
     const ghost = q(container, '[data-testid="review-ghost"]')[0]!;
     expect([ghost.dataset.focus, ghost.dataset.recede]).toEqual(["change", undefined]);
   });
@@ -224,18 +228,19 @@ describe("Review focus on the editor timeline", () => {
     expect(ghost().dataset.raised).toBeUndefined();
     expect(ghost().className.split(/\s+/)).toEqual(expect.arrayContaining(["cursor-pointer"]));
     expect(ghost().className).not.toContain("z-[3]");
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:gone" }));
+    act(() => useAgentActivity.setState({ tab: "changes" }));
+    act(() => setReviewHover({ kind: "change", source: "review", id: "Layer:gone" }));
     expect(ghost().dataset.raised).toBe("true");
-    act(() => useAgentActivity.getState().setReviewHover(null));
-    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    act(() => setReviewHover(null));
+    act(() => selectChange("Layer:gone"));
     expect(ghost().dataset.raised).toBe("true");
     expect(ghost().className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "z-[3]"]));
     // Focused, it is named in its corner — the removed twin of a move's "before" box —
     // and nothing washes over the clip now there: that would say it was removed.
     expect(ghost().textContent).toBe("Removed 3.0 – 4.0 s");
     expect(q(container, '[data-testid="review-focus-wash"]')).toHaveLength(0);
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:gone" }));
-    act(() => useAgentActivity.getState().setReviewFocus(null));
+    act(() => setReviewHover({ kind: "change", source: "review", id: "Layer:gone" }));
+    act(() => setReviewFocus(null));
     expect(ghost().textContent).toBe("");
     // The clip it lies over keeps its press.
     const block = q(container, '[data-layer-id="closed-up"]')[0]!;
@@ -253,18 +258,18 @@ describe("Review focus on the editor timeline", () => {
     expect([edge!.style.left, edge!.style.width]).toEqual([ghost.style.left, ghost.style.width]);
     expect(edge!.className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "top-0", "z-[3]"]));
     // Another change focused: it steps back with the other marks.
-    act(() => useAgentActivity.getState().selectChange("Layer:edited"));
+    act(() => selectChange("Layer:edited"));
     expect(edge!.dataset.recede).toBe("true");
     // Focused itself, its named box says it once.
-    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    act(() => selectChange("Layer:gone"));
     expect(q(container, '[data-testid="review-ghost-edge"]')).toHaveLength(0);
-    act(() => useAgentActivity.getState().setReviewFocus(null));
+    act(() => setReviewFocus(null));
     expect(q(container, '[data-testid="review-ghost-edge"]')).toHaveLength(1);
   });
 
   it("a removed clip's footprint washes no lane while its own lane shows its ghost; with that lane gone it washes them all", () => {
     const { container } = renderTimeline();
-    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    act(() => selectChange("Layer:gone"));
     const lanesWashed = () => q(container, '[data-testid="track-lane"]')
       .filter((l) => l.querySelector('[data-testid="review-focus-wash"]')).map((l) => l.dataset.trackId);
     expect(lanesWashed()).toEqual([]);
@@ -284,13 +289,14 @@ describe("Review focus on the editor timeline", () => {
   it("a ghost click focuses its change; a clip click selects that clip and lets the focus go", () => {
     const { container } = renderTimeline();
     fireEvent.click(q(container, '[data-testid="review-ghost"]')[0]!);
-    expect(useAgentActivity.getState()).toMatchObject({ tab: "changes", reviewFocus: { kind: "change", id: "Layer:gone" } });
+    expect(useAgentActivity.getState().tab).toBe("changes");
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "change", source: "review", id: "Layer:gone" });
     const block = q(container, '[data-layer-id="added"]')[0]!;
     fireEvent.pointerDown(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
     fireEvent.pointerUp(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
     fireEvent.click(block);
     expect([...layerIdsOf(currentSelection())]).toEqual(["added"]);
-    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+    expect(useReviewFocus.getState().focus).toBeNull();
   });
 
   it("brings a focused range into view by scrolling, never by moving the playhead", () => {
@@ -298,10 +304,10 @@ describe("Review focus on the editor timeline", () => {
     const viewport = getByTestId("timeline-track-viewport");
     Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 300 });
     const playhead = usePlayheadStore.getState();
-    act(() => useAgentActivity.getState().selectChange("Layer:shifted"));
+    act(() => selectChange("Layer:shifted"));
     // The change has no range; nothing to reveal, nothing moved.
     expect(viewport.scrollLeft).toBe(0);
-    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    act(() => selectChange("Layer:gone"));
     // A removal has no current range: what it reveals is its baseline footprint, its ghost.
     expect(washes(container)).toHaveLength(0);
     const wash = q(container, '[data-testid="review-ghost"]')[0]!;
@@ -342,8 +348,9 @@ describe("Pure change marks", () => {
       }
     });
     fireEvent.click(marks[0]!);
-    expect(useAgentActivity.getState()).toMatchObject({ tab: 'changes', reviewFocus: { kind: 'change', id: 'Layer:edited' } });
-    act(() => useAgentActivity.getState().selectChange('Layer:gone'));
+    expect(useAgentActivity.getState().tab).toBe('changes');
+    expect(useReviewFocus.getState().focus).toEqual({ kind: 'change', source: 'review', id: 'Layer:edited' });
+    act(() => selectChange('Layer:gone'));
     expect(cuts().every(m => m.dataset.recede === 'true')).toBe(true);
     act(() => useAgentActivity.setState({ reviewOverlay: false }));
     expect(cuts()).toHaveLength(0);
@@ -357,21 +364,21 @@ describe("Pure change marks", () => {
     const { container } = renderTimeline();
     const dimmed = () => q(container, '[data-testid="review-spotlight-dim"]').map((d) => d.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId).sort();
     expect(dimmed()).toEqual([]);
-    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    act(() => selectChange("Layer:moved"));
     expect(dimmed()).toEqual(["added", "edited", "group-clip", "shifted"]);
     // A tack's focus or a hover dims nothing.
-    act(() => useAgentActivity.setState({ reviewFocus: null, reviewHover: { kind: "change", id: "Layer:moved" } }));
+    act(() => useReviewFocus.setState({ focus: null, hover: { kind: "change", source: "review", id: "Layer:moved" } }));
     expect(dimmed()).toEqual([]);
-    act(() => useAgentActivity.setState({ reviewHover: null }));
-    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    act(() => useReviewFocus.setState({ hover: null }));
+    act(() => selectChange("Layer:moved"));
     fireEvent.pointerDown(q(container, '[data-layer-id="moved"]')[0]!);
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Layer:moved" });
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "change", source: "review", id: "Layer:moved" });
     fireEvent.pointerDown(q(container, '[data-layer-id="added"]')[0]!);
-    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+    expect(useReviewFocus.getState().focus).toBeNull();
     expect(dimmed()).toEqual([]);
-    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    act(() => selectChange("Layer:moved"));
     fireEvent.pointerDown(q(container, '[data-testid="track-lane"]')[0]!);
-    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+    expect(useReviewFocus.getState().focus).toBeNull();
   });
   it("keeps the original pixel clustering and midpoint at each zoom", () => {
     const at = (tUs: number) => ({ changeId: `c${tUs}`, layerId: 'l', compositionId: ROOT_ID, trackId: null, tUs, kind: 'trim' as const });
@@ -387,7 +394,7 @@ describe("Pure change marks", () => {
     useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 }, unreviewed: [moved] });
     const { container } = renderTimeline();
     expect(q(container, '[data-testid="review-was"]')).toHaveLength(0);
-    act(() => useAgentActivity.getState().selectChange("Layer:moved"));
+    act(() => selectChange("Layer:moved"));
     const frames = q(container, '[data-testid="review-was"]');
     expect(frames).toHaveLength(1);
     // Over the clip now in its place, as paint only, named as the place it was.
@@ -397,7 +404,7 @@ describe("Pure change marks", () => {
     expect(frames[0]!.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId).toBe("track-2");
     expect(q(container, '[data-testid="review-cut"]')).toHaveLength(0);
     expect(q(container, '[data-layer-id="moved"]')[0]!.title).toContain("Start 4.0 → 2.0 s");
-    act(() => useAgentActivity.getState().setReviewFocus(null));
+    act(() => setReviewFocus(null));
     expect(q(container, '[data-testid="review-was"]')).toHaveLength(0);
   });
 });

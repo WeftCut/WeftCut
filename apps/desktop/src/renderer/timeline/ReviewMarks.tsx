@@ -14,7 +14,6 @@ import {
   useTrackReviewGhosts,
 } from "../agent/reviewStore";
 import type { ReviewClipMark, ReviewCut } from "../agent/reviewHighlight";
-import { useAgentActivity } from "../agent/activityStore";
 import {
   useCompositionFocusWashes,
   useFocusedChangeId,
@@ -23,6 +22,8 @@ import {
   useReviewMarksRecede,
   useTrackFocusWas,
   useFocusPaint,
+  releaseFocus,
+  selectChange,
 } from "../agent/reviewFocus";
 import { formatSeconds } from "../agent/changeModel";
 import { changeWordsContext, describeChange, type ChangeWordsContext } from "../agent/changeWords";
@@ -211,7 +212,7 @@ export function ReviewGhosts({
             end: formatTimecode(g.tEndUs, fpsNum, fpsDen),
           })}
           onClick={() => {
-            useAgentActivity.getState().selectChange(g.changeId);
+            selectChange(g.changeId);
             void getCommand("openAgentPanel")?.run();
           }}
           className={`review-ghost absolute overflow-hidden rounded ${mark !== undefined ? "pointer-events-none z-[3]" : "cursor-pointer"}`}
@@ -347,7 +348,7 @@ export function ReviewFocusExit() {
       if (!el?.closest('[data-testid="track-lane"]')) return;
       const layerId = el.closest<HTMLElement>("[data-layer-id]")?.dataset.layerId;
       if (layerId !== undefined && useFocusPaint.getState().layers.get(layerId) === "change") return;
-      useAgentActivity.getState().setReviewFocus(null);
+      releaseFocus();
     };
     window.addEventListener("pointerdown", onDown, true);
     return () => window.removeEventListener("pointerdown", onDown, true);
@@ -433,7 +434,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
             aria-label={label}
             title={label}
             onClick={() => {
-              useAgentActivity.getState().selectChange(first.changeId);
+              selectChange(first.changeId);
               void getCommand("openAgentPanel")?.run();
             }}
             className="review-cut absolute top-0 z-[3] flex cursor-pointer"

@@ -12,6 +12,7 @@ import { formatSeconds, groupChanges, keyIds, sessionReason, sessionReasonIndex,
 import { changeWordsContext, describeChange, statesPlace } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
+import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
  *  Review baseline because an agent touched it, grouped by composition and in
@@ -41,9 +42,8 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const layers = useProjectStore(s => s.layerById)
   const ordinals = useProjectStore(s => s.groupOrdinals)
   const [busy, setBusy] = useState(false)
-  const focus = useAgentActivity(s => s.reviewFocus)
-  const selected = focus?.kind === 'change' ? focus.id : null
-  const setHover = useAgentActivity(s => s.setReviewHover)
+  const focus = useReviewFocus(s => s.focus)
+  const selected = focus?.kind === 'change' && focus.source === 'review' ? focus.id : null
   const list = useRef<HTMLDivElement>(null)
   const activity = useAgentActivity(s => s.snapshot)
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
@@ -55,13 +55,13 @@ export function ChangesTab({ editor }: { editor: boolean }) {
 
   // A ghost or a mini timeline band focuses a change; bring its row into view.
   useEffect(() => {
-    if (focus?.kind !== 'change') return
+    if (focus?.kind !== 'change' || focus.source !== 'review') return
     const row = list.current?.querySelector<HTMLElement>(`[data-change-id="${CSS.escape(focus.id)}"]`)
     row?.scrollIntoView?.({ block: 'nearest' })
   }, [focus])
   // A row unmounted under the pointer never hears it leave.
   useEffect(() => () => {
-    if (useAgentActivity.getState().reviewHover?.kind === 'change') useAgentActivity.getState().setReviewHover(null)
+    if (useReviewFocus.getState().hover?.kind === 'change') setReviewHover(null)
   }, [])
 
   const approve = async (run: () => Promise<boolean>) => {
@@ -134,10 +134,10 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     const focused = selected === c.id
     return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
       className={`agent-change class-${c.class} source-${source}`}
-      onMouseEnter={() => setHover({ kind: 'change', id: c.id })} onMouseLeave={() => setHover(null)}>
+      onMouseEnter={() => setReviewHover({ kind: 'change', source: 'review', id: c.id })} onMouseLeave={() => setReviewHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main agent-change-main" aria-pressed={focused}
-          onClick={() => useAgentActivity.getState().setReviewFocus(focused ? null : { kind: 'change', id: c.id })}>
+          onClick={() => setReviewFocus(focused ? null : { kind: 'change', source: 'review', id: c.id })}>
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
             <small title={when?.timecode}>{[describeChange(c, words), when?.text].filter(Boolean).join(' · ')}</small>

@@ -1087,5 +1087,8 @@ timeline's bands. Its row is highlighted, its chip solid, its time range washed
 across the editor's lanes and the clips it covers or follows outlined; the
 editor timeline scrolls it into view but never seeks (Locate does). Historical
 footprints are shown and located explicitly as baseline positions. One for
-both kinds, runtime-only, gone with its item. No UI word of its own.
+both kinds, runtime-only. A change is focused in the set it was named in — the
+Review view's, or a selected call's own while its highlight is up — and the
+focus stays only while that list shows the item: deleted, approved, another
+tab, another row each let it go. No UI word of its own.
 _Avoid_: selection (that is clips'), highlight (the per-activity highlight)

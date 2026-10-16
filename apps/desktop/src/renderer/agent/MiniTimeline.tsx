@@ -5,8 +5,7 @@ import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
 import type { ReviewRangeMark } from "./reviewHighlight";
-import type { ReviewItem } from "./activityStore";
-import { hitBand, type BandItem } from "./reviewFocus";
+import { hitBand, type BandItem, type ReviewTarget } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
@@ -32,9 +31,9 @@ interface MiniTimelineProps {
   /// The review focus (`reviewFocus`). A focused tack is drawn over the union
   /// at full strength when it is one of `tacks`, a focused change's ranges
   /// over the change band, so what the panel is showing can be found here.
-  focus?: ReviewItem | null;
+  focus?: ReviewTarget | null;
   /// The panel row under the pointer (`reviewHover`): its mark is ringed.
-  hover?: ReviewItem | null;
+  hover?: ReviewTarget | null;
   /// Review change ranges on this composition (`useCompositionChangeRanges`),
   /// painted as a second band along the strip's head — opposite the tack band,
   /// so the two never read as one: added/modified in their review hues; a
@@ -47,7 +46,7 @@ interface MiniTimelineProps {
   historyLabel?: string;
   /// A press on a band that names an item (`hitBand`) focuses it instead of
   /// seeking; the caller shows its row.
-  onFocus?: (item: ReviewItem) => void;
+  onFocus?: (item: ReviewTarget) => void;
   onSeek: (tUs: number) => void;
   fpsNum: number;
   fpsDen: number;
@@ -216,7 +215,7 @@ export function MiniTimeline({
   const historyItems = useMemo(() => changeBandItems(changes.filter((c) => c.historical)), [changes]);
   // The focused and hovered tack, drawn over the union: the selection solid,
   // the hover ringed (a hover on the selection adds nothing).
-  const tackSpan = (item: ReviewItem | null) =>
+  const tackSpan = (item: ReviewTarget | null) =>
     item?.kind === "tack" ? tackItems.find((x) => x.id === item.id) ?? null : null;
   const selectedSpan = tackSpan(focus);
   const hoverSpan = hover?.kind === "tack" && hover.id !== selectedSpan?.id ? tackSpan(hover) : null;
@@ -244,7 +243,7 @@ export function MiniTimeline({
     return bandItemAt(first, e) ?? bandItemAt(second, e);
   };
   const bandHandlers = (
-    kind: ReviewItem["kind"],
+    kind: ReviewTarget["kind"],
     itemAt: (e: React.PointerEvent<HTMLElement>) => string | null,
     label: (id: string) => string,
   ) => ({

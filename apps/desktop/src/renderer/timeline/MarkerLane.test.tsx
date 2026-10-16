@@ -60,6 +60,7 @@ import { resetReviewForTests, useReview } from "../agent/reviewStore";
 import { useAgentActivity } from "../agent/activityStore";
 import type { Change, ReviewView } from "../../shared/review";
 import { ROOT_ID } from "../testing/summaryFixture";
+import { setReviewFocus, useReviewFocus } from "../agent/reviewFocus";
 
 afterEach(cleanup);
 // Every store here is renderer-global; reset them so each case starts at the row
@@ -1052,7 +1053,9 @@ describe("review marks on the marker lane (ADR 0116)", () => {
 
   beforeEach(() => {
     resetReviewForTests();
-    useAgentActivity.setState({ reviewOverlay: true, reviewFocus: null });
+    useAgentActivity.setState({ reviewOverlay: true });
+   
+useReviewFocus.setState({ focus: null, hover: null });
     seed([point({ label: "Intro" }), region({ id: "region-1", t_us: 3_000_000, end_t_us: 3_500_000 })]);
     useReview.getState().apply(review([moved, gone]));
   });
@@ -1074,10 +1077,10 @@ describe("review marks on the marker lane (ADR 0116)", () => {
   it("a trace click focuses its change; another focus makes the marks step back; the overlay switch takes them all", () => {
     const { container } = renderLane();
     fireEvent.click(ghosts(container)[0]!);
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Marker:old" });
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "change", source: "review", id: "Marker:old" });
     expect(rings(container)[0]!.dataset.recede).toBe("true");
     expect(ghosts(container)[0]!.dataset.recede).toBeUndefined();
-    act(() => useAgentActivity.getState().setReviewFocus({ kind: "change", id: "Marker:point-1" }));
+    act(() => setReviewFocus({ kind: "change", source: "review", id: "Marker:point-1" }));
     expect(rings(container)[0]!.dataset.recede).toBeUndefined();
     act(() => useAgentActivity.setState({ reviewOverlay: false }));
     expect(rings(container)).toHaveLength(0);

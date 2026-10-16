@@ -11,6 +11,7 @@ import { formatClock } from '../history/historyRows'
 import { AppDialog } from '../components/AppDialog'
 import { AgentSection } from '../settings/AgentSection'
 import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
+import { releaseFocus, useReviewFocus } from './reviewFocus'
 import { TacksTab } from './TacksTab'
 import { ChangesTab } from './ChangesTab'
 import { clearActivityChanges, showActivityChanges, useActivityHighlightHost, useReview, useUnreviewedCount } from './reviewStore'
@@ -134,10 +135,10 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
   // through React to here but are not inside this box, and are its own.
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Escape' || e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) return
-    if (useAgentActivity.getState().reviewFocus === null) return
+    if (useReviewFocus.getState().focus === null) return
     e.preventDefault()
     e.stopPropagation()
-    useAgentActivity.getState().setReviewFocus(null)
+    releaseFocus()
   }
   return <div className="agent-panel agent-activity-panel" onKeyDown={onKeyDown}>
     {/* One status row: the service (its toggle opens the connection details),

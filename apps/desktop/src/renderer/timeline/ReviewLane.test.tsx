@@ -14,6 +14,7 @@ import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 const actions = vi.hoisted(() => ({ locateTack: vi.fn(() => true) }));
 vi.mock("../agent/tackActions", () => actions);
 import { ReviewLane, ReviewLaneHeader } from "./ReviewLane";
+import { selectTack, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
 
 // The Review lane (ADR 0115): tacks as chips in a row of their own under the
 // marker lane. It exists by the overlay and the opening's review material,
@@ -36,8 +37,9 @@ function seed(tacks: TackView[], sessions: AgentWorkSession[] = []) {
   useProjectStore.getState().apply(summaryFixture({ root: { markers: [marker], duration_us: 10_000_000 } }));
   useAgentActivity.setState({
     snapshot: { workspace_id: "w", revision: 1, session: null, sessions, activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks },
-    ready: true, tab: "activity", reviewFocus: null, reviewHover: null, reviewOverlay: true, expanded: {},
+    ready: true, tab: "activity", reviewOverlay: true, expanded: {},
   });
+  useReviewFocus.setState({ focus: null, hover: null });
 }
 const setTacks = (tacks: TackView[]) =>
   act(() => useAgentActivity.setState((s) => ({ snapshot: { ...s.snapshot!, revision: s.snapshot!.revision + 1, tacks } })));
@@ -150,7 +152,8 @@ describe("Review lane", () => {
     const items = () => [...document.querySelectorAll<HTMLElement>('[data-testid="timeline-tack-group-item"]')];
     expect(items().map((i) => i.textContent)).toEqual(["Note · Whole take", "Issue · Jump cut", "Question"]);
     fireEvent.click(items()[1]!);
-    expect(useAgentActivity.getState()).toMatchObject({ tab: "tacks", reviewFocus: { kind: "tack", id: "b" } });
+    expect(useAgentActivity.getState().tab).toBe("tacks");
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "tack", id: "b" });
     expect(group.dataset.selected).toBe("true");
     expect(q(container, "timeline-review-lane")!.dataset.selecting).toBe("true");
     // Reopened, the menu says which of its tacks is the focused one.
@@ -161,7 +164,9 @@ describe("Review lane", () => {
   it("rings a group when the hovered Tacks tab row is one of its tacks", () => {
     seed([tack({ id: "a" }), tack({ id: "b" })]);
     const { container } = renderRows();
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "tack", id: "b" }));
+    // The hovered row is in the Tacks tab.
+    act(() => useAgentActivity.setState({ tab: "tacks" }));
+    act(() => setReviewHover({ kind: "tack", id: "b" }));
     expect(q(container, "timeline-tack-group")!.dataset.hovered).toBe("true");
   });
 
@@ -169,10 +174,11 @@ describe("Review lane", () => {
     seed([tack(), tack({ id: "t2", t_us: 6_000_000, end_t_us: 7_000_000 }), tack({ id: "done", status: "resolved" })]);
     const { container } = renderRows();
     fireEvent.click(chips(container)[0]!);
-    expect(useAgentActivity.getState()).toMatchObject({ tab: "tacks", reviewFocus: { kind: "tack", id: "t1" } });
+    expect(useAgentActivity.getState().tab).toBe("tacks");
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "tack", id: "t1" });
     expect(chips(container).map((b) => b.dataset.selected)).toEqual(["true", undefined]);
     expect(q(container, "timeline-review-lane")!.dataset.selecting).toBe("true");
-    act(() => useAgentActivity.getState().selectTack("done"));
+    act(() => selectTack("done"));
     expect(chips(container).map((b) => b.dataset.selected)).toEqual([undefined, undefined]);
     expect(q(container, "timeline-review-lane")!.dataset.selecting).toBeUndefined();
   });
@@ -192,19 +198,20 @@ describe("Review lane", () => {
     seed([tack()]);
     const { container } = renderRows();
     fireEvent.click(chips(container)[0]!.querySelector(".review-tack-label")!);
-    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "tack", id: "t1" });
+    expect(useReviewFocus.getState().focus).toEqual({ kind: "tack", id: "t1" });
     fireEvent.click(q(container, "timeline-review-lane")!);
-    expect(useAgentActivity.getState().reviewFocus).toBeNull();
+    expect(useReviewFocus.getState().focus).toBeNull();
     expect(chips(container)[0]!.dataset.selected).toBeUndefined();
   });
 
   it("rings the chip whose Tacks tab row is under the pointer", () => {
     seed([tack(), tack({ id: "t2", t_us: 6_000_000, end_t_us: 7_000_000 })]);
     const { container } = renderRows();
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "tack", id: "t2" }));
+    act(() => useAgentActivity.setState({ tab: "tacks" }));
+    act(() => setReviewHover({ kind: "tack", id: "t2" }));
     expect(chips(container).map((b) => b.dataset.hovered)).toEqual([undefined, "true"]);
     // A hovered change names no chip.
-    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "t1" }));
+    act(() => setReviewHover({ kind: "change", source: "review", id: "t1" }));
     expect(chips(container).map((b) => b.dataset.hovered)).toEqual([undefined, undefined]);
   });
 });
