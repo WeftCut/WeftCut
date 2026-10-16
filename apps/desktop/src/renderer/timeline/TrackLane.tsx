@@ -710,7 +710,7 @@ export function TrackLane({
           only as a sliver along its edges. Above a selected block (`z-[2]`,
           earlier in the DOM), below a dragged one and the height handle
           (`z-[3]`); paint only. */}
-      <ReviewFocusWash compositionId={compositionId} trackId={track.id} pxPerSec={pxPerSec} />
+      <ReviewFocusWash compositionId={compositionId} pxPerSec={pxPerSec} />
       {/* Cut marks (ADR 0115): where material was taken out, from the lane's
           top edge — after the blocks and the wash, so one at a clip's edge is
           never under the clip. They take the click alone. */}

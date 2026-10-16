@@ -54,14 +54,18 @@ up over it), the historical footprint is drawn apart from current ranges
 wherever it appears: the mini timeline paints it as a solid block in the removed
 hue, in a row of its own under the current change band, for every removed kind,
 markers and transitions included — running past the film's end, shaded, when
-a footprint lies there, while seeking stays inside the film; focusing a removal
-washes it hatched in the removed hue instead of the solid current-range wash;
-and a focused or hovered ghost lifts over the clips as its dashed edge alone,
-taking no press. Unfocused, a removed clip is never invisible: a thin
-removed-hue edge along its lane's top spans its baseline stretch over the
-clips — the lane-top red of the trim marks — without a box that would claim
-the clip now there was removed. A removed clip's focus wash stays on its own
-lane while that lane exists. Under an activity's highlight the comparison is
+a footprint lies there, while seeking stays inside the film; and a focused
+or hovered ghost lifts over the clips as its dashed edge alone, taking no
+press — focused, named "removed" with its seconds in its corner: the
+removed-hue twin of a move's "before" box, with no fill or hatch over the
+clip that may now sit there (that would say it was the one removed).
+Unfocused, a removed clip is never invisible: a thin removed-hue edge along
+its lane's top spans its baseline stretch over the clips — the lane-top red
+of the trim marks — without a box that would claim the clip now there was
+removed; while that removal is focused its named box says it, and the edge
+steps aside. Focusing a removal whose ghost has no lane (its track is gone), or
+one with no ghost (a marker, a transition), washes its footprint across the
+lanes hatched in the removed hue instead of the solid current-range wash. Under an activity's highlight the comparison is
 against the project before that call, and ghosts and historical marks say
 "before this call" rather than "baseline". A Group clip's "contains changes"
 stretch paints under the changes' own marks, and its badge counts timeline

@@ -1750,6 +1750,8 @@ const enUS = {
     before_point: "Baseline position {{t}} s",
     track_title: "Track “{{name}}”",
     was_label: "Before {{start}} – {{end}} s",
+    ghost_tag: "Removed {{start}} – {{end}} s",
+    ghost_tag_activity: "Removed · before this call {{start}} – {{end}} s",
     was_label_activity: "Before this call {{start}} – {{end}} s",
     marker_ghost_label: "Removed marker “{{label}}”, baseline position {{at}}",
     marker_ghost_label_activity: "Removed marker “{{label}}”, position before this call {{at}}",

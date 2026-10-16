@@ -161,6 +161,8 @@ export function ReviewGroupBadge({
 /// across the same stretch (`review-ghost-edge`) — the lane-top red the cut
 /// marks speak — so a removal reads on the timeline without being looked for,
 /// without the box that would say the clip now there is the one removed.
+/// Focused, it lifts over the clips as its dashed edge alone and is named
+/// "removed" in its corner: the removed-hue twin of a move's "before" box.
 /// Paint only. Under an activity's highlight the stretch is where the clip
 /// was before that call, and the words say so.
 export function ReviewGhosts({
@@ -212,9 +214,20 @@ export function ReviewGhosts({
             useAgentActivity.getState().selectChange(g.changeId);
             void getCommand("openAgentPanel")?.run();
           }}
-          className={`review-ghost absolute rounded ${mark !== undefined ? "pointer-events-none z-[3]" : "cursor-pointer"}`}
+          className={`review-ghost absolute overflow-hidden rounded ${mark !== undefined ? "pointer-events-none z-[3]" : "cursor-pointer"}`}
           style={{ left, width, top: band.top, height: band.height }}
-        />
+        >
+          {mark === "change" && (
+            <span className="review-was-label review-ghost-label">
+              {t(activity ? "changes.ghost_tag_activity" : "changes.ghost_tag", {
+                start: formatSeconds(g.tStartUs),
+                end: formatSeconds(g.tEndUs),
+              })}
+            </span>
+          )}
+        </span>
+        {/* Focused, its named box says it; the edge would draw it twice. */}
+        {mark !== "change" && (
         <span
           data-testid="review-ghost-edge"
           data-change-id={g.changeId}
@@ -223,6 +236,7 @@ export function ReviewGhosts({
           className="review-ghost-edge pointer-events-none absolute top-0 z-[3]"
           style={{ left, width }}
         />
+        )}
         </Fragment>
         );
       })}
@@ -236,17 +250,16 @@ export function ReviewGhosts({
 /// ghosts, clips. Paint only: no pointer events, no box of its own in the
 /// flow, so the focus moving never reflows or re-hits anything. The tack hue
 /// for a tack, the neutral review-focus hue for a change; a removal's baseline
-/// footprint hatched in the removed hue — where it was, not what is there.
+/// footprint hatched in the removed hue — where it was, not what is there —
+/// unless it is a clip whose lane survives, which its raised ghost shows.
 export function ReviewFocusWash({
   compositionId,
-  trackId,
   pxPerSec,
 }: {
   compositionId: string | null;
-  trackId?: string;
   pxPerSec: number;
 }) {
-  const washes = useCompositionFocusWashes(compositionId, trackId);
+  const washes = useCompositionFocusWashes(compositionId);
   if (washes.length === 0) return null;
   return (
     <>

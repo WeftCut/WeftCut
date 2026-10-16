@@ -381,24 +381,15 @@
   opacity: 0.45;
 }
 
-/* Lifted over the clips while it is pointed at: its edge alone, so the clip
-   now in its place still reads through it. */
+/* Lifted over the clips while it is pointed at: its dashed edge alone, as
+   the focused move's old place is drawn — no fill, so a clip that now sits
+   there (a ripple closed up over it) reads as dimmed under it, not as the
+   clip removed. Focused, it is named in its corner (`.review-ghost-label`). */
 .review-ghost[data-raised] {
   background: none;
-  border-width: 2px;
+  border-width: 1.5px;
 }
 
-/* The focus's hairline, inside its dashed edge. */
-.review-ghost[data-focus="change"] {
-  box-shadow: inset 0 0 0 2px var(--review-focus);
-}
-
-.review-ghost[data-focus="hover"] {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-focus) 55%, transparent);
-}
-
-/* A focused move's old place: the focus's neutral hairline, dashed — a
-   frame, not a clip, and no change class's hue. Over the clips, so no fill. */
 /* A focused change's baseline place: a dashed box the shape of a clip — a
    place, not a thing — its "before" name in its corner. The rest of the
    timeline has dimmed (`.review-spotlight-dim`), so its edge reads as a layer
@@ -420,6 +411,11 @@
   white-space: nowrap;
 }
 /* While a change is focused, every clip but its own steps back. */
+/* The removed counterpart of the "before" name: the same chip, removed hue. */
+.review-ghost-label {
+  background: var(--review-removed);
+}
+
 .review-spotlight-dim {
   background: rgba(10, 12, 16, 0.62);
 }

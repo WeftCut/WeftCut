@@ -1563,6 +1563,8 @@ const zhCN: Resources = {
     before_point: "基线位置 {{t}} 秒",
     track_title: "轨道“{{name}}”",
     was_label: "原位置 {{start}} – {{end}} 秒",
+    ghost_tag: "已删除 {{start}} – {{end}} 秒",
+    ghost_tag_activity: "已删除 · 调用前 {{start}} – {{end}} 秒",
     was_label_activity: "调用前位置 {{start}} – {{end}} 秒",
     marker_ghost_label: "已删除的标记“{{label}}”，基线位置 {{at}}",
     marker_ghost_label_activity: "已删除的标记“{{label}}”，调用前位置 {{at}}",

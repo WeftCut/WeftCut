@@ -26,8 +26,9 @@ export type FocusMark = 'tack' | 'change' | 'hover'
  *  the editor timeline's lanes. `endUs === startUs` for a point. `historical`:
  *  a removed entity's baseline footprint, which no current content has to be
  *  under — washed in the removed hue, apart from a current range. `trackId`:
- *  the one lane a removed clip's footprint was on, washed alone while that
- *  lane exists (on the others it would lie over clips it says nothing of). */
+ *  the lane a removed clip's footprint was on — while that lane exists its
+ *  raised ghost shows the footprint and nothing washes; once it is gone the
+ *  footprint washes every lane, the one place left to show it. */
 export interface FocusWash { kind: ReviewItem['kind']; compositionId: string; startUs: number; endUs: number; historical?: true; trackId?: string }
 
 /** Historical baseline footprint of the focused entity on one track. */
@@ -207,20 +208,21 @@ export function useTrackFocusWas(trackId: string): readonly FocusWas[] {
 }
 
 const NO_WASHES: readonly FocusWash[] = []
-/** The focus's washes on one lane of a timeline. `compositionId` null names
- *  the root, as everywhere on the timeline. A wash held to one lane
- *  (`trackId`) washes every lane once that lane is gone. */
-export function useCompositionFocusWashes(compositionId: string | null, trackId?: string): readonly FocusWash[] {
+/** The focus's washes on the lanes of a timeline. `compositionId` null names
+ *  the root, as everywhere on the timeline. */
+export function useCompositionFocusWashes(compositionId: string | null): readonly FocusWash[] {
   const overlay = useOverlay()
   const washes = useFocusPaint(s => s.washes)
   const resolved = useProjectStore(s => compositionId ?? s.summary?.root_id ?? null)
   const lanes = useProjectStore(s => (washes.some(w => w.trackId !== undefined) ? s.compositionIdByTrackId : null))
   return useMemo(() => {
     if (!overlay || washes.length === 0 || resolved === null) return NO_WASHES
+    // A removed clip whose lane survives is shown by its raised ghost there;
+    // only once that lane is gone does its footprint wash every lane.
     const mine = washes.filter(w => w.compositionId === resolved &&
-      (w.trackId === undefined || w.trackId === trackId || !lanes?.has(w.trackId)))
+      (w.trackId === undefined || !lanes?.has(w.trackId)))
     return mine.length === 0 ? NO_WASHES : mine
-  }, [overlay, washes, resolved, lanes, trackId])
+  }, [overlay, washes, resolved, lanes])
 }
 
 // ── Reveal: scroll an editor timeline to the focus, never seeking ─────────────
