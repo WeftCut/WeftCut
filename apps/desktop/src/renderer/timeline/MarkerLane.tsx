@@ -9,10 +9,11 @@ import { attachMarker, detachMarker, removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
 import { useComposition, useCompositionMarkers } from "../state/projectStore";
 import {
-  useActivityHighlightShown,
+  useChangeWords,
   useCompositionMarkerGhosts,
   useMarkerReviewMark,
 } from "../agent/reviewStore";
+import { framedWords } from "../agent/changeWords";
 import { selectChange, useFocusedChangeId, useReviewMarksRecede } from "../agent/reviewFocus";
 import { getCommand } from "../commands/registry";
 import { useMarkerDrag } from "./hooks/useMarkerDrag";
@@ -326,7 +327,7 @@ function ReviewMarkerGhosts({
   const ghosts = useCompositionMarkerGhosts(ownId);
   const focusedId = useFocusedChangeId();
   const recedeAll = useReviewMarksRecede();
-  const activity = useActivityHighlightShown();
+  const words = useChangeWords({ active: false });
   if (ghosts.length === 0) return null;
   const laneHeight = MARKER.laneHeight * scale;
   return (
@@ -335,7 +336,7 @@ function ReviewMarkerGhosts({
         const left = (g.tUs / 1_000_000) * pxPerSec;
         const start = formatTimecode(g.tUs, fpsNum, fpsDen);
         const at = g.endUs === null ? start : `${start} – ${formatTimecode(g.endUs, fpsNum, fpsDen)}`;
-        const title = t(activity ? "changes.marker_ghost_label_activity" : "changes.marker_ghost_label", {
+        const title = framedWords(words, "marker_ghost_label", {
           label: g.label.trim() || t("kinds.marker"),
           at,
         });

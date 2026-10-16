@@ -6,7 +6,7 @@ import zh from '../i18n/locales/zh-CN'
 import type { Change, ChangeDetail } from '../../shared/review'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
 import type { TrackSummary } from '../ipc'
-import { DETAIL_KEYS, changeWordsContext, describeChange, paramName, statesPlace, type Translate } from './changeWords'
+import { DETAIL_KEYS, FRAMED_KEYS, changeLine, changePlace, changeTitle, changeWordsContext, describeChange, framedWords, paramName, statesPlace, type ChangeFrame, type Translate } from './changeWords'
 
 const S = 1_000_000
 const track = (id: string, label: string | null): TrackSummary => ({ id, kind: 'Video', label, enabled: true, locked: false, muted: false, solo: false, role: null, transient: false, layers: [] })
@@ -25,7 +25,7 @@ beforeAll(() => {
   tZh = i18n.getFixedT('zh-CN') as unknown as Translate
 })
 const say = (t: Translate, details: ChangeDetail[], patch?: Partial<Change>) =>
-  describeChange(change(details, patch), changeWordsContext(t, summary, new Map([['grp', 1]])))
+  describeChange(change(details, patch), changeWordsContext(t, { summary, groupOrdinals: new Map([['grp', 1]]) }))
 
 describe('describeChange', () => {
   it('does not hide a microsecond difference or drop a time value sign', () => {
@@ -105,10 +105,46 @@ describe('describeChange', () => {
   })
 })
 
+describe('a change pointed at', () => {
+  const words = (t: Translate, frame: ChangeFrame = 'review') => changeWordsContext(t, { summary, groupOrdinals: new Map([['grp', 1]]) }, frame)
+  const trim: ChangeDetail[] = [{ type: 'trim', side: 'start', delta_us: -S }]
+
+  it('reads the same line on a clip, a cut mark and a band: its class, then what it did', () => {
+    expect(changeLine(change(trim), words(tEn))).toBe('Modified: Cut 1.0 s from the start')
+    expect(changeLine(change([], { class: 'added' }), words(tEn))).toBe('Added')
+  })
+
+  it('is titled as the app names it, a removed one by its baseline name, else by its kind', () => {
+    expect(changeTitle(change([], { id: 'Composition:grp' }), words(tEn))).toBe('Intro')
+    expect(changeTitle(change([], { id: 'Track:t2' }), words(tEn))).toBe('Track “Track 2”')
+    expect(changeTitle(change([], { id: 'Layer:gone', class: 'removed', before_name: 'Interview' }), words(tEn))).toBe('Interview')
+    expect(changeTitle(change([], { id: 'Marker:nope' }), words(tEn))).toBe('Marker')
+  })
+
+  it('places itself now, or a removed one where it was in its frame, with the timecode beside', () => {
+    const now = change(trim, { ranges: [{ composition_id: ROOT_ID, track_id: 't1', t_start_us: 2.5 * S, t_end_us: 4 * S }] })
+    expect(changePlace(now, words(tEn))).toEqual({ text: 'Now 2.5 – 4.0 s', timecode: '00:00:02:15 – 00:00:04:00' })
+    const gone = change([], { class: 'removed', before_ranges: [{ composition_id: ROOT_ID, track_id: 't1', t_start_us: S, t_end_us: S }] })
+    expect(changePlace(gone, words(tEn))?.text).toBe('Baseline position 1.0 s')
+    expect(changePlace(gone, words(tEn, 'activity'))?.text).toBe('Position before this call 1.0 s')
+    // Its facts already say its whole place, or it has none on a timeline that exists.
+    expect(changePlace(change([{ type: 'time', field: 'start', from_us: 0, to_us: S }],
+      { ranges: [{ composition_id: ROOT_ID, track_id: null, t_start_us: S, t_end_us: S }] }), words(tEn))).toBeNull()
+    expect(changePlace(change([], { ranges: [{ composition_id: 'gone', track_id: null, t_start_us: 0, t_end_us: S }] }), words(tEn))).toBeNull()
+  })
+
+  it('says every "before" in its frame', () => {
+    expect(framedWords(words(tEn), 'group_badge', { count: 2 })).toBe('Contains 2 unreviewed change(s)')
+    expect(framedWords(words(tEn, 'activity'), 'group_badge', { count: 2 })).toBe('Contains 2 change(s)')
+    expect(framedWords(words(tZh, 'activity'), 'before_label')).toBe('调用前位置')
+  })
+})
+
 describe('change wording locale coverage', () => {
   const at = (loc: unknown, dotted: string): unknown => dotted.split('.').reduce<any>((acc, k) => acc?.[k], loc)
-  const extra = ['changes.from_session', 'changes.before_label', 'changes.ghost_label']
-  it.each([['en-US', en], ['zh-CN', zh]] as const)('every fact type has its words in %s', (_name, loc) => {
+  const extra = ['changes.from_session', 'changes.clip_title', 'changes.track_title', 'changes.position_span', 'changes.position_point',
+    ...FRAMED_KEYS.flatMap(k => [`changes.${k}`, `changes.${k}_activity`])]
+  it.each([['en-US', en], ['zh-CN', zh]] as const)('every fact type and every framed word has its words in %s', (_name, loc) => {
     const keys = [...Object.values(DETAIL_KEYS).flat(), ...extra]
     expect(keys.filter(k => { const v = at(loc, k); return typeof v !== 'string' || v.trim() === '' })).toEqual([])
   })

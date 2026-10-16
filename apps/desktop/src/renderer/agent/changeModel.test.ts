@@ -1,17 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentActivity, AgentWorkSession } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
-import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
+import { groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
 
 const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
   class: 'modified', details: [],
   composition_id: 'root', ranges: [], ...patch,
-})
-
-describe('formatSeconds', () => {
-  it('is unsigned, keeps one decimal, at most three', () => {
-    expect([4 * 1e6, -4 * 1e6, 1_250_000, 40_000, 1_234_567, 0].map(formatSeconds)).toEqual(['4.0', '4.0', '1.25', '0.04', '1.235', '0.0'])
-  })
 })
 
 describe('groupChanges', () => {

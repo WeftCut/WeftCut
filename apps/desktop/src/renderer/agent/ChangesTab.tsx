@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CheckCheck, LocateFixed } from 'lucide-react'
-import { parseEntityKey, type Change } from '../../shared/review'
-import { formatTimecode } from '../frames'
-import { groupDisplayName, layerDisplayName } from '../lib/layerName'
-import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
-import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
-import { changeWordsContext, describeChange, statesPlace } from './changeWords'
+import { approveAllChanges, approveChanges, setShowUser, useChangeWords, useReview, useReviewView } from './reviewStore'
+import { groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { changePlace, changeTitle, describeChange } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
@@ -39,15 +35,13 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const showUser = useReview(s => s.showUser)
   const stale = useReview(s => s.approvalStale)
   const summary = useProjectStore(s => s.summary)
-  const layers = useProjectStore(s => s.layerById)
-  const ordinals = useProjectStore(s => s.groupOrdinals)
   const [busy, setBusy] = useState(false)
   const focus = useReviewFocus(s => s.focus)
   const selected = focus?.kind === 'change' && focus.source === 'review' ? focus.id : null
   const list = useRef<HTMLDivElement>(null)
   const activity = useAgentActivity(s => s.snapshot)
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
-  const words = useMemo(() => changeWordsContext(t, summary, ordinals), [t, summary, ordinals])
+  const words = useChangeWords({ frame: 'review' })
   const unreviewed = view?.unreviewed ?? []
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
@@ -70,65 +64,14 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     try { await run() } finally { setBusy(false) }
   }
 
-  const compositionName = (id: string | null): string => {
-    if (id === null) return t('changes.group_project')
-    if (id === summary?.root_id) return t('changes.group_root')
-    const c = summary?.compositions[id]
-    return c ? groupDisplayName(id, c.label, ordinals, t) : t('changes.group_gone')
-  }
-
-  /** What the row names: the clip, marker, track or Group as the rest of the
-   *  app names it when it still exists; a removed one by its baseline name;
-   *  its kind when it has none. A track says it is one: inside a new Group
-   *  its derived name ("A roll") repeats the root's. */
-  const title = (c: Change): string => {
-    const { kind, id } = parseEntityKey(c.id)
-    const fallback = t(`changes.kind_${kind}`)
-    if (c.class === 'removed') return kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
-    if (!summary) return fallback
-    switch (kind) {
-      case 'Layer': { const l = layers.get(id); return l ? layerDisplayName(l, t, ordinals) : fallback }
-      case 'Marker': {
-        const m = c.composition_id ? summary.compositions[c.composition_id]?.markers.find(x => x.id === id) : undefined
-        return m?.label.trim() || fallback
-      }
-      case 'Track': {
-        const comp = c.composition_id ? summary.compositions[c.composition_id] : undefined
-        const track = comp?.tracks.find(x => x.id === id)
-        return track && comp ? t('changes.track_title', { name: trackDisplayName(track, comp.tracks, t) }) : fallback
-      }
-      case 'Composition': {
-        const comp = summary.compositions[id]
-        return comp ? groupDisplayName(id, comp.label, ordinals, t) : fallback
-      }
-      default: return fallback
-    }
-  }
-
-  /** Where the row is on the timeline, in the seconds its facts speak
-   *  ("Cut 0.5 s from the start · Now 2.5 – 4.0 s"); the timecode only as the
-   *  line's tooltip. Nothing when its facts already say its whole current
-   *  place ("Start 4.0 → 2.0 s · End 6.0 → 4.0 s", or a point marker's
-   *  start) — the same place twice. */
-  const time = (c: Change): { text: string; timecode: string } | null => {
-    if (statesPlace(c)) return null
-    const ranges = c.ranges.length ? c.ranges : c.before_ranges ?? []
-    const r = ranges.find(x => x.composition_id === c.composition_id) ?? ranges[0]
-    const comp = r ? summary?.compositions[r.composition_id] : undefined
-    if (!r || !comp) return null
-    const span = r.t_end_us > r.t_start_us
-    const tc = formatTimecode(r.t_start_us, comp.fps_num, comp.fps_den)
-    const timecode = span ? `${tc} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : tc
-    const at = c.ranges.length ? 'position' : 'before'
-    const text = span
-      ? t(`changes.${at}_span`, { start: formatSeconds(r.t_start_us), end: formatSeconds(r.t_end_us) })
-      : t(`changes.${at}_point`, { t: formatSeconds(r.t_start_us) })
-    return { text, timecode }
-  }
+  /** A group heading: the composition's name, whole-composition changes
+   *  under "Groups", a composition gone since as a removed group. */
+  const heading = (id: string | null): string =>
+    id === null ? t('changes.group_project') : words.compositionName(id) ?? t('changes.group_gone')
 
   const row = (r: ChangeRow) => {
     const { change: c, source } = r
-    const when = time(c)
+    const when = changePlace(c, words)
     const reason = source === 'agent' ? sessionReason(c, reasons) : null
     const locatable = editor && canLocateChange(c)
     const focused = selected === c.id
@@ -139,7 +82,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         <button type="button" className="agent-tack-main agent-change-main" aria-pressed={focused}
           onClick={() => setReviewFocus(focused ? null : { kind: 'change', source: 'review', id: c.id })}>
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
-          <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
+          <span className="agent-activity-copy agent-change-copy"><span>{changeTitle(c, words)}</span>
             <small title={when?.timecode}>{[describeChange(c, words), when?.text].filter(Boolean).join(' · ')}</small>
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
@@ -169,7 +112,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         ? <div className="agent-empty"><p>{t(empty)}</p><p className="agent-empty-subtitle">{t('changes.subtitle')}</p></div>
         : <p className="agent-empty">{t(empty)}</p>)}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
-        <h3 className="agent-change-group-heading"><span>{compositionName(g.compositionId)}</span>
+        <h3 className="agent-change-group-heading"><span>{heading(g.compositionId)}</span>
           <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent').length })}</small></h3>
         {g.rows.map(row)}
       </section>)}

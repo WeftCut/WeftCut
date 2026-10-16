@@ -3,9 +3,8 @@ import { useTranslation } from "react-i18next";
 import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { formatTimecode } from "../frames";
-import type { Change } from "../../shared/review";
 import {
-  useActivityHighlightShown,
+  useChangeWords,
   useGroupReviewCount,
   useHighlightedChanges,
   useLayerReviewChange,
@@ -25,12 +24,10 @@ import {
   releaseFocus,
   selectChange,
 } from "../agent/reviewFocus";
-import { formatSeconds } from "../agent/changeModel";
-import { changeWordsContext, describeChange, type ChangeWordsContext } from "../agent/changeWords";
+import { changeLine, formatSeconds, framedWords } from "../agent/changeWords";
 import { getCommand } from "../commands/registry";
 import { uiPixels, useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
-import { useProjectStore } from "../state/projectStore";
 import { layerSliceRect } from "./geometry";
 
 /// The Review overlay's marks on the editor timeline (ADR 0115). Each is an
@@ -96,21 +93,14 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
   );
 }
 
-/// The words a clip's tooltip adds for its review mark: the class, then what
-/// the change did (`changeWords.ts`) — the panel row's words, so a clip reads
-/// the same pointed at from either side. The project is read only for a marked
-/// clip, so an unmarked block hears nothing of a publication from here.
+/// The words a clip's tooltip adds for its review mark: its change's line
+/// (`changeLine`) — the panel row's words, so a clip reads the same pointed at
+/// from either side. The project is read only for a marked clip, so an
+/// unmarked block hears nothing of a publication from here.
 export function useLayerReviewTitle(layerId: string | null): string | null {
-  const { t } = useTranslation();
   const change = useLayerReviewChange(layerId);
-  const summary = useProjectStore((s) => (change ? s.summary : null));
-  const ordinals = useProjectStore((s) => (change ? s.groupOrdinals : undefined));
-  return useMemo(() => {
-    if (change === null || change.class === "removed") return null;
-    const cls = t(`changes.class_${change.class}`);
-    const what = describeChange(change, changeWordsContext(t, summary, ordinals));
-    return what ? t("changes.clip_title", { cls, what }) : cls;
-  }, [change, summary, ordinals, t]);
+  const words = useChangeWords({ active: change !== null });
+  return useMemo(() => (change === null || change.class === "removed" ? null : changeLine(change, words)), [change, words]);
 }
 
 /// The "contains changes" badge on a Group clip: how many highlighted changes
@@ -124,11 +114,10 @@ export function ReviewGroupBadge({
   layerId: string;
   locked: boolean;
 }) {
-  const { t } = useTranslation();
   const count = useGroupReviewCount(layerId);
-  const activity = useActivityHighlightShown();
+  const words = useChangeWords({ active: false });
   if (count === 0) return null;
-  const label = t(activity ? "changes.group_badge_activity" : "changes.group_badge", { count });
+  const label = framedWords(words, "group_badge", { count });
   return (
     <span
       data-testid="review-group-badge"
@@ -179,12 +168,10 @@ export function ReviewGhosts({
   fpsNum: number;
   fpsDen: number;
 }) {
-  const { t } = useTranslation();
   const ghosts = useTrackReviewGhosts(trackId);
   const focus = useGhostFocus();
-  const activity = useActivityHighlightShown();
+  const words = useChangeWords({ active: false });
   if (ghosts.length === 0) return null;
-  const labelKey = activity ? "changes.ghost_label_activity" : "changes.ghost_label";
   const band = layerSliceRect(laneHeight, "full");
   return (
     <>
@@ -203,11 +190,11 @@ export function ReviewGhosts({
           data-raised={mark !== undefined || undefined}
           data-recede={recede}
           role="img"
-          aria-label={t(labelKey, {
+          aria-label={framedWords(words, "ghost_label", {
             start: formatTimecode(g.tStartUs, fpsNum, fpsDen),
             end: formatTimecode(g.tEndUs, fpsNum, fpsDen),
           })}
-          title={t(labelKey, {
+          title={framedWords(words, "ghost_label", {
             start: formatTimecode(g.tStartUs, fpsNum, fpsDen),
             end: formatTimecode(g.tEndUs, fpsNum, fpsDen),
           })}
@@ -220,7 +207,7 @@ export function ReviewGhosts({
         >
           {mark === "change" && (
             <span className="review-was-label review-ghost-label">
-              {t(activity ? "changes.ghost_tag_activity" : "changes.ghost_tag", {
+              {framedWords(words, "ghost_tag", {
                 start: formatSeconds(g.tStartUs),
                 end: formatSeconds(g.tEndUs),
               })}
@@ -302,9 +289,8 @@ export function ReviewWasFrames({
   pxPerSec: number;
   laneHeight: number;
 }) {
-  const { t } = useTranslation();
   const was = useTrackFocusWas(trackId);
-  const activity = useActivityHighlightShown();
+  const words = useChangeWords({ active: false });
   if (was.length === 0) return null;
   const band = layerSliceRect(laneHeight, "full");
   return (
@@ -323,7 +309,7 @@ export function ReviewWasFrames({
           }}
         >
           <span className="review-was-label">
-            {t(activity ? "changes.was_label_activity" : "changes.was_label", {
+            {framedWords(words, "was_label", {
               start: formatSeconds(w.startUs),
               end: formatSeconds(w.endUs),
             })}
@@ -376,11 +362,6 @@ export function mergeCuts(
   return out.map((g) => ({ px: (g.first + g.last) / 2, cuts: g.cuts }));
 }
 
-/** A trim mark uses the same change description as the panel. */
-function cutWords(change: Change, words: ChangeWordsContext): string {
-  return describeChange(change, words) || words.t(`changes.class_${change.class}`, {});
-}
-
 /// Cut marks: a small red ▼ hanging from the lane's top edge where material was
 /// taken out — the end a trim cut back. The
 /// three colours mark what is there; this marks what is no longer there where
@@ -395,18 +376,15 @@ function cutWords(change: Change, words: ChangeWordsContext): string {
 /// agent panel — and nothing else: the press bubbles to the lane, which reads
 /// it as background.
 export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: number }) {
-  const { t } = useTranslation();
   useUiScale();
   const cuts = useTrackReviewCuts(trackId);
   const changes = useHighlightedChanges();
-  const summary = useProjectStore((s) => (cuts.length > 0 ? s.summary : null));
-  const ordinals = useProjectStore((s) => (cuts.length > 0 ? s.groupOrdinals : undefined));
+  const words = useChangeWords({ active: cuts.length > 0 });
   const recede = useReviewMarksRecede();
   const focused = useFocusedChangeId();
   if (cuts.length === 0) return null;
   const metrics = UI_METRICS.timeline.review.cutMark;
   const [width, height] = [uiPixels(metrics.width), uiPixels(metrics.height)];
-  const words = changeWordsContext(t, summary, ordinals);
   return (
     <>
       {mergeCuts(cuts, pxPerSec, uiPixels(metrics.merge)).map((g) => {
@@ -416,7 +394,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
           const change = changes.get(c.changeId);
           if (!change || seen.has(c.changeId)) continue;
           seen.add(c.changeId);
-          lines.push(cutWords(change, words));
+          lines.push(changeLine(change, words));
         }
         const label = lines.join("\n");
         const first = g.cuts[0]!;

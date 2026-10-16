@@ -56,14 +56,6 @@ export function entityIdOf(change: Pick<Change, 'id'>, kind: EntityKind): string
   return p.kind === kind ? p.id : null
 }
 
-/** An unsigned amount of seconds for a sentence that says the direction in
- *  words ("前移 2.0 秒"): at most three decimals, trailing zeros dropped but
- *  one kept — `4.0`, `1.25`, `0.04`. */
-export function formatSeconds(us: number): string {
-  const text = (Math.abs(us) / 1_000_000).toFixed(3).replace(/0+$/, '')
-  return text.endsWith('.') ? `${text}0` : text
-}
-
 /** Entity key → the reason of the work session that last edited it: the most
  *  recent `operation` activity (by start) of a session naming it in
  *  `affected`. Built once per activity snapshot; read with `sessionReason`. */

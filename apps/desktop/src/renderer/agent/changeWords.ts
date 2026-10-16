@@ -1,42 +1,72 @@
 // The words a review change is told in (ADR 0115): main hands facts
 // (`Change.details`), this module words them in the editor's own vocabulary —
 // the inspector's param names, the effect catalog's names, the History panel's
-// verbs — and never an MCP tool's. Pure, and shared by every surface that
-// describes a change (the Changes tab's rows, the timeline's tooltips), so a
+// verbs — and never an MCP tool's. Pure, and the one source of words for
+// every surface that tells of a change — the Changes tab's rows, the
+// timeline's tooltips, ghosts and badges, the mini timeline's bands — so a
 // change reads the same wherever it is pointed at.
 //
-// Time details show measured before/after values.
+// What a change is told against is its frame: the Review baseline, or — under
+// an activity's highlight — the project just before that agent call. Every
+// word that names the "before" is said through the frame (`framedWords`).
 import { AUDIO_EFFECTS } from '../../shared/audioEffects/catalog'
 import { VISUAL_EFFECT_PARAMS } from '../../shared/effects/params'
-import type { Change, ChangeAspect, ChangeDetail } from '../../shared/review'
-import type { ProjectSummary } from '../ipc'
+import { parseEntityKey, type Change, type ChangeAspect, type ChangeDetail } from '../../shared/review'
+import { formatTimecode } from '../frames'
+import type { LayerSummary, ProjectSummary } from '../ipc'
 import { animatableParams } from '../keyframe/descriptors'
-import { groupDisplayName } from '../lib/layerName'
+import { groupDisplayName, layerDisplayName } from '../lib/layerName'
 import { trackDisplayName } from '../lib/trackName'
-import { formatSeconds } from './changeModel'
+import type { ChangeSource } from './reviewFocus'
 
 /** Structurally typed so `useTranslation().t` passes straight through (as
  *  `layerDisplayName` does). */
 export type Translate = (key: string, values: Record<string, unknown>) => string
 
+/** What a change is told against: the Review baseline (`review`), or the
+ *  project just before one agent call (`activity`, its highlight). */
+export type ChangeFrame = ChangeSource
+
 export interface ChangeWordsContext {
   t: Translate
+  frame: ChangeFrame
   /** A track's display name, or null when it is gone. `compositionId` is the
    *  change's own composition, searched first. */
   trackName: (trackId: string, compositionId: string | null) => string | null
   /** A composition's display name, or null when it is gone. */
   compositionName: (compositionId: string) => string | null
+  /** A clip's display name, or null when it is gone. */
+  layerName: (layerId: string) => string | null
+  /** A marker's label in `compositionId`, or null when it is gone or has none. */
+  markerLabel: (compositionId: string, markerId: string) => string | null
+  /** A composition's frame rate, or null when it is gone. */
+  fps: (compositionId: string) => { num: number; den: number } | null
+}
+
+/** The project the words resolve names in: the project store's own fields. */
+export interface WordsProject {
+  summary: ProjectSummary | null
+  layerById?: ReadonlyMap<string, LayerSummary> | undefined
+  groupOrdinals?: ReadonlyMap<string, number> | undefined
 }
 
 /** The resolvers over the project as it is now. A null summary resolves
  *  nothing (every place falls back to its generic word). */
-export function changeWordsContext(
-  t: Translate,
-  summary: ProjectSummary | null,
-  ordinals: ReadonlyMap<string, number> | undefined,
-): ChangeWordsContext {
+export function changeWordsContext(t: Translate, project: WordsProject, frame: ChangeFrame = 'review'): ChangeWordsContext {
+  const { summary, layerById, groupOrdinals: ordinals } = project
   return {
     t,
+    frame,
+    layerName: id => {
+      const l = layerById?.get(id)
+      return l ? layerDisplayName(l, t, ordinals) : null
+    },
+    markerLabel: (compositionId, markerId) =>
+      summary?.compositions[compositionId]?.markers.find(m => m.id === markerId)?.label.trim() || null,
+    fps: id => {
+      const c = summary?.compositions[id]
+      return c ? { num: c.fps_num, den: c.fps_den } : null
+    },
     trackName: (trackId, compositionId) => {
       if (!summary) return null
       const own = compositionId ? summary.compositions[compositionId] : undefined
@@ -59,6 +89,16 @@ export function changeWordsContext(
 const FACT_SEPARATOR = ' · '
 /** How many param names a fact lists before "and N more". */
 const MAX_NAMES = 3
+
+/** Words that name the "before" a change is told against, each with an
+ *  `_activity` twin for an activity's highlight (`changes.<key>[_activity]`). */
+export const FRAMED_KEYS = ['before_label', 'before_span', 'before_point', 'ghost_label', 'ghost_tag', 'was_label', 'group_badge', 'marker_ghost_label'] as const
+export type FramedKey = typeof FRAMED_KEYS[number]
+
+/** A framed word in the context's frame. */
+export function framedWords(ctx: Pick<ChangeWordsContext, 't' | 'frame'>, key: FramedKey, values: Record<string, unknown> = {}): string {
+  return ctx.t(`changes.${key}${ctx.frame === 'activity' ? '_activity' : ''}`, values)
+}
 
 /** Every locale key a fact type can be worded with — the locale parity test
  *  reads it, and the `Record` makes a new fact type fail typecheck here until
@@ -170,8 +210,17 @@ function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(1).replace(/\.0$/, '')}%`
 }
 
-/** Preserve signs and microseconds in before/after values. */
-function formatTimeValue(us: number): string {
+/** Seconds as a place or a length is said: at most three decimals, trailing
+ *  zeros dropped but one kept — `4.0`, `1.25`, `0.04`. The exact frame is a
+ *  timecode's to tell (a row's place, a ghost's tooltip). */
+export function formatSeconds(us: number): string {
+  const text = (us / 1_000_000).toFixed(3).replace(/0+$/, '')
+  return text.endsWith('.') ? `${text}0` : text
+}
+
+/** Seconds as a measured before/after value is said: to the microsecond and
+ *  signed, so no difference reads as none (`1.0 → 1.000001`). */
+function formatExactSeconds(us: number): string {
   const value = (us / 1_000_000).toFixed(6).replace(/0+$/, '')
   return value.endsWith('.') ? `${value}0` : value
 }
@@ -186,9 +235,9 @@ function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composi
     case 'length':
       return t(change.class === 'removed' ? 'changes.detail.length_removed' : 'changes.detail.length_added', { s: formatSeconds(d.duration_us) })
     case 'time':
-      return t('changes.detail.time_' + d.field, { from: formatTimeValue(d.from_us), to: formatTimeValue(d.to_us) })
+      return t('changes.detail.time_' + d.field, { from: formatExactSeconds(d.from_us), to: formatExactSeconds(d.to_us) })
     case 'trim':
-      return t(`changes.detail.trim_${d.side}_${d.delta_us < 0 ? 'cut' : 'extend'}`, { s: formatTimeValue(Math.abs(d.delta_us)) })
+      return t(`changes.detail.trim_${d.side}_${d.delta_us < 0 ? 'cut' : 'extend'}`, { s: formatExactSeconds(Math.abs(d.delta_us)) })
     case 'track': {
       const from = d.from === null ? null : ctx.trackName(d.from, change.composition_id)
       const to = d.to === null ? null : ctx.trackName(d.to, change.composition_id)
@@ -247,4 +296,49 @@ export function statesPlace(change: Pick<Change, 'details' | 'ranges'>): boolean
  *  removed one without a length says nothing (its badge and title already do). */
 export function describeChange(change: Change, ctx: ChangeWordsContext): string {
   return toldDetails(change).map(d => describeDetail(d, change, ctx)).join(FACT_SEPARATOR)
+}
+
+/** A change pointed at from the timeline — a clip's tooltip, a cut mark, a
+ *  mini timeline band: its class, then what it did. */
+export function changeLine(change: Change, ctx: ChangeWordsContext): string {
+  const cls = ctx.t(`changes.class_${change.class}`, {})
+  const what = describeChange(change, ctx)
+  return what ? ctx.t('changes.clip_title', { cls, what }) : cls
+}
+
+/** What a change names: the clip, marker, track or Group as the rest of the
+ *  app names it while it exists; a removed one by its baseline name; its kind
+ *  when it has none. A track says it is one: inside a new Group its derived
+ *  name ("A roll") repeats the root's. */
+export function changeTitle(c: Change, ctx: ChangeWordsContext): string {
+  const { t } = ctx
+  const { kind, id } = parseEntityKey(c.id)
+  const fallback = t(`changes.kind_${kind}`, {})
+  if (c.class === 'removed') return kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
+  switch (kind) {
+    case 'Layer': return ctx.layerName(id) ?? fallback
+    case 'Marker': return (c.composition_id ? ctx.markerLabel(c.composition_id, id) : null) || fallback
+    case 'Track': { const name = ctx.trackName(id, c.composition_id); return name ? t('changes.track_title', { name }) : fallback }
+    case 'Composition': return ctx.compositionName(id) ?? fallback
+    default: return fallback
+  }
+}
+
+/** Where a change is on the timeline — or, removed, where it was before — in
+ *  the seconds its facts speak ("Now 2.5 – 4.0 s"), its timecode for a
+ *  tooltip. Null when its facts already say its whole current place, or it
+ *  has no place on a composition that exists. */
+export function changePlace(c: Change, ctx: ChangeWordsContext): { text: string; timecode: string } | null {
+  if (statesPlace(c)) return null
+  const ranges = c.ranges.length ? c.ranges : c.before_ranges ?? []
+  const r = ranges.find(x => x.composition_id === c.composition_id) ?? ranges[0]
+  const fps = r ? ctx.fps(r.composition_id) : null
+  if (!r || !fps) return null
+  const span = r.t_end_us > r.t_start_us
+  const tc = formatTimecode(r.t_start_us, fps.num, fps.den)
+  const timecode = span ? `${tc} – ${formatTimecode(r.t_end_us, fps.num, fps.den)}` : tc
+  const values = span ? { start: formatSeconds(r.t_start_us), end: formatSeconds(r.t_end_us) } : { t: formatSeconds(r.t_start_us) }
+  const shape = span ? 'span' : 'point'
+  const text = c.ranges.length ? ctx.t(`changes.position_${shape}`, values) : framedWords(ctx, `before_${shape}`, values)
+  return { text, timecode }
 }

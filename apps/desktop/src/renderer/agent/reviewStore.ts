@@ -9,7 +9,8 @@
 // last one to leave unsubscribes. Replies older than the view held — by project
 // publication or by baseline revision — are dropped, so a fetch that started
 // before an approval can never paint the approved changes back.
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
 import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
@@ -18,6 +19,7 @@ import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
+import { changeLine, changeWordsContext, framedWords, type ChangeFrame, type ChangeWordsContext, type Translate } from './changeWords'
 import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
@@ -234,6 +236,34 @@ export function useGroupReviewCount(layerId: string): number {
  *  the unreviewed ones — what a badge counting them calls them. */
 export function useActivityHighlightShown(): boolean {
   return useReview(s => s.activity?.status === 'ready')
+}
+
+/** The change words over the project as it is now (`changeWords.ts`), in
+ *  `frame` — by default the one the timelines show: an activity's highlight
+ *  while one is shown, else the Review baseline. Not `active`, the project
+ *  is not read, so a surface with nothing marked hears no publication; its
+ *  names then fall back to their generic words. */
+export function useChangeWords({ active = true, frame }: { active?: boolean; frame?: ChangeFrame } = {}): ChangeWordsContext {
+  const { t } = useTranslation()
+  const shown: ChangeFrame = useActivityHighlightShown() ? 'activity' : 'review'
+  const summary = useProjectStore(s => (active ? s.summary : null))
+  const layerById = useProjectStore(s => (active ? s.layerById : undefined))
+  const groupOrdinals = useProjectStore(s => (active ? s.groupOrdinals : undefined))
+  const f = frame ?? shown
+  return useMemo(() => changeWordsContext(t as unknown as Translate, { summary, layerById, groupOrdinals }, f), [t, summary, layerById, groupOrdinals, f])
+}
+
+/** What a mark of the mini timeline's change band says under the pointer:
+ *  its change's line, and for a removal's baseline footprint whose place it
+ *  is — in the frame the highlight shows. */
+export function useChangeMarkLabel(): (mark: ReviewRangeMark) => string {
+  const words = useChangeWords()
+  const changes = useHighlightedChanges()
+  return useCallback((mark: ReviewRangeMark) => {
+    const c = changes.get(mark.changeId)
+    const line = c ? changeLine(c, words) : words.t(`changes.class_${mark.cls}`, {})
+    return mark.historical ? `${line} · ${framedWords(words, 'before_label')}` : line
+  }, [words, changes])
 }
 
 /** Removed layers to outline on one track of the editor timeline. */

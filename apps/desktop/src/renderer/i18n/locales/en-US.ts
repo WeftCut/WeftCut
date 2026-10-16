@@ -1735,12 +1735,14 @@ const enUS = {
     // not against the review baseline.
     ghost_label_activity: "Removed clip, position before this call {{start}} – {{end}}",
     before_label: "Baseline position",
-    before_call_label: "Position before this call",
+    before_label_activity: "Position before this call",
     // A row's place, in the seconds its facts speak; the timecode is its tooltip.
     position_span: "Now {{start}} – {{end}} s",
     position_point: "Now at {{t}} s",
     before_span: "Baseline position {{start}} – {{end}} s",
     before_point: "Baseline position {{t}} s",
+    before_span_activity: "Position before this call {{start}} – {{end}} s",
+    before_point_activity: "Position before this call {{t}} s",
     track_title: "Track “{{name}}”",
     was_label: "Before {{start}} – {{end}} s",
     ghost_tag: "Removed {{start}} – {{end}} s",

@@ -40,10 +40,9 @@ interface MiniTimelineProps {
   /// removal at its baseline footprint, in the removed hue on a row of its
   /// own just under them (ADR 0116).
   changes?: readonly ReviewRangeMark[];
-  /// What a removal's historical mark is a position of, under the pointer:
-  /// the review baseline's by default, the project before one call under an
-  /// activity's highlight.
-  historyLabel?: string;
+  /// What a change mark says under the pointer (`useChangeMarkLabel`) —
+  /// its class alone when absent.
+  changeLabel?: (mark: ReviewRangeMark) => string;
   /// A press on a band that names an item (`hitBand`) focuses it instead of
   /// seeking; the caller shows its row.
   onFocus?: (item: ReviewTarget) => void;
@@ -95,10 +94,10 @@ function formatTickLabel(us: number): string {
 const POINT_SLOP_PX = 4;
 
 /// A change band item per painted change range — not the "contains changes"
-/// footprints of Group clips (`Group:` ids), which name no row to show.
+/// footprints of Group clips, which name no row to show.
 function changeBandItems(changes: readonly ReviewRangeMark[]): BandItem[] {
   return changes
-    .filter((c) => !c.changeId.startsWith("Group:"))
+    .filter((c) => !c.group)
     .map((c) => ({ id: c.changeId, startUs: c.tStartUs, endUs: c.tEndUs }));
 }
 
@@ -118,7 +117,7 @@ export function MiniTimeline({
   focus = null,
   hover = null,
   changes = [],
-  historyLabel,
+  changeLabel,
   onFocus,
   onSeek,
   fpsNum,
@@ -383,8 +382,7 @@ export function MiniTimeline({
             {...bandHandlers("change", changeAt, (id) => {
               const c = changes.find((x) => x.changeId === id);
               if (c === undefined) return "";
-              const cls = t(`changes.class_${c.cls}`);
-              return c.historical ? `${cls} · ${historyLabel ?? t("changes.before_label")}` : cls;
+              return changeLabel ? changeLabel(c) : t(`changes.class_${c.cls}`);
             })}
           />
         )}

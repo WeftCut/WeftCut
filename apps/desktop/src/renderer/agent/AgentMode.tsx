@@ -21,7 +21,7 @@ import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
 import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./reviewFocus";
-import { useActivityHighlightShown, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
+import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 import { useUiScale } from '../settings/layoutTheme';
@@ -81,7 +81,7 @@ export const AgentMode = forwardRef(function AgentMode(
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
   const changes = useCompositionChangeRanges(comp?.id ?? null);
-  const activityShown = useActivityHighlightShown();
+  const changeLabel = useChangeMarkLabel();
   const scale = useUiScale();
   const [recordWidthBase, setRecordWidth] = useState<number>(AGENT.recordWidth.default);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
@@ -169,7 +169,7 @@ export const AgentMode = forwardRef(function AgentMode(
           focus={focus}
           hover={hover}
           changes={changes}
-          historyLabel={t(activityShown ? "changes.before_call_label" : "changes.before_label")}
+          changeLabel={changeLabel}
           // A band press focuses its item and shows its row in the panel
           // beside the strip (tab, group and row opened; the tab scrolls to it).
           onFocus={focusReviewItem}

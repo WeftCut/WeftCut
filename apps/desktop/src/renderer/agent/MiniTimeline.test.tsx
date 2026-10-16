@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n";
 import { MiniTimeline } from "./MiniTimeline";
+import type { ReviewRangeMark } from "./reviewHighlight";
 
 beforeEach(() => vi.stubGlobal("ResizeObserver", class {
   observe() {}
@@ -111,7 +112,7 @@ describe("review focus on the strip", () => {
   const changes = [
     { changeId: "Layer:a", cls: "added" as const, compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
     { changeId: "Layer:m", cls: "modified" as const, compositionId: "root", tStartUs: 5_000_000, tEndUs: 7_000_000 },
-    { changeId: "Group:g", cls: "modified" as const, compositionId: "root", tStartUs: 8_000_000, tEndUs: 9_000_000 },
+    { changeId: "Group:g", cls: "modified" as const, compositionId: "root", tStartUs: 8_000_000, tEndUs: 9_000_000, group: true as const },
   ];
   function strip(props: Partial<React.ComponentProps<typeof MiniTimeline>> = {}) {
     const onSeek = vi.fn();
@@ -139,12 +140,13 @@ describe("review focus on the strip", () => {
 
   it("a removal's baseline footprint is dashed apart, says so under the pointer, and a press focuses it", () => {
     const removed = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 3_000_000, tEndUs: 4_000_000, historical: true as const };
-    const { container, band, onFocus, onSeek } = strip({ changes: [...changes, removed] });
+    const changeLabel = (m: ReviewRangeMark) => `${m.changeId}${m.historical ? " · Baseline position" : ""}`;
+    const { container, band, onFocus, onSeek } = strip({ changes: [...changes, removed], changeLabel });
     const mark = container.querySelector<HTMLElement>("[data-change-id='Layer:r']")!;
     expect([mark.dataset.historical, mark.classList.contains("mini-change-historical")]).toEqual(["true", true]);
     expect(container.querySelector<HTMLElement>("[data-change-id='Layer:m']")!.classList.contains("mini-change-historical")).toBe(false);
     fireEvent.pointerMove(band("mini-change-band"), { clientX: 175 }); // 3.5 s
-    expect(band("mini-change-band").title).toBe("Removed · Baseline position");
+    expect(band("mini-change-band").title).toBe("Layer:r · Baseline position");
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 175 });
     expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:r" });
     expect(onSeek).not.toHaveBeenCalled();

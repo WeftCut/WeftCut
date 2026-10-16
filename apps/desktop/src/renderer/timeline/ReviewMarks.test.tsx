@@ -339,7 +339,7 @@ describe("Pure change marks", () => {
       expect(parseFloat(mark.style.left) + parseFloat(mark.style.width) / 2).toBeCloseTo((i + 1) * pxPerSec);
       expect([parseFloat(mark.style.width), parseFloat(mark.style.height)]).toEqual([uiPixels(metrics.width), uiPixels(metrics.height)]);
       expect(mark.className.split(/\s+/)).toEqual(expect.arrayContaining(['top-0', 'z-[3]', 'cursor-pointer']));
-      expect(mark.title).toBe('Cut 1.0 s from the start · Cut 1.0 s from the end');
+      expect(mark.title).toBe('Modified: Cut 1.0 s from the start · Cut 1.0 s from the end');
       expect(mark.getAttribute('aria-label')).toBe(mark.title);
       for (const block of lane.querySelectorAll('[data-layer-id]')) {
         expect(block.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

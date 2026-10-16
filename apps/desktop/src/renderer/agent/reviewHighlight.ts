@@ -47,9 +47,10 @@ export interface ReviewCut {
 }
 
 /** One painted stretch of the mini timeline's change band: a change's own
- *  range, or a Group clip containing changes at its footprint (`changeId`
- *  `Group:<layer id>`, painted as `modified`), so what changed inside a
- *  Group shows on the timeline holding it. */
+ *  range, or a Group clip containing changes at its footprint (`group`,
+ *  `changeId` `Group:<layer id>`, painted as `modified`), so what changed
+ *  inside a Group shows on the timeline holding it. A Group's mark names no
+ *  change. */
 export interface ReviewRangeMark {
   changeId: string
   cls: ChangeClass
@@ -59,6 +60,7 @@ export interface ReviewRangeMark {
   /** A removed entity's baseline footprint (`before_ranges`), not a place on
    *  the current timeline: painted apart from current ranges. */
   historical?: true
+  group?: true
 }
 
 export interface ReviewHighlight {
@@ -104,7 +106,7 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
     const n = d.change_ids.reduce((sum, id) => sum + (ids.has(id) ? 1 : 0), 0)
     if (n === 0) continue
     groups.set(d.layer_id, n)
-    ranges.push({ changeId: `Group:${d.layer_id}`, cls: 'modified', compositionId: d.composition_id, tStartUs: d.t_start_us, tEndUs: d.t_end_us })
+    ranges.push({ changeId: `Group:${d.layer_id}`, cls: 'modified', compositionId: d.composition_id, tStartUs: d.t_start_us, tEndUs: d.t_end_us, group: true })
   }
   for (const c of changes) {
     for (const r of c.ranges) ranges.push({ changeId: c.id, cls: c.class, compositionId: r.composition_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us })
