@@ -619,9 +619,10 @@ jobs:
   # `typecheck` and `mcp:catalog:check` appear here as well as inline in every
   # e2e leg; the duplication is concurrent, so it costs nothing.
   checks:
-    # ~4 min warm. The cap covers a cold rust-artifacts miss, which adds the
-    # whole addon + analyzer build on top.
-    timeout-minutes: 20
+    # A cold rust-artifacts miss can spend 15 min building the addons and
+    # analyzer before typecheck and the full unit suite even start. Leave
+    # those gates their own budget, plus dependency setup and cache cleanup.
+    timeout-minutes: 30
     runs-on: windows-latest
     defaults:
       run:
