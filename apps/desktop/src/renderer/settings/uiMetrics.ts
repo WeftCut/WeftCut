@@ -25,6 +25,14 @@ export const UI_METRICS = {
     recordWidth: { default: 360, min: 280, max: 720 },
     /** Width always left to the preview column beside the record panel. */
     previewMinWidth: 480,
+    /** The mini timeline's review bands. */
+    miniTimeline: {
+      /** How near a point mark a band press still names it. */
+      pointSlop: 4,
+      /** Where the row of removals' baseline footprints starts, under the
+       * current change band (`.mini-change-historical`). */
+      historyRowTop: 5,
+    },
   },
 
   /** Log console floor; drags are remembered in baseline units. */

@@ -22,7 +22,7 @@
 .agent-connection-details code { font-size: var(--font-size-micro); }
 .agent-history-lock button, .agent-activity-actions button, .agent-activity-details > button { border: 1px solid var(--border); }
 /* The timeline is showing one call's changes (per-activity highlight). */
-.agent-activity-highlight { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px)); border: 1px solid var(--primary); border-radius: 4px; color: var(--foreground); font-size: var(--font-size-caption); }
+.agent-activity-highlight { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px)); border: 1px solid var(--primary); border-radius: var(--radius-control); color: var(--foreground); font-size: var(--font-size-caption); }
 .agent-activity-highlight > svg { color: var(--primary); flex: none; }
 .agent-activity-highlight > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .agent-activity-note { margin: 0 0 calc(8 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); }
@@ -93,7 +93,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack-closed-heading { display: flex; align-items: center; justify-content: space-between; gap: calc(4 * var(--ui-px)); padding-left: calc(20 * var(--ui-px)); }
 .agent-tack-closed-heading > button { flex: none; gap: calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); padding-block: calc(3 * var(--ui-px)) !important; }
 .agent-tack-closed > .agent-tack { margin-left: calc(20 * var(--ui-px)); }
-.agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
+.agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: var(--radius-control); }
 /* A tack or change row hovers and selects as a Playhead panel row does: one
    fill over the whole row, the selection's over the hover's, no edge bar.
    Its main button adds no fill of its own; the row's small actions do. */
@@ -121,7 +121,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-change-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: calc(8 * var(--ui-px)); margin: 0; padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) calc(4 * var(--ui-px)); font-size: var(--font-size-body); font-weight: 500; }
 .agent-change-group-heading > span { min-width: 0; overflow-wrap: anywhere; }
 .agent-change-group-heading > small { flex: none; }
-.agent-change { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
+.agent-change { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: var(--radius-control); }
 .agent-change .agent-tack-row { align-items: center; padding-left: calc(7 * var(--ui-px)); }
 .agent-change-copy { padding-block: calc(4 * var(--ui-px)); }
 .agent-change-badge { flex: none; min-width: calc(58 * var(--ui-px)); padding: calc(1 * var(--ui-px)) calc(5 * var(--ui-px)); border-radius: var(--radius-control); font-size: var(--font-size-micro); text-align: center; border: 1px solid currentColor; }

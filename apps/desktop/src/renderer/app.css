@@ -269,15 +269,20 @@
        timeline band and the agent panel's Tacks tab. A hue no marker default,
        selection, playhead or status role uses, so a tack never reads as one. */
     --tack: #2dd4bf;
+    /* Ink on a solid --tack fill: a selected Review lane chip, a group chip's
+       count. */
+    --tack-foreground: #0b1f1c;
     /* Review changes (ADR 0115): an unreviewed agent change on the editor
        timeline (clip edges, ghosts, the Group badge), the mini timeline's change
        band and the Changes tab's class badges. Added is green and modified amber
-       as in every diff view; removed takes the error hue; a shift is a muted
-       slate so a ripple's thirty-seven clips do not shout. Their own roles, not
+       as in every diff view; removed takes the error hue. Their own roles, not
        aliases of the status hues: a review mark is not a bake or meter state. */
     --review-added: #4ade80;
     --review-modified: #fbbf24;
     --review-removed: #f87171;
+    /* Ink on a solid review fill: the "before" / "removed" corner labels, the
+       Group badge. */
+    --review-foreground: #101014;
     /* The review focus on a change (agent/reviewFocus.ts): the wash over its
        time range, the ring round its clips or ghost, its mini timeline mark.
        Neutral on purpose — the class hues above already sit on those clips,

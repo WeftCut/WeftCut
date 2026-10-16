@@ -64,6 +64,8 @@ the hue as an rgba literal.
 | `--review-modified` | `#fbbf24` | Review: a modified clip's edge (a move to another track or time included), the Group "contains changes" badge, modified/moved stretches of the change band and their badges. |
 | `--review-removed` | `#f87171` | Review: a removed clip's ghost outline where it was (carried onto the current timeline), the cut mark (▼) at a ripple's seam or a trimmed end, removed stretches of the change band, the `removed` badge. Same hue as `--destructive`, separate role. |
 | `--review-focus` | `#e2e8f0` | Review focus on a change: the translucent wash over its time range across the editor's lanes, the hairline inside its clips, the clips it carried along, or its removed ghost (fainter while its row is only hovered), the dashed frame where a focused move's clips were, its mark on the mini timeline. Neutral so it never reads as one more change class; a focused tack uses `--tack` for the same wash and the same neutral hairline. |
+| `--tack-foreground` | `#0b1f1c` | Ink on a solid `--tack` fill: a selected Review lane chip, a group chip's count. |
+| `--review-foreground` | `#101014` | Ink on a solid review fill: the "before" / "removed" corner labels, the Group badge. |
 
 One-off categorical palettes (log category pills, kind badges, motif card
 status badges) may stay literal or use the pinned `--color-*` Tailwind
@@ -195,11 +197,12 @@ baseline: `fine` 9, `micro` 10, `caption` 11, `body` 12, `label` 13, `title` 14,
 (the gizmo's rotate glyph) sizes from `UI_METRICS` instead.
 
 `UI_METRICS` covers the Dock strip thickness and group gap, the edge-overflow
-overlay, agent record and log-console bounds, the mixer layout threshold, the
-timeline header column, track heights, trim edge zone, clip label, layer label
-thresholds, ruler label spacing, marker lane, keyframe sub-lanes, curve tangent
-handles and extrapolation marks, and the preview transform
-gizmo's handles, rotation knob and anchor target. Per-panel Dock floors stay in
+overlay, agent record and log-console bounds, the mini timeline's review-band
+hit slop and removal row, the mixer layout threshold, the timeline header
+column, track heights, trim edge zone, clip label, layer label thresholds,
+ruler label spacing, marker lane, review lane and cut marks, keyframe
+sub-lanes, curve tangent handles and extrapolation marks, and the preview
+transform gizmo's handles, rotation knob and anchor target. Per-panel Dock floors stay in
 `workspace/panelRegistry.ts` and resolve the same way. A component that renders
 a themed JS size calls `useUiScale()` so a theme switch re-renders it.
 

@@ -10,6 +10,7 @@ import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 import { uiPixels } from "../settings/layoutTheme";
+import { UI_METRICS } from "../settings/uiMetrics";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
 /// row + project marker pips + timecode readout. No track lanes — the
@@ -92,8 +93,10 @@ function formatTickLabel(us: number): string {
   return `${m}:${pad(s, 2)}`;
 }
 
-/// How near a point mark a band press still names it, in strip pixels.
-const POINT_SLOP_PX = 4;
+/// The review bands' baselines: a press's slop round a point mark, and the
+/// top of the removals' row — a press below it names a historical mark first,
+/// one above it a current mark first.
+const MINI = UI_METRICS.agent.miniTimeline;
 
 /// A change band item per painted change range — not the "contains changes"
 /// footprints of Group clips, which name no row to show.
@@ -102,11 +105,6 @@ function changeBandItems(changes: readonly ReviewRangeMark[]): BandItem[] {
     .filter((c) => !c.group)
     .map((c) => ({ id: c.changeId, startUs: c.tStartUs, endUs: c.tEndUs }));
 }
-
-/// Where the row of removals' baseline footprints starts, under the current
-/// change band (`.mini-change-historical`), in theme baseline px: a press
-/// below it names a historical mark first, one above it a current mark first.
-const HISTORY_ROW_TOP = 5;
 
 /// Room left after the last baseline footprint past the film's end, as a
 /// fraction of its time.
@@ -244,12 +242,12 @@ export function MiniTimeline({
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || durationUs <= 0) return null;
     const tUs = ((e.clientX - rect.left) / rect.width) * extentUs;
-    return hitBand(items, tUs, (POINT_SLOP_PX / rect.width) * extentUs);
+    return hitBand(items, tUs, (uiPixels(MINI.pointSlop) / rect.width) * extentUs);
   };
   // The change band holds two rows; the one pressed is asked first, so a
   // removal's footprint under a current change is reachable from its own row.
   const changeAt = (e: React.MouseEvent<HTMLElement>): string | null => {
-    const lower = e.clientY - e.currentTarget.getBoundingClientRect().top >= uiPixels(HISTORY_ROW_TOP);
+    const lower = e.clientY - e.currentTarget.getBoundingClientRect().top >= uiPixels(MINI.historyRowTop);
     const [first, second] = lower ? [historyItems, changeItems] : [changeItems, historyItems];
     return bandItemAt(first, e) ?? bandItemAt(second, e);
   };

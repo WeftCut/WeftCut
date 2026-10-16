@@ -123,8 +123,8 @@ export function ReviewGroupBadge({
       data-testid="review-group-badge"
       role="img"
       aria-label={label}
-      className="pointer-events-none absolute right-1 top-1 z-[4] flex items-center gap-0.5 rounded px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none text-black shadow-sm"
-      style={{ right: locked ? 20 : undefined, background: "var(--review-modified)" }}
+      className="review-group-badge pointer-events-none absolute right-1 top-1 z-[4] flex items-center gap-0.5 rounded px-1 py-0.5 text-[length:var(--font-size-micro)] font-semibold leading-none shadow-sm"
+      style={{ right: locked ? 20 : undefined }}
     >
       <AppIcon icon={GitCompareArrows} size="fine" strokeWidth={2.5} aria-hidden="true" />
       {count}

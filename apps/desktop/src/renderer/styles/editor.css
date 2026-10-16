@@ -135,9 +135,9 @@
 .mini-change-removed { background: var(--review-removed); }
 
 /* A removal's baseline footprint: the removed hue's own solid block, in a
-   row of its own just under the current band (MiniTimeline's
-   HISTORY_ROW_TOP) — what now sits where it was keeps the band above, so
-   neither paints over the other. As tall as the band: the row and the hue
+   row of its own just under the current band (`historyRowTop` in
+   UI_METRICS.agent.miniTimeline) — what now sits where it was keeps the band
+   above, so neither paints over the other. As tall as the band: the row and the hue
    set it apart, not its weight. */
 .mini-change-historical {
   top: calc(5 * var(--ui-px));
@@ -256,7 +256,7 @@
 .review-tack[data-selected] {
   z-index: 1;
   background: var(--tack);
-  color: #0b1f1c;
+  color: var(--tack-foreground);
   box-shadow: 0 0 0 1px var(--foreground);
 }
 
@@ -287,14 +287,14 @@
   padding: 0 calc(2 * var(--ui-px));
   border-radius: 2px;
   background: var(--tack);
-  color: #0b1f1c;
+  color: var(--tack-foreground);
   font-weight: 600;
   text-align: center;
   line-height: calc(11 * var(--ui-px));
 }
 
 .review-tack[data-selected] .review-tack-count {
-  background: #0b1f1c;
+  background: var(--tack-foreground);
   color: var(--tack);
 }
 
@@ -415,10 +415,10 @@
   padding: 0 calc(3 * var(--ui-px));
   border-radius: calc(2 * var(--ui-px));
   background: var(--review-focus);
-  color: #101014;
+  color: var(--review-foreground);
   font-size: var(--font-size-micro);
   font-weight: 600;
-  line-height: 1.4;
+  line-height: var(--line-height-body);
   white-space: nowrap;
 }
 /* While a change is focused, every clip but its own steps back. */
@@ -428,7 +428,13 @@
 }
 
 .review-spotlight-dim {
-  background: rgba(10, 12, 16, 0.62);
+  background: color-mix(in srgb, var(--background) 62%, transparent);
+}
+
+/* A Group clip's "contains changes" count: the modified hue, solid. */
+.review-group-badge {
+  background: var(--review-modified);
+  color: var(--review-foreground);
 }
 
 /* A cut mark: the removed hue, nothing else — a ▼ from the lane's top edge
