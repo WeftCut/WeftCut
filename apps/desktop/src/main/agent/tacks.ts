@@ -7,25 +7,19 @@
 // undo, redo, checkpoint restore or the history lock — so nothing here goes
 // through the actor's commit path.
 //
-// At creation the store records what plays in the range, across every track
-// (`playedIn`). Every read places the range again — its created length, moved
-// as far as the first covered layer that still shows the content its part
-// started on moved — and compares what plays there now. Whichever layer
-// moves it, a range whose content moved together plays the same; one whose
-// content did not is outdated wherever it is drawn. Two states only: current while it plays the
+// At creation the store records what plays in the range, across every track;
+// every read replays that record against the current project
+// (`rangePlayback.ts`, which owns what "plays the same" means). Two states only: current while it plays the
 // same, outdated otherwise (as a review comment on changed lines is on GitHub
 // or Gerrit). Derived, never latched: an undo that restores the content makes
 // the tack current again.
 import { randomUUID } from 'node:crypto'
-import type { Composition, Layer, Project, Transition } from '../state/model'
-import { eachLayer } from '../state/model'
+import type { Project } from '../state/model'
 import { CommandFailure } from '../state/errors'
-import { hasSourceWindow } from '../state/mutations/helpers'
-import { snapMarkerTimes, sourceInstantAt } from '../state/mutations/markers'
-import { jsonEqual, transitionEqual } from '../state/reviewEntities'
-import { sourceInstantHibernating, sourceInstantTimelineUs, type SourceInstant } from '../state/summary'
+import { snapMarkerTimes } from '../state/mutations/markers'
+import { recordPlayback, replay, type Playback } from './rangePlayback'
 import {
-  TACK_CAPACITY, type AffectedTack, type Tack, type TackFollows, type TackKind, type TackRange, type TackStatus,
+  TACK_CAPACITY, type AffectedTack, type Tack, type TackKind, type TackRange, type TackStatus,
   type TackToReview, type TackView,
 } from '../../shared/agent-activity'
 
@@ -71,139 +65,11 @@ export interface TackStoreDeps {
 type Placement = Pick<TackView, 'composition_id' | 't_us' | 'end_t_us' | 'outdated' | 'follows'>
 const UNPLACED: Placement = { composition_id: null, t_us: null, end_t_us: null, outdated: true, follows: null }
 
-// ── What plays in a range ─────────────────────────────────────────────────────
-
-/** One layer as it plays inside a range: the part of it the range covers, as
- *  offsets from the range's start, and the content time that part starts at —
- *  a source instant for a layer with a source window, else its offset into
- *  the layer (past a Motif's `src_in_us`). `layer` is the snapshot's own
- *  object, held by reference — immer never mutates it. */
-interface Played {
-  track_id: string
-  layer: Layer
-  from: number
-  to: number
-  at: SourceInstant
-  /** What plays over that part in a Group's composition; null for other kinds. */
-  nested: RangeContent | null
-}
-interface RangeContent { played: Played[]; transitions: Transition[] }
-
-/** Compositions nest without cycles (validate); this only keeps a malformed
- *  project from recursing without end. */
-const MAX_NESTING = 32
-
-/** What plays in `[tUs, endTUs)` of `c` — or at the instant `tUs` for a point
- *  — on every track, in track order (bottom of the z-stack first): each
- *  overlapping layer's part, and the transitions touching those layers. Markers are notes, not playback;
- *  track toggles are preference-shaped (review excludes them too). */
-function playedIn(p: Project, c: Composition, tUs: number, endTUs: number | null, depth = 0): RangeContent {
-  const played: Played[] = []
-  const ids = new Set<string>()
-  for (const track of c.tracks) for (const layer of track.layers) {
-    const overlaps = endTUs === null ? layer.t_start_us <= tUs && tUs < layer.t_end_us : layer.t_start_us < endTUs && layer.t_end_us > tUs
-    if (!overlaps) continue
-    const start = Math.max(layer.t_start_us, tUs)
-    const end = endTUs === null ? start : Math.min(layer.t_end_us, endTUs)
-    const params = layer.params
-    const at: SourceInstant = hasSourceWindow(params) ? sourceInstantAt(layer, start)
-      : { src_us: ('src_in_us' in params ? params.src_in_us : 0) + start - layer.t_start_us }
-    let nested: RangeContent | null = null
-    if (params.kind === 'CompositionRef') {
-      const inner = p.compositions[params.composition]
-      nested = !inner || depth >= MAX_NESTING ? { played: [], transitions: [] }
-        : playedIn(p, inner, at.src_us, endTUs === null ? null : sourceInstantAt(layer, end).src_us, depth + 1)
-    }
-    played.push({ track_id: track.id, layer, from: start - tUs, to: end - tUs, at, nested })
-    ids.add(layer.id)
-  }
-  return { played, transitions: c.transitions.filter((tr) => ids.has(tr.from_layer) || ids.has(tr.to_layer)) }
-}
-
-/** A layer's values apart from where it sits and which stretch of its source
- *  it shows — what `Played.from` / `to` / `at` already say for the part that
- *  plays — so a trim or a move outside the range compares equal. */
-function layerBody(l: Layer): unknown {
-  const params = l.params
-  return {
-    ...l, t_start_us: 0, t_end_us: 0,
-    params: 'src_in_us' in params ? { ...params, src_in_us: 0, ...('src_out_us' in params ? { src_out_us: 0 } : {}) } : params,
-  }
-}
-
-function samePlayed(a: Played, b: Played): boolean {
-  return a.track_id === b.track_id && a.layer.id === b.layer.id && a.from === b.from && a.to === b.to
-    && a.at.src_us === b.at.src_us && jsonEqual(a.at.src_fraction, b.at.src_fraction)
-    && (a.layer === b.layer || jsonEqual(layerBody(a.layer), layerBody(b.layer)))
-    && (a.nested === null ? b.nested === null : b.nested !== null && sameContent(a.nested, b.nested))
-}
-
-function sameContent(a: RangeContent, b: RangeContent): boolean {
-  return a.played.length === b.played.length && a.played.every((x, i) => samePlayed(x, b.played[i]!))
-    && a.transitions.length === b.transitions.length && a.transitions.every((x, i) => transitionEqual(x, b.transitions[i]!))
-}
-
-// ── Placement ─────────────────────────────────────────────────────────────────
-
-/** A layer the range may move with: its id, the content time its covered
- *  part starts at, and the timeline time that read at creation. */
-interface Follow { layer_id: string; at: SourceInstant; t_us: number }
-
-/** Every covered layer, in track order. Which one moves the range matters
- *  only for where an outdated tack is drawn: content that moved together
- *  moved every covered layer alike. */
-const followsOf = (tUs: number, content: RangeContent): Follow[] =>
-  content.played.map((x) => ({ layer_id: x.layer.id, at: x.at, t_us: tUs + x.from }))
-
-/** Where content time `at` of `layer` reads on its timeline now, or null when
- *  the layer no longer shows it — the source↔timeline mapping anchored markers
- *  use for a layer with a source window, the plain offset into it otherwise. */
-function readsAt(layer: Layer, at: SourceInstant, fps: Composition['fps']): number | null {
-  const params = layer.params
-  if (hasSourceWindow(params)) return sourceInstantHibernating(at, layer) ? null : sourceInstantTimelineUs(layer, at, fps)
-  const t = layer.t_start_us + at.src_us - ('src_in_us' in params ? params.src_in_us : 0)
-  return layer.t_start_us <= t && t < layer.t_end_us ? t : null
-}
-
-/** What the store keeps beside a record: what played in its range at
- *  creation, and the layers it may follow. Off the record — views are copies,
- *  and a layer is no part of the wire. */
-interface Made { content: RangeContent; follows: Follow[] }
-
-type LayerIndex = () => Map<string, { layer: Layer; composition: Composition }>
-/** Every layer of `p` by id, built on first use: a refresh that holds only
- *  tacks following nothing never needs it. */
-function lazyLayerIndex(p: Project): LayerIndex {
-  let index: Map<string, { layer: Layer; composition: Composition }> | null = null
-  return () => index ??= new Map([...eachLayer(p)].map(({ layer, composition }) => [layer.id, { layer, composition }]))
-}
-
 /** Where a tack sits in `p` right now, and whether its range still plays what
- *  it did. The first covered layer that still shows its content moves the
- *  range — into another composition too, as a clip moved into a Group takes
- *  its anchored markers; with none, the range stays where it was made, and
- *  has no place once that composition is gone. A range moved before zero is
- *  held at zero, and plays differently there. */
-function place(p: Project, range: TackRange, made: Made, layers: LayerIndex): Placement {
-  let composition = p.compositions[range.composition_id]
-  let t = range.t_us
-  let follows: TackFollows | null = null
-  for (const f of made.follows) {
-    const found = layers().get(f.layer_id)
-    const now = found ? readsAt(found.layer, f.at, found.composition.fps) : null
-    if (found === undefined || now === null) continue
-    composition = found.composition
-    t = Math.max(0, range.t_us + now - f.t_us)
-    follows = {
-      layer_id: f.layer_id, t_us: now,
-      ...(hasSourceWindow(found.layer.params) ? { src_us: f.at.src_us, ...(f.at.src_fraction ? { src_fraction: f.at.src_fraction } : {}) } : {}),
-    }
-    break
-  }
-  if (!composition) return UNPLACED
-  const end = range.end_t_us === null ? null : t + range.end_t_us - range.t_us
-  const outdated = !sameContent(made.content, playedIn(p, composition, t, end))
-  return { composition_id: composition.id, t_us: t, end_t_us: end, outdated, follows }
+ *  it did; no place once its composition is gone. */
+function place(p: Project, playback: Playback): Placement {
+  const at = replay(p, playback)
+  return at === null ? UNPLACED : { composition_id: at.composition_id, t_us: at.t_us, end_t_us: at.end_t_us, outdated: !at.same, follows: at.follows }
 }
 
 const samePlacement = (a: Placement | undefined, b: Placement): boolean =>
@@ -219,7 +85,9 @@ function placementChange(was: Placement, now: Placement): AffectedTack['change']
 export class TackStore {
   private records = new Map<string, Tack>()
   private placed = new Map<string, Placement>()
-  private made = new Map<string, Made>()
+  /** What played in each tack's range at creation. Kept off the record:
+   *  views are copies, and a layer is no part of the wire. */
+  private playbacks = new Map<string, Playback>()
   private placedFor: Project | null = null
   private readonly capacity: number
   private readonly now: () => string
@@ -305,17 +173,12 @@ export class TackStore {
     const p = this.deps.project()
     if (p === this.placedFor) return
     this.placedFor = p
-    const layers = lazyLayerIndex(p)
     const dirty: string[] = []
     for (const t of this.records.values()) {
-      const at = this.placement(p, t, layers)
+      const at = place(p, this.playbacks.get(t.id)!)
       if (!samePlacement(this.placed.get(t.id), at)) { this.placed.set(t.id, at); dirty.push(t.id) }
     }
     if (dirty.length) this.deps.changed(dirty, [])
-  }
-
-  private placement(p: Project, t: Tack, layers: LayerIndex): Placement {
-    return place(p, t.range, this.made.get(t.id)!, layers)
   }
 
   /** Validate the whole batch, then create it — all or nothing. */
@@ -334,13 +197,12 @@ export class TackStore {
         id, session_id: who.session_id, connection_id: who.connection_id, client: who.client, activity_id: who.activity_id,
         kind: input.kind, label: input.label, body: input.body, status: 'open', range: ranges[i]!.range, created_at,
       })
-      this.made.set(id, ranges[i]!.made)
+      this.playbacks.set(id, ranges[i]!.playback)
       return id
     })
     // Placed against the project they were validated on, which is the one
     // every other placement was just refreshed against.
-    const layers = lazyLayerIndex(p)
-    for (const id of ids) this.placed.set(id, this.placement(p, this.records.get(id)!, layers))
+    for (const id of ids) this.placed.set(id, place(p, this.playbacks.get(id)!))
     this.deps.changed(ids, [])
     return ids
   }
@@ -368,7 +230,7 @@ export class TackStore {
     } else {
       ids = [...this.records.values()].filter((t) => t.session_id === selector.session_id).map((t) => t.id)
     }
-    for (const id of ids) { this.records.delete(id); this.placed.delete(id); this.made.delete(id) }
+    for (const id of ids) { this.records.delete(id); this.placed.delete(id); this.playbacks.delete(id) }
     if (ids.length) this.deps.changed([], ids)
     return ids
   }
@@ -377,7 +239,7 @@ export class TackStore {
   clear(): void {
     this.records.clear()
     this.placed.clear()
-    this.made.clear()
+    this.playbacks.clear()
     this.placedFor = null
   }
 
@@ -388,7 +250,7 @@ export class TackStore {
   /** The stored range of one input and what plays in it, or a refusal naming
    *  `at`. The times land on the composition's frame grid first, as
    *  `add_marker` lands them. */
-  private range(p: Project, input: TackInput, at: string): { range: TackRange; made: Made } {
+  private range(p: Project, input: TackInput, at: string): { range: TackRange; playback: Playback } {
     const compositionId = input.composition_id ?? p.root_id
     const c = p.compositions[compositionId]
     if (!c) throw new TackError('CompositionNotFound', `${at}.composition_id: composition ${compositionId} not found — project://compositions lists them`, 'composition_id')
@@ -399,7 +261,6 @@ export class TackStore {
         throw new TackError('InvalidArgument', `${at}.${e.err.field}: ${e.err.detail}`, e.err.field)
       throw e
     }
-    const content = playedIn(p, c, tUs, endTUs)
-    return { range: { composition_id: c.id, t_us: tUs, end_t_us: endTUs }, made: { content, follows: followsOf(tUs, content) } }
+    return { range: { composition_id: c.id, t_us: tUs, end_t_us: endTUs }, playback: recordPlayback(p, c.id, tUs, endTUs) }
   }
 }

@@ -31,11 +31,15 @@ commented on still what plays here?
 **A tack is a comment on what plays in a time range.** At creation the store
 records what plays in the range across every track of its composition: each
 layer the range overlaps, the part of it inside the range (as offsets from
-the range's start), the source instant that part starts at, every other value
-of the layer, the tracks' order, the transitions touching those layers, and
-— through a Group — what plays in the stretch of its composition the Group
-shows. Markers are notes, not playback, and are not part of it; neither are
-the preference-shaped track toggles review already excludes.
+the range's start), the content time that part starts on, the layer's values
+that affect what plays, the tracks' order, the transitions touching those
+layers, and — through a Group — what plays in the stretch of its composition
+the Group shows. Keyframe times are compared from the range's start, not the
+layer's, since a head trim rebases them; a layer's label and lock play nothing
+and are not compared. Markers are notes, not playback, and are not part of it;
+neither are the preference-shaped track toggles review already excludes.
+`main/agent/rangePlayback.ts` owns this comparison; the tack store only
+records and replays it.
 
 **Two states.** A tack is *current* while its range, where it now sits, plays
 what it played at creation, and *outdated* (内容已修改) otherwise. Nothing else:
