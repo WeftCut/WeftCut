@@ -28,11 +28,13 @@ interface MiniTimelineProps {
   /// paints the tacks' UNION (`tackCoverage`) at one opacity: overlapping
   /// tacks must not darken into what reads as a different mark.
   tacks?: readonly TackView[];
-  /// The review focus (`reviewFocus`). A focused tack is drawn over the union
-  /// at full strength when it is one of `tacks`, a focused change's ranges
-  /// over the change band, so what the panel is showing can be found here.
+  /// The review focus (`reviewFocus`), shown as the editor timeline shows it:
+  /// its range washed the strip's full height, its own mark at full strength
+  /// and the others in its band stepping back. No mark grows, so a focused
+  /// change never covers the removal row under it.
   focus?: ReviewTarget | null;
-  /// The panel row under the pointer (`reviewHover`): its mark is ringed.
+  /// The panel row under the pointer (`reviewHover`): its mark is ringed
+  /// inside its own box.
   hover?: ReviewTarget | null;
   /// Review change ranges on this composition (`useCompositionChangeRanges`),
   /// painted as a second band along the strip's head — opposite the tack band,
@@ -219,6 +221,15 @@ export function MiniTimeline({
     item?.kind === "tack" ? tackItems.find((x) => x.id === item.id) ?? null : null;
   const selectedSpan = tackSpan(focus);
   const hoverSpan = hover?.kind === "tack" && hover.id !== selectedSpan?.id ? tackSpan(hover) : null;
+  // The focus's washes: the tack's range, or each range of the change.
+  const focusWashes: { kind: ReviewTarget["kind"]; startUs: number; endUs: number; historical: boolean }[] =
+    selectedSpan !== null
+      ? [{ kind: "tack", startUs: selectedSpan.startUs, endUs: selectedSpan.endUs, historical: false }]
+      : focus?.kind === "change"
+        ? changes.filter((c) => c.changeId === focus.id)
+            .map((c) => ({ kind: "change", startUs: c.tStartUs, endUs: c.tEndUs, historical: c.historical === true }))
+        : [];
+  const focusBand = focusWashes[0]?.kind;
   const changeMark = (c: ReviewRangeMark) =>
     focus?.kind === "change" && focus.id === c.changeId
       ? " mini-change-selected"
@@ -296,9 +307,27 @@ export function MiniTimeline({
       </div>
       <div
         ref={stripRef}
-        className="mini-timeline-strip-real"
+        className={`mini-timeline-strip-real${focusBand ? ` mini-focus-${focusBand}` : ""}`}
         onPointerDown={onPointerDown}
       >
+        {durationUs > 0 && focusWashes.map((w, i) => {
+          const point = w.endUs <= w.startUs;
+          return (
+            <span
+              key={`wash-${i}`}
+              data-testid="mini-focus-wash"
+              data-kind={w.kind}
+              data-point={point || undefined}
+              data-historical={w.historical || undefined}
+              aria-hidden="true"
+              className="review-focus-wash mini-focus-wash"
+              style={{
+                left: `${(w.startUs / extentUs) * 100}%`,
+                ...(point ? {} : { width: `${((w.endUs - w.startUs) / extentUs) * 100}%` }),
+              }}
+            />
+          );
+        })}
         {markers.map((m) => {
           if (durationUs <= 0) return null;
           // A hibernating marker's `t_us` names a moment its clip no longer

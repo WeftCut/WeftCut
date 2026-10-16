@@ -229,6 +229,30 @@ describe("review focus on the strip", () => {
     ]);
   });
 
+  it("washes the focused range the strip's full height and steps its band back, as the editor timeline does", () => {
+    const removed = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 2_000_000, tEndUs: 3_000_000, historical: true as const };
+    const { container, rerender } = render(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={[...changes, removed]}
+      focus={{ kind: "change", id: "Layer:m" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
+    const strip = () => container.querySelector<HTMLElement>(".mini-timeline-strip-real")!;
+    const washes = () => [...container.querySelectorAll<HTMLElement>("[data-testid='mini-focus-wash']")]
+      .map((w) => [w.dataset.kind, w.dataset.historical ?? null, w.style.left, w.style.width]);
+    expect(washes()).toEqual([["change", null, "50%", "20%"]]);
+    expect(strip().classList.contains("mini-focus-change")).toBe(true);
+    // Under every mark: the wash comes first in the strip.
+    expect(strip().firstElementChild?.getAttribute("data-testid")).toBe("mini-focus-wash");
+    rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={[...changes, removed]}
+      focus={{ kind: "change", id: "Layer:r" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
+    expect(washes()).toEqual([["change", "true", "20%", "10%"]]);
+    rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={changes}
+      focus={{ kind: "tack", id: "short" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
+    expect(washes()).toEqual([["tack", null, "20%", "10%"]]);
+    expect(strip().classList.contains("mini-focus-tack")).toBe(true);
+    rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={changes}
+      focus={null} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
+    expect(washes()).toEqual([]);
+    expect(strip().className).toBe("mini-timeline-strip-real");
+  });
+
   it("without a focus handler the bands are paint only", () => {
     const { container } = render(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={changes}
       onSeek={() => {}} fpsNum={30} fpsDen={1} />);
