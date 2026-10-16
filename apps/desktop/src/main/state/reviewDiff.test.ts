@@ -11,7 +11,7 @@ import { PBT_RUNS, PBT_SEED } from './__tests__/pbt/harness'
 import { diffProjects, locateChanges, groupDecorations } from './reviewDiff'
 import { mediaLabel } from './summary'
 import { ABSENT, entityKey, extractEntities, touchedEntityKeys, type EntityValue } from './reviewEntities'
-import { parseEntityKey, type Change, type ChangeAspect, type ChangeDetail, type EntityKey } from '../../shared/review'
+import { changeKind, parseEntityKey, type Change, type ChangeDetail, type EntityKey } from '../../shared/review'
 
 const S = 1_000_000
 const AV = '00000000-0000-0000-0000-0000000000ab'
@@ -45,17 +45,14 @@ const window = (l: Layer, t0: number, t1: number, src0: number, src1: number) =>
 }
 const detailsOf = (p: Project, q: Project, id: Uuid): ChangeDetail[] => diffProjects(p, q).find((c) => c.id === L(id))!.details
 
-/** The details that can stand for each aspect; a composition move's timing is
- *  said by the move itself, a retime's new length by its speed. */
-const SAYS: Record<ChangeAspect, ReadonlyArray<ChangeDetail['type']>> = {
-  placement: ['track', 'composition'], timing: ['time'], retime: ['speed'], params: ['params'],
-  keyframes: ['keyframes'], effects: ['effect'], label: ['label'], flags: ['enabled', 'locked'],
-}
-/** Every aspect is said by a detail, and no fact is a zero. */
+/** The kinds of fact a change is told by, in order. */
+const says = (c: Change): Array<ChangeDetail['type']> => c.details.map((d) => d.type)
+/** A modification says at least one fact — the renderer words nothing else —
+ *  and no fact is a zero. */
 function detailsCover(c: Change): boolean {
-  const covered = c.aspects.every((a) => c.details.some((d) => (d.type === 'aspect' && d.aspect === a) || SAYS[a].includes(d.type)))
+  const told = c.class !== 'modified' || c.details.length > 0
   const nonzero = c.details.every((d) => !('delta_us' in d) || d.delta_us !== 0)
-  return covered && nonzero
+  return told && nonzero
 }
 
 describe('entity keys', () => {
@@ -78,31 +75,33 @@ describe('diffProjects — classes', () => {
     const before = a.snapshot()
     const id = color(a, tA, 2 * S, 3 * S)
     const added = only(diffProjects(before, a.snapshot()))
-    expect(added).toMatchObject({ class: 'added', kind: 'Layer', keys: [L(id)], aspects: [], ranges: [{ composition_id: before.root_id, t_start_us: 2 * S, t_end_us: 3 * S }] })
+    expect(added).toMatchObject({ id: L(id), class: 'added', details: [{ type: 'length', duration_us: S }], ranges: [{ composition_id: before.root_id, track_id: tA, t_start_us: 2 * S, t_end_us: 3 * S }] })
     const mid = a.snapshot()
     ok(a.dispatch('delete_layers', { layers: [id] }))
-    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ class: 'removed', keys: [L(id)], from: { composition_id: before.root_id, track_id: tA }, ranges: [], before_ranges: [{ t_start_us: 2 * S, t_end_us: 3 * S, track_id: tA }] })
+    expect(only(diffProjects(mid, a.snapshot()))).toMatchObject({ id: L(id), class: 'removed', ranges: [], before_ranges: [{ composition_id: before.root_id, track_id: tA, t_start_us: 2 * S, t_end_us: 3 * S }] })
   })
 
-  it('modified names its aspects: label, flags, params, keyframes, effects', () => {
+  it('modified says what differs: label, flags, params, keyframes, effects', () => {
     const { a, tA } = setup()
     ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
     const id = video(a, tA, 0, S)
-    const cases: Array<[() => void, string[]]> = [
+    const cases: Array<[() => void, Array<ChangeDetail['type']>]> = [
       [() => ok(a.dispatch('update_layer', { layer: id, patch: { label: 'Intro' } })), ['label']],
-      [() => ok(a.dispatch('set_layers_enabled', { layers: [id], enabled: false })), ['flags']],
+      [() => ok(a.dispatch('set_layers_enabled', { layers: [id], enabled: false })), ['enabled']],
       [() => ok(a.dispatch('update_layer_param_track', { layer: id, param_key: 'opacity', track: { mode: 'Static', value: 0.5 } })), ['params']],
       [() => ok(a.dispatch('update_layer_param_track', { layer: id, param_key: 'opacity', track: keyframed(0.2) })), ['keyframes']],
-      [() => ok(a.dispatch('add_effect', { layer: id, kind: 'blur' })), ['effects']],
+      [() => ok(a.dispatch('add_effect', { layer: id, kind: 'blur' })), ['effect']],
     ]
-    for (const [edit, aspects] of cases) {
+    for (const [edit, types] of cases) {
       const before = a.snapshot()
       edit()
-      expect(only(diffProjects(before, a.snapshot()))).toMatchObject({ class: 'modified', keys: [L(id)], aspects })
+      const c = only(diffProjects(before, a.snapshot()))
+      expect(c).toMatchObject({ class: 'modified', id: L(id) })
+      expect(says(c)).toEqual(types)
     }
   })
 
-  it('a trim is a timing modification; a retime adds the retime aspect', () => {
+  it('a trim says its times and the cut; a retime says its speed', () => {
     const { a, tA } = setup()
     ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
     const v = video(a, tA, 0, 4 * S)
@@ -111,21 +110,24 @@ describe('diffProjects — classes', () => {
     const trim = only(diffProjects(before, a.snapshot()))
     // Where the clip is now — not where it was as well, which is baseline time.
     const now = root(a.snapshot()).tracks[0].layers.find((l) => l.id === v)!
-    expect(trim).toMatchObject({ class: 'modified', aspects: ['timing'], ranges: [{ t_start_us: now.t_start_us, t_end_us: now.t_end_us }] })
+    expect(trim).toMatchObject({ class: 'modified', ranges: [{ t_start_us: now.t_start_us, t_end_us: now.t_end_us }] })
+    expect(says(trim)).toContain('trim')
+    expect(says(trim).every((t) => t === 'time' || t === 'trim')).toBe(true)
     expect(now.t_end_us - now.t_start_us).toBe(S)
     const mid = a.snapshot()
     ok(a.dispatch('retime_layers', { layers: [v], target: { kind: 'Rate', value: { num: 2, den: 1 } } }))
-    expect(only(diffProjects(mid, a.snapshot())).aspects).toContain('retime')
+    expect(says(only(diffProjects(mid, a.snapshot())))).toContain('speed')
   })
 
-  it('a move to another track is a placement modification, with both locations and the current footprint', () => {
+  it('a move to another track says the track first, with the footprint on each side on its track', () => {
     const { a, tA, tB } = setup()
     const id = color(a, tA, 0, S)
     const before = a.snapshot()
     ok(a.dispatch('move_layer', { layer: id, to_track: tB, t_start_us: S, escape_link: false }))
     const c = only(diffProjects(before, a.snapshot()))
-    expect(c).toMatchObject({ class: 'modified', from: { track_id: tA }, to: { track_id: tB }, ranges: [{ t_start_us: S, t_end_us: 2 * S }] })
-    expect(c.aspects).toEqual(['placement', 'timing'])
+    expect(c).toMatchObject({ class: 'modified', ranges: [{ track_id: tB, t_start_us: S, t_end_us: 2 * S }], before_ranges: [{ track_id: tA, t_start_us: 0, t_end_us: S }] })
+    expect(c.details[0]).toEqual({ type: 'track', from: tA, to: tB })
+    expect(says(c).slice(1).every((t) => t === 'time')).toBe(true)
   })
 
   it('same-delta translations remain independent entity changes; a marker riding its clip is not one', () => {
@@ -140,7 +142,6 @@ describe('diffProjects — classes', () => {
     // The marker's anchor — its truth — is unchanged; only its cached time followed the clip.
     expect(root(a.snapshot()).markers[0]!.t_us).toBe(1.5 * S)
     expect(new Set(cs.map(c => c.id))).toEqual(new Set([L(x), L(y)]))
-    expect(cs.every(c => c.keys.length === 1 && c.id === c.keys[0])).toBe(true)
     expect(cs.find(c => c.id === L(x))!.details).toEqual([
       { type: 'time', field: 'start', from_us: 0, to_us: S },
       { type: 'time', field: 'end', from_us: S, to_us: 2 * S },
@@ -157,16 +158,16 @@ describe('diffProjects — classes', () => {
     const tied = a.snapshot()
     ok(a.dispatch('update_marker', { marker: m, patch: { t_us: 3 * S } }))
     const moved = only(diffProjects(tied, a.snapshot()))
-    expect(moved).toMatchObject({ id: M, aspects: ['timing'], details: [{ type: 'time', field: 'start', from_us: S, to_us: 3 * S }] })
+    expect(moved).toMatchObject({ id: M, details: [{ type: 'time', field: 'start', from_us: S, to_us: 3 * S }] })
     // Moved within its clip while the clip moved too: the marker's own instant changed, and its times say where it went.
     ok(a.dispatch('shift_layers', { layers: [x], delta_us: S / 2 }))
     expect(only(diffProjects(tied, a.snapshot()).filter(c => c.id === M)).details).toEqual([{ type: 'time', field: 'start', from_us: S, to_us: 3.5 * S }])
     const free = structuredClone(tied)
     root(free).markers[0]!.anchor = null
-    expect(only(diffProjects(free, tied))).toMatchObject({ id: M, aspects: ['placement'] })
+    expect(only(diffProjects(free, tied))).toMatchObject({ id: M, details: [{ type: 'aspect', aspect: 'placement' }] })
     const other = structuredClone(tied)
     root(other).markers[0]!.anchor!.layer = y
-    expect(only(diffProjects(other, tied).filter(c => c.id === M)).aspects).toEqual(['placement'])
+    expect(only(diffProjects(other, tied).filter(c => c.id === M)).details).toEqual([{ type: 'aspect', aspect: 'placement' }])
   })
 
   it('ripple deletion reports all changed entities and never relocates the removal', () => {
@@ -217,9 +218,9 @@ describe('diffProjects — classes', () => {
     ok(a.dispatch('rename_track', { track: tA, label: 'Dialogue' }))
     const link = ok(a.dispatch('links_create', { layers: [x, y] })) as Uuid
     const cs = diffProjects(before, a.snapshot())
-    expect(cs.map((c) => [c.class, c.kind, c.ranges])).toEqual([['added', 'Link', []], ['modified', 'Track', []]])
-    expect(cs[0].keys).toEqual([entityKey('Link', link)])
-    expect(cs[1].aspects).toEqual(['label'])
+    expect(cs.map((c) => [c.class, changeKind(c), c.ranges])).toEqual([['added', 'Link', []], ['modified', 'Track', []]])
+    expect(cs[0].id).toEqual(entityKey('Link', link))
+    expect(cs[1].details).toEqual([{ type: 'label' }])
   })
 })
 
@@ -245,7 +246,7 @@ describe('diffProjects — direct timing facts', () => {
     const id = color(a, tA, 0, 4 * S)
     const before = a.snapshot()
     const after = editLayer(before, id, l => { l.t_start_us = S; l.t_end_us = 3 * S })
-    expect(only(diffProjects(before, after))).toMatchObject({ keys: [L(id)], details: [
+    expect(only(diffProjects(before, after))).toMatchObject({ id: L(id), details: [
       { type: 'time', field: 'start', from_us: 0, to_us: S },
       { type: 'time', field: 'end', from_us: 4 * S, to_us: 3 * S },
       { type: 'trim', side: 'start', delta_us: -S },
@@ -335,12 +336,12 @@ describe('diffProjects — track order', () => {
     ok(a.dispatch('move_track', { track: tA, new_position: 1 }))
     const after = a.snapshot()
     const c = only(diffProjects(before, after))
-    expect(c).toMatchObject({ class: 'modified', kind: 'Composition', keys: [entityKey('Composition', before.root_id)], aspects: ['placement'], ranges: [] })
+    expect(c).toMatchObject({ class: 'modified', id: entityKey('Composition', before.root_id), details: [{ type: 'aspect', aspect: 'placement' }], ranges: [] })
     expect([...touchedEntityKeys(before, after)]).toEqual([entityKey('Composition', before.root_id)])
     const mid = a.snapshot()
     const t = ok(a.dispatch('add_track', {})) as Uuid
     const added = diffProjects(mid, a.snapshot())
-    expect(added.map((x) => [x.class, x.kind, x.id])).toEqual([['added', 'Track', entityKey('Track', t)]])
+    expect(added.map((x) => [x.class, x.id])).toEqual([['added', entityKey('Track', t)]])
     expect([...touchedEntityKeys(mid, a.snapshot())]).toEqual([entityKey('Track', t)])
   })
 })
@@ -386,14 +387,18 @@ describe('diffProjects — compositions and Groups', () => {
     const { composition_id, layer_id } = ok(a.dispatch('groups_create', { layers: [v], label: 'Intro' })) as { composition_id: Uuid; layer_id: Uuid }
     const after = a.snapshot()
     const cs = diffProjects(before, after)
-    const comp = cs.find((c) => c.kind === 'Composition')!
+    const comp = cs.find((c) => changeKind(c) === 'Composition')!
     expect(comp.class).toBe('added')
-    expect(comp.keys).toEqual([entityKey('Composition', composition_id)])
-    expect(cs.filter((c) => c.kind === 'Track').map(c => c.keys[0]).sort()).toEqual(after.compositions[composition_id].tracks.map(t => entityKey('Track', t.id)).sort())
+    expect(comp.id).toEqual(entityKey('Composition', composition_id))
+    expect(cs.filter((c) => changeKind(c) === 'Track').map(c => c.id).sort()).toEqual(after.compositions[composition_id].tracks.map(t => entityKey('Track', t.id)).sort())
     const moved = cs.find((c) => c.id === L(v))!
-    expect(moved).toMatchObject({ class: 'modified', aspects: expect.arrayContaining(['placement']), from: { composition_id: before.root_id, track_id: tA } })
+    expect(moved).toMatchObject({ class: 'modified', before_ranges: [{ composition_id: before.root_id, track_id: tA }] })
+    expect(moved.details[0]).toEqual({ type: 'composition', from: before.root_id, to: composition_id })
     expect(new Set(moved.ranges.map((r) => r.composition_id))).toEqual(new Set([composition_id]))
     expect(cs.find((c) => c.id === L(layer_id))).toMatchObject({ class: 'added' })
+    // Its badge counts the clip moved in, not the tracks it was created with:
+    // they have no place on its timeline.
+    expect(groupDecorations(cs, after).map((d) => [d.layer_id, d.change_ids])).toEqual([[layer_id, [L(v)]]])
   })
 
   it('a change inside a Group decorates the Group layer with the Group layer footprint', () => {
@@ -415,7 +420,7 @@ describe('diffProjects — compositions and Groups', () => {
     ok(a.dispatch('groups_rename', { composition: inside, label: 'Renamed' }))
     const after = a.snapshot()
     const cs = diffProjects(before, after)
-    expect(cs.map((c) => c.kind).sort()).toEqual(['Composition', 'Layer'])
+    expect(cs.map(changeKind).sort()).toEqual(['Composition', 'Layer'])
     const decos = groupDecorations(cs, after)
     expect(decos.map((d) => [d.layer_id, d.composition_id, d.change_ids])).toEqual(expect.arrayContaining([
       [group, outer.composition_id, [L(v)]],
@@ -429,7 +434,6 @@ describe('diffProjects — compositions and Groups', () => {
     const before = a.snapshot()
     ok(a.dispatch('move_layers_to_composition', { layers: [v], to_composition: before.root_id, anchor_layer: v, anchor_t_start_us: 8 * S }))
     const c = only(diffProjects(before, a.snapshot()).filter((x) => x.id === L(v)))
-    expect(c.aspects).toEqual(['placement'])
     expect(c.details).toEqual([{ type: 'composition', from: inside, to: before.root_id }])
   })
 
@@ -439,7 +443,6 @@ describe('diffProjects — compositions and Groups', () => {
     ok(a.dispatch('move_layers_to_composition', { layers: [v], to_composition: before.root_id, anchor_layer: v, anchor_t_start_us: 8 * S, to_track: tA }))
     const c = only(diffProjects(before, a.snapshot()).filter((x) => x.id === L(v)))
     expect(c.class).toBe('modified')
-    expect(c.from).toBeDefined()
     expect(c.ranges.map(r => r.composition_id)).toEqual([before.root_id])
     expect(c.before_ranges?.map(r => r.composition_id)).toEqual([inside])
     expect(c.ranges.find((r) => r.composition_id === before.root_id)).toMatchObject({ t_start_us: 8 * S })
@@ -462,7 +465,7 @@ describe('diffProjects — effective baseline overlay', () => {
     expect(diffProjects({ base, approved }, cur)).toEqual([])
     // Editing an approved entity again reappears against the approved value.
     ok(a.dispatch('update_layer', { layer: x, patch: { label: 'again' } }))
-    expect(only(diffProjects({ base, approved }, a.snapshot()))).toMatchObject({ id: L(x), class: 'modified', aspects: ['label'] })
+    expect(only(diffProjects({ base, approved }, a.snapshot()))).toMatchObject({ id: L(x), class: 'modified', details: [{ type: 'label' }] })
   })
 
   it('an approved value inside a composition both sides share still differs from it', () => {
@@ -472,7 +475,7 @@ describe('diffProjects — effective baseline overlay', () => {
     ok(a.dispatch('update_layer', { layer: x, patch: { label: 'approved' } }))
     const approved = new Map<EntityKey, EntityValue | typeof ABSENT>([[L(x), extractEntities(a.snapshot()).get(L(x))!]])
     // Undone back to `first`: the base and current root are one object.
-    expect(only(diffProjects({ base: first, approved }, first))).toMatchObject({ id: L(x), class: 'modified', aspects: ['label'] })
+    expect(only(diffProjects({ base: first, approved }, first))).toMatchObject({ id: L(x), class: 'modified', details: [{ type: 'label' }] })
   })
 })
 
@@ -559,7 +562,7 @@ describe('diffProjects — properties', () => {
       const len = a.historyStatus().len
       apply(a, op)
       const after = a.snapshot()
-      const diffKeys = new Set(diffProjects(before, after).flatMap((c) => c.keys))
+      const diffKeys = new Set(diffProjects(before, after).map((c) => c.id))
       const touched = touchedEntityKeys(before, after)
       if (diffKeys.size !== touched.size || [...diffKeys].some((k) => !touched.has(k))) return false
       if (a.historyStatus().len > len) ok(a.dispatch('undo', {}))
@@ -590,7 +593,7 @@ describe('diffProjects — properties', () => {
       for (const o of edits) apply(a, o)
       const cs = diffProjects(before, a.snapshot())
       const ids = new Set(cs.map((c) => c.id))
-      return ids.size === cs.length && cs.every(c => detailsCover(c) && c.keys.length === 1 && c.id === c.keys[0])
+      return ids.size === cs.length && cs.every(detailsCover)
     }), { seed: PBT_SEED, numRuns: Math.min(PBT_RUNS, 100) })
   })
 })

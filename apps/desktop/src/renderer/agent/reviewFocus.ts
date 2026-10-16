@@ -23,7 +23,7 @@ import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
 import { useProjectStore } from '../state/projectStore'
 import { tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
-import { keyIds } from './changeModel'
+import { entityIdOf } from './changeModel'
 import { listedChanges, useReview } from './reviewStore'
 
 /** Which change set a focused change belongs to: the Review view's (the
@@ -182,7 +182,8 @@ export function buildFocusPaint(
   const was: FocusWas[] = []
   const outline = (c: Change, mark: Exclude<FocusMark, 'tack'>) => {
     if (c.class === 'removed') { ghosts.set(c.id, mark); return }
-    for (const id of keyIds(c, 'Layer')) layers.set(id, mark)
+    const id = entityIdOf(c, 'Layer')
+    if (id !== null) layers.set(id, mark)
   }
   // The hover first, so the focus's own outline wins on a clip both name.
   if (hover?.kind === 'change') {
@@ -209,7 +210,7 @@ export function buildFocusPaint(
         else historical.push(wash)
       }
       for (const r of c.class === 'modified' ? c.before_ranges ?? [] : []) {
-        if (!c.from && c.ranges.some(now => now.composition_id === r.composition_id && now.t_start_us === r.t_start_us && now.t_end_us === r.t_end_us)) continue
+        if (c.ranges.some(now => now.composition_id === r.composition_id && now.track_id === r.track_id && now.t_start_us === r.t_start_us && now.t_end_us === r.t_end_us)) continue
         if (r.track_id !== null) was.push({ trackId: r.track_id, compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
       }
     }

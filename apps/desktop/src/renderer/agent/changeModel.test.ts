@@ -3,9 +3,9 @@ import type { AgentActivity, AgentWorkSession } from '../../shared/agent-activit
 import type { Change } from '../../shared/review'
 import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex } from './changeModel'
 
-const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [],
-  composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
+const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
+  class: 'modified', details: [],
+  composition_id: 'root', ranges: [], ...patch,
 })
 
 describe('formatSeconds', () => {
@@ -42,13 +42,13 @@ describe('sessionReason', () => {
     ],
   }
   const index = sessionReasonIndex(snapshot)
-  it('is the most recent session whose operation touched any of the keys', () => {
-    expect(sessionReason({ keys: ['Layer:x'] }, index)).toBe('Tighten the intro')
-    expect(sessionReason({ keys: ['Marker:m'] }, index)).toBe('Tighten the intro')
-    expect(sessionReason({ keys: ['Layer:y'] }, index)).toBe('Fix the outro')
+  it('is the most recent session whose operation touched the change’s entity', () => {
+    expect(sessionReason({ id: 'Layer:x' }, index)).toBe('Tighten the intro')
+    expect(sessionReason({ id: 'Marker:m' }, index)).toBe('Tighten the intro')
+    expect(sessionReason({ id: 'Layer:y' }, index)).toBe('Fix the outro')
   })
   it('is null when no session operation names the change', () => {
-    expect(sessionReason({ keys: ['Layer:z'] }, index)).toBeNull()
-    expect(sessionReason({ keys: ['Layer:x'] }, sessionReasonIndex(null))).toBeNull()
+    expect(sessionReason({ id: 'Layer:z' }, index)).toBeNull()
+    expect(sessionReason({ id: 'Layer:x' }, sessionReasonIndex(null))).toBeNull()
   })
 })

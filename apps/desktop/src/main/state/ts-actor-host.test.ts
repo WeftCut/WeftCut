@@ -609,7 +609,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(view.unreviewed).toHaveLength(2)
       const before = host.publication().version
       const historyBefore = host.actor.historyStatus()
-      const { applied, view: approved } = await host.handleInvoke('review_approve', { version: view.version, change_ids: [view.unreviewed[0].id], keys: ['Layer:stale'] }) as Approved
+      const { applied, view: approved } = await host.handleInvoke('review_approve', { version: view.version, change_ids: [view.unreviewed[0].id, 'Layer:stale'] }) as Approved
       expect(applied).toBe(true)
       expect(approved.unreviewed.map((c) => c.id)).toEqual([view.unreviewed[1].id])
       expect(approved.version.baseline_revision).toBeGreaterThan(view.version.baseline_revision)
@@ -679,7 +679,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       const op = host.actor.historyView(1).ops[0].op_id
       const publication = host.publication().version
       expect(await host.handleInvoke('review_activity_view', { history_ids: [op] }))
-        .toMatchObject({ available: true, reverted: false, changes: [{ class: 'added', kind: 'Track' }] })
+        .toMatchObject({ available: true, reverted: false, changes: [{ class: 'added', id: expect.stringMatching(/^Track:/) }] })
       // A read: no publication.
       expect(host.publication().version).toEqual(publication)
       expect(await host.handleInvoke('review_activity_view', { history_ids: ['gone', 3] })).toMatchObject({ available: false, changes: [] })

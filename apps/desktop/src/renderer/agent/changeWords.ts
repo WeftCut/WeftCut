@@ -243,11 +243,8 @@ export function statesPlace(change: Pick<Change, 'details' | 'ranges'>): boolean
   return fields.every(f => told.some(d => d.type === 'time' && d.field === f))
 }
 
-/** What a change did, in one line: its facts in order, joined. A change with
- *  no facts says its aspects; an added or removed one with neither says
- *  nothing (its badge and title already do). */
+/** What a change did, in one line: its facts in order, joined. An added or
+ *  removed one without a length says nothing (its badge and title already do). */
 export function describeChange(change: Change, ctx: ChangeWordsContext): string {
-  const facts = toldDetails(change).map(d => describeDetail(d, change, ctx))
-  if (facts.length) return facts.join(FACT_SEPARATOR)
-  return change.aspects.map(a => ctx.t(`changes.aspect_${a}`, {})).join(FACT_SEPARATOR)
+  return toldDetails(change).map(d => describeDetail(d, change, ctx)).join(FACT_SEPARATOR)
 }

@@ -13,8 +13,8 @@ import { useProjectStore } from '../state/projectStore'
 import { summaryFixture } from '../testing/summaryFixture'
 
 const change = (patch: Partial<Change> = {}): Change => ({
-  id: 'Layer:a', class: 'added', kind: 'Layer', keys: ['Layer:a'], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'],
-  ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: 1_000_000 }], ...patch,
+  id: 'Layer:a', class: 'added', details: [], composition_id: 'root',
+  ranges: [{ composition_id: 'root', track_id: null, t_start_us: 0, t_end_us: 1_000_000 }], ...patch,
 })
 const view = (revision: number, baseline: number, unreviewed: Change[] = [change()], session = 1): ReviewView => ({
   version: { session, revision, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
@@ -114,7 +114,7 @@ describe('review consumers', () => {
   })
 
   it('a refused approval (the view moved on) shows the fresh list and says so', async () => {
-    const fresh = view(2, 1, [change(), change({ id: 'Layer:new', keys: ['Layer:new'] })])
+    const fresh = view(2, 1, [change(), change({ id: 'Layer:new' })])
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? approved(fresh, false) : view(1, 1))
     const release = acquireReview()
     await flush()
@@ -125,7 +125,7 @@ describe('review consumers', () => {
   })
 
   it('asks for the user-only list only while "show my changes" is on', async () => {
-    const mine = change({ id: 'Layer:mine', keys: ['Layer:mine'] })
+    const mine = change({ id: 'Layer:mine' })
     mocks.invoke.mockImplementation(async (_: string, args: { include_user?: boolean }) =>
       ({ ...view(1, 1), user: args.include_user ? [mine] : [], user_count: 1 }))
     const release = acquireReview()
@@ -143,9 +143,9 @@ describe('review consumers', () => {
 
 describe('buildReviewHighlight', () => {
   it('marks each current entity and uses only explicit baseline footprints for removal ghosts', () => {
-    const gone = change({ id: 'Layer:gone', class: 'removed', keys: ['Layer:gone'], ranges: [],
+    const gone = change({ id: 'Layer:gone', class: 'removed', ranges: [],
       before_ranges: [{ composition_id: 'root', track_id: 'track-1', t_start_us: 3, t_end_us: 9 }] })
-    const moved = change({ id: 'Layer:moved', class: 'modified', keys: ['Layer:moved'] })
+    const moved = change({ id: 'Layer:moved', class: 'modified' })
     const h = buildReviewHighlight([change(), moved, gone], [
       { layer_id: 'group', composition_id: 'root', t_start_us: 4, t_end_us: 7, change_ids: ['Layer:moved', 'Layer:user'] },
     ])
@@ -159,19 +159,19 @@ describe('buildReviewHighlight', () => {
     expect(buildReviewHighlight([{ ...gone, before_ranges: [] }], []).ghosts).toEqual([])
   })
 
-  it('paints a Group\'s "contains changes" stretch under the changes, and its badge counts timeline content only', () => {
-    const group = change({ id: 'Layer:group', class: 'added', keys: ['Layer:group'], ranges: [{ composition_id: 'root', t_start_us: 2, t_end_us: 6 }] })
-    const inner = change({ id: 'Layer:inner', class: 'modified', keys: ['Layer:inner'], composition_id: 'grp', ranges: [{ composition_id: 'grp', t_start_us: 0, t_end_us: 1 }] })
-    const lane = change({ id: 'Track:inside', kind: 'Track', class: 'added', keys: ['Track:inside'], composition_id: 'grp', ranges: [] })
-    const h = buildReviewHighlight([group, inner, lane], [
-      { layer_id: 'group', composition_id: 'root', t_start_us: 2, t_end_us: 6, change_ids: ['Layer:inner', 'Track:inside'] },
+  it('paints a Group\'s "contains changes" stretch under the changes, and its badge counts only the changes given', () => {
+    const group = change({ id: 'Layer:group', class: 'added', ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 2, t_end_us: 6 }] })
+    const inner = change({ id: 'Layer:inner', class: 'modified', composition_id: 'grp', ranges: [{ composition_id: 'grp', track_id: 'g1', t_start_us: 0, t_end_us: 1 }] })
+    // The decoration also names a change of the other list, not on screen.
+    const h = buildReviewHighlight([group, inner], [
+      { layer_id: 'group', composition_id: 'root', t_start_us: 2, t_end_us: 6, change_ids: ['Layer:inner', 'Layer:mine'] },
     ])
     expect(h.ranges.filter(r => r.compositionId === 'root').map(r => r.changeId)).toEqual(['Group:group', 'Layer:group'])
     expect([...h.groups]).toEqual([['group', 1]])
   })
 
   it('gives a removed marker or transition, which has no ghost, its baseline footprint on the mini timeline', () => {
-    const marker = change({ id: 'Marker:m', kind: 'Marker', class: 'removed', keys: ['Marker:m'], ranges: [],
+    const marker = change({ id: 'Marker:m', class: 'removed', ranges: [],
       before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 5, t_end_us: 5 }] })
     const h = buildReviewHighlight([marker], [])
     expect(h.ghosts).toEqual([])
@@ -181,9 +181,9 @@ describe('buildReviewHighlight', () => {
   })
 
   it('marks a live marker by its class and traces a removed region marker with its baseline name', () => {
-    const added = change({ id: 'Marker:a', kind: 'Marker', class: 'added', keys: ['Marker:a'] })
-    const edited = change({ id: 'Marker:e', kind: 'Marker', class: 'modified', keys: ['Marker:e'] })
-    const gone = change({ id: 'Marker:g', kind: 'Marker', class: 'removed', keys: ['Marker:g'], ranges: [], before_name: 'Beat',
+    const added = change({ id: 'Marker:a', class: 'added' })
+    const edited = change({ id: 'Marker:e', class: 'modified' })
+    const gone = change({ id: 'Marker:g', class: 'removed', ranges: [], before_name: 'Beat',
       before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 2, t_end_us: 4 }] })
     const h = buildReviewHighlight([added, edited, gone], [])
     expect([...h.markers]).toEqual([['a', 'added'], ['e', 'modified']])
@@ -203,7 +203,7 @@ describe('activity highlight', () => {
     snapshot: { workspace_id: 'w', revision: 1, session: null, sessions: [], activities, evicted: 0, lock_reason: null, checkpoints: [], tacks: [], ...patch },
     expanded: {}, tab: 'activity', reviewOverlay: true,
   })
-  const mine = change({ id: 'Layer:mine', keys: ['Layer:mine'], class: 'modified' })
+  const mine = change({ id: 'Layer:mine', class: 'modified' })
   const answer = (available = true, reverted = false) => mocks.invoke.mockImplementation(async (channel: string) =>
     channel === 'review_activity_view' ? { available, reverted, changes: available ? [mine] : [], decorations: [] } : view(1, 1))
   beforeEach(() => { useReview.getState().apply(view(1, 1)); seed([op('a'), op('b'), op('read', { kind: 'read', history_ids: [], effect: null })]) })
@@ -223,8 +223,8 @@ describe('activity highlight', () => {
   })
 
   it('counts each changed entity in the activity', async () => {
-    const gone = change({ id: 'Layer:gone', keys: ['Layer:gone'], class: 'removed' })
-    const moved = change({ id: 'Layer:next', keys: ['Layer:next'], class: 'modified' })
+    const gone = change({ id: 'Layer:gone', class: 'removed' })
+    const moved = change({ id: 'Layer:next', class: 'modified' })
     mocks.invoke.mockImplementation(async (channel: string) =>
       channel === 'review_activity_view' ? { available: true, reverted: false, changes: [gone, moved], decorations: [] } : view(1, 1))
     act(() => useAgentActivity.getState().toggle('a'))
@@ -255,7 +255,7 @@ describe('activity highlight', () => {
   it('a stale reply for a replaced selection is dropped', async () => {
     const replies: Array<() => void> = []
     mocks.invoke.mockImplementation((_channel: string, args: { history_ids: string[] }) => new Promise(r => replies.push(() =>
-      r({ available: true, reverted: false, changes: [change({ id: `Layer:${args.history_ids[0]}`, keys: [`Layer:${args.history_ids[0]}`] })], decorations: [] }))))
+      r({ available: true, reverted: false, changes: [change({ id: `Layer:${args.history_ids[0]}` })], decorations: [] }))))
     act(() => useAgentActivity.getState().toggle('a'))
     act(() => useAgentActivity.getState().toggle('b'))
     replies[1]!(); await flush()

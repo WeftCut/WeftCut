@@ -135,7 +135,7 @@ function wire(): () => void {
   // A project edit changes the diff without touching the baseline; the review
   // follows every publication the project store applies.
   // So does a selected activity's highlight: it is drawn on the current
-  // timeline (main's `carryChangesTo`), which the edit just moved.
+  // timeline (main's `locateChanges`), which the edit just moved.
   const stopProject = useProjectStore.subscribe((s, prev) => {
     if (s.summary === prev.summary) return
     void refreshReview()
@@ -268,12 +268,11 @@ export function useCompositionMarkerGhosts(compositionId: string | null): readon
 export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
   const overlay = useOverlay()
   const cuts = useReview(s => selectHighlight(s).cuts)
-  const trackOf = useProjectStore(s => (cuts.length === 0 ? null : s.trackIdByLayerId))
   return useMemo(() => {
     if (!overlay || cuts.length === 0) return NO_CUTS
-    const mine = cuts.filter(c => (c.trackId ?? trackOf?.get(c.layerId)) === trackId)
+    const mine = cuts.filter(c => c.trackId === trackId)
     return mine.length === 0 ? NO_CUTS : mine.sort((a, b) => a.tUs - b.tUs)
-  }, [overlay, cuts, trackOf, trackId])
+  }, [overlay, cuts, trackId])
 }
 
 /** Change ranges on one composition — the mini timeline's change band. Not

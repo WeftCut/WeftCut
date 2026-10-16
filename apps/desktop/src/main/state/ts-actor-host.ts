@@ -714,10 +714,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         const applied = reviewViewCurrent(a.version)
         if (applied && channel === 'review_approve_all') actor.approveReviewAll()
         else if (applied) {
-          actor.approveReview({
-            change_ids: Array.isArray(a.change_ids) ? a.change_ids.filter((x) => typeof x === 'string') : [],
-            keys: Array.isArray(a.keys) ? a.keys.filter((x) => typeof x === 'string') : [],
-          })
+          actor.approveReview(Array.isArray(a.change_ids) ? a.change_ids.filter((x) => typeof x === 'string') : [])
         }
         return { applied, view: reviewView(includeUser) } satisfies ReviewApproveResult
       }

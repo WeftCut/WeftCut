@@ -20,7 +20,7 @@ import type { Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } fro
 import { hasSourceWindow } from './mutations/helpers'
 import { mediaLabel } from './summary'
 import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
-import type { Change, ChangeAspect, ChangeClass, ChangeDetail, EntityLocation, GroupDecoration, TimeRange } from '../../shared/review'
+import { changeKind, type Change, type ChangeAspect, type ChangeClass, type ChangeDetail, type EntityKind, type GroupDecoration, type PlacedRange } from '../../shared/review'
 
 import { compareEntities, trackOrderEqual, linkLabel, entitiesEqual, entityKey, extractEntities, jsonEqual, type BaselineSource, type EntityIndex, type EntityValue } from './reviewEntities'
 
@@ -173,7 +173,9 @@ function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
   return out
 }
 
-function locationOf(v: EntityValue): EntityLocation | null {
+/** Where an entity lives: its composition and, for a layer, its track. Null
+ *  for a composition. */
+function locationOf(v: EntityValue): { composition_id: Uuid; track_id: Uuid | null } | null {
   if (v.kind === 'Composition') return null
   return { composition_id: v.composition_id, track_id: v.kind === 'Layer' ? v.track_id : null }
 }
@@ -345,21 +347,22 @@ function nameOf(v: EntityValue, index: EntityIndex, media: Record<Uuid, MediaIte
 
 // ── Footprints and ranges ─────────────────────────────────────────────────────
 
-/** Where an entity sits on its composition's timeline; null when it has no
- *  time footprint (track, link, composition). `index` is the SAME side's
- *  entities — a transition's footprint is read off its own side's layers. */
-function footprint(v: EntityValue, index: EntityIndex): TimeRange | null {
+/** Where an entity sits on its composition's timeline — on its track, for a
+ *  layer; null when it has no time footprint (track, link, composition).
+ *  `index` is the SAME side's entities — a transition's footprint is read off
+ *  its own side's layers. */
+function footprint(v: EntityValue, index: EntityIndex): PlacedRange | null {
   switch (v.kind) {
-    case 'Layer': return { composition_id: v.composition_id, t_start_us: v.layer.t_start_us, t_end_us: v.layer.t_end_us }
-    case 'Marker': return { composition_id: v.composition_id, t_start_us: v.marker.t_us, t_end_us: v.marker.end_t_us ?? v.marker.t_us }
+    case 'Layer': return { composition_id: v.composition_id, track_id: v.track_id, t_start_us: v.layer.t_start_us, t_end_us: v.layer.t_end_us }
+    case 'Marker': return { composition_id: v.composition_id, track_id: null, t_start_us: v.marker.t_us, t_end_us: v.marker.end_t_us ?? v.marker.t_us }
     case 'Transition': {
       // The overlap is [incoming.t_start, outgoing.t_end] and its length is
       // duration_us (validate's overlap === duration).
       const d = v.transition.duration_us
       const to = index.get(entityKey('Layer', v.transition.to_layer))
-      if (to?.kind === 'Layer') return { composition_id: v.composition_id, t_start_us: to.layer.t_start_us, t_end_us: to.layer.t_start_us + d }
+      if (to?.kind === 'Layer') return { composition_id: v.composition_id, track_id: null, t_start_us: to.layer.t_start_us, t_end_us: to.layer.t_start_us + d }
       const from = index.get(entityKey('Layer', v.transition.from_layer))
-      if (from?.kind === 'Layer') return { composition_id: v.composition_id, t_start_us: from.layer.t_end_us - d, t_end_us: from.layer.t_end_us }
+      if (from?.kind === 'Layer') return { composition_id: v.composition_id, track_id: null, t_start_us: from.layer.t_end_us - d, t_end_us: from.layer.t_end_us }
       return null
     }
     default: return null
@@ -372,7 +375,7 @@ function footprint(v: EntityValue, index: EntityIndex): TimeRange | null {
 export function locateChanges(changes: readonly Change[], current: Project): Change[] {
   const now = extractEntities(current)
   return changes.map(c => {
-    const entity = now.get(c.keys[0])
+    const entity = now.get(c.id)
     const range = c.class !== 'removed' && entity ? footprint(entity, now) : null
     return { ...c, ranges: range ? [range] : [] }
   })
@@ -383,27 +386,19 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
   const { before, after, keys } = compareEntities(baseline, current)
   const changes: Change[] = []
 
-  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, aspects: ChangeAspect[], details: ChangeDetail[], moved = false): Change => {
+  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, details: ChangeDetail[]): void => {
     const v = (c ?? b)!
-    const ranges: TimeRange[] = []
     const fc = c && footprint(c, after)
     const fb = b && footprint(b, before)
-    if (fc) ranges.push(fc)
-    const lb = b && locationOf(b), lc = c && locationOf(c)
-    const comps = [...new Set([lc?.composition_id, lb?.composition_id].filter((x): x is Uuid => x !== undefined))]
     const change: Change = {
-      id: entityKey(v.kind, v.id), class: cls, kind: v.kind, keys: [entityKey(v.kind, v.id)], aspects, details,
-      composition_id: lc?.composition_id ?? lb?.composition_id ?? null, composition_ids: comps,
-      ranges,
+      id: entityKey(v.kind, v.id), class: cls, details,
+      composition_id: (c && locationOf(c))?.composition_id ?? (b && locationOf(b))?.composition_id ?? null,
+      ranges: fc ? [fc] : [],
     }
-    if (moved && lb && lc) { change.from = lb; change.to = lc }
-    // A removed entity's baseline place: where the timeline ghosts it.
-    else if (cls === 'removed' && lb) change.from = lb
-    if (fb) change.before_ranges = [{ ...fb, track_id: b!.kind === 'Layer' ? b!.track_id : null }]
+    if (fb) change.before_ranges = [fb]
     // Gone from the current project, it can be named only from the baseline.
     if (cls === 'removed' && b) { const name = nameOf(b, before, current.media_pool); if (name) change.before_name = name }
     changes.push(change)
-    return change
   }
 
   for (const key of keys) {
@@ -412,7 +407,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     if (!b || !c) {
       const v = (b ?? c)!
       const cls = b ? 'removed' : 'added'
-      emit(cls, b, c, [], lengthDetails(v))
+      emit(cls, b, c, lengthDetails(v))
       continue
     }
     let aspects: Set<ChangeAspect>
@@ -427,7 +422,7 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     const ordered = orderedAspects(aspects)
     const details = b.kind === 'Layer' ? layerDetails(b, c as LayerEntity, ordered, params!)
       : b.kind === 'Marker' ? markerDetails(b, c as MarkerEntity, ordered) : otherDetails(ordered)
-    emit('modified', b, c, ordered, details, moved)
+    emit('modified', b, c, details)
   }
 
   const rootId = current.root_id
@@ -449,10 +444,14 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
 /**
  * Every Group layer in `current` whose `params.composition` holds a change —
  * recursively: a Group layer inside a decorated Group's composition decorates
- * the Group layers showing THAT composition, up to the root. Composition-level
- * changes (a Group's label, its creation) do not decorate: they are not inside
- * the composition.
+ * the Group layers showing THAT composition, up to the root — from either
+ * side's composition, so a clip moved out of a Group still decorates it. Only
+ * a change with a place on the composition's timeline decorates (a layer,
+ * marker or transition): a composition-level change (a Group's label, its
+ * creation) is not inside it, and a track or link inside has no place there.
  */
+const FOOTPRINT_KINDS: ReadonlySet<EntityKind> = new Set(['Layer', 'Marker', 'Transition'])
+
 export function groupDecorations(changes: readonly Change[], current: Project): GroupDecoration[] {
   const shownBy = new Map<Uuid, Array<{ layer: Layer; composition_id: Uuid }>>()
   for (const c of Object.values(current.compositions))
@@ -465,9 +464,9 @@ export function groupDecorations(changes: readonly Change[], current: Project): 
         }
   const out = new Map<Uuid, GroupDecoration>()
   for (const change of changes) {
-    if (change.kind === 'Composition') continue
+    if (!FOOTPRINT_KINDS.has(changeKind(change))) continue
     const seen = new Set<Uuid>()
-    const queue = [...new Set([...change.composition_ids, ...change.ranges.map(r => r.composition_id)])]
+    const queue = [...new Set([...change.ranges, ...change.before_ranges ?? []].map(r => r.composition_id))]
     while (queue.length > 0) {
       const comp = queue.shift()!
       if (seen.has(comp)) continue // cycle guard; validate forbids cycles anyway

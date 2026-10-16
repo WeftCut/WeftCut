@@ -1,6 +1,6 @@
 // Internal entity comparison and approval representation shared by history and diff.
 import type { Composition, Layer, Link, Marker, Project, Track, TrackRole, Transition, Uuid } from './model'
-import type { EntityKey, EntityKind } from '../../shared/review'
+import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ export interface BaselineOverlay {
 }
 export type BaselineSource = Project | BaselineOverlay
 
-export function entityKey(kind: EntityKind, id: Uuid): EntityKey { return `${kind}:${id}` }
+export { entityKey }
 function keyOf(v: EntityValue): EntityKey { return entityKey(v.kind, v.id) }
 /** The composition an entity lives in — its own id for a Composition. */
 function compositionOf(v: EntityValue): Uuid { return v.kind === 'Composition' ? v.id : v.composition_id }

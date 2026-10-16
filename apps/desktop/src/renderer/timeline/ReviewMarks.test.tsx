@@ -46,18 +46,18 @@ const track: TrackSummary = {
   layers: [clip("added", 0, S), clip("edited", S, 2 * S), clip("moved", 2 * S, 3 * S), clip("shifted", 4 * S, 5 * S), group],
 };
 const other: TrackSummary = { ...track, id: "track-2", role: null, label: "V2", layers: [] };
-const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: "added", kind: "Layer", keys: [patch.id as Change["keys"][number]], aspects: [], details: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
+  class: "added", details: [], composition_id: ROOT_ID, ranges: [], ...patch,
 });
 const view: ReviewView = {
   version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0,
   unreviewed: [
     change({ id: "Layer:added" }),
-    change({ id: "Layer:edited", class: "modified", aspects: ["params"] }),
-    change({ id: "Layer:moved", class: "modified", aspects: ["placement"], from: { composition_id: ROOT_ID, track_id: "track-2" }, to: { composition_id: ROOT_ID, track_id: "track-1" } }),
-    change({ id: "Layer:shifted", class: "modified", aspects: ["timing"], keys: ["Layer:shifted"] }),
-    change({ id: "Layer:gone", class: "removed", from: { composition_id: ROOT_ID, track_id: "track-2" }, before_ranges: [{ composition_id: ROOT_ID, track_id: "track-2", t_start_us: 3 * S, t_end_us: 4 * S }] }),
-    change({ id: "Layer:inner", composition_id: "grp", composition_ids: ["grp"] }),
+    change({ id: "Layer:edited", class: "modified" }),
+    change({ id: "Layer:moved", class: "modified" }),
+    change({ id: "Layer:shifted", class: "modified" }),
+    change({ id: "Layer:gone", class: "removed", before_ranges: [{ composition_id: ROOT_ID, track_id: "track-2", t_start_us: 3 * S, t_end_us: 4 * S }] }),
+    change({ id: "Layer:inner", composition_id: "grp" }),
   ],
   decorations: [{ layer_id: "group-clip", composition_id: ROOT_ID, t_start_us: 6 * S, t_end_us: 8 * S, change_ids: ["Layer:inner"] }],
 };
@@ -194,7 +194,7 @@ describe("Review focus on the editor timeline", () => {
 
   it("a focused change rings its clips and washes its range; the other marks step back", () => {
     useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 },
-      unreviewed: view.unreviewed.map((c) => (c.id === "Layer:edited" ? { ...c, ranges: [{ composition_id: ROOT_ID, t_start_us: S, t_end_us: 2 * S }] } : c)) });
+      unreviewed: view.unreviewed.map((c) => (c.id === "Layer:edited" ? { ...c, ranges: [{ composition_id: ROOT_ID, track_id: null, t_start_us: S, t_end_us: 2 * S }] } : c)) });
     const { container } = renderTimeline();
     act(() => selectChange("Layer:edited"));
     expect(outlines(container)).toEqual({ edited: "change" });
@@ -321,11 +321,9 @@ describe("Review focus on the editor timeline", () => {
 
 describe("Pure change marks", () => {
   it("retains the original lane-top trim placement, size, click focus and overlay lifecycle", () => {
-    const trimmed = change({ id: "Layer:edited", class: "modified", aspects: ["timing"],
-      ranges: [{ composition_id: ROOT_ID, t_start_us: S, t_end_us: 2 * S }],
+    const trimmed = change({ id: "Layer:edited", class: "modified", ranges: [{ composition_id: ROOT_ID, track_id: "track-1", t_start_us: S, t_end_us: 2 * S }],
       details: [{ type: "trim", side: "start", delta_us: -S }, { type: "trim", side: "end", delta_us: -S }] });
-    const extended = change({ id: "Layer:moved", class: "modified", aspects: ["timing"],
-      details: [{ type: "trim", side: "end", delta_us: S }] });
+    const extended = change({ id: "Layer:moved", class: "modified", details: [{ type: "trim", side: "end", delta_us: S }] });
     useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 }, unreviewed: [trimmed, extended, view.unreviewed[4]!] });
     const { container } = renderTimeline();
     const before = geometry(container);
@@ -381,15 +379,14 @@ describe("Pure change marks", () => {
     expect(useReviewFocus.getState().focus).toBeNull();
   });
   it("keeps the original pixel clustering and midpoint at each zoom", () => {
-    const at = (tUs: number) => ({ changeId: `c${tUs}`, layerId: 'l', compositionId: ROOT_ID, trackId: null, tUs, kind: 'trim' as const });
+    const at = (tUs: number) => ({ changeId: `c${tUs}`, layerId: 'l', compositionId: ROOT_ID, trackId: 'track-1', tUs, kind: 'trim' as const });
     const list = [at(0), at(0.05 * S), at(0.1 * S), at(S)];
     expect(mergeCuts(list, 100, 6).map(g => [g.px, g.cuts.length])).toEqual([[5, 3], [100, 1]]);
     expect(mergeCuts(list, 200, 6).map(g => g.cuts.length)).toEqual([1, 1, 1, 1]);
   });
   it("shows baseline frames only for the focused entity and never inferred cuts", () => {
-    const moved = change({ id: "Layer:moved", class: "modified", aspects: ["timing"],
-      details: [{ type: "time", field: "start", from_us: 4 * S, to_us: 2 * S }],
-      ranges: [{ composition_id: ROOT_ID, t_start_us: 2 * S, t_end_us: 3 * S }],
+    const moved = change({ id: "Layer:moved", class: "modified", details: [{ type: "time", field: "start", from_us: 4 * S, to_us: 2 * S }],
+      ranges: [{ composition_id: ROOT_ID, track_id: null, t_start_us: 2 * S, t_end_us: 3 * S }],
       before_ranges: [{ composition_id: ROOT_ID, track_id: "track-2", t_start_us: 4 * S, t_end_us: 5 * S }] });
     useReview.getState().apply({ ...view, version: { ...view.version, revision: 2 }, unreviewed: [moved] });
     const { container } = renderTimeline();

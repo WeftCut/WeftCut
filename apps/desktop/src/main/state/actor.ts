@@ -7,7 +7,6 @@ import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpo
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
-import type { EntityKey } from '../../shared/review'
 import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -196,9 +195,9 @@ export interface ActorHandle {
   approveReviewAll(): void
   /** What the recorded ops `ids` did — `History.opDiff`; a read. */
   reviewOpDiff(ids: readonly Uuid[]): OpDiff
-  /** Approve by change id and/or entity key, as `approveReviewAll` does for
-   *  everything. Returns how many changes it approved. */
-  approveReview(sel: { change_ids?: readonly string[]; keys?: readonly EntityKey[] }): number
+  /** Approve the changes `ids`, as `approveReviewAll` does for everything.
+   *  Returns how many changes it approved. */
+  approveReview(ids: readonly string[]): number
   /** Told the new baseline revision on every baseline change (initialize,
    *  re-pin, approval, attribution, reset) — synchronously, possibly inside a
    *  commit; a consumer should defer its own work. */
@@ -2382,7 +2381,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       history.pinReviewBaseline((checkpointId !== undefined ? history.checkpointSnapshot(checkpointId) : null) ?? current()),
     approveReviewAll: () => history.approveAll(),
     reviewOpDiff: (ids) => history.opDiff(ids),
-    approveReview: (sel) => (sel.change_ids?.length ? history.approveChanges(sel.change_ids) : 0) + (sel.keys?.length ? history.approveKeys(sel.keys) : 0),
+    approveReview: (ids) => history.approveChanges(ids),
     subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
     dryRun,
     setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },

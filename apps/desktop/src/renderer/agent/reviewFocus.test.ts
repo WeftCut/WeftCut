@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TackView } from '../../shared/agent-activity'
-import type { Change, ReviewView } from '../../shared/review'
+import type { Change, EntityKey, ReviewView } from '../../shared/review'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { resetReviewForTests, useReview } from './reviewStore'
@@ -17,13 +17,13 @@ const tack = (patch: Partial<TackView> = {}): TackView => ({
   range: { composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S }, composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S,
   outdated: false, follows: null, ...patch,
 })
-const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
+const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
+  class: 'modified', details: [], composition_id: 'root', ranges: [], ...patch,
 })
 const changes = [
-  change({ id: 'Layer:a', ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }, { composition_id: 'grp', t_start_us: 5 * S, t_end_us: 6 * S }] }),
-  change({ id: 'Layer:gone', class: 'removed', from: { composition_id: 'root', track_id: 'v1' }, ranges: [{ composition_id: 'root', t_start_us: 4 * S, t_end_us: 5 * S }] }),
-  change({ id: 'Layer:b', class: 'modified', keys: ['Layer:b'], ranges: [{ composition_id: 'root', t_start_us: 7 * S, t_end_us: 9 * S }] }),
+  change({ id: 'Layer:a', ranges: [{ composition_id: 'root', track_id: null, t_start_us: 0, t_end_us: S }, { composition_id: 'grp', track_id: null, t_start_us: 5 * S, t_end_us: 6 * S }] }),
+  change({ id: 'Layer:gone', class: 'removed', ranges: [{ composition_id: 'root', track_id: null, t_start_us: 4 * S, t_end_us: 5 * S }] }),
+  change({ id: 'Layer:b', class: 'modified', ranges: [{ composition_id: 'root', track_id: null, t_start_us: 7 * S, t_end_us: 9 * S }] }),
 ]
 
 /** Resolve a focused change from one list, as the store resolves it from its set. */
@@ -73,7 +73,7 @@ describe('buildFocusPaint', () => {
   })
 
   it('a focused move frames where its clips were, on their tracks — only while focused, never a marker', () => {
-    const moved = change({ id: 'Layer:m', aspects: ['placement'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
+    const moved = change({ id: 'Layer:m', ranges: [{ composition_id: 'root', track_id: null, t_start_us: 0, t_end_us: S }],
       before_ranges: [{ composition_id: 'root', track_id: 'v2', t_start_us: 3 * S, t_end_us: 4 * S }, { composition_id: 'root', track_id: null, t_start_us: 5 * S, t_end_us: 5 * S }] })
     const list = [...changes, moved]
     expect(buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:m' }, null, [], of(list)).was)
@@ -85,7 +85,7 @@ describe('buildFocusPaint', () => {
   it('a focused removal washes its baseline footprint as historical — a marker\'s too, which has no ghost', () => {
     const gone = change({ id: 'Layer:ripple', class: 'removed', ranges: [],
       before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 2 * S, t_end_us: 3 * S }] })
-    const mark = change({ id: 'Marker:m', kind: 'Marker', class: 'removed', ranges: [],
+    const mark = change({ id: 'Marker:m', class: 'removed', ranges: [],
       before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 6 * S, t_end_us: 6 * S }] })
     const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:ripple' }, null, [], of([gone, mark]))
     // Held to the lane the clip was on.
@@ -99,7 +99,7 @@ describe('buildFocusPaint', () => {
   })
 
   it('a modified change washes its current range only; its baseline place is a frame, never a historical wash', () => {
-    const moved = change({ id: 'Layer:m', aspects: ['timing'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
+    const moved = change({ id: 'Layer:m', ranges: [{ composition_id: 'root', track_id: null, t_start_us: 0, t_end_us: S }],
       before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 3 * S, t_end_us: 4 * S }] })
     const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:m' }, null, [], of([moved]))
     expect(p.washes.some(w => w.historical)).toBe(false)
@@ -165,7 +165,7 @@ describe('the review focus rule: an item stays while its list shows it', () => {
   const focus = () => useReviewFocus.getState().focus
   const hover = () => useReviewFocus.getState().hover
   /** Expand an activity row whose call changed `ids`, its highlight ready. */
-  const showActivity = (ids: string[]) => {
+  const showActivity = (ids: EntityKey[]) => {
     useAgentActivity.setState({ tab: 'activity' })
     useReview.setState({ activity: { activityId: 'a1', historyIds: ['h1'], effect: 'applied', status: 'ready', reverted: false, count: ids.length,
       highlight: { ...EMPTY_HIGHLIGHT, changes: new Map(ids.map(id => [id, change({ id })])) } } })

@@ -124,7 +124,7 @@ describe('Review baseline — attribution', () => {
     a.pinReviewBaseline()
     ok(a.dispatch('move_track', { track: tA, new_position: 1 }, AGENT))
     const [c] = a.reviewState().unreviewed
-    expect(c).toMatchObject({ class: 'modified', kind: 'Composition', keys: [entityKey('Composition', a.snapshot().root_id)], aspects: ['placement'], ranges: [] })
+    expect(c).toMatchObject({ class: 'modified', id: entityKey('Composition', a.snapshot().root_id), details: [{ type: 'aspect', aspect: 'placement' }], ranges: [] })
   })
 })
 
@@ -134,13 +134,13 @@ describe('Review baseline — approval', () => {
     a.pinReviewBaseline()
     const x = color(a, tA, 0, S, AGENT)
     const y = color(a, tB, 0, S, AGENT)
-    expect(a.approveReview({ change_ids: [L(x)] })).toBe(1)
+    expect(a.approveReview([L(x)])).toBe(1)
     expect(ids(a)).toEqual({ unreviewed: [L(y)], user: [] })
     label(a, x, 'first', AGENT)
-    a.approveReview({ keys: [L(x)] }) // the approved value is now labelled 'first'
+    a.approveReview([L(x)]) // the approved value is now labelled 'first'
     expect(ids(a).unreviewed).toEqual([L(y)])
     label(a, x, 'renamed', AGENT)
-    expect(a.reviewState().unreviewed.find((c) => c.id === L(x))).toMatchObject({ class: 'modified', aspects: ['label'] })
+    expect(a.reviewState().unreviewed.find((c) => c.id === L(x))).toMatchObject({ class: 'modified', details: [{ type: 'label' }] })
     label(a, x, 'first') // back to the approved value — by the user, even
     expect(ids(a)).toEqual({ unreviewed: [L(y)], user: [] })
   })
@@ -151,7 +151,7 @@ describe('Review baseline — approval', () => {
     a.pinReviewBaseline()
     ok(a.dispatch('delete_layers', { layers: [x] }, AGENT))
     expect(ids(a).unreviewed).toEqual([L(x)])
-    a.approveReview({ keys: [L(x)] })
+    a.approveReview([L(x)])
     expect(ids(a)).toEqual({ unreviewed: [], user: [] })
     ok(a.dispatch('undo', {})) // the layer is back: differs from the approved removal
     expect(ids(a)).toEqual({ unreviewed: [], user: [L(x)] })
@@ -165,7 +165,7 @@ describe('Review baseline — approval', () => {
     a.pinReviewBaseline()
     ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
     label(a, z, 'z', AGENT)
-    expect(a.approveReview({ keys: [L(y)] })).toBe(1)
+    expect(a.approveReview([L(y)])).toBe(1)
     expect(ids(a)).toEqual({ unreviewed: [L(x), L(z)], user: [] })
   })
 
@@ -178,7 +178,7 @@ describe('Review baseline — approval', () => {
     const status = a.historyStatus()
     const events = vi.fn()
     a.subscribe(events)
-    a.approveReview({ change_ids: [L(x)] })
+    a.approveReview([L(x)])
     a.approveReviewAll()
     expect(ids(a)).toEqual({ unreviewed: [], user: [] })
     expect(a.historyStatus()).toEqual(status)
@@ -190,11 +190,11 @@ describe('Review baseline — approval', () => {
 
   it('unknown ids and keys are ignored; with no baseline nothing happens', () => {
     const { a, tA } = setup()
-    expect(a.approveReview({ change_ids: ['Layer:nope'] })).toBe(0)
+    expect(a.approveReview(['Layer:nope'])).toBe(0)
     a.approveReviewAll()
     expect(a.reviewState().has_baseline).toBe(false)
     color(a, tA, 0, S, AGENT)
-    expect(a.approveReview({ change_ids: ['Layer:nope'], keys: ['Marker:nope'] })).toBe(0)
+    expect(a.approveReview(['Layer:nope', 'Marker:nope'])).toBe(0)
     expect(a.reviewState().unreviewed).toHaveLength(1)
   })
 })
@@ -206,10 +206,10 @@ describe('Review baseline — independent changes', () => {
     a.pinReviewBaseline()
     ok(a.dispatch('ripple_delete_layers', { layers: [gone] }, AGENT))
     expect(new Set(ids(a).unreviewed)).toEqual(new Set([L(gone), L(tail), L(overlay)]))
-    expect(a.approveReview({ keys: [L(gone)] })).toBe(1)
+    expect(a.approveReview([L(gone)])).toBe(1)
     expect(new Set(ids(a).unreviewed)).toEqual(new Set([L(tail), L(overlay)]))
     const tailBefore = a.reviewState().unreviewed.find(c => c.id === L(tail))!.before_ranges
-    a.approveReview({ keys: [L(overlay)] })
+    a.approveReview([L(overlay)])
     expect(a.reviewState().unreviewed[0].before_ranges).toEqual(tailBefore)
   })
   it('approving one moved entity resets only its own comparison values', () => {
@@ -217,7 +217,7 @@ describe('Review baseline — independent changes', () => {
     const x = color(a, tA, 0, S), y = color(a, tB, 0, S)
     a.pinReviewBaseline()
     ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }, AGENT))
-    a.approveReview({ keys: [L(x)] })
+    a.approveReview([L(x)])
     ok(a.dispatch('shift_layers', { layers: [x], delta_us: S }, AGENT))
     expect(a.reviewState().unreviewed.find(c => c.id === L(x))!.before_ranges![0].t_start_us).toBe(S)
     expect(a.reviewState().unreviewed.find(c => c.id === L(y))!.before_ranges![0].t_start_us).toBe(0)
@@ -281,7 +281,7 @@ describe('Review baseline — preference patches, checkpoints, reset', () => {
     const { a } = setup()
     a.pinReviewBaseline()
     const m = ok(a.dispatch('add_marker', { t_us: 100_000 }, AGENT)) as Uuid
-    a.approveReview({ keys: [entityKey('Marker', m)] })
+    a.approveReview([entityKey('Marker', m)])
     expect(ids(a)).toEqual({ unreviewed: [], user: [] })
     // No layer anywhere, so the rate is free; the marker re-snaps to 24 fps in
     // every snapshot and in the base, but not in the approved overlay.
@@ -289,7 +289,7 @@ describe('Review baseline — preference patches, checkpoints, reset', () => {
     const moved = root(a.snapshot()).markers[0].t_us
     expect(moved).not.toBe(100_000)
     const { unreviewed, user } = a.reviewState()
-    expect([unreviewed, user.map((c) => c.keys)]).toEqual([[], [[entityKey('Marker', m)]]])
+    expect([unreviewed, user.map((c) => c.id)]).toEqual([[], [entityKey('Marker', m)]])
   })
 })
 

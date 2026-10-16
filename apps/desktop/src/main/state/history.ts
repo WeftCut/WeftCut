@@ -313,29 +313,21 @@ export class History {
     this.bumpReview()
   }
 
-  /** Approve the changes that hold any of `keys`: the selected entity
-   *  takes its current value in the overlay
-   *  and leaves `agentTouched`. A key in no change is ignored. Returns how
-   *  many changes were approved. */
-  approveKeys(keys: Iterable<EntityKey>): number {
-    const wanted = new Set(keys)
-    return this.approveWhere((c) => wanted.has(c.keys[0]))
-  }
-  /** As approveKeys, by change id from the current review state. */
+  /** Approve the changes `ids` (entity keys) of the current review state:
+   *  each entity takes its current value in the overlay and leaves
+   *  `agentTouched`. An id in no change is ignored. Returns how many changes
+   *  were approved. */
   approveChanges(ids: Iterable<string>): number {
-    const wanted = new Set(ids)
-    return this.approveWhere((c) => wanted.has(c.id))
-  }
-  private approveWhere(pick: (c: Change) => boolean): number {
     const review = this.review
     if (review === null) return 0
+    const wanted = new Set(ids)
     const { unreviewed, user } = this.reviewState()
-    const picked = [...unreviewed, ...user].filter(pick)
+    const picked = [...unreviewed, ...user].filter((c) => wanted.has(c.id))
     if (picked.length === 0) return 0
     const cur = extractEntities(this.current())
     const base = extractEntities(review.base)
     for (const change of picked) {
-      const k = change.keys[0], v = cur.get(k)
+      const k = change.id, v = cur.get(k)
       // Keep the overlay minimal when approval returns to the base value.
       if (v === undefined ? !base.has(k) : entitiesEqual(base.get(k), v)) review.approved.delete(k)
       else review.approved.set(k, v ?? ABSENT)
@@ -365,7 +357,7 @@ export class History {
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
     const changes = diffProjects(review, current)
     const unreviewed: Change[] = [], user: Change[] = []
-    for (const c of changes) (review.agentTouched.has(c.keys[0]) ? unreviewed : user).push(c)
+    for (const c of changes) (review.agentTouched.has(c.id) ? unreviewed : user).push(c)
     const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) }
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state

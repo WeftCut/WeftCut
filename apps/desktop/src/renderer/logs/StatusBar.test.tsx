@@ -53,7 +53,7 @@ it("shows the unreviewed change count while there is one; a click opens the agen
   const { container } = render(<StatusBar />);
   await act(async () => {});
   expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
-  const change = (id: `Layer:${string}`): Change => ({ id, class: "added", kind: "Layer", keys: [id], aspects: [], details: [], composition_id: "r", composition_ids: ["r"], ranges: [] });
+  const change = (id: `Layer:${string}`): Change => ({ id, class: "added", details: [], composition_id: "r", ranges: [] });
   act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, unreviewed: [change("Layer:a"), change("Layer:b")], user: [], user_count: 0, decorations: [] }); });
   const badge = container.querySelector<HTMLElement>('[data-testid="status-bar-review"]')!;
   expect(badge.textContent).toBe("2 to review");

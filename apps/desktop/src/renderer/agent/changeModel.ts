@@ -2,7 +2,7 @@
 // grouping by composition, row order, and the words a row is made of. Pure —
 // the store lives in `reviewStore.ts`, locate in `changeActions.ts`.
 import type { AgentActivitySnapshot } from '../../shared/agent-activity'
-import { parseEntityKey, type Change, type EntityKind } from '../../shared/review'
+import { entityKey, parseEntityKey, type Change, type EntityKind } from '../../shared/review'
 
 /** Whose change a row lists: an unreviewed (agent-touched) one, or one only the
  *  user made — shown under "show my changes", never needing approval. */
@@ -50,9 +50,10 @@ export function groupChanges(unreviewed: readonly Change[], user: readonly Chang
     .map(g => ({ ...g, rows: [...g.rows].sort(byTime) }))
 }
 
-/** The ids of every key of `kind` a change covers. */
-export function keyIds(change: Change, kind: EntityKind): string[] {
-  return change.keys.flatMap(k => { const p = parseEntityKey(k); return p.kind === kind ? [p.id] : [] })
+/** The id of the entity a change describes when it is of `kind`, else null. */
+export function entityIdOf(change: Pick<Change, 'id'>, kind: EntityKind): string | null {
+  const p = parseEntityKey(change.id)
+  return p.kind === kind ? p.id : null
 }
 
 /** An unsigned amount of seconds for a sentence that says the direction in
@@ -79,7 +80,8 @@ export function sessionReasonIndex(snapshot: Pick<AgentActivitySnapshot, 'activi
     // the order they started.
     const at = Date.parse(a.started_at) || 0
     for (const ref of a.affected) {
-      const key = `${ref.kind}:${ref.id}`
+      if (ref.kind === 'Media') continue // media is no review entity
+      const key = entityKey(ref.kind, ref.id)
       const seen = out.get(key)
       if (!seen || at >= seen.at) out.set(key, { at, reason })
     }
@@ -87,13 +89,8 @@ export function sessionReasonIndex(snapshot: Pick<AgentActivitySnapshot, 'activi
   return out
 }
 
-/** The reason of the most recent work session that edited any entity the
- *  change covers, or null when no session's operation names one. */
-export function sessionReason(change: Pick<Change, 'keys'>, index: SessionReasonIndex): string | null {
-  let best: { at: number; reason: string } | undefined
-  for (const k of change.keys) {
-    const hit = index.get(k)
-    if (hit && (!best || hit.at > best.at)) best = hit
-  }
-  return best?.reason ?? null
+/** The reason of the most recent work session that edited the change's
+ *  entity, or null when no session's operation names it. */
+export function sessionReason(change: Pick<Change, 'id'>, index: SessionReasonIndex): string | null {
+  return index.get(change.id)?.reason ?? null
 }

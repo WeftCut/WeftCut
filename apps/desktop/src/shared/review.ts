@@ -9,6 +9,9 @@ export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transit
 /** `Layer:<id>`, `Marker:<id>` … — stable across snapshots, unique project-wide. */
 export type EntityKey = `${EntityKind}:${string}`
 
+/** The key of entity `id` of `kind`. */
+export function entityKey(kind: EntityKind, id: string): EntityKey { return `${kind}:${id}` }
+
 /** The kind and id an entity key names; the id may itself hold colons. */
 export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string } {
   const at = key.indexOf(':')
@@ -19,7 +22,6 @@ export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string }
 export type ChangeClass = 'added' | 'removed' | 'modified'
 export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
-export interface EntityLocation { composition_id: string; track_id: string | null }
 /** A range on one track (`track_id` null for a marker or transition). */
 export interface PlacedRange extends TimeRange { track_id: string | null }
 
@@ -54,27 +56,16 @@ export type ChangeDetail =
   | { type: 'aspect'; aspect: ChangeAspect }
 
 export interface Change {
-  /** Stable entity key; independent of displacement and surrounding content. */
-  id: string
+  /** The entity's key (`Layer:<id>`…): stable across snapshots, independent of
+   *  displacement and surrounding content. Each change describes exactly one
+   *  entity, and approving it never expands to related entities. */
+  id: EntityKey
   class: ChangeClass
-  /** The entity kind; each difference describes one entity. */
-  kind: EntityKind
-  /** Exactly one entity; approvals never expand to related entities. */
-  keys: readonly [EntityKey]
-  /** What differs. Empty for added/removed; `placement` for a move to another
-   *  track or composition; `timing` for changed timeline or source time values. */
-  aspects: ChangeAspect[]
   /** The composition the change is listed under (current side, else baseline);
    *  null for a Composition entity. */
   composition_id: string | null
-  /** Every composition the change lives in, either side. */
-  composition_ids: string[]
-  /** A move to another track or composition (`placement`): baseline and
-   *  current location. `removed`: `from` alone, the baseline location (where
-   *  the editor timeline ghosts a removed layer). */
-  from?: EntityLocation
-  to?: EntityLocation
-  /** Measured changes to this entity, without an inferred cause. */
+  /** Measured changes to this entity, without an inferred cause. Empty for
+   *  added/removed except a length; every compared difference has one. */
   details: ChangeDetail[]
   /** A removed entity's own name in the baseline (label, media or text name);
    *  absent when it had none. The current project cannot name it any more. */
@@ -82,11 +73,19 @@ export interface Change {
   /** Historical footprints in the comparison baseline. Never current coordinates. */
   before_ranges?: PlacedRange[]
   /** Current footprints by entity identity. Removed entities have none. */
-  ranges: TimeRange[]
+  ranges: PlacedRange[]
+}
+
+/** The kind of entity a change describes. */
+export function changeKind(change: Pick<Change, 'id'>): EntityKind {
+  return parseEntityKey(change.id).kind
 }
 
 /** A Group layer that shows a composition containing changes ("contains
- *  changes"), at the Group layer's own footprint in its composition. */
+ *  changes"), at the Group layer's own footprint in its composition. Only
+ *  changes with a place on that composition's timeline count — a layer,
+ *  marker or transition; a track or link inside has none (a new Group's own
+ *  tracks would otherwise count as changes in it). */
 export interface GroupDecoration {
   layer_id: string
   composition_id: string
@@ -128,9 +127,9 @@ export interface ReviewView {
  *  between what the user saw and their click is never approved unseen. */
 export interface ReviewApproveAllArgs extends ReviewViewArgs { version: ReviewVersion }
 
-/** `review_approve` arguments: change ids from the view the user acted on,
- *  and/or entity keys. A key selects that entity’s change. Unknown ids/keys are ignored. */
-export interface ReviewApproveArgs extends ReviewApproveAllArgs { change_ids?: string[]; keys?: EntityKey[] }
+/** `review_approve` arguments: change ids from the view the user acted on.
+ *  Unknown ids are ignored. */
+export interface ReviewApproveArgs extends ReviewApproveAllArgs { change_ids: string[] }
 
 /** What an approval answers: whether it was applied — false when `version`
  *  is no longer the current view, and then nothing was approved — and the

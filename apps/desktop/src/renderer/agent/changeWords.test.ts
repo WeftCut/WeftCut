@@ -15,8 +15,8 @@ const summary = summaryFixture({
   groups: [compositionFixture({ id: 'grp', label: 'Intro', tracks: [] })],
 })
 const change = (details: ChangeDetail[], patch: Partial<Change> = {}): Change => ({
-  id: 'Layer:x', class: 'modified', kind: 'Layer', keys: ['Layer:x'], aspects: [], details,
-  composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+  id: 'Layer:x', class: 'modified', details,
+  composition_id: ROOT_ID, ranges: [], ...patch,
 })
 
 let tEn: Translate, tZh: Translate
@@ -78,8 +78,8 @@ describe('describeChange', () => {
     expect(statesPlace(change(details.slice(0, 2)))).toBe(true)
     // A point has no end: its start is its whole place.
     const start = details.slice(0, 1)
-    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', t_start_us: 2 * S, t_end_us: 2 * S }] }))).toBe(true)
-    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', t_start_us: 2 * S, t_end_us: 3 * S }] }))).toBe(false)
+    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', track_id: null, t_start_us: 2 * S, t_end_us: 2 * S }] }))).toBe(true)
+    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', track_id: null, t_start_us: 2 * S, t_end_us: 3 * S }] }))).toBe(false)
   })
 
   it('names the audio catalog’s effects too', () => {
@@ -100,8 +100,7 @@ describe('describeChange', () => {
     expect(paramName('mystery', tZh)).toBeNull()
   })
 
-  it('a change without facts says its aspects; an added one without either says nothing', () => {
-    expect(say(tEn, [], { aspects: ['timing', 'params'] })).toBe('Timing · Properties')
+  it('an added change without a length says nothing', () => {
     expect(say(tEn, [], { class: 'added' })).toBe('')
   })
 })

@@ -1038,9 +1038,9 @@ describe("dragging a marker", () => {
 });
 
 describe("review marks on the marker lane (ADR 0116)", () => {
-  const change = (patch: Partial<Change> & { id: string }): Change => ({
-    class: "modified", kind: "Marker", keys: [patch.id as Change["keys"][number]], aspects: ["timing"], details: [],
-    composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+  const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
+    class: "modified", details: [],
+    composition_id: ROOT_ID, ranges: [], ...patch,
   });
   const review = (unreviewed: Change[]): ReviewView => ({
     version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0, unreviewed, decorations: [],

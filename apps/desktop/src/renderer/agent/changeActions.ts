@@ -5,12 +5,12 @@ import { openComposition, useCompositionAnchorStore } from '../state/composition
 import { jumpToTimeUs, revealLayerWithoutSeek, revealTrackWithoutSelection } from '../state/navigation'
 import { focusedRootUs } from '../state/playheadProjection'
 import { useProjectStore } from '../state/projectStore'
-import { keyIds } from './changeModel'
+import { entityIdOf } from './changeModel'
 
-/** The first clip of the change that exists now (a removed clip has none). */
+/** The change's clip when it exists now (a removed clip has none). */
 function currentLayer(c: Change): string | null {
-  const { layerById } = useProjectStore.getState()
-  return keyIds(c, 'Layer').find(id => layerById.has(id)) ?? null
+  const id = entityIdOf(c, 'Layer')
+  return id !== null && useProjectStore.getState().layerById.has(id) ? id : null
 }
 
 /** Can `locateChange` take the user anywhere? A current clip, a stretch of a
@@ -20,8 +20,9 @@ export function canLocateChange(c: Change): boolean {
   if (!summary) return false
   if (currentLayer(c) !== null) return true
   if ([...c.ranges, ...c.before_ranges ?? []].some(r => summary.compositions[r.composition_id] !== undefined)) return true
-  if (keyIds(c, 'Track').some(id => compositionIdByTrackId.has(id))) return true
-  return keyIds(c, 'Composition').some(id => summary.compositions[id] !== undefined)
+  const track = entityIdOf(c, 'Track'), comp = entityIdOf(c, 'Composition')
+  if (track !== null && compositionIdByTrackId.has(track)) return true
+  return comp !== null && summary.compositions[comp] !== undefined
 }
 
 /** Reveal and select the change's clip if one exists, entering its
@@ -43,10 +44,10 @@ export function locateChange(c: Change): boolean {
     if (range) {
       if (useCompositionAnchorStore.getState().focusedId !== range.composition_id && !openComposition(range.composition_id, null)) return false
     } else {
-      const track = keyIds(c, 'Track').find(id => revealTrackWithoutSelection(id))
-      if (track !== undefined) return true
-      const comp = keyIds(c, 'Composition').find(id => summary.compositions[id] !== undefined)
-      return comp !== undefined && openComposition(comp, null)
+      const track = entityIdOf(c, 'Track')
+      if (track !== null && revealTrackWithoutSelection(track)) return true
+      const comp = entityIdOf(c, 'Composition')
+      return comp !== null && summary.compositions[comp] !== undefined && openComposition(comp, null)
     }
   }
   // The composition holding the footprint is focused now; its own clock

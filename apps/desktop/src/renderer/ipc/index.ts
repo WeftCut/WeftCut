@@ -1124,9 +1124,7 @@ export async function reviewApproveAll(args: ReviewApproveAllArgs): Promise<Revi
   return invoke<ReviewApproveResult>("review_approve_all", { ...args });
 }
 
-/// Approve changes by id (from the view) and/or entity key; a key approves the
-/// whole change holding it, so a shift group approves as a unit. Unknown ids
-/// are ignored. Applied only while `version` is still the current view;
+/// Approve changes by id (from the view). Unknown ids are ignored. Applied only while `version` is still the current view;
 /// answers with whether it was, and the fresh view.
 export async function reviewApprove(args: ReviewApproveArgs): Promise<ReviewApproveResult> {
   return invoke<ReviewApproveResult>("review_approve", { ...args });

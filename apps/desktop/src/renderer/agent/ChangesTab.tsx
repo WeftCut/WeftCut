@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CheckCheck, LocateFixed } from 'lucide-react'
-import type { Change } from '../../shared/review'
+import { parseEntityKey, type Change } from '../../shared/review'
 import { formatTimecode } from '../frames'
 import { groupDisplayName, layerDisplayName } from '../lib/layerName'
 import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { formatSeconds, groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { formatSeconds, groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changeWordsContext, describeChange, statesPlace } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
@@ -82,11 +82,11 @@ export function ChangesTab({ editor }: { editor: boolean }) {
    *  its kind when it has none. A track says it is one: inside a new Group
    *  its derived name ("A roll") repeats the root's. */
   const title = (c: Change): string => {
-    const id = keyIds(c, c.kind)[0]
-    const fallback = t(`changes.kind_${c.kind}`)
-    if (c.class === 'removed') return c.kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
-    if (id === undefined || !summary) return fallback
-    switch (c.kind) {
+    const { kind, id } = parseEntityKey(c.id)
+    const fallback = t(`changes.kind_${kind}`)
+    if (c.class === 'removed') return kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
+    if (!summary) return fallback
+    switch (kind) {
       case 'Layer': { const l = layers.get(id); return l ? layerDisplayName(l, t, ordinals) : fallback }
       case 'Marker': {
         const m = c.composition_id ? summary.compositions[c.composition_id]?.markers.find(x => x.id === id) : undefined

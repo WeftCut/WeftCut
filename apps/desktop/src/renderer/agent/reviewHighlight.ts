@@ -8,7 +8,7 @@
 // The input is deliberately just a change set: the Review view's unreviewed
 // list, or one activity's own changes (`review_activity_view`) — both through
 // the same function onto the same surfaces (`reviewStore.ts`).
-import type { Change, ChangeClass, GroupDecoration } from '../../shared/review'
+import { parseEntityKey, type Change, type ChangeClass, type GroupDecoration } from '../../shared/review'
 
 /** How a CURRENT clip is decorated. `removed` has no current clip: it is a ghost. */
 export type ReviewClipMark = Exclude<ChangeClass, 'removed'>
@@ -35,13 +35,13 @@ export interface ReviewMarkerGhost {
   label: string
 }
 
-/** A measured trim cut at an edge of its current clip. The track is resolved
- *  by identity by the renderer; this cannot represent an inferred ripple seam. */
+/** A measured trim cut at an edge of its current clip, on the clip's current
+ *  track. It cannot represent an inferred ripple seam. */
 export interface ReviewCut {
   changeId: string
   layerId: string
   compositionId: string
-  trackId: null
+  trackId: string
   tUs: number
   kind: 'trim'
 }
@@ -82,16 +82,10 @@ export const EMPTY_HIGHLIGHT: ReviewHighlight = {
   layers: new Map(), ghosts: [], markers: new Map(), markerGhosts: [], cuts: [], layerChanges: new Map(), changes: new Map(), groups: new Map(), ranges: [],
 }
 
-const LAYER_PREFIX = 'Layer:'
-const MARKER_PREFIX = 'Marker:'
-/** What a Group clip's badge counts: content on its composition's timeline.
- *  A track or link inside has no place there (a new Group's own tracks would
- *  otherwise count as changes in it). */
-const FOOTPRINT_KINDS: ReadonlySet<Change['kind']> = new Set(['Layer', 'Marker', 'Transition'])
-
 /** Project `changes` onto paintable marks. `decorations` may cover more
  *  changes than `changes` (the Review view's cover both lists); only the
- *  changes given count toward a Group's badge. */
+ *  changes given count toward a Group's badge — main counts only those with
+ *  a place on the Group's timeline (`GroupDecoration`). */
 export function buildReviewHighlight(changes: readonly Change[], decorations: readonly GroupDecoration[]): ReviewHighlight {
   if (changes.length === 0) return EMPTY_HIGHLIGHT
   const layers = new Map<string, ReviewClipMark>()
@@ -104,7 +98,7 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
   // A Group clip's "contains changes" stretch first, so it paints under the
   // marks of the changes themselves: a Group clip that is itself added reads
   // as added where both lie.
-  const ids = new Set(changes.filter(c => FOOTPRINT_KINDS.has(c.kind)).map(c => c.id))
+  const ids = new Set<string>(changes.map(c => c.id))
   const groups = new Map<string, number>()
   for (const d of decorations) {
     const n = d.change_ids.reduce((sum, id) => sum + (ids.has(id) ? 1 : 0), 0)
@@ -118,32 +112,29 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
     // find it — any kind, a marker or transition included, which has no ghost.
     if (c.class === 'removed') for (const r of c.before_ranges ?? [])
       ranges.push({ changeId: c.id, cls: c.class, compositionId: r.composition_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us, historical: true })
-    for (const key of c.keys) {
-      if (key.startsWith(MARKER_PREFIX)) {
-        const markerId = key.slice(MARKER_PREFIX.length)
-        if (c.class !== 'removed') markers.set(markerId, c.class)
-        else for (const r of c.before_ranges ?? []) markerGhosts.push({ changeId: c.id, markerId, compositionId: r.composition_id,
-          tUs: r.t_start_us, endUs: r.t_end_us > r.t_start_us ? r.t_end_us : null, label: c.before_name ?? '' })
-        continue
+    const { kind, id } = parseEntityKey(c.id)
+    if (kind === 'Marker') {
+      if (c.class !== 'removed') markers.set(id, c.class)
+      else for (const r of c.before_ranges ?? []) markerGhosts.push({ changeId: c.id, markerId: id, compositionId: r.composition_id,
+        tUs: r.t_start_us, endUs: r.t_end_us > r.t_start_us ? r.t_end_us : null, label: c.before_name ?? '' })
+      continue
+    }
+    if (kind !== 'Layer') continue
+    if (c.class !== 'removed') {
+      layers.set(id, c.class)
+      layerChanges.set(id, c.id)
+      const r = c.ranges[0]
+      if (r && r.track_id !== null) for (const d of c.details) {
+        if (d.type !== 'trim' || d.delta_us >= 0) continue
+        cuts.push({ changeId: c.id, layerId: id, compositionId: r.composition_id, trackId: r.track_id,
+          tUs: d.side === 'start' ? r.t_start_us : r.t_end_us, kind: 'trim' })
       }
-      if (!key.startsWith(LAYER_PREFIX)) continue
-      const layerId = key.slice(LAYER_PREFIX.length)
-      if (c.class !== 'removed') {
-        layers.set(layerId, c.class)
-        layerChanges.set(layerId, c.id)
-        const r = c.ranges.find(x => x.composition_id === c.composition_id) ?? c.ranges[0]
-        if (r) for (const d of c.details) {
-          if (d.type !== 'trim' || d.delta_us >= 0) continue
-          cuts.push({ changeId: c.id, layerId, compositionId: r.composition_id, trackId: null,
-            tUs: d.side === 'start' ? r.t_start_us : r.t_end_us, kind: 'trim' })
-        }
-        continue
-      }
-      // Historical footprint only: never place a removal from adjacent content.
-      for (const r of c.before_ranges ?? []) {
-        if (r.track_id === null) continue
-        ghosts.push({ changeId: c.id, layerId, compositionId: r.composition_id, trackId: r.track_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us })
-      }
+      continue
+    }
+    // Historical footprint only: never place a removal from adjacent content.
+    for (const r of c.before_ranges ?? []) {
+      if (r.track_id === null) continue
+      ghosts.push({ changeId: c.id, layerId: id, compositionId: r.composition_id, trackId: r.track_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us })
     }
   }
   return { layers, ghosts, markers, markerGhosts, cuts, layerChanges, changes: new Map(changes.map(c => [c.id, c])), groups, ranges }

@@ -25,20 +25,20 @@ const clip = (id: string, label: string, s: number, e: number): LayerSummary => 
   params: { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 1 } }, width: 1920, height: 1080 }, effects: [],
 })
 const track = (id: string, layers: LayerSummary[]): TrackSummary => ({ id, kind: 'Video', label: 'V1', enabled: true, locked: false, muted: false, solo: false, role: null, transient: true, layers })
-const change = (patch: Partial<Change> & { id: string }): Change => ({
-  class: 'added', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [], composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
+  class: 'added', details: [], composition_id: ROOT_ID, ranges: [], ...patch,
 })
-const range = (s: number, e: number, composition_id = ROOT_ID) => [{ composition_id, t_start_us: s, t_end_us: e }]
+const range = (s: number, e: number, composition_id = ROOT_ID) => [{ composition_id, track_id: null, t_start_us: s, t_end_us: e }]
 
 const unreviewed: Change[] = [
-  change({ id: 'Layer:late', class: 'modified', aspects: ['timing', 'params'], ranges: range(8 * S, 9 * S),
+  change({ id: 'Layer:late', class: 'modified', ranges: range(8 * S, 9 * S),
     details: [{ type: 'time', field: 'end', from_us: 3_200_000, to_us: 2 * S }, { type: 'params', keys: ['opacity', 'x'] }] }),
   change({ id: 'Layer:early', ranges: range(1 * S, 2 * S) }),
-  change({ id: 'Layer:inner', class: 'removed', composition_id: 'grp', composition_ids: ['grp'], from: { composition_id: 'grp', track_id: 'gt' }, ranges: range(0, S, 'grp') }),
-  change({ id: 'Layer:a', class: 'modified', aspects: ['timing'], keys: ['Layer:a'], ranges: range(3 * S, 7 * S),
+  change({ id: 'Layer:inner', class: 'removed', composition_id: 'grp', ranges: range(0, S, 'grp') }),
+  change({ id: 'Layer:a', class: 'modified', ranges: range(3 * S, 7 * S),
     details: [{ type: 'time', field: 'start', from_us: 5_400_000, to_us: 3 * S }] }),
 ]
-const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', aspects: ['label'], ranges: range(5 * S, 6 * S) })]
+const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
   version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed: list, user, user_count: user.length, decorations: [],
 })
@@ -182,10 +182,10 @@ describe('AgentPanel Changes tab', () => {
       change({ id: 'Layer:gone', class: 'removed', ranges: [], before_name: 'Interview take 3',
         before_ranges: [{ composition_id: ROOT_ID, track_id: 't1', t_start_us: 4 * S, t_end_us: 5 * S }] }),
       change({ id: 'Layer:nameless', class: 'removed', ranges: [] }),
-      change({ id: 'Track:gt', kind: 'Track', composition_id: 'grp', composition_ids: ['grp'] }),
-      change({ id: 'Layer:early', class: 'modified', aspects: ['timing'], ranges: range(S, 2 * S),
+      change({ id: 'Track:gt', composition_id: 'grp' }),
+      change({ id: 'Layer:early', class: 'modified', ranges: range(S, 2 * S),
         details: [{ type: 'time', field: 'start', from_us: 3 * S, to_us: S }, { type: 'time', field: 'end', from_us: 4 * S, to_us: 2 * S }] }),
-      change({ id: 'Layer:trimmed', class: 'modified', aspects: ['timing'], ranges: range(2.5 * S, 4 * S),
+      change({ id: 'Layer:trimmed', class: 'modified', ranges: range(2.5 * S, 4 * S),
         details: [{ type: 'time', field: 'start', from_us: 2 * S, to_us: 2.5 * S }, { type: 'trim', side: 'start', delta_us: -0.5 * S }] }),
     ]
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, list, []) : { available: true, url: '', connections: [] })
@@ -245,8 +245,7 @@ describe('AgentPanel Changes tab', () => {
   })
 
   it('lists and approves each changed entity independently', async () => {
-    const moved = change({ id: 'Layer:next', class: 'modified', aspects: ['timing'], keys: ['Layer:next'],
-      details: [{ type: 'time', field: 'start', from_us: 4 * S, to_us: 3 * S }], ranges: range(3 * S, 4 * S) })
+    const moved = change({ id: 'Layer:next', class: 'modified',       details: [{ type: 'time', field: 'start', from_us: 4 * S, to_us: 3 * S }], ranges: range(3 * S, 4 * S) })
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [...unreviewed, moved], []) : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()

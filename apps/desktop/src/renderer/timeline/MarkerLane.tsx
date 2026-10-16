@@ -21,6 +21,7 @@ import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
 import { computeLaneMarkers, type LaneMarker } from "./rulerModel";
+import { entityKey } from "../../shared/review";
 
 /// The project's markers, in a row of their own directly under the ruler.
 ///
@@ -279,7 +280,7 @@ const MarkerGlyph = memo(function MarkerGlyph({
 /// Review overlay switch, both stepping back while another change is focused.
 function ReviewMarkerRing({ view }: { view: LaneMarker }) {
   const mark = useMarkerReviewMark(view.id);
-  const focused = useFocusedChangeId() === `Marker:${view.id}`;
+  const focused = useFocusedChangeId() === entityKey('Marker', view.id);
   const recede = useReviewMarksRecede() && !focused;
   if (mark === null) return null;
   const width = view.shape === "region" ? view.widthPx : L_WIDTH_PX;
