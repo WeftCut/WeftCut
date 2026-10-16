@@ -17,7 +17,7 @@ export const deleteTacks = (selector: TackDeleteSelector) =>
   tryMutate(() => agentTacksDelete(selector), 'agent_tacks_delete')
 
 /** One recorded `add_marker` carrying the tack's place, label, body and (iff
- *  anchored) anchor; then the tack goes. Undoing the marker does not bring the
+ *  the clip it follows starts at its start) anchor; then the tack goes. Undoing the marker does not bring the
  *  tack back — the tack was review material, the marker is the user's content.
  *  A failed add leaves the tack where it was. True when the marker exists. */
 export async function convertTackToMarker(t: TackView): Promise<boolean> {
@@ -30,14 +30,14 @@ export async function convertTackToMarker(t: TackView): Promise<boolean> {
   return true
 }
 
-/** Seek to a tack and, for an anchored one, reveal and select its clip —
+/** Seek to a tack and, for one following a clip, reveal and select it —
  *  entering the composition it sits in first. Editor only (ADR 0065): agent
  *  view is for watching the preview. False when the tack has no place. */
 export function locateTack(t: TackView): boolean {
-  if (t.state !== 'visible' || t.composition_id === null || t.t_us === null) return false
-  // A tack on a clip reveals that clip — for one following content, the clip
-  // its start follows — wherever it now lives; otherwise open its composition.
-  const followed = t.range.kind === 'anchored' ? t.range.layer_id : t.range.kind === 'edges' ? t.range.start?.layer_id ?? null : null
+  if (t.composition_id === null || t.t_us === null) return false
+  // A tack following a clip reveals that clip wherever it now lives; otherwise
+  // open its composition.
+  const followed = t.follows?.layer_id ?? null
   if (followed !== null) {
     if (!revealLayerWithoutSeek(followed)) return false
   } else if (useCompositionAnchorStore.getState().focusedId !== t.composition_id && !openComposition(t.composition_id, null)) {

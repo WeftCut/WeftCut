@@ -8,8 +8,8 @@ import { tackGroupKey, tackRowKey, useAgentActivity, wireAgentActivity } from '.
 
 const tackView = (id: string, patch: Partial<TackView> = {}): TackView => ({ id, session_id: 'session', connection_id: 'c', client: 'Client',
   activity_id: 'a', kind: 'note', label: id, body: '', status: 'open', created_at: '',
-  range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible',
-  outdated: false, follows: { start: null, end: null }, ...patch })
+  range: { composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null,
+  outdated: false, follows: null, ...patch })
 const work: AgentWorkSession = { id: 'session', connection_id: 'c', client: 'Client', reason: 'Edit', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 function snapshot(revision: number, session: AgentWorkSession | null = null): AgentActivitySnapshot {
   return { workspace_id: 'project', revision, session, sessions: session ? [session] : [], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [] }
@@ -69,8 +69,8 @@ describe('agent view and snapshot state', () => {
   it('merges tack deltas in creation order and drops them on a reset', async () => {
     const tack = (id: string, patch: Partial<TackView> = {}): TackView => ({ id, session_id: null, connection_id: 'c', client: 'Client',
       activity_id: 'a', kind: 'note', label: id, body: '', status: 'open', created_at: '',
-      range: { kind: 'free', composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null, state: 'visible',
-      outdated: false, follows: { start: null, end: null }, ...patch })
+      range: { composition_id: 'root', t_us: 0, end_t_us: null }, composition_id: 'root', t_us: 0, end_t_us: null,
+      outdated: false, follows: null, ...patch })
     const delta = (revision: number, patch: Record<string, unknown>) => ({ payload: { ...snapshot(revision), from_revision: revision - 1, reset: false, removed_ids: [], removed_tack_ids: [], ...patch } })
     mocks.invoke.mockResolvedValueOnce({ ...snapshot(1), tacks: [tack('a'), tack('b')] })
     const stop = await wireAgentActivity()
@@ -80,8 +80,8 @@ describe('agent view and snapshot state', () => {
       expect(useAgentActivity.getState().snapshot?.tacks.map(t => [t.id, t.status])).toEqual([['a', 'resolved'], ['b', 'open'], ['c', 'open']])
       changed(delta(3, { removed_tack_ids: ['b'] }))
       expect(useAgentActivity.getState().snapshot?.tacks.map(t => t.id)).toEqual(['a', 'c'])
-      changed(delta(4, { tacks: [tack('b', { state: 'stale', t_us: null, composition_id: null })], removed_tack_ids: ['a'] }))
-      expect(useAgentActivity.getState().snapshot?.tacks.map(t => [t.id, t.state])).toEqual([['c', 'visible'], ['b', 'stale']])
+      changed(delta(4, { tacks: [tack('b', { outdated: true })], removed_tack_ids: ['a'] }))
+      expect(useAgentActivity.getState().snapshot?.tacks.map(t => [t.id, t.outdated])).toEqual([['c', false], ['b', true]])
       changed({ payload: { ...snapshot(5), workspace_id: 'reopened', from_revision: 0, reset: true, removed_ids: [], removed_tack_ids: [] } })
       expect(useAgentActivity.getState().snapshot?.tacks).toEqual([])
     } finally { stop() }

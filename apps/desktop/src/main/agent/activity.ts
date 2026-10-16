@@ -332,7 +332,8 @@ export class AgentActivityService {
       }
     }
     this.refreshEffects()
-    // Anchored tacks are placed from the project, so an edit can move them.
+    // Tacks are placed and compared against the project, so an edit can move
+    // or outdate them.
     this.tacks.refresh()
     this.publish()
   }

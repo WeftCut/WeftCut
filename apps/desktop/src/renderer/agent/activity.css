@@ -96,7 +96,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack-status { color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; margin-top: calc(2 * var(--ui-px)); }
 .agent-tack.status-resolved .agent-activity-copy > span, .agent-tack.status-dismissed .agent-activity-copy > span { color: var(--muted-foreground); }
 .agent-tack.status-dismissed .agent-activity-copy > span { text-decoration: line-through; }
-.agent-tack.state-stale .agent-activity-copy small, .agent-tack.state-hibernating .agent-activity-copy small { font-style: italic; }
+.agent-tack.unplaced .agent-activity-copy small { font-style: italic; }
 .agent-tack-body { margin: 0 0 calc(8 * var(--ui-px)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(220 * var(--ui-px)); overflow: auto; }
 /* Changes tab (ADR 0115): rows reuse the tack row layout; the class badge
    carries the review hue, user-only rows ("show my changes") are muted. */
@@ -126,9 +126,8 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-change .agent-tack-row { padding-left: 0; }
 .agent-change-main { align-items: center !important; }
 .agent-tack-row > .agent-change-main[aria-pressed="true"] { color: inherit; background: none; }
-/* Tack states (ticket 10): an open tack whose clips changed after it was
-   written carries a quiet badge; stale ones gather at the foot of their group,
-   muted, under a heading of their own. */
+/* Tack states (ADR 0117): an open tack whose range plays differently from
+   when it was written carries a quiet badge; one whose composition is gone
+   sorts to the foot of its group, muted. */
 .agent-tack-outdated { flex: none; margin-top: calc(1 * var(--ui-px)); padding: 0 calc(5 * var(--ui-px)); border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: 999px; color: var(--warning); font-size: var(--font-size-micro); white-space: nowrap; }
-.agent-tack-stale-heading { margin: 0; padding: calc(8 * var(--ui-px)) calc(7 * var(--ui-px)) calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); font-weight: 500; }
-.agent-tack-stale > .agent-tack:not([data-selected="true"]) { opacity: .7; }
+.agent-tack.unplaced:not([data-selected="true"]) { opacity: .7; }

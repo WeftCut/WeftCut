@@ -148,8 +148,8 @@ describe("Review overlay clip decorations", () => {
 describe("Review focus on the editor timeline", () => {
   const tack = (patch: Partial<TackView> = {}): TackView => ({
     id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", kind: "issue", label: "Pause", body: "", status: "open",
-    range: { kind: "edges", composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, start: { layer_id: "edited", src_us: 0 }, end: null }, created_at: "",
-    composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, state: "visible", outdated: false, follows: { start: { layer_id: "edited" }, end: null }, ...patch,
+    range: { composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S }, created_at: "",
+    composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, outdated: false, follows: { layer_id: "edited", src_us: 0, t_us: S }, ...patch,
   });
   beforeEach(() => {
     useAgentActivity.setState({

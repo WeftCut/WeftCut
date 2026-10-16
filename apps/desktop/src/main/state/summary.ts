@@ -153,35 +153,25 @@ export function markerHibernatingForLayer(m: Marker, layer: Layer | undefined): 
   return sourceInstantHibernating(m.anchor, layer)
 }
 
-/** A source instant of a layer — a marker's anchor, or an anchored tack's
- *  start (ADR 0115), which stores the same pair without being a marker. */
+/** A source instant of a layer — a marker's anchor, or the instant a tack's
+ *  range follows (ADR 0117), which stores the same pair without being a marker. */
 export type SourceInstant = Pick<MarkerAnchor, 'src_us' | 'src_fraction'>
 
 /** The hibernation rule itself, over a bare source instant: outside the
  *  layer's half-open `[src_in, src_out)` window, or no layer with a window at
  *  all. `markerHibernatingForLayer` is this for a marker; the tack projection
- *  (`main/agent/tacks.ts`) asks the same question, so a tack and a marker on one
- *  frame always sleep and wake together. */
+ *  (`main/agent/tacks.ts`) asks the same question, so a tack stops following a
+ *  frame exactly when a marker on it would sleep. */
 export function sourceInstantHibernating(at: SourceInstant, layer: Layer | undefined): boolean {
   if (layer === undefined || !hasSourceWindow(layer.params)) return true
   const time = addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)
   return compareTime(time, sourceIn(layer.params)) < 0 || compareTime(time, sourceOut(layer)) >= 0
 }
 
-/** The same question for the END of a range: an end sits on the far side of
- *  its frame, so the window is half-open the other way, `(src_in, src_out]` —
- *  an end on the clip's out point is still on the clip. An edge-anchored
- *  tack's end (`main/agent/tacks.ts`) is lost when this says so. */
-export function sourceEndInstantLost(at: SourceInstant, layer: Layer | undefined): boolean {
-  if (layer === undefined || !hasSourceWindow(layer.params)) return true
-  const time = addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)
-  return compareTime(time, sourceIn(layer.params)) <= 0 || compareTime(time, sourceOut(layer)) > 0
-}
-
 /** The timeline time a source instant of `layer` reads at, on the frame grid
  *  of the composition holding it — the ONE source→timeline derivation:
  *  `reconcileMarkers` writes an anchored marker's `t_us` with it and the tack
- *  projection places an anchored tack with it. Callers have established that
+ *  projection places a tack's followed instant with it. Callers have established that
  *  the layer has a source window (`hasSourceWindow`). */
 export function sourceInstantTimelineUs(layer: Layer, at: SourceInstant, fps: Rational): number {
   const local = localAtContent(layer.params, addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME))
@@ -233,9 +223,8 @@ function markerShownEndForLayer(m: Marker, layer: Layer | undefined, hibernating
 
 /** The clip rule of `markerShownEnd` over a bare awake region of `layer`
  *  starting at timeline `tUs`: drawn as far as the clip still runs, unless the
- *  clip's end sits on or before the start. The tack projection
- *  (`main/agent/tacks.ts`) draws an anchored tack's region with it. */
-export function sourceRegionShownEndUs(layer: Layer, tUs: number, endUs: number): number {
+ *  clip's end sits on or before the start. */
+function sourceRegionShownEndUs(layer: Layer, tUs: number, endUs: number): number {
   return layer.t_end_us <= tUs ? endUs : Math.min(endUs, layer.t_end_us)
 }
 

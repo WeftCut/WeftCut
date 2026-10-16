@@ -9,7 +9,7 @@ import { mcpDef, McpArgError } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { toolErrorResult } from './toolResult.js'
 import { TackError, type TackInput, type TackPatch, type TackStore } from '../agent/tacks.js'
-import type { TackFollows, TackView } from '../../shared/agent-activity.js'
+import type { TackView } from '../../shared/agent-activity.js'
 
 export const TACK_TOOLS: ReadonlySet<string> = new Set(['create_tacks', 'update_tack', 'delete_tacks'])
 
@@ -28,9 +28,8 @@ export function runTackTool(store: TackStore, name: string, args: Record<string,
       const ids = store.create(inputs)
       const views = store.viewsOf(new Set(ids))
       const created = ids.map((id) => views.find((v) => v.id === id)!)
-      const follows = created.map((v) => v.follows)
-      const hints = [...createTackHints(inputs, follows), ...samePlaceHints(created, store.views())]
-      return toolRecord({ tack_ids: ids, follows, ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
+      const hints = [...createTackHints(inputs, created), ...samePlaceHints(created, store.views())]
+      return toolRecord({ tack_ids: ids, ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
     }
     if (name === 'update_tack') return toolRecord(store.update(p.tack_id as string, p.patch as TackPatch)) as unknown as ServerResult
     const selector = typeof p.session_id === 'string' ? { session_id: p.session_id } : { tack_ids: p.tack_ids as string[] }
@@ -51,17 +50,16 @@ const TIME_REFERENCE = new RegExp([
 ].join('|'), 'i')
 
 /** Soft advice on a created batch — never a refusal. A label or body that
- *  names a time goes stale as soon as an edit moves the material, while the
- *  panel always shows where the tack is now; and a tack with no clip under
- *  either end follows nothing. */
-export function createTackHints(inputs: readonly Pick<TackInput, 'label' | 'body' | 'anchor_layer_id'>[], follows: readonly TackFollows[]): string[] {
+ *  names a time goes wrong as soon as an edit moves the material, while the
+ *  panel always shows where the tack is now; and a tack over no clip follows
+ *  nothing. */
+export function createTackHints(inputs: readonly Pick<TackInput, 'label' | 'body'>[], created: readonly Pick<TackView, 'follows'>[]): string[] {
   const hints: string[] = []
   inputs.forEach((input, i) => {
     const time = TIME_REFERENCE.exec(input.label) ?? TIME_REFERENCE.exec(input.body)
     if (time) hints.push(`tacks[${i}] mentions a time ("${time[0]}"): the panel shows each tack's live place, which follows later edits, so describe the content (what is said or shown) instead — update_tack can rewrite it.`)
-    const f = follows[i]!
-    if (input.anchor_layer_id === null && f.start === null && f.end === null)
-      hints.push(`tacks[${i}] has no clip under either end, so it follows nothing and keeps its timeline time through later edits.`)
+    if (created[i]!.follows === null)
+      hints.push(`tacks[${i}] covers no clip, so it follows nothing and keeps its timeline time; anything later placed in its range outdates it.`)
   })
   return hints
 }
@@ -83,9 +81,9 @@ export function samePlaceHints(created: readonly TackView[], all: readonly TackV
   const hints: string[] = []
   const batch = new Set(created.map((v) => v.id))
   created.forEach((tack, i) => {
-    if (tack.state !== 'visible') return
+    if (tack.t_us === null) return
     const earlier = new Set(created.slice(0, i).map((v) => v.id))
-    const other = all.find((v) => v.id !== tack.id && v.client === tack.client && v.status === 'open' && v.state === 'visible' &&
+    const other = all.find((v) => v.id !== tack.id && v.client === tack.client && v.status === 'open' &&
       (!batch.has(v.id) || earlier.has(v.id)) && samePlace(v, tack))
     if (other) hints.push(`tacks[${i}] sits where open tack ${other.id} ("${other.label}") does: the user sees tacks in one place as one group to open, so unless they are separate matters, put both in one tack (update_tack its body) and delete_tacks the other.`)
   })

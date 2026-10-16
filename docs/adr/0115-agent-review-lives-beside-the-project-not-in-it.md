@@ -4,7 +4,11 @@ Status: Accepted
 
 The movement inference, carried changes, grouped approval and cut-mark rules
 below are superseded by [ADR 0116](0116-review-diff-compares-entities-without-causal-inference.md).
-The baseline, attribution, approval version guard and Tack lifecycle remain in force.
+Tack placement and lifecycle — edge anchoring, the stale and hibernating
+states, shrinking ranges and the covered-clip outdating — are superseded by
+[ADR 0117](0117-a-tack-is-outdated-when-its-range-plays-differently.md).
+The baseline, attribution, approval version guard and the Tack as runtime
+review state beside the project remain in force.
 
 ## Context
 

@@ -1,5 +1,5 @@
 // apps/desktop/src/main/mcp/server.tacks.test.ts
-// The tack surface over MCP (ADR 0115): three verbs and two reads served by the
+// The tack surface over MCP (ADR 0115, ADR 0117): three verbs and two reads served by the
 // host's TackStore, never by the actor — so no history, no commit, and the
 // history lock does not apply.
 import { describe, it, expect, vi } from 'vitest'
@@ -41,28 +41,27 @@ describe('create_tacks / update_tack / delete_tacks', () => {
   it('create a batch, read it back through the tool and the resource, update and delete it', async () => {
     const h = host()
     const created = await h.call('create_tacks', { tacks: [
-      { label: 'Long pause', t_us: 2_000_000, end_t_us: 3_000_000, anchor_layer_id: h.clip, kind: 'issue' },
+      { label: 'Long pause', t_us: 2_000_000, end_t_us: 3_000_000, kind: 'issue' },
       { label: 'Music in?', body: 'Swell here or later', t_us: 4_000_000, kind: 'question' },
     ] })
     expect(created.isError).toBeFalsy()
     const ids = created.structuredContent!.tack_ids as string[]
     expect(ids).toHaveLength(2)
-    expect(JSON.parse(created.content[0]!.text)).toEqual({ tack_ids: ids, follows: [
-      { start: { layer_id: h.clip }, end: { layer_id: h.clip } }, { start: { layer_id: h.clip }, end: null },
-    ] })
+    expect(JSON.parse(created.content[0]!.text)).toEqual({ tack_ids: ids })
 
     const viaTool = JSON.parse((await h.call('read_project', { view: 'tacks' })).content[0]!.text)
     expect(viaTool).toEqual(await h.read('project://tacks'))
     expect(viaTool).toMatchObject([
-      { id: ids[0], kind: 'issue', status: 'open', state: 'visible', t_us: 2_000_000, end_t_us: 3_000_000, client: 'client-one',
-        range: { kind: 'anchored', layer_id: h.clip, src_us: 3_000_000, src_end_us: 4_000_000 } },
+      { id: ids[0], kind: 'issue', status: 'open', t_us: 2_000_000, end_t_us: 3_000_000, outdated: false, client: 'client-one',
+        range: { composition_id: h.rootId, t_us: 2_000_000, end_t_us: 3_000_000 },
+        follows: { layer_id: h.clip, src_us: 3_000_000, t_us: 2_000_000 } },
       { id: ids[1], kind: 'question', body: 'Swell here or later', outdated: false,
-        range: { kind: 'edges', composition_id: h.rootId, t_us: 4_000_000, end_t_us: null, start: { layer_id: h.clip, src_us: 5_000_000 }, end: null } },
+        range: { composition_id: h.rootId, t_us: 4_000_000, end_t_us: null } },
     ])
     expect(await h.read(`project://tacks?composition=${h.rootId}`)).toHaveLength(2)
 
     const updated = await h.call('update_tack', { tack_id: ids[0], patch: { status: 'resolved' } })
-    expect(updated.structuredContent).toMatchObject({ id: ids[0], status: 'resolved', label: 'Long pause', state: 'visible' })
+    expect(updated.structuredContent).toMatchObject({ id: ids[0], status: 'resolved', label: 'Long pause', t_us: 2_000_000 })
 
     const deleted = await h.call('delete_tacks', { tack_ids: [ids[1]] })
     expect(deleted.structuredContent).toEqual({ deleted_tack_ids: [ids[1]] })
@@ -97,10 +96,10 @@ describe('create_tacks / update_tack / delete_tacks', () => {
 describe('refusals change nothing and name what to fix', () => {
   it('a batch with one bad entry creates none', async () => {
     const h = host()
-    const out = await h.call('create_tacks', { tacks: [{ label: 'ok', t_us: 0 }, { label: 'off the clip', t_us: 8_000_000, anchor_layer_id: h.clip }] })
+    const out = await h.call('create_tacks', { tacks: [{ label: 'ok', t_us: 0 }, { label: 'backwards', t_us: 3_000_000, end_t_us: 2_000_000 }] })
     expect(out.isError).toBe(true)
-    expect(out.structuredContent).toMatchObject({ code: 'invalid_params', error: 'InvalidArgument', field: 't_us' })
-    expect(out.content[0]!.text).toContain('tacks[1].t_us')
+    expect(out.structuredContent).toMatchObject({ code: 'invalid_params', error: 'InvalidArgument', field: 'end_t_us' })
+    expect(out.content[0]!.text).toContain('tacks[1].end_t_us')
     expect(await h.read('project://tacks')).toEqual([])
   })
 
@@ -110,6 +109,7 @@ describe('refusals change nothing and name what to fix', () => {
       ['create_tacks', { tacks: [] }, /names nothing/],
       ['create_tacks', { tacks: [{ label: '  ', t_us: 0 }] }, /tacks\[0\]\.label must be non-empty/],
       ['create_tacks', { tacks: [{ label: 'x', t_us: 0, color: 'red' }] }, /unknown key 'color'/],
+      ['create_tacks', { tacks: [{ label: 'x', t_us: 0, anchor_layer_id: MISSING }] }, /unknown key 'anchor_layer_id'/],
       ['create_tacks', { tacks: [{ label: 'x', t_us: 0.5 }] }, /must be an integer/],
       ['create_tacks', { tacks: [{ label: 'x', t_us: 0, kind: 'todo' }] }, /kind must be one of/],
       ['create_tacks', { tacks: [{ label: 'x'.repeat(201), t_us: 0 }] }, /at most 200/],
@@ -155,7 +155,7 @@ describe('refusals change nothing and name what to fix', () => {
 })
 
 describe('harness feedback', () => {
-  it('create_tacks reports what each tack follows, and hints at times in the text and at tacks that follow nothing', async () => {
+  it('create_tacks hints at times in the text and at tacks that cover nothing', async () => {
     const h = host()
     const out = await h.call('create_tacks', { tacks: [
       { label: 'Breath before the answer', t_us: 2_000_000, end_t_us: 3_000_000 },
@@ -163,15 +163,12 @@ describe('harness feedback', () => {
       { label: 'Breath', body: '大约4秒的停顿', t_us: 2_500_000 },
       { label: 'Music in?', t_us: 7_000_000, end_t_us: 8_000_000 },
     ] })
-    expect(out.structuredContent).toMatchObject({ follows: [
-      { start: { layer_id: h.clip }, end: { layer_id: h.clip } }, { start: { layer_id: h.clip }, end: null },
-      { start: { layer_id: h.clip }, end: null }, { start: null, end: null },
-    ] })
+    expect(out.structuredContent).not.toHaveProperty('follows')
     const hints = out.structuredContent!.hints as string[]
     expect(hints).toHaveLength(3)
     expect(hints[0]).toMatch(/^tacks\[1\] mentions a time \("0:12"\).*describe the content/)
     expect(hints[1]).toMatch(/^tacks\[2\] mentions a time \("4秒"\)/)
-    expect(hints[2]).toMatch(/^tacks\[3\] has no clip under either end/)
+    expect(hints[2]).toMatch(/^tacks\[3\] covers no clip/)
     const clean = await h.call('create_tacks', { tacks: [{ label: 'Two shots of the same take', body: 'Keep the 4K one?', t_us: 2_900_000 }] })
     expect(clean.structuredContent).not.toHaveProperty('hints')
   })
@@ -197,15 +194,15 @@ describe('harness feedback', () => {
   it('a committing call reports the caller’s own changed open tacks, and nothing otherwise', async () => {
     const h = host()
     const track = h.ts.actor.snapshot().compositions[h.rootId].tracks[0].id
-    const [mine] = (await h.call('create_tacks', { tacks: [{ label: 'mine', t_us: 2_000_000, anchor_layer_id: h.clip }] })).structuredContent!.tack_ids
+    const [mine] = (await h.call('create_tacks', { tacks: [{ label: 'mine', t_us: 2_000_000 }] })).structuredContent!.tack_ids
     const [theirs] = (await h.call('create_tacks', { tacks: [{ label: 'theirs', t_us: 3_000_000 }] }, 'two')).structuredContent!.tack_ids
 
     const moved = await h.call('move_layer', { layer_id: h.clip, new_t_start_us: 2_000_000, new_track_id: track })
     expect(moved.structuredContent!.affected_tacks).toEqual([{ tack_id: mine, label: 'mine', change: 'moved' }])
     expect(JSON.parse(moved.content[0]!.text).affected_tacks).toEqual(moved.structuredContent!.affected_tacks)
 
-    // Connection two's trim outdates both tacks; only two hears about its own.
-    const trimmed = await h.call('trim_layer', { layer_id: h.clip, edge: 'out', new_t_us: 5_000_000 }, 'two')
+    // Connection two's trim takes the frame under its own tack; only two hears about it.
+    const trimmed = await h.call('trim_layer', { layer_id: h.clip, edge: 'out', new_t_us: 4_000_000 }, 'two')
     expect(trimmed.structuredContent!.affected_tacks).toEqual([{ tack_id: theirs, label: 'theirs', change: 'outdated' }])
 
     // A call that changes none of the caller's tacks, a read, and a refusal carry no field.
@@ -219,25 +216,25 @@ describe('harness feedback', () => {
     expect(JSON.stringify(refused)).not.toContain('affected_tacks')
   })
 
-  it('end_agent_session lists the client’s open tacks that are stale, hibernating or outdated', async () => {
+  it('end_agent_session lists the client’s open outdated tacks', async () => {
     const h = host()
     await h.call('begin_agent_session', { reason: 'Pauses' })
     const [gone, resolved, fine] = (await h.call('create_tacks', { tacks: [
-      { label: 'on the clip', t_us: 2_000_000, anchor_layer_id: h.clip },
-      { label: 'resolved one', t_us: 3_000_000, anchor_layer_id: h.clip },
+      { label: 'on the clip', t_us: 2_000_000 },
+      { label: 'resolved one', t_us: 3_000_000 },
       { label: 'over a gap', t_us: 7_000_000 },
     ] })).structuredContent!.tack_ids
     await h.call('update_tack', { tack_id: resolved, patch: { status: 'resolved' } })
     const deleted = await h.call('delete_layers', { layer_ids: [h.clip] })
-    expect(deleted.structuredContent!.affected_tacks).toEqual([{ tack_id: gone, label: 'on the clip', change: 'stale' }])
+    expect(deleted.structuredContent!.affected_tacks).toEqual([{ tack_id: gone, label: 'on the clip', change: 'outdated' }])
     const ended = await h.call('end_agent_session', {})
-    expect(ended.structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip', state: 'stale', outdated: false }])
+    expect(ended.structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip' }])
     expect(fine).toBeDefined()
 
-    // A later session still hears about an earlier one's stranded tack — that
-    // is usually what stranded it — until it is resolved; another client never does.
+    // A later session still hears about an earlier one's outdated tack — that
+    // is usually what outdated it — until it is resolved; another client never does.
     await h.call('begin_agent_session', { reason: 'Again' })
-    expect((await h.call('end_agent_session', {})).structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip', state: 'stale', outdated: false }])
+    expect((await h.call('end_agent_session', {})).structuredContent!.tacks_to_review).toEqual([{ tack_id: gone, label: 'on the clip' }])
     await h.call('begin_agent_session', { reason: 'Theirs' }, 'two')
     expect((await h.call('end_agent_session', {}, 'two')).structuredContent).not.toHaveProperty('tacks_to_review')
     await h.call('update_tack', { tack_id: gone, patch: { status: 'resolved' } })

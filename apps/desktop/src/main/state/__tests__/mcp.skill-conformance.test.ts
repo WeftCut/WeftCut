@@ -60,9 +60,9 @@ const KNOWN_NON_TOOLS = new Set([
   'pad_us', 't_start_us', 'segments', 'word_timing', 'source_us', 'playback_rate', 'time_fraction', 't_local_us', 'preset_id', 'src_out_us',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
   'adjusted', 'siblings',
-  // SKILL.md — tack feedback: a create_tacks param, a mutating call's and
-  // end_agent_session's result fields (tackTools.ts, activity.ts)
-  'anchor_layer_id', 'affected_tacks', 'tacks_to_review',
+  // SKILL.md — tack feedback: a mutating call's and end_agent_session's
+  // result fields (activity.ts, server.ts)
+  'affected_tacks', 'tacks_to_review',
   // SKILL.md — the MCP protocol method whose `instructions` the head mirrors
   'initialize',
   // motif-authoring.md — manifest fields

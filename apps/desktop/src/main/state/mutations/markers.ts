@@ -190,7 +190,7 @@ export function applyAttachMarker(p: Project, markerId: Uuid, layerId: Uuid): vo
 
 /** The source instant timeline time `tUs` shows on `layer` — the ONE
  *  timeline→source derivation every anchor writer uses: attaching a marker,
- *  retiming an anchored one, and placing an anchored tack (ADR 0115). Whole
+ *  retiming an anchored one, and recording what a tack's range plays (ADR 0117). Whole
  *  microseconds plus the exact remainder a retimed layer leaves, the pair a
  *  `MarkerAnchor` stores. Callers have established the layer has a source
  *  window (`hasSourceWindow`). */

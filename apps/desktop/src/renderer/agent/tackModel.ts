@@ -39,12 +39,12 @@ export function groupTacks(tacks: readonly TackView[], sessions: readonly AgentW
   return [...groups.values()].map(g => ({ ...g, tacks: [...g.tacks].sort(byPlacement) }))
 }
 
-/** Open tacks placed on `compositionId`'s timeline right now — what a timeline
- *  surface paints. Resolved, dismissed, hibernating and stale ones are listed
- *  in the panel only. */
+/** Open tacks placed on `compositionId`'s timeline right now, outdated ones
+ *  included — what a timeline surface paints. Resolved and dismissed ones, and
+ *  those whose composition is gone, are listed in the panel only. */
 export function paintableTacks(tacks: readonly TackView[], compositionId: string | null): TackView[] {
   if (compositionId === null) return []
-  return tacks.filter(t => t.status === 'open' && t.state === 'visible' && t.composition_id === compositionId && t.t_us !== null)
+  return tacks.filter(t => t.status === 'open' && t.composition_id === compositionId && t.t_us !== null)
 }
 
 const NO_TACKS: TackView[] = []
@@ -97,36 +97,23 @@ export function tackCoverage(tacks: readonly Pick<TackView, 't_us' | 'end_t_us'>
   return { spans, points: [...points].filter(t => !covered(t)).sort((a, b) => a - b) }
 }
 
-/** The clips a tack follows, start's first, each once: both ends of an edge
- *  range on one clip name it once, an anchored tack names its one clip, a free
- *  one none. */
-export function tackFollowedLayers(t: Pick<TackView, 'follows'>): string[] {
-  const ids = [t.follows.start?.layer_id, t.follows.end?.layer_id].filter((id): id is string => id !== undefined)
-  return [...new Set(ids)]
-}
-
 /** Why a tack cannot be located or converted, as an i18n key — or null when
- *  it can. Only a visible tack has a place on a timeline. */
+ *  it can. Only a tack whose composition is gone has no place. */
 export function tackUnplacedReason(t: TackView): string | null {
-  if (t.state === 'stale') return 'tacks.stale_hint'
-  if (t.state === 'hibernating') return 'tacks.hibernating_hint'
-  return null
+  return t.t_us === null ? 'tacks.unplaced_hint' : null
 }
 
 /** The `add_marker` a tack converts into: its place, its label and body as the
- *  marker's label and note, and the source instant it follows — an anchored
- *  tack's, or an edge-anchored tack's start — so the marker follows the clip as
- *  the tack did (a marker anchors one instant; its region end stays timeline
- *  time). Free otherwise. Null when the tack has no place to convert at. */
+ *  marker's label and note, and — when the clip its range follows starts at
+ *  the tack's start and has a source window — that clip's source instant, so the marker follows the
+ *  clip as the tack did (a marker anchors one instant; its region end stays
+ *  timeline time). Free otherwise. Null when the tack has no place. */
 export function tackMarkerArgs(t: TackView): {
   compositionId: string; tUs: number; endTUs: number | null; label: string; note: string; anchor: MarkerAnchorArg | null
 } | null {
-  if (t.state !== 'visible' || t.composition_id === null || t.t_us === null) return null
-  const r = t.range
-  const instant = r.kind === 'anchored' ? { layer: r.layer_id, src_us: r.src_us, src_fraction: r.src_fraction }
-    : r.kind === 'edges' && r.start !== null ? { layer: r.start.layer_id, src_us: r.start.src_us, src_fraction: r.start.src_fraction }
-    : null
-  const anchor: MarkerAnchorArg | null = instant === null ? null
-    : { layer: instant.layer, src_us: instant.src_us, ...(instant.src_fraction ? { src_fraction: instant.src_fraction } : {}) }
+  if (t.composition_id === null || t.t_us === null) return null
+  const f = t.follows
+  const anchor: MarkerAnchorArg | null = f === null || f.src_us === undefined || f.t_us !== t.t_us ? null
+    : { layer: f.layer_id, src_us: f.src_us, ...(f.src_fraction ? { src_fraction: f.src_fraction } : {}) }
   return { compositionId: t.composition_id, tUs: t.t_us, endTUs: t.end_t_us, label: t.label, note: t.body, anchor }
 }

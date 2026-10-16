@@ -105,7 +105,7 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   return true
 }
 
-function transitionEqual(a: Transition, b: Transition): boolean {
+export function transitionEqual(a: Transition, b: Transition): boolean {
   // Compared: participants, duration, kind (+ direction). `extended_us` is the
   // inverse ops' bookkeeping, not something the user reviews (spec table).
   return a.from_layer === b.from_layer && a.to_layer === b.to_layer && a.duration_us === b.duration_us && jsonEqual(a.kind, b.kind)
@@ -205,13 +205,6 @@ function touchedTracks(a: readonly Track[], b: readonly Track[], out: Set<Entity
     if (!y || x.track !== y.track || (x.layer !== y.layer && !jsonEqual(x.layer, y.layer))) out.add(entityKey('Layer', id))
   }
   for (const id of layersAfter.keys()) if (!layersBefore.has(id)) out.add(entityKey('Layer', id))
-}
-
-/** Tack invalidation ignores a pure translation of the same layer. */
-export function layerUnchangedOrShifted(a: Layer, b: Layer): boolean {
-  if (a === b) return true
-  const delta = b.t_start_us - a.t_start_us
-  return jsonEqual({ ...a, t_start_us: a.t_start_us + delta, t_end_us: a.t_end_us + delta }, b)
 }
 
 /** Ids of the compositions `current` shares by reference with the baseline's

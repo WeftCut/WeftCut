@@ -2157,7 +2157,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when your open tacks are stale, hibernating or outdated. Unrecorded.",
+    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when your open tacks are outdated. Unrecorded.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
@@ -2168,7 +2168,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    activity (`mcp/tackTools.ts`), not by the actor: they are not project
   //    state, record nothing and ignore the history lock. A bare actor refuses. ──
   { name: 'create_tacks', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only, and the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. Each end follows the clip under it (A roll first); a gap end keeps its time; `anchor_layer_id` pins one clip. Describe content, never times: the panel shows the live place. One place, one tack. Returns `{ tack_ids, follows, hints? }`; your later edits report your moved or outdated tacks as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
+    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only; the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. It comments on what plays in its range on every track: it moves with that content and is outdated once the range plays anything else. Describe content, never times: the panel shows the live place. One place, one tack. Returns `{ tack_ids, hints? }`; your later edits report your moved or outdated tacks as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
     inputSchema: { type: 'object', properties: {
       tacks: { type: 'array', minItems: 1, description: 'The tacks to create, validated together: one refusal creates none.',
         items: { type: 'object', additionalProperties: false, required: ['label', 't_us'], properties: {
@@ -2177,8 +2177,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
           kind: { type: 'string', enum: [...TACK_KINDS], description: 'note (default) informs; issue flags a problem; question asks the user to decide.' },
           t_us: US_SCHEMA('Start, on the composition timeline'),
           end_t_us: US_SCHEMA('Range end, timeline; omit for a point'),
-          anchor_layer_id: { type: 'string', description: 'Pin the tack to this VideoClip, Audio or Group layer; t_us must lie on it. Omit to let each end follow the clip under it.' },
-          composition_id: { type: 'string', description: "A Group's composition; omit for the root (or, anchored, the clip's own)." },
+          composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
         } } },
     }, required: ['tacks'] },
     parseDedicated: (a) => {
@@ -2325,7 +2324,7 @@ function parseCreateProject(a: Record<string, unknown>): Record<string, unknown>
  *  the times as integers — what `TackStore` validates against the project. */
 function parseTackInput(v: unknown, field: string): Record<string, unknown> {
   const o = parseObj(v, field)
-  const keys = ['label', 'body', 'kind', 't_us', 'end_t_us', 'anchor_layer_id', 'composition_id']
+  const keys = ['label', 'body', 'kind', 't_us', 'end_t_us', 'composition_id']
   for (const k of Object.keys(o)) if (!keys.includes(k)) throw new McpArgError(`${field}: unknown key '${k}'; expected ${keys.join(', ')}`, field)
   return {
     label: parseTackLabel(o.label, `${field}.label`),
@@ -2333,7 +2332,6 @@ function parseTackInput(v: unknown, field: string): Record<string, unknown> {
     kind: o.kind === undefined || o.kind === null ? 'note' : parseOneOf(o.kind, TACK_KINDS, `${field}.kind`),
     t_us: parseIntNum(o.t_us, `${field}.t_us`),
     end_t_us: o.end_t_us === undefined || o.end_t_us === null ? null : parseIntNum(o.end_t_us, `${field}.end_t_us`),
-    anchor_layer_id: o.anchor_layer_id === undefined || o.anchor_layer_id === null ? null : parseUuid(o.anchor_layer_id, `${field}.anchor_layer_id`),
     composition_id: o.composition_id === undefined || o.composition_id === null ? null : parseUuid(o.composition_id, `${field}.composition_id`),
   }
 }

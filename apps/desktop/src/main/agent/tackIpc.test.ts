@@ -21,7 +21,7 @@ function makeHost() {
   host.start()
   const create = async (labels: string[], session = false) => host.agent.run('conn', 'Client', 'create_tacks', {}, false, () => {
     if (session) host.agent.begin('Review')
-    return host.agent.tacks.create(labels.map((label) => ({ label, body: '', kind: 'note' as const, t_us: 0, end_t_us: null, anchor_layer_id: null, composition_id: null })))
+    return host.agent.tacks.create(labels.map((label) => ({ label, body: '', kind: 'note' as const, t_us: 0, end_t_us: null, composition_id: null })))
   })
   const statuses = () => Object.fromEntries(host.agent.tacks.views().map((t) => [t.label, t.status]))
   return { host, send, create, statuses }

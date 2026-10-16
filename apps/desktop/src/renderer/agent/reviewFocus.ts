@@ -55,15 +55,15 @@ export const EMPTY_FOCUS_PAINT: FocusPaint = { focus: null, layers: new Map(), g
 
 /** Where a tack is now, if it is anywhere: only a visible one has a place. */
 function tackWash(t: TackView): FocusWash | null {
-  if (t.state !== 'visible' || t.composition_id === null || t.t_us === null) return null
+  if (t.composition_id === null || t.t_us === null) return null
   const end = t.end_t_us !== null && t.end_t_us > t.t_us ? t.end_t_us : t.t_us
   return { kind: 'tack', compositionId: t.composition_id, startUs: t.t_us, endUs: end }
 }
 
 /** Project the focus and the hover onto what the editor timeline paints. A
- *  tack outlines the clips it follows (either end; an anchored tack's one
- *  clip) and washes its current range; a change outlines its clips — or its
- *  ghost, removed — and washes its current range; a removed one, having none,
+ *  tack outlines the clip its range follows and washes its current range; a
+ *  change outlines its clips — or its ghost, removed — and washes its current
+ *  range; a removed one, having none,
  *  washes its baseline footprint as historical. Historical footprints of a
  *  modified entity are shown as separate baseline frames. Other entities are
  *  never selected through spatial or causal relationships. */
@@ -94,7 +94,7 @@ export function buildFocusPaint(
     if (t) {
       const wash = tackWash(t)
       if (wash) washes.push(wash)
-      for (const end of [t.follows.start, t.follows.end]) if (end) layers.set(end.layer_id, 'tack')
+      if (t.follows) layers.set(t.follows.layer_id, 'tack')
     }
   } else if (focus?.kind === 'change') {
     const c = changes.find(x => x.id === focus.id)

@@ -27,7 +27,7 @@ function setup(capacity?: number) {
   stops.push(() => service.stop())
   const run = <T>(connection: string, fn: () => T | Promise<T>) => service.run(connection, `client-${connection}`, 'create_tacks', {}, false, fn)
   const input = (patch: Partial<TackInput> = {}): TackInput =>
-    ({ label: 'Check', body: '', kind: 'note', t_us: 2_000_000, end_t_us: null, anchor_layer_id: null, composition_id: null, ...patch })
+    ({ label: 'Check', body: '', kind: 'note', t_us: 2_000_000, end_t_us: null, composition_id: null, ...patch })
   const create = (inputs: TackInput[], connection = 'one') => run(connection, () => service.tacks.create(inputs))
   const mcp = (name: string, args: Record<string, unknown>) => {
     const r = actor.mcpCall(name, JSON.stringify(args))
@@ -49,8 +49,8 @@ describe('tack records', () => {
     expect(s.view(inSession!)).toMatchObject({
       session_id: session.id, connection_id: 'one', client: 'client-one', activity_id: activities[1]!.id,
       kind: 'question', label: '  Pause  ', body: 'Keep it?', status: 'open',
-      range: { kind: 'edges', composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, start: { layer_id: s.clip, src_us: 3_000_000 }, end: null },
-      composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, state: 'visible', outdated: false, follows: { start: { layer_id: s.clip }, end: null },
+      range: { composition_id: s.root().id, t_us: 2_000_000, end_t_us: null },
+      composition_id: s.root().id, t_us: 2_000_000, end_t_us: null, outdated: false, follows: { layer_id: s.clip, src_us: 3_000_000, t_us: 2_000_000 },
     })
     expect(s.view(outside!)).toMatchObject({ session_id: null, connection_id: 'two', activity_id: activities[2]!.id })
   })
@@ -63,13 +63,12 @@ describe('tack records', () => {
 
   it('validate a batch whole: one bad entry creates none, and the refusal names it', async () => {
     const s = setup()
-    const bad = [s.input(), s.input({ anchor_layer_id: s.clip, t_us: 6_000_000 }), s.input()]
-    await expect(s.create(bad)).rejects.toThrow(/tacks\[1\]\.t_us 6000000 is outside layer/)
+    const bad = [s.input(), s.input({ t_us: -1 }), s.input()]
+    await expect(s.create(bad)).rejects.toThrow(/tacks\[1\]\.t_us/)
     for (const [entry, pattern] of [
       [s.input({ t_us: -1 }), /tacks\[1\]\.t_us/],
       [s.input({ end_t_us: 2_000_000 }), /tacks\[1\]\.end_t_us/],
       [s.input({ composition_id: '00000000-0000-7000-8000-00000000dead' }), /CompositionNotFound|not found/],
-      [s.input({ anchor_layer_id: '00000000-0000-7000-8000-00000000dead' }), /layer .* not found/],
     ] as const) await expect(s.create([s.input(), entry])).rejects.toThrow(pattern)
     expect(s.service.tacks.size).toBe(0)
   })
@@ -98,70 +97,86 @@ describe('tack records', () => {
   })
 })
 
-describe('anchored placement', () => {
-  it('converts timeline time to the clip’s source time at creation and follows a move', async () => {
+describe('placement over one clip', () => {
+  it('follows its clip through a move, keeping its length', async () => {
     const s = setup()
-    const [id] = await s.create([s.input({ anchor_layer_id: s.clip, t_us: 2_000_000, end_t_us: 3_000_000 })])
-    expect(s.view(id!).range).toEqual({ kind: 'anchored', layer_id: s.clip, src_us: 3_000_000, src_end_us: 4_000_000 })
-    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, state: 'visible', composition_id: s.root().id })
+    const [id] = await s.create([s.input({ t_us: 2_000_000, end_t_us: 3_000_000 })])
+    expect(s.view(id!)).toMatchObject({
+      range: { composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000 },
+      composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000, outdated: false, follows: { layer_id: s.clip, src_us: 3_000_000 },
+    })
     s.mcp('move_layer', { layer_id: s.clip, new_t_start_us: 3_000_000, new_track_id: s.root().tracks[0]!.id })
-    expect(s.view(id!)).toMatchObject({ t_us: 4_000_000, end_t_us: 5_000_000, state: 'visible' })
+    expect(s.view(id!)).toMatchObject({ t_us: 4_000_000, end_t_us: 5_000_000, outdated: false })
   })
 
-  it('stays on its frame through a head trim, hibernates past one and wakes on undo', async () => {
+  it('stays current through a trim outside its range, is outdated by one into it, and recovers on undo', async () => {
     const s = setup()
-    const [id] = await s.create([s.input({ anchor_layer_id: s.clip, t_us: 2_000_000 })])
+    const [id] = await s.create([s.input({ t_us: 2_000_000, end_t_us: 3_000_000 })])
     s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: 1_500_000 })
-    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, state: 'visible' })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'out', new_t_us: 4_000_000 })
+    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, outdated: false })
     s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: 2_500_000 })
-    expect(s.view(id!)).toMatchObject({ t_us: null, end_t_us: null, state: 'hibernating', composition_id: s.root().id })
+    // Its starting frame is gone, so nothing moves it: it keeps its place.
+    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, outdated: true, follows: null })
     s.mcp('undo', {})
-    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, state: 'visible' })
+    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, outdated: false, follows: { layer_id: s.clip } })
   })
 
-  it('follows the piece of a split that keeps its frame and clips a region to its clip', async () => {
+  it('is outdated by a split inside its range, and follows the piece that keeps its start', async () => {
     const s = setup()
-    const [early, late] = await s.create([
-      s.input({ anchor_layer_id: s.clip, t_us: 2_000_000, end_t_us: 4_000_000 }),
-      s.input({ anchor_layer_id: s.clip, t_us: 4_000_000 }),
+    const [region, point] = await s.create([
+      s.input({ t_us: 2_000_000, end_t_us: 4_000_000 }),
+      s.input({ t_us: 4_000_000 }),
     ])
     s.mcp('split_layer', { layer_id: s.clip, at_t_us: [3_000_000] })
-    // The split keeps the left piece's id; the right piece no longer shows the
-    // later frame under this id, exactly as an anchored marker hibernates.
-    expect(s.view(early!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, state: 'visible' })
-    expect(s.view(late!)).toMatchObject({ state: 'hibernating' })
+    expect(s.view(region!)).toMatchObject({ t_us: 2_000_000, end_t_us: 4_000_000, outdated: true, follows: { layer_id: s.clip } })
+    // The right piece is a new layer: what plays at the point is not the clip it was.
+    expect(s.view(point!)).toMatchObject({ t_us: 4_000_000, outdated: true, follows: null })
   })
 
-  it('goes stale when its clip is deleted, stays listed, and follows it into a Group', async () => {
+  it('is outdated, in place and listed, when its clip is deleted, and current again on undo', async () => {
     const s = setup()
-    const [id] = await s.create([s.input({ anchor_layer_id: s.clip, t_us: 2_000_000 })])
+    const [id] = await s.create([s.input({ t_us: 2_000_000 })])
     s.mcp('delete_layers', { layer_ids: [s.clip] })
-    expect(s.view(id!)).toMatchObject({ state: 'stale', composition_id: null, t_us: null })
-    expect(s.service.tacks.views()).toHaveLength(1)
+    expect(s.view(id!)).toMatchObject({ composition_id: s.root().id, t_us: 2_000_000, outdated: true, follows: null })
     s.mcp('undo', {})
-    expect(s.view(id!)).toMatchObject({ state: 'visible', t_us: 2_000_000 })
+    expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, outdated: false })
   })
 
-  it('refuses a windowless layer and a composition the clip is not in', async () => {
+  it('lives in a Group’s composition, reads what plays inside a Group layer, and has no place once its composition is gone', async () => {
     const ids = seededGen()
     const base = blankProject(ids, 'group')
     base.media_pool[MEDIA] = mediaItemTemplate(MEDIA, 'Video', 10_000_000)
     let inner = ''
-    const { p, groupId } = withGroup(base, ids, (g, view) => { inner = applyAddLayer(view, ids, g.tracks[0]!.id, videoClipParams(MEDIA, 0, 4_000_000), 0, 4_000_000) })
+    const { p, groupId, refLayerId } = withGroup(base, ids, (g, view) => { inner = applyAddLayer(view, ids, g.tracks[0]!.id, videoClipParams(MEDIA, 0, 4_000_000), 0, 4_000_000) })
     const actor = createActor({ initial: p, idGen: ids, clock: () => '<TS>' })
     const service = new AgentActivityService(actor, vi.fn())
     service.start(); stops.push(() => service.stop())
     const create = (input: Partial<TackInput>) => service.run('c', 'c', 'create_tacks', {}, false, () => service.tacks.create([
-      { label: 'x', body: '', kind: 'note', t_us: 1_000_000, end_t_us: null, anchor_layer_id: null, composition_id: null, ...input }]))
-    await expect(create({ anchor_layer_id: inner, composition_id: p.root_id })).rejects.toMatchObject({ error: 'CrossCompositionSet' })
-    const [id] = await create({ anchor_layer_id: inner })
+      { label: 'x', body: '', kind: 'note', t_us: 1_000_000, end_t_us: null, composition_id: null, ...input }]))
+    const [id] = await create({ composition_id: groupId })
     expect(service.tacks.views(groupId).map(t => t.id)).toEqual([id])
     expect(service.tacks.views(p.root_id)).toEqual([])
-    expect(service.tacks.views()[0]).toMatchObject({ composition_id: groupId, t_us: 1_000_000 })
-    const color = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: rootComposition(actor.snapshot()).tracks[0]!.id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
-    if (!color.ok) throw new Error(color.error.message)
-    const colorId = (color.result.structuredContent as { layer_id: string }).layer_id
-    await expect(create({ anchor_layer_id: colorId, t_us: 0 })).rejects.toMatchObject({ error: 'WrongLayerKind' })
+    expect(service.tacks.views()[0]).toMatchObject({ composition_id: groupId, t_us: 1_000_000, outdated: false, follows: { layer_id: inner } })
+    const mcp = (name: string, args: Record<string, unknown>) => {
+      const r = actor.mcpCall(name, JSON.stringify(args))
+      if (!r.ok) throw new Error(r.error.message)
+      return r.result.structuredContent as Record<string, unknown>
+    }
+    // A tack on the root over the Group layer reads what plays inside it: an
+    // edit within the Group's shown stretch outdates it, one past it does not.
+    const [outer] = await create({ t_us: 1_000_000, end_t_us: 2_000_000 })
+    expect(service.tacks.views().find(t => t.id === outer)).toMatchObject({ outdated: false, follows: { layer_id: refLayerId } })
+    mcp('trim_layer', { layer_id: inner, edge: 'out', new_t_us: 3_000_000 })
+    expect(service.tacks.views().find(t => t.id === outer)!.outdated).toBe(false)
+    mcp('update_layer_params', { layer_id: inner, patch: { kind: 'VideoClip', flip_h: true } })
+    expect(service.tacks.views().find(t => t.id === outer)!.outdated).toBe(true)
+    mcp('undo', {}); mcp('undo', {})
+    mcp('delete_layers', { layer_ids: [refLayerId] })
+    expect(service.tacks.views()[0]).toMatchObject({ composition_id: groupId, outdated: false })
+    expect(service.tacks.views().find(t => t.id === outer)).toMatchObject({ outdated: true, follows: null })
+    mcp('delete_composition', { composition_id: groupId })
+    expect(service.tacks.views()[0]).toMatchObject({ composition_id: null, t_us: null, end_t_us: null, outdated: true, follows: null })
   })
 })
 
@@ -210,7 +225,7 @@ describe('delta publication', () => {
   it('publishes changed tacks and removed ids under the activity revision, and a reset', async () => {
     const s = setup()
     // `b` is over a gap: it follows nothing.
-    const [a, b] = await s.create([s.input({ anchor_layer_id: s.clip }), s.input({ t_us: 7_000_000 })])
+    const [a, b] = await s.create([s.input(), s.input({ t_us: 7_000_000 })])
     await flush()
     expect(s.updates().flatMap(u => u.tacks.map(t => t.id)).sort()).toEqual([a, b].sort())
     expect(s.updates().flatMap(u => u.removed_tack_ids)).toEqual([])
@@ -255,92 +270,110 @@ function multi() {
   service.start()
   stops.push(() => service.stop())
   const tack = async (t_us: number, end_t_us: number | null = null) => (await service.run('one', 'client-one', 'create_tacks', {}, false, () =>
-    service.tacks.create([{ label: 'x', body: '', kind: 'note', t_us, end_t_us, anchor_layer_id: null, composition_id: null }])))[0]!
+    service.tacks.create([{ label: 'x', body: '', kind: 'note', t_us, end_t_us, composition_id: null }])))[0]!
   const mcp = (name: string, args: Record<string, unknown>) => {
     const r = actor.mcpCall(name, JSON.stringify(args))
     if (!r.ok) throw new Error(r.error.message)
   }
   const view = (id: string) => service.tacks.views().find(t => t.id === id)!
-  const follows = (id: string) => { const f = view(id).follows; return [f.start?.layer_id ?? null, f.end?.layer_id ?? null] }
+  const follows = (id: string) => view(id).follows?.layer_id ?? null
   return { actor, service, c, tack, mcp, view, follows }
 }
 
-describe('edge anchoring', () => {
-  it('ties each end to the clip under it: A roll first, the start’s clip kept for the end, an end closing on its clip', async () => {
+describe('following', () => {
+  it('follows the first covered layer in track order, and nothing over a gap', async () => {
     const m = multi()
-    // R on the B roll spans the whole range, but the A roll is the material.
-    expect(m.follows(await m.tack(1_000_000, 4_000_000))).toEqual([m.c.A, m.c.B])
-    // An A-roll gap under the start: S starts it, and S also holds the end,
-    // so it keeps the end too rather than D on the A roll.
-    expect(m.follows(await m.tack(5_500_000, 6_500_000))).toEqual([m.c.S, m.c.S])
-    // An end on a clip's out point is that clip's, not the next one's.
-    expect(m.follows(await m.tack(500_000, 2_000_000))).toEqual([m.c.A, m.c.A])
-    // A point ties only its start; an end over a gap follows nothing.
-    expect(m.follows(await m.tack(1_000_000))).toEqual([m.c.A, null])
-    expect(m.follows(await m.tack(7_500_000, 9_000_000))).toEqual([m.c.D, null])
-    const point = await m.tack(1_000_000)
-    expect(m.view(point).range).toMatchObject({ kind: 'edges', start: { layer_id: m.c.A, src_us: 1_000_000 }, end: null })
-  })
-
-  it('stays free when neither end has a clip under it, and skips a disabled clip', async () => {
-    const m = multi()
+    expect(m.follows(await m.tack(1_000_000, 4_000_000))).toBe(m.c.A)
+    // D on the first track starts later in the range than S, and still comes first.
+    expect(m.follows(await m.tack(5_500_000, 6_500_000))).toBe(m.c.D)
+    expect(m.follows(await m.tack(5_500_000))).toBe(m.c.S)
     const gap = await m.tack(8_500_000, 9_000_000)
-    expect(m.view(gap).range).toEqual({ kind: 'free', composition_id: m.actor.snapshot().root_id, t_us: 8_500_000, end_t_us: 9_000_000 })
-    expect(m.view(gap).follows).toEqual({ start: null, end: null })
-    m.mcp('set_layers_enabled', { layer_ids: [m.c.A], enabled: false })
-    expect(m.follows(await m.tack(1_500_000))).toEqual([m.c.R, null])
+    expect(m.view(gap)).toMatchObject({ range: { composition_id: m.actor.snapshot().root_id, t_us: 8_500_000, end_t_us: 9_000_000 }, follows: null })
   })
 
-  it('moves with a ripple upstream, unchanged in length and not outdated', async () => {
+  it('follows a layer with no source window by its offset into it', async () => {
     const m = multi()
+    const root = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!
+    const r = m.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: root().tracks[0]!.id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 9_000_000, t_end_us: 11_000_000 }))
+    if (!r.ok) throw new Error(r.error.message)
+    const color = (r.result.structuredContent as { layer_id: string }).layer_id
+    const id = await m.tack(9_500_000, 10_500_000)
+    expect(m.view(id).follows).toEqual({ layer_id: color, t_us: 9_500_000 })
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.view(id)).toMatchObject({ t_us: 8_500_000, end_t_us: 9_500_000, outdated: false })
+    m.mcp('trim_layer', { layer_id: color, edge: 'out', new_t_us: 9_000_000 })
+    expect(m.view(id)).toMatchObject({ t_us: 8_500_000, outdated: true, follows: { layer_id: color } })
+  })
+
+  it('moves with a ripple upstream that carries every track, unchanged in length and current', async () => {
+    const m = multi()
+    const id = await m.tack(6_500_000, 7_500_000)
+    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
+    expect(m.view(id)).toMatchObject({ t_us: 5_500_000, end_t_us: 6_500_000, outdated: false, follows: { layer_id: m.c.D, t_us: 5_500_000 } })
+  })
+
+  it('is outdated by a ripple that slides one track under another inside its range', async () => {
+    const m = multi()
+    // R on the B roll starts before the hole and stays; B moves in under it.
     const id = await m.tack(3_500_000, 4_500_000)
     m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
-    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 2_500_000, end_t_us: 3_500_000, outdated: false })
+    expect(m.view(id)).toMatchObject({ t_us: 2_500_000, end_t_us: 3_500_000, outdated: true })
   })
 
-  it('goes stale when its start’s clip is deleted, and comes back on undo', async () => {
-    const m = multi()
-    const id = await m.tack(500_000, 1_500_000)
-    m.mcp('delete_layers', { layer_ids: [m.c.A] })
-    expect(m.view(id)).toMatchObject({ state: 'stale', t_us: null, end_t_us: null, composition_id: null })
-    m.mcp('undo', {})
-    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 500_000, end_t_us: 1_500_000, outdated: false })
-  })
-
-  it('shrinks when a cut closes up inside a two-clip range, and reads outdated', async () => {
+  it('falls back to the next covered clip when the first is lost', async () => {
     const m = multi()
     const id = await m.tack(1_000_000, 4_000_000)
-    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
-    expect(m.view(id)).toMatchObject({ state: 'visible', t_us: 1_000_000, end_t_us: 3_000_000, outdated: true })
-  })
-
-  it('keeps its length from the start once the end’s clip is lost', async () => {
-    const m = multi()
-    const id = await m.tack(3_500_000, 6_500_000)
-    expect(m.follows(id)).toEqual([m.c.B, m.c.D])
-    m.mcp('delete_layers', { layer_ids: [m.c.D] })
-    expect(m.view(id)).toMatchObject({ t_us: 3_500_000, end_t_us: 6_500_000, state: 'visible', outdated: true })
-    m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
-    expect(m.view(id)).toMatchObject({ t_us: 2_500_000, end_t_us: 5_500_000 })
-  })
-
-  it('hibernates when a trim takes its start’s frame, as an anchored tack does', async () => {
-    const m = multi()
-    const id = await m.tack(3_500_000, 4_500_000)
-    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'in', new_t_us: 4_000_000 })
-    expect(m.view(id)).toMatchObject({ state: 'hibernating', t_us: null })
+    m.mcp('delete_layers', { layer_ids: [m.c.A] })
+    expect(m.view(id)).toMatchObject({ t_us: 1_000_000, end_t_us: 4_000_000, outdated: true, follows: { layer_id: m.c.C } })
   })
 })
 
 describe('outdated', () => {
-  it('is not raised by a pure shift, and is by a trim, a split or a param change — and cleared by undo', async () => {
+  it('reads what plays in the range: deleting the clip between its two gap ends outdates it', async () => {
+    const s = setup()
+    // The clip plays [1 s, 5 s); the tack's ends both sit over gaps.
+    const [id] = await s.create([s.input({ t_us: 500_000, end_t_us: 6_000_000 })])
+    expect(s.view(id!)).toMatchObject({ outdated: false, follows: { layer_id: s.clip, t_us: 1_000_000 } })
+    s.mcp('delete_layers', { layer_ids: [s.clip] })
+    expect(s.view(id!)).toMatchObject({ t_us: 500_000, end_t_us: 6_000_000, outdated: true, follows: null })
+    s.mcp('undo', {})
+    expect(s.view(id!).outdated).toBe(false)
+  })
+
+  it('is raised by a change on any track, by content put into a gap, and by a covered clip moved out', async () => {
+    const m = multi()
+    const id = await m.tack(1_500_000, 2_500_000)
+    const root = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!
+    m.mcp('update_layer_params', { layer_id: m.c.R, patch: { kind: 'VideoClip', flip_h: true } })
+    expect(m.view(id).outdated, 'other track').toBe(true)
+    m.mcp('undo', {})
+    expect(m.view(id).outdated).toBe(false)
+    const gap = await m.tack(8_500_000, 9_500_000)
+    m.mcp('add_color_layer', { track_id: root().tracks[0]!.id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 9_000_000, t_end_us: 10_000_000 })
+    expect(m.view(gap).outdated, 'filled gap').toBe(true)
+    m.mcp('move_layer', { layer_id: m.c.C, new_t_start_us: 12_000_000, new_track_id: root().tracks[0]!.id })
+    expect(m.view(id)).toMatchObject({ t_us: 1_500_000, outdated: true, follows: { layer_id: m.c.A } })
+  })
+
+  it('moves with the only clip it covers, wherever it goes, and stays current', async () => {
+    const m = multi()
+    const id = await m.tack(5_200_000, 5_800_000)
+    const bRoll = m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[1]!.id
+    m.mcp('move_layer', { layer_id: m.c.S, new_t_start_us: 12_000_000, new_track_id: bRoll })
+    expect(m.view(id)).toMatchObject({ t_us: 12_200_000, end_t_us: 12_800_000, outdated: false })
+  })
+
+  it('is not raised by a pure shift or edits outside the range, and is by a trim, a split or a param change inside it', async () => {
     const m = multi()
     const id = await m.tack(3_500_000, 4_500_000)
-    m.mcp('move_layer', { layer_id: m.c.D, new_t_start_us: 6_500_000, new_track_id: m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[0]!.id })
+    const aRoll = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[0]!.id
+    m.mcp('move_layer', { layer_id: m.c.D, new_t_start_us: 6_500_000, new_track_id: aRoll() })
+    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_800_000 })
+    m.mcp('update_layer_params', { layer_id: m.c.A, patch: { kind: 'VideoClip', flip_h: true } })
     expect(m.view(id).outdated).toBe(false)
     for (const [name, args] of [
-      ['trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_800_000 }],
-      ['split_layer', { layer_id: m.c.B, at_t_us: [4_800_000] }],
+      ['trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_200_000 }],
+      ['split_layer', { layer_id: m.c.B, at_t_us: [4_000_000] }],
       ['update_layer_params', { layer_id: m.c.B, patch: { kind: 'VideoClip', flip_h: true } }],
     ] as const) {
       m.mcp(name, args)
@@ -349,36 +382,22 @@ describe('outdated', () => {
       expect(m.view(id).outdated, `${name} undone`).toBe(false)
     }
   })
-
-  it('covers the overlapping clips on the anchor’s track, not other tracks', async () => {
-    const m = multi()
-    const id = await m.tack(1_500_000, 2_500_000)
-    expect(m.follows(id)).toEqual([m.c.A, m.c.C])
-    m.mcp('update_layer_params', { layer_id: m.c.R, patch: { kind: 'VideoClip', flip_h: true } })
-    expect(m.view(id).outdated).toBe(false)
-    const pinned = await m.service.run('one', 'c', 'create_tacks', {}, false, () => m.service.tacks.create([
-      { label: 'x', body: '', kind: 'note', t_us: 1_500_000, end_t_us: 2_500_000, anchor_layer_id: m.c.A, composition_id: null }]))
-    m.mcp('update_layer_params', { layer_id: m.c.C, patch: { kind: 'VideoClip', flip_h: true } })
-    expect(m.view(id).outdated).toBe(true)
-    expect(m.view(pinned[0]!)).toMatchObject({ outdated: true, follows: { start: { layer_id: m.c.A }, end: { layer_id: m.c.A } } })
-  })
 })
 
 describe('feedback for the creating client', () => {
-  it('reports only that client’s open tacks the call changed, by the most serious change', async () => {
+  it('reports only that client’s open tacks the call changed, outdated over moved', async () => {
     const m = multi()
-    const id = await m.tack(3_500_000, 4_500_000)
+    const id = await m.tack(6_500_000, 7_500_000)
     const watched = m.service.tacks.watch('client-one')!
     expect(m.service.tacks.watch('client-two')).toBeNull()
     m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
     expect(m.service.tacks.affectedSince(watched)).toEqual([{ tack_id: id, label: 'x', change: 'moved' }])
     const again = m.service.tacks.watch('client-one')!
-    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 3_800_000 })
+    m.mcp('delete_layers', { layer_ids: [m.c.D] })
     expect(m.service.tacks.affectedSince(again)).toEqual([{ tack_id: id, label: 'x', change: 'outdated' }])
-    const before = m.service.tacks.watch('client-one')!
-    m.mcp('delete_layers', { layer_ids: [m.c.B] })
-    expect(m.service.tacks.affectedSince(before)).toEqual([{ tack_id: id, label: 'x', change: 'stale' }])
+    expect(m.service.tacks.toReview('client-one')).toEqual([{ tack_id: id, label: 'x' }])
     m.service.tacks.update(id, { status: 'resolved' })
     expect(m.service.tacks.watch('client-one')).toBeNull()
+    expect(m.service.tacks.toReview('client-one')).toEqual([])
   })
 })

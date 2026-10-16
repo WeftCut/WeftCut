@@ -9,8 +9,8 @@ import { EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, use
 const S = 1_000_000
 const tack = (patch: Partial<TackView> = {}): TackView => ({
   id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: '', status: 'open', created_at: '',
-  range: { kind: 'free', composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S }, composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S,
-  state: 'visible', outdated: false, follows: { start: null, end: null }, ...patch,
+  range: { composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S }, composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S,
+  outdated: false, follows: null, ...patch,
 })
 const change = (patch: Partial<Change> & { id: string }): Change => ({
   class: 'modified', kind: 'Layer', keys: [patch.id as Change['keys'][number]], aspects: [], details: [], composition_id: 'root', composition_ids: ['root'], ranges: [], ...patch,
@@ -26,20 +26,20 @@ describe('buildFocusPaint', () => {
     expect(buildFocusPaint(null, null, [tack()], changes)).toBe(EMPTY_FOCUS_PAINT)
   })
 
-  it('a tack washes its current range and outlines the clips either end follows, once each', () => {
+  it('a tack washes its current range and outlines the clip its range follows', () => {
     const focus = { kind: 'tack' as const, id: 't' }
-    const p = buildFocusPaint(focus, null, [tack({ follows: { start: { layer_id: 'x' }, end: { layer_id: 'y' } } })], changes)
+    const p = buildFocusPaint(focus, null, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], changes)
     expect(p.focus).toBe(focus)
     expect(p.washes).toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 3 * S }])
-    expect([...p.layers]).toEqual([['x', 'tack'], ['y', 'tack']])
+    expect([...p.layers]).toEqual([['x', 'tack']])
     expect(p.changeFocused).toBe(false)
   })
 
-  it('a point tack washes one instant; a tack with no place washes nothing but still names its clip', () => {
+  it('a point tack washes one instant; a tack with no place washes nothing', () => {
     expect(buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ end_t_us: null })], []).washes)
       .toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 2 * S }])
-    const p = buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ state: 'hibernating', t_us: null, end_t_us: null, follows: { start: { layer_id: 'x' }, end: null } })], [])
-    expect([p.washes, [...p.layers]]).toEqual([[], [['x', 'tack']]])
+    const p = buildFocusPaint({ kind: 'tack', id: 't' }, null, [tack({ composition_id: null, t_us: null, end_t_us: null, outdated: true })], [])
+    expect([p.washes, [...p.layers]]).toEqual([[], []])
   })
 
   it('a change washes every range it has, outlines its clips, and makes the rest recede', () => {
@@ -61,7 +61,7 @@ describe('buildFocusPaint', () => {
     const both = buildFocusPaint({ kind: 'change', id: 'Layer:a' }, { kind: 'change', id: 'Layer:a' }, [], changes)
     expect([...both.layers]).toEqual([['a', 'change']])
     // A hovered tack row has no clip outline: its chip and mini mark read the hover.
-    expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { start: { layer_id: 'x' }, end: null } })], []).layers]).toEqual([])
+    expect([...buildFocusPaint(null, { kind: 'tack', id: 't' }, [tack({ follows: { layer_id: 'x', src_us: 0, t_us: 2 * S } })], []).layers]).toEqual([])
   })
 
   it('a focused move frames where its clips were, on their tracks — only while focused, never a marker', () => {

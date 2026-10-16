@@ -30,7 +30,7 @@ export const HOST_RESOURCE_DEFS = [
   { uri: 'project://session', name: 'Work session', mimeType: APP_JSON,
     description: 'The active agent work session (or null): owner client, connection, reason, started_at, checkpoint — plus recent sessions and the history lock. Read it after AgentSessionBusy.' },
   { uri: 'project://tacks', name: 'Tacks', mimeType: APP_JSON,
-    description: 'Every review tack of this project opening, oldest first — { id, label, body, kind, status, range, session_id, client, created_at } plus the placement derived now: composition_id, t_us, end_t_us and state (visible | hibernating | stale). status shows what the user resolved or dismissed. `?composition=<id>` keeps the tacks placed there.' },
+    description: 'Every review tack of this project opening, oldest first — { id, label, body, kind, status, range (as created), session_id, client, created_at } plus what is derived now: composition_id, t_us, end_t_us (null only when its composition is gone), follows (the clip its range moves with) and outdated (its range no longer plays what it did at creation, on any track). status shows what the user resolved or dismissed. `?composition=<id>` keeps the tacks placed there.' },
 ]
 
 /** RFC 6570 templates for the parameterised resources. `{?composition}` is the

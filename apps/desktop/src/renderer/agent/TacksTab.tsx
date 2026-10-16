@@ -3,11 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronRight, CircleHelp, LocateFixed, StickyNote, TriangleAlert, X } from 'lucide-react'
 import type { TackKind, TackView } from '../../shared/agent-activity'
 import { formatTimecode } from '../frames'
-import { groupDisplayName, groupOrdinals, layerDisplayName } from '../lib/layerName'
+import { groupDisplayName, groupOrdinals } from '../lib/layerName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
-import { groupTacks, tackFollowedLayers, tackUnplacedReason } from './tackModel'
+import { groupTacks, tackUnplacedReason } from './tackModel'
 import { convertTackToMarker, deleteTacks, locateTack, setTackStatus } from './tackActions'
 
 const KIND_ICON: Record<TackKind, typeof StickyNote> = { note: StickyNote, issue: TriangleAlert, question: CircleHelp }
@@ -18,9 +18,9 @@ const NO_TACKS: TackView[] = []
  *  (ADR 0065); everything else is the same in both layouts.
  *
  *  A row's click focuses its tack (the review focus, shared with the
- *  timelines: its chip, its range, the clips it follows), and hovering it
- *  outlines its chip. Stale tacks — their start content gone — gather at the
- *  foot of their group, where they were; they can only be closed or cleared. */
+ *  timelines: its chip, its range, the clip it follows), and hovering it
+ *  outlines its chip. A tack whose composition is gone sorts to the foot of
+ *  its group; it can only be closed or cleared. */
 export function TacksTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
   const tacks = useAgentActivity(s => s.snapshot?.tacks ?? NO_TACKS)
@@ -32,7 +32,6 @@ export function TacksTab({ editor }: { editor: boolean }) {
   const selected = focus?.kind === 'tack' ? focus.id : null
   const setHover = useAgentActivity(s => s.setReviewHover)
   const summary = useProjectStore(s => s.summary)
-  const layers = useProjectStore(s => s.layerById)
   const list = useRef<HTMLDivElement>(null)
   const groups = useMemo(() => groupTacks(tacks, sessions ?? [], tackGroupKey), [tacks, sessions])
   const ordinals = useMemo(() => summary ? groupOrdinals(summary.compositions, summary.root_id) : undefined, [summary])
@@ -59,25 +58,8 @@ export function TacksTab({ editor }: { editor: boolean }) {
   }
 
   const place = (x: TackView): string => {
-    // Where a stale tack was, from the times it was made at — a range that
-    // follows one clip kept none, nor does one whose composition went, and
-    // those say only that it is gone.
-    if (x.state === 'stale') {
-      const r = x.range
-      const was = r.kind === 'anchored' ? null : placeAt(r.composition_id, r.t_us, r.end_t_us)
-      return was === null ? t('tacks.state_stale') : t('tacks.was_at', { place: was })
-    }
-    if (x.state === 'hibernating') return t('tacks.state_hibernating')
-    if (x.composition_id === null || x.t_us === null) return '—'
+    if (x.composition_id === null || x.t_us === null) return t('tacks.state_unplaced')
     return placeAt(x.composition_id, x.t_us, x.end_t_us) ?? '—'
-  }
-
-  /** The clip(s) a tack follows, by the names the timeline gives them; one
-   *  name when both ends follow the same clip, null for a free tack. */
-  const follows = (x: TackView): string | null => {
-    const ids = tackFollowedLayers(x)
-    if (ids.length === 0) return null
-    return ids.map(id => { const l = layers.get(id); return l ? layerDisplayName(l, t, ordinals) : t('tacks.follows_gone') }).join(' → ')
   }
 
   const row = (x: TackView) => {
@@ -85,10 +67,9 @@ export function TacksTab({ editor }: { editor: boolean }) {
     const reason = tackUnplacedReason(x)
     const why = reason ? t(reason) : null
     const statusToggle = (status: 'resolved' | 'dismissed') => void setTackStatus([x.id], x.status === status ? 'open' : status)
-    const followed = open ? follows(x) : null
     const focusThis = () => useAgentActivity.getState().setReviewFocus({ kind: 'tack', id: x.id })
     return <article key={x.id} data-tack-id={x.id} data-selected={selected === x.id ? 'true' : undefined}
-      className={`agent-tack status-${x.status} state-${x.state}`}
+      className={`agent-tack status-${x.status}${reason ? ' unplaced' : ''}`}
       onMouseEnter={() => setHover({ kind: 'tack', id: x.id })} onMouseLeave={() => setHover(null)}>
       <div className="agent-tack-row">
         <button type="button" className="agent-tack-main" aria-expanded={open}
@@ -110,7 +91,6 @@ export function TacksTab({ editor }: { editor: boolean }) {
         <p className="agent-tack-body">{x.body.trim() || t('tacks.no_body')}</p>
         <dl><dt>{t('tacks.kind')}</dt><dd>{t(`tacks.kind_${x.kind}`)}</dd>
           <dt>{t('agent_panel.client')}</dt><dd>{x.client}</dd>
-          {followed && <><dt>{t('tacks.follows')}</dt><dd>{followed}</dd></>}
           {why && <><dt>{t('tacks.place')}</dt><dd>{why}</dd></>}</dl>
         <button type="button" disabled={reason !== null} title={why ?? t('tacks.convert_hint')} onClick={() => void convertTackToMarker(x)}>{t('tacks.convert')}</button>
       </div>}
@@ -131,7 +111,6 @@ export function TacksTab({ editor }: { editor: boolean }) {
         const defaultOpen = g.tacks.some(x => x.status === 'open')
         const open = expanded[g.key] ?? defaultOpen
         const title = g.session?.reason ?? t(g.sessionId === null ? 'tacks.outside_session' : 'tacks.earlier_session')
-        const stale = g.tacks.filter(x => x.state === 'stale')
         return <section key={g.key} className="agent-work-group agent-tack-group">
           <div className="agent-tack-group-heading">
             <button type="button" className="agent-work-heading" aria-expanded={open} onClick={() => toggle(g.key, defaultOpen)}>
@@ -141,11 +120,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
             <button type="button" className="agent-tack-clear" title={t('tacks.clear_session_hint')}
               onClick={() => void deleteTacks({ session_id: g.sessionId })}>{t('tacks.clear_session')}</button>
           </div>
-          {open && g.tacks.filter(x => x.state !== 'stale').map(row)}
-          {open && stale.length > 0 && <div className="agent-tack-stale" role="group" aria-label={t('tacks.stale_group')}>
-            <h4 className="agent-tack-stale-heading" title={t('tacks.stale_hint')}>{t('tacks.stale_group')}</h4>
-            {stale.map(row)}
-          </div>}
+          {open && g.tacks.map(row)}
         </section>
       })}
       <p className="agent-retention-note agent-list-footnote">{t('tacks.retention')}</p>

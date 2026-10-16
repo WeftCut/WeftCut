@@ -23,8 +23,8 @@ const PX_PER_SEC = 100;
 const REVIEW = UI_METRICS.timeline.review;
 const tack = (patch: Partial<TackView> = {}): TackView => ({
   id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", kind: "issue", label: "Pause", body: "",
-  status: "open", range: { kind: "free", composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000 }, created_at: "",
-  composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000, state: "visible", outdated: false, follows: { start: null, end: null }, ...patch,
+  status: "open", range: { composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000 }, created_at: "",
+  composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000, outdated: false, follows: null, ...patch,
 });
 const session = { id: "s1", connection_id: "c", client: "C", reason: "Cut", started_at: "", ended_at: null, end_reason: null, checkpoint_id: "k" } satisfies AgentWorkSession;
 const marker: MarkerSummary = {
@@ -110,12 +110,12 @@ describe("Review lane", () => {
     expect(chips(container)).toHaveLength(1);
   });
 
-  it("paints open visible tacks as chips: start, painted width, kind and label", () => {
+  it("paints open placed tacks as chips: start, painted width, kind and label", () => {
     seed([
       tack(),
       tack({ id: "point", kind: "note", label: "Check", t_us: 5_000_000, end_t_us: null }),
       tack({ id: "done", status: "resolved" }),
-      tack({ id: "asleep", state: "hibernating", t_us: null, end_t_us: null }),
+      tack({ id: "unplaced", composition_id: null, t_us: null, end_t_us: null, outdated: true }),
     ]);
     const { container } = renderRows();
     expect(chips(container).map((b) => [b.dataset.tackId, b.dataset.kind, b.style.left, b.style.width, b.textContent])).toEqual([

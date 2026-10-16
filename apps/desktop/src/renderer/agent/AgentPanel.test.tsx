@@ -154,9 +154,9 @@ describe('AgentPanel — per-activity highlight', () => {
 
 function tack(patch: Partial<TackView> = {}): TackView {
   return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', kind: 'issue', label: 'Long pause',
-    body: 'Keep the breath?', status: 'open', range: { kind: 'free', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000 },
-    created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000, state: 'visible',
-    outdated: false, follows: { start: null, end: null }, ...patch }
+    body: 'Keep the breath?', status: 'open', range: { composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000 },
+    created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000,
+    outdated: false, follows: null, ...patch }
 }
 const work = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Review pauses', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)
@@ -217,7 +217,7 @@ describe('AgentPanel Tacks tab', () => {
 
   it('converts into one recorded marker carrying label, note and anchor, then removes the tack', async () => {
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'add_marker' ? 'marker-1' : channel === 'agent_tacks_delete' ? { deleted_tack_ids: ['t1'] } : { available: true, url: '', connections: [] })
-    const anchored = tack({ range: { kind: 'anchored', layer_id: 'clip', src_us: 5_000_000, src_end_us: 6_000_000, src_fraction: { num: 1, den: 3 } } })
+    const anchored = tack({ follows: { layer_id: 'clip', src_us: 5_000_000, src_fraction: { num: 1, den: 3 }, t_us: 2_000_000 } })
     seed([], { sessions: [work], tacks: [anchored] })
     render(<AgentPanel />)
     openTacks()
@@ -244,28 +244,24 @@ describe('AgentPanel Tacks tab', () => {
     expect(calls('agent_tacks_delete')).toEqual([])
   })
 
-  it('lists stale and hibernating tacks with their state, refusing locate and convert with the reason', () => {
+  it('lists a tack whose composition is gone, refusing locate and convert with the reason', () => {
     seed([], { sessions: [work], tacks: [
-      tack({ id: 's', label: 'Gone', state: 'stale', composition_id: null, t_us: null, end_t_us: null }),
-      tack({ id: 'h', label: 'Asleep', state: 'hibernating', t_us: null, end_t_us: null }),
+      tack({ id: 's', label: 'Gone', composition_id: null, t_us: null, end_t_us: null, outdated: true }),
     ] })
     render(<AgentPanel editor />)
     openTacks()
-    // Its composition is not in the project either: no "was at", just gone.
-    expect(screen.getByText('No longer on the timeline')).toBeTruthy()
-    expect(screen.getByText('Hibernating')).toBeTruthy()
-    const locates = screen.getAllByRole('button', { name: 'Locate on the timeline' })
-    expect(locates.every(b => b.hasAttribute('disabled'))).toBe(true)
-    // Stale ones gather last, so the hibernating row comes first.
-    expect(locates[0]!.getAttribute('title')).toMatch(/^Hibernating: its clip no longer shows/)
+    expect(screen.getByText('Its composition no longer exists')).toBeTruthy()
+    const locate = screen.getByRole('button', { name: 'Locate on the timeline' })
+    expect(locate.hasAttribute('disabled')).toBe(true)
+    expect(locate.getAttribute('title')).toMatch(/so it cannot be located or converted/)
     fireEvent.click(screen.getByRole('button', { name: /Gone/ }))
     const convert = screen.getByRole('button', { name: 'Convert to marker' })
     expect(convert.hasAttribute('disabled')).toBe(true)
     expect(convert.getAttribute('title')).toMatch(/no longer exists/)
   })
 
-  it('locates in the editor only: seek, and reveal the anchor clip', () => {
-    const anchored = tack({ range: { kind: 'anchored', layer_id: 'clip', src_us: 5_000_000, src_end_us: null } })
+  it('locates in the editor only: seek, and reveal the followed clip', () => {
+    const anchored = tack({ follows: { layer_id: 'clip', src_us: 5_000_000, t_us: 2_000_000 } })
     seed([], { sessions: [work], tacks: [anchored] })
     const agentView = render(<AgentPanel />)
     openTacks()
@@ -308,7 +304,7 @@ describe('AgentPanel Tacks tab — states and the review focus', () => {
     useProjectStore.getState().apply(summaryFixture({ root: { duration_us: 10 * S, tracks: [{ id: 'v1', kind: 'Video', label: 'V1', enabled: true, locked: false,
       muted: false, solo: false, role: null, transient: false, layers: [clip('interview', 'Interview'), clip('broll', 'B-roll')] }] } }))
   })
-  const placed = (patch: Partial<TackView> = {}) => tack({ composition_id: ROOT_ID, range: { kind: 'free', composition_id: ROOT_ID, t_us: 2 * S, end_t_us: 3 * S }, ...patch })
+  const placed = (patch: Partial<TackView> = {}) => tack({ composition_id: ROOT_ID, range: { composition_id: ROOT_ID, t_us: 2 * S, end_t_us: 3 * S }, ...patch })
   const row = (id: string) => document.querySelector<HTMLElement>(`[data-tack-id="${id}"]`)!
 
   it('badges an open outdated tack, explaining why, and only while it is open', () => {
@@ -318,46 +314,27 @@ describe('AgentPanel Tacks tab — states and the review focus', () => {
     openTacks()
     const badge = row('t1').querySelector<HTMLElement>('.agent-tack-outdated')!
     expect(badge.textContent).toBe('Content changed')
-    expect(badge.title).toMatch(/clips it covers changed after the agent wrote it/)
+    expect(badge.title).toMatch(/What plays in its range changed after the agent wrote it/)
     expect(row('t2').querySelector('.agent-tack-outdated')).toBeNull()
   })
 
-  it('gathers stale tacks at the foot of their group under their own heading, saying where they were', () => {
+  it('sorts a tack whose composition is gone to the foot of its group, and lists an outdated one in place', () => {
     seed([], { sessions: [work], tacks: [
-      placed({ id: 'gone', label: 'Gone', state: 'stale', composition_id: null, t_us: null, end_t_us: null,
-        range: { kind: 'edges', composition_id: ROOT_ID, t_us: 2 * S, end_t_us: 3 * S, start: { layer_id: 'deleted', src_us: 0 }, end: null } }),
-      placed({ id: 'pinned', label: 'Pinned', state: 'stale', composition_id: null, t_us: null, end_t_us: null,
-        range: { kind: 'anchored', layer_id: 'deleted', src_us: 0, src_end_us: null } }),
+      placed({ id: 'gone', label: 'Gone', composition_id: null, t_us: null, end_t_us: null, outdated: true }),
+      placed({ id: 'outdated', label: 'Outdated', t_us: 5 * S, end_t_us: 6 * S, outdated: true }),
       placed({ id: 'here', label: 'Here' }),
     ] })
     render(<AgentPanel editor />)
     openTacks()
     const ids = [...document.querySelectorAll<HTMLElement>('[data-tack-id]')].map(r => r.dataset.tackId)
-    expect(ids).toEqual(['here', 'gone', 'pinned'])
-    const group = screen.getByRole('group', { name: 'No longer placed' })
-    expect(group.contains(row('gone')) && group.contains(row('pinned')) && !group.contains(row('here'))).toBe(true)
-    expect(row('gone').textContent).toContain('Was at 00:00:02:00 – 00:00:03:00')
-    // A tack pinned to one clip kept no times of its own.
-    expect(row('pinned').textContent).toContain('No longer on the timeline')
+    expect(ids).toEqual(['here', 'outdated', 'gone'])
+    expect(row('outdated').textContent).toContain('00:00:05:00 – 00:00:06:00')
+    expect(row('outdated').querySelector<HTMLButtonElement>('[aria-label="Locate on the timeline"]')!.disabled).toBe(false)
+    expect(row('gone').textContent).toContain('Its composition no longer exists')
     // Not locatable, but still closable.
     expect(row('gone').querySelector<HTMLButtonElement>('[aria-label="Locate on the timeline"]')!.disabled).toBe(true)
     fireEvent.click(row('gone').querySelector<HTMLButtonElement>('[aria-label="Resolve"]')!)
     expect(calls('agent_tacks_set_status')).toEqual([{ tack_ids: ['gone'], status: 'resolved' }])
-  })
-
-  it('names the clips a tack follows when expanded: once for one clip, both ends for two, nothing when free', () => {
-    seed([], { sessions: [work], tacks: [
-      placed({ id: 'one', label: 'One', follows: { start: { layer_id: 'interview' }, end: { layer_id: 'interview' } } }),
-      placed({ id: 'two', label: 'Two', follows: { start: { layer_id: 'interview' }, end: { layer_id: 'broll' } } }),
-      placed({ id: 'free', label: 'Free' }),
-    ] })
-    useAgentActivity.setState({ expanded: { 'tack-one': true, 'tack-two': true, 'tack-free': true } })
-    render(<AgentPanel />)
-    openTacks()
-    const follows = (id: string) => [...row(id).querySelectorAll('dt')].find(dt => dt.textContent === 'Follows')?.nextElementSibling?.textContent ?? null
-    expect(follows('one')).toBe('Interview')
-    expect(follows('two')).toBe('Interview → B-roll')
-    expect(follows('free')).toBeNull()
   })
 
   it('a row click focuses its tack, a hover names it, Esc in the panel lets the focus go', () => {
@@ -388,10 +365,10 @@ describe('AgentPanel Tacks tab — states and the review focus', () => {
 })
 
 describe('Tack terms', () => {
-  it('names the new tack states in Chinese with the agreed words', async () => {
+  it('names the tack states in Chinese with the agreed words', async () => {
     await i18n.changeLanguage('zh-CN')
-    expect([i18n.t('tacks.stale_group'), i18n.t('tacks.outdated'), i18n.t('tacks.follows'), i18n.t('tacks.was_at', { place: 'X' })])
-      .toEqual(['已失效', '内容已修改', '跟随', '原位置 X'])
+    expect([i18n.t('tacks.outdated'), i18n.t('tacks.state_unplaced')])
+      .toEqual(['内容已修改', '所在的合成已不存在'])
     await i18n.changeLanguage('en-US')
   })
 })

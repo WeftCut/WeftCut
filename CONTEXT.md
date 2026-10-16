@@ -1028,18 +1028,19 @@ activity stream retains running calls and does not restore from disk.
 _Avoid_: diagnostic log entry, history entry, permanent transcript
 
 **Tack**:
-A time range an agent points the user at for review. Each end follows the
-content under it — the clip's source time, placed on read — unless it sits over
-a gap or the agent pinned the whole range to one clip. A tack whose start
-content is gone is stale (失效); one whose covered clips changed other than by
-moving is outdated (内容已修改). Runtime-only within a
+A time range an agent points the user at for review — a comment on what
+plays there. It keeps its length and moves with the content it covered,
+placed on read. It is current while its range plays what it played at
+creation, across every track, and outdated (内容已修改) otherwise — nothing
+else: no stale, no hibernating, no pinned clip (ADR 0117). Runtime-only within a
 project opening; not project content, not in history, never exported. The user
 resolves, dismisses or clears it, or converts it into an ordinary marker
 (ADR 0115). Named for the tailor's tack: a temporary thread mark pulled out
 once the seam is sewn. One letter from **Track** — never abbreviate either.
 UI word: Tack / 批注.
 _Avoid_: annotation, agent marker, review marker (it is not a marker), comment;
-标注 (the Motif callout overlay), 备注 (the marker's note field)
+标注 (the Motif callout overlay), 备注 (the marker's note field); stale or
+hibernating tack (both states are gone — say outdated)
 
 **Review lane**:
 The timeline row below the marker lane that carries tacks, one row the marker
