@@ -95,8 +95,12 @@ export function TacksTab({ editor }: { editor: boolean }) {
             onClick={() => void setTackStatus([x.id], 'resolved')}><AppIcon icon={Check} size="body" /></button>
           <button type="button" aria-label={t('tacks.dismiss')} title={t('tacks.dismiss_hint')}
             onClick={() => void setTackStatus([x.id], 'dismissed')}><AppIcon icon={X} size="body" /></button>
-        </> : <button type="button" aria-label={t('tacks.reopen')} title={t('tacks.reopen')}
-          onClick={() => void setTackStatus([x.id], 'open')}><AppIcon icon={RotateCcw} size="body" /></button>}
+        </> : <>
+          {/* Holds the Resolve column, so Locate lines up with open rows'. */}
+          <span className="agent-tack-slot" aria-hidden><AppIcon icon={Check} size="body" /></span>
+          <button type="button" aria-label={t('tacks.reopen')} title={t('tacks.reopen')}
+            onClick={() => void setTackStatus([x.id], 'open')}><AppIcon icon={RotateCcw} size="body" /></button>
+        </>}
       </div>
       {open && <div className="agent-activity-details">
         <p className="agent-tack-body">{x.body.trim() || t('tacks.no_body')}</p>
@@ -136,9 +140,9 @@ export function TacksTab({ editor }: { editor: boolean }) {
           {open && closed.length > 0 && <div className="agent-tack-closed">
             <div className="agent-tack-closed-heading">
               <button type="button" className="agent-tack-closed-toggle" aria-expanded={closedOpen} onClick={() => toggle(closedKey, !defaultOpen)}>
-                {closedOpen ? <AppIcon icon={ChevronDown} size="body" /> : <AppIcon icon={ChevronRight} size="body" />}
-                {t('tacks.closed_section', { count: closed.length })}</button>
-              <button type="button" className="agent-tack-group-action" title={t('tacks.clear_closed_hint')}
+                {t('tacks.closed_section', { count: closed.length })}
+                {closedOpen ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>
+              <button type="button" className="agent-tack-closed-clear" title={t('tacks.clear_closed_hint')}
                 onClick={() => void deleteTacks({ tack_ids: closed.map(x => x.id) })}>{t('tacks.clear_closed')}</button>
             </div>
             {closedOpen && closed.map(row)}

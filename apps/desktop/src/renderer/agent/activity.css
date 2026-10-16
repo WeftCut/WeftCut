@@ -84,11 +84,17 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack-group-heading { display: flex; align-items: flex-start; gap: calc(4 * var(--ui-px)); }
 .agent-tack-group-heading > .agent-work-heading { flex: 1; min-width: 0; }
 .agent-tack-group-action { margin-top: calc(6 * var(--ui-px)); gap: calc(4 * var(--ui-px)); font-size: var(--font-size-caption); border: 1px solid var(--border); flex: none; }
-/* A group's resolved and dismissed tacks, under their own toggle at its foot. */
-.agent-tack-closed { margin-top: calc(2 * var(--ui-px)); }
-.agent-tack-closed-heading { display: flex; align-items: center; gap: calc(4 * var(--ui-px)); }
-.agent-tack-closed-heading > .agent-tack-group-action { margin-top: 0; }
-.agent-tack-closed-toggle { flex: 1; min-width: 0; gap: calc(4 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); padding-block: calc(6 * var(--ui-px)) !important; }
+/* A group's resolved and dismissed tacks: a subheading inside the group, not
+   a second group heading. It starts at the rows' label column (27px, as the
+   row details do) and is only as wide as its words; its rows hang beneath
+   it, their kind icons on that same column. Clear is a quiet word sized like
+   the subheading — tidying up, below the heading's Resolve all. */
+.agent-tack-closed { margin: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); }
+.agent-tack-closed-heading { display: flex; align-items: center; justify-content: space-between; gap: calc(4 * var(--ui-px)); padding-left: calc(20 * var(--ui-px)); }
+.agent-tack-closed-heading > button { flex: none; gap: calc(2 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); padding-block: calc(3 * var(--ui-px)) !important; }
+.agent-tack-closed > .agent-tack { margin-left: calc(20 * var(--ui-px)); }
+/* An empty action column, as wide as an icon button. */
+.agent-tack-slot { flex: none; display: inline-flex; padding: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)); visibility: hidden; }
 .agent-tack { padding: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 4px; }
 .agent-tack[data-selected="true"] { background: var(--selection-bg); box-shadow: inset 2px 0 0 var(--selection); }
 .agent-tack-row { display: flex; align-items: flex-start; gap: calc(2 * var(--ui-px)); }
