@@ -656,6 +656,26 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
+  it('review_view answers a caller holding the current lists with the version alone', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    try {
+      await host.handleInvoke('project_new_workspace', publicationProject)
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      type View = { version: unknown; content_revision: number; unreviewed: unknown[] }
+      const held = await host.handleInvoke('review_view', {}) as View
+      expect(await host.handleInvoke('review_view', { held_content: held.content_revision }))
+        .toEqual({ unchanged: true, version: held.version, content_revision: held.content_revision, has_baseline: true, user_count: 0 })
+      expect(host.mcpCall('add_track', '{}', 'test-agent').ok).toBe(true)
+      const fresh = await host.handleInvoke('review_view', { held_content: held.content_revision }) as View
+      expect(fresh.unreviewed).toHaveLength(2)
+      expect(fresh.content_revision).toBeGreaterThan(held.content_revision)
+    } finally {
+      host.stop()
+    }
+  })
+
   it('review_view sends the user-only list only when asked, and always its count', async () => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)

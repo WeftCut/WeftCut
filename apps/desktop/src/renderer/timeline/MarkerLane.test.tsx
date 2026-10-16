@@ -1043,7 +1043,7 @@ describe("review marks on the marker lane (ADR 0116)", () => {
     composition_id: ROOT_ID, ranges: [], ...patch,
   });
   const review = (unreviewed: Change[]): ReviewView => ({
-    version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0, unreviewed, decorations: [],
+    version: { session: 1, revision: 1, baseline_revision: 1 }, content_revision: 1, has_baseline: true, user: [], user_count: 0, unreviewed, decorations: [],
   });
   const moved = change({ id: "Marker:point-1" });
   const gone = change({ id: "Marker:old", class: "removed", before_name: "Beat",

@@ -62,7 +62,10 @@ export function extractEntities(p: Project): EntityIndex {
   const hit = projectMemo.get(p)
   if (hit) return hit
   const out = new Map<EntityKey, EntityValue>()
-  for (const c of Object.values(p.compositions)) for (const v of compositionEntities(c)) out.set(keyOf(v), v)
+  for (const c of Object.values(p.compositions)) {
+    const values = compositionEntities(c), keys = compositionKeys(c)
+    for (let i = 0; i < values.length; i++) out.set(keys[i]!, values[i]!)
+  }
   projectMemo.set(p, out)
   return out
 }
@@ -224,6 +227,14 @@ function sharedCompositions(baseline: BaselineSource, current: Project): Set<Uui
   return out
 }
 
+/** A composition's entity keys, kept per composition object. */
+const compositionKeyMemo = new WeakMap<Composition, readonly EntityKey[]>()
+function compositionKeys(c: Composition): readonly EntityKey[] {
+  let keys = compositionKeyMemo.get(c)
+  if (!keys) compositionKeyMemo.set(c, keys = compositionEntities(c).map(keyOf))
+  return keys
+}
+
 /** Comparison indexes and candidate keys; snapshot sharing and approvals stay private. */
 export function compareEntities(baseline: BaselineSource, current: Project): { before: EntityIndex; after: EntityIndex; keys: ReadonlySet<EntityKey> } {
   const before = effectiveEntities(baseline)
@@ -236,7 +247,7 @@ export function compareEntities(baseline: BaselineSource, current: Project): { b
   const shared = sharedCompositions(baseline, current)
   const keys = new Set<EntityKey>()
   for (const p of [base, current])
-    for (const c of Object.values(p.compositions)) if (!shared.has(c.id)) for (const v of compositionEntities(c)) keys.add(keyOf(v))
+    for (const c of Object.values(p.compositions)) if (!shared.has(c.id)) for (const k of compositionKeys(c)) keys.add(k)
   if (isOverlay(baseline)) for (const k of baseline.approved.keys()) keys.add(k)
   return { before, after, keys }
 }

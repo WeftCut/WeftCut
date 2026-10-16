@@ -40,7 +40,7 @@ const unreviewed: Change[] = [
 ]
 const mine: Change[] = [change({ id: 'Layer:mine', class: 'modified', ranges: range(5 * S, 6 * S) })]
 const view = (baseline: number, list = unreviewed, user = mine): ReviewView => ({
-  version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed: list, user, user_count: user.length, decorations: [],
+  version: { session: 1, revision: 1, baseline_revision: baseline }, content_revision: 1, has_baseline: true, unreviewed: list, user, user_count: user.length, decorations: [],
 })
 /** Main sends the user-only list only when asked. */
 const served = (v: ReviewView, args?: { include_user?: boolean }): ReviewView => (args?.include_user ? v : { ...v, user: [] })

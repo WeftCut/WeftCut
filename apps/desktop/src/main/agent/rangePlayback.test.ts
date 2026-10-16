@@ -70,6 +70,16 @@ describe('replay', () => {
     expect(replay(s.actor.snapshot(), pb)).toEqual({ composition_id: s.root(), t_us: 5 * S, end_t_us: 6 * S, same: false, follows: null })
   })
 
+  it('answers each project as it is, whichever it read before — as undo and redo swap them', () => {
+    const s = setup()
+    const pb = recordPlayback(s.actor.snapshot(), s.root(), 5 * S, 6 * S)
+    const was = s.actor.snapshot()
+    const off = s.edit((l) => { l.enabled = false })
+    const renamed = s.edit((l) => { l.label = 'Interview' })
+    for (const [p, same] of [[was, true], [off, false], [was, true], [renamed, true], [off, false]] as const)
+      expect(replay(p, pb)!.same).toBe(same)
+  })
+
   it('has no place once its composition is gone', () => {
     const s = setup()
     const pb = recordPlayback(s.actor.snapshot(), s.root(), 5 * S, 6 * S)

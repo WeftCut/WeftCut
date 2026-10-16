@@ -119,6 +119,21 @@ describe('diffProjects — classes', () => {
     expect(says(only(diffProjects(mid, a.snapshot())))).toContain('speed')
   })
 
+  it('says each pair of snapshots afresh where a clip now sits, however it was diffed before', () => {
+    const { a, tA, tB } = setup()
+    const id = color(a, tA, 0, S)
+    const before = a.snapshot()
+    ok(a.dispatch('update_layer', { layer: id, patch: { label: 'Intro' } }))
+    const renamed = a.snapshot()
+    ok(a.dispatch('move_layer', { layer: id, to_track: tB, t_start_us: 0, escape_link: false }))
+    const moved = a.snapshot()
+    for (const [p, track] of [[renamed, tA], [moved, tB], [renamed, tA]] as const) {
+      const c = only(diffProjects(before, p))
+      expect(c.ranges[0]!.track_id).toBe(track)
+      expect(says(c)).toEqual(track === tA ? ['label'] : ['track', 'label'])
+    }
+  })
+
   it('a move to another track says the track first, with the footprint on each side on its track', () => {
     const { a, tA, tB } = setup()
     const id = color(a, tA, 0, S)

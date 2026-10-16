@@ -17,7 +17,7 @@ import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
 import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
-import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewApproveResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs } from '../../shared/review'
+import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewApproveArgs, type ReviewApproveResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -529,13 +529,29 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { value, publication: before === publicationVersion.revision ? null : { ...publicationVersion } }
   }
 
+  /** The Review view: the actor's state now, named by the latest publication.
+   *  The two can differ only while a replacement defers the actor's events —
+   *  the state may then be ahead of what was published — and an approval is
+   *  refused then (`reviewViewCurrent`), so no view of that window is ever
+   *  acted on. */
   function reviewView(includeUser = false): ReviewView {
     const s = actor.reviewState()
     const version = { ...publicationVersion, baseline_revision: s.baseline_revision }
     // Closing accepts unreviewed changes silently (ADR 0115): with no project
     // open there is nothing to review, though the actor still holds one.
-    if (publishedDir === null) return { version, has_baseline: false, unreviewed: [], user: [], user_count: 0, decorations: [] }
-    return { version, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: includeUser ? s.user : [], user_count: s.user.length, decorations: s.decorations }
+    // What this reader reads: the user-only list's changes move it only when asked for.
+    const content_revision = includeUser ? s.content_revision_with_user : s.content_revision
+    if (publishedDir === null) return { version, content_revision, has_baseline: false, unreviewed: [], user: [], user_count: 0, decorations: [] }
+    return { version, content_revision, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: includeUser ? s.user : [], user_count: s.user.length, decorations: s.decorations }
+  }
+
+  /** `review_view` for a caller holding the lists of content revision
+   *  `held`: while they are still the current ones (and a project is open),
+   *  only the version and counts — the lists again otherwise. */
+  function reviewViewSince(includeUser: boolean, held: unknown): ReviewView | ReviewViewUnchanged {
+    const view = reviewView(includeUser)
+    if (publishedDir === null || held !== view.content_revision) return view
+    return { unchanged: true, version: view.version, content_revision: view.content_revision, has_baseline: view.has_baseline, user_count: view.user_count }
   }
 
   /** Is `held` — the version of the view the user approved from — still the
@@ -546,7 +562,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (typeof version !== 'object' || version === null || replacing || publishedDir === null) return false
     const held = version as Partial<ReviewVersion>
     return held.session === publicationVersion.session && held.revision === publicationVersion.revision
-      && held.baseline_revision === actor.reviewState().baseline_revision
+      && held.baseline_revision === actor.reviewRevision()
   }
 
   /** What one activity's ops did (spec Part B, per-activity highlight). Like
@@ -705,7 +721,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'review': {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true
-        if (channel === 'review_view') return reviewView(includeUser)
+        if (channel === 'review_view') return reviewViewSince(includeUser, (args as ReviewViewArgs).held_content)
         // An approval applies only to the view the user acted on; a stale one
         // approves nothing. Either way it answers with the fresh view: the
         // surface that approved is the one reading it, so the recompute is

@@ -293,6 +293,28 @@ describe('Review baseline — preference patches, checkpoints, reset', () => {
   })
 })
 
+describe('Review baseline — content revision', () => {
+  it('moves only when what the state lists does', () => {
+    const { a, tA, tB } = setup()
+    a.pinReviewBaseline()
+    color(a, tA, 0, S, AGENT)
+    const y = color(a, tB, 0, S)
+    const first = a.reviewState().content_revision
+    expect(a.reviewState().content_revision).toBe(first)
+    const withUser = a.reviewState().content_revision_with_user
+    // The user's clip is still "added, 1 s long": a new state, the same lists.
+    label(a, y, 'renamed')
+    expect([a.reviewState().content_revision, a.reviewState().content_revision_with_user]).toEqual([first, withUser])
+    // Moved, it is a different user change — nothing a reader of the
+    // unreviewed list alone reads.
+    ok(a.dispatch('move_layer', { layer: y, to_track: tB, t_start_us: 2 * S, escape_link: false }))
+    expect(a.reviewState().content_revision).toBe(first)
+    expect(a.reviewState().content_revision_with_user).toBeGreaterThan(withUser)
+    ok(a.dispatch('update_layer', { layer: y, patch: { label: 'theirs' } }, AGENT))
+    expect(a.reviewState().content_revision).toBeGreaterThan(first)
+  })
+})
+
 describe('Review baseline — memo and notification', () => {
   it('the review state is memoized until the baseline or the project changes', () => {
     const { a, tA } = setup()

@@ -185,6 +185,8 @@ export interface ActorHandle {
   /** Review (ADR 0115). The baseline compared against the current state —
    *  memoized, computed only when asked. */
   reviewState(): ReviewState
+  /** The baseline revision, without computing the state. */
+  reviewRevision(): number
   /** Work session begin: pin the Review baseline to the session's `Pre-agent`
    *  checkpoint (current state when `checkpointId` is absent or gone).
    *  Initializes when there is none; re-pins only when nothing is unreviewed.
@@ -2377,6 +2379,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     deleteCheckpoint,
     listCheckpoints,
     reviewState: () => history.reviewState(),
+    reviewRevision: () => history.reviewRevision(),
     pinReviewBaseline: (checkpointId) =>
       history.pinReviewBaseline((checkpointId !== undefined ? history.checkpointSnapshot(checkpointId) : null) ?? current()),
     approveReviewAll: () => history.approveAll(),

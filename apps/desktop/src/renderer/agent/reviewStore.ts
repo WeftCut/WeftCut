@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@/bridge/events'
 import { REVIEW_CHANGED_EVENT, reviewActivityView, reviewApprove, reviewApproveAll, reviewView } from '../ipc'
-import type { Change, ReviewApproveResult, ReviewVersion, ReviewView } from '../../shared/review'
+import type { Change, ReviewApproveResult, ReviewVersion, ReviewView, ReviewViewUnchanged } from '../../shared/review'
 import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
@@ -65,6 +65,10 @@ interface ReviewState {
    *  version, unless it adds nothing (`listsUser` where the held view had no
    *  user list). True when applied. */
   apply: (next: ReviewView, listsUser?: boolean) => boolean
+  /** Take a newer version of the held lists (`ReviewViewUnchanged`): the
+   *  view's version and counts move, its lists and highlight stay. False —
+   *  nothing taken — unless the held view has those very lists. */
+  applyUnchanged: (next: ReviewViewUnchanged) => boolean
 }
 
 /** Is `next` a strictly newer view than `held`? A view is identified by its
@@ -102,6 +106,12 @@ export const useReview = create<ReviewState>((set, get) => ({
     set({ view: next, viewListsUser: listsUser, highlight: fillsUser ? held.highlight : buildReviewHighlight(next.unreviewed, next.decorations) })
     return true
   },
+  applyUnchanged: (next) => {
+    const held = get().view
+    if (held === null || held.version.session !== next.version.session || held.content_revision !== next.content_revision) return false
+    if (isNewerReviewView(next.version, held.version)) set({ view: { ...held, version: next.version, has_baseline: next.has_baseline, user_count: next.user_count } })
+    return true
+  },
 }))
 
 // ── Ownership ──────────────────────────────────────────────────────────────────
@@ -117,9 +127,16 @@ export async function refreshReview(): Promise<void> {
   if (pending) { again = true; return }
   pending = true
   try {
-    const listsUser = useReview.getState().showUser
-    const next = await reviewView({ include_user: listsUser })
-    if (consumers > 0) useReview.getState().apply(next, listsUser)
+    const { showUser: listsUser, view: held, viewListsUser } = useReview.getState()
+    // The lists held, when read the way this read asks: main then sends them
+    // again only if they changed.
+    const heldContent = held !== null && viewListsUser === listsUser ? { held_content: held.content_revision } : {}
+    const next = await reviewView({ include_user: listsUser, ...heldContent })
+    if (consumers > 0) {
+      if (!('unchanged' in next)) useReview.getState().apply(next, listsUser)
+      // The view held was replaced while this read was out: read the lists.
+      else if (!useReview.getState().applyUnchanged(next)) again = true
+    }
   } catch { /* keep the last good view */ }
   finally {
     pending = false

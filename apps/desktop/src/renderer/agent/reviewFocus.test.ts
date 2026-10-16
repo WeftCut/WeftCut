@@ -120,7 +120,7 @@ describe('buildFocusPaint', () => {
 
 describe('useFocusPaint', () => {
   const view = (unreviewed: Change[], baseline = 1): ReviewView => ({
-    version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
+    version: { session: 1, revision: 1, baseline_revision: baseline }, content_revision: 1, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
   })
   beforeEach(() => {
     resetReviewForTests()
@@ -160,7 +160,7 @@ describe('the review focus rule: an item stays while its list shows it', () => {
     ({ workspace_id: workspace, revision, session: work, sessions: [work], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks })
   const t = (id: string, patch: Partial<TackView> = {}) => tack({ id, session_id: 'session', ...patch })
   const view = (unreviewed: Change[], baseline = 1): ReviewView => ({
-    version: { session: 1, revision: 1, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
+    version: { session: 1, revision: 1, baseline_revision: baseline }, content_revision: 1, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
   })
   const focus = () => useReviewFocus.getState().focus
   const hover = () => useReviewFocus.getState().hover

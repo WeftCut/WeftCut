@@ -17,7 +17,7 @@ const change = (patch: Partial<Change> = {}): Change => ({
   ranges: [{ composition_id: 'root', track_id: null, t_start_us: 0, t_end_us: 1_000_000 }], ...patch,
 })
 const view = (revision: number, baseline: number, unreviewed: Change[] = [change()], session = 1): ReviewView => ({
-  version: { session, revision, baseline_revision: baseline }, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
+  version: { session, revision, baseline_revision: baseline }, content_revision: revision, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [],
 })
 const approved = (v: ReviewView, applied = true) => ({ applied, view: v })
 /** Resolve microtasks and the listen() promise. */
@@ -37,6 +37,42 @@ describe('review view versions', () => {
     expect(isNewerReviewView({ session: 1, revision: 5, baseline_revision: 1 }, { session: 1, revision: 4, baseline_revision: 2 })).toBe(false)
     expect(isNewerReviewView({ session: 1, revision: 9, baseline_revision: 9 }, { session: 2, revision: 0, baseline_revision: 0 })).toBe(false)
     expect(isNewerReviewView({ session: 2, revision: 0, baseline_revision: 0 }, { session: 1, revision: 9, baseline_revision: 9 })).toBe(true)
+  })
+
+  const unchanged = (revision: number, content: number, user_count = 0) =>
+    ({ unchanged: true, version: { session: 1, revision, baseline_revision: 1 }, content_revision: content, has_baseline: true, user_count })
+
+  it('sends the lists it holds, and keeps them and their highlight when main answers they are unchanged', async () => {
+    let reads = 0
+    mocks.invoke.mockImplementation(async () => (++reads === 1 ? view(1, 1) : unchanged(2, 1, 3)))
+    const release = acquireReview()
+    await flush()
+    const { highlight, view: held } = useReview.getState()
+    await refreshReview()
+    expect(mocks.invoke).toHaveBeenLastCalledWith('review_view', { include_user: false, held_content: 1 })
+    expect(useReview.getState().view).toEqual({ ...held, version: { session: 1, revision: 2, baseline_revision: 1 }, user_count: 3 })
+    expect(useReview.getState().highlight).toBe(highlight)
+    release()
+  })
+
+  it('reads the lists again when the view it held was replaced while an unchanged answer was out', async () => {
+    let answer!: (v: unknown) => void
+    let reads = 0
+    mocks.invoke.mockImplementation((channel: string) => {
+      if (channel !== 'review_view') return Promise.resolve(approved(view(3, 2, [])))
+      reads += 1
+      return reads === 1 ? Promise.resolve(view(1, 1)) : reads === 2 ? new Promise(r => { answer = r }) : Promise.resolve(view(4, 2, []))
+    })
+    const release = acquireReview()
+    await flush()
+    void refreshReview()
+    expect(await approveAllChanges()).toBe(true)
+    // Unchanged against the lists of content 1, which are no longer held.
+    answer(unchanged(2, 1))
+    await flush()
+    expect(reads).toBe(3)
+    expect(useReview.getState().view).toMatchObject({ version: { revision: 4 }, content_revision: 4, unreviewed: [] })
+    release()
   })
 
   it('drops a fetch that started before an approval and answered after it', async () => {

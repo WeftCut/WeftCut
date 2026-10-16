@@ -102,12 +102,20 @@ export interface GroupDecoration {
 export interface ReviewVersion { session: number; revision: number; baseline_revision: number }
 
 /** `review_view` arguments. The user-only list is sent only when asked for
- *  (the Changes tab's "show my changes"); its count always is. */
-export interface ReviewViewArgs { include_user?: boolean }
+ *  (the Changes tab's "show my changes"); its count always is.
+ *  `held_content`: the `content_revision` of the view the caller holds, read
+ *  with the same `include_user` — when the lists are still those, the answer
+ *  is a `ReviewViewUnchanged` instead of the lists again. */
+export interface ReviewViewArgs { include_user?: boolean; held_content?: number }
 
 /** What the review surfaces read (`review_view`). */
 export interface ReviewView {
   version: ReviewVersion
+  /** Moves whenever what this view lists does — the unreviewed list, the
+   *  decorations, the user-only list when asked for — and only then; within
+   *  one session (`version.session`) and one `include_user`, equal means the
+   *  same lists. */
+  content_revision: number
   /** False until the first work session begins or an agent first edits. */
   has_baseline: boolean
   /** Differences an Agent-sourced commit touched since the baseline. */
@@ -120,6 +128,18 @@ export interface ReviewView {
   /** Group layers containing changes of EITHER list; filter by `change_ids`
    *  against the list on screen. */
   decorations: GroupDecoration[]
+}
+
+/** A `review_view` answer to a caller that holds the current lists
+ *  (`held_content`): the fresh version and counts, nothing to rebuild. A
+ *  commit that touched nothing reviewed — the common one — costs the
+ *  renderer no list and no highlight. */
+export interface ReviewViewUnchanged {
+  unchanged: true
+  version: ReviewVersion
+  content_revision: number
+  has_baseline: boolean
+  user_count: number
 }
 
 /** `review_approve_all` arguments. `version` is the view the user acted on:

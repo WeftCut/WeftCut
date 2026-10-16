@@ -15,8 +15,15 @@
 // layer's start, so a head trim shifts them; compared from the range's
 // start), and a layer's label and lock, which play nothing. Markers are notes,
 // and track toggles preference-shaped (review excludes them too).
-import type { Composition, Layer, LayerParams, Project, Transition } from '../state/model'
-import { eachLayer } from '../state/model'
+//
+// Cost: every tack is replayed on every commit, so what a replay reads is
+// indexed, and what it derives is kept, per model object — a track's layers
+// by time, a composition's transitions by layer, the project's layers by id,
+// and a layer's content times (exact arithmetic, the dearest part) — each
+// built once, on first read. Immer keeps an unedited object's identity across
+// commits, so a commit re-derives only what it touched, however many tacks
+// read it, and a replay costs a binary search per track.
+import type { Composition, Layer, LayerParams, Project, Rational, Track, Transition } from '../state/model'
 import { shiftKeyframes } from '../state/mutations/animated'
 import { hasSourceWindow, shiftLayerKeyframes } from '../state/mutations/helpers'
 import { sourceInstantAt } from '../state/mutations/markers'
@@ -66,25 +73,97 @@ export interface Replay {
  *  project from recursing without end. */
 const MAX_NESTING = 32
 
+/** The content time `layer` shows at timeline instant `tUs`, kept per layer
+ *  object: the same object at the same instant is the same answer, and the
+ *  same object — so `samePlayed` can tell an unedited part by identity. */
+const instants = new WeakMap<Layer, Map<number, SourceInstant>>()
+function instantAt(layer: Layer, tUs: number): SourceInstant {
+  let byT = instants.get(layer)
+  if (!byT) instants.set(layer, byT = new Map())
+  let at = byT.get(tUs)
+  if (!at) byT.set(tUs, at = sourceInstantAt(layer, tUs))
+  return at
+}
+
+/** Where `layer` shows the recorded content time `at` now, on a `fps` grid —
+ *  null when it no longer shows it — kept per layer object and recorded
+ *  instant. */
+const places = new WeakMap<Layer, WeakMap<SourceInstant, { fps: Rational; t_us: number | null }>>()
+function placeOf(layer: Layer, at: SourceInstant, fps: Rational): number | null {
+  let byAt = places.get(layer)
+  if (!byAt) places.set(layer, byAt = new WeakMap())
+  const kept = byAt.get(at)
+  if (kept && kept.fps.num === fps.num && kept.fps.den === fps.den) return kept.t_us
+  const t_us = shows(layer, at) ? sourceInstantTimelineUs(layer, at, fps) : null
+  byAt.set(at, { fps, t_us })
+  return t_us
+}
+
+/** A track's layers by start, with the running maximum of their ends. */
+interface TrackIndex { layers: Layer[]; maxEnd: number[] }
+const trackIndexes = new WeakMap<Track, TrackIndex>()
+function trackIndex(track: Track): TrackIndex {
+  let index = trackIndexes.get(track)
+  if (!index) {
+    const layers = [...track.layers].sort((a, b) => a.t_start_us - b.t_start_us)
+    const maxEnd: number[] = []
+    for (const l of layers) maxEnd.push(Math.max(maxEnd.at(-1) ?? -Infinity, l.t_end_us))
+    trackIndexes.set(track, index = { layers, maxEnd })
+  }
+  return index
+}
+
+/** The layers of `track` overlapping `[tUs, endTUs)` — or showing at `tUs`
+ *  for a point — by start. Every layer before the first whose running end
+ *  passes `tUs` ends at or before it. */
+function overlapping(track: Track, tUs: number, endTUs: number | null): Layer[] {
+  const { layers, maxEnd } = trackIndex(track)
+  let lo = 0, hi = layers.length
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (maxEnd[mid]! > tUs) hi = mid; else lo = mid + 1 }
+  const out: Layer[] = []
+  for (let i = lo; i < layers.length; i++) {
+    const l = layers[i]!
+    if (endTUs === null ? l.t_start_us > tUs : l.t_start_us >= endTUs) break
+    if (l.t_end_us > tUs) out.push(l)
+  }
+  return out
+}
+
+/** A composition's transitions by the layers they join, as indexes into its
+ *  list — so the ones a range plays keep the list's order. */
+const transitionIndexes = new WeakMap<readonly Transition[], Map<string, number[]>>()
+function transitionsOf(c: Composition, layerIds: ReadonlySet<string>): Transition[] {
+  if (c.transitions.length === 0 || layerIds.size === 0) return []
+  let index = transitionIndexes.get(c.transitions)
+  if (!index) {
+    index = new Map()
+    c.transitions.forEach((tr, i) => {
+      for (const id of [tr.from_layer, tr.to_layer]) { const at = index!.get(id); if (at) at.push(i); else index!.set(id, [i]) }
+    })
+    transitionIndexes.set(c.transitions, index)
+  }
+  const at = new Set<number>()
+  for (const id of layerIds) for (const i of index.get(id) ?? []) at.add(i)
+  return [...at].sort((a, b) => a - b).map((i) => c.transitions[i]!)
+}
+
 function contentIn(p: Project, c: Composition, tUs: number, endTUs: number | null, depth: number): Content {
   const played: Played[] = []
   const ids = new Set<string>()
-  for (const track of c.tracks) for (const layer of track.layers) {
-    const overlaps = endTUs === null ? layer.t_start_us <= tUs && tUs < layer.t_end_us : layer.t_start_us < endTUs && layer.t_end_us > tUs
-    if (!overlaps) continue
+  for (const track of c.tracks) for (const layer of overlapping(track, tUs, endTUs)) {
     const start = Math.max(layer.t_start_us, tUs)
     const end = endTUs === null ? start : Math.min(layer.t_end_us, endTUs)
-    const at = sourceInstantAt(layer, start)
+    const at = instantAt(layer, start)
     let nested: Content | null = null
     if (layer.params.kind === 'CompositionRef') {
       const inner = p.compositions[layer.params.composition]
       nested = !inner || depth >= MAX_NESTING ? { played: [], transitions: [] }
-        : contentIn(p, inner, at.src_us, endTUs === null ? null : sourceInstantAt(layer, end).src_us, depth + 1)
+        : contentIn(p, inner, at.src_us, endTUs === null ? null : instantAt(layer, end).src_us, depth + 1)
     }
     played.push({ track_id: track.id, layer, from: start - tUs, to: end - tUs, offset: start - layer.t_start_us, at, nested })
     ids.add(layer.id)
   }
-  return { played, transitions: c.transitions.filter((tr) => ids.has(tr.from_layer) || ids.has(tr.to_layer)) }
+  return { played, transitions: transitionsOf(c, ids) }
 }
 
 /** Record what plays in `[tUs, endTUs)` of composition `compositionId` — or
@@ -107,10 +186,26 @@ function playedValues(l: Layer, offset: number): unknown {
   return { kind: l.params.kind, enabled: l.enabled, metadata: l.metadata, params, effects }
 }
 
+/** Whether two objects of one layer play the same values, `aOffset` and
+ *  `bOffset` into each — kept per pair of objects: a recorded layer edited in
+ *  a way that plays nothing (a rename) is compared once, not on every commit. */
+const verdicts = new WeakMap<Layer, WeakMap<Layer, Map<string, boolean>>>()
+function sameValues(a: Layer, aOffset: number, b: Layer, bOffset: number): boolean {
+  if (a === b) return true
+  let byB = verdicts.get(a)
+  if (!byB) verdicts.set(a, byB = new WeakMap())
+  let byOffsets = byB.get(b)
+  if (!byOffsets) byB.set(b, byOffsets = new Map())
+  const key = `${aOffset}:${bOffset}`
+  let same = byOffsets.get(key)
+  if (same === undefined) byOffsets.set(key, same = jsonEqual(playedValues(a, aOffset), playedValues(b, bOffset)))
+  return same
+}
+
 function samePlayed(a: Played, b: Played): boolean {
   return a.track_id === b.track_id && a.layer.id === b.layer.id && a.from === b.from && a.to === b.to
-    && a.at.src_us === b.at.src_us && jsonEqual(a.at.src_fraction, b.at.src_fraction)
-    && (a.layer === b.layer || jsonEqual(playedValues(a.layer, a.offset), playedValues(b.layer, b.offset)))
+    && (a.at === b.at || (a.at.src_us === b.at.src_us && jsonEqual(a.at.src_fraction, b.at.src_fraction)))
+    && sameValues(a.layer, a.offset, b.layer, b.offset)
     && (a.nested === null ? b.nested === null : b.nested !== null && sameContent(a.nested, b.nested))
 }
 
@@ -131,7 +226,9 @@ const layerIndexes = new WeakMap<Project, Map<string, { layer: Layer; compositio
 function layerIndex(p: Project): Map<string, { layer: Layer; composition: Composition }> {
   let index = layerIndexes.get(p)
   if (!index) {
-    index = new Map([...eachLayer(p)].map(({ layer, composition }) => [layer.id, { layer, composition }]))
+    index = new Map()
+    for (const composition of Object.values(p.compositions))
+      for (const track of composition.tracks) for (const layer of track.layers) index.set(layer.id, { layer, composition })
     layerIndexes.set(p, index)
   }
   return index
@@ -145,6 +242,31 @@ function layerIndex(p: Project): Map<string, { layer: Layer; composition: Compos
  *  none, the range stays where it was recorded; null once that composition
  *  is gone. A range moved before zero is held at zero, and plays differently
  *  there. */
+/** What a playback last played against, per track — and whether that was
+ *  the same — so a replay over tracks that still hold the very same layer
+ *  objects in its range answers without building or comparing anything. Not
+ *  kept over a Group layer: what it plays is read through another
+ *  composition. */
+interface LastReplay {
+  composition_id: string; t: number; end: number | null
+  tracks: readonly Track[]; layers: Layer[][]; transitions: readonly Transition[]; same: boolean
+}
+const lastReplays = new WeakMap<Playback, LastReplay>()
+
+function sameAsLast(last: LastReplay | undefined, c: Composition, t: number, end: number | null): boolean {
+  if (!last || last.composition_id !== c.id || last.t !== t || last.end !== end
+    || last.transitions !== c.transitions || last.tracks.length !== c.tracks.length) return false
+  if (last.tracks === c.tracks) return true
+  for (let i = 0; i < c.tracks.length; i++) {
+    const track = c.tracks[i]!, was = last.tracks[i]!
+    if (track === was) continue
+    if (track.id !== was.id) return false
+    const now = overlapping(track, t, end), before = last.layers[i]!
+    if (now.length !== before.length || now.some((l, j) => l !== before[j])) return false
+  }
+  return true
+}
+
 export function replay(p: Project, pb: Playback): Replay | null {
   let composition: Composition | undefined = p.compositions[pb.composition_id]
   let t = pb.t_us
@@ -152,8 +274,8 @@ export function replay(p: Project, pb: Playback): Replay | null {
   const layers = pb.content.played.length ? layerIndex(p) : null
   for (const x of pb.content.played) {
     const found = layers!.get(x.layer.id)
-    if (!found || !shows(found.layer, x.at)) continue
-    const now = sourceInstantTimelineUs(found.layer, x.at, found.composition.fps)
+    const now = found ? placeOf(found.layer, x.at, found.composition.fps) : null
+    if (now === null || !found) continue
     composition = found.composition
     t = Math.max(0, now - x.from)
     follows = {
@@ -164,6 +286,15 @@ export function replay(p: Project, pb: Playback): Replay | null {
   }
   if (!composition) return null
   const end = pb.end_t_us === null ? null : t + pb.end_t_us - pb.t_us
-  const same = sameContent(pb.content, contentIn(p, composition, t, end, 0))
+  const last = lastReplays.get(pb)
+  let same: boolean
+  if (sameAsLast(last, composition, t, end)) same = last!.same
+  else {
+    const content = contentIn(p, composition, t, end, 0)
+    same = sameContent(pb.content, content)
+    const layers = composition.tracks.map((track) => content.played.filter((x) => x.track_id === track.id).map((x) => x.layer))
+    if (content.played.some((x) => x.nested !== null)) lastReplays.delete(pb)
+    else lastReplays.set(pb, { composition_id: composition.id, t, end, tracks: composition.tracks, layers, transitions: composition.transitions, same })
+  }
   return { composition_id: composition.id, t_us: t, end_t_us: end, same, follows }
 }

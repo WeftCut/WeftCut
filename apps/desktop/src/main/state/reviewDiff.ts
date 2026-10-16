@@ -16,7 +16,7 @@
 // up as a false difference either.
 import { layerRate, sourceIn, sourceOut } from '../../renderer/layerTiming'
 import { approximateTime, compareTime, divideTime, subtractTime } from '../../renderer/timeMapping'
-import type { Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } from './model'
+import type { Composition, Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } from './model'
 import { hasSourceWindow } from './mutations/helpers'
 import { mediaLabel } from './summary'
 import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
@@ -381,12 +381,37 @@ export function locateChanges(changes: readonly Change[], current: Project): Cha
   })
 }
 
+/** A modified layer's or marker's change, kept per pair of model objects and
+ *  their places: everything it says — what differs, its details, both
+ *  footprints — is read off those alone. The Review view is recomputed on
+ *  every commit, and after a ripple most of its changes are of objects the
+ *  commit did not touch: they are found here, the very same Change, instead
+ *  of compared again. `null`: the pair differs in no compared field. */
+interface KeptModification { b: Kept; c: Kept; change: Change | null }
+const modifications = new WeakMap<object, WeakMap<object, KeptModification>>()
+type Kept = LayerEntity | MarkerEntity
+const keptObject = (v: Kept): object => (v.kind === 'Layer' ? v.layer : v.marker)
+const keepable = (v: EntityValue): v is Kept => v.kind === 'Layer' || v.kind === 'Marker'
+const samePlace = (x: Kept, y: Kept): boolean =>
+  x.composition_id === y.composition_id && (x.kind !== 'Layer' || x.track_id === (y as LayerEntity).track_id)
+function keptModification(b: EntityValue, c: EntityValue): Change | null | undefined {
+  if (!keepable(b) || !keepable(c) || b.kind !== c.kind || keptObject(b) === keptObject(c)) return undefined
+  const hit = modifications.get(keptObject(b))?.get(keptObject(c))
+  return hit && samePlace(hit.b, b) && samePlace(hit.c, c) ? hit.change : undefined
+}
+function keepModification(b: EntityValue, c: EntityValue, change: Change | null): void {
+  if (!keepable(b) || !keepable(c) || b.kind !== c.kind) return
+  let byAfter = modifications.get(keptObject(b))
+  if (!byAfter) modifications.set(keptObject(b), byAfter = new WeakMap())
+  byAfter.set(keptObject(c), { b, c, change })
+}
+
 /** Net values only; one stable change per entity. */
 export function diffProjects(baseline: BaselineSource, current: Project): Change[] {
   const { before, after, keys } = compareEntities(baseline, current)
   const changes: Change[] = []
 
-  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, details: ChangeDetail[]): void => {
+  const emit = (cls: ChangeClass, b: EntityValue | undefined, c: EntityValue | undefined, details: ChangeDetail[]): Change => {
     const v = (c ?? b)!
     const fc = c && footprint(c, after)
     const fb = b && footprint(b, before)
@@ -399,10 +424,13 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     // Gone from the current project, it can be named only from the baseline.
     if (cls === 'removed' && b) { const name = nameOf(b, before, current.media_pool); if (name) change.before_name = name }
     changes.push(change)
+    return change
   }
 
   for (const key of keys) {
     const b = before.get(key), c = after.get(key)
+    const kept = b && c ? keptModification(b, c) : undefined
+    if (kept !== undefined) { if (kept !== null) changes.push(kept); continue }
     if (entitiesEqual(b, c)) continue
     if (!b || !c) {
       const v = (b ?? c)!
@@ -415,14 +443,14 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     if (b.kind === 'Layer') ({ aspects, keys: params } = compareLayers(b, c as LayerEntity))
     else if (b.kind === 'Marker') ({ aspects } = compareMarkers(b, c as MarkerEntity))
     else aspects = compareOther(b, c)
-    if (aspects.size === 0) continue // differs only in an uncompared field
+    if (aspects.size === 0) { keepModification(b, c, null); continue } // differs only in an uncompared field
     const lb = locationOf(b), lc = locationOf(c)
     const moved = lb !== null && lc !== null && (lb.composition_id !== lc.composition_id || lb.track_id !== lc.track_id)
     if (moved) aspects.add('placement')
     const ordered = orderedAspects(aspects)
     const details = b.kind === 'Layer' ? layerDetails(b, c as LayerEntity, ordered, params!)
       : b.kind === 'Marker' ? markerDetails(b, c as MarkerEntity, ordered) : otherDetails(ordered)
-    emit('modified', b, c, details)
+    keepModification(b, c, emit('modified', b, c, details))
   }
 
   const rootId = current.root_id
@@ -452,16 +480,30 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
  */
 const FOOTPRINT_KINDS: ReadonlySet<EntityKind> = new Set(['Layer', 'Marker', 'Transition'])
 
+/** A composition's Group layers, kept per composition object: a commit
+ *  re-reads only the compositions it touched. */
+const groupLayers = new WeakMap<Composition, readonly Layer[]>()
+function groupLayersOf(c: Composition): readonly Layer[] {
+  let out = groupLayers.get(c)
+  if (!out) {
+    const found: Layer[] = []
+    for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'CompositionRef') found.push(l)
+    groupLayers.set(c, out = found)
+  }
+  return out
+}
+
 export function groupDecorations(changes: readonly Change[], current: Project): GroupDecoration[] {
   const shownBy = new Map<Uuid, Array<{ layer: Layer; composition_id: Uuid }>>()
   for (const c of Object.values(current.compositions))
-    for (const t of c.tracks)
-      for (const l of t.layers)
-        if (l.params.kind === 'CompositionRef') {
-          const list = shownBy.get(l.params.composition) ?? []
-          list.push({ layer: l, composition_id: c.id })
-          shownBy.set(l.params.composition, list)
-        }
+    for (const l of groupLayersOf(c)) {
+      const ref = (l.params as Extract<LayerParams, { kind: 'CompositionRef' }>).composition
+      const list = shownBy.get(ref) ?? []
+      list.push({ layer: l, composition_id: c.id })
+      shownBy.set(ref, list)
+    }
+  // No Group layer anywhere — the common case — decorates nothing.
+  if (shownBy.size === 0) return []
   const out = new Map<Uuid, GroupDecoration>()
   for (const change of changes) {
     if (!FOOTPRINT_KINDS.has(changeKind(change))) continue

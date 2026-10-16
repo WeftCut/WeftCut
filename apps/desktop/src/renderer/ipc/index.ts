@@ -36,7 +36,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
-import type { ReviewActivityView, ReviewApproveAllArgs, ReviewApproveArgs, ReviewApproveResult, ReviewView, ReviewViewArgs } from "../../shared/review";
+import type { ReviewActivityView, ReviewApproveAllArgs, ReviewApproveArgs, ReviewApproveResult, ReviewView, ReviewViewArgs, ReviewViewUnchanged } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
 export type {
   Change as ReviewChange,
@@ -1103,9 +1103,10 @@ export async function projectRestoreCheckpoint(checkpointId: string): Promise<vo
 /// changes, user-only changes and Group decorations. Main computes it only
 /// when asked, memoized per baseline and project revision. Refetch on
 /// `REVIEW_CHANGED_EVENT` and on `project:changed`. The user-only list comes
-/// only with `include_user`; `user_count` always does.
-export async function reviewView(args: ReviewViewArgs = {}): Promise<ReviewView> {
-  return invoke<ReviewView>("review_view", { ...args });
+/// only with `include_user`; `user_count` always does. With `held_content`,
+/// lists still the held ones answer as `ReviewViewUnchanged`.
+export async function reviewView(args: ReviewViewArgs = {}): Promise<ReviewView | ReviewViewUnchanged> {
+  return invoke<ReviewView | ReviewViewUnchanged>("review_view", { ...args });
 }
 
 /// What one agent call did: the history ops of an activity row, each diffed

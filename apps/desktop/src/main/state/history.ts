@@ -2,7 +2,7 @@
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 import { diffProjects, groupDecorations, locateChanges } from './reviewDiff'
-import { ABSENT, entitiesEqual, extractEntities, touchedEntityKeys, type Absent, type EntityValue } from './reviewEntities'
+import { ABSENT, entitiesEqual, extractEntities, jsonEqual, touchedEntityKeys, type Absent, type EntityValue } from './reviewEntities'
 import type { Change, EntityKey, GroupDecoration } from '../../shared/review'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
@@ -96,6 +96,13 @@ interface MutableBaseline { base: Project; approved: Map<EntityKey, EntityValue 
  *  agent touched) and user-only ones, plus Group decorations for both. */
 export interface ReviewState {
   baseline_revision: number
+  /** Moves whenever what a reader without the user-only list reads does —
+   *  the unreviewed list, the decorations, whether there is a baseline — and
+   *  only then: a commit that changes none of it keeps it. Only ever
+   *  increases. */
+  content_revision: number
+  /** As `content_revision`, for a reader of the user-only list too. */
+  content_revision_with_user: number
   has_baseline: boolean
   unreviewed: Change[]
   user: Change[]
@@ -111,6 +118,24 @@ export interface OpDiff {
   decorations: GroupDecoration[]
 }
 const unavailableOpDiff = (): OpDiff => ({ available: false, reverted: false, changes: [], decorations: [] })
+
+const sameChanges = (a: readonly Change[], b: readonly Change[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i] || jsonEqual(x, b[i]))
+
+/** What a run of ops did — its predecessor snapshot against its last one —
+ *  kept per pair of snapshots. Both are immutable, so the diff is too: a
+ *  selected activity is re-read on every commit (its changes are placed on
+ *  the current timeline), and only that placing depends on the commit. A
+ *  snapshot rewritten by an `*Everywhere` patch is a new object, and diffs
+ *  afresh. */
+const runDiffs = new WeakMap<Project, WeakMap<Project, Change[]>>()
+function runDiff(before: Project, after: Project): Change[] {
+  let byAfter = runDiffs.get(before)
+  if (!byAfter) runDiffs.set(before, byAfter = new WeakMap())
+  let changes = byAfter.get(after)
+  if (!changes) byAfter.set(after, changes = diffProjects(before, after))
+  return changes
+}
 
 /** The 'Initial' entry's summary half — shared by the constructor and reset() so
  *  the seed row is spelled once. */
@@ -138,6 +163,10 @@ export class History {
   private review: MutableBaseline | null = null
   private reviewRev = 0
   private reviewMemo: { rev: number; base: Project; current: Project; state: ReviewState } | null = null
+  private reviewContent = 0
+  private reviewContentWithUser = 0
+  /** The last state handed out, for the content comparison. */
+  private reviewLast: ReviewState | null = null
   private reviewListener: ((revision: number) => void) | null = null
 
   effectStates(ids: readonly Uuid[]): Array<'applied' | 'reverted' | 'unknown'> {
@@ -163,8 +192,9 @@ export class History {
     this.effectLineage = new WeakMap()
     this.knownEffects.clear()
     // A project opening's baseline goes with its history (ADR 0115), and so
-    // does the memo holding the previous project's snapshots.
+    // do the memo and the last state holding the previous project's snapshots.
     this.reviewMemo = null
+    this.reviewLast = null
     if (this.review !== null) { this.review = null; this.bumpReview() }
   }
 
@@ -351,16 +381,33 @@ export class History {
     const current = this.current()
     if (review === null) {
       this.reviewMemo = null
-      return { baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] }
+      return this.stamped({ baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] })
     }
     const m = this.reviewMemo
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
     const changes = diffProjects(review, current)
     const unreviewed: Change[] = [], user: Change[] = []
     for (const c of changes) (review.agentTouched.has(c.id) ? unreviewed : user).push(c)
-    const state: ReviewState = { baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) }
+    const state = this.stamped({ baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) })
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state
+  }
+
+  /** The baseline revision alone, without computing the state. */
+  reviewRevision(): number { return this.reviewRev }
+
+  /** `state` with its content revision: the last one's when it lists the
+   *  same, else the next. A change the diff kept is the very same object
+   *  (`diffProjects`), so comparing lists is mostly by reference. */
+  private stamped(state: Omit<ReviewState, 'content_revision' | 'content_revision_with_user'>): ReviewState {
+    const last = this.reviewLast
+    const sameListed = last !== null && last.has_baseline === state.has_baseline && sameChanges(last.unreviewed, state.unreviewed)
+      && jsonEqual(last.decorations, state.decorations)
+    if (!sameListed) this.reviewContent += 1
+    if (!sameListed || !sameChanges(last!.user, state.user)) this.reviewContentWithUser += 1
+    const out = { ...state, content_revision: this.reviewContent, content_revision_with_user: this.reviewContentWithUser }
+    this.reviewLast = out
+    return out
   }
 
   /** What the recorded ops `ids` did (spec Part B, per-activity highlight):
@@ -389,8 +436,7 @@ export class History {
     for (let s = 0; s < at.length;) {
       let e = s
       while (e + 1 < at.length && at[e + 1] === at[e] + 1) e += 1
-      const after = this.snapshots[at[e]].snapshot
-      const run = diffProjects(this.snapshots[at[s] - 1].snapshot, after)
+      const run = runDiff(this.snapshots[at[s] - 1].snapshot, this.snapshots[at[e]].snapshot)
       for (const c of run) { changes.delete(c.id); changes.set(c.id, c) }
       s = e + 1
     }

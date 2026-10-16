@@ -50,7 +50,7 @@ const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({
   class: "added", details: [], composition_id: ROOT_ID, ranges: [], ...patch,
 });
 const view: ReviewView = {
-  version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0,
+  version: { session: 1, revision: 1, baseline_revision: 1 }, content_revision: 1, has_baseline: true, user: [], user_count: 0,
   unreviewed: [
     change({ id: "Layer:added" }),
     change({ id: "Layer:edited", class: "modified" }),
