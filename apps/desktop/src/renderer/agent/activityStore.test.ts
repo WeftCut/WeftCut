@@ -35,6 +35,14 @@ describe('agent view and snapshot state', () => {
     receive({ ...snapshot(5), workspace_id: 'reopened' })
     expect(useAgentActivity.getState()).toMatchObject({ mode: 'editor', expanded: {}, following: true })
   })
+  it('settles what is expanded as each snapshot arrives: an emptied closed section forgets it was open', () => {
+    const receive = useAgentActivity.getState().receive
+    const tack = (status: TackView['status']) => ({ id: 't1', session_id: 'session', status }) as TackView
+    receive({ ...snapshot(1, work), tacks: [tack('open'), { ...tack('resolved'), id: 't2' }] })
+    useAgentActivity.setState({ expanded: { 'tacks-closed-session': true } })
+    receive({ ...snapshot(2, work), tacks: [tack('open'), { ...tack('open'), id: 't2' }] })
+    expect(useAgentActivity.getState().expanded).toEqual({})
+  })
   it('repairs a dropped event through a new snapshot and unsubscribes', async () => {
     mocks.invoke.mockResolvedValueOnce(snapshot(1)).mockResolvedValueOnce(snapshot(4))
     const stop = await wireAgentActivity()

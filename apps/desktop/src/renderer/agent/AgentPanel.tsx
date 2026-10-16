@@ -16,6 +16,7 @@ import { TacksTab } from './TacksTab'
 import { ChangesTab } from './ChangesTab'
 import { clearActivityChanges, showActivityChanges, useActivityHighlightHost, useReview, useUnreviewedCount } from './reviewStore'
 import { buildActivitySections, type ActivityRow } from './activityRows'
+import { sessionSectionKey, sessionSectionOpenByDefault } from './expansion'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
 
@@ -180,8 +181,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
       {sections.map(section => {
         const work = snapshot?.sessions.find(s => s.id === section.sessionId)
         if (!work) return <div key={section.id}>{section.rows.map(row)}</div>
-        const key = `session-${section.id}`
-        const defaultOpen = work.ended_at === null || filter === 'errors' || section.rows.some(r => r.kind === 'activity' && r.activity.state === 'running')
+        const key = sessionSectionKey(section)
+        const defaultOpen = filter === 'errors' || sessionSectionOpenByDefault(section, snapshot?.sessions ?? [])
         const open = expanded[key] ?? defaultOpen
         const count = section.rows.reduce((sum, r) => sum + (r.kind === 'reads' ? r.activities.length : 1), 0)
         const failure = section.rows.some(r => r.kind === 'activity' && r.activity.state === 'error')

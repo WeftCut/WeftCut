@@ -2,17 +2,12 @@ import { create } from 'zustand'
 import { listen } from '@/bridge/events'
 import { invoke } from '@/bridge/ipc'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, type AgentActivitySnapshot, type AgentActivityUpdate } from '../../shared/agent-activity'
+import { settleExpanded } from './expansion'
 
 /** The agent panel's tabs, in display order: Activity · Tacks · Changes. */
 export const AGENT_PANEL_TABS = ['activity', 'tacks', 'changes'] as const
 export type AgentPanelTab = (typeof AGENT_PANEL_TABS)[number]
 
-/** Expansion key of a tack row and of a tack group (work session, or `none`
- *  for tacks created outside one). Prefixed so activity eviction keeps them. */
-export const tackRowKey = (id: string) => `tack-${id}`
-export const tackGroupKey = (sessionId: string | null) => `tacks-session-${sessionId ?? 'none'}`
-/** A tack group's "closed" section: its resolved and dismissed tacks. */
-export const tackClosedKey = (sessionId: string | null) => `tacks-closed-${sessionId ?? 'none'}`
 
 interface AgentPanelState {
   snapshot: AgentActivitySnapshot | null
@@ -45,11 +40,14 @@ export const useAgentActivity = create<AgentPanelState>((set) => ({
     const changedProject = s.snapshot?.workspace_id !== snapshot.workspace_id
     const newSession = snapshot.session && snapshot.session.id !== s.seenSession
     const retained = snapshot.evicted !== s.snapshot?.evicted ? new Set(snapshot.activities.flatMap(a => [a.id, `reads-${a.id}`, `session-${a.id}`])) : null
+    const kept = retained ? Object.fromEntries(Object.entries(s.expanded).filter(([key]) => key === 'connections' || key.startsWith('tack') || retained.has(key))) : s.expanded
+    // What a section shows moves with the snapshot; its state does not (expansion.ts).
+    const expanded = s.snapshot && !changedProject ? settleExpanded(s.snapshot, snapshot, kept) : kept
     return {
       snapshot, ready: true,
       mode: newSession ? 'agent' : changedProject ? 'editor' : s.mode,
       seenSession: snapshot.session?.id ?? (changedProject ? null : s.seenSession),
-      ...(retained ? { expanded: Object.fromEntries(Object.entries(s.expanded).filter(([key]) => key === 'connections' || key.startsWith('tack') || retained.has(key))) } : {}),
+      ...(expanded !== s.expanded ? { expanded } : {}),
       ...(changedProject ? { filter: 'all' as const, expanded: {}, anchor: null, following: true } : {}),
     }
   }),

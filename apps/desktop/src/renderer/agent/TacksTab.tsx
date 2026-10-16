@@ -6,7 +6,8 @@ import { formatTimecode } from '../frames'
 import { groupDisplayName, groupOrdinals } from '../lib/layerName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
-import { tackClosedKey, tackGroupKey, tackRowKey, useAgentActivity } from './activityStore'
+import { useAgentActivity } from './activityStore'
+import { tackClosedKey, tackClosedOpenByDefault, tackGroupKey, tackGroupOpenByDefault, tackRowKey } from './expansion'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 import { groupTacks, tackUnplacedReason } from './tackModel'
 import { convertTackToMarker, deleteTacks, setTackStatus } from './tackActions'
@@ -122,10 +123,11 @@ export function TacksTab({ editor }: { editor: boolean }) {
       {groups.map(g => {
         const pending = g.tacks.filter(x => x.status === 'open')
         const closed = g.tacks.filter(x => x.status !== 'open')
-        const defaultOpen = pending.length > 0
+        const defaultOpen = tackGroupOpenByDefault(pending.length)
         const open = expanded[g.key] ?? defaultOpen
         const closedKey = tackClosedKey(g.sessionId)
-        const closedOpen = expanded[closedKey] ?? !defaultOpen
+        const closedDefault = tackClosedOpenByDefault(pending.length)
+        const closedOpen = expanded[closedKey] ?? closedDefault
         const title = g.session?.reason ?? t(g.sessionId === null ? 'tacks.outside_session' : 'tacks.earlier_session')
         return <section key={g.key} className="agent-work-group agent-tack-group">
           <div className="agent-tack-group-heading">
@@ -139,7 +141,7 @@ export function TacksTab({ editor }: { editor: boolean }) {
           {open && pending.map(row)}
           {open && closed.length > 0 && <div className="agent-tack-closed">
             <div className="agent-tack-closed-heading">
-              <button type="button" className="agent-tack-closed-toggle" aria-expanded={closedOpen} onClick={() => toggle(closedKey, !defaultOpen)}>
+              <button type="button" className="agent-tack-closed-toggle" aria-expanded={closedOpen} onClick={() => toggle(closedKey, closedDefault)}>
                 {t('tacks.closed_section', { count: closed.length })}
                 {closedOpen ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>
               <button type="button" className="agent-tack-closed-clear" title={t('tacks.clear_closed_hint')}

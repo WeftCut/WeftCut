@@ -9,7 +9,7 @@ import {
   EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, selectChange, selectTack, setReviewFocus, setReviewHover, useFocusPaint, useReviewFocus,
 } from './reviewFocus'
 import { EMPTY_HIGHLIGHT } from './reviewHighlight'
-import { tackGroupKey, tackRowKey } from './activityStore'
+import { tackGroupKey, tackRowKey } from './expansion'
 
 const S = 1_000_000
 const tack = (patch: Partial<TackView> = {}): TackView => ({
