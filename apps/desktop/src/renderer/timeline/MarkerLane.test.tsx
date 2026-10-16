@@ -56,6 +56,10 @@ import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
+import { resetReviewForTests, useReview } from "../agent/reviewStore";
+import { useAgentActivity } from "../agent/activityStore";
+import type { Change, ReviewView } from "../../shared/review";
+import { ROOT_ID } from "../testing/summaryFixture";
 
 afterEach(cleanup);
 // Every store here is renderer-global; reset them so each case starts at the row
@@ -1029,5 +1033,54 @@ describe("dragging a marker", () => {
         null,
       ),
     );
+  });
+});
+
+describe("review marks on the marker lane (ADR 0116)", () => {
+  const change = (patch: Partial<Change> & { id: string }): Change => ({
+    class: "modified", kind: "Marker", keys: [patch.id as Change["keys"][number]], aspects: ["timing"], details: [],
+    composition_id: ROOT_ID, composition_ids: [ROOT_ID], ranges: [], ...patch,
+  });
+  const review = (unreviewed: Change[]): ReviewView => ({
+    version: { session: 1, revision: 1, baseline_revision: 1 }, has_baseline: true, user: [], user_count: 0, unreviewed, decorations: [],
+  });
+  const moved = change({ id: "Marker:point-1" });
+  const gone = change({ id: "Marker:old", class: "removed", before_name: "Beat",
+    before_ranges: [{ composition_id: ROOT_ID, track_id: null, t_start_us: 2_000_000, t_end_us: 2_000_000 }] });
+  const rings = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('[data-testid="review-marker-mark"]'));
+  const ghosts = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('[data-testid="review-marker-ghost"]'));
+
+  beforeEach(() => {
+    resetReviewForTests();
+    useAgentActivity.setState({ reviewOverlay: true, reviewFocus: null });
+    seed([point({ label: "Intro" }), region({ id: "region-1", t_us: 3_000_000, end_t_us: 3_500_000 })]);
+    useReview.getState().apply(review([moved, gone]));
+  });
+  afterEach(() => resetReviewForTests());
+
+  it("rings a changed marker in its class hue without touching its own colour, and traces a removed one at its baseline place", () => {
+    const { container } = renderLane();
+    expect(rings(container).map((r) => [r.dataset.markerId, r.dataset.reviewMark])).toEqual([["point-1", "modified"]]);
+    expect(parseFloat(rings(container)[0]!.style.left)).toBe(2000 - 2);
+    expect(markById(container, "point-1").style.borderLeft).toContain("rgb(255, 136, 0)");
+    const [trace] = ghosts(container);
+    expect(parseFloat(trace!.style.left)).toBe(4000);
+    expect(trace!.title).toBe("Removed marker “Beat”, baseline position 00:00:02:00");
+    expect(container.querySelector(".review-marker-ghost-label")!.textContent).toBe("Beat");
+    // No "was" bracket for a marker: its row says where it was.
+    expect(container.querySelector('[data-testid="review-was"]')).toBeNull();
+  });
+
+  it("a trace click focuses its change; another focus makes the marks step back; the overlay switch takes them all", () => {
+    const { container } = renderLane();
+    fireEvent.click(ghosts(container)[0]!);
+    expect(useAgentActivity.getState().reviewFocus).toEqual({ kind: "change", id: "Marker:old" });
+    expect(rings(container)[0]!.dataset.recede).toBe("true");
+    expect(ghosts(container)[0]!.dataset.recede).toBeUndefined();
+    act(() => useAgentActivity.getState().setReviewFocus({ kind: "change", id: "Marker:point-1" }));
+    expect(rings(container)[0]!.dataset.recede).toBeUndefined();
+    act(() => useAgentActivity.setState({ reviewOverlay: false }));
+    expect(rings(container)).toHaveLength(0);
+    expect(ghosts(container)).toHaveLength(0);
   });
 });

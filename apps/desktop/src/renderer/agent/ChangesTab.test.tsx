@@ -166,10 +166,38 @@ describe('AgentPanel Changes tab', () => {
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, [removed], []) : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()
-    expect(rows()[0]!.textContent).toContain('Baseline position:')
+    const line = rows()[0]!.querySelector<HTMLElement>('.agent-change-copy > small')!
+    expect(line.textContent).toContain('Baseline position 4.0 – 5.0 s')
+    expect(line.title).toBe('00:00:04:00 – 00:00:05:00')
     fireEvent.click(within(rows()[0]!).getByRole('button', { name: 'Locate on the timeline' }))
     expect(mocks.jump).toHaveBeenCalledWith(4 * S)
     expect(mocks.reveal).not.toHaveBeenCalled()
+  })
+
+  it('names a removed entity by its baseline name, says a track is one, and gives no second notation for both edges', async () => {
+    const list = [
+      change({ id: 'Layer:gone', class: 'removed', ranges: [], before_name: 'Interview take 3',
+        before_ranges: [{ composition_id: ROOT_ID, track_id: 't1', t_start_us: 4 * S, t_end_us: 5 * S }] }),
+      change({ id: 'Layer:nameless', class: 'removed', ranges: [] }),
+      change({ id: 'Track:gt', kind: 'Track', composition_id: 'grp', composition_ids: ['grp'] }),
+      change({ id: 'Layer:early', class: 'modified', aspects: ['timing'], ranges: range(S, 2 * S),
+        details: [{ type: 'time', field: 'start', from_us: 3 * S, to_us: S }, { type: 'time', field: 'end', from_us: 4 * S, to_us: 2 * S }] }),
+      change({ id: 'Layer:trimmed', class: 'modified', aspects: ['timing'], ranges: range(2.5 * S, 4 * S),
+        details: [{ type: 'time', field: 'start', from_us: 2 * S, to_us: 2.5 * S }, { type: 'trim', side: 'start', delta_us: -0.5 * S }] }),
+    ]
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, list, []) : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    const row = (id: string) => document.querySelector<HTMLElement>(`[data-change-id="${id}"]`)!
+    const title = (id: string) => row(id).querySelector('.agent-change-copy > span')!.textContent
+    expect(title('Layer:gone')).toBe('Interview take 3')
+    expect(title('Layer:nameless')).toBe('Clip')
+    expect(title('Track:gt')).toBe('Track “V1”')
+    expect(row('Layer:early').querySelector('.agent-change-copy > small')!.textContent).toBe('Start 3.0 → 1.0 s · End 4.0 → 2.0 s')
+    // One edge told: the place in the same seconds, the timecode only as the tooltip.
+    const trimmed = row('Layer:trimmed').querySelector<HTMLElement>('.agent-change-copy > small')!
+    expect(trimmed.textContent).toBe('Cut 0.5 s from the start · Now 2.5 – 4.0 s')
+    expect(trimmed.title).toBe('00:00:02:15 – 00:00:04:00')
   })
 
   it('a row click focuses its change without seeking; a second click lets it go; hover names it', async () => {

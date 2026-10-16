@@ -16,8 +16,10 @@
 // up as a false difference either.
 import { layerRate, sourceIn, sourceOut } from '../../renderer/layerTiming'
 import { approximateTime, compareTime, divideTime, subtractTime } from '../../renderer/timeMapping'
-import type { Effect, Layer, LayerParams, Project, Uuid } from './model'
+import type { Effect, Layer, LayerParams, Marker, MediaItem, Project, Uuid } from './model'
 import { hasSourceWindow } from './mutations/helpers'
+import { mediaLabel } from './summary'
+import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
 import type { Change, ChangeAspect, ChangeClass, ChangeDetail, EntityLocation, GroupDecoration, TimeRange } from '../../shared/review'
 
 import { compareEntities, trackOrderEqual, linkLabel, entitiesEqual, entityKey, extractEntities, jsonEqual, type BaselineSource, type EntityIndex, type EntityValue } from './reviewEntities'
@@ -82,7 +84,9 @@ function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAsp
   const keys: ParamKeys = { params: new Set(), keyframes: new Set() }
   const la = a.layer, lb = b.layer
   if (a.composition_id !== b.composition_id || a.track_id !== b.track_id) out.add('placement')
-  if (la.t_start_us !== lb.t_start_us || la.t_end_us !== lb.t_end_us) out.add('timing')
+  // Timeline times compare only on one clock: across compositions the two
+  // values are not the same quantity (the move itself is `placement`).
+  if (a.composition_id === b.composition_id && (la.t_start_us !== lb.t_start_us || la.t_end_us !== lb.t_end_us)) out.add('timing')
   if (la.label !== lb.label) out.add('label')
   if (la.enabled !== lb.enabled || la.locked !== lb.locked) out.add('flags')
   if (!jsonEqual(la.effects, lb.effects)) out.add('effects')
@@ -103,14 +107,33 @@ function compareLayers(a: LayerEntity, b: LayerEntity): { aspects: Set<ChangeAsp
   return { aspects: out, keys }
 }
 
+/** A marker tied to the same clip on both sides is placed by its anchor —
+ *  the model's truth; `t_us` is a cache re-derived from the clip on every
+ *  commit (`reconcileMarkers`). So it compares the source instant it names
+ *  and a region's length, the fields that are its own: riding along with its
+ *  clip changes neither, and the clip's change already says the clip moved.
+ *  A region's end follows by a re-snapped delta, so its length may differ by
+ *  a microsecond at a fractional rate without anything having been edited. */
+function anchoredTimingEqual(ma: Marker, mb: Marker): boolean {
+  const len = (m: Marker) => (m.end_t_us === null ? null : m.end_t_us - m.t_us)
+  const la = len(ma), lb = len(mb)
+  const lengthEqual = la === null || lb === null ? la === lb : Math.abs(la - lb) <= 1
+  return ma.anchor!.src_us === mb.anchor!.src_us && jsonEqual(ma.anchor!.src_fraction, mb.anchor!.src_fraction) && lengthEqual
+}
+
 function compareMarkers(a: MarkerEntity, b: MarkerEntity): { aspects: Set<ChangeAspect> } {
   const out = new Set<ChangeAspect>()
   const ma = a.marker, mb = b.marker
+  const sameAnchor = ma.anchor != null && mb.anchor != null && ma.anchor.layer === mb.anchor.layer
   if (a.composition_id !== b.composition_id) out.add('placement')
-  if (ma.t_us !== mb.t_us || ma.end_t_us !== mb.end_t_us) out.add('timing')
+  if (a.composition_id === b.composition_id) {
+    const timingEqual = sameAnchor ? anchoredTimingEqual(ma, mb) : ma.t_us === mb.t_us && ma.end_t_us === mb.end_t_us
+    if (!timingEqual) out.add('timing')
+  }
   if (ma.label !== mb.label || ma.note !== mb.note) out.add('label')
   if (!jsonEqual(ma.color, mb.color)) out.add('params')
-  if (!jsonEqual(ma.anchor, mb.anchor)) out.add('placement')
+  // Tied, untied or tied to another clip; a new instant on the same clip is timing.
+  if (!sameAnchor && (ma.anchor != null || mb.anchor != null)) out.add('placement')
   return { aspects: out }
 }
 
@@ -217,7 +240,8 @@ function trimDetails(a: Layer, b: Layer, rebased: boolean): ChangeDetail[] {
 }
 
 function layerTimingDetails(a: Layer, b: Layer, rebased: boolean): ChangeDetail[] {
-  const out = [...timeDetails(a.t_start_us, b.t_start_us, 'start'), ...timeDetails(a.t_end_us, b.t_end_us, 'end')]
+  // Across compositions only the source clock is shared.
+  const out = rebased ? [] : [...timeDetails(a.t_start_us, b.t_start_us, 'start'), ...timeDetails(a.t_end_us, b.t_end_us, 'end')]
   if (hasSourceWindow(a.params) && hasSourceWindow(b.params)) {
     out.push(...timeDetails(approximateTime(sourceIn(a.params)), approximateTime(sourceIn(b.params)), 'source_start'))
     out.push(...timeDetails(approximateTime(sourceOut(a)), approximateTime(sourceOut(b)), 'source_end'))
@@ -276,7 +300,12 @@ function markerDetails(a: MarkerEntity, b: MarkerEntity, aspects: readonly Chang
   return detailsOf(aspects, (aspect, out) => {
     switch (aspect) {
       case 'placement': if (rebased) out.push({ type: 'composition', from: a.composition_id, to: b.composition_id }); return
-      case 'timing': out.push(...timeDetails(ma.t_us, mb.t_us, 'start'), ...timeDetails(ma.end_t_us ?? ma.t_us, mb.end_t_us ?? mb.t_us, 'end')); return
+      case 'timing':
+        out.push(...timeDetails(ma.t_us, mb.t_us, 'start'))
+        // A point marker has no end; one side's region end against the
+        // other's point compares that point.
+        if (ma.end_t_us !== null || mb.end_t_us !== null) out.push(...timeDetails(ma.end_t_us ?? ma.t_us, mb.end_t_us ?? mb.t_us, 'end'))
+        return
       case 'label': out.push({ type: 'label' }); return
       case 'params': if (!jsonEqual(ma.color, mb.color)) out.push({ type: 'params', keys: ['color'] }); return
     }
@@ -287,6 +316,31 @@ function markerDetails(a: MarkerEntity, b: MarkerEntity, aspects: readonly Chang
  *  by its aspect. */
 function otherDetails(aspects: readonly ChangeAspect[]): ChangeDetail[] {
   return detailsOf(aspects, (aspect, out) => { if (aspect === 'label') out.push({ type: 'label' }) })
+}
+
+/** An entity's own name in a snapshot, as the rest of the app would show it
+ *  first: a clip's label, else its media's or its text's, a Group clip's
+ *  composition label; a marker's, track's or composition's label. Undefined
+ *  when it has none — the surface then names its kind. `index` is the same
+ *  snapshot's entities; `media` the pool (never compared, the same on both). */
+function nameOf(v: EntityValue, index: EntityIndex, media: Record<Uuid, MediaItem>): string | undefined {
+  const name = (() => {
+    switch (v.kind) {
+      case 'Layer': {
+        const own = v.layer.label?.trim()
+        if (own) return own
+        const p = v.layer.params
+        if ('media' in p) { const m = media[p.media]; return m ? mediaLabel(m) : undefined }
+        if (p.kind === 'Text') return textSnippet(p.content, TEXT_NAME_MAX)
+        if (p.kind === 'CompositionRef') { const c = index.get(entityKey('Composition', p.composition)); return c?.kind === 'Composition' ? c.label ?? undefined : undefined }
+        return undefined
+      }
+      case 'Marker': return v.marker.label
+      case 'Track': case 'Composition': return v.label ?? undefined
+      default: return undefined
+    }
+  })()
+  return name?.trim() || undefined
 }
 
 // ── Footprints and ranges ─────────────────────────────────────────────────────
@@ -346,6 +400,8 @@ export function diffProjects(baseline: BaselineSource, current: Project): Change
     // A removed entity's baseline place: where the timeline ghosts it.
     else if (cls === 'removed' && lb) change.from = lb
     if (fb) change.before_ranges = [{ ...fb, track_id: b!.kind === 'Layer' ? b!.track_id : null }]
+    // Gone from the current project, it can be named only from the baseline.
+    if (cls === 'removed' && b) { const name = nameOf(b, before, current.media_pool); if (name) change.before_name = name }
     changes.push(change)
     return change
   }

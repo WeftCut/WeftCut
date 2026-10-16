@@ -1553,7 +1553,17 @@ const zhCN: Resources = {
     group_badge: "包含 {{count}} 项待审阅的变更",
     group_badge_activity: "包含 {{count}} 处变更",
     ghost_label: "已删除的片段，基线位置 {{start}} – {{end}}",
+    // 单次调用的高亮对比的是该调用之前的项目，而不是审阅基线。
+    ghost_label_activity: "已删除的片段，调用前位置 {{start}} – {{end}}",
     before_label: "基线位置",
+    before_call_label: "调用前位置",
+    position_span: "现位于 {{start}} – {{end}} 秒",
+    position_point: "现位于 {{t}} 秒",
+    before_span: "基线位置 {{start}} – {{end}} 秒",
+    before_point: "基线位置 {{t}} 秒",
+    track_title: "轨道“{{name}}”",
+    marker_ghost_label: "已删除的标记“{{label}}”，基线位置 {{at}}",
+    marker_ghost_label_activity: "已删除的标记“{{label}}”，调用前位置 {{at}}",
     // 片段提示中的一行：变更类别与说明。
     clip_title: "{{cls}}：{{what}}",
     status: "{{count}} 项变更待审阅",

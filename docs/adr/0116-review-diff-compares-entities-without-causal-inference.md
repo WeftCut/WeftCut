@@ -14,8 +14,13 @@ were not facts available from two snapshots and could change with unrelated edit
 
 Review compares the effective baseline and current values by entity identity.
 Each entity has its own stable change and is added, removed or modified.
-Equal displacements, linked clips, anchored markers and tracks created with a
-composition remain separate changes. Approval selects only those entities.
+Equal displacements, linked clips and tracks created with a composition remain
+separate changes. A marker tied to the same clip on both sides is placed by its
+anchor — the model's truth, `t_us` being a cache re-derived from the clip — so
+it compares the source instant it names and a region's length: a marker riding
+along with its clip is not a change (the clip's change says the clip moved),
+while one moved within its clip is timing and reports its times. Tying,
+untying or re-tying is placement. Approval selects only those entities.
 Commit-source attribution, preference exclusions and version-checked approval
 remain as defined in ADR 0115.
 
@@ -27,18 +32,55 @@ translations are not trims; without source timing, only nested spans describe
 edge cuts/extensions. The raw before/after values remain available. No editing
 intent, ripple cause, carrier,
 residual motion or operation sequence is inferred.
+Timeline start and end compare only within one composition: across a move to
+another composition the two values sit on different clocks and are not the
+same quantity, so such a move reports the composition (and any source-window
+difference) alone. A point marker has no end value. A removed entity carries
+its own baseline name (`before_name`: label, media or text name), since the
+current project can no longer name it.
+Wording repeats no fact: an edge measured as a trim is said by the trim alone
+(its raw values stay on the change), and a row whose words state its whole
+current place (both edges, or a point's start) shows no second notation for it. Otherwise a row gives its
+place in the seconds its facts speak ("Cut 0.5 s from the start · Now 2.5 –
+4.0 s"), the timecode only as that line's tooltip. A track row says it is a
+track.
 
 Current footprints and historical baseline footprints are separate fields.
 Removed entities have no current footprint. Their ghosts and row timestamps
 are explicitly labelled as baseline positions; locating them uses those
 coordinates verbatim. No neighbour mapping or inferred ripple seam is drawn.
+Because content may now occupy a removal's baseline place (a ripple closes
+up over it), the historical footprint is drawn apart from current ranges
+wherever it appears: the mini timeline paints it as a solid block in the removed
+hue, in a row of its own under the current change band, for every removed kind,
+markers and transitions included — running past the film's end, shaded, when
+a footprint lies there, while seeking stays inside the film; focusing a removal
+washes it hatched in the removed hue instead of the solid current-range wash;
+and a focused or hovered ghost lifts over the clips as its dashed edge alone,
+taking no press. Unfocused, a removed clip is never invisible: a thin
+removed-hue edge along its lane's top spans its baseline stretch over the
+clips — the lane-top red of the trim marks — without a box that would claim
+the clip now there was removed. A removed clip's focus wash stays on its own
+lane while that lane exists. Under an activity's highlight the comparison is
+against the project before that call, and ghosts and historical marks say
+"before this call" rather than "baseline". A Group clip's "contains changes"
+stretch paints under the changes' own marks, and its badge counts timeline
+content (layers, markers, transitions), not tracks or links inside.
 Trim cuts retain the original frontend's lane-top red triangles: centred on
 the current edge, drawn after clips and the focus wash, with the original
 theme-scaled size and pixel clustering. Clicking a mark focuses its first
 change; tooltips list each change once. The adapter accepts only measured trim
 cuts and cannot produce inferred ripple seams or carried-change annotations.
-Focus selects only the entity, with a historical frame when its footprint
-changed. Group badges follow explicit composition references.
+Markers are notes about the material, so the marker lane marks them lightly:
+a changed marker wears a thin ring in its class hue around its glyph, leaving
+its authored colour alone, and a removed one leaves a faded trace in the
+removed hue at its baseline place, its baseline name struck through, under the
+live marks; a click on the trace focuses its change. A marker gets no
+historical bracket — its row says where it was.
+Focus selects only the entity, with a historical bracket when its footprint
+changed: a dashed bracket hung from its lane's top edge over its baseline
+stretch, never a full-height box whose sides would stand inside the clip now
+there and read as a cut through it. Group badges follow explicit composition references.
 
 Activity comparisons retain their historical facts. Only surviving entities'
 current footprints are resolved by identity; later edits never rewrite a

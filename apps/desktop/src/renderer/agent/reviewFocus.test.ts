@@ -74,6 +74,29 @@ describe('buildFocusPaint', () => {
     expect(buildFocusPaint({ kind: 'change', id: 'Layer:a' }, null, [], list).was).toEqual([])
   })
 
+  it('a focused removal washes its baseline footprint as historical — a marker\'s too, which has no ghost', () => {
+    const gone = change({ id: 'Layer:ripple', class: 'removed', ranges: [],
+      before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 2 * S, t_end_us: 3 * S }] })
+    const mark = change({ id: 'Marker:m', kind: 'Marker', class: 'removed', ranges: [],
+      before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 6 * S, t_end_us: 6 * S }] })
+    const p = buildFocusPaint({ kind: 'change', id: 'Layer:ripple' }, null, [], [gone, mark])
+    // Held to the lane the clip was on.
+    expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 2 * S, endUs: 3 * S, historical: true, trackId: 'v1' }])
+    expect(p.reveal).toEqual(p.washes)
+    expect(p.was).toEqual([])
+    const m = buildFocusPaint({ kind: 'change', id: 'Marker:m' }, null, [], [gone, mark])
+    expect([m.washes, [...m.ghosts]]).toEqual([[{ kind: 'change', compositionId: 'root', startUs: 6 * S, endUs: 6 * S, historical: true }], [['Marker:m', 'change']]])
+    // Hovering a removal's row outlines its ghost only; it washes nothing.
+    expect(buildFocusPaint(null, { kind: 'change', id: 'Layer:ripple' }, [], [gone]).washes).toEqual([])
+  })
+
+  it('a modified change washes its current range only; its baseline place is a frame, never a historical wash', () => {
+    const moved = change({ id: 'Layer:m', aspects: ['timing'], ranges: [{ composition_id: 'root', t_start_us: 0, t_end_us: S }],
+      before_ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: 3 * S, t_end_us: 4 * S }] })
+    const p = buildFocusPaint({ kind: 'change', id: 'Layer:m' }, null, [], [moved])
+    expect(p.washes.some(w => w.historical)).toBe(false)
+  })
+
   it('focusing a removal never outlines neighbouring changed clips', () => {
     const list = [...changes, change({ id: 'Layer:after' })]
     const focused = buildFocusPaint({ kind: 'change', id: 'Layer:gone' }, null, [], list)

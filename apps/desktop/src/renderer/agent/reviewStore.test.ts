@@ -152,9 +152,43 @@ describe('buildReviewHighlight', () => {
     expect([...h.layers]).toEqual([['a', 'added'], ['moved', 'modified']])
     expect(h.ghosts).toEqual([{ changeId: 'Layer:gone', layerId: 'gone', compositionId: 'root', trackId: 'track-1', tStartUs: 3, tEndUs: 9 }])
     expect([...h.groups]).toEqual([['group', 1]])
-    expect(h.ranges.some(r => r.changeId === 'Layer:gone')).toBe(false)
+    // Its baseline footprint reaches the mini timeline as historical only.
+    expect(h.ranges.filter(r => r.changeId === 'Layer:gone')).toEqual([{ changeId: 'Layer:gone', cls: 'removed', compositionId: 'root', tStartUs: 3, tEndUs: 9, historical: true }])
+    expect(h.ranges.filter(r => r.historical).map(r => r.changeId)).toEqual(['Layer:gone'])
     expect([...h.layerChanges]).toEqual([['a', 'Layer:a'], ['moved', 'Layer:moved']])
     expect(buildReviewHighlight([{ ...gone, before_ranges: [] }], []).ghosts).toEqual([])
+  })
+
+  it('paints a Group\'s "contains changes" stretch under the changes, and its badge counts timeline content only', () => {
+    const group = change({ id: 'Layer:group', class: 'added', keys: ['Layer:group'], ranges: [{ composition_id: 'root', t_start_us: 2, t_end_us: 6 }] })
+    const inner = change({ id: 'Layer:inner', class: 'modified', keys: ['Layer:inner'], composition_id: 'grp', ranges: [{ composition_id: 'grp', t_start_us: 0, t_end_us: 1 }] })
+    const lane = change({ id: 'Track:inside', kind: 'Track', class: 'added', keys: ['Track:inside'], composition_id: 'grp', ranges: [] })
+    const h = buildReviewHighlight([group, inner, lane], [
+      { layer_id: 'group', composition_id: 'root', t_start_us: 2, t_end_us: 6, change_ids: ['Layer:inner', 'Track:inside'] },
+    ])
+    expect(h.ranges.filter(r => r.compositionId === 'root').map(r => r.changeId)).toEqual(['Group:group', 'Layer:group'])
+    expect([...h.groups]).toEqual([['group', 1]])
+  })
+
+  it('gives a removed marker or transition, which has no ghost, its baseline footprint on the mini timeline', () => {
+    const marker = change({ id: 'Marker:m', kind: 'Marker', class: 'removed', keys: ['Marker:m'], ranges: [],
+      before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 5, t_end_us: 5 }] })
+    const h = buildReviewHighlight([marker], [])
+    expect(h.ghosts).toEqual([])
+    expect(h.ranges).toEqual([{ changeId: 'Marker:m', cls: 'removed', compositionId: 'root', tStartUs: 5, tEndUs: 5, historical: true }])
+    // On the marker lane: a trace at its baseline place, named by its baseline label.
+    expect(h.markerGhosts).toEqual([{ changeId: 'Marker:m', markerId: 'm', compositionId: 'root', tUs: 5, endUs: null, label: '' }])
+  })
+
+  it('marks a live marker by its class and traces a removed region marker with its baseline name', () => {
+    const added = change({ id: 'Marker:a', kind: 'Marker', class: 'added', keys: ['Marker:a'] })
+    const edited = change({ id: 'Marker:e', kind: 'Marker', class: 'modified', keys: ['Marker:e'] })
+    const gone = change({ id: 'Marker:g', kind: 'Marker', class: 'removed', keys: ['Marker:g'], ranges: [], before_name: 'Beat',
+      before_ranges: [{ composition_id: 'root', track_id: null, t_start_us: 2, t_end_us: 4 }] })
+    const h = buildReviewHighlight([added, edited, gone], [])
+    expect([...h.markers]).toEqual([['a', 'added'], ['e', 'modified']])
+    expect(h.markerGhosts).toEqual([{ changeId: 'Marker:g', markerId: 'g', compositionId: 'root', tUs: 2, endUs: 4, label: 'Beat' }])
+    expect(h.layers.size).toBe(0)
   })
 })
 

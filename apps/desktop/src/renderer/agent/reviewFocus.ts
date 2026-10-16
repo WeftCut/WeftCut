@@ -23,8 +23,12 @@ import { listedChanges, useReview } from './reviewStore'
 export type FocusMark = 'tack' | 'change' | 'hover'
 
 /** A stretch of a composition's clock the focused item covers, washed across
- *  the editor timeline's lanes. `endUs === startUs` for a point. */
-export interface FocusWash { kind: ReviewItem['kind']; compositionId: string; startUs: number; endUs: number }
+ *  the editor timeline's lanes. `endUs === startUs` for a point. `historical`:
+ *  a removed entity's baseline footprint, which no current content has to be
+ *  under — washed in the removed hue, apart from a current range. `trackId`:
+ *  the one lane a removed clip's footprint was on, washed alone while that
+ *  lane exists (on the others it would lie over clips it says nothing of). */
+export interface FocusWash { kind: ReviewItem['kind']; compositionId: string; startUs: number; endUs: number; historical?: true; trackId?: string }
 
 /** Historical baseline footprint of the focused entity on one track. */
 export interface FocusWas { trackId: string; compositionId: string; startUs: number; endUs: number }
@@ -58,7 +62,8 @@ function tackWash(t: TackView): FocusWash | null {
 /** Project the focus and the hover onto what the editor timeline paints. A
  *  tack outlines the clips it follows (either end; an anchored tack's one
  *  clip) and washes its current range; a change outlines its clips — or its
- *  ghost, removed — and washes its current range. Historical footprints of a
+ *  ghost, removed — and washes its current range; a removed one, having none,
+ *  washes its baseline footprint as historical. Historical footprints of a
  *  modified entity are shown as separate baseline frames. Other entities are
  *  never selected through spatial or causal relationships. */
 export function buildFocusPaint(
@@ -96,7 +101,11 @@ export function buildFocusPaint(
       changeFocused = true
       outline(c, 'change')
       for (const r of c.ranges) washes.push({ kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
-      for (const r of c.before_ranges ?? []) historical.push({ kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: r.t_end_us })
+      for (const r of c.before_ranges ?? []) {
+        const wash: FocusWash = { kind: 'change', compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us), historical: true }
+        if (c.class === 'removed') washes.push(r.track_id === null ? wash : { ...wash, trackId: r.track_id })
+        else historical.push(wash)
+      }
       for (const r of c.class === 'modified' ? c.before_ranges ?? [] : []) {
         if (!c.from && c.ranges.some(now => now.composition_id === r.composition_id && now.t_start_us === r.t_start_us && now.t_end_us === r.t_end_us)) continue
         if (r.track_id !== null) was.push({ trackId: r.track_id, compositionId: r.composition_id, startUs: r.t_start_us, endUs: Math.max(r.t_start_us, r.t_end_us) })
@@ -114,7 +123,8 @@ const sameMap = <K, V>(a: ReadonlyMap<K, V>, b: ReadonlyMap<K, V>) =>
 const sameWashes = (a: readonly FocusWash[], b: readonly FocusWash[]) =>
   a.length === b.length && a.every((w, i) => {
     const o = b[i]!
-    return w.kind === o.kind && w.compositionId === o.compositionId && w.startUs === o.startUs && w.endUs === o.endUs
+    return w.kind === o.kind && w.compositionId === o.compositionId && w.startUs === o.startUs && w.endUs === o.endUs &&
+      w.historical === o.historical && w.trackId === o.trackId
   })
 const sameWas = (a: readonly FocusWas[], b: readonly FocusWas[]) =>
   a.length === b.length && a.every((w, i) => {
@@ -197,17 +207,20 @@ export function useTrackFocusWas(trackId: string): readonly FocusWas[] {
 }
 
 const NO_WASHES: readonly FocusWash[] = []
-/** The focus's washes on one timeline. `compositionId` null names the root, as
- *  everywhere on the timeline. */
-export function useCompositionFocusWashes(compositionId: string | null): readonly FocusWash[] {
+/** The focus's washes on one lane of a timeline. `compositionId` null names
+ *  the root, as everywhere on the timeline. A wash held to one lane
+ *  (`trackId`) washes every lane once that lane is gone. */
+export function useCompositionFocusWashes(compositionId: string | null, trackId?: string): readonly FocusWash[] {
   const overlay = useOverlay()
   const washes = useFocusPaint(s => s.washes)
   const resolved = useProjectStore(s => compositionId ?? s.summary?.root_id ?? null)
+  const lanes = useProjectStore(s => (washes.some(w => w.trackId !== undefined) ? s.compositionIdByTrackId : null))
   return useMemo(() => {
     if (!overlay || washes.length === 0 || resolved === null) return NO_WASHES
-    const mine = washes.filter(w => w.compositionId === resolved)
+    const mine = washes.filter(w => w.compositionId === resolved &&
+      (w.trackId === undefined || w.trackId === trackId || !lanes?.has(w.trackId)))
     return mine.length === 0 ? NO_WASHES : mine
-  }, [overlay, washes, resolved])
+  }, [overlay, washes, resolved, lanes, trackId])
 }
 
 // ── Reveal: scroll an editor timeline to the focus, never seeking ─────────────

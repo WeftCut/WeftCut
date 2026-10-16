@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react";
+import { Fragment, useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
@@ -140,6 +140,18 @@ export function ReviewGroupBadge({
 /// agent panel instead. It takes the click and nothing else: the press still
 /// bubbles to the lane, which reads it as background as it would without the
 /// ghost (a box from here, a gap click), and a clip over it keeps its own.
+///
+/// While its change is focused or its row hovered, the ghost lifts over the
+/// clips as its dashed edge alone (`data-raised`): after a ripple the content
+/// that closed up sits exactly where it was, and would hide it. Lifted, it
+/// takes no press, so the clip under it keeps every one.
+///
+/// And always, over the clips, a thin removed-hue edge along the lane's top
+/// across the same stretch (`review-ghost-edge`) — the lane-top red the cut
+/// marks speak — so a removal reads on the timeline without being looked for,
+/// without the box that would say the clip now there is the one removed.
+/// Paint only. Under an activity's highlight the stretch is where the clip
+/// was before that call, and the words say so.
 export function ReviewGhosts({
   trackId,
   pxPerSec,
@@ -156,24 +168,32 @@ export function ReviewGhosts({
   const { t } = useTranslation();
   const ghosts = useTrackReviewGhosts(trackId);
   const focus = useGhostFocus();
+  const activity = useActivityHighlightShown();
   if (ghosts.length === 0) return null;
+  const labelKey = activity ? "changes.ghost_label_activity" : "changes.ghost_label";
   const band = layerSliceRect(laneHeight, "full");
   return (
     <>
-      {ghosts.map((g) => (
+      {ghosts.map((g) => {
+        const mark = focus.ghosts.get(g.changeId);
+        const recede = (focus.recede && mark !== "change") || undefined;
+        const left = (g.tStartUs / 1_000_000) * pxPerSec;
+        const width = Math.max(2, ((g.tEndUs - g.tStartUs) / 1_000_000) * pxPerSec);
+        return (
+        <Fragment key={g.changeId}>
         <span
-          key={g.changeId}
           data-testid="review-ghost"
           data-layer-ghost={g.layerId}
           data-change-id={g.changeId}
-          data-focus={focus.ghosts.get(g.changeId)}
-          data-recede={(focus.recede && focus.ghosts.get(g.changeId) !== "change") || undefined}
+          data-focus={mark}
+          data-raised={mark !== undefined || undefined}
+          data-recede={recede}
           role="img"
-          aria-label={t("changes.ghost_label", {
+          aria-label={t(labelKey, {
             start: formatTimecode(g.tStartUs, fpsNum, fpsDen),
             end: formatTimecode(g.tEndUs, fpsNum, fpsDen),
           })}
-          title={t("changes.ghost_label", {
+          title={t(labelKey, {
             start: formatTimecode(g.tStartUs, fpsNum, fpsDen),
             end: formatTimecode(g.tEndUs, fpsNum, fpsDen),
           })}
@@ -181,18 +201,20 @@ export function ReviewGhosts({
             useAgentActivity.getState().selectChange(g.changeId);
             void getCommand("openAgentPanel")?.run();
           }}
-          className="review-ghost absolute cursor-pointer rounded"
-          style={{
-            left: (g.tStartUs / 1_000_000) * pxPerSec,
-            width: Math.max(2, ((g.tEndUs - g.tStartUs) / 1_000_000) * pxPerSec),
-            top: band.top,
-            height: band.height,
-            border: "1px dashed var(--review-removed)",
-            background:
-              "repeating-linear-gradient(135deg, color-mix(in srgb, var(--review-removed) 16%, transparent) 0 4px, transparent 4px 8px)",
-          }}
+          className={`review-ghost absolute rounded ${mark !== undefined ? "pointer-events-none z-[3]" : "cursor-pointer"}`}
+          style={{ left, width, top: band.top, height: band.height }}
         />
-      ))}
+        <span
+          data-testid="review-ghost-edge"
+          data-change-id={g.changeId}
+          data-recede={recede}
+          aria-hidden="true"
+          className="review-ghost-edge pointer-events-none absolute top-0 z-[3]"
+          style={{ left, width }}
+        />
+        </Fragment>
+        );
+      })}
     </>
   );
 }
@@ -202,15 +224,18 @@ export function ReviewGhosts({
 /// over the lane's own background and under everything the lane draws — gap,
 /// ghosts, clips. Paint only: no pointer events, no box of its own in the
 /// flow, so the focus moving never reflows or re-hits anything. The tack hue
-/// for a tack, the neutral review-focus hue for a change.
+/// for a tack, the neutral review-focus hue for a change; a removal's baseline
+/// footprint hatched in the removed hue — where it was, not what is there.
 export function ReviewFocusWash({
   compositionId,
+  trackId,
   pxPerSec,
 }: {
   compositionId: string | null;
+  trackId?: string;
   pxPerSec: number;
 }) {
-  const washes = useCompositionFocusWashes(compositionId);
+  const washes = useCompositionFocusWashes(compositionId, trackId);
   if (washes.length === 0) return null;
   return (
     <>
@@ -222,6 +247,7 @@ export function ReviewFocusWash({
             data-testid="review-focus-wash"
             data-kind={w.kind}
             data-point={point || undefined}
+            data-historical={w.historical || undefined}
             aria-hidden="true"
             className="review-focus-wash pointer-events-none absolute inset-y-0 z-[2]"
             style={{
@@ -237,35 +263,30 @@ export function ReviewFocusWash({
 
 /// A focused change's historical baseline footprint on this lane. Only
 /// while that change is focused (`buildFocusPaint`) — the move's amber edge
-/// says it moved, the panel says by how much; the frame answers "from where"
-/// when that is the question. Drawn before the blocks, so a clip now on that
-/// stretch paints over it; paint only.
+/// says it moved, the panel says by how much; the bracket answers "from where"
+/// when that is the question. Along the lane's top edge, over the blocks
+/// (`z-[3]`), as the removed edge is: a full-height box would stand its sides
+/// inside whatever clip now sits there and read as a cut through it. Paint only.
 export function ReviewWasFrames({
   trackId,
   pxPerSec,
-  laneHeight,
 }: {
   trackId: string;
   pxPerSec: number;
-  laneHeight: number;
 }) {
-  const { t } = useTranslation();
   const was = useTrackFocusWas(trackId);
   if (was.length === 0) return null;
-  const band = layerSliceRect(laneHeight, "full");
   return (
     <>
       {was.map((w, i) => (
         <span
           key={i}
           data-testid="review-was"
-          title={t("changes.before_label")}
-          className="review-was pointer-events-none absolute rounded"
+          aria-hidden="true"
+          className="review-was pointer-events-none absolute top-0 z-[3]"
           style={{
             left: (w.startUs / 1_000_000) * pxPerSec,
             width: Math.max(2, ((w.endUs - w.startUs) / 1_000_000) * pxPerSec),
-            top: band.top,
-            height: band.height,
           }}
         />
       ))}

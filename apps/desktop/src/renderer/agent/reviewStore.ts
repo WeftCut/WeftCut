@@ -18,7 +18,7 @@ import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
-import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
  *  what that call did, shown on the timelines in place of the unreviewed
@@ -195,6 +195,7 @@ export const selectHighlight = (s: Pick<ReviewState, 'highlight' | 'activity'>):
   s.activity?.status === 'ready' ? s.activity.highlight : s.highlight
 const NO_GHOSTS: readonly ReviewGhost[] = []
 const NO_CUTS: readonly ReviewCut[] = []
+const NO_MARKER_GHOSTS: readonly ReviewMarkerGhost[] = []
 const NO_RANGES: readonly ReviewRangeMark[] = []
 
 /** The editor timeline paints review marks only under the Review overlay. */
@@ -244,6 +245,23 @@ export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
     const mine = ghosts.filter(g => g.trackId === trackId)
     return mine.length === 0 ? NO_GHOSTS : mine
   }, [overlay, ghosts, trackId])
+}
+
+/** A marker's review mark on the editor's marker lane, or null. */
+export function useMarkerReviewMark(markerId: string): ReviewClipMark | null {
+  const overlay = useOverlay()
+  return useReview(s => (overlay ? selectHighlight(s).markers.get(markerId) ?? null : null))
+}
+
+/** Removed markers to leave a trace of on one composition's marker lane. */
+export function useCompositionMarkerGhosts(compositionId: string | null): readonly ReviewMarkerGhost[] {
+  const overlay = useOverlay()
+  const ghosts = useReview(s => selectHighlight(s).markerGhosts)
+  return useMemo(() => {
+    if (!overlay || compositionId === null || ghosts.length === 0) return NO_MARKER_GHOSTS
+    const mine = ghosts.filter(g => g.compositionId === compositionId)
+    return mine.length === 0 ? NO_MARKER_GHOSTS : mine
+  }, [overlay, ghosts, compositionId])
 }
 
 /** Trim cut marks on the clip's current lane, in time order. */

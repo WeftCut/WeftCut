@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { shallow } from "zustand/shallow";
 import { useUiScale } from "../settings/layoutTheme";
 import { useTranslation } from "react-i18next";
@@ -7,7 +7,15 @@ import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
 import { attachMarker, detachMarker, removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
-import { useCompositionMarkers } from "../state/projectStore";
+import { useComposition, useCompositionMarkers } from "../state/projectStore";
+import {
+  useActivityHighlightShown,
+  useCompositionMarkerGhosts,
+  useMarkerReviewMark,
+} from "../agent/reviewStore";
+import { useFocusedChangeId, useReviewMarksRecede } from "../agent/reviewFocus";
+import { useAgentActivity } from "../agent/activityStore";
+import { getCommand } from "../commands/registry";
 import { useMarkerDrag } from "./hooks/useMarkerDrag";
 import { MarkerContextMenu } from "./MarkerContextMenu";
 import { openMarkerRenamePrompt } from "./markerRenamePrompt";
@@ -263,6 +271,121 @@ const MarkerGlyph = memo(function MarkerGlyph({
 }, (a, b) => shallow(a.view, b.view) && a.title === b.title && a.dragging === b.dragging &&
   a.onOpenMenu === b.onOpenMenu && a.onBeginDrag === b.onBeginDrag);
 
+/// Review marks on the marker lane (ADR 0116), in the light weight a marker
+/// carries: a marker is a note about the material, not material, so it gets
+/// no "was" bracket — its row in the panel says where it was. A changed
+/// marker wears a thin ring in its class hue around its glyph, the clip
+/// edge's colour without touching the author's own; a removed one leaves a
+/// faded trace at its baseline place (`ReviewMarkerGhosts`). Both under the
+/// Review overlay switch, both stepping back while another change is focused.
+function ReviewMarkerRing({ view }: { view: LaneMarker }) {
+  const mark = useMarkerReviewMark(view.id);
+  const focused = useFocusedChangeId() === `Marker:${view.id}`;
+  const recede = useReviewMarksRecede() && !focused;
+  if (mark === null) return null;
+  const width = view.shape === "region" ? view.widthPx : L_WIDTH_PX;
+  return (
+    <span
+      data-testid="review-marker-mark"
+      data-marker-id={view.id}
+      data-review-mark={mark}
+      data-recede={recede || undefined}
+      aria-hidden="true"
+      className="review-marker-mark pointer-events-none absolute inset-y-px rounded-[3px]"
+      style={{
+        left: view.xPx - RING_PAD_PX,
+        width: width + 2 * RING_PAD_PX,
+        boxShadow: `inset 0 0 0 1.5px var(--review-${mark})`,
+      }}
+    />
+  );
+}
+
+/// Room between a ring and the glyph it surrounds.
+const RING_PAD_PX = 2;
+
+/// Removed markers at their baseline place, drawn before the live marks so a
+/// marker there now paints over the trace: the L or capsule in the removed
+/// hue, faded, its baseline name struck through. A click focuses its change
+/// in the agent panel, as a removed clip's ghost does; it takes no drag and
+/// no menu — there is no marker left to move.
+function ReviewMarkerGhosts({
+  compositionId,
+  pxPerSec,
+  fpsNum,
+  fpsDen,
+}: {
+  compositionId: string | null;
+  pxPerSec: number;
+  fpsNum: number;
+  fpsDen: number;
+}) {
+  const { t } = useTranslation();
+  const scale = useUiScale();
+  const ownId = useComposition(compositionId)?.id ?? null;
+  const ghosts = useCompositionMarkerGhosts(ownId);
+  const focusedId = useFocusedChangeId();
+  const recedeAll = useReviewMarksRecede();
+  const activity = useActivityHighlightShown();
+  if (ghosts.length === 0) return null;
+  const laneHeight = MARKER.laneHeight * scale;
+  return (
+    <>
+      {ghosts.map((g) => {
+        const left = (g.tUs / 1_000_000) * pxPerSec;
+        const start = formatTimecode(g.tUs, fpsNum, fpsDen);
+        const at = g.endUs === null ? start : `${start} – ${formatTimecode(g.endUs, fpsNum, fpsDen)}`;
+        const title = t(activity ? "changes.marker_ghost_label_activity" : "changes.marker_ghost_label", {
+          label: g.label.trim() || t("kinds.marker"),
+          at,
+        });
+        const recede = (recedeAll && focusedId !== g.changeId) || undefined;
+        const focus = () => {
+          useAgentActivity.getState().selectChange(g.changeId);
+          void getCommand("openAgentPanel")?.run();
+        };
+        const region = g.endUs !== null && ((g.endUs - g.tUs) / 1_000_000) * pxPerSec >= L_WIDTH_PX;
+        const height = (region ? MARKER.regionHeight : MARKER.stem.free) * scale;
+        const common = {
+          "data-change-id": g.changeId,
+          "data-recede": recede,
+          title,
+          onClick: focus,
+        };
+        return (
+          <Fragment key={g.changeId}>
+            <span
+              {...common}
+              data-testid="review-marker-ghost"
+              data-marker-ghost={g.markerId}
+              role="img"
+              aria-label={title}
+              className="review-marker-ghost pointer-events-auto absolute cursor-pointer"
+              data-shape={region ? "region" : "point"}
+              style={{
+                left,
+                top: region ? (laneHeight - height) / 2 : laneHeight - MARKER.footInset * scale - height,
+                width: region ? ((g.endUs! - g.tUs) / 1_000_000) * pxPerSec : L_WIDTH_PX,
+                height,
+              }}
+            />
+            {!region && g.label.trim() !== "" && (
+              <span
+                {...common}
+                aria-hidden="true"
+                className="review-marker-ghost-label pointer-events-auto absolute cursor-pointer whitespace-nowrap text-[length:var(--font-size-fine)] font-medium leading-none"
+                style={{ left: left + L_WIDTH_PX + LABEL_GAP_PX, top: (laneHeight - MARKER.labelLine * scale) / 2 }}
+              >
+                {g.label.trim()}
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
 /// The lane's sticky-header cell: what the row is.
 ///
 /// Not the drop strip's bare height-parity spacer — this one names the row —
@@ -422,20 +545,23 @@ export function MarkerLane({
             lane hold nothing: an empty wrapper would leave "painted
             transparently" and "not painted" indistinguishable. `inset-0` so its
             children share the lane's row coordinates. */}
+        <ReviewMarkerGhosts compositionId={compositionId} pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} />
         {markerViews.length > 0 && (
           <div
             data-testid="timeline-marker-layer"
             className="pointer-events-none absolute inset-0"
           >
             {markerViews.map(({ view, title }) => (
-              <MarkerGlyph
-                key={view.id}
-                view={view}
-                title={title}
-                dragging={preview?.markerId === view.id}
-                onOpenMenu={openMarkerMenu}
-                onBeginDrag={beginMarkerDrag}
-              />
+              <Fragment key={view.id}>
+                <ReviewMarkerRing view={view} />
+                <MarkerGlyph
+                  view={view}
+                  title={title}
+                  dragging={preview?.markerId === view.id}
+                  onOpenMenu={openMarkerMenu}
+                  onBeginDrag={beginMarkerDrag}
+                />
+              </Fragment>
             ))}
           </div>
         )}

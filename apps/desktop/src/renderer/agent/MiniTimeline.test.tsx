@@ -137,6 +137,50 @@ describe("review focus on the strip", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
+  it("a removal's baseline footprint is dashed apart, says so under the pointer, and a press focuses it", () => {
+    const removed = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 3_000_000, tEndUs: 4_000_000, historical: true as const };
+    const { container, band, onFocus, onSeek } = strip({ changes: [...changes, removed] });
+    const mark = container.querySelector<HTMLElement>("[data-change-id='Layer:r']")!;
+    expect([mark.dataset.historical, mark.classList.contains("mini-change-historical")]).toEqual(["true", true]);
+    expect(container.querySelector<HTMLElement>("[data-change-id='Layer:m']")!.classList.contains("mini-change-historical")).toBe(false);
+    fireEvent.pointerMove(band("mini-change-band"), { clientX: 175 }); // 3.5 s
+    expect(band("mini-change-band").title).toBe("Removed · Baseline position");
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 175 });
+    expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:r" });
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("a removal's footprint under a current change has its own row: a press there names it, above names the current one", () => {
+    // A ripple closed up: Layer:m now sits exactly where Layer:r was.
+    const under = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 5_000_000, tEndUs: 7_000_000, historical: true as const };
+    const { band, onFocus } = strip({ changes: [...changes, under] });
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300, clientY: 1 });
+    expect(onFocus).toHaveBeenLastCalledWith({ kind: "change", id: "Layer:m" });
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300, clientY: 8 });
+    expect(onFocus).toHaveBeenLastCalledWith({ kind: "change", id: "Layer:r" });
+  });
+
+  it("runs past the film's end to a removal's footprint there, shaded, and never seeks beyond the end", () => {
+    const past = { changeId: "Marker:x", cls: "removed" as const, compositionId: "root", tStartUs: 12_000_000, tEndUs: 12_000_000, historical: true as const };
+    const { container, onSeek, onFocus, band } = strip({ changes: [past] });
+    // Scale 0–12 s on a 10 s film, and a little room after 12 s.
+    const extent = 12_240_000;
+    expect(container.querySelector<HTMLElement>("[data-testid='mini-beyond-end']")!.style.left).toBe(`${(10_000_000 / extent) * 100}%`);
+    expect(container.querySelector<HTMLElement>("[data-change-id='Marker:x']")!.style.left).toBe(`${(12_000_000 / extent) * 100}%`);
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 490, clientY: 8 });
+    expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Marker:x" });
+    const real = container.querySelector<HTMLElement>(".mini-timeline-strip-real")!;
+    fireEvent.pointerDown(real, { button: 0, pointerId: 2, clientX: 250 });
+    expect(onSeek).toHaveBeenLastCalledWith(6_120_000);
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 480 });
+    expect(onSeek).toHaveBeenLastCalledWith(10_000_000);
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    // Without one, no shade and the film's own scale.
+    cleanup();
+    const plain = strip();
+    expect(plain.container.querySelector("[data-testid='mini-beyond-end']")).toBeNull();
+  });
+
   it("a press on the change band focuses the change under it, never a Group footprint", () => {
     const { band, onSeek, onFocus } = strip();
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300 }); // 6 s

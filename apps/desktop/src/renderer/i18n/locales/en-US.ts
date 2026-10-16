@@ -1738,7 +1738,19 @@ const enUS = {
     group_badge: "Contains {{count}} unreviewed change(s)",
     group_badge_activity: "Contains {{count}} change(s)",
     ghost_label: "Removed clip, baseline position {{start}} – {{end}}",
+    // An activity's highlight compares against the project before that call,
+    // not against the review baseline.
+    ghost_label_activity: "Removed clip, position before this call {{start}} – {{end}}",
     before_label: "Baseline position",
+    before_call_label: "Position before this call",
+    // A row's place, in the seconds its facts speak; the timecode is its tooltip.
+    position_span: "Now {{start}} – {{end}} s",
+    position_point: "Now at {{t}} s",
+    before_span: "Baseline position {{start}} – {{end}} s",
+    before_point: "Baseline position {{t}} s",
+    track_title: "Track “{{name}}”",
+    marker_ghost_label: "Removed marker “{{label}}”, baseline position {{at}}",
+    marker_ghost_label_activity: "Removed marker “{{label}}”, position before this call {{at}}",
     // A clip tooltip's line for its review mark: the class, then what it did.
     clip_title: "{{cls}}: {{what}}",
     status: "{{count}} to review",

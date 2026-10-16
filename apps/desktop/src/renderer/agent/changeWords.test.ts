@@ -6,7 +6,7 @@ import zh from '../i18n/locales/zh-CN'
 import type { Change, ChangeDetail } from '../../shared/review'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
 import type { TrackSummary } from '../ipc'
-import { DETAIL_KEYS, changeWordsContext, describeChange, paramName, type Translate } from './changeWords'
+import { DETAIL_KEYS, changeWordsContext, describeChange, paramName, statesPlace, type Translate } from './changeWords'
 
 const S = 1_000_000
 const track = (id: string, label: string | null): TrackSummary => ({ id, kind: 'Video', label, enabled: true, locked: false, muted: false, solo: false, role: null, transient: false, layers: [] })
@@ -64,6 +64,22 @@ describe('describeChange', () => {
   ])('%s', (_name, details, patch, zhText, enText) => {
     expect(say(tZh, details, patch)).toBe(zhText)
     expect(say(tEn, details, patch)).toBe(enText)
+  })
+
+  it('an edge measured as a trim is said by the trim alone; the other edge keeps its values', () => {
+    const details: ChangeDetail[] = [
+      { type: 'time', field: 'start', from_us: 4 * S, to_us: 2 * S },
+      { type: 'time', field: 'end', from_us: 6 * S, to_us: 3_500_000 },
+      { type: 'time', field: 'source_end', from_us: 6 * S, to_us: 5_500_000 },
+      { type: 'trim', side: 'end', delta_us: -500_000 },
+    ]
+    expect(say(tEn, details)).toBe('Start 4.0 → 2.0 s · Cut 0.5 s from the end')
+    expect(statesPlace(change(details))).toBe(false)
+    expect(statesPlace(change(details.slice(0, 2)))).toBe(true)
+    // A point has no end: its start is its whole place.
+    const start = details.slice(0, 1)
+    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', t_start_us: 2 * S, t_end_us: 2 * S }] }))).toBe(true)
+    expect(statesPlace(change(start, { ranges: [{ composition_id: 'root', t_start_us: 2 * S, t_end_us: 3 * S }] }))).toBe(false)
   })
 
   it('names the audio catalog’s effects too', () => {

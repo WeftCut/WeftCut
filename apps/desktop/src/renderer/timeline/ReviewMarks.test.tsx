@@ -212,6 +212,67 @@ describe("Review focus on the editor timeline", () => {
     expect([ghost.dataset.focus, ghost.dataset.recede]).toEqual(["change", undefined]);
   });
 
+  it("a pointed-at ghost lifts over the clips as an edge that takes no press; otherwise it sits under them and takes the click", () => {
+    // A ripple closed up over it: a current clip occupies its baseline place.
+    const covered = { ...other, layers: [clip("closed-up", 3 * S, 4 * S)] };
+    const { container } = render(
+      <Timeline compositionId={null} tracks={[track, covered]} links={[]} transitions={[]} durationUs={10 * S} keybindings={{}}
+        fpsNum={30} fpsDen={1} bladeMode={false} media={[]} readinessOf={() => ({ ready: true })}
+        onExitBlade={vi.fn()} onSeek={vi.fn()} onMutated={vi.fn().mockResolvedValue(undefined)} />,
+    );
+    const ghost = () => q(container, '[data-testid="review-ghost"]')[0]!;
+    expect(ghost().dataset.raised).toBeUndefined();
+    expect(ghost().className.split(/\s+/)).toEqual(expect.arrayContaining(["cursor-pointer"]));
+    expect(ghost().className).not.toContain("z-[3]");
+    act(() => useAgentActivity.getState().setReviewHover({ kind: "change", id: "Layer:gone" }));
+    expect(ghost().dataset.raised).toBe("true");
+    act(() => useAgentActivity.getState().setReviewHover(null));
+    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    expect(ghost().dataset.raised).toBe("true");
+    expect(ghost().className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "z-[3]"]));
+    // The wash names the same stretch, as where it was.
+    const lane = q(container, '[data-testid="track-lane"]').find((l) => l.dataset.trackId === "track-2")!;
+    const wash = lane.querySelector<HTMLElement>('[data-testid="review-focus-wash"]')!;
+    expect([wash.dataset.historical, wash.style.left, wash.style.width]).toEqual(["true", ghost().style.left, ghost().style.width]);
+    // The clip it lies over keeps its press.
+    const block = q(container, '[data-layer-id="closed-up"]')[0]!;
+    fireEvent.pointerDown(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(block, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.click(block);
+    expect([...layerIdsOf(currentSelection())]).toEqual(["closed-up"]);
+  });
+
+  it("a removal always shows a lane-top edge over the clips across its baseline stretch; it takes no press", () => {
+    const { container } = renderTimeline();
+    const [edge] = q(container, '[data-testid="review-ghost-edge"]');
+    const ghost = q(container, '[data-testid="review-ghost"]')[0]!;
+    expect(edge!.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId).toBe("track-2");
+    expect([edge!.style.left, edge!.style.width]).toEqual([ghost.style.left, ghost.style.width]);
+    expect(edge!.className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "top-0", "z-[3]"]));
+    // Another change focused: it steps back with the other marks.
+    act(() => useAgentActivity.getState().selectChange("Layer:edited"));
+    expect(edge!.dataset.recede).toBe("true");
+  });
+
+  it("a removed clip's wash stays on its own lane; with that lane gone it washes them all", () => {
+    const { container } = renderTimeline();
+    act(() => useAgentActivity.getState().selectChange("Layer:gone"));
+    const lanesWashed = () => q(container, '[data-testid="track-lane"]')
+      .filter((l) => l.querySelector('[data-testid="review-focus-wash"]')).map((l) => l.dataset.trackId);
+    expect(lanesWashed()).toEqual(["track-2"]);
+    const gone = { ...view.unreviewed[4]!, before_ranges: [{ composition_id: ROOT_ID, track_id: "no-such-track", t_start_us: 3 * S, t_end_us: 4 * S }] };
+    act(() => useReview.getState().apply({ ...view, version: { ...view.version, revision: 3 }, unreviewed: [gone] }));
+    expect(lanesWashed().sort()).toEqual(["track-1", "track-2"]);
+  });
+
+  it("under an activity's highlight a ghost says where the clip was before that call", () => {
+    const { container } = renderTimeline();
+    expect(q(container, '[data-testid="review-ghost"]')[0]!.title).toContain("baseline position");
+    act(() => useReview.setState({ activity: { activityId: "a", historyIds: [], effect: null, status: "ready", reverted: false, count: 1,
+      highlight: buildReviewHighlight([view.unreviewed[4]!], []) } as never }));
+    expect(q(container, '[data-testid="review-ghost"]')[0]!.title).toBe("Removed clip, position before this call 00:00:03:00 – 00:00:04:00");
+  });
+
   it("a ghost click focuses its change; a clip click still only selects the clip", () => {
     const { container } = renderTimeline();
     fireEvent.click(q(container, '[data-testid="review-ghost"]')[0]!);
@@ -233,7 +294,9 @@ describe("Review focus on the editor timeline", () => {
     // The change has no range; nothing to reveal, nothing moved.
     expect(viewport.scrollLeft).toBe(0);
     act(() => useAgentActivity.getState().selectChange("Layer:gone"));
-    expect(washes(container)).toHaveLength(0);
+    // A removal has no current range: what washes is its baseline footprint.
+    expect(washes(container).length).toBeGreaterThan(0);
+    for (const w of washes(container)) expect(w.dataset.historical).toBe("true");
     const wash = q(container, '[data-testid="review-ghost"]')[0]!;
     const [left, width] = [parseFloat(wash.style.left), parseFloat(wash.style.width)];
     expect(viewport.scrollLeft).toBeGreaterThan(0);
@@ -300,7 +363,10 @@ describe("Pure change marks", () => {
     act(() => useAgentActivity.getState().selectChange("Layer:moved"));
     const frames = q(container, '[data-testid="review-was"]');
     expect(frames).toHaveLength(1);
-    expect(frames[0]!.title).toBe("Baseline position");
+    // A bracket on the lane's top edge over the clip now in its place, as paint only.
+    expect(frames[0]!.className.split(/\s+/)).toEqual(expect.arrayContaining(["pointer-events-none", "z-[3]", "top-0"]));
+    expect(frames[0]!.style.height).toBe("");
+    expect(frames[0]!.getAttribute("aria-hidden")).toBe("true");
     expect(frames[0]!.closest<HTMLElement>('[data-testid="track-lane"]')!.dataset.trackId).toBe("track-2");
     expect(q(container, '[data-testid="review-cut"]')).toHaveLength(0);
     expect(q(container, '[data-layer-id="moved"]')[0]!.title).toContain("Start 4.0 → 2.0 s");

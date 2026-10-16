@@ -9,6 +9,7 @@ import { blankProject, type Layer, type Project, type Uuid } from './model'
 import { root } from './__tests__/fixtures/project'
 import { PBT_RUNS, PBT_SEED } from './__tests__/pbt/harness'
 import { diffProjects, locateChanges, groupDecorations } from './reviewDiff'
+import { mediaLabel } from './summary'
 import { ABSENT, entityKey, extractEntities, touchedEntityKeys, type EntityValue } from './reviewEntities'
 import { parseEntityKey, type Change, type ChangeAspect, type ChangeDetail, type EntityKey } from '../../shared/review'
 
@@ -127,7 +128,7 @@ describe('diffProjects — classes', () => {
     expect(c.aspects).toEqual(['placement', 'timing'])
   })
 
-  it('same-delta translations remain independent entity changes, including anchored markers', () => {
+  it('same-delta translations remain independent entity changes; a marker riding its clip is not one', () => {
     const { a, tA, tB } = setup()
     ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
     const x = video(a, tA, 0, S), y = color(a, tB, 3 * S, 4 * S)
@@ -136,12 +137,36 @@ describe('diffProjects — classes', () => {
     const before = a.snapshot()
     ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }))
     const cs = diffProjects(before, a.snapshot())
-    expect(new Set(cs.map(c => c.id))).toEqual(new Set([L(x), L(y), entityKey('Marker', m)]))
+    // The marker's anchor — its truth — is unchanged; only its cached time followed the clip.
+    expect(root(a.snapshot()).markers[0]!.t_us).toBe(1.5 * S)
+    expect(new Set(cs.map(c => c.id))).toEqual(new Set([L(x), L(y)]))
     expect(cs.every(c => c.keys.length === 1 && c.id === c.keys[0])).toBe(true)
     expect(cs.find(c => c.id === L(x))!.details).toEqual([
       { type: 'time', field: 'start', from_us: 0, to_us: S },
       { type: 'time', field: 'end', from_us: S, to_us: 2 * S },
     ])
+  })
+
+  it('an anchored marker moved within its clip is timing; tying and untying are placement', () => {
+    const { a, tA } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const x = video(a, tA, 0, 4 * S), y = video(a, tA, 5 * S, 9 * S)
+    const m = ok(a.dispatch('add_marker', { t_us: S })) as Uuid
+    const M = entityKey('Marker', m)
+    ok(a.dispatch('attach_marker', { marker: m, layer: x }))
+    const tied = a.snapshot()
+    ok(a.dispatch('update_marker', { marker: m, patch: { t_us: 3 * S } }))
+    const moved = only(diffProjects(tied, a.snapshot()))
+    expect(moved).toMatchObject({ id: M, aspects: ['timing'], details: [{ type: 'time', field: 'start', from_us: S, to_us: 3 * S }] })
+    // Moved within its clip while the clip moved too: the marker's own instant changed, and its times say where it went.
+    ok(a.dispatch('shift_layers', { layers: [x], delta_us: S / 2 }))
+    expect(only(diffProjects(tied, a.snapshot()).filter(c => c.id === M)).details).toEqual([{ type: 'time', field: 'start', from_us: S, to_us: 3.5 * S }])
+    const free = structuredClone(tied)
+    root(free).markers[0]!.anchor = null
+    expect(only(diffProjects(free, tied))).toMatchObject({ id: M, aspects: ['placement'] })
+    const other = structuredClone(tied)
+    root(other).markers[0]!.anchor!.layer = y
+    expect(only(diffProjects(other, tied).filter(c => c.id === M)).aspects).toEqual(['placement'])
   })
 
   it('ripple deletion reports all changed entities and never relocates the removal', () => {
@@ -157,6 +182,31 @@ describe('diffProjects — classes', () => {
       { type: 'time', field: 'start', from_us: 2 * S, to_us: S },
       { type: 'time', field: 'end', from_us: 3 * S, to_us: 2 * S },
     ])
+  })
+
+  it('a removed entity carries its own baseline name: label, media, marker label; none for an unnamed clip', () => {
+    const { a, tA, tB } = setup()
+    ok(a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 20 * S, with_audio: false }))
+    const clip = video(a, tA, 0, S), titled = color(a, tB, 0, S), plain = color(a, tB, 2 * S, 3 * S)
+    ok(a.dispatch('update_layer', { layer: titled, patch: { label: '  Title card ' } }))
+    const m = ok(a.dispatch('add_marker', { t_us: S, label: 'Beat' })) as Uuid
+    const before = a.snapshot()
+    ok(a.dispatch('delete_layers', { layers: [clip, titled, plain] }))
+    ok(a.dispatch('remove_marker', { marker: m }))
+    const cs = diffProjects(before, a.snapshot())
+    const name = (id: EntityKey) => cs.find(c => c.id === id)!.before_name
+    expect(name(L(clip))).toBe(mediaLabel(before.media_pool[AV]!))
+    expect(name(L(titled))).toBe('Title card')
+    expect(name(L(plain))).toBeUndefined()
+    expect(name(entityKey('Marker', m))).toBe('Beat')
+  })
+
+  it('a point marker moved says its time, no end', () => {
+    const { a } = setup()
+    const m = ok(a.dispatch('add_marker', { t_us: S })) as Uuid
+    const before = a.snapshot()
+    ok(a.dispatch('update_marker', { marker: m, patch: { t_us: 2 * S } }))
+    expect(only(diffProjects(before, a.snapshot())).details).toEqual([{ type: 'time', field: 'start', from_us: S, to_us: 2 * S }])
   })
 
   it('listed-only changes have no ranges: track label, link, composition label', () => {
@@ -372,6 +422,15 @@ describe('diffProjects — compositions and Groups', () => {
       [outer.layer_id, after.root_id, [L(v)]],
     ]))
     expect(decos).toHaveLength(2)
+  })
+
+  it('moving across compositions compares no timeline times — two clocks — only the move', () => {
+    const { a, v, inside } = grouped()
+    const before = a.snapshot()
+    ok(a.dispatch('move_layers_to_composition', { layers: [v], to_composition: before.root_id, anchor_layer: v, anchor_t_start_us: 8 * S }))
+    const c = only(diffProjects(before, a.snapshot()).filter((x) => x.id === L(v)))
+    expect(c.aspects).toEqual(['placement'])
+    expect(c.details).toEqual([{ type: 'composition', from: inside, to: before.root_id }])
   })
 
   it('a move out of a Group yields a range in each composition', () => {

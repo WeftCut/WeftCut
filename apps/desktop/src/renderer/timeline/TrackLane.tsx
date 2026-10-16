@@ -593,9 +593,10 @@ export function TrackLane({
           )}
         </div>
       )}
-      {/* Removed clips of this lane under the Review overlay (ADR 0115):
+      {/* Removed clips of this lane under the Review overlay (ADR 0116):
           outlines at their baseline place, before the blocks so a clip now on
-          that stretch paints over them; pointer-events none, no height. */}
+          that stretch paints over them — until pointed at, when one lifts
+          over the blocks as its edge alone and takes no press. */}
       <ReviewGhosts
         trackId={track.id}
         pxPerSec={pxPerSec}
@@ -603,8 +604,9 @@ export function TrackLane({
         fpsNum={fpsNum}
         fpsDen={fpsDen}
       />
-      {/* A focused move's old places on this lane, behind the blocks too. */}
-      <ReviewWasFrames trackId={track.id} pxPerSec={pxPerSec} laneHeight={height} />
+      {/* A focused change's old places on this lane: over the blocks
+          (`z-[3]`), so the clip now there cannot hide them. */}
+      <ReviewWasFrames trackId={track.id} pxPerSec={pxPerSec} />
       {/* Eye-off feedback: dim + freeze the whole layer area. When the
           track is enabled the wrapper is `display: contents` (no box, no
           layout impact); when disabled it's an unpositioned plain div, so
@@ -708,7 +710,7 @@ export function TrackLane({
           only as a sliver along its edges. Above a selected block (`z-[2]`,
           earlier in the DOM), below a dragged one and the height handle
           (`z-[3]`); paint only. */}
-      <ReviewFocusWash compositionId={compositionId} pxPerSec={pxPerSec} />
+      <ReviewFocusWash compositionId={compositionId} trackId={track.id} pxPerSec={pxPerSec} />
       {/* Cut marks (ADR 0115): where material was taken out, from the lane's
           top edge — after the blocks and the wash, so one at a clip's edge is
           never under the clip. They take the click alone. */}

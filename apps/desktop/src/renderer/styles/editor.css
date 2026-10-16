@@ -136,6 +136,36 @@
 .mini-change-modified { background: var(--review-modified); }
 .mini-change-removed { background: var(--review-removed); }
 
+/* A removal's baseline footprint: the removed hue's own solid block, in a
+   row of its own just under the current band (MiniTimeline's
+   HISTORY_ROW_TOP) — what now sits where it was keeps the band above, so
+   neither paints over the other. */
+.mini-change-historical {
+  top: calc(5 * var(--ui-px));
+  height: calc(3 * var(--ui-px));
+}
+
+.mini-change-historical.mini-change-selected {
+  height: calc(4 * var(--ui-px));
+}
+
+/* Past the film's end: the strip runs on only so a removal's baseline
+   footprint there has somewhere to be. Shaded as no film; seeking stops at
+   its edge. */
+.mini-beyond-end {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  pointer-events: none;
+  border-left: 1px solid color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--muted-foreground) 12%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
 /* The review focus on the strip (agent/reviewFocus.ts): the focused change's
    ranges at full strength with a ring, as the selected tack is drawn; a row
    under the pointer rings its mark without filling it. */
@@ -289,6 +319,29 @@
   box-shadow: none;
 }
 
+/* A removal's baseline footprint (ADR 0116): where it was, which the content
+   now there need not have anything to do with. The removed hue, hatched like
+   its ghost, its edges dashed — never the solid current-range wash. */
+.review-focus-wash[data-historical] {
+  --review-focus-hue: var(--review-removed);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--review-focus-hue) 12%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+  box-shadow: none;
+  border-inline: 1px dashed color-mix(in srgb, var(--review-focus-hue) 75%, transparent);
+}
+
+.review-focus-wash[data-historical][data-point] {
+  border-inline: none;
+  background: repeating-linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--review-focus-hue) 85%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
 /* A clip the focus names: one neutral hairline INSIDE its own box, just
    inside a review mark's 2px edge. A ring outside the box ran over the lane's
    edge and onto the clip next door, and left a gap that read as one more
@@ -306,7 +359,36 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-focus) 55%, transparent);
 }
 
-/* A removed clip's ghost: the same hairline, inside its dashed edge. */
+/* A removed clip's ghost at its baseline place: a dashed edge, hatched. */
+.review-ghost {
+  border: 1px dashed var(--review-removed);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--review-removed) 16%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+/* Always over the clips: the removed stretch as a thin removed-hue edge on
+   the lane's top, where cut marks hang — material gone from here, without a
+   box on whatever clip now sits there. */
+.review-ghost-edge {
+  height: calc(2 * var(--ui-px));
+  background: var(--review-removed);
+}
+
+.review-ghost-edge[data-recede] {
+  opacity: 0.45;
+}
+
+/* Lifted over the clips while it is pointed at: its edge alone, so the clip
+   now in its place still reads through it. */
+.review-ghost[data-raised] {
+  background: none;
+  border-width: 2px;
+}
+
+/* The focus's hairline, inside its dashed edge. */
 .review-ghost[data-focus="change"] {
   box-shadow: inset 0 0 0 2px var(--review-focus);
 }
@@ -316,10 +398,14 @@
 }
 
 /* A focused move's old place: the focus's neutral hairline, dashed — a
-   frame, not a clip, and no change class's hue. Behind the clips. */
+   frame, not a clip, and no change class's hue. Over the clips, so no fill. */
+/* A focused change's baseline stretch: a dashed bracket hung from the lane's
+   top edge, short ticks at its two ends — never a box whose sides would stand
+   inside the clip now there. */
 .review-was {
-  border: 1px dashed var(--review-focus);
-  background: color-mix(in srgb, var(--review-focus) 4%, transparent);
+  height: calc(6 * var(--ui-px));
+  border: 2px dashed var(--review-focus);
+  border-bottom: none;
 }
 
 /* A cut mark: the removed hue, nothing else — a ▼ from the lane's top edge
@@ -330,7 +416,29 @@
 
 /* While a change is focused the other review marks step back — still there,
    no longer competing with the one being looked at. */
+/* A removed marker's trace: its L (or capsule) in the removed hue, faded,
+   its baseline name struck through — a note that is no longer there. */
+.review-marker-ghost {
+  opacity: 0.7;
+}
+.review-marker-ghost[data-shape="point"] {
+  border-left: 2px solid var(--review-removed);
+  border-bottom: 2px solid var(--review-removed);
+}
+.review-marker-ghost[data-shape="region"] {
+  border: 1.5px dashed var(--review-removed);
+  border-radius: 2px;
+}
+.review-marker-ghost-label {
+  color: var(--review-removed);
+  opacity: 0.7;
+  text-decoration: line-through;
+}
+
 .review-clip-mark[data-recede],
+.review-marker-mark[data-recede],
+.review-marker-ghost[data-recede],
+.review-marker-ghost-label[data-recede],
 .review-ghost[data-recede],
 .review-cut[data-recede] {
   opacity: 0.45;

@@ -8,8 +8,8 @@ import { trackDisplayName } from '../lib/trackName'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
 import { approveAllChanges, approveChanges, setShowUser, useReview, useReviewView } from './reviewStore'
-import { groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
-import { changeWordsContext, describeChange } from './changeWords'
+import { formatSeconds, groupChanges, keyIds, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
+import { changeWordsContext, describeChange, statesPlace } from './changeWords'
 import { canLocateChange, locateChange } from './changeActions'
 import { useAgentActivity } from './activityStore'
 
@@ -78,10 +78,13 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   }
 
   /** What the row names: the clip, marker, track or Group as the rest of the
-   *  app names it when it still exists; its kind when it is gone. */
+   *  app names it when it still exists; a removed one by its baseline name;
+   *  its kind when it has none. A track says it is one: inside a new Group
+   *  its derived name ("A roll") repeats the root's. */
   const title = (c: Change): string => {
     const id = keyIds(c, c.kind)[0]
     const fallback = t(`changes.kind_${c.kind}`)
+    if (c.class === 'removed') return c.kind === 'Track' && c.before_name ? t('changes.track_title', { name: c.before_name }) : c.before_name ?? fallback
     if (id === undefined || !summary) return fallback
     switch (c.kind) {
       case 'Layer': { const l = layers.get(id); return l ? layerDisplayName(l, t, ordinals) : fallback }
@@ -92,7 +95,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
       case 'Track': {
         const comp = c.composition_id ? summary.compositions[c.composition_id] : undefined
         const track = comp?.tracks.find(x => x.id === id)
-        return track && comp ? trackDisplayName(track, comp.tracks, t) : fallback
+        return track && comp ? t('changes.track_title', { name: trackDisplayName(track, comp.tracks, t) }) : fallback
       }
       case 'Composition': {
         const comp = summary.compositions[id]
@@ -102,14 +105,25 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     }
   }
 
-  const time = (c: Change): string | null => {
+  /** Where the row is on the timeline, in the seconds its facts speak
+   *  ("Cut 0.5 s from the start · Now 2.5 – 4.0 s"); the timecode only as the
+   *  line's tooltip. Nothing when its facts already say its whole current
+   *  place ("Start 4.0 → 2.0 s · End 6.0 → 4.0 s", or a point marker's
+   *  start) — the same place twice. */
+  const time = (c: Change): { text: string; timecode: string } | null => {
+    if (statesPlace(c)) return null
     const ranges = c.ranges.length ? c.ranges : c.before_ranges ?? []
     const r = ranges.find(x => x.composition_id === c.composition_id) ?? ranges[0]
     const comp = r ? summary?.compositions[r.composition_id] : undefined
     if (!r || !comp) return null
-    const start = formatTimecode(r.t_start_us, comp.fps_num, comp.fps_den)
-    const span = r.t_end_us > r.t_start_us ? `${start} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : start
-    return c.ranges.length ? span : `${t('changes.before_label')}: ${span}`
+    const span = r.t_end_us > r.t_start_us
+    const tc = formatTimecode(r.t_start_us, comp.fps_num, comp.fps_den)
+    const timecode = span ? `${tc} – ${formatTimecode(r.t_end_us, comp.fps_num, comp.fps_den)}` : tc
+    const at = c.ranges.length ? 'position' : 'before'
+    const text = span
+      ? t(`changes.${at}_span`, { start: formatSeconds(r.t_start_us), end: formatSeconds(r.t_end_us) })
+      : t(`changes.${at}_point`, { t: formatSeconds(r.t_start_us) })
+    return { text, timecode }
   }
 
   const row = (r: ChangeRow) => {
@@ -126,7 +140,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
           onClick={() => useAgentActivity.getState().setReviewFocus(focused ? null : { kind: 'change', id: c.id })}>
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{title(c)}</span>
-            <small>{[describeChange(c, words), when].filter(Boolean).join(' · ')}</small>
+            <small title={when?.timecode}>{[describeChange(c, words), when?.text].filter(Boolean).join(' · ')}</small>
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}

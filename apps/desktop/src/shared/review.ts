@@ -76,6 +76,9 @@ export interface Change {
   to?: EntityLocation
   /** Measured changes to this entity, without an inferred cause. */
   details: ChangeDetail[]
+  /** A removed entity's own name in the baseline (label, media or text name);
+   *  absent when it had none. The current project cannot name it any more. */
+  before_name?: string
   /** Historical footprints in the comparison baseline. Never current coordinates. */
   before_ranges?: PlacedRange[]
   /** Current footprints by entity identity. Removed entities have none. */

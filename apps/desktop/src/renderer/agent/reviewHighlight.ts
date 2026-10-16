@@ -1,7 +1,9 @@
 // What the timelines paint for a set of review changes (ADR 0115): a pure
 // projection of `Change[]` + `GroupDecoration[]` onto the shapes the surfaces
-// draw — a mark per current clip, a historical ghost per removed clip, a badge
-// per Group clip containing changes, and current ranges for the mini timeline.
+// draw — a mark per current clip or marker, a historical ghost per removed
+// clip or marker, a badge
+// per Group clip containing changes, and ranges for the mini timeline: current
+// footprints, and a removed entity's baseline footprint marked `historical`.
 //
 // The input is deliberately just a change set: the Review view's unreviewed
 // list, or one activity's own changes (`review_activity_view`) — both through
@@ -20,6 +22,17 @@ export interface ReviewGhost {
   trackId: string
   tStartUs: number
   tEndUs: number
+}
+
+/** A removed marker, at its baseline place on the marker lane of its
+ *  composition — `endUs` null for a point — named by its baseline label. */
+export interface ReviewMarkerGhost {
+  changeId: string
+  markerId: string
+  compositionId: string
+  tUs: number
+  endUs: number | null
+  label: string
 }
 
 /** A measured trim cut at an edge of its current clip. The track is resolved
@@ -43,12 +56,18 @@ export interface ReviewRangeMark {
   compositionId: string
   tStartUs: number
   tEndUs: number
+  /** A removed entity's baseline footprint (`before_ranges`), not a place on
+   *  the current timeline: painted apart from current ranges. */
+  historical?: true
 }
 
 export interface ReviewHighlight {
   /** Current layer id → its mark. */
   layers: ReadonlyMap<string, ReviewClipMark>
   ghosts: readonly ReviewGhost[]
+  /** Current marker id → its mark: the marker lane's light ring. */
+  markers: ReadonlyMap<string, ReviewClipMark>
+  markerGhosts: readonly ReviewMarkerGhost[]
   cuts: readonly ReviewCut[]
   /** Current layer id → the change that marks it (its tooltip's words). */
   layerChanges: ReadonlyMap<string, string>
@@ -60,10 +79,15 @@ export interface ReviewHighlight {
 }
 
 export const EMPTY_HIGHLIGHT: ReviewHighlight = {
-  layers: new Map(), ghosts: [], cuts: [], layerChanges: new Map(), changes: new Map(), groups: new Map(), ranges: [],
+  layers: new Map(), ghosts: [], markers: new Map(), markerGhosts: [], cuts: [], layerChanges: new Map(), changes: new Map(), groups: new Map(), ranges: [],
 }
 
 const LAYER_PREFIX = 'Layer:'
+const MARKER_PREFIX = 'Marker:'
+/** What a Group clip's badge counts: content on its composition's timeline.
+ *  A track or link inside has no place there (a new Group's own tracks would
+ *  otherwise count as changes in it). */
+const FOOTPRINT_KINDS: ReadonlySet<Change['kind']> = new Set(['Layer', 'Marker', 'Transition'])
 
 /** Project `changes` onto paintable marks. `decorations` may cover more
  *  changes than `changes` (the Review view's cover both lists); only the
@@ -73,11 +97,35 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
   const layers = new Map<string, ReviewClipMark>()
   const layerChanges = new Map<string, string>()
   const ghosts: ReviewGhost[] = []
+  const markers = new Map<string, ReviewClipMark>()
+  const markerGhosts: ReviewMarkerGhost[] = []
   const cuts: ReviewCut[] = []
   const ranges: ReviewRangeMark[] = []
+  // A Group clip's "contains changes" stretch first, so it paints under the
+  // marks of the changes themselves: a Group clip that is itself added reads
+  // as added where both lie.
+  const ids = new Set(changes.filter(c => FOOTPRINT_KINDS.has(c.kind)).map(c => c.id))
+  const groups = new Map<string, number>()
+  for (const d of decorations) {
+    const n = d.change_ids.reduce((sum, id) => sum + (ids.has(id) ? 1 : 0), 0)
+    if (n === 0) continue
+    groups.set(d.layer_id, n)
+    ranges.push({ changeId: `Group:${d.layer_id}`, cls: 'modified', compositionId: d.composition_id, tStartUs: d.t_start_us, tEndUs: d.t_end_us })
+  }
   for (const c of changes) {
     for (const r of c.ranges) ranges.push({ changeId: c.id, cls: c.class, compositionId: r.composition_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us })
+    // A removal has no current footprint; its baseline one is still where to
+    // find it — any kind, a marker or transition included, which has no ghost.
+    if (c.class === 'removed') for (const r of c.before_ranges ?? [])
+      ranges.push({ changeId: c.id, cls: c.class, compositionId: r.composition_id, tStartUs: r.t_start_us, tEndUs: r.t_end_us, historical: true })
     for (const key of c.keys) {
+      if (key.startsWith(MARKER_PREFIX)) {
+        const markerId = key.slice(MARKER_PREFIX.length)
+        if (c.class !== 'removed') markers.set(markerId, c.class)
+        else for (const r of c.before_ranges ?? []) markerGhosts.push({ changeId: c.id, markerId, compositionId: r.composition_id,
+          tUs: r.t_start_us, endUs: r.t_end_us > r.t_start_us ? r.t_end_us : null, label: c.before_name ?? '' })
+        continue
+      }
       if (!key.startsWith(LAYER_PREFIX)) continue
       const layerId = key.slice(LAYER_PREFIX.length)
       if (c.class !== 'removed') {
@@ -98,13 +146,5 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
       }
     }
   }
-  const ids = new Set(changes.map(c => c.id))
-  const groups = new Map<string, number>()
-  for (const d of decorations) {
-    const n = d.change_ids.reduce((sum, id) => sum + (ids.has(id) ? 1 : 0), 0)
-    if (n === 0) continue
-    groups.set(d.layer_id, n)
-    ranges.push({ changeId: `Group:${d.layer_id}`, cls: 'modified', compositionId: d.composition_id, tStartUs: d.t_start_us, tEndUs: d.t_end_us })
-  }
-  return { layers, ghosts, cuts, layerChanges, changes: new Map(changes.map(c => [c.id, c])), groups, ranges }
+  return { layers, ghosts, markers, markerGhosts, cuts, layerChanges, changes: new Map(changes.map(c => [c.id, c])), groups, ranges }
 }

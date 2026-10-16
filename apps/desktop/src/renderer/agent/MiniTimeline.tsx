@@ -10,6 +10,7 @@ import { hitBand, type BandItem } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
+import { uiPixels } from "../settings/layoutTheme";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
 /// row + project marker pips + timecode readout. No track lanes — the
@@ -36,9 +37,14 @@ interface MiniTimelineProps {
   hover?: ReviewItem | null;
   /// Review change ranges on this composition (`useCompositionChangeRanges`),
   /// painted as a second band along the strip's head — opposite the tack band,
-  /// so the two never read as one: added/modified/removed in their review
-  /// hues, shifted muted.
+  /// so the two never read as one: added/modified in their review hues; a
+  /// removal at its baseline footprint, in the removed hue on a row of its
+  /// own just under them (ADR 0116).
   changes?: readonly ReviewRangeMark[];
+  /// What a removal's historical mark is a position of, under the pointer:
+  /// the review baseline's by default, the project before one call under an
+  /// activity's highlight.
+  historyLabel?: string;
   /// A press on a band that names an item (`hitBand`) focuses it instead of
   /// seeking; the caller shows its row.
   onFocus?: (item: ReviewItem) => void;
@@ -97,6 +103,15 @@ function changeBandItems(changes: readonly ReviewRangeMark[]): BandItem[] {
     .map((c) => ({ id: c.changeId, startUs: c.tStartUs, endUs: c.tEndUs }));
 }
 
+/// Where the row of removals' baseline footprints starts, under the current
+/// change band (`.mini-change-historical`), in theme baseline px: a press
+/// below it names a historical mark first, one above it a current mark first.
+const HISTORY_ROW_TOP = 5;
+
+/// Room left after the last baseline footprint past the film's end, as a
+/// fraction of its time.
+const BEYOND_END_PAD = 0.02;
+
 export function MiniTimeline({
   durationUs,
   markers,
@@ -104,6 +119,7 @@ export function MiniTimeline({
   focus = null,
   hover = null,
   changes = [],
+  historyLabel,
   onFocus,
   onSeek,
   fpsNum,
@@ -139,16 +155,25 @@ export function MiniTimeline({
 
   // Click / drag anywhere on the strip → seek. The shared pointer session
   // tracks outside the strip and releases every listener if scrubbing aborts.
+  // The strip's scale: the composition, stretched past its end when a
+  // removal's baseline footprint lies there (a ripple shortened the film) —
+  // where it was is still somewhere to point at, with a little room after it
+  // so a point there is not cut off by the strip's edge. Seeking stays inside
+  // the film.
+  const extentUs = useMemo(() => {
+    const end = changes.reduce((e, c) => (c.historical ? Math.max(e, c.tEndUs) : e), durationUs);
+    return end > durationUs ? Math.round(end * (1 + BEYOND_END_PAD)) : durationUs;
+  }, [changes, durationUs]);
   const seekFromClientX = useCallback(
     (clientX: number) => {
       const el = stripRef.current;
       if (!el || durationUs <= 0) return;
       const rect = el.getBoundingClientRect();
       const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-      const t = Math.round((x / rect.width) * durationUs);
+      const t = Math.min(durationUs, Math.round((x / rect.width) * extentUs));
       onSeek(t);
     },
-    [durationUs, onSeek],
+    [durationUs, extentUs, onSeek],
   );
 
   const beginGesture = usePointerGesture();
@@ -166,12 +191,12 @@ export function MiniTimeline({
   );
 
   const width = stripWidth;
-  const safeDuration = Math.max(durationUs, 1);
+  const safeDuration = Math.max(extentUs, 1);
   const tickInterval = pickTickIntervalUs(safeDuration, width);
   const ticks: { tUs: number; left: number }[] = [];
   if (width > 0 && durationUs > 0) {
-    for (let t = 0; t <= durationUs; t += tickInterval) {
-      ticks.push({ tUs: t, left: (t / durationUs) * width });
+    for (let t = 0; t <= extentUs; t += tickInterval) {
+      ticks.push({ tUs: t, left: (t / extentUs) * width });
     }
   }
 
@@ -187,7 +212,8 @@ export function MiniTimeline({
       ),
     [tacks],
   );
-  const changeItems = useMemo(() => changeBandItems(changes), [changes]);
+  const changeItems = useMemo(() => changeBandItems(changes.filter((c) => !c.historical)), [changes]);
+  const historyItems = useMemo(() => changeBandItems(changes.filter((c) => c.historical)), [changes]);
   // The focused and hovered tack, drawn over the union: the selection solid,
   // the hover ringed (a hover on the selection adds nothing).
   const tackSpan = (item: ReviewItem | null) =>
@@ -207,13 +233,24 @@ export function MiniTimeline({
   const bandItemAt = (items: readonly BandItem[], e: React.PointerEvent<HTMLElement>): string | null => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || durationUs <= 0) return null;
-    const tUs = ((e.clientX - rect.left) / rect.width) * durationUs;
-    return hitBand(items, tUs, (POINT_SLOP_PX / rect.width) * durationUs);
+    const tUs = ((e.clientX - rect.left) / rect.width) * extentUs;
+    return hitBand(items, tUs, (POINT_SLOP_PX / rect.width) * extentUs);
   };
-  const bandHandlers = (kind: ReviewItem["kind"], items: readonly BandItem[], label: (id: string) => string) => ({
+  // The change band holds two rows; the one pressed is asked first, so a
+  // removal's footprint under a current change is reachable from its own row.
+  const changeAt = (e: React.PointerEvent<HTMLElement>): string | null => {
+    const lower = e.clientY - e.currentTarget.getBoundingClientRect().top >= uiPixels(HISTORY_ROW_TOP);
+    const [first, second] = lower ? [historyItems, changeItems] : [changeItems, historyItems];
+    return bandItemAt(first, e) ?? bandItemAt(second, e);
+  };
+  const bandHandlers = (
+    kind: ReviewItem["kind"],
+    itemAt: (e: React.PointerEvent<HTMLElement>) => string | null,
+    label: (id: string) => string,
+  ) => ({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || onFocus === undefined) return;
-      const id = bandItemAt(items, e);
+      const id = itemAt(e);
       if (id === null) return;
       // The strip's own pointerdown would seek; this press was for the item.
       e.stopPropagation();
@@ -222,14 +259,14 @@ export function MiniTimeline({
     // The label under the pointer as the hover text — set on the node, not
     // through state, so moving along the band renders nothing.
     onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
-      const id = bandItemAt(items, e);
+      const id = itemAt(e);
       e.currentTarget.title = id === null ? "" : label(id);
     },
   });
 
   const playheadLeft =
     durationUs > 0
-      ? (Math.max(0, Math.min(currentTimeUs, durationUs)) / durationUs) * width
+      ? (Math.max(0, Math.min(currentTimeUs, durationUs)) / extentUs) * width
       : 0;
 
   return (
@@ -262,10 +299,10 @@ export function MiniTimeline({
           // a preference about canvas noise, and this strip deliberately ignores
           // it. An anchor that has left its window is a fact about the project.
           if (m.hibernating) return null;
-          const left = (m.t_us / durationUs) * 100;
+          const left = (m.t_us / extentUs) * 100;
           const regionWidth =
             m.end_t_us !== null && m.end_t_us > m.t_us
-              ? ((m.end_t_us - m.t_us) / durationUs) * 100
+              ? ((m.end_t_us - m.t_us) / extentUs) * 100
               : 0;
           return (
             <div
@@ -292,7 +329,7 @@ export function MiniTimeline({
             key={`span-${start}`}
             data-testid="mini-tack"
             className="mini-tack mini-tack-region"
-            style={{ left: `${(start / durationUs) * 100}%`, width: `${((end - start) / durationUs) * 100}%` }}
+            style={{ left: `${(start / extentUs) * 100}%`, width: `${((end - start) / extentUs) * 100}%` }}
           />
         ))}
         {durationUs > 0 && tackBand.points.map((tUs) => (
@@ -300,7 +337,7 @@ export function MiniTimeline({
             key={`point-${tUs}`}
             data-testid="mini-tack"
             className="mini-tack mini-tack-point"
-            style={{ left: `${(tUs / durationUs) * 100}%` }}
+            style={{ left: `${(tUs / extentUs) * 100}%` }}
           />
         ))}
         {durationUs > 0 && ([["selected", selectedSpan], ["hover", hoverSpan]] as const).map(([role, span]) =>
@@ -310,35 +347,45 @@ export function MiniTimeline({
               data-testid={`mini-tack-${role}`}
               className={`mini-tack mini-tack-${role} ${span.endUs <= span.startUs ? "mini-tack-point" : "mini-tack-region"}`}
               style={{
-                left: `${(span.startUs / durationUs) * 100}%`,
+                left: `${(span.startUs / extentUs) * 100}%`,
                 ...(span.endUs <= span.startUs
                   ? {}
-                  : { width: `${((span.endUs - span.startUs) / durationUs) * 100}%` }),
+                  : { width: `${((span.endUs - span.startUs) / extentUs) * 100}%` }),
               }}
             />
           ),
         )}
+        {durationUs > 0 && extentUs > durationUs && (
+          <div
+            data-testid="mini-beyond-end"
+            className="mini-beyond-end"
+            style={{ left: `${(durationUs / extentUs) * 100}%` }}
+          />
+        )}
         {durationUs > 0 && changes.map((c, i) => {
-          const left = (c.tStartUs / durationUs) * 100;
-          const span = ((c.tEndUs - c.tStartUs) / durationUs) * 100;
+          const left = (c.tStartUs / extentUs) * 100;
+          const span = ((c.tEndUs - c.tStartUs) / extentUs) * 100;
           return (
             <div
               key={`${c.changeId}-${i}`}
               data-testid="mini-change"
               data-change-id={c.changeId}
               data-change-class={c.cls}
-              className={`mini-change mini-change-${c.cls}${changeMark(c)}`}
+              data-historical={c.historical || undefined}
+              className={`mini-change mini-change-${c.cls}${c.historical ? " mini-change-historical" : ""}${changeMark(c)}`}
               style={{ left: `${left}%`, width: `${Math.max(0, span)}%` }}
             />
           );
         })}
-        {durationUs > 0 && onFocus !== undefined && changeItems.length > 0 && (
+        {durationUs > 0 && onFocus !== undefined && changeItems.length + historyItems.length > 0 && (
           <div
             data-testid="mini-change-band"
             className="mini-band-hit mini-band-hit-changes"
-            {...bandHandlers("change", changeItems, (id) => {
-              const cls = changes.find((c) => c.changeId === id)?.cls;
-              return cls === undefined ? "" : t(`changes.class_${cls}`);
+            {...bandHandlers("change", changeAt, (id) => {
+              const c = changes.find((x) => x.changeId === id);
+              if (c === undefined) return "";
+              const cls = t(`changes.class_${c.cls}`);
+              return c.historical ? `${cls} · ${historyLabel ?? t("changes.before_label")}` : cls;
             })}
           />
         )}
@@ -346,7 +393,7 @@ export function MiniTimeline({
           <div
             data-testid="mini-tack-band"
             className="mini-band-hit mini-band-hit-tacks"
-            {...bandHandlers("tack", tackItems, (id) => {
+            {...bandHandlers("tack", (e) => bandItemAt(tackItems, e), (id) => {
               const tack = tacks.find((x) => x.id === id);
               return tack === undefined ? "" : tack.label.trim() || t(`tacks.kind_${tack.kind}`);
             })}

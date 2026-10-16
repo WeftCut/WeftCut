@@ -224,11 +224,30 @@ function describeDetail(d: ChangeDetail, change: Pick<Change, 'class' | 'composi
   }
 }
 
+/** The facts a change is told by. An edge measured as a trim is said by
+ *  the trim alone: its raw timeline and source values say the same cut again
+ *  in other units (they stay on the change, unworded). */
+function toldDetails(change: Pick<Change, 'details'>): ChangeDetail[] {
+  const trimmed = new Set(change.details.flatMap(d => (d.type === 'trim' ? [d.side] : [])))
+  if (trimmed.size === 0) return change.details
+  return change.details.filter(d => d.type !== 'time' || !trimmed.has(d.field === 'start' || d.field === 'source_start' ? 'start' : 'end'))
+}
+
+/** Whether a change's words already state its whole current place — both
+ *  timeline edges, or the start of a point (a point marker has no end) —
+ *  so it needs no second notation beside them. */
+export function statesPlace(change: Pick<Change, 'details' | 'ranges'>): boolean {
+  const told = toldDetails(change)
+  const point = change.ranges.length > 0 && change.ranges.every(r => r.t_end_us <= r.t_start_us)
+  const fields = point ? (['start'] as const) : (['start', 'end'] as const)
+  return fields.every(f => told.some(d => d.type === 'time' && d.field === f))
+}
+
 /** What a change did, in one line: its facts in order, joined. A change with
  *  no facts says its aspects; an added or removed one with neither says
  *  nothing (its badge and title already do). */
 export function describeChange(change: Change, ctx: ChangeWordsContext): string {
-  const facts = change.details.map(d => describeDetail(d, change, ctx))
+  const facts = toldDetails(change).map(d => describeDetail(d, change, ctx))
   if (facts.length) return facts.join(FACT_SEPARATOR)
   return change.aspects.map(a => ctx.t(`changes.aspect_${a}`, {})).join(FACT_SEPARATOR)
 }
