@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
+use crate::compute_jobs::{ignore_model_phase, ModelObserver, ModelPhase};
 use crate::inference_files::InferenceFiles;
 
 use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
@@ -62,6 +63,17 @@ impl WhisperCpp {
 #[async_trait]
 impl Transcriber for WhisperCpp {
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
+        self.transcribe_observed(req, &ignore_model_phase).await
+    }
+
+    async fn transcribe_observed(
+        &self,
+        req: TranscribeRequest,
+        observer: ModelObserver<'_>,
+    ) -> Result<RawTranscript, SpeechError> {
+        // Staging the model alias and admission belong to the load, as the
+        // person waiting sees it; inference starts when whisper says so.
+        observer(ModelPhase::LoadingModel);
         let files = InferenceFiles::new()?;
         // The CLI sees relative ASCII names; Rust reads through the real path.
         // Keep files alive until the sidecar has finished and read its result.
@@ -124,14 +136,34 @@ impl Transcriber for WhisperCpp {
             output: OutputSink::File(out_file),
             format,
             device_pin,
+            stderr_phase: whisper_stderr_phase,
         }
-        .run()
+        .run(observer)
         .await
     }
 }
 
+/// whisper-cli's stderr, read for the job phase. `main: processing '<wav>' (…)`
+/// is printed after the model has loaded, right before inference, and `-pp`
+/// adds `whisper_print_progress_callback: progress =  45%` every few percent.
+/// A short clip may finish before the first progress line; it then stays at
+/// inferring without a count, which is the truth.
+fn whisper_stderr_phase(line: &str) -> Option<ModelPhase> {
+    if let Some((_, rest)) = line.split_once("progress =") {
+        let percent: u32 = rest.trim().strip_suffix('%')?.trim().parse().ok()?;
+        return Some(ModelPhase::Inferring {
+            done: Some(percent.min(100)),
+            total: Some(100),
+        });
+    }
+    line.contains(": processing '")
+        .then_some(ModelPhase::INFERRING)
+}
+
 /// Build the `whisper-cli` argument vector:
-/// `-m <model> -f <wav> {-ojf|-osrt} -of <prefix> -l <lang|auto> [-t <threads>]`.
+/// `-m <model> -f <wav> {-ojf|-osrt} -of <prefix> -l <lang|auto> -pp [-t <threads>]`.
+/// `-pp` (print progress, whisper.cpp ≥ 1.2) only adds stderr lines; it is
+/// how a job reports inference progress (see [`whisper_stderr_phase`]).
 ///
 /// Kept as a free function (paths borrowed) so the flag logic is unit-testable
 /// without a running binary — the only automated pin on this CLI contract.
@@ -143,7 +175,7 @@ fn build_args(
     language: Option<&str>,
     threads: Option<u32>,
 ) -> Vec<OsString> {
-    let mut args: Vec<OsString> = Vec::with_capacity(11);
+    let mut args: Vec<OsString> = Vec::with_capacity(12);
     args.push(OsString::from("-m"));
     args.push(model.as_os_str().to_owned());
     args.push(OsString::from("-f"));
@@ -161,6 +193,7 @@ fn build_args(
     // keeps the arg vector uniform and self-documenting.
     args.push(OsString::from("-l"));
     args.push(OsString::from(language.unwrap_or("auto")));
+    args.push(OsString::from("-pp"));
     if let Some(t) = threads {
         args.push(OsString::from("-t"));
         args.push(OsString::from(t.to_string()));
@@ -294,6 +327,49 @@ mod tests {
         );
         let s = as_strings(&args);
         assert!(pos(&s, "-t").is_none(), "no threads → no -t: {s:?}");
+    }
+
+    #[test]
+    fn progress_is_printed_for_the_job_phase() {
+        let s = as_strings(&build_args(
+            Path::new("m"),
+            Path::new("w"),
+            Path::new("o"),
+            true,
+            None,
+            None,
+        ));
+        assert!(pos(&s, "-pp").is_some(), "{s:?}");
+    }
+
+    #[test]
+    fn stderr_reports_inference_start_and_percent() {
+        assert_eq!(
+            whisper_stderr_phase("whisper_model_load: loading model"),
+            None
+        );
+        assert_eq!(
+            whisper_stderr_phase(
+                "main: processing 'audio.wav' (160000 samples, 10.0 sec), 4 threads, 1 processors"
+            ),
+            Some(ModelPhase::INFERRING)
+        );
+        assert_eq!(
+            whisper_stderr_phase("whisper_print_progress_callback: progress =   5%"),
+            Some(ModelPhase::Inferring {
+                done: Some(5),
+                total: Some(100)
+            })
+        );
+        assert_eq!(
+            whisper_stderr_phase("whisper_print_progress_callback: progress = 100%"),
+            Some(ModelPhase::Inferring {
+                done: Some(100),
+                total: Some(100)
+            })
+        );
+        // A line that only looks like progress is not trusted.
+        assert_eq!(whisper_stderr_phase("progress = soon"), None);
     }
 
     /// The read-back extension must match the format flag (json↔-ojf, srt↔-osrt)

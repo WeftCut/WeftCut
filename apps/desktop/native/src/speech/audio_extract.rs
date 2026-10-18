@@ -74,9 +74,9 @@ pub async fn extract_audio_window(
     extract_audio_window_with_observer(cache, source, source_hash, in_us, out_us, |_| {}).await
 }
 
-/// [`extract_audio_window`] reporting why it is still waiting for admission;
-/// see `resources::user_compute` for the observer contract. A cache hit
-/// returns without admission and never calls the observer.
+/// [`extract_audio_window`] reporting admission: the blocking reason while it
+/// waits, then `None` once the slice starts (see `resources::user_compute`). A
+/// cache hit returns without admission and never calls the observer.
 pub async fn extract_audio_window_with_observer(
     cache: &CacheLayout,
     source: &Path,

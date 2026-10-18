@@ -26,8 +26,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::process::Command;
 
+use crate::compute_jobs::{ignore_model_phase, ModelObserver, ModelPhase};
 use crate::inference_files::{program_path, InferenceFiles};
-use crate::process::NoConsoleWindow;
+use crate::process::{output_watching_stderr, NoConsoleWindow};
 
 use super::describer::{DescribeRequest, Focus, Language, SceneDescriber, TimedFrame};
 use super::error::VlmError;
@@ -90,7 +91,17 @@ impl LlamaMtmdSidecar {
 #[async_trait]
 impl SceneDescriber for LlamaMtmdSidecar {
     async fn describe(&self, req: DescribeRequest) -> Result<RawDescription, VlmError> {
-        self.describe_verified(req).await.map(|(raw, _)| raw)
+        self.describe_observed(req, &ignore_model_phase).await
+    }
+
+    async fn describe_observed(
+        &self,
+        req: DescribeRequest,
+        observer: ModelObserver<'_>,
+    ) -> Result<RawDescription, VlmError> {
+        self.describe_verified(req, observer)
+            .await
+            .map(|(raw, _)| raw)
     }
 }
 
@@ -98,6 +109,7 @@ impl LlamaMtmdSidecar {
     pub(crate) async fn describe_verified(
         &self,
         req: DescribeRequest,
+        observer: ModelObserver<'_>,
     ) -> Result<(RawDescription, bool), VlmError> {
         let prompt = build_prompt(&req.frames, req.focus, &req.language);
         let files = InferenceFiles::new()?;
@@ -119,12 +131,12 @@ impl LlamaMtmdSidecar {
         apply_device(&mut args, self.device.as_deref());
         let timeout = sidecar_timeout(req.frames.len());
         let mut cpu = self.device.as_deref() == Some("cpu");
-        let body = match run(&self.binary, &args, files.cwd(), timeout).await {
+        let body = match run(&self.binary, &args, files.cwd(), timeout, observer).await {
             Ok(body) => body,
             Err(e) if self.device.is_none() && device_failure(&e) => {
                 apply_device(&mut args, Some("cpu"));
                 cpu = true;
-                run(&self.binary, &args, files.cwd(), timeout).await?
+                run(&self.binary, &args, files.cwd(), timeout, observer).await?
             }
             Err(e) => return Err(e),
         };
@@ -287,14 +299,17 @@ fn sidecar_timeout(n_frames: usize) -> Duration {
 
 /// Spawn the one-shot child, wait (bounded by `timeout`), capture stdout as the
 /// raw body. Mirrors `speech::backends::sidecar::SidecarRun::run`: conhost guard,
-/// `kill_on_drop` (a timed-out future drops the child → reaped), exit-code →
-/// [`VlmError`] mapping.
+/// `kill_on_drop` (a timed-out or cancelled future drops the child → reaped),
+/// exit-code → [`VlmError`] mapping. `observer` hears the load, then
+/// [`stderr_phase`]'s reading of the child's log; a CPU retry loads again.
 async fn run(
     program: &Path,
     args: &[OsString],
     cwd: &Path,
     timeout: Duration,
+    observer: ModelObserver<'_>,
 ) -> Result<String, VlmError> {
+    observer(ModelPhase::LoadingModel);
     let _resources = crate::resources::interactive(crate::resources::model_memory_mib(args, cwd))
         .await
         .map_err(|e| VlmError::Io(std::io::Error::other(e)))?;
@@ -318,7 +333,12 @@ async fn run(
             cause: e.to_string(),
         })?;
 
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let watched = output_watching_stderr(child, |line| {
+        if let Some(phase) = stderr_phase(line) {
+            observer(phase);
+        }
+    });
+    let output = match tokio::time::timeout(timeout, watched).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => return Err(VlmError::Io(e)),
         Err(_elapsed) => {
@@ -336,9 +356,27 @@ async fn run(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// llama-mtmd-cli's stderr, read for the job phase. The multimodal helper logs
+/// `encoding image slice...` once both the model and the projector are loaded
+/// and the frames go in; from there the run is inference. Image slices are
+/// not frames (MiniCPM-V splits one image into several), so no count is read.
+fn stderr_phase(line: &str) -> Option<ModelPhase> {
+    line.contains("encoding image")
+        .then_some(ModelPhase::INFERRING)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stderr_reports_inference_once_images_are_encoded() {
+        assert_eq!(stderr_phase("load_tensors: offloading 36 layers"), None);
+        assert_eq!(
+            stderr_phase("encoding image slice..."),
+            Some(ModelPhase::INFERRING)
+        );
+    }
 
     #[test]
     fn cpu_disables_model_and_projector_offload_without_changing_weights() {
@@ -500,9 +538,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // Sample the first 8 seconds at 1 fps (window-relative anchors).
         let anchors = plan_anchors(0, 8_000_000, 1.0);
-        let frames = sample_frames(std::path::Path::new(&video), 0, tmp.path(), &anchors)
-            .await
-            .expect("frame sampling");
+        let frames = sample_frames(
+            std::path::Path::new(&video),
+            0,
+            tmp.path(),
+            &anchors,
+            |_| {},
+            |_| {},
+        )
+        .await
+        .expect("frame sampling");
         eprintln!("live_qwen_describe: extracted {} frames", frames.len());
 
         let sidecar = LlamaMtmdSidecar::new(

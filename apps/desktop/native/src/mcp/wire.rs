@@ -12,6 +12,10 @@ pub enum McpErrorCode {
     InvalidRequest,
     NotFound,
     Internal,
+    /// The host cancelled a clip-compute job (`Backend::cancel_compute_job`).
+    /// Its own code, not `internal`, so the host can tell a request someone
+    /// withdrew from one that failed.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +46,15 @@ impl McpToolError {
             code: McpErrorCode::Internal,
             message: msg.into(),
             data,
+        }
+    }
+    /// The one message every cancellation carries; the code is what callers
+    /// match on.
+    pub fn cancelled() -> Self {
+        Self {
+            code: McpErrorCode::Cancelled,
+            message: "Cancelled".into(),
+            data: None,
         }
     }
     pub fn resource_not_found(msg: impl Into<String>, data: Option<Value>) -> Self {
@@ -299,6 +312,16 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert_eq!(v["error"]["code"], "invalid_params");
         assert_eq!(v["error"]["message"], "bad");
+    }
+
+    #[test]
+    fn cancelled_reply_envelope() {
+        let v: Value =
+            serde_json::from_str(&reply::<ToolResult>(Err(McpToolError::cancelled()))).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "ok": false, "error": { "code": "cancelled", "message": "Cancelled" } })
+        );
     }
 
     #[test]

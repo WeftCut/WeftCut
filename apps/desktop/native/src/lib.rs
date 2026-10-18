@@ -23,6 +23,7 @@
 mod audio;
 mod cache;
 mod commands;
+mod compute_jobs;
 mod events;
 #[cfg(windows)]
 mod gpu_hardware;

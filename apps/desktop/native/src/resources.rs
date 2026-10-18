@@ -582,23 +582,47 @@ pub(crate) fn install_diagnostics(slot: LogBusSlot) {
 /// [`interactive`] it waits up to [`USER_COMPUTE_WAIT`]. Pressure, export
 /// finalization and the CPU/memory budget still apply, and running work is
 /// never interrupted. `observer` hears the blocking reason when the claim first
-/// fails to admit and whenever it changes, then `None` once admitted. Dropping
-/// the future withdraws the claim.
+/// fails to admit and whenever it changes, then `None` once admitted, also when
+/// admitted at once: a job's phase moves from queued (or nothing) to its work
+/// on that `None`. Dropping the future withdraws the claim.
 pub async fn user_compute(
     caller: UserComputeCaller,
-    mut observer: impl FnMut(Option<UserComputeBlock>) + Send,
+    observer: impl FnMut(Option<UserComputeBlock>) + Send,
 ) -> Result<Permit, String> {
     let empty = LogBusSlot::new();
     governor()
-        .acquire_user_compute(
+        .acquire_user_compute_announced(
             caller,
             USER_COMPUTE_WAIT,
-            &mut observer,
+            observer,
             DIAGNOSTICS.get().unwrap_or(&empty),
         )
         .await
 }
 impl Governor {
+    /// [`Self::acquire_user_compute`] plus the `None` for an admission that
+    /// never waited, which the inner loop has no reason to report.
+    async fn acquire_user_compute_announced(
+        self: &Arc<Self>,
+        caller: UserComputeCaller,
+        wait: Duration,
+        mut observer: impl FnMut(Option<UserComputeBlock>) + Send,
+        log: &LogBusSlot,
+    ) -> Result<Permit, String> {
+        let mut waited = false;
+        let mut seen = |block| {
+            waited = true;
+            observer(block);
+        };
+        let permit = self
+            .acquire_user_compute(caller, wait, &mut seen, log)
+            .await?;
+        // After a wait the observer has already heard the closing `None`.
+        if !waited {
+            observer(None);
+        }
+        Ok(permit)
+    }
     async fn acquire_user_compute(
         self: &Arc<Self>,
         caller: UserComputeCaller,
@@ -1782,6 +1806,86 @@ mod tests {
         assert_eq!(
             *seen.lock().unwrap(),
             [Some(Budget), Some(Memory), Some(Budget), None]
+        );
+    }
+    #[tokio::test]
+    async fn announced_user_compute_reports_admission_exactly_once() {
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 256,
+            ..Limits::default()
+        })
+        .unwrap();
+        let log = LogBusSlot::new();
+        let seen = Seen::default();
+        let observer = |block| seen.lock().unwrap().push(block);
+        let caller = UserComputeCaller::FrameExtract;
+        let wait = Duration::from_secs(1);
+        drop(
+            g.acquire_user_compute_announced(caller, wait, observer, &log)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(*seen.lock().unwrap(), [None], "admitted at once");
+        seen.lock().unwrap().clear();
+        let resident = g
+            .reserve(Claim {
+                threads: 0,
+                mib: 200,
+                background: false,
+            })
+            .unwrap();
+        let task = tokio::spawn({
+            let (g, seen) = (g.clone(), seen.clone());
+            async move {
+                let observer = |block| seen.lock().unwrap().push(block);
+                g.acquire_user_compute_announced(caller, wait, observer, &LogBusSlot::new())
+                    .await
+            }
+        });
+        until(|| user_waiting(&g) == 1).await;
+        g.release(resident);
+        drop(task.await.unwrap().unwrap());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(UserComputeBlock::Budget), None]
+        );
+    }
+    /// A job queued for admission is reported as queued with the reason, and
+    /// cancelling it withdraws both the job and the claim, so background work
+    /// is no longer held back for a person who has given up.
+    #[tokio::test]
+    async fn cancelling_a_job_queued_for_user_compute_withdraws_job_and_claim() {
+        use crate::compute_jobs::{ComputeJobs, ComputePhase, JobReporter, JobStop};
+        let g = Governor::new();
+        g.state.lock().unwrap().pressured = true;
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let jobs = Arc::new(ComputeJobs::default());
+        let task = tokio::spawn({
+            let (g, jobs, sink) = (g.clone(), jobs.clone(), sink.clone());
+            async move {
+                let job = JobReporter::new(sink, Some("j".into()));
+                let log = LogBusSlot::new();
+                let admission = g.acquire_user_compute_announced(
+                    UserComputeCaller::AudioExtract,
+                    USER_COMPUTE_WAIT,
+                    job.admission(ComputePhase::Extracting { done: 0, total: 1 }),
+                    &log,
+                );
+                jobs.run(Some("j"), admission).await.map(|r| r.is_ok())
+            }
+        });
+        until(|| user_waiting(&g) == 1).await;
+        assert!(jobs.cancel("j"));
+        assert_eq!(task.await.unwrap(), Err(JobStop::Cancelled));
+        assert_eq!(user_waiting(&g), 0);
+        assert_eq!(g.snapshot().waiting, 0);
+        assert_eq!(jobs.live_count(), 0);
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(
+            events[0].1,
+            serde_json::json!({ "job_id": "j", "phase": { "kind": "queued", "reason": "memory" } })
         );
     }
     #[tokio::test]

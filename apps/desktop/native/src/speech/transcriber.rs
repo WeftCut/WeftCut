@@ -26,6 +26,7 @@ use async_trait::async_trait;
 
 use super::error::SpeechError;
 use super::parse::RawTranscript;
+use crate::compute_jobs::{ModelObserver, ModelPhase};
 
 #[derive(Debug, Clone)]
 pub struct TranscribeRequest {
@@ -47,4 +48,17 @@ pub trait Transcriber: Send + Sync {
     /// style is the backend's choice, guided by
     /// [`TranscribeRequest::want_word_timing`].
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError>;
+
+    /// [`transcribe`](Self::transcribe), reporting the engine's phase. The
+    /// default suits a remote engine: the request is in flight from the start,
+    /// and there is no model load of ours to report. A local engine overrides
+    /// it to report its load and, where it prints one, its progress.
+    async fn transcribe_observed(
+        &self,
+        req: TranscribeRequest,
+        observer: ModelObserver<'_>,
+    ) -> Result<RawTranscript, SpeechError> {
+        observer(ModelPhase::INFERRING);
+        self.transcribe(req).await
+    }
 }

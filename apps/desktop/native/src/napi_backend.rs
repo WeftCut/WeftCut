@@ -49,6 +49,9 @@ pub struct Backend {
     /// addon's feature set.
     pub(crate) speech_config:
         std::sync::Mutex<std::collections::HashMap<String, crate::speech::config::BackendConfig>>,
+    /// Clip-compute jobs started with a host-injected `job_id`, so the host can
+    /// cancel one by id (`cancel_compute_job`).
+    pub(crate) compute_jobs: crate::compute_jobs::ComputeJobs,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -98,6 +101,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         agent_session: AgentSessionSlot::new(),
         log_slot,
         speech_config: std::sync::Mutex::new(std::collections::HashMap::new()),
+        compute_jobs: crate::compute_jobs::ComputeJobs::default(),
     }
 }
 
@@ -759,6 +763,16 @@ impl Backend {
     #[napi]
     pub fn end_agent_session_slot(&self) {
         crate::agent_session::end_and_emit(self.events.as_ref(), &self.agent_session);
+    }
+
+    /// Cancel the clip-compute job the host started with this `job_id`
+    /// (`transcribe_clip` / `describe_clip`). True when a live job was found:
+    /// its `mcp_call_tool` then resolves with error code `cancelled`, and the
+    /// ffmpeg / model children it owned are killed as its future drops. False
+    /// for an unknown or already finished id.
+    #[napi]
+    pub fn cancel_compute_job(&self, job_id: String) -> bool {
+        self.compute_jobs.cancel(&job_id)
     }
 }
 

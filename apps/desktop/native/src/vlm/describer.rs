@@ -20,6 +20,7 @@ use async_trait::async_trait;
 
 use super::error::VlmError;
 use super::parser::RawDescription;
+use crate::compute_jobs::{ModelObserver, ModelPhase};
 
 /// One sampled frame: its window-relative timestamp (0 = start of the requested
 /// window) and the on-disk image the backend feeds to the model. The local
@@ -191,6 +192,19 @@ pub trait SceneDescriber: Send + Sync {
     /// style (which [`RawDescription`] variant) is the backend's choice — the
     /// parser layer normalizes it.
     async fn describe(&self, req: DescribeRequest) -> Result<RawDescription, VlmError>;
+
+    /// [`describe`](Self::describe), reporting the engine's phase. The default
+    /// suits an HTTP endpoint: one request, in flight from the start, against a
+    /// server whose model load is not ours to see (or to stop: cancelling drops
+    /// the request, never the server). The local sidecar overrides it.
+    async fn describe_observed(
+        &self,
+        req: DescribeRequest,
+        observer: ModelObserver<'_>,
+    ) -> Result<RawDescription, VlmError> {
+        observer(ModelPhase::INFERRING);
+        self.describe(req).await
+    }
 }
 
 #[cfg(test)]

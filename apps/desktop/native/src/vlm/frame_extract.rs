@@ -59,23 +59,18 @@ pub fn plan_anchors(in_us: i64, out_us: i64, fps: f64) -> Vec<i64> {
 /// [`TimedFrame`]s (window-relative time + path). `source_in_us` is where the
 /// window starts in the SOURCE; anchors are window-relative, so the absolute
 /// seek time is `source_in_us + anchor`.
+///
+/// `observer` hears admission: the blocking reason while it waits, then `None`
+/// once sampling starts (see `resources::user_compute`). `on_frame` hears how
+/// many frames are done after each one, so a long window shows movement
+/// between admission and the model.
 pub async fn sample_frames(
     source: &Path,
     source_in_us: i64,
     out_dir: &Path,
     anchors: &[i64],
-) -> Result<Vec<TimedFrame>, VlmError> {
-    sample_frames_with_observer(source, source_in_us, out_dir, anchors, |_| {}).await
-}
-
-/// [`sample_frames`] reporting why it is still waiting for admission; see
-/// `resources::user_compute` for the observer contract.
-pub async fn sample_frames_with_observer(
-    source: &Path,
-    source_in_us: i64,
-    out_dir: &Path,
-    anchors: &[i64],
     observer: impl FnMut(Option<UserComputeBlock>) + Send,
+    mut on_frame: impl FnMut(usize) + Send,
 ) -> Result<Vec<TimedFrame>, VlmError> {
     if !ffmpeg_is_installed() {
         return Err(VlmError::FrameExtract(
@@ -149,6 +144,7 @@ pub async fn sample_frames_with_observer(
             t_us: anchor_us,
             path,
         });
+        on_frame(frames.len());
     }
     Ok(frames)
 }

@@ -27,8 +27,9 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::compute_jobs::{ModelObserver, ModelPhase};
 use crate::inference_files::program_path;
-use crate::process::NoConsoleWindow;
+use crate::process::{output_watching_stderr, NoConsoleWindow};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
 use crate::speech::SpeechBackend;
@@ -82,14 +83,19 @@ pub struct SidecarRun {
     pub format: TranscriptFormat,
     /// Set when the caller pinned an explicit non-CPU device; see [`DevicePin`].
     pub device_pin: Option<DevicePin>,
+    /// Reads one stderr line for the engine's own word that the model is
+    /// loaded or how far inference is. Engine-specific wording, so the backend
+    /// supplies it; a line it does not recognize changes nothing.
+    pub stderr_phase: fn(&str) -> Option<ModelPhase>,
 }
 
 impl SidecarRun {
     /// Spawn, wait (bounded by `timeout`), and return the tagged
     /// [`RawTranscript`]. Errors: [`SpeechError::Spawn`] if the child cannot
     /// start, [`SpeechError::Timeout`] if it overruns, [`SpeechError::EngineExit`]
-    /// on a non-zero exit.
-    pub async fn run(mut self) -> Result<RawTranscript, SpeechError> {
+    /// on a non-zero exit. `observer` hears what [`Self::stderr_phase`] reads
+    /// while the child runs.
+    pub async fn run(mut self, observer: ModelObserver<'_>) -> Result<RawTranscript, SpeechError> {
         let _resources = crate::resources::interactive(crate::resources::model_memory_mib(
             &self.args, &self.cwd,
         ))
@@ -130,11 +136,17 @@ impl SidecarRun {
             cause: e.to_string(),
         })?;
 
-        // `wait_with_output` consumes the `Child` (it is moved into this
-        // future). If `timeout` elapses, tokio drops the future → drops the
-        // owned `Child` → `kill_on_drop` kills the process. That is why the
-        // `Err(_elapsed)` arm needs no explicit `.kill()`.
-        let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+        // `output_watching_stderr` consumes the `Child` (it is moved into this
+        // future). If `timeout` elapses, or the job is cancelled, tokio drops
+        // the future → drops the owned `Child` → `kill_on_drop` kills the
+        // process. That is why the `Err(_elapsed)` arm needs no explicit `.kill()`.
+        let stderr_phase = self.stderr_phase;
+        let watched = output_watching_stderr(child, |line| {
+            if let Some(phase) = stderr_phase(line) {
+                observer(phase);
+            }
+        });
+        let output = match tokio::time::timeout(self.timeout, watched).await {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => return Err(SpeechError::Io(e)),
             Err(_elapsed) => {

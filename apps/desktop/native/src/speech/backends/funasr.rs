@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
+use crate::compute_jobs::{ignore_model_phase, ModelObserver, ModelPhase};
 use crate::inference_files::InferenceFiles;
 
 use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
@@ -75,6 +76,15 @@ impl FunAsr {
 #[async_trait]
 impl Transcriber for FunAsr {
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
+        self.transcribe_observed(req, &ignore_model_phase).await
+    }
+
+    async fn transcribe_observed(
+        &self,
+        req: TranscribeRequest,
+        observer: ModelObserver<'_>,
+    ) -> Result<RawTranscript, SpeechError> {
+        observer(ModelPhase::LoadingModel);
         // sherpa-onnx-offline is language-agnostic per model (Paraformer-zh is
         // Mandarin), so the request's `language` hint has no CLI flag here — the
         // model choice IS the language. `want_word_timing` is likewise implicit:
@@ -130,10 +140,18 @@ impl Transcriber for FunAsr {
             output: OutputSink::Stdout, // sherpa prints the result JSON to stdout
             format: TranscriptFormat::FunAsrJson,
             device_pin,
+            stderr_phase: funasr_stderr_phase,
         }
-        .run()
+        .run(observer)
         .await
     }
+}
+
+/// sherpa-onnx-offline's stderr, read for the job phase: it prints
+/// `Creating recognizer ...` while loading and a bare `Started` once the
+/// recognizer is built and decoding begins. It prints no progress.
+fn funasr_stderr_phase(line: &str) -> Option<ModelPhase> {
+    (line.trim() == "Started").then_some(ModelPhase::INFERRING)
 }
 
 /// Build the `sherpa-onnx-offline` argument vector:
@@ -243,6 +261,14 @@ mod tests {
             s.contains(&"--num-threads=8".to_string()),
             "threads → --num-threads=8: {s:?}"
         );
+    }
+
+    #[test]
+    fn stderr_started_marks_decoding() {
+        assert_eq!(funasr_stderr_phase("Creating recognizer ..."), None);
+        assert_eq!(funasr_stderr_phase("Started"), Some(ModelPhase::INFERRING));
+        // The config dump can mention the word; only the bare line counts.
+        assert_eq!(funasr_stderr_phase("Started decoding with x"), None);
     }
 
     #[test]

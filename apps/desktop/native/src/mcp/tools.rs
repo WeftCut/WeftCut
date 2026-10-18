@@ -11,6 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "speech")]
+use crate::compute_jobs::{ComputePhase, JobReporter};
+#[cfg(feature = "speech")]
 use crate::speech;
 
 #[cfg(feature = "jobs")]
@@ -1197,6 +1199,13 @@ pub(super) struct TranscribeClipArgs {
     #[serde(default, skip_serializing)]
     #[schemars(skip)]
     pub media: Option<crate::state::MediaItem>,
+    /// Injected by the TS MCP host: the id it minted for this job. With it the
+    /// call reports `compute:job_phase` events and `cancel_compute_job` can
+    /// stop it; without it (a bare-core caller) neither happens. Never
+    /// advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub job_id: Option<String>,
 }
 
 #[cfg(feature = "speech")]
@@ -1431,10 +1440,44 @@ struct TranscribeClipResult<'a> {
     input_normalization: Option<&'a speech::audio_normalize::NormalizationReport>,
 }
 
+/// Run a clip-compute tool body as the host's job `job_id`: cancellable by
+/// `Backend::cancel_compute_job`, which resolves the call as `cancelled`.
+/// Without an id the body simply runs.
+#[cfg(feature = "speech")]
+async fn run_compute_job(
+    b: &Backend,
+    job_id: Option<&str>,
+    work: impl std::future::Future<Output = Result<ToolResult, McpToolError>>,
+) -> Result<ToolResult, McpToolError> {
+    use crate::compute_jobs::JobStop;
+    match b.compute_jobs.run(job_id, work).await {
+        Ok(result) => result,
+        Err(JobStop::Cancelled) => Err(McpToolError::cancelled()),
+        Err(JobStop::Duplicate) => Err(McpToolError::invalid_request(
+            format!(
+                "compute job {} is already running",
+                job_id.unwrap_or_default()
+            ),
+            None,
+        )),
+    }
+}
+
 #[cfg(feature = "speech")]
 pub(super) async fn transcribe_clip(
     b: &Backend,
     args: TranscribeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    let job_id = args.job_id.clone();
+    let job = JobReporter::new(b.events.clone(), job_id.clone());
+    run_compute_job(b, job_id.as_deref(), transcribe_clip_job(b, args, &job)).await
+}
+
+#[cfg(feature = "speech")]
+async fn transcribe_clip_job(
+    b: &Backend,
+    args: TranscribeClipArgs,
+    job: &JobReporter,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
     let resolved = resolve_clip_audio_source(
@@ -1498,27 +1541,39 @@ pub(super) async fn transcribe_clip(
         }
     };
 
-    let audio_path = speech::audio_extract::extract_audio_window(
+    // One slice, so extraction counts 0/1 once admitted and 1/1 when the WAV
+    // is ready; a cache hit skips straight to 1/1.
+    let audio_path = speech::audio_extract::extract_audio_window_with_observer(
         &b.cache,
         &resolved.source_path,
         &resolved.source_hash,
         resolved.source_in_us,
         resolved.source_out_us,
+        job.admission(ComputePhase::Extracting { done: 0, total: 1 }),
     )
     .await
     .map_err(|e| McpToolError::internal_error(format!("audio extract: {e:#}"), None))?;
+    job.phase(ComputePhase::Extracting { done: 1, total: 1 });
 
     // Keep the private copy alive until inference has consumed it. Original
-    // mode returns the exact cached WAV without processing or cache mutation.
-    let prepared = speech::audio_normalize::prepare(audio_path, args.normalize_audio)
-        .await
-        .map_err(|e| McpToolError::internal_error(format!("transcription audio: {e:#}"), None))?;
+    // mode returns the exact cached WAV without processing or cache mutation,
+    // and reports no normalizing phase.
+    let prepared = speech::audio_normalize::prepare(
+        audio_path,
+        args.normalize_audio,
+        job.admission(ComputePhase::Normalizing),
+    )
+    .await
+    .map_err(|e| McpToolError::internal_error(format!("transcription audio: {e:#}"), None))?;
     let raw = transcriber
-        .transcribe(speech::TranscribeRequest {
-            audio_path: prepared.path.clone(),
-            language: args.language,
-            want_word_timing: args.word_timestamps.unwrap_or(true),
-        })
+        .transcribe_observed(
+            speech::TranscribeRequest {
+                audio_path: prepared.path.clone(),
+                language: args.language,
+                want_word_timing: args.word_timestamps.unwrap_or(true),
+            },
+            &|phase| job.model(phase),
+        )
         .await
         .map_err(map_speech_error)?;
 
@@ -1601,6 +1656,10 @@ pub(super) struct DescribeClipArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub media: Option<crate::state::MediaItem>,
+    /// Injected by the TS MCP host — see `TranscribeClipArgs::job_id`.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub job_id: Option<String>,
 }
 
 /// Resolved source-video coordinates for a `describe_clip` call.
@@ -1757,6 +1816,17 @@ pub(super) async fn describe_clip(
     b: &Backend,
     args: DescribeClipArgs,
 ) -> Result<ToolResult, McpToolError> {
+    let job_id = args.job_id.clone();
+    let job = JobReporter::new(b.events.clone(), job_id.clone());
+    run_compute_job(b, job_id.as_deref(), describe_clip_job(b, args, &job)).await
+}
+
+#[cfg(feature = "speech")]
+async fn describe_clip_job(
+    b: &Backend,
+    args: DescribeClipArgs,
+    job: &JobReporter,
+) -> Result<ToolResult, McpToolError> {
     use crate::vlm;
 
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
@@ -1854,21 +1924,33 @@ pub(super) async fn describe_clip(
             .prefix("weftcut-vlm")
             .tempdir()
             .map_err(|e| McpToolError::internal_error(format!("temp dir: {e}"), None))?;
+        let total = anchors.len() as u32;
         let frames = vlm::frame_extract::sample_frames(
             &resolved.source_path,
             resolved.source_in_us,
             tmp.path(),
             &anchors,
+            job.admission(ComputePhase::Extracting { done: 0, total }),
+            |done| {
+                job.phase(ComputePhase::Extracting {
+                    done: done as u32,
+                    total,
+                })
+            },
         )
         .await
         .map_err(map_vlm_error)?;
 
+        // One request per description, whichever engine serves it.
         let raw = describer
-            .describe(vlm::DescribeRequest {
-                frames,
-                focus,
-                language: language.clone(),
-            })
+            .describe_observed(
+                vlm::DescribeRequest {
+                    frames,
+                    focus,
+                    language: language.clone(),
+                },
+                &|phase| job.model(phase),
+            )
             .await
             .map_err(map_vlm_error)?;
         let mut fresh = vlm::parse_raw(raw).map_err(map_vlm_error)?;
@@ -1997,4 +2079,381 @@ pub(super) async fn synthesize_speech(
         "synthesize_speech is handled by the host process (TS actor hybrid)".to_string(),
         None,
     ))
+}
+
+// ============================================================
+// Clip-compute jobs: phases and cancellation through the real tool path, with
+// shell scripts standing in for the engines.
+// ============================================================
+
+#[cfg(all(test, target_os = "linux", feature = "speech", feature = "mcp"))]
+mod compute_job_tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use serde_json::{json, Value};
+
+    use crate::events::{VecEventSink, EVENT_COMPUTE_JOB_PHASE};
+    use crate::napi_backend::Backend;
+    use crate::state::{new_id, Layer, LayerParams, MediaItem, MediaKind};
+
+    fn phases(sink: &VecEventSink, job_id: &str) -> Vec<Value> {
+        sink.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, p)| name == EVENT_COMPUTE_JOB_PHASE && p["job_id"] == job_id)
+            .map(|(_, p)| p["phase"].clone())
+            .collect()
+    }
+
+    /// An executable stand-in for an engine binary.
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    async fn ffmpeg(args: &[&str], out: &Path) {
+        let status = crate::ffmpeg::command()
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(args)
+            .arg(out)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success(), "fixture ffmpeg failed: {status}");
+    }
+
+    fn media(path: PathBuf, kind: MediaKind) -> MediaItem {
+        use crate::state::{AudioStreamMeta, DecodeRoute, MediaMetadata};
+        MediaItem {
+            id: new_id(),
+            label: None,
+            path_abs: path,
+            path_rel: None,
+            kind,
+            metadata: MediaMetadata {
+                duration_us: Some(2_000_000),
+                audio: Some(AudioStreamMeta {
+                    sample_rate: 44_100,
+                    channels: 1,
+                    codec: "pcm_s16le".into(),
+                    start_pts_us: None,
+                }),
+                ..Default::default()
+            },
+            decode_route: DecodeRoute::Bypass,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            // Unique per fixture, so no two tests share a cached slice.
+            file_hash_blake3: new_id().to_string(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        }
+    }
+
+    fn layer(params: LayerParams, t_end_us: i64) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 0,
+            t_end_us,
+            enabled: true,
+            locked: false,
+            metadata: Default::default(),
+            params,
+            effects: Vec::new(),
+        }
+    }
+
+    /// A 1 s audio clip whose transcription engine is `whisper`, a script.
+    struct Transcription {
+        backend: Arc<Backend>,
+        sink: Arc<VecEventSink>,
+        dir: tempfile::TempDir,
+        args: Value,
+    }
+
+    async fn transcription(whisper: &str) -> Option<Transcription> {
+        if !crate::ffmpeg::ffmpeg_is_installed() {
+            eprintln!("ffmpeg not installed — skipping");
+            return None;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src.wav");
+        ffmpeg(
+            &["-f", "lavfi", "-i", "sine=frequency=440:duration=1"],
+            &source,
+        )
+        .await;
+        let binary = script(dir.path(), "whisper-cli", whisper);
+        let model = dir.path().join("model.bin");
+        std::fs::write(&model, b"model").unwrap();
+        let sink = Arc::new(VecEventSink::new());
+        let backend = Backend::new_for_test_with_sink(sink.clone());
+        backend.speech_config.lock().unwrap().insert(
+            "whisper_cpp".into(),
+            crate::speech::config::BackendConfig::Local {
+                binary,
+                model,
+                tokens: None,
+                device: None,
+                threads: None,
+            },
+        );
+        let media = media(source, MediaKind::Audio);
+        let layer = layer(
+            LayerParams::Audio(crate::state::AudioParams {
+                timing: Default::default(),
+                media: media.id,
+                src_in_us: 0,
+                src_out_us: 1_000_000,
+                gain_db: Default::default(),
+                pan: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+                role: Default::default(),
+            }),
+            1_000_000,
+        );
+        let args = json!({
+            "layer_id": layer.id.to_string(), "backend": "whisper_cpp",
+            "word_timestamps": false, "layer": layer, "media": media,
+        });
+        Some(Transcription {
+            backend: Arc::new(backend),
+            sink,
+            dir,
+            args,
+        })
+    }
+
+    async fn call(b: &Backend, tool: &str, args: &Value) -> Value {
+        serde_json::from_str(
+            &b.mcp_call_tool(tool.into(), args.to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn with_job(args: &Value, job_id: &str) -> Value {
+        let mut args = args.clone();
+        args["job_id"] = json!(job_id);
+        args
+    }
+
+    const WHISPER: &str = r#"echo "whisper_model_load: loading model" >&2
+echo "main: processing 'audio.wav' (16000 samples, 1.0 sec), 1 threads" >&2
+echo "whisper_print_progress_callback: progress =  50%" >&2
+printf '1\n00:00:00,000 --> 00:00:00,500\nhello\n\n' > out.srt"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn transcribe_reports_each_phase_in_order_and_a_cache_hit_skips_extraction() {
+        let Some(t) = transcription(WHISPER).await else {
+            return;
+        };
+        let b = &t.backend;
+        let reply = call(b, "transcribe_clip", &with_job(&t.args, "first")).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        let model = [
+            json!({ "kind": "loading_model" }),
+            json!({ "kind": "inferring" }),
+            json!({ "kind": "inferring", "done": 50, "total": 100 }),
+        ];
+        let mut first = vec![
+            json!({ "kind": "extracting", "done": 0, "total": 1 }),
+            json!({ "kind": "extracting", "done": 1, "total": 1 }),
+        ];
+        first.extend(model.clone());
+        assert_eq!(phases(&t.sink, "first"), first);
+
+        // The slice is cached now: extraction is done before it starts.
+        let reply = call(b, "transcribe_clip", &with_job(&t.args, "second")).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        let mut second = vec![json!({ "kind": "extracting", "done": 1, "total": 1 })];
+        second.extend(model);
+        assert_eq!(phases(&t.sink, "second"), second);
+
+        // Without a job id: same answer, no events, nothing registered.
+        let before = t.sink.names().len();
+        let reply = call(b, "transcribe_clip", &t.args).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("hello"), "{text}");
+        let after = t.sink.events.lock().unwrap()[before..]
+            .iter()
+            .filter(|(name, _)| name == EVENT_COMPUTE_JOB_PHASE)
+            .count();
+        assert_eq!(after, 0);
+        assert_eq!(b.compute_jobs.live_count(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn transcribe_normalizing_is_reported_only_when_it_runs() {
+        let Some(t) = transcription(WHISPER).await else {
+            return;
+        };
+        let mut args = with_job(&t.args, "loud");
+        args["normalize_audio"] = json!(true);
+        let reply = call(&t.backend, "transcribe_clip", &args).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        let kinds: Vec<_> = phases(&t.sink, "loud")
+            .into_iter()
+            .map(|p| p["kind"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "extracting",
+                "extracting",
+                "normalizing",
+                "loading_model",
+                "inferring",
+                "inferring"
+            ]
+        );
+    }
+
+    fn alive(pid: i32) -> bool {
+        // A reaped child has no /proc entry; a killed, unreaped one is a zombie.
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|stat| {
+                let state = stat.rsplit(')').next().unwrap_or("").trim_start();
+                !state.starts_with('Z')
+            })
+            .unwrap_or(false)
+    }
+
+    async fn eventually(mut ready: impl FnMut() -> bool) -> bool {
+        for _ in 0..500 {
+            if ready() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_a_running_transcription_kills_the_engine_and_answers_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let whisper = format!(
+            "echo $$ > '{}'\necho \"main: processing 'audio.wav'\" >&2\nexec sleep 30",
+            pid_file.display()
+        );
+        let Some(t) = transcription(&whisper).await else {
+            return;
+        };
+        assert!(!t.backend.cancel_compute_job("never-started".into()));
+        let call = tokio::spawn({
+            let (b, args) = (t.backend.clone(), with_job(&t.args, "slow"));
+            async move { call(&b, "transcribe_clip", &args).await }
+        });
+        assert!(
+            eventually(|| phases(&t.sink, "slow").contains(&json!({ "kind": "inferring" }))).await,
+            "the engine never started: {:?}",
+            phases(&t.sink, "slow")
+        );
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(alive(pid));
+        assert!(t.backend.cancel_compute_job("slow".into()));
+        let reply = call.await.unwrap();
+        assert_eq!(
+            reply,
+            json!({ "ok": false, "error": { "code": "cancelled", "message": "Cancelled" } })
+        );
+        assert_eq!(t.backend.compute_jobs.live_count(), 0);
+        assert!(!t.backend.cancel_compute_job("slow".into()));
+        assert!(
+            eventually(|| !alive(pid)).await,
+            "engine {pid} outlived its job"
+        );
+        drop(t.dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn describe_counts_sampled_frames_then_reports_the_model() {
+        if !crate::ffmpeg::ffmpeg_is_installed() {
+            eprintln!("ffmpeg not installed — skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src.mp4");
+        ffmpeg(
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=64x64:rate=10:duration=2",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "mpeg4",
+            ],
+            &source,
+        )
+        .await;
+        let binary = script(
+            dir.path(),
+            "llama-mtmd-cli",
+            r#"echo "load_tensors: loading model" >&2
+echo "encoding image slice..." >&2
+echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["pattern"]}]'"#,
+        );
+        let (model, mmproj) = (dir.path().join("m.gguf"), dir.path().join("mm.gguf"));
+        std::fs::write(&model, b"m").unwrap();
+        std::fs::write(&mmproj, b"mm").unwrap();
+        let media = media(source, MediaKind::Video);
+        let layer = layer(
+            LayerParams::VideoClip(crate::state::VideoClipParams {
+                timing: Default::default(),
+                media: media.id,
+                src_in_us: 0,
+                src_out_us: 2_000_000,
+                transform: Default::default(),
+                opacity: Default::default(),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+            2_000_000,
+        );
+        let sink = Arc::new(VecEventSink::new());
+        let b = Backend::new_for_test_with_sink(sink.clone());
+        let args = json!({
+            "layer_id": layer.id.to_string(), "backend": "qwen3_vl", "fps": 1.0,
+            "layer": layer, "media": media, "job_id": "look",
+            "vlm_config": { "qwen3_vl": {
+                "kind": "local", "binary": binary, "model": model, "mmproj": mmproj,
+            } },
+        });
+        let reply = call(&b, "describe_clip", &args).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(
+            phases(&sink, "look"),
+            [
+                json!({ "kind": "extracting", "done": 0, "total": 2 }),
+                json!({ "kind": "extracting", "done": 1, "total": 2 }),
+                json!({ "kind": "extracting", "done": 2, "total": 2 }),
+                json!({ "kind": "loading_model" }),
+                json!({ "kind": "inferring" }),
+            ]
+        );
+        assert_eq!(b.compute_jobs.live_count(), 0);
+    }
 }

@@ -135,10 +135,16 @@ async fn live_unicode_vlm_paths() {
     image::RgbImage::from_pixel(64, 64, image::Rgb([40, 100, 180]))
         .save(&frame)
         .unwrap();
-    let frames =
-        crate::vlm::frame_extract::sample_frames(&frame, 0, &dir.path().join("抽帧, 缓存"), &[0])
-            .await
-            .expect("ffmpeg must sample a Unicode/comma image into a Unicode/comma directory");
+    let frames = crate::vlm::frame_extract::sample_frames(
+        &frame,
+        0,
+        &dir.path().join("抽帧, 缓存"),
+        &[0],
+        |_| {},
+        |_| {},
+    )
+    .await
+    .expect("ffmpeg must sample a Unicode/comma image into a Unicode/comma directory");
     let style = match std::env::var("WEFTCUT_VLM_STYLE").as_deref() {
         Ok("minicpm") => OutputStyle::MiniCpmVText,
         Ok("qwen") | Err(_) => OutputStyle::Qwen3VlJson,

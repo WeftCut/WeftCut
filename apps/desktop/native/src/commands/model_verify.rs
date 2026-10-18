@@ -217,7 +217,10 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                     l.device,
                     style,
                 );
-                let (raw, cpu) = d.describe_verified(req).await.map_err(|e| e.to_string())?;
+                let (raw, cpu) = d
+                    .describe_verified(req, &crate::compute_jobs::ignore_model_phase)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 vlm::parser::parse_raw(raw).map_err(|e| e.to_string())?;
                 Ok(VerifyResult {
                     device: if cpu { "cpu" } else { device },

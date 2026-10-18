@@ -54,14 +54,12 @@ fn report(peak: Option<f64>) -> NormalizationReport {
     }
 }
 
-pub async fn prepare(path: PathBuf, normalize: bool) -> Result<PreparedAudio> {
-    prepare_with_observer(path, normalize, |_| {}).await
-}
-
-/// [`prepare`] reporting why it is still waiting for admission; see
-/// `resources::user_compute` for the observer contract. Original mode needs no
-/// admission and never calls the observer.
-pub async fn prepare_with_observer(
+/// The WAV transcription reads: `path` itself in original mode, else a
+/// normalized private copy. `observer` hears admission: the blocking reason
+/// while it waits, then `None` once normalization starts (see
+/// `resources::user_compute`). Original mode needs no admission and never
+/// calls it.
+pub async fn prepare(
     path: PathBuf,
     normalize: bool,
     observer: impl FnMut(Option<UserComputeBlock>) + Send,
@@ -186,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn original_mode_never_prepares_or_replaces_the_input() {
         let path = PathBuf::from("even-a-missing-file.wav");
-        let prepared = prepare(path.clone(), false).await.unwrap();
+        let prepared = prepare(path.clone(), false, |_| {}).await.unwrap();
         assert_eq!(prepared.path, path);
         assert!(prepared.normalization.is_none());
     }
@@ -197,7 +195,7 @@ mod tests {
         let path = dir.path().join("raw.wav");
         let original = wav(1600);
         std::fs::write(&path, &original).unwrap();
-        let prepared = prepare(path.clone(), true).await.unwrap();
+        let prepared = prepare(path.clone(), true, |_| {}).await.unwrap();
         assert_ne!(prepared.path, path);
         let report = prepared.normalization.as_ref().unwrap();
         assert!((report.gain_db - 23.23).abs() < 0.02, "{report:?}");
@@ -225,7 +223,7 @@ mod tests {
         assert!(!output.exists());
         assert!(path.exists());
         std::fs::write(&path, wav(0)).unwrap();
-        let silent = prepare(path.clone(), true).await.unwrap();
+        let silent = prepare(path.clone(), true, |_| {}).await.unwrap();
         assert_eq!(silent.path, path);
         assert_eq!(silent.normalization.unwrap().gain_db, 0.0);
     }

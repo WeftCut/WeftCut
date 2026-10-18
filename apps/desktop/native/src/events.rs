@@ -8,6 +8,11 @@ use std::sync::{Arc, Mutex};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::Value;
 
+/// A clip-compute job (`transcribe_clip` / `describe_clip` called with a
+/// host-injected `job_id`) entered a new phase. Payload
+/// `{ job_id, phase: { kind, ...fields } }`; see `compute_jobs::ComputePhase`.
+pub const EVENT_COMPUTE_JOB_PHASE: &str = "compute:job_phase";
+
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: &str, payload: Value);
 }
