@@ -99,7 +99,10 @@ pub const EVENT_COMPLETE: &str = "media:job_complete";
 pub const EVENT_ERROR: &str = "media:job_error";
 
 /// Background admission shared with native/renderer work and inference.
-/// The authority owns thread, memory, playback and pressure checks.
+/// The authority owns thread, memory, playback and pressure checks. For
+/// derivatives only: compute a person is waiting on (transcription audio,
+/// description frames) takes `resources::user_compute` so it never queues
+/// behind them (ADR 0120).
 pub(crate) fn ffmpeg_sem() -> &'static crate::resources::BackgroundGate {
     &crate::resources::BackgroundGate
 }

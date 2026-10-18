@@ -2,10 +2,13 @@
 //! share this ledger on every platform. A lease is returned only after teardown.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+
+use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 mod export_plan;
 mod memory;
 pub use export_plan::interactive_export;
@@ -43,6 +46,9 @@ struct State {
     leases: HashMap<u32, Claim>,
     waiting: u32,
     finalization_waiting: u32,
+    /// User-compute claims currently queued. While non-zero, no new background
+    /// claim is admitted, so freed capacity goes to the person waiting.
+    user_waiting: u32,
     playing: bool,
     pressured: bool,
     critical: bool,
@@ -78,6 +84,7 @@ impl Governor {
                 leases: HashMap::new(),
                 waiting: 0,
                 finalization_waiting: 0,
+                user_waiting: 0,
                 playing: false,
                 pressured: false,
                 critical: false,
@@ -129,9 +136,32 @@ impl Governor {
         } else {
             0
         };
+        let bg = s.leases.values().filter(|c| c.background).count() as u32;
+        if Self::fresh_claim_block(&s, claim, credit).is_some()
+            || claim.background
+                && (bg >= s.limits.background_jobs
+                    || s.playing && !s.limits.background_playback
+                    // Queued background work yields to user compute. Running
+                    // derivatives keep their leases; only new admissions wait.
+                    || s.user_waiting > 0)
+        {
+            return None;
+        }
+        let id = Self::insert_lease(&mut s, claim);
+        if let Some(tail) = finalization {
+            s.leases.get_mut(&tail).unwrap().mib = 0;
+            s.finalizations.get_mut(&tail).unwrap().production = Some(id);
+            s.production.insert(id, tail);
+        }
+        Some(id)
+    }
+    /// The rules every fresh claim shares, in the order a refusal is reported:
+    /// pressure, then a waiting export finalization, then the CPU/memory ledger.
+    /// One function for admission and for the user-compute refusal reason, so
+    /// the reason named to the user is the rule that actually refused.
+    fn fresh_claim_block(s: &State, claim: Claim, credit: u64) -> Option<UserComputeBlock> {
         let threads: u32 = s.leases.values().map(|c| c.threads).sum();
         let mib: u64 = s.leases.values().map(|c| c.mib).sum();
-        let bg = s.leases.values().filter(|c| c.background).count() as u32;
         // Background work leaves one compute slot for interactive work when
         // possible. Pressure closes admission; existing work drains safely.
         let cpu_limit = if claim.background && s.limits.cpu_threads > 1 {
@@ -139,26 +169,25 @@ impl Governor {
         } else {
             s.limits.cpu_threads
         };
-        if s.pressured
-            || claim.threads > 0 && s.finalization_waiting > 0
-            || threads.saturating_add(claim.threads) > cpu_limit
+        if s.pressured {
+            Some(UserComputeBlock::Memory)
+        } else if claim.threads > 0 && s.finalization_waiting > 0 {
+            Some(UserComputeBlock::Finalization)
+        } else if threads.saturating_add(claim.threads) > cpu_limit
             || mib.saturating_sub(credit).saturating_add(claim.mib) > s.limits.work_mib
-            || claim.background
-                && (bg >= s.limits.background_jobs || s.playing && !s.limits.background_playback)
         {
-            return None;
+            Some(UserComputeBlock::Budget)
+        } else {
+            None
         }
+    }
+    fn insert_lease(s: &mut State, claim: Claim) -> u32 {
         loop {
             s.next = s.next.wrapping_add(1).max(1);
             let id = s.next;
             if let std::collections::hash_map::Entry::Vacant(e) = s.leases.entry(id) {
                 e.insert(claim);
-                if let Some(tail) = finalization {
-                    s.leases.get_mut(&tail).unwrap().mib = 0;
-                    s.finalizations.get_mut(&tail).unwrap().production = Some(id);
-                    s.production.insert(id, tail);
-                }
-                return Some(id);
+                return id;
             }
         }
     }
@@ -445,17 +474,24 @@ pub struct BackgroundGate;
 /// Snapshot only, not an assertion of the reason for the entire wait. Limits
 /// and playback may change while a request is queued.
 pub(crate) fn background_diagnostic_state() -> serde_json::Value {
-    let s = governor().state.lock().unwrap();
-    serde_json::json!({
-        "playing": s.playing, "background_playback": s.limits.background_playback,
-        "memory_pressure": s.pressured,
-        "background_active": s.leases.values().filter(|c| c.background).count(),
-        "background_limit": s.limits.background_jobs, "waiting": s.waiting,
-        "reserved_mib": s.leases.values().map(|c| c.mib).sum::<u64>(),
-        "work_mib": s.limits.work_mib,
-        "threads_active": s.leases.values().map(|c| c.threads).sum::<u32>(),
-        "cpu_threads": s.limits.cpu_threads,
-    })
+    governor().diagnostic_state()
+}
+impl Governor {
+    fn diagnostic_state(&self) -> serde_json::Value {
+        let s = self.state.lock().unwrap();
+        serde_json::json!({
+            "playing": s.playing, "background_playback": s.limits.background_playback,
+            "memory_pressure": s.pressured,
+            "background_active": s.leases.values().filter(|c| c.background).count(),
+            "background_limit": s.limits.background_jobs, "waiting": s.waiting,
+            "user_compute_waiting": s.user_waiting,
+            "finalization_waiting": s.finalization_waiting,
+            "reserved_mib": s.leases.values().map(|c| c.mib).sum::<u64>(),
+            "work_mib": s.limits.work_mib,
+            "threads_active": s.leases.values().map(|c| c.threads).sum::<u32>(),
+            "cpu_threads": s.limits.cpu_threads,
+        })
+    }
 }
 impl BackgroundGate {
     pub async fn acquire(&self) -> anyhow::Result<Permit> {
@@ -470,6 +506,299 @@ impl BackgroundGate {
             .acquire(true, 128)
             .await
             .map_err(anyhow::Error::msg)
+    }
+}
+/// Longest a user-compute claim waits for admission before it is refused with
+/// the reason. Interactive's 15 s is sized for a frame or an export working set
+/// that a draining derivative frees quickly; user compute instead waits out a
+/// pressure hysteresis cycle or an export's mux, and is never allowed to
+/// interrupt a running derivative to get in. Bounded all the same: a request
+/// that cannot start must answer with its cause, not look hung (#67).
+pub const USER_COMPUTE_WAIT: Duration = Duration::from_secs(60);
+/// One ffmpeg child decoding a slice of audio or a single frame, the same
+/// working-memory charge as a background derivative.
+const USER_COMPUTE_MIB: u64 = 128;
+
+/// Clip computation a person or agent asked for and is waiting on: the audio
+/// slice and normalization behind transcription and the frames behind
+/// description. Named in admission diagnostics and refusals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserComputeCaller {
+    AudioExtract,
+    AudioNormalize,
+    FrameExtract,
+}
+impl UserComputeCaller {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AudioExtract => "audio_extract",
+            Self::AudioNormalize => "audio_normalize",
+            Self::FrameExtract => "frame_extract",
+        }
+    }
+    fn task(self) -> &'static str {
+        match self {
+            Self::AudioExtract => "extracting clip audio",
+            Self::AudioNormalize => "normalizing clip audio",
+            Self::FrameExtract => "sampling clip frames",
+        }
+    }
+}
+
+/// Why a user-compute claim is not admitted yet. These are the only rules the
+/// lane obeys: it ignores the background job cap and the playback gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserComputeBlock {
+    /// Measured process-tree memory is under pressure; admission is closed
+    /// for everything until it recovers.
+    Memory,
+    /// An admitted export is waiting to finish (mux); it goes first.
+    Finalization,
+    /// The CPU or working-memory budget is held by other leases.
+    Budget,
+}
+impl UserComputeBlock {
+    /// Stable wire tag, surfaced as a queued job's `reason`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Finalization => "finalization",
+            Self::Budget => "budget",
+        }
+    }
+}
+
+/// Workspace log for admission diagnostics. Installed once with the backend's
+/// slot, which follows workspace switches; absent in unit tests, where rows
+/// are dropped exactly as the slot drops them before a workspace opens.
+static DIAGNOSTICS: OnceLock<LogBusSlot> = OnceLock::new();
+pub(crate) fn install_diagnostics(slot: LogBusSlot) {
+    let _ = DIAGNOSTICS.set(slot);
+}
+
+/// Admit user-initiated clip computation (see [`UserComputeCaller`]). Unlike
+/// [`BackgroundGate`] it is not held back by the background job cap or by
+/// playback, and while it waits no new background work is admitted; unlike
+/// [`interactive`] it waits up to [`USER_COMPUTE_WAIT`]. Pressure, export
+/// finalization and the CPU/memory budget still apply, and running work is
+/// never interrupted. `observer` hears the blocking reason when the claim first
+/// fails to admit and whenever it changes, then `None` once admitted. Dropping
+/// the future withdraws the claim.
+pub async fn user_compute(
+    caller: UserComputeCaller,
+    mut observer: impl FnMut(Option<UserComputeBlock>) + Send,
+) -> Result<Permit, String> {
+    let empty = LogBusSlot::new();
+    governor()
+        .acquire_user_compute(
+            caller,
+            USER_COMPUTE_WAIT,
+            &mut observer,
+            DIAGNOSTICS.get().unwrap_or(&empty),
+        )
+        .await
+}
+impl Governor {
+    async fn acquire_user_compute(
+        self: &Arc<Self>,
+        caller: UserComputeCaller,
+        wait: Duration,
+        observer: &mut (dyn FnMut(Option<UserComputeBlock>) + Send),
+        log: &LogBusSlot,
+    ) -> Result<Permit, String> {
+        let trace = AdmissionTrace {
+            governor: self.clone(),
+            log: log.clone(),
+            caller,
+            queued: Instant::now(),
+        };
+        let first = match self.try_user_compute() {
+            Ok(Ok(id)) => {
+                trace.emit(LogLevel::Debug, "admitted", None, None);
+                return Ok(self.permit(id));
+            }
+            Ok(Err(block)) => block,
+            Err(message) => {
+                trace.emit(LogLevel::Warn, "refused", None, Some(&message));
+                return Err(message);
+            }
+        };
+        let mut waiting = {
+            let mut s = self.state.lock().unwrap();
+            if s.waiting >= 256 {
+                drop(s);
+                let message = "resource-capacity-exceeded: Too many queued tasks; retry when current work finishes".to_string();
+                trace.emit(LogLevel::Warn, "refused", Some(first), Some(&message));
+                return Err(message);
+            }
+            // Raising the count only narrows background admission, so no
+            // waiter needs waking; the guard notifies when it falls again.
+            s.waiting += 1;
+            s.user_waiting += 1;
+            UserComputeWaiting {
+                trace,
+                reason: first,
+                settled: false,
+            }
+        };
+        waiting
+            .trace
+            .emit(LogLevel::Info, "waiting", Some(first), None);
+        observer(Some(first));
+        let outcome = tokio::time::timeout(wait, async {
+            loop {
+                // Register before checking to avoid losing a concurrent release.
+                let notified = self.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                match self.try_user_compute()? {
+                    Ok(id) => return Ok::<u32, String>(id),
+                    Err(block) if block != waiting.reason => {
+                        waiting.reason = block;
+                        observer(Some(block));
+                    }
+                    Err(_) => {}
+                }
+                notified.await;
+            }
+        })
+        .await;
+        match outcome {
+            Ok(Ok(id)) => {
+                let permit = self.permit(id);
+                waiting.settle(LogLevel::Info, "admitted", None);
+                observer(None);
+                Ok(permit)
+            }
+            Ok(Err(message)) => {
+                waiting.settle(LogLevel::Warn, "refused", Some(&message));
+                Err(message)
+            }
+            Err(_) => {
+                let message = self.user_compute_refusal(&mut waiting, wait);
+                waiting.settle(LogLevel::Warn, "refused", Some(&message));
+                Err(message)
+            }
+        }
+    }
+    /// Full CPU like interactive work: the lane competes for the slot that
+    /// background leaves free. Same task-thread claim as other ffmpeg work,
+    /// because `task_threads()` caps every new command by the smallest live
+    /// claim, and a one-thread lease would throttle unrelated derivatives.
+    fn user_compute_claim(s: &State) -> Claim {
+        Claim {
+            threads: s.limits.task_threads.min(s.limits.cpu_threads),
+            mib: USER_COMPUTE_MIB,
+            background: false,
+        }
+    }
+    /// One admission attempt under one lock, so a refusal carries the rule
+    /// that refused it. The outer error is a claim that can never fit.
+    fn try_user_compute(&self) -> Result<Result<u32, UserComputeBlock>, String> {
+        let mut s = self.state.lock().unwrap();
+        if USER_COMPUTE_MIB > s.limits.work_mib {
+            return Err(format!("resource-capacity-exceeded: Requested {USER_COMPUTE_MIB} MiB working memory exceeds the {} MiB allowance; increase the memory target", s.limits.work_mib));
+        }
+        let claim = Self::user_compute_claim(&s);
+        Ok(match Self::fresh_claim_block(&s, claim, 0) {
+            Some(block) => Err(block),
+            None => Ok(Self::insert_lease(&mut s, claim)),
+        })
+    }
+    /// Name the rule still refusing at expiry, falling back to the last one
+    /// seen if capacity freed in the instant after the deadline.
+    fn user_compute_refusal(&self, waiting: &mut UserComputeWaiting, wait: Duration) -> String {
+        let s = self.state.lock().unwrap();
+        let claim = Self::user_compute_claim(&s);
+        let reason = Self::fresh_claim_block(&s, claim, 0).unwrap_or(waiting.reason);
+        waiting.reason = reason;
+        let head = format!(
+            "resource-capacity-exceeded: Waited {} s before {}",
+            wait.as_secs_f64(),
+            waiting.trace.caller.task()
+        );
+        match reason {
+            UserComputeBlock::Memory => format!("{head}: memory is under pressure. Close other work or wait for memory to recover, then retry"),
+            UserComputeBlock::Finalization => format!("{head}: an export is finishing and goes first. Retry when the export completes"),
+            UserComputeBlock::Budget => {
+                let others = s.leases.len();
+                let background = s.leases.values().filter(|c| c.background).count();
+                format!("{head}: the CPU and memory budget is held by {others} other lease(s), {background} of them background processing such as proxy generation. Retry when it finishes, or raise Processing effort or the Memory target in Settings")
+            }
+        }
+    }
+    fn permit(self: &Arc<Self>, id: u32) -> Permit {
+        Permit {
+            governor: self.clone(),
+            id,
+        }
+    }
+}
+/// One user-compute admission as logged: who asked, and since when.
+struct AdmissionTrace {
+    governor: Arc<Governor>,
+    log: LogBusSlot,
+    caller: UserComputeCaller,
+    queued: Instant,
+}
+impl AdmissionTrace {
+    fn emit(
+        &self,
+        level: LogLevel,
+        status: &str,
+        reason: Option<UserComputeBlock>,
+        error: Option<&str>,
+    ) {
+        if self.log.current().is_none() {
+            return;
+        }
+        self.log.emit(LogEntryInput {
+            level,
+            category: LogCategory::Job,
+            source: LogSource::System,
+            message: format!("Clip compute admission: {}", self.caller.as_str()),
+            details: Some(serde_json::json!({
+                "schema": 1, "caller": self.caller.as_str(), "status": status,
+                "queued_ms": self.queued.elapsed().as_secs_f64() * 1000.0,
+                "reason": reason.map(UserComputeBlock::as_str), "error": error,
+                "admission": self.governor.diagnostic_state(),
+            })),
+            ..Default::default()
+        });
+    }
+}
+/// Holds a user-compute claim's place in the queue. Dropping it, on admission,
+/// refusal or cancellation of the waiting future, withdraws the claim and lets
+/// background admission resume; an unsettled drop is logged as cancelled.
+struct UserComputeWaiting {
+    trace: AdmissionTrace,
+    reason: UserComputeBlock,
+    settled: bool,
+}
+impl UserComputeWaiting {
+    /// Withdraw from the queue first, so the logged snapshot shows the state
+    /// the claim leaves behind.
+    fn settle(mut self, level: LogLevel, status: &str, error: Option<&str>) {
+        self.settled = true;
+        self.withdraw();
+        self.trace.emit(level, status, Some(self.reason), error);
+    }
+    fn withdraw(&mut self) {
+        {
+            let mut s = self.trace.governor.state.lock().unwrap();
+            s.waiting -= 1;
+            s.user_waiting -= 1;
+        }
+        self.trace.governor.notify_change();
+    }
+}
+impl Drop for UserComputeWaiting {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.withdraw();
+            let reason = Some(self.reason);
+            self.trace.emit(LogLevel::Info, "cancelled", reason, None);
+        }
     }
 }
 pub async fn interactive(mib: u64) -> Result<Permit, String> {
@@ -1199,6 +1528,329 @@ mod tests {
         g.release(recovered);
         g.release(decoder);
         assert_eq!(g.snapshot().reserved_mib, 0);
+    }
+
+    type Seen = Arc<Mutex<Vec<Option<UserComputeBlock>>>>;
+    fn spawn_user_compute(
+        g: &Arc<Governor>,
+        wait: Duration,
+    ) -> (tokio::task::JoinHandle<Result<Permit, String>>, Seen) {
+        let seen = Seen::default();
+        let task = tokio::spawn({
+            let (g, seen) = (g.clone(), seen.clone());
+            async move {
+                let mut observer = |block| seen.lock().unwrap().push(block);
+                let log = LogBusSlot::new();
+                g.acquire_user_compute(UserComputeCaller::AudioExtract, wait, &mut observer, &log)
+                    .await
+            }
+        });
+        (task, seen)
+    }
+    async fn until(mut ready: impl FnMut() -> bool) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !ready() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("condition not reached");
+    }
+    fn user_waiting(g: &Governor) -> u32 {
+        g.state.lock().unwrap().user_waiting
+    }
+    #[tokio::test]
+    async fn user_compute_admits_while_background_is_saturated_and_playback_runs() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 8,
+            task_threads: 2,
+            background_jobs: 1,
+            ..Limits::default()
+        })
+        .unwrap();
+        let proxy = g.acquire(true, 128).await.unwrap();
+        g.state.lock().unwrap().playing = true;
+        let (task, seen) = spawn_user_compute(&g, Duration::from_millis(200));
+        let permit = tokio::time::timeout(Duration::from_millis(100), task)
+            .await
+            .expect("user compute must not wait for the background cap or playback")
+            .unwrap()
+            .unwrap();
+        assert_eq!(permit.threads(), 2);
+        assert!(seen.lock().unwrap().is_empty(), "admitted without waiting");
+        assert_eq!(g.snapshot().waiting, 0);
+        drop(permit);
+        drop(proxy);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn user_compute_is_refused_under_pressure_after_its_bounded_wait() {
+        let g = Governor::new();
+        g.state.lock().unwrap().pressured = true;
+        let (task, seen) = spawn_user_compute(&g, Duration::from_millis(30));
+        let error = task.await.unwrap().err().unwrap();
+        assert!(error.starts_with("resource-capacity-exceeded: "), "{error}");
+        assert!(error.contains("extracting clip audio"), "{error}");
+        assert!(error.contains("memory is under pressure"), "{error}");
+        assert_eq!(*seen.lock().unwrap(), [Some(UserComputeBlock::Memory)]);
+        assert_eq!(g.snapshot().waiting, 0);
+        assert_eq!(user_waiting(&g), 0);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn waiting_user_compute_holds_back_new_background_work_only() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 4,
+            task_threads: 1,
+            background_jobs: 4,
+            work_mib: 256,
+            ..Limits::default()
+        })
+        .unwrap();
+        let resident = g
+            .reserve(Claim {
+                threads: 0,
+                mib: 200,
+                background: false,
+            })
+            .unwrap();
+        let small = |background| Claim {
+            threads: 1,
+            mib: 50,
+            background,
+        };
+        let (task, seen) = spawn_user_compute(&g, Duration::from_secs(1));
+        until(|| user_waiting(&g) == 1).await;
+        // The small background claim fits the ledger, but must not take the
+        // capacity a person is waiting for. Interactive work is unaffected.
+        assert!(g.reserve(small(true)).is_none());
+        let interactive = g.reserve(small(false)).unwrap();
+        g.release(interactive);
+        g.release(resident);
+        let permit = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(UserComputeBlock::Budget), None]
+        );
+        assert_eq!(user_waiting(&g), 0);
+        let background = g.reserve(small(true)).expect("background resumes");
+        g.release(background);
+        drop(permit);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn cancelling_a_waiting_user_compute_restores_background_admission() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 4,
+            task_threads: 1,
+            background_jobs: 4,
+            work_mib: 256,
+            ..Limits::default()
+        })
+        .unwrap();
+        let resident = g
+            .reserve(Claim {
+                threads: 0,
+                mib: 200,
+                background: false,
+            })
+            .unwrap();
+        let mut observer = |_| {};
+        let log = LogBusSlot::new();
+        let mut pending = Box::pin(g.acquire_user_compute(
+            UserComputeCaller::FrameExtract,
+            Duration::from_secs(60),
+            &mut observer,
+            &log,
+        ));
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert_eq!(user_waiting(&g), 1);
+        assert_eq!(g.snapshot().waiting, 1);
+        // A background waiter held back only by the queued user claim must be
+        // woken when that claim is withdrawn.
+        let background = tokio::spawn({
+            let g = g.clone();
+            async move { g.acquire_threads(true, 50, Some(1)).await }
+        });
+        until(|| g.snapshot().waiting == 2).await;
+        drop(pending);
+        assert_eq!(user_waiting(&g), 0);
+        let permit = tokio::time::timeout(Duration::from_secs(1), background)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(g.snapshot().waiting, 0);
+        drop(permit);
+        g.release(resident);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn user_compute_refusal_names_the_rule_still_blocking_at_expiry() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 2,
+            task_threads: 2,
+            ..Limits::default()
+        })
+        .unwrap();
+        // Budget: a background proxy holds the slot the claim needs.
+        let proxy = g.acquire(true, 128).await.unwrap();
+        let (task, seen) = spawn_user_compute(&g, Duration::from_millis(30));
+        let error = task.await.unwrap().err().unwrap();
+        assert!(error.starts_with("resource-capacity-exceeded: "), "{error}");
+        assert!(
+            error.contains("held by 1 other lease(s), 1 of them background processing such as proxy generation"),
+            "{error}"
+        );
+        assert_eq!(*seen.lock().unwrap(), [Some(UserComputeBlock::Budget)]);
+        drop(proxy);
+        // Finalization: an admitted export waiting for its mux goes first.
+        let busy = g
+            .reserve(Claim {
+                threads: 2,
+                mib: 1,
+                background: false,
+            })
+            .unwrap();
+        let id = g.reserve_finalization().unwrap();
+        let mut mux = Box::pin(g.acquire_finalization(id));
+        assert!(matches!(
+            mux.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        g.release(busy);
+        let (task, seen) = spawn_user_compute(&g, Duration::from_millis(30));
+        let error = task.await.unwrap().err().unwrap();
+        assert!(error.contains("an export is finishing"), "{error}");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(UserComputeBlock::Finalization)]
+        );
+        drop(mux);
+        g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+        assert_eq!(g.snapshot().waiting, 0);
+        assert_eq!(user_waiting(&g), 0);
+    }
+    #[tokio::test]
+    async fn user_compute_observer_follows_the_blocking_reason() {
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 256,
+            ..Limits::default()
+        })
+        .unwrap();
+        let resident = g
+            .reserve(Claim {
+                threads: 0,
+                mib: 200,
+                background: false,
+            })
+            .unwrap();
+        let (task, seen) = spawn_user_compute(&g, Duration::from_secs(1));
+        let seen_len = || seen.lock().unwrap().len();
+        until(|| seen_len() == 1).await;
+        g.state.lock().unwrap().pressured = true;
+        g.notify_change();
+        until(|| seen_len() == 2).await;
+        // A wake-up that changes nothing about the reason is not reported.
+        g.notify_change();
+        tokio::task::yield_now().await;
+        g.state.lock().unwrap().pressured = false;
+        g.notify_change();
+        until(|| seen_len() == 3).await;
+        g.release(resident);
+        drop(task.await.unwrap().unwrap());
+        use UserComputeBlock::{Budget, Memory};
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(Budget), Some(Memory), Some(Budget), None]
+        );
+    }
+    #[tokio::test]
+    async fn user_compute_admission_is_logged_with_queue_time_and_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = LogBusSlot::new();
+        let bus =
+            crate::logs::LogBus::spawn(dir.path(), Arc::new(crate::events::VecEventSink::new()));
+        log.install(bus.clone());
+        let g = Governor::new();
+        let mut observer = |_| {};
+        let caller = UserComputeCaller::AudioNormalize;
+        drop(
+            g.acquire_user_compute(caller, Duration::from_millis(30), &mut observer, &log)
+                .await
+                .unwrap(),
+        );
+        g.state.lock().unwrap().pressured = true;
+        let refused = g
+            .acquire_user_compute(caller, Duration::from_millis(30), &mut observer, &log)
+            .await;
+        assert!(refused.is_err());
+        {
+            let cancelled =
+                g.acquire_user_compute(caller, Duration::from_secs(60), &mut observer, &log);
+            assert!(tokio::time::timeout(Duration::from_millis(10), cancelled)
+                .await
+                .is_err());
+        }
+        let rows = bus.list();
+        let rows: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let d = row.details.as_ref().unwrap();
+                assert_eq!(row.message, "Clip compute admission: audio_normalize");
+                assert_eq!(d["caller"], "audio_normalize");
+                assert!(d["admission"]["memory_pressure"].is_boolean());
+                (
+                    row.level,
+                    d["status"].as_str().unwrap().to_string(),
+                    d.clone(),
+                )
+            })
+            .collect();
+        let statuses: Vec<_> = rows.iter().map(|r| (r.0, r.1.as_str())).collect();
+        assert_eq!(
+            statuses,
+            [
+                (LogLevel::Debug, "admitted"),
+                (LogLevel::Info, "waiting"),
+                (LogLevel::Warn, "refused"),
+                (LogLevel::Info, "waiting"),
+                (LogLevel::Info, "cancelled"),
+            ]
+        );
+        let refused = &rows[2].2;
+        assert_eq!(refused["reason"], "memory");
+        assert!(refused["queued_ms"].as_f64().unwrap() >= 30.0);
+        assert!(refused["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("resource-capacity-exceeded: "));
+        assert_eq!(rows[4].2["admission"]["user_compute_waiting"], 0);
+    }
+    #[test]
+    fn user_compute_block_wire_tags_are_stable() {
+        use UserComputeBlock::*;
+        let tags = [Memory, Finalization, Budget].map(UserComputeBlock::as_str);
+        assert_eq!(tags, ["memory", "finalization", "budget"]);
     }
 
     #[test]

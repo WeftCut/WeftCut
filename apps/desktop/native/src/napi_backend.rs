@@ -60,6 +60,9 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         tracing::warn!("cache dir setup failed: {e:#}");
     }
     let log_slot = LogBusSlot::new();
+    // Admission diagnostics are written by the process-wide resource authority,
+    // which has no backend handle of its own. First backend wins, like tracing.
+    crate::resources::install_diagnostics(log_slot.clone());
     #[cfg(feature = "jobs")]
     let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
     // Forward our crate's `tracing` events into whichever LogBus is current.

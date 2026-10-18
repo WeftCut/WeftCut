@@ -1,12 +1,15 @@
 //! Explicit, per-request peak normalization of the transcription WAV only.
 //! The source and the shared extraction cache are always read-only. A private
 //! temporary copy survives until inference ends, then is removed by RAII.
+//! Measuring and amplifying run in the user-compute lane, like the slice they
+//! read: transcription is waiting on them.
 use std::{path::PathBuf, process::Stdio};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::process::NoConsoleWindow;
+use crate::resources::{UserComputeBlock, UserComputeCaller};
 
 const TARGET_DBFS: f64 = -3.0;
 const MAX_GAIN_DB: f64 = 24.0;
@@ -52,6 +55,17 @@ fn report(peak: Option<f64>) -> NormalizationReport {
 }
 
 pub async fn prepare(path: PathBuf, normalize: bool) -> Result<PreparedAudio> {
+    prepare_with_observer(path, normalize, |_| {}).await
+}
+
+/// [`prepare`] reporting why it is still waiting for admission; see
+/// `resources::user_compute` for the observer contract. Original mode needs no
+/// admission and never calls the observer.
+pub async fn prepare_with_observer(
+    path: PathBuf,
+    normalize: bool,
+    observer: impl FnMut(Option<UserComputeBlock>) + Send,
+) -> Result<PreparedAudio> {
     if !normalize {
         return Ok(PreparedAudio {
             path,
@@ -59,10 +73,11 @@ pub async fn prepare(path: PathBuf, normalize: bool) -> Result<PreparedAudio> {
             _directory: None,
         });
     }
-    let _permit = crate::jobs::ffmpeg_sem()
-        .acquire()
+    // One admission covers both passes. The refusal message is surfaced as is:
+    // it names the blocking reason and carries the capacity prefix.
+    let _permit = crate::resources::user_compute(UserComputeCaller::AudioNormalize, observer)
         .await
-        .context("acquire ffmpeg slot")?;
+        .map_err(anyhow::Error::msg)?;
     let measured = crate::ffmpeg::command()
         .no_console_window()
         .kill_on_drop(true)

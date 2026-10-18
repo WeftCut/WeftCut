@@ -133,7 +133,7 @@ proptest = "1"
 default = ["jobs", "export", "mcp", "speech"]
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg
 export = ["jobs"]  # video export + IPC videosink; needs jobs for enqueue_conform/io::probe
-speech = ["jobs"]  # transcription/TTS; needs jobs for audio_extract's ffmpeg_sem
+speech = ["jobs"]  # transcription/TTS; needs jobs for the ffmpeg command builder
 mcp = []         # MCP server
 
 # test-noop: NAPI-RS's official Cargo-test compilation mode (TEST-ONLY, never in

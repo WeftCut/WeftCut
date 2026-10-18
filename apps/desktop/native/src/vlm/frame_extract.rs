@@ -7,7 +7,10 @@
 //! each as a downscaled PNG, and return them tagged with their **window-relative**
 //! timestamp.
 //!
-//! One ffmpeg child per frame, under `jobs::ffmpeg_sem()`. Frames land in a
+//! One ffmpeg child per frame, all under a single user-compute admission
+//! (`resources::user_compute`): someone is waiting on the description, so the
+//! sampling neither queues behind background derivatives nor re-queues between
+//! frames. Frames land in a
 //! caller-owned temp dir (RAII-cleaned once the sidecar has read them), not the
 //! persistent cache — the *description* is what we cache, not the frames.
 
@@ -17,6 +20,7 @@ use std::process::Stdio;
 use crate::ffmpeg::ffmpeg_is_installed;
 
 use crate::process::NoConsoleWindow;
+use crate::resources::{UserComputeBlock, UserComputeCaller};
 
 use super::describer::TimedFrame;
 use super::error::VlmError;
@@ -61,6 +65,18 @@ pub async fn sample_frames(
     out_dir: &Path,
     anchors: &[i64],
 ) -> Result<Vec<TimedFrame>, VlmError> {
+    sample_frames_with_observer(source, source_in_us, out_dir, anchors, |_| {}).await
+}
+
+/// [`sample_frames`] reporting why it is still waiting for admission; see
+/// `resources::user_compute` for the observer contract.
+pub async fn sample_frames_with_observer(
+    source: &Path,
+    source_in_us: i64,
+    out_dir: &Path,
+    anchors: &[i64],
+    observer: impl FnMut(Option<UserComputeBlock>) + Send,
+) -> Result<Vec<TimedFrame>, VlmError> {
     if !ffmpeg_is_installed() {
         return Err(VlmError::FrameExtract(
             "ffmpeg not installed; cannot sample frames for description".into(),
@@ -70,16 +86,17 @@ pub async fn sample_frames(
         .await
         .map_err(VlmError::Io)?;
 
+    // Held across every frame: the frames run one at a time, and admitting
+    // each separately would let background work in between.
+    let _permit = crate::resources::user_compute(UserComputeCaller::FrameExtract, observer)
+        .await
+        .map_err(VlmError::FrameExtract)?;
+
     let mut frames = Vec::with_capacity(anchors.len());
     for (i, &anchor_us) in anchors.iter().enumerate() {
         let abs_us = (source_in_us + anchor_us).max(0);
         let abs_s = abs_us as f64 / 1_000_000.0;
         let path = out_dir.join(format!("f{i:02}.png"));
-
-        let _permit = crate::jobs::ffmpeg_sem()
-            .acquire()
-            .await
-            .map_err(|e| VlmError::FrameExtract(format!("acquire ffmpeg slot: {e}")))?;
 
         // -ss BEFORE -i = fast keyframe seek (matches spike.mjs + jobs/frame.rs);
         // description is robust to thumbnail-grade seek accuracy.

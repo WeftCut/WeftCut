@@ -7,9 +7,15 @@
 //! `<cache>/transcribe-audio/<hash>.wav` (see `cache::CacheLayout`).
 //!
 //! Atomic via the shared `temp_path / promote_temp / discard_temp` triad,
-//! same as the jobs module. Acquires `jobs::ffmpeg_sem()` so cloud extracts
-//! compete fairly with background derivative ffmpegs rather than spawning
-//! unbounded parallelism on import-heavy moments.
+//! same as the jobs module. Admitted through the user-compute lane
+//! (`resources::user_compute`): someone is waiting on this slice, so it must
+//! not queue behind background derivatives, yet it still respects memory
+//! pressure and the shared CPU/memory budget rather than spawning unbounded
+//! parallelism on import-heavy moments.
+//!
+//! Seeking is two-stage (see [`seek_args`]): a coarse input-side seek to a few
+//! seconds before the in-point, then an exact output-side seek for the rest.
+//! The output is the same window, so the cache key above is unaffected.
 //!
 //! Size envelope at 16 kHz mono pcm_s16le: 32 KB/sec, so the Whisper 25 MB
 //! upload cap is ~13 minutes per single extract. `transcribe_clip`
@@ -25,12 +31,35 @@ use anyhow::{Context, Result};
 use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
-use crate::jobs;
+use crate::resources::{UserComputeBlock, UserComputeCaller};
 
 /// The input rate every backend we drive takes (OpenAI Whisper, whisper.cpp,
 /// FunASR): 16 kHz mono is the smallest shape that keeps transcription
 /// accuracy.
 pub const SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// How far before the in-point the coarse input-side seek lands. Demuxer seeks
+/// are only as precise as the container index, and can land after the target
+/// on sparse or estimated indexes (e.g. MP3 without a TOC). Landing anywhere
+/// within this pre-roll still precedes the in-point, so the exact output-side
+/// seek trims to the requested sample.
+const SEEK_PREROLL_US: i64 = 5_000_000;
+
+/// ffmpeg seek split for an in-point: the optional input-side `-ss` (before
+/// `-i`, a fast demuxer seek) and the output-side `-ss` (after `-i`, decoded
+/// and sample-accurate). Input seeking rebases timestamps to zero at its
+/// target, so the two add up to `in_us`. Pure so the split is testable
+/// without ffmpeg.
+fn seek_args(in_us: i64) -> (Option<String>, String) {
+    if in_us <= SEEK_PREROLL_US {
+        // Decoding a few seconds from the start is cheap; seek exactly.
+        return (None, us_to_seconds(in_us));
+    }
+    (
+        Some(us_to_seconds(in_us - SEEK_PREROLL_US)),
+        us_to_seconds(SEEK_PREROLL_US),
+    )
+}
 
 /// Slice `[in_us, out_us)` of `source` into a mono 16 kHz WAV and return
 /// the cached path. `source_hash` is the upstream `MediaItem.file_hash_blake3`
@@ -41,6 +70,20 @@ pub async fn extract_audio_window(
     source_hash: &str,
     in_us: i64,
     out_us: i64,
+) -> Result<PathBuf> {
+    extract_audio_window_with_observer(cache, source, source_hash, in_us, out_us, |_| {}).await
+}
+
+/// [`extract_audio_window`] reporting why it is still waiting for admission;
+/// see `resources::user_compute` for the observer contract. A cache hit
+/// returns without admission and never calls the observer.
+pub async fn extract_audio_window_with_observer(
+    cache: &CacheLayout,
+    source: &Path,
+    source_hash: &str,
+    in_us: i64,
+    out_us: i64,
+    observer: impl FnMut(Option<UserComputeBlock>) + Send,
 ) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot extract audio for transcription");
@@ -65,26 +108,35 @@ pub async fn extract_audio_window(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let in_s = us_to_seconds(in_us);
+    let (coarse_s, exact_s) = seek_args(in_us);
     let dur_s = us_to_seconds(out_us - in_us);
 
-    let _permit = jobs::ffmpeg_sem()
-        .acquire()
+    // The capacity refusal is the message itself: it names the blocking
+    // reason and carries the prefix the renderer recognizes.
+    let _permit = crate::resources::user_compute(UserComputeCaller::AudioExtract, observer)
         .await
-        .context("acquire ffmpeg slot for audio extract")?;
+        .map_err(anyhow::Error::msg)?;
 
-    // -ss AFTER -i for sample-accurate seek (input-side -ss is faster but
-    // keyframe-aligned; transcription wants the actual requested window).
-    let child = crate::ffmpeg::command()
+    // Two-stage seek: the input-side -ss skips decoding everything before the
+    // pre-roll (a window deep into a long file would otherwise decode from 0),
+    // and the output-side -ss is the sample-accurate remainder transcription
+    // needs; an input-side seek alone is only as precise as the index.
+    let mut command = crate::ffmpeg::command();
+    command
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the slice temp; see
         // jobs/hwaccel.rs.
         .kill_on_drop(true)
-        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
+    if let Some(coarse_s) = &coarse_s {
+        command.args(["-ss", coarse_s]);
+    }
+    let child = command
+        .arg("-i")
         .arg(source)
         .args([
             "-ss",
-            &in_s,
+            &exact_s,
             "-t",
             &dur_s,
             "-vn",
@@ -241,6 +293,89 @@ mod tests {
             .await
             .expect("audio extract second call");
         assert_eq!(path, path2);
+    }
+
+    #[test]
+    fn seek_splits_into_coarse_input_and_exact_output_parts() {
+        // Within the pre-roll: no input seek, the whole offset is exact.
+        assert_eq!(seek_args(0), (None, "0.000000".into()));
+        assert_eq!(seek_args(3_250_000), (None, "3.250000".into()));
+        assert_eq!(seek_args(SEEK_PREROLL_US), (None, "5.000000".into()));
+        // Deep in-point: the input seek stops one pre-roll short and the exact
+        // remainder makes up the rest, to the microsecond.
+        assert_eq!(
+            seek_args(1_800_500_001),
+            (Some("1795.500001".into()), "5.000000".into()),
+        );
+        assert_eq!(
+            seek_args(SEEK_PREROLL_US + 1),
+            (Some("0.000001".into()), "5.000000".into()),
+        );
+    }
+
+    /// The two-stage seek must stay sample-accurate: a tone that starts at
+    /// exactly 7 s lands at exactly the middle of a `[6.9 s, 7.1 s)` slice.
+    #[tokio::test]
+    async fn two_stage_seek_keeps_the_window_sample_accurate() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not on PATH — skipping two-stage seek smoke");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        let source = tmp.path().join("onset.m4a");
+        let status = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg("aevalsrc=if(gte(t\\,7)\\,0.5*sin(2*PI*1000*t)\\,0):s=44100:d=10")
+            .args(["-c:a", "aac", "-b:a", "192k"])
+            .arg(&source)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
+
+        let path = extract_audio_window(&cache, &source, "onset", 6_900_000, 7_100_000)
+            .await
+            .expect("audio extract");
+        let bytes = std::fs::read(&path).unwrap();
+        let data = bytes
+            .windows(4)
+            .position(|w| w == b"data")
+            .expect("data chunk");
+        let samples: Vec<i16> = bytes[data + 8..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|s| i16::from_le_bytes(*s))
+            .collect();
+        let half = (SAMPLE_RATE_HZ / 10) as usize; // 0.1 s
+        assert!(
+            (samples.len() as i64 - 2 * half as i64).abs() < 32,
+            "{}",
+            samples.len()
+        );
+        // Allow a few ms for the resampler and AAC filter to ring at the edge.
+        let quiet = samples[..half - 64]
+            .iter()
+            .map(|s| s.unsigned_abs())
+            .max()
+            .unwrap();
+        let loud = samples[half + 64..]
+            .iter()
+            .map(|s| s.unsigned_abs())
+            .max()
+            .unwrap();
+        assert!(quiet < 500, "audio before the onset: peak {quiet}");
+        assert!(loud > 8_000, "tone missing after the onset: peak {loud}");
     }
 
     #[test]
