@@ -92,6 +92,50 @@ export function endpointUrl(auth: McpAuth): string {
   return `http://127.0.0.1:${auth.port}/mcp`
 }
 
+/// How long the shim waits on the app. The agent's own client timeout cannot
+/// rescue a call that this hop gave up on first, so a tool call — which can be
+/// minutes of transcription or frame description — gets an IDLE window that
+/// every progress notification from the app re-arms, not a flat deadline.
+export interface BridgeTimeouts {
+  /// tools/call: silence allowed between the request and the result, or
+  /// between two progress notifications.
+  toolIdleMs: number
+  /// tools/call: hard cap no matter how much progress arrives. Absent: none —
+  /// a call that keeps reporting progress may take as long as it takes.
+  toolMaxTotalMs?: number
+  /// Everything else (lists, resource reads, prompts): short and flat.
+  requestMs: number
+}
+
+export const TOOL_TIMEOUT_ENV = 'WEFTCUT_MCP_TOOL_TIMEOUT_MS'
+export const TOOL_MAX_TOTAL_ENV = 'WEFTCUT_MCP_TOOL_MAX_TOTAL_MS'
+
+export const DEFAULT_BRIDGE_TIMEOUTS: BridgeTimeouts = { toolIdleMs: 300_000, requestMs: 60_000 }
+
+/// setTimeout's ceiling: past 2^31-1 ms Node fires the timer at once instead.
+const MAX_TIMER_MS = 2_147_483_647
+
+/// A positive integer of milliseconds, else undefined. An env typo must fall
+/// back to the default rather than take the shim down with it.
+function envMs(raw: string | undefined): number | undefined {
+  if (!raw || !/^\d+$/.test(raw.trim())) return undefined
+  const ms = Number(raw.trim())
+  return ms > 0 ? Math.min(ms, MAX_TIMER_MS) : undefined
+}
+
+/// The bridge timeouts this shim was configured with: WEFTCUT_MCP_TOOL_TIMEOUT_MS
+/// sets the tool-call idle window, WEFTCUT_MCP_TOOL_MAX_TOTAL_MS opts into a
+/// total cap.
+export function bridgeTimeouts(se: ShimEnv): BridgeTimeouts {
+  const toolIdleMs = envMs(se.env[TOOL_TIMEOUT_ENV]) ?? DEFAULT_BRIDGE_TIMEOUTS.toolIdleMs
+  const toolMaxTotalMs = envMs(se.env[TOOL_MAX_TOTAL_ENV])
+  return {
+    ...DEFAULT_BRIDGE_TIMEOUTS,
+    toolIdleMs,
+    ...(toolMaxTotalMs !== undefined ? { toolMaxTotalMs } : {}),
+  }
+}
+
 /// What `launch_weftcut` should spawn.
 ///  - WEFTCUT_APP env override first (dev: point at a packaged build or
 ///    `electron .`-style wrapper script).

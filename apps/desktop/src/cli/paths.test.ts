@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  bridgeTimeouts,
   clientConfig,
   clientConfigJson,
   defaultUserDataDir,
@@ -116,5 +117,27 @@ describe('clientConfig', () => {
       mcpServers: { weftcut: { command: string } }
     }
     expect(parsed.mcpServers.weftcut.command).toBe('C:\\Program Files\\WeftCut\\WeftCut.exe')
+  })
+})
+
+describe('bridgeTimeouts', () => {
+  it('defaults to a 5 min tool-call idle window, no total cap, 60 s for everything else', () => {
+    expect(bridgeTimeouts(se())).toEqual({ toolIdleMs: 300_000, requestMs: 60_000 })
+  })
+
+  it('reads the tool-call idle window and the opt-in total cap from the env', () => {
+    const t = bridgeTimeouts(se({ env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '900000', WEFTCUT_MCP_TOOL_MAX_TOTAL_MS: ' 3600000 ' } }))
+    expect(t).toEqual({ toolIdleMs: 900_000, toolMaxTotalMs: 3_600_000, requestMs: 60_000 })
+  })
+
+  it('falls back to the default on anything but a positive integer', () => {
+    for (const bad of ['', '0', '-5', '1.5', '10s', 'abc', '1e6']) {
+      const t = bridgeTimeouts(se({ env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: bad, WEFTCUT_MCP_TOOL_MAX_TOTAL_MS: bad } }))
+      expect(t).toEqual({ toolIdleMs: 300_000, requestMs: 60_000 })
+    }
+  })
+
+  it('clamps to the timer ceiling instead of overflowing into an instant timeout', () => {
+    expect(bridgeTimeouts(se({ env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '99999999999' } })).toolIdleMs).toBe(2_147_483_647)
   })
 })

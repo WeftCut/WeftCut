@@ -10,10 +10,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import {
   CallToolRequestSchema,
+  CallToolResultSchema,
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
+  ProgressNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { createShim, type Shim } from './shim.js'
@@ -32,6 +34,12 @@ const AUTH: McpAuth = { token: 'tok', port: 4711 }
 /// leaves read_project a plain pass-through like every other tool.
 let appSession: Record<string, unknown> | undefined
 
+/// What the fake app saw of its `slow` / `heartbeat` calls: each call's
+/// cancellation signal and the progress token it was addressed with, plus the
+/// release for every `slow` call still hanging.
+let appCalls: { signal: AbortSignal; progressToken: unknown }[] = []
+let hanging: (() => void)[] = []
+
 function fakeAppServer(): Server {
   const s = new Server(
     { name: 'weftcut', version: '0.0.0' },
@@ -40,10 +48,30 @@ function fakeAppServer(): Server {
   s.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [{ name: 'add_marker', description: 'Add a marker.', inputSchema: { type: 'object' as const } }],
   }))
-  s.setRequestHandler(CallToolRequestSchema, async (req) => {
+  s.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
     // The session view, when a test has set what the app has open.
     if (req.params.name === 'read_project' && appSession !== undefined) {
       return { content: [{ type: 'text' as const, text: JSON.stringify(appSession) }], structuredContent: appSession }
+    }
+    if (req.params.name === 'slow' || req.params.name === 'heartbeat') {
+      const progressToken = req.params._meta?.progressToken
+      appCalls.push({ signal: extra.signal, progressToken })
+      if (req.params.name === 'slow') {
+        // A job that outlives any test timeout: settles only on release or cancel.
+        await new Promise<void>((r) => {
+          hanging.push(r)
+          extra.signal.addEventListener('abort', () => r())
+        })
+      } else {
+        // Five beats 30 ms apart: 150 ms of work, never 80 ms of silence.
+        for (let i = 1; i <= 5; i++) {
+          await new Promise((r) => setTimeout(r, 30))
+          if (progressToken !== undefined) {
+            await extra.sendNotification({ method: 'notifications/progress', params: { progressToken, progress: i, total: 5 } })
+          }
+        }
+      }
+      return { content: [{ type: 'text' as const, text: `done:${req.params.name}` }] }
     }
     return { content: [{ type: 'text' as const, text: `called:${req.params.name}` }] }
   })
@@ -63,28 +91,40 @@ interface Harness {
   notified: string[]
   /// Flip to false to make the next bridge connect fail (app "not running").
   setAppUp(up: boolean): void
+  /// The app stops answering anything (requests and pings) without closing.
+  freeze(): void
   appServer(): Server | null
   close(): Promise<void>
 }
 
-async function harness(opts: { appUp: boolean; auth?: McpAuth | null; spawnApp?: (p: string) => void; launchTimeoutMs?: number }): Promise<Harness> {
+async function harness(opts: {
+  appUp: boolean
+  auth?: McpAuth | null
+  spawnApp?: (p: string) => void
+  launchTimeoutMs?: number
+  env?: Record<string, string>
+}): Promise<Harness> {
   let up = opts.appUp
+  let frozen = false
   let app: Server | null = null
   const makeTransport = (_auth: McpAuth): Transport => {
     if (!up) throw new Error('ECONNREFUSED')
     app = fakeAppServer()
     const [clientT, serverT] = InMemoryTransport.createLinkedPair()
     void app.connect(serverT)
+    const send = clientT.send.bind(clientT)
+    clientT.send = (m, o) => (frozen ? Promise.resolve() : send(m, o))
     return clientT
   }
   const shim = createShim({
-    se: SE,
+    se: { ...SE, env: opts.env ?? {} },
     userDataDir: 'C:\\ud',
     readAuth: () => (opts.auth === undefined ? AUTH : opts.auth),
     makeTransport,
     ...(opts.spawnApp ? { spawnApp: opts.spawnApp } : {}),
     launchTimeoutMs: opts.launchTimeoutMs ?? 300,
     launchPollMs: 20,
+    probeTimeoutMs: 100,
   })
   const notified: string[] = []
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
@@ -101,6 +141,9 @@ async function harness(opts: { appUp: boolean; auth?: McpAuth | null; spawnApp?:
     setAppUp: (v) => {
       up = v
     },
+    freeze: () => {
+      frozen = true
+    },
     appServer: () => app,
     close: async () => {
       await client.close().catch(() => {})
@@ -115,6 +158,8 @@ afterEach(async () => {
   await open?.close()
   open = null
   appSession = undefined
+  for (const r of hanging.splice(0)) r()
+  appCalls = []
 })
 
 const settle = () => new Promise((r) => setTimeout(r, 25))
@@ -353,5 +398,138 @@ describe('the app session carries the driving client name, not the shim', () => 
     await client.close().catch(() => {})
     await shim.server.close().catch(() => {})
     shim.bridge.markDown()
+  })
+})
+
+describe('long tool calls: idle timeout, progress, cancel', () => {
+  // The bug (#67): the app hop ran under the SDK's flat 60 s default, and its
+  // RequestTimeout was read as "the app went away" — the bridge tore the
+  // session down and the agent was told WeftCut was not running while the
+  // app was still working on the call.
+  const FAST = { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '80' }
+  const textOf = (r: unknown): string => (r as { content: { text: string }[] }).content[0]!.text
+
+  it('timeout with a live app: a still-running tool error, the bridge stays up, the job is not cancelled', async () => {
+    open = await harness({ appUp: true, env: FAST })
+    await open.client.listTools()
+    await settle()
+    const seen = open.notified.length // the connect's own list_changed
+    const result = await open.client.callTool({ name: 'slow', arguments: {} })
+    expect(result.isError).toBe(true)
+    const msg = textOf(result)
+    expect(msg).toContain('WeftCut is running')
+    expect(msg).toContain('still working inside the app')
+    expect(msg).toContain('80 ms')
+    expect(msg).toContain('joins the in-flight job')
+    expect(msg).toContain('WEFTCUT_MCP_TOOL_TIMEOUT_MS')
+    expect(msg).not.toContain('not running')
+    expect(open.shim.bridge.isUp()).toBe(true)
+    await settle()
+    expect(appCalls).toHaveLength(1)
+    expect(appCalls[0]!.signal.aborted).toBe(false)
+    expect(open.notified.slice(seen)).not.toContain('notifications/tools/list_changed')
+  })
+
+  it('timeout with a dead app: not-running, and the bridge goes down', async () => {
+    open = await harness({ appUp: true, env: FAST })
+    await open.client.listTools()
+    const pending = open.client
+      .callTool({ name: 'slow', arguments: {} })
+      .then(() => null)
+      .catch((e: unknown) => e)
+    await settle()
+    open.freeze() // the app stops answering — the liveness ping included
+    const err = await pending
+    expect(err).toBeInstanceOf(McpError)
+    expect((err as McpError).message).toContain('WeftCut is not running')
+    expect(open.shim.bridge.isUp()).toBe(false)
+  })
+
+  it('the tool-call timeout comes from WEFTCUT_MCP_TOOL_TIMEOUT_MS, defaulting to 5 min', async () => {
+    open = await harness({ appUp: true, env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '150' } })
+    const started = Date.now()
+    const result = await open.client.callTool({ name: 'slow', arguments: {} })
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140)
+    expect(textOf(result)).toContain('150 ms')
+    await open.close()
+    // The 5 min default itself is pinned in paths.test.ts; here, only that an
+    // unset env does not end the call early.
+    open = await harness({ appUp: true })
+    let done = false
+    void open.client.callTool({ name: 'slow', arguments: {} }).then(
+      () => (done = true),
+      () => (done = true),
+    )
+    await new Promise((r) => setTimeout(r, 200))
+    expect(done).toBe(false)
+  })
+
+  it('a total cap applies only when WEFTCUT_MCP_TOOL_MAX_TOTAL_MS asks for one', async () => {
+    open = await harness({ appUp: true, env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '80', WEFTCUT_MCP_TOOL_MAX_TOTAL_MS: '100' } })
+    const result = await open.client.callTool({ name: 'heartbeat', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('WEFTCUT_MCP_TOOL_MAX_TOTAL_MS')
+  })
+
+  it('app progress re-arms the idle window and is relayed under the UPSTREAM token', async () => {
+    open = await harness({ appUp: true, env: FAST })
+    const relayed: unknown[] = []
+    // Replace the client's own progress routing to see the raw notifications.
+    open.client.setNotificationHandler(ProgressNotificationSchema, async (n) => {
+      relayed.push(n.params)
+    })
+    const result = await open.client.request(
+      { method: 'tools/call', params: { name: 'heartbeat', arguments: {}, _meta: { progressToken: 'upstream-tok' } } },
+      CallToolResultSchema,
+    )
+    // 150 ms of work under an 80 ms idle window: only the beats kept it alive.
+    expect(result.isError).toBeUndefined()
+    expect(textOf(result)).toBe('done:heartbeat')
+    expect(relayed).toHaveLength(5)
+    expect(relayed[4]).toEqual({ progressToken: 'upstream-tok', progress: 5, total: 5 })
+    // The app hop runs under the SDK's own token, not the stdio client's.
+    expect(appCalls[0]!.progressToken).toBeDefined()
+    expect(appCalls[0]!.progressToken).not.toBe('upstream-tok')
+  })
+
+  it('app progress re-arms the idle window even when the client asked for none', async () => {
+    open = await harness({ appUp: true, env: FAST })
+    const result = await open.client.callTool({ name: 'heartbeat', arguments: {} })
+    expect(result.isError).toBeUndefined()
+    expect(textOf(result)).toBe('done:heartbeat')
+  })
+
+  it('an upstream cancel cancels the app-side call and leaves the bridge up', async () => {
+    open = await harness({ appUp: true, env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '5000' } })
+    await open.client.listTools()
+    await settle()
+    const seen = open.notified.length
+    const ac = new AbortController()
+    const pending = open.client
+      .callTool({ name: 'slow', arguments: {} }, CallToolResultSchema, { signal: ac.signal })
+      .catch(() => 'cancelled')
+    await settle()
+    expect(appCalls).toHaveLength(1)
+    ac.abort('user pressed stop')
+    expect(await pending).toBe('cancelled')
+    await settle()
+    expect(appCalls[0]!.signal.aborted).toBe(true)
+    expect(open.shim.bridge.isUp()).toBe(true)
+    expect(open.notified.slice(seen)).not.toContain('notifications/tools/list_changed')
+    // And the session is still good for the next call.
+    const next = await open.client.callTool({ name: 'add_marker', arguments: {} })
+    expect(textOf(next)).toBe('called:add_marker')
+  })
+
+  it('the stdio client going away does not cancel the app-side call', async () => {
+    // The SDK aborts every handler signal on transport close as well; only an
+    // explicit notifications/cancelled may reach the app as a cancel.
+    open = await harness({ appUp: true, env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '5000' } })
+    void open.client.callTool({ name: 'slow', arguments: {} }).catch(() => {})
+    await settle()
+    expect(appCalls).toHaveLength(1)
+    await open.client.close()
+    await settle()
+    expect(appCalls[0]!.signal.aborted).toBe(false)
   })
 })

@@ -1,8 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
-import { endpointUrl, type McpAuth } from './paths.js'
+import { ErrorCode, McpError, type Progress } from '@modelcontextprotocol/sdk/types.js'
+import { DEFAULT_BRIDGE_TIMEOUTS, endpointUrl, type BridgeTimeouts, type McpAuth } from './paths.js'
 
 /// Structural stand-in for a zod schema — zod is the SDK's dependency, not
 /// ours, so naming its types directly would lean on npm hoisting.
@@ -31,6 +31,19 @@ export interface BridgeDeps {
   /// its session was opened under, so the shim opens it under this one rather
   /// than its own. Absent → the shim's own name.
   clientName?: () => string | undefined
+  /// Defaults: `DEFAULT_BRIDGE_TIMEOUTS` (the stdio shim passes the env's).
+  timeouts?: BridgeTimeouts
+  /// How long the liveness ping may take. Test seam; default 3 s.
+  probeTimeoutMs?: number
+}
+
+/// What one forwarded request carries from the upstream (stdio) request.
+export interface ForwardOptions {
+  /// The upstream handler's `extra.signal`. Aborting it sends the app a
+  /// `notifications/cancelled` for the bridged request.
+  signal?: AbortSignal
+  /// Receives the app's progress for this request, to relay upstream.
+  onprogress?: (progress: Progress) => void
 }
 
 /// What the shim calls itself upstream until the downstream client has named
@@ -61,13 +74,39 @@ function serverAnswered(e: unknown): boolean {
   )
 }
 
+function timedOut(e: unknown): e is McpError {
+  return e instanceof McpError && e.code === ErrorCode.RequestTimeout
+}
+
+/// The SDK's own timer for a tool call, kept out of the way: when it fires the
+/// SDK sends the app `notifications/cancelled`, which would abort the very job
+/// the timeout result tells the agent is still running. The bridge's idle
+/// timer (`boundedToolCall`) is the one that answers.
+const SDK_TIMER_CEILING_MS = 2_147_483_647
+
+/// The upstream request's `_meta.progressToken` names the STDIO client's
+/// request; on the app hop the SDK attaches its own (it owns `onprogress`
+/// routing), so the upstream one is dropped rather than leaked.
+function withoutProgressToken(params: unknown): unknown {
+  const p = params as { _meta?: Record<string, unknown> } | undefined
+  if (!p?._meta || !('progressToken' in p._meta)) return params
+  const { progressToken: _, ...meta } = p._meta
+  return { ...p, _meta: meta }
+}
+
 export class Bridge {
   private client: Client | null = null
   private connecting: Promise<EnsureResult> | null = null
   /// The name the live app session was opened under.
   private openedAs: string | null = null
 
-  constructor(private readonly deps: BridgeDeps) {}
+  private readonly timeouts: BridgeTimeouts
+  private readonly probeTimeoutMs: number
+
+  constructor(private readonly deps: BridgeDeps) {
+    this.timeouts = deps.timeouts ?? DEFAULT_BRIDGE_TIMEOUTS
+    this.probeTimeoutMs = deps.probeTimeoutMs ?? 3000
+  }
 
   isUp(): boolean {
     return this.client !== null
@@ -156,30 +195,120 @@ export class Bridge {
   async pingOrMarkDown(): Promise<void> {
     const c = this.client
     if (!c) return
+    if (!(await this.answers(c))) this.markDown()
+  }
+
+  private async answers(c: Client): Promise<boolean> {
     try {
-      await c.ping({ timeout: 3000 })
+      await c.ping({ timeout: this.probeTimeoutMs })
+      return true
     } catch {
-      this.markDown()
+      return false
     }
   }
 
   /// Forward one request verbatim. Throws `BridgeDownError` when the app is
-  /// (or just went) unreachable; rethrows the app's own JSON-RPC errors.
-  async forward<T>(method: string, params: unknown, resultSchema: ParseSchema<T>): Promise<T> {
+  /// (or just went) unreachable, `BridgeTimeoutError` when it is alive but did
+  /// not answer in time; rethrows the app's own JSON-RPC errors, and whatever
+  /// an upstream cancel produced.
+  async forward<T>(
+    method: string,
+    params: unknown,
+    resultSchema: ParseSchema<T>,
+    opts: ForwardOptions = {},
+  ): Promise<T> {
     const c = this.client
     if (!c) throw new BridgeDownError()
+    const request = { method, params: withoutProgressToken(params) }
     try {
-      return await c.request({ method, params } as never, resultSchema as never)
+      if (method === 'tools/call') return await this.boundedToolCall(c, request, resultSchema, opts)
+      // Always an `onprogress`, so the SDK puts its own token on the app hop.
+      return await c.request(request as never, resultSchema as never, {
+        timeout: this.timeouts.requestMs,
+        onprogress: (p: Progress) => opts.onprogress?.(p),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      })
     } catch (e) {
+      // The caller cancelled: the SDK already told the app, and the app is
+      // as up as it was. (The SDK reports the abort as a RequestTimeout.)
+      if (opts.signal?.aborted) throw e
       if (serverAnswered(e)) throw e
-      this.markDown()
+      // A timeout alone does not say the app went away — a long tool call
+      // looks exactly like it. Only a failed ping does.
+      if (timedOut(e) && (await this.answers(c))) {
+        const data = e.data as { timeout?: number; maxTotalTimeout?: number } | undefined
+        throw new BridgeTimeoutError(method, data?.maxTotalTimeout ?? data?.timeout ?? 0, data?.maxTotalTimeout !== undefined)
+      }
+      // A failure on a session that has since been replaced is not news
+      // about the current one.
+      if (this.client === c) this.markDown()
       throw new BridgeDownError()
     }
+  }
+
+  /// A tool call under the idle window: every progress notification from the
+  /// app re-arms it, and the optional total cap bounds it regardless. On
+  /// expiry the bridged request is left pending rather than cancelled, so the
+  /// job keeps running in the app and an identical retry can join it; its
+  /// late result (or the session's close) lands on a settled promise.
+  private boundedToolCall<T>(
+    c: Client,
+    request: { method: string; params: unknown },
+    resultSchema: ParseSchema<T>,
+    opts: ForwardOptions,
+  ): Promise<T> {
+    const { toolIdleMs, toolMaxTotalMs } = this.timeouts
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      let idle: ReturnType<typeof setTimeout> | undefined
+      let total: ReturnType<typeof setTimeout> | undefined
+      const settle = (done: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(idle)
+        clearTimeout(total)
+        done()
+      }
+      const expire = (data: { timeout: number } | { maxTotalTimeout: number }) => () =>
+        settle(() => reject(new McpError(ErrorCode.RequestTimeout, 'Request timed out', data)))
+      const arm = (): void => {
+        clearTimeout(idle)
+        idle = setTimeout(expire({ timeout: toolIdleMs }), toolIdleMs)
+      }
+      arm()
+      if (toolMaxTotalMs !== undefined) total = setTimeout(expire({ maxTotalTimeout: toolMaxTotalMs }), toolMaxTotalMs)
+      c.request(request as never, resultSchema as never, {
+        timeout: SDK_TIMER_CEILING_MS,
+        // Present even with no upstream token: app heartbeats must re-arm the
+        // idle window whether or not anyone upstream is listening.
+        onprogress: (p: Progress) => {
+          if (settled) return // the upstream request is already answered
+          arm()
+          opts.onprogress?.(p)
+        },
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      }).then(
+        (r) => settle(() => resolve(r as T)),
+        (e: unknown) => settle(() => reject(e)),
+      )
+    })
   }
 }
 
 export class BridgeDownError extends Error {
   constructor() {
     super('WeftCut is not reachable')
+  }
+}
+
+/// The app answered a liveness ping but not the request in time. `total` says
+/// the tool-call total cap elapsed rather than the idle window.
+export class BridgeTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+    readonly total: boolean,
+  ) {
+    super(`WeftCut did not answer ${method} within ${timeoutMs} ms`)
   }
 }

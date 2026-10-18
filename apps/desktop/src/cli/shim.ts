@@ -16,11 +16,24 @@ import {
   McpError,
   ReadResourceRequestSchema,
   ReadResourceResultSchema,
+  type ProgressToken,
+  type ServerNotification,
+  type ServerRequest,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { Bridge, BridgeDownError } from './bridge.js'
-import { endpointUrl, launchTarget, readAuth, type McpAuth, type ShimEnv } from './paths.js'
+import { Bridge, BridgeDownError, BridgeTimeoutError, type ForwardOptions } from './bridge.js'
+import {
+  bridgeTimeouts,
+  endpointUrl,
+  launchTarget,
+  readAuth,
+  TOOL_MAX_TOTAL_ENV,
+  TOOL_TIMEOUT_ENV,
+  type McpAuth,
+  type ShimEnv,
+} from './paths.js'
 
 /// The stdio face of the shim: a real MCP server, not a byte pipe. Its
 /// catalog is `synthetic ∪ (app reachable ? real catalog : ∅)` — the two
@@ -50,6 +63,46 @@ const SYNTHETIC_TOOLS: Tool[] = [
   },
 ]
 
+/// What a forwarding handler hands the bridge from its upstream request: the
+/// cancellation signal, and — when the stdio client asked for progress — a
+/// relay that re-addresses the app's progress to the client's OWN token (the
+/// app hop runs under a token the SDK picked).
+function upstream(
+  req: { params?: { _meta?: { progressToken?: ProgressToken } } },
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  closed: () => boolean,
+): ForwardOptions {
+  const signal = explicitCancel(extra.signal, closed)
+  const token = req.params?._meta?.progressToken
+  if (token === undefined) return { signal }
+  return {
+    signal,
+    onprogress: (p) => {
+      extra.sendNotification({ method: 'notifications/progress', params: { ...p, progressToken: token } }).catch(() => {})
+    },
+  }
+}
+
+/// Only the stdio client's `notifications/cancelled` may cancel the app's job.
+/// The SDK aborts every handler signal when the stdio transport closes, too,
+/// and a client going away leaves its job running so a retry can join it —
+/// so an abort is forwarded only if the transport is still open once the
+/// close (which clears it right after aborting) has had its turn.
+function explicitCancel(signal: AbortSignal, closed: () => boolean): AbortSignal {
+  const forwarded = new AbortController()
+  signal.addEventListener('abort', () => {
+    queueMicrotask(() => { if (!closed()) forwarded.abort(signal.reason) })
+  }, { once: true })
+  return forwarded.signal
+}
+
+/// 300000 → "5 min", 45000 → "45 s".
+function duration(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} min`
+  if (ms >= 1000) return `${Math.round(ms / 1000)} s`
+  return `${ms} ms`
+}
+
 function text(s: string, isError = false): { content: { type: 'text'; text: string }[]; isError?: boolean } {
   return isError ? { content: [{ type: 'text', text: s }], isError: true } : { content: [{ type: 'text', text: s }] }
 }
@@ -67,6 +120,7 @@ export interface ShimOptions {
   spawnApp?: (targetPath: string) => void
   launchTimeoutMs?: number
   launchPollMs?: number
+  probeTimeoutMs?: number
 }
 
 export interface Shim {
@@ -103,6 +157,7 @@ export function createShim(opts: ShimOptions): Shim {
       },
     },
   )
+  const closed = (): boolean => server.transport === undefined
 
   // Before the stdio transport connects (or after it closes) notification
   // sends throw — transitions at those moments have nothing to tell anyway.
@@ -115,6 +170,8 @@ export function createShim(opts: ShimOptions): Shim {
   const bridge = new Bridge({
     readAuth: readAuthFn,
     ...(opts.makeTransport ? { makeTransport: opts.makeTransport } : {}),
+    timeouts: bridgeTimeouts(se),
+    ...(opts.probeTimeoutMs !== undefined ? { probeTimeoutMs: opts.probeTimeoutMs } : {}),
     onUp: broadcastCatalogChanged,
     onDown: broadcastCatalogChanged,
     clientName: () => server.getClientVersion()?.name,
@@ -147,6 +204,36 @@ export function createShim(opts: ShimOptions): Shim {
         'Call the launch_weftcut tool to start it, or ask the user to open WeftCut; ' +
         'the full tool catalog appears in this session automatically once the app is up.',
     )
+  }
+
+  /// The app is alive but the call outlived the bridge's wait. Same rule as
+  /// `downError`: the message is all most clients show, so it carries what
+  /// the agent should do. A tool call was left running in the app (the bridge
+  /// does not cancel on timeout); other requests were cancelled by the SDK.
+  const timeoutMessage = (e: BridgeTimeoutError, tool?: string): string => {
+    if (e.method !== 'tools/call') {
+      return (
+        `WeftCut is running, but did not answer ${e.method} within ${duration(e.timeoutMs)}. ` +
+        'Retry the request; call weftcut_status if it keeps happening.'
+      )
+    }
+    const waited = e.total
+      ? `within the ${duration(e.timeoutMs)} total limit set by ${TOOL_MAX_TOTAL_ENV}`
+      : `within ${duration(e.timeoutMs)} of no progress from the app`
+    return (
+      `WeftCut is running, and ${tool ?? 'the tool'} is still working inside the app: it did not finish ${waited}. ` +
+      'The call was not cancelled. Call the same tool again with the same arguments to keep waiting — ' +
+      'an identical retry joins the in-flight job instead of starting a new one. ' +
+      `To wait longer per call, raise ${TOOL_TIMEOUT_ENV} (milliseconds) in this MCP server's env config.`
+    )
+  }
+
+  /// Every forwarding handler's error mapping except the down-state fallbacks
+  /// the list handlers keep for themselves.
+  const mapError = (e: unknown): unknown => {
+    if (e instanceof BridgeDownError) return downError()
+    if (e instanceof BridgeTimeoutError) return new McpError(ErrorCode.RequestTimeout, timeoutMessage(e))
+    return e
   }
 
   /// The status line for the open project, from the app's session view. Left
@@ -234,7 +321,7 @@ export function createShim(opts: ShimOptions): Shim {
     )
   }
 
-  server.setRequestHandler(ListToolsRequestSchema, async (req) => {
+  server.setRequestHandler(ListToolsRequestSchema, async (req, extra) => {
     // Opportunistic reconnect: a list request is exactly when a just-started
     // app should become visible without waiting on the poll tick.
     await bridge.ensureUp()
@@ -243,67 +330,67 @@ export function createShim(opts: ShimOptions): Shim {
     const synthetic = req.params?.cursor ? [] : SYNTHETIC_TOOLS
     if (!bridge.isUp()) return { tools: synthetic }
     try {
-      const real = await bridge.forward('tools/list', req.params, ListToolsResultSchema)
+      const real = await bridge.forward('tools/list', req.params, ListToolsResultSchema, upstream(req, extra, closed))
       const taken = new Set(synthetic.map((t) => t.name))
       return { ...real, tools: [...synthetic, ...real.tools.filter((t) => !taken.has(t.name))] }
     } catch (e) {
       if (e instanceof BridgeDownError) return { tools: synthetic }
-      throw e
+      throw mapError(e)
     }
   })
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
     const name = req.params.name
     if (name === 'weftcut_status') return statusResult()
     if (name === 'launch_weftcut') return launchResult()
     await bridge.ensureUp()
     try {
-      return await bridge.forward('tools/call', req.params, CallToolResultSchema)
+      return await bridge.forward('tools/call', req.params, CallToolResultSchema, upstream(req, extra, closed))
     } catch (e) {
-      if (e instanceof BridgeDownError) throw downError()
-      throw e
+      // A tool result, not a protocol error: the call is fine, only this
+      // wait is over.
+      if (e instanceof BridgeTimeoutError) return text(timeoutMessage(e, name), true)
+      throw mapError(e)
     }
   })
 
-  server.setRequestHandler(ListResourcesRequestSchema, async (req) => {
+  server.setRequestHandler(ListResourcesRequestSchema, async (req, extra) => {
     await bridge.ensureUp()
     if (!bridge.isUp()) return { resources: [] }
     try {
-      return await bridge.forward('resources/list', req.params, ListResourcesResultSchema)
+      return await bridge.forward('resources/list', req.params, ListResourcesResultSchema, upstream(req, extra, closed))
     } catch (e) {
       if (e instanceof BridgeDownError) return { resources: [] }
-      throw e
+      throw mapError(e)
     }
   })
 
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+  server.setRequestHandler(ReadResourceRequestSchema, async (req, extra) => {
     await bridge.ensureUp()
     try {
-      return await bridge.forward('resources/read', req.params, ReadResourceResultSchema)
+      return await bridge.forward('resources/read', req.params, ReadResourceResultSchema, upstream(req, extra, closed))
     } catch (e) {
-      if (e instanceof BridgeDownError) throw downError()
-      throw e
+      throw mapError(e)
     }
   })
 
-  server.setRequestHandler(ListPromptsRequestSchema, async (req) => {
+  server.setRequestHandler(ListPromptsRequestSchema, async (req, extra) => {
     await bridge.ensureUp()
     if (!bridge.isUp()) return { prompts: [] }
     try {
-      return await bridge.forward('prompts/list', req.params, ListPromptsResultSchema)
+      return await bridge.forward('prompts/list', req.params, ListPromptsResultSchema, upstream(req, extra, closed))
     } catch (e) {
       if (e instanceof BridgeDownError) return { prompts: [] }
-      throw e
+      throw mapError(e)
     }
   })
 
-  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+  server.setRequestHandler(GetPromptRequestSchema, async (req, extra) => {
     await bridge.ensureUp()
     try {
-      return await bridge.forward('prompts/get', req.params, GetPromptResultSchema)
+      return await bridge.forward('prompts/get', req.params, GetPromptResultSchema, upstream(req, extra, closed))
     } catch (e) {
-      if (e instanceof BridgeDownError) throw downError()
-      throw e
+      throw mapError(e)
     }
   })
 
