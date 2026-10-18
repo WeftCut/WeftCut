@@ -34,6 +34,9 @@ export interface DescribingSpan {
   mediaId: string;
   srcStartUs: number;
   srcEndUs: number;
+  /// The run's call tag (ADR 0121): `useComputeJobForRequest` turns it into the
+  /// job the run started or joined, and that job's phase.
+  requestId?: string;
 }
 
 interface DescriptionsState {

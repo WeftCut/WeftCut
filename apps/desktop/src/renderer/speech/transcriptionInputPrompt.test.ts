@@ -29,14 +29,14 @@ describe("transcription input preflight integration", () => {
     expect(mocks.logEmit).toHaveBeenCalledWith(expect.objectContaining({ level: "warn", i18n_key: "log.auto_caption_quiet" }));
     answerTranscriptionInput("original");
     await run;
-    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip");
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip", { requestId: expect.any(String) });
   });
 
   it("continues without a prompt when measured source volume is normal", async () => {
     mocks.getWaveformTile.mockResolvedValue({ peaksPerSecond: 1, min: [-0.4], max: [0.4], rms: [0.1] });
     await runTranscribe(target());
     expect(useTranscriptionInputPrompt.getState().pending).toBeNull();
-    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip");
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip", { requestId: expect.any(String) });
   });
 
   it("allows cancelling an unavailable check before any inference or write", async () => {
@@ -57,7 +57,7 @@ describe("transcription input preflight integration", () => {
     expect(mocks.transcribeClip).not.toHaveBeenCalled();
     answerTranscriptionInput("normalize");
     await run;
-    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip", { normalizeAudio: true });
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip", { normalizeAudio: true, requestId: expect.any(String) });
     expect(mocks.logEmit).toHaveBeenCalledWith(expect.objectContaining({
       i18n_key: "log.auto_caption_normalized", details: expect.objectContaining({ gain_db: 24 }),
     }));
@@ -67,6 +67,6 @@ describe("transcription input preflight integration", () => {
     await vi.waitFor(() => expect(useTranscriptionInputPrompt.getState().pending).not.toBeNull());
     answerTranscriptionInput("original");
     await next;
-    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip");
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("clip", { requestId: expect.any(String) });
   });
 });

@@ -104,7 +104,8 @@ export async function describeShotRows(
     for (const [done, shot] of shots.entries()) {
       if (cancelRequested) break;
       setDescribeBatch({ done, total: shots.length });
-      const message = await describeOneShot(shot, subject);
+      // A cancelled job (ADR 0121) stops the sweep as its Stop button does.
+      const message = await describeOneShot(shot, subject, () => { cancelRequested = true; });
       if (message !== "") break;
     }
   } finally {
@@ -124,8 +125,10 @@ export async function describeShotRows(
 export async function describeOneShot(
   shot: DescribableShot,
   subject: DescribeShotsSubject,
+  onCancelled?: () => void,
 ): Promise<string> {
   return runDescribe({
+    ...(onCancelled ? { onCancelled } : {}),
     layerId: subject.layerId,
     mediaId: subject.mediaId,
     srcStartUs: shot.srcStartUs,

@@ -12,6 +12,61 @@ import type { CropRect } from '../../shared/crop';
 import { invoke } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
+import {
+  COMPUTE_CANCELLED_FIELD,
+  COMPUTE_JOB_CANCEL_CHANNEL,
+  COMPUTE_JOBS_SNAPSHOT_CHANNEL,
+  COMPUTE_REQUEST_ID_ARG,
+  type ComputeCancelledPayload,
+  type ComputeJobsSnapshot,
+} from '../../shared/compute-jobs';
+export {
+  COMPUTE_JOBS_EVENT,
+  phaseLabel,
+  phaseText,
+} from '../../shared/compute-jobs';
+export type {
+  ComputeJob,
+  ComputeJobEnded,
+  ComputeJobsSnapshot,
+  ComputeJobsUpdate,
+  ComputeOrigin,
+  ComputeOutcome,
+  ComputePhase,
+  ComputeTool,
+} from '../../shared/compute-jobs';
+
+// ============================================================
+// Clip-compute jobs (ADR 0121)
+// ============================================================
+
+/// A transcribe / describe whose job was cancelled — by the user's cancel
+/// button, or by every agent caller that shared it. Not a failure: a run logs
+/// it as a cancelled terminal row, never as an error.
+export class ComputeCancelledError extends Error {
+  constructor(readonly jobId: string) {
+    super("Cancelled");
+    this.name = "ComputeCancelledError";
+  }
+}
+
+/// The marker main answers in place of a cancelled job's payload, as the
+/// typed error the run catches.
+function throwIfCancelled<T>(result: T | ComputeCancelledPayload): T {
+  if (result !== null && typeof result === "object" && COMPUTE_CANCELLED_FIELD in result) {
+    throw new ComputeCancelledError((result as ComputeCancelledPayload)[COMPUTE_CANCELLED_FIELD].job_id);
+  }
+  return result as T;
+}
+
+/// Every running clip-compute job — the seed `computeJobsStore` mirrors.
+export const computeJobsSnapshot = (): Promise<ComputeJobsSnapshot> =>
+  invoke<ComputeJobsSnapshot>(COMPUTE_JOBS_SNAPSHOT_CHANNEL);
+
+/// Force-cancel one job for every caller, agent or human. False when it had
+/// already ended.
+export const cancelComputeJob = (jobId: string): Promise<boolean> =>
+  invoke<boolean>(COMPUTE_JOB_CANCEL_CHANNEL, { job_id: jobId });
 
 export function setPosition(layerId: string, position: PositionAnimation, geometryOnly = false): Promise<void> {
   return invoke<void>('set_position', { layerId, position, geometryOnly });
@@ -2655,16 +2710,21 @@ export interface TranscriptResult {
 ///
 /// A read: it commits nothing, so it neither enters undo nor dirties the
 /// project. Applying the result is `applyTranscripts`.
+///
+/// `requestId` tags the call so the run can find its job in
+/// `computeJobsStore` (it may join one an agent started). A cancelled job
+/// rejects with `ComputeCancelledError`.
 export async function transcribeClip(
   layerId: string,
-  opts: { language?: string; normalizeAudio?: boolean } = {},
+  opts: { language?: string; normalizeAudio?: boolean; requestId?: string } = {},
 ): Promise<TranscriptResult> {
   const language = opts.language?.trim();
-  return invoke<TranscriptResult>("transcribe_clip", {
+  return throwIfCancelled(await invoke<TranscriptResult | ComputeCancelledPayload>("transcribe_clip", {
     layer_id: layerId,
     ...(language ? { language } : {}),
     ...(opts.normalizeAudio ? { normalize_audio: true } : {}),
-  });
+    ...(opts.requestId ? { [COMPUTE_REQUEST_ID_ARG]: opts.requestId } : {}),
+  }));
 }
 
 export async function applyTranscripts(transcripts: TranscriptResult[], projectId: string, compositionId: string, sourceIds: string[]): Promise<string> {
@@ -2992,16 +3052,20 @@ export interface DescriptionCache {
 /// (`main/mcp/server.ts`), which is what makes a run land in the view
 /// `media://{id}/description` serves. A renderer that sent its own would be a
 /// second statement of a setting it does not own.
+///
+/// `requestId` and a cancelled job behave as on `transcribeClip`.
 export async function describeClip(args: {
   layerId: string;
   tStartUs?: number;
   tEndUs?: number;
+  requestId?: string;
 }): Promise<SceneDescription> {
-  return invoke<SceneDescription>("describe_clip", {
+  return throwIfCancelled(await invoke<SceneDescription | ComputeCancelledPayload>("describe_clip", {
     layer_id: args.layerId,
     ...(args.tStartUs === undefined ? {} : { t_start_us: args.tStartUs }),
     ...(args.tEndUs === undefined ? {} : { t_end_us: args.tEndUs }),
-  });
+    ...(args.requestId ? { [COMPUTE_REQUEST_ID_ARG]: args.requestId } : {}),
+  }));
 }
 
 /// The description cached for one source under the view the app's settings name

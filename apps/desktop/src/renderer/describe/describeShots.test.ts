@@ -30,6 +30,7 @@ import {
   resetDescriptionsStore,
   useDescriptionsStore,
 } from "./descriptionsStore";
+import { ComputeCancelledError } from "../ipc";
 
 const SUBJECT = { layerId: "l-1", mediaId: "m-1", clipName: "reel.mp4" };
 
@@ -177,6 +178,8 @@ describe("describeOneShot", () => {
       layerId: "l-1",
       tStartUs: 2_000_000,
       tEndUs: 3_000_000,
+      // The call's job tag (ADR 0121) — host plumbing, not a view parameter.
+      requestId: expect.any(String),
     });
   });
 
@@ -191,5 +194,34 @@ describe("describeOneShot", () => {
   it("answers the refusal's own sentence", async () => {
     mocks.describeClip.mockRejectedValue(new Error("layer l-1 not found"));
     expect(await describeOneShot(shot(0), SUBJECT)).toContain("layer l-1 not found");
+  });
+
+  // ADR 0121: a cancelled job is not a failure — no error in the Panel's
+  // slot, an info row that closes the op Ok, and the run is over.
+  it("logs a cancelled job as a cancel, not a failure", async () => {
+    mocks.describeClip.mockImplementation(async (args: { requestId?: string }) => {
+      expect(useDescriptionsStore.getState().describing?.requestId).toBe(args.requestId);
+      throw new ComputeCancelledError("job-3");
+    });
+    expect(await describeOneShot(shot(0), SUBJECT)).toBe("");
+    const rows = mocks.logEmit.mock.calls.map((c) => c[0]);
+    expect(rows.at(-1)).toMatchObject({
+      level: "info",
+      i18n_key: "log.describe_cancelled",
+      details: { job_id: "job-3" },
+      op_id: rows[0].op_id,
+      op_state: { state: "Ok" },
+    });
+    expect(useDescriptionsStore.getState().error).toBe("");
+    expect(useDescriptionsStore.getState().describing).toBeNull();
+  });
+
+  it("stops a sweep when a shot's job is cancelled", async () => {
+    mocks.describeClip
+      .mockResolvedValueOnce(answer("a hallway"))
+      .mockRejectedValueOnce(new ComputeCancelledError("job-4"));
+    await describeShotRows([shot(0), shot(1), shot(2)], SUBJECT);
+    expect(mocks.describeClip).toHaveBeenCalledTimes(2);
+    expect(useDescriptionsStore.getState().batch).toBeNull();
   });
 });

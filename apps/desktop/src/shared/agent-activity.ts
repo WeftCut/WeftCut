@@ -1,5 +1,6 @@
 /** Runtime-only agent activity. Independent of the diagnostic log and edit stack. */
 import type { ExactTime } from './timeMapping'
+import type { ComputePhase } from './compute-jobs'
 export type AgentEntityRef = { kind: 'Layer' | 'Track' | 'Marker' | 'Media' | 'Transition' | 'Composition'; id: string }
 export type AgentEntityLabel = { text: string } | { label_key: string; label_args?: Record<string, string | number> }
 export interface AgentWorkSession {
@@ -35,7 +36,14 @@ export interface AgentActivity {
   args: unknown
   error: string | null
   checkpoint_id?: string
+  /** A clip-compute call's job (ADR 0121), kept live while the row runs and
+   *  left at its last phase once it ends. */
+  compute?: AgentActivityCompute
+  /** The calling connection closed while this call was running. The row stays
+   *  `running` until the work ends — the job is not cancelled by a disconnect. */
+  caller_disconnected?: true
 }
+export interface AgentActivityCompute { job_id: string; phase: ComputePhase; phase_since: string }
 export interface AgentConnection {
   id: string
   client: string

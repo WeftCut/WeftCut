@@ -16,9 +16,15 @@
 // reading a description never computes one, and a `describeClip` call inside it
 // would be exactly the shape that rule forbids. The store holds the answers;
 // this is the one thing allowed to spend a model to get one.
+//
+// The call is a clip-compute job (ADR 0121): tagged with a `requestId` the
+// span carries, so a surface finds the job — possibly an agent's, joined — and
+// its phase in `compute/computeJobsStore.ts`. The in-flight gate stays this
+// run's own: an agent describing some clip must not grey out the user's press.
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
-import { describeClip, logEmit } from "../ipc";
+import { ComputeCancelledError, describeClip, logEmit } from "../ipc";
+import { jobIdForRequest, useComputeJobsStore } from "../compute/computeJobsStore";
 import {
   mergeDescription,
   reloadDescription,
@@ -45,6 +51,10 @@ export interface DescribeRunTarget {
   /// What the log rows call this run's subject: the clip's name, or the clip's
   /// name and the shot's ordinal.
   label: string;
+  /// Told when the run's job was cancelled (the app's cancel button, or every
+  /// agent that shared it). The run itself answers `""` — a cancel has no
+  /// remedy — so a caller that loops over runs needs this to stop.
+  onCancelled?: () => void;
 }
 
 /// Run one description and land it. Answers the failure's own sentence, or `""`
@@ -59,7 +69,8 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
   const { mediaId, srcStartUs, srcEndUs } = target;
 
   setDescribeError("");
-  setDescribing({ mediaId, srcStartUs, srcEndUs });
+  const requestId = crypto.randomUUID();
+  setDescribing({ mediaId, srcStartUs, srcEndUs, requestId });
   // Twenty seconds against a local model, so the run announces itself: without
   // a Started row the status badge has nothing to spin on and the user cannot
   // tell a slow engine from a dead one. One `op_id` pairs it with the terminal
@@ -83,6 +94,7 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
       ...(target.window === null
         ? {}
         : { tStartUs: target.window.tStartUs, tEndUs: target.window.tEndUs }),
+      requestId,
     });
     setDescribing(null);
     // The run's own segments first, over its own window and nothing wider, so
@@ -109,11 +121,30 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
         engine: result.backend,
         model: result.model,
       },
+      ...jobDetails(requestId),
       op_id: opId,
       op_state: { state: "Ok" },
     });
     return "";
   } catch (err) {
+    if (err instanceof ComputeCancelledError) {
+      setDescribing(null);
+      // Not a failure: `info`, closing the op as `Ok` the way an import or
+      // export cancel does (docs/status-log.md), and nothing for the slot.
+      void logEmit({
+        level: "info",
+        category: { kind: "Project" },
+        source: { kind: "User" },
+        message: `Describing ${target.label} was cancelled`,
+        i18n_key: "log.describe_cancelled",
+        i18n_args: { clip: target.label },
+        details: { context: "describe_clip", layer_id: target.layerId, job_id: err.jobId },
+        op_id: opId,
+        op_state: { state: "Ok" },
+      });
+      target.onCancelled?.();
+      return "";
+    }
     // The tool's own message, verbatim: "no backend available" names the two
     // ways to configure one, an explicit engine names the path it is missing,
     // and a speed refusal names the split to make. A generic "description
@@ -126,4 +157,11 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
     logMutationFailure(err, "describe_clip", opId);
     return message;
   }
+}
+
+/// The job the call ran under, for the terminal row's `details` — absent when
+/// it never became one (an unresolved clip is refused as a plain call).
+function jobDetails(requestId: string): { details?: { job_id: string } } {
+  const jobId = jobIdForRequest(useComputeJobsStore.getState(), requestId);
+  return jobId === null ? {} : { details: { job_id: jobId } };
 }

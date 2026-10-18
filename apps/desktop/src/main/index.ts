@@ -56,6 +56,8 @@ import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystem
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
+import { ComputeCancelledError, ComputeJobs } from './compute/jobs.js'
+import { COMPUTE_CANCELLED_FIELD, COMPUTE_JOB_CANCEL_CHANNEL, COMPUTE_JOBS_SNAPSHOT_CHANNEL, COMPUTE_REQUEST_ID_ARG } from '../shared/compute-jobs.js'
 import { SINGLE_MEDIA_CHANNELS, WAVEFORM_KEY_CHANNELS, resolveSingleMediaArgs, resolveWaveformKeyArg } from './state/single-media-forward.js'
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
 import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './audioFx/baker.js'
@@ -113,6 +115,10 @@ function emitToRenderer(event: string, payload: unknown): void {
 // `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
+// The clip-compute job registry (ADR 0121). Module-scoped for the `onEvent`
+// closure's sake, like `tsHost`: native phase events route to it, and it is
+// built after the Backend that emits them.
+let computeJobs: ComputeJobs | null = null
 // Audio-effect bake orchestrator (ADR 0063). Module-scoped for the same reason
 // as `tsHost`: the `backend:invoke` handler and the before-quit hook both reach
 // it, and it does not exist until whenReady has built the actor it subscribes to.
@@ -643,6 +649,12 @@ app.whenReady().then(async () => {
         mcpHostRef?.notifyChange(payload)
         return
       }
+      // A clip-compute job's phase: the registry owns it and publishes its own
+      // `compute_jobs:changed` to the renderer, so the raw event goes no further.
+      if (event === 'compute:job_phase') {
+        computeJobs?.phase(payload)
+        return
+      }
       // `media:derivatives` write-back: apply the derivative patch to the TS
       // actor instead of forwarding to the renderer. tsHost is module-scoped
       // (set later); the closure captures it by reference.
@@ -957,8 +969,14 @@ app.whenReady().then(async () => {
     generation: () => workspaceEvents.requireCurrent(),
     native: async (channel, args) => JSON.parse(await backend!.invoke(channel, JSON.stringify(args))),
   });
+  computeJobs = new ComputeJobs({
+    call: (name, argsJson) => backend!.mcpCallTool(name, argsJson),
+    cancel: (jobId) => backend!.cancelComputeJob(jobId),
+    send: emitToRenderer,
+  })
   tsHost = createTsActorHost({
     exportJobs,
+    computeJobs,
     onWorkspaceChanging: () => {
       exportJobs.forgetRenderer();
       motifAdmissionOpen = false
@@ -1445,6 +1463,8 @@ app.whenReady().then(async () => {
     if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
+    if (channel === COMPUTE_JOBS_SNAPSHOT_CHANNEL) return computeJobs!.snapshot()
+    if (channel === COMPUTE_JOB_CANCEL_CHANNEL) return computeJobs!.cancel(String((args as { job_id?: unknown })?.job_id ?? ''))
     if (channel === 'agent_activity_snapshot' || channel === 'agent_session_get' || channel === 'agent_unlock_history') {
       return tsHost!.handleInvoke(channel, args ?? {})
     }
@@ -1751,13 +1771,28 @@ app.whenReady().then(async () => {
     // The renderer gets the tool's PAYLOAD, not the MCP envelope: the channel's
     // contract is the tool's answer, and unwrapping in one place beats every
     // caller learning MCP's carrier shape.
+    //
+    // A human transcribe / describe is a registry caller of origin `user`
+    // (ADR 0121). The renderer tags it with a `request_id` of its own — it
+    // cannot know the job id up front, since a press may JOIN an agent's job —
+    // and finds its job in the mirrored record by that tag. The tag is the
+    // host's, so it is stripped before the slice, the key or Rust see it. A
+    // cancelled job answers a marker rather than throwing: it is not a failure.
     if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
+      const { [COMPUTE_REQUEST_ID_ARG]: requestId, ...toolArgs } = (args ?? {}) as Record<string, unknown>
       const before = tsHost.actor.snapshot()
-      const located = channel === 'transcribe_clip' ? locateLayer(before, (args as { layer_id?: string })?.layer_id ?? '') : null
+      const located = channel === 'transcribe_clip' ? locateLayer(before, (toolArgs as { layer_id?: string }).layer_id ?? '') : null
       const source = located ? { id: located.layer.id, signature: sourceSignature(located.layer), project_id: before.project_id, composition_id: located.comp.id } : undefined
-      const result = await callClipComputeTool(
-        backend!, tsHost, channel, (args ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor,
-      )
+      let result: Awaited<ReturnType<typeof callClipComputeTool>>
+      try {
+        result = await callClipComputeTool(
+          backend!, tsHost, channel, toolArgs, getPreferredEngine, getVlm, peaksPathFor,
+          typeof requestId === 'string' ? { requestId } : {},
+        )
+      } catch (e) {
+        if (e instanceof ComputeCancelledError) return { [COMPUTE_CANCELLED_FIELD]: { job_id: e.jobId } }
+        throw e
+      }
       const payload = toolResultPayload(result)
       return source && payload && typeof payload === 'object' ? { ...payload, source } : payload
     }

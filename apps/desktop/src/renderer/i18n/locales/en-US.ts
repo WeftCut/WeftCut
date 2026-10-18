@@ -2826,6 +2826,8 @@ const enUS = {
     auto_caption_started_many: "Transcribing {{count}} clips",
     auto_caption_done: "{{cues}} caption cues added ({{engine}})",
     auto_caption_failed: "Transcribing “{{clip}}” failed: {{reason}}",
+    // A cancelled job is not a failure: the clip is named, nothing else is said.
+    auto_caption_cancelled: "Transcribing “{{clip}}” was cancelled",
     auto_caption_quiet: "“{{clip}}” has low source audio volume. Transcription may miss speech or detect the wrong language.",
     auto_caption_level_unavailable: "Could not check the source audio volume of “{{clip}}”.",
     auto_caption_normalize_requested: "Normalizing the transcription copy of “{{clip}}” at your request.",
@@ -2887,6 +2889,7 @@ const enUS = {
     // own does not say which weights answered.
     describe_done:
       "{{segments}} described spans in “{{clip}}” ({{engine}}, {{model}})",
+    describe_cancelled: "Describing “{{clip}}” was cancelled",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three

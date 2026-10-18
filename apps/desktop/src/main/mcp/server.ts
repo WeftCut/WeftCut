@@ -45,6 +45,10 @@ import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 import { TACK_TOOLS, isTacksUri, readTacksResource, readTacksView, runTackTool } from './tackTools.js'
+import { ComputeCancelledError, type ComputeCaller } from '../compute/jobs.js'
+import { clipJobSpec } from '../compute/clipJob.js'
+import { mcpComputeCaller } from './computeCaller.js'
+import { COMPUTE_TOOLS, type ComputeTool } from '../../shared/compute-jobs.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -126,7 +130,14 @@ const NO_PEAKS_PATH: PeaksPathProvider = () => null
  *  this injection would be exactly how that stops being true.
  *
  *  Read/compute only — no arm here writes. The write half of a recipe (the SRT
- *  a transcript becomes, the layer a synthesis lands as) is a hybrid channel. */
+ *  a transcript becomes, the layer a synthesis lands as) is a hybrid channel.
+ *
+ *  `transcribe_clip` / `describe_clip` run as JOBS when the host has the
+ *  registry (`tsHost.computeJobs`, ADR 0121): the same question about the same
+ *  source span joins the job already running, whoever asked, and `caller` says
+ *  how this one may cancel, leave, and hear the phases. A cancelled job throws
+ *  `ComputeCancelledError`. A host without the registry (a test stub, a bare
+ *  harness) calls the backend directly, as before. */
 export async function callClipComputeTool(
   backend: Backend,
   tsHost: TsActorHost,
@@ -135,6 +146,7 @@ export async function callClipComputeTool(
   getPreferredEngine: () => string | null = () => null,
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
+  caller?: ComputeCaller,
 ): Promise<ServerResult> {
   // `detect_pauses` takes its own resolver: the slice is the SUBJECT Audio
   // layer, not the layer the caller named, and the peaks file rides with it
@@ -169,9 +181,20 @@ export async function callClipComputeTool(
     if (merged.fps == null && vlm.fps != null) merged.fps = vlm.fps
     if (merged.focus == null && vlm.focus) merged.focus = vlm.focus
   }
-  const release = name === 'transcribe_clip' || name === 'describe_clip' ? beginModelUse() : () => {}
+  // The registry holds the model lease for the job's whole native life, not
+  // per caller; an unresolved slice runs plain — Rust refuses it at once.
+  const spec = COMPUTE_TOOLS.has(name) && tsHost.computeJobs ? clipJobSpec(name as ComputeTool, merged) : null
+  if (spec) return unwrap(await tsHost.computeJobs!.run(spec, caller)) as ServerResult
+  const release = COMPUTE_TOOLS.has(name) ? beginModelUse() : () => {}
   try { return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult }
   finally { release() }
+}
+
+/** What an agent reads for a cancelled job. Only a job someone ELSE cancelled
+ *  ever reaches a client — one that cancelled its own call gets no response at
+ *  all, by the protocol — so the text names who did it when it was the user. */
+function cancelledToolResult(e: ComputeCancelledError): ServerResult {
+  return toolErrorResult({ code: 'cancelled', message: e.message, data: { job_id: e.jobId, cancelled_by: e.reason } })
 }
 
 /** The Rust catalog is static for the life of the process — `tool_table!` is a
@@ -272,6 +295,7 @@ export async function handleCallTool(
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
   client?: string,
+  compute?: ComputeCaller,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
   // Nothing the user can see is open: every project tool refuses before it
@@ -286,8 +310,9 @@ export async function handleCallTool(
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor, client)
+    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor, client, compute)
   } catch (e) {
+    if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError) return toolErrorResult({code:'invalid_params',message:e.message});
     if (e instanceof ExportJobError) return {isError:true, content:[{type:"text",text:JSON.stringify({error:{code:e.code,message:e.message,data:e.data}})}], structuredContent:{error:{code:e.code,message:e.message,data:e.data}}};
     if (e instanceof UnknownToolError) throw e
@@ -320,6 +345,7 @@ async function dispatchTool(
   getVlm: VlmProvider,
   peaksPathFor: PeaksPathProvider,
   client: string | undefined,
+  compute: ComputeCaller | undefined,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (route === 'export') {
@@ -471,7 +497,7 @@ async function dispatchTool(
       if (refused) return refused
       // Throws the SDK-shaped envelope error for the renderer's sake; the outer
       // catch maps its code back onto an `isError` result for the agent.
-      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm, peaksPathFor)
+      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm, peaksPathFor, compute)
     }
     // route === 'rust' → fall through (other reads are served by the backend).
   }
@@ -704,6 +730,18 @@ export function mcpCommitObserver(getTsHost: () => TsActorHost | null): (tool: s
   }
 }
 
+/** The phase hook for the Activity row of the call running in this async
+ *  context: captured now, because the phases arrive from a native event, far
+ *  outside it. Heartbeats change nothing a row shows. */
+function activityPhase(getTsHost: () => TsActorHost | null): ComputeCaller['onPhase'] {
+  const agent = getTsHost()?.agent
+  const activity = agent?.currentCall?.()?.activity_id
+  if (!agent || !activity) return undefined
+  return (job, cause) => {
+    if (cause !== 'heartbeat') agent.setCompute(activity, { job_id: job.job_id, phase: job.phase, phase_since: job.phase_since })
+  }
+}
+
 /** The injectable seams of one MCP session. An options bag rather than trailing
  *  positionals: `log` is the fourth and every one of them is optional, and each
  *  omitted seam must keep the behaviour it had before it existed. */
@@ -777,9 +815,19 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // A retired tool name is rewritten to the advertised one BEFORE `track`, so
   // the log row, the activity service's read/write split and the dispatcher all
   // read the same single name (`toolAliases.ts`).
-  const callTool = track('tools/call', async (req: CallToolRequest) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, clientInfo()?.name),
-  log, clientInfo)
+  //
+  // A clip-compute call also gets its registry caller (ADR 0121), built here
+  // because only this closure holds the session: its transport is what tells a
+  // cancel from a disconnect, and its activity row is the one the phases go to.
+  // Synchronous, so the LANDMINE in `handleCallTool` holds.
+  const callTool = track('tools/call', async (req: CallToolRequest, extra: unknown) => {
+    const name = req.params.name
+    const client = clientInfo()?.name
+    const compute = COMPUTE_TOOLS.has(name)
+      ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
+      : undefined
+    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, client, compute)
+  }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(withCanonicalToolName(req), extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {

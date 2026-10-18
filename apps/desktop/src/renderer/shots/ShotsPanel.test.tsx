@@ -830,6 +830,8 @@ describe("ShotsPanel — describing one shot", () => {
       layerId: "l1",
       tStartUs: 3_000_000,
       tEndUs: 7_000_000,
+      // The call's job tag (ADR 0121) — host plumbing, not a view argument.
+      requestId: expect.any(String),
     });
   });
 
@@ -916,6 +918,8 @@ describe("ShotsPanel — describing one shot", () => {
       layerId: "l1",
       tStartUs: 3_000_000,
       tEndUs: 7_000_000,
+      // The call's job tag (ADR 0121) — host plumbing, not a view argument.
+      requestId: expect.any(String),
     });
   });
 

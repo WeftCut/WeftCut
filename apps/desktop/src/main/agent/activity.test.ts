@@ -181,3 +181,39 @@ describe('structured activity', () => {
     expect(service.snapshot().activities.at(-1)?.affected).toEqual([{ kind: 'Track', id: track.id }])
   })
 })
+
+// ADR 0121: a long clip-compute call keeps its row on the job's live phase, and
+// a connection that closes under it flags the row instead of ending it — the
+// row ends when the call does, whenever the job finishes.
+describe('long calls', () => {
+  it('carries the job and phase onto the running row, and leaves ended rows alone', async () => {
+    const { service, run } = setup()
+    let release!: () => void
+    let id = ''
+    const call = run('one', () => {
+      id = service.currentCall()!.activity_id
+      return new Promise<void>(resolve => { release = resolve })
+    }, 'transcribe_clip')
+    service.setCompute(id, { job_id: 'job-1', phase: { kind: 'loading_model' }, phase_since: 't1' })
+    expect(service.snapshot().activities.at(-1)).toMatchObject({ state: 'running', compute: { job_id: 'job-1', phase: { kind: 'loading_model' } } })
+    release()
+    await call
+    service.setCompute(id, { job_id: 'job-1', phase: { kind: 'inferring' }, phase_since: 't2' })
+    expect(service.snapshot().activities.at(-1)).toMatchObject({ state: 'done', compute: { phase: { kind: 'loading_model' } } })
+  })
+
+  it('flags the running calls of a closed connection, which then end with their work', async () => {
+    const { service, run } = setup()
+    let release!: () => void
+    const call = run('one', () => new Promise<void>(resolve => { release = resolve }), 'describe_clip')
+    const other = run('two', () => new Promise<void>(() => {}), 'describe_clip')
+    void other
+    service.end('disconnected', 'one')
+    const rows = service.snapshot().activities
+    expect(rows.find(a => a.connection_id === 'one')).toMatchObject({ state: 'running', caller_disconnected: true })
+    expect(rows.find(a => a.connection_id === 'two')?.caller_disconnected).toBeUndefined()
+    release()
+    await call
+    expect(service.snapshot().activities.find(a => a.connection_id === 'one')).toMatchObject({ state: 'done', caller_disconnected: true })
+  })
+})

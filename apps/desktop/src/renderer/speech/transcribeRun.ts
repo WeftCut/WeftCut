@@ -22,7 +22,16 @@
 // the COMMAND has to grey out while a run is in flight — a second concurrent
 // run would bill a second request and race two caption tracks onto the
 // timeline — and a command gate cannot read a component's local state
-// (`speech/autoCaptionEligibility.ts` folds it into the verdict).
+// (`speech/autoCaptionEligibility.ts` folds it into the verdict). It stays the
+// renderer's own flag, not the job registry's: it covers the preflight prompt
+// and the write-back too, which are not jobs, and an AGENT transcribing some
+// clip must not grey out the user's press — a press on the same clip simply
+// joins that job (ADR 0121).
+//
+// Each read is tagged with a fresh `requestId`, which is how the run — and a
+// surface showing it — finds the job its call started or joined in
+// `compute/computeJobsStore.ts`: the job id is main's to mint, and a joined
+// job's id is not this run's to know up front.
 
 import { create } from "zustand";
 import type { TranscriptionInputDecision } from "./transcriptionInput";
@@ -30,22 +39,35 @@ import type { TranscriptionInputDecision } from "./transcriptionInput";
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import {
   applyTranscripts,
+  ComputeCancelledError,
   logEmit,
   transcribeClip,
   type LogEntryInput,
   type TranscriptResult,
 } from "../ipc";
+import { jobIdForRequest, useComputeJobsStore } from "../compute/computeJobsStore";
 
 interface TranscribeRunState {
   transcribing: boolean;
+  /// The tag of the read in flight, or null — `useComputeJobForRequest` turns
+  /// it into the job and its phase.
+  requestId: string | null;
 }
 
 export const useTranscribeRunStore = create<TranscribeRunState>(() => ({
   transcribing: false,
+  requestId: null,
 }));
 
 export function setTranscribing(transcribing: boolean): void {
-  useTranscribeRunStore.setState({ transcribing });
+  useTranscribeRunStore.setState(transcribing ? { transcribing } : { transcribing, requestId: null });
+}
+
+/// The job a tagged read ran under, for a row's `details` — absent when the
+/// read never became a job (an unresolved clip is refused as a plain call).
+function jobDetails(requestId: string): { job_id?: string } {
+  const jobId = jobIdForRequest(useComputeJobsStore.getState(), requestId);
+  return jobId === null ? {} : { job_id: jobId };
 }
 
 /// One clip a run reads.
@@ -125,7 +147,7 @@ function doneRow(transcripts: readonly TranscriptResult[], opId: string | null):
 /// actionable half, and a row that did not name the clip would leave a
 /// six-clip run's user guessing which one to fix. Terminal (closes the op as
 /// `Err`) unless the write step failed too, in which case that row closes it.
-function failedRow(clip: TranscribeClip, err: unknown, opId: string | null): LogEntryInput {
+function failedRow(clip: TranscribeClip, err: unknown, requestId: string, opId: string | null): LogEntryInput {
   const reason = refusalText(err);
   return {
     level: "error",
@@ -133,8 +155,24 @@ function failedRow(clip: TranscribeClip, err: unknown, opId: string | null): Log
     message: `Transcribing ${clip.label} failed: ${reason}`,
     i18n_key: "log.auto_caption_failed",
     i18n_args: { clip: clip.label, reason },
-    details: { context: "transcribe_clip", layer_id: clip.layerId },
+    details: { context: "transcribe_clip", layer_id: clip.layerId, ...jobDetails(requestId) },
     ...(opId === null ? {} : { op_id: opId, op_state: { state: "Err" } }),
+  };
+}
+
+/// The clip whose job was cancelled — from the app's cancel button, or by the
+/// agents that shared it. Not a failure, so `info` and `Ok`, the way an import
+/// or export cancel closes its op (docs/status-log.md): the log has no
+/// cancelled state, and an `Err` would count it as an error.
+function cancelledRow(clip: TranscribeClip, jobId: string, opId: string | null): LogEntryInput {
+  return {
+    level: "info",
+    ...ROW,
+    message: `Transcribing ${clip.label} was cancelled`,
+    i18n_key: "log.auto_caption_cancelled",
+    i18n_args: { clip: clip.label },
+    details: { context: "transcribe_clip", layer_id: clip.layerId, job_id: jobId },
+    ...(opId === null ? {} : { op_id: opId, op_state: { state: "Ok" } }),
   };
 }
 
@@ -182,8 +220,10 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   // The read half: one call per clip, in order, stopping at the first that
   // fails. No language hint goes on the wire, so the engine detects it.
   const transcripts: TranscriptResult[] = [];
-  let failed: { clip: TranscribeClip; err: unknown } | null = null;
+  let failed: { clip: TranscribeClip; err: unknown; requestId: string } | null = null;
   for (const clip of clips) {
+    const requestId = crypto.randomUUID();
+    useTranscribeRunStore.setState({ requestId });
     try {
       const normalize = normalizeLayerIds.includes(clip.layerId);
       if (normalize) void logEmit({
@@ -192,9 +232,10 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
         i18n_key: "log.auto_caption_normalize_requested", i18n_args: { clip: clip.label },
         details: { context: "transcribe_clip", layer_id: clip.layerId, normalize_audio: true },
       });
-      const result = normalize
-        ? await transcribeClip(clip.layerId, { normalizeAudio: true })
-        : await transcribeClip(clip.layerId);
+      const result = await transcribeClip(
+        clip.layerId,
+        normalize ? { normalizeAudio: true, requestId } : { requestId },
+      );
       transcripts.push(result);
       if (result.input_normalization) {
         const gain = result.input_normalization.gain_db.toFixed(1);
@@ -206,10 +247,14 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
         });
       }
     } catch (err) {
-      failed = { clip, err };
+      // A cancel stops the run exactly as a failure does — the clips after it
+      // are not read, the transcripts before it still land — and differs only
+      // in the row that says so.
+      failed = { clip, err, requestId };
       break;
     }
   }
+  useTranscribeRunStore.setState({ requestId: null });
 
   // One write for all successful reads, retaining normalized word timing and
   // source identity with the caption layers. SRT would discard this evidence,
@@ -230,15 +275,22 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   // else the cues that landed.
   const landed = transcripts.length > 0 && applyError === null;
   const clean = failed === null && applyError === null;
+  const cancelled = failed !== null && failed.err instanceof ComputeCancelledError ? failed.err : null;
   if (landed) void logEmit(doneRow(transcripts, clean ? opId : null));
-  if (failed !== null) void logEmit(failedRow(failed.clip, failed.err, applyError === null ? opId : null));
+  if (failed !== null) {
+    const closer = applyError === null ? opId : null;
+    void logEmit(cancelled !== null
+      ? cancelledRow(failed.clip, cancelled.jobId, closer)
+      : failedRow(failed.clip, failed.err, failed.requestId, closer));
+  }
   if (applyError !== null) logMutationFailure(applyError, "apply_transcripts", opId);
 
   // Cleared before the reveal and on failure too, or the command stays greyed
   // for the rest of the session.
   setTranscribing(false);
   if (landed) target.revealCaptions();
-  if (failed !== null) return refusalText(failed.err);
+  // A cancel has no remedy to open: the person asked for it.
+  if (failed !== null) return cancelled !== null ? "" : refusalText(failed.err);
   if (applyError !== null) return refusalText(applyError);
   return "";
 }

@@ -12,6 +12,7 @@ import {
   ping,
 } from "../ipc";
 import { useAgentActivity, wireAgentActivity } from "../agent/activityStore";
+import { wireComputeJobs } from "../compute/computeJobsStore";
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { bootAudioFxStore } from "../state/audioFxStore";
@@ -68,6 +69,16 @@ export function useAppWiring(): {
     let cancelled = false;
     let stop: (() => void) | undefined;
     void wireAgentActivity().then(unlisten => {
+      if (cancelled) unlisten(); else stop = unlisten;
+    });
+    return () => { cancelled = true; stop?.(); };
+  }, []);
+
+  // Clip-compute jobs (ADR 0121): human and agent transcribe / describe alike.
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void wireComputeJobs().then(unlisten => {
       if (cancelled) unlisten(); else stop = unlisten;
     });
     return () => { cancelled = true; stop?.(); };

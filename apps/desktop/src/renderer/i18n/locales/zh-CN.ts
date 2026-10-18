@@ -2571,6 +2571,7 @@ const zhCN: Resources = {
     auto_caption_started_many: "正在转写 {{count}} 个片段",
     auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
     auto_caption_failed: "转写“{{clip}}”失败：{{reason}}",
+    auto_caption_cancelled: "已取消转写“{{clip}}”",
     auto_caption_quiet: "“{{clip}}”的源音频音量偏低，转写可能漏字或误判语言。",
     auto_caption_level_unavailable: "未能检查“{{clip}}”的源音频音量。",
     auto_caption_normalize_requested: "已按你的选择，对“{{clip}}”的本次识别副本进行归一化。",
@@ -2619,6 +2620,7 @@ const zhCN: Resources = {
     // 引擎和模型都写上，和转写那行只写引擎不同：这里一个运行时服务多个视觉
     // 模型，只写引擎标签说不清是哪套权重回答的。
     describe_done: "已从“{{clip}}”得到 {{segments}} 段描述（{{engine}}，{{model}}）",
+    describe_cancelled: "已取消描述“{{clip}}”",
   },
   history: {
     initial: "初始状态",

@@ -18,6 +18,8 @@ vi.mock("../ipc", async (importActual) => {
 });
 
 import { runTranscribe, setTranscribing, useTranscribeRunStore } from "./transcribeRun";
+import { ComputeCancelledError } from "../ipc";
+import { receiveComputeJobs } from "../compute/computeJobsStore";
 
 /// One transcript envelope, forwarded intact so word timing is not discarded.
 function transcript(cues = 3, over: { backend?: string; language?: string } = {}) {
@@ -79,7 +81,7 @@ describe("runTranscribe", () => {
 
   it("continues with the existing unmodified transcription request after acknowledgement", async () => {
     await runTranscribe({ ...target(), confirmInput: async () => ({ normalizeLayerIds: [] }) });
-    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("l-1");
+    expect(mocks.transcribeClip).toHaveBeenCalledExactlyOnceWith("l-1", { requestId: expect.any(String) });
     expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +96,7 @@ describe("runTranscribe", () => {
   // language goes on the wire — detection is the engine's, not a field's.
   it("transcribes with no language hint, then applies the returned transcript", async () => {
     expect(await runTranscribe(target())).toBe("");
-    expect(mocks.transcribeClip).toHaveBeenCalledWith("l-1");
+    expect(mocks.transcribeClip).toHaveBeenCalledWith("l-1", { requestId: expect.any(String) });
     expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript()], "project", "composition", ["l-1"]);
   });
 
@@ -280,5 +282,66 @@ describe("runTranscribe", () => {
     expect(mocks.transcribeClip).not.toHaveBeenCalled();
     expect(mocks.logEmit).not.toHaveBeenCalled();
     expect(useTranscribeRunStore.getState().transcribing).toBe(false);
+  });
+
+  // ADR 0121: a read is a job the run may have joined. Its tag goes on the
+  // wire, the store maps it to the job id main minted, and a cancel is its
+  // own terminal row — not a failure.
+  describe("as a clip-compute job", () => {
+    let revision = 1000;
+    /// Main announcing the job the call tagged `requestId` is running under.
+    const announce = (requestId: string, jobId: string) => receiveComputeJobs({
+      revision: ++revision,
+      jobs: [{
+        job_id: jobId, tool: "transcribe_clip", layer_id: "l-1", media_id: "m", window: { t_start_us: 0, t_end_us: 1 },
+        phase: { kind: "queued", reason: null }, phase_since: "t", started_at: "t", origin: { kind: "agent", client: "claude" },
+        callers: 2, caller_disconnected: false, request_ids: [requestId],
+      }],
+    });
+
+    it("tags each read, exposes the tag while it runs, and clears it after", async () => {
+      const seen: Array<string | null> = [];
+      mocks.transcribeClip.mockImplementation(async (_id: string, opts: { requestId: string }) => {
+        seen.push(useTranscribeRunStore.getState().requestId);
+        expect(useTranscribeRunStore.getState().requestId).toBe(opts.requestId);
+        return transcript();
+      });
+      await runTranscribe(many());
+      expect(new Set(seen).size).toBe(3);
+      expect(useTranscribeRunStore.getState().requestId).toBeNull();
+    });
+
+    it("logs a cancel as an info row closing the op Ok, keeps what landed, and answers no remedy", async () => {
+      mocks.transcribeClip
+        .mockResolvedValueOnce(transcript(2))
+        .mockImplementationOnce(async (_id: string, opts: { requestId: string }) => {
+          announce(opts.requestId, "job-7");
+          throw new ComputeCancelledError("job-7");
+        });
+      expect(await runTranscribe(many())).toBe("");
+      // The clip after the cancelled one is not read; the one before lands.
+      expect(mocks.transcribeClip).toHaveBeenCalledTimes(2);
+      expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript(2)], "project", "composition", ["l-1"]);
+      const last = rows().at(-1);
+      expect(last).toMatchObject({
+        level: "info",
+        i18n_key: "log.auto_caption_cancelled",
+        i18n_args: { clip: "broll.mov" },
+        details: { job_id: "job-7", layer_id: "l-2" },
+        op_id: rows()[0].op_id,
+        op_state: { state: "Ok" },
+      });
+      expect(rows().some((r) => r.level === "error")).toBe(false);
+      expect(useTranscribeRunStore.getState().transcribing).toBe(false);
+    });
+
+    it("names the job a failed read ran under, joined or not", async () => {
+      mocks.transcribeClip.mockImplementationOnce(async (_id: string, opts: { requestId: string }) => {
+        announce(opts.requestId, "job-9");
+        throw ipcError("engine crashed");
+      });
+      await runTranscribe(target());
+      expect(rows().at(-1)).toMatchObject({ i18n_key: "log.auto_caption_failed", details: { job_id: "job-9" } });
+    });
   });
 });

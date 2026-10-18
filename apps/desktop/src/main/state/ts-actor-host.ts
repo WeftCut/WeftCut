@@ -37,6 +37,8 @@ import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
+  /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
+  computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
   onWorkspaceChanging?: () => void
   onWorkspaceOpened?: () => void
@@ -138,6 +140,7 @@ export interface ProjectOpened { name: string; dir: string; replaced: string | n
 
 export interface TsActorHost {
   exportJobs?: import("../exportJobs").ExportJobs
+  computeJobs?: import("../compute/jobs").ComputeJobs
   projectOperationPending?: () => boolean
   actor: ActorHandle
   agent: AgentActivityService
@@ -855,6 +858,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     actor,
     agent,
     ...(deps.exportJobs ? { exportJobs: deps.exportJobs } : {}),
+    ...(deps.computeJobs ? { computeJobs: deps.computeJobs } : {}),
     projectOperationPending: () => workspaceTransitions > 0 || quitting,
     openedProject: () => opened,
     projects: agentProjects,

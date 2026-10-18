@@ -4,7 +4,7 @@ import type { ActorHandle, ChangeEvent } from '../state/actor'
 import { resolveEntityLabels } from '../state/history-labels'
 import type { EntityRef } from '../state/history'
 import { eachLayer } from '../state/model'
-import type { AgentActivity, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
+import type { AgentActivity, AgentActivityCompute, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../shared/agent-activity'
 import { appendToolResultField } from '../state/mcp-results'
 import { TackStore, type TackAttribution } from './tacks'
@@ -217,6 +217,17 @@ export class AgentActivityService {
     })
   }
 
+  /** A clip-compute call's job and phase, onto its row while it runs. The
+   *  caller captured the id inside its call (`currentCall`), because phases
+   *  arrive from native events outside that async context. A row that ended,
+   *  was evicted or belongs to an earlier opening is left alone. */
+  setCompute(activityId: string, compute: AgentActivityCompute): void {
+    const a = this.activities.find(x => x.id === activityId)
+    if (!a || a.state !== 'running') return
+    a.compute = structuredClone(compute)
+    this.publish(a)
+  }
+
   begin(reason: string): AgentWorkSession {
     const ctx = this.context.getStore()
     if (!ctx || ctx.workspace !== this.workspace) throw new Error('Agent session requires a current MCP connection')
@@ -260,6 +271,7 @@ export class AgentActivityService {
    *  began — because a lock whose owner is gone blocks every revert for nobody.
    *  Another live connection's lock is never touched. */
   end(reason: 'agent' | 'user' | 'disconnected' | 'forced', connection?: string): void {
+    if (reason === 'disconnected' && connection !== undefined) this.markDisconnected(connection)
     // A connection going away releases the lock it holds even with no work
     // session to end: nothing else ever would.
     if (reason === 'disconnected' && connection !== undefined && this.lockOwner?.connection === connection) this.unlock()
@@ -277,6 +289,17 @@ export class AgentActivityService {
     if (owner !== null && (owner.session === ended.id || owner.connection === ended.connection_id)) this.unlock()
     this.trim()
     this.publish()
+  }
+
+  /** The connection's calls still running are flagged, not ended: a call
+   *  outlives its caller (a clip-compute job runs on so a retry can join it),
+   *  and its row ends when the call returns, as every row does. */
+  private markDisconnected(connection: string): void {
+    for (const a of this.activities) {
+      if (a.state !== 'running' || a.connection_id !== connection || a.caller_disconnected) continue
+      a.caller_disconnected = true
+      this.publish(a)
+    }
   }
 
   lock(reason: string): void {

@@ -21,7 +21,9 @@ import { CANVAS_MAX, CANVAS_MIN, DEFAULT_CANVAS, FPS_OPTIONS, canvasSizeError, v
 import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
 import { TACK_BODY_LIMIT, TACK_KINDS, TACK_LABEL_LIMIT, TACK_STATUSES } from '../../shared/agent-activity'
 
-export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
+/** `cancelled`: a clip-compute job ended by an explicit cancel (ADR 0121) —
+ *  native's envelope code for it, and the code of the tool result that says so. */
+export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal' | 'cancelled'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
 export type ToolResultJson = { content: Array<{ type: 'text'; text: string }>; structuredContent?: Record<string, unknown> } // isError omitted when false
 export type McpCallResult = { ok: true; result: ToolResultJson } | { ok: false; error: McpToolErrorJson }
