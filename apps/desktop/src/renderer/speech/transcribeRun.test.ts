@@ -311,6 +311,23 @@ describe("runTranscribe", () => {
       expect(useTranscribeRunStore.getState().requestId).toBeNull();
     });
 
+    it("names the clips being written while the write runs, after every read, and clears them after", async () => {
+      const during: Array<readonly string[] | null> = [];
+      mocks.transcribeClip.mockImplementation(async () => {
+        during.push(useTranscribeRunStore.getState().applying);
+        return transcript();
+      });
+      let applying: readonly string[] | null = null;
+      mocks.applyTranscripts.mockImplementation(async () => {
+        applying = useTranscribeRunStore.getState().applying;
+        throw ipcError("write failed");
+      });
+      await runTranscribe(many());
+      expect(during).toEqual([null, null, null]);
+      expect(applying).toEqual(["l-1", "l-2", "l-3"]);
+      expect(useTranscribeRunStore.getState().applying).toBeNull();
+    });
+
     it("logs a cancel as an info row closing the op Ok, keeps what landed, and answers no remedy", async () => {
       mocks.transcribeClip
         .mockResolvedValueOnce(transcript(2))

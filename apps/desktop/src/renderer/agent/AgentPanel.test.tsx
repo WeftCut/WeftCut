@@ -107,6 +107,44 @@ describe('AgentPanel', () => {
     expect(within(lock).getByRole('button', { name: 'Unlock undo' })).toBeTruthy()
   })
 
+  it('a running clip-compute row shows its job: waiting with an hourglass, the live phase, Cancel, and a disconnected caller', async () => {
+    const { receiveComputeJobs } = await import('../compute/computeJobsStore')
+    const since = new Date(Date.now() - 5000).toISOString()
+    seed([activity({ tool: 'describe_clip', state: 'running', ended_at: null, duration_ms: null, caller_disconnected: true,
+      compute: { job_id: 'job-9', phase: { kind: 'queued', reason: 'memory' }, phase_since: since } })])
+    render(<AgentPanel />)
+    const row = document.querySelector<HTMLElement>('.agent-activity')!
+    expect(row.classList.contains('is-waiting')).toBe(true)
+    expect(row.querySelector('.agent-spin')).toBeNull()
+    expect(within(row).getByText('Waiting for memory to free up')).toBeTruthy()
+    expect(within(row).getByText('Caller disconnected — still running')).toBeTruthy()
+    expect(row.querySelector('.agent-activity-status')).toBeNull()
+    // The mirror's live job is fresher than the row's copy.
+    act(() => receiveComputeJobs({ revision: 1_000_000, jobs: [{ job_id: 'job-9', tool: 'describe_clip', layer_id: 'gone', media_id: 'm',
+      window: { t_start_us: 0, t_end_us: 1 }, phase: { kind: 'extracting', done: 4, total: 10 }, phase_since: new Date().toISOString(),
+      started_at: since, origin: { kind: 'agent', client: 'Test client' }, callers: 0, caller_disconnected: false, request_ids: [] }] }))
+    expect(within(row).getByText('Sampling frames 4/10')).toBeTruthy()
+    expect(row.classList.contains('is-waiting')).toBe(false)
+    expect(row.querySelector('.agent-spin')).not.toBeNull()
+    mocks.invoke.mockResolvedValue(true)
+    fireEvent.click(within(row).getByRole('button', { name: 'Cancel description' }))
+    expect(mocks.invoke).toHaveBeenCalledWith('compute_job_cancel', { job_id: 'job-9' })
+    act(() => receiveComputeJobs({ revision: 1_000_001, jobs: [] }))
+  })
+
+  it('an ended clip-compute row reads as any other', () => {
+    seed([activity({ tool: 'transcribe_clip', compute: { job_id: 'job-1', phase: { kind: 'inferring' }, phase_since: '2026-09-10T00:00:00Z' } })])
+    render(<AgentPanel />)
+    expect(screen.getByText('Completed')).toBeTruthy()
+    expect(document.querySelector('.compute-job-status')).toBeNull()
+  })
+
+  it('a running non-compute row whose caller went away says so', () => {
+    seed([activity({ state: 'running', ended_at: null, duration_ms: null, caller_disconnected: true })])
+    render(<AgentPanel />)
+    expect(screen.getByText('Caller disconnected — still running')).toBeTruthy()
+  })
+
   it('closes the activity list with the retention note, inside the list', () => {
     seed([activity()])
     render(<AgentPanel />)

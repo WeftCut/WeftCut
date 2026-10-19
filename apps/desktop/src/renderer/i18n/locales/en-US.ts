@@ -2697,6 +2697,90 @@ const enUS = {
     outline_width: "Outline width (px), 0 for none",
     seek_to: "Go to caption at {{timecode}}",
   },
+  // Clip-compute jobs: transcribe_clip / describe_clip (ADR 0120, ADR 0121).
+  compute: {
+    // One per key `phaseLabel` (shared/compute-jobs.ts) emits — tool-neutral,
+    // for any surface that only has the phase. A queued job's reason is the
+    // admission condition that is closed, said as what it waits FOR.
+    phase: {
+      queued: "Waiting to start",
+      queued_memory: "Waiting for memory to free up",
+      queued_finalization: "Waiting for an export to finish",
+      queued_budget: "Waiting for processing capacity",
+      extracting: "Extracting {{done}}/{{total}}",
+      normalizing: "Normalizing audio",
+      loading_model: "Loading model",
+      inferring: "Running the model",
+      inferring_counted: "Running the model {{done}}/{{total}}",
+      applying: "Applying results",
+    },
+    // What job surfaces (the Activity row, the status bar, in-context
+    // indicators) draw. They know the tool, so a phase can say what it does.
+    ui: {
+      // The budget wait names what holds the capacity: the derivatives pill
+      // beside it is usually the answer.
+      queued_budget_detail: "Waiting for processing capacity — background work such as proxy generation is using it",
+      extracting_audio: "Extracting audio",
+      sampling_frames: "Sampling frames {{done}}/{{total}}",
+      transcribing: "Transcribing",
+      transcribing_percent: "Transcribing {{percent}}%",
+      describing: "Describing",
+      describing_counted: "Describing {{done}}/{{total}}",
+      applying_captions: "Adding captions",
+      // In-context overlay over the source range a job reads.
+      transcribing_range: "Transcribing this range…",
+      describing_range: "Describing this range…",
+      // The short form wherever the reason does not fit; the reason goes in
+      // the title.
+      waiting_short: "Waiting for resources",
+      waited: "waiting {{duration}}",
+      // A working phase that has not changed (counts included) for a while.
+      stalled: "No progress for {{duration}}",
+      stalled_hint: "The current step has not reported progress for a while. It may still be working — a long source can take minutes per step.",
+      caller_disconnected: "Caller disconnected — still running",
+      caller_disconnected_hint: "The agent that asked for this is no longer connected. The work continues, and a retry picks up its result.",
+      cancel: "Cancel",
+      cancel_transcribe: "Cancel transcription",
+      cancel_describe: "Cancel description",
+      cancelling: "Cancelling…",
+      cancelled: "Cancelled",
+      cancel_failed: "Could not cancel: {{reason}}",
+      // The status bar pill: one job is named by what it does, several are
+      // counted. Its title lists every job, one per line.
+      pill_transcribing: "Transcribing",
+      pill_describing: "Describing",
+      pill_many_one: "{{count}} clip job",
+      pill_many_other: "{{count}} clip jobs",
+      pill_many: "{{count}} clip jobs",
+      pill_waiting_one: "{{count}} clip job waiting",
+      pill_waiting_other: "{{count}} clip jobs waiting",
+      pill_waiting: "{{count}} clip jobs waiting",
+      pill_line: "{{tool}} “{{clip}}”: {{phase}}",
+      pill_line_unnamed: "{{tool}}: {{phase}}",
+      pill_hint: "Click to open the agent panel or the log",
+      tool_transcribe: "Transcribe",
+      tool_describe: "Describe",
+      // Appended to the derivatives pill's title while a clip job waits on
+      // the processing budget those jobs hold.
+      derivatives_blocking: "A transcription or description is waiting for these to finish.",
+      // Durations, coarsest unit first, no leading zeros.
+      duration_seconds: "{{s}}s",
+      duration_minutes: "{{m}}m {{s}}s",
+      duration_hours: "{{h}}h {{m}}m",
+      // Completion notice: a job the person started (or joined) ended while
+      // they may be looking elsewhere.
+      notice_transcribe_done_title: "Transcription finished",
+      notice_transcribe_done_body: "“{{clip}}” is transcribed.",
+      notice_describe_done_title: "Description finished",
+      notice_describe_done_body: "“{{clip}}” is described.",
+      notice_transcribe_failed_title: "Transcription failed",
+      notice_transcribe_failed_body: "Transcribing “{{clip}}” failed: {{reason}}",
+      notice_describe_failed_title: "Description failed",
+      notice_describe_failed_body: "Describing “{{clip}}” failed: {{reason}}",
+      notice_transcribe_cancelled_body: "Transcribing “{{clip}}” was cancelled.",
+      notice_describe_cancelled_body: "Describing “{{clip}}” was cancelled.",
+    },
+  },
   audio_roles: { dialogue: "Dialogue", music: "Music", sfx: "SFX", voiceover: "Voiceover" },
   mixer: {
     title: "Mixer",

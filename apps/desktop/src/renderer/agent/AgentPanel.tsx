@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X } from 'lucide-react'
+import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X, Hourglass, Unplug } from 'lucide-react'
 import { invoke } from '@/bridge/ipc'
 import type { AgentActivity, AgentConnectionSnapshot } from '../../shared/agent-activity'
 import { agentSessionEnd, projectRestoreCheckpoint, type HistoryEntityRef } from '../ipc'
@@ -19,6 +19,10 @@ import { buildActivitySections, type ActivityRow } from './activityRows'
 import { sessionSectionKey, sessionSectionOpenByDefault } from './expansion'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
+import { ComputeJobStatus } from '../compute/ComputeJobStatus'
+import { isWaiting, type ComputeJobSubject } from '../compute/computeJobView'
+import { useComputeJobsStore } from '../compute/computeJobsStore'
+import { COMPUTE_TOOLS, type ComputeJob, type ComputeTool } from '../../shared/compute-jobs'
 
 /** Shared activity surface; only the editor offers object navigation. */
 export function AgentPanel({ editor = false }: { editor?: boolean }) {
@@ -40,6 +44,8 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
   const shown = useReview(s => s.activity)
   const project = useProjectStore(s => s.summary)
   const layers = useProjectStore(s => s.layerById)
+  // Live clip-compute jobs: fresher than a row's own copy of its job.
+  const computeJobs = useComputeJobsStore(s => s.jobs)
   const list = useRef<HTMLDivElement>(null)
   const [connections, setConnections] = useState<AgentConnectionSnapshot | null>(null)
   const [settings, setSettings] = useState(false)
@@ -96,16 +102,21 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     const refs = a.affected.filter((r): r is HistoryEntityRef => r.kind === 'Layer' || r.kind === 'Track' || r.kind === 'Marker')
     const canReveal = refs.some(r => r.kind === 'Layer' ? layers.has(r.id) : r.kind === 'Track' && Object.values(project?.compositions ?? {}).some(c => c.tracks.some(track => track.id === r.id)))
     const valid = snapshot?.checkpoints.some(cp => cp.id === a.checkpoint_id) ?? false
-    const Icon = a.state === 'running' ? Loader2 : a.state === 'error' ? AlertCircle : Check
-    return <article key={a.id} data-agent-anchor={a.id} className={`agent-activity state-${a.state}`}>
+    const compute = computeSubject(a, computeJobs)
+    const waiting = compute !== null && isWaiting(compute.phase)
+    const Icon = a.state === 'running' ? (waiting ? Hourglass : Loader2) : a.state === 'error' ? AlertCircle : Check
+    return <article key={a.id} data-agent-anchor={a.id} className={`agent-activity state-${a.state}${waiting ? ' is-waiting' : ''}`}>
       <button type="button" className="agent-activity-main" aria-expanded={open} onClick={() => toggle(a.id)}>
-        <AppIcon icon={Icon} size="title" className={a.state === 'running' ? 'agent-spin' : ''} aria-hidden />
+        <AppIcon icon={Icon} size="title" className={a.state === 'running' && !waiting ? 'agent-spin' : ''} aria-hidden />
         <span className="agent-activity-copy"><span>{label}</span>{names && <small>{names}</small>}</span>
         <span className="agent-activity-meta">{elapsed >= 250 ? `${(elapsed / 1000).toFixed(1)}s` : formatClock(a.started_at)}</span>
         {open ? <AppIcon icon={ChevronDown} size="body" /> : <AppIcon icon={ChevronRight} size="body" />}
       </button>
-      <div className="agent-activity-status"><span>{t(`agent_panel.${a.state}`)}</span>
-        {(a.effect === 'reverted' || a.effect === 'partial') && <span className="agent-effect">{t(`agent_panel.${a.effect}`)}</span>}</div>
+      {compute !== null
+        ? <ComputeJobStatus job={compute} variant="row" showIcon={false} className="agent-activity-compute" />
+        : <div className="agent-activity-status"><span>{t(`agent_panel.${a.state}`)}</span>
+          {a.state === 'running' && a.caller_disconnected && <span className="agent-effect agent-disconnected" title={t('compute.ui.caller_disconnected_hint')}><AppIcon icon={Unplug} size="label" aria-hidden /> {t('compute.ui.caller_disconnected')}</span>}
+          {(a.effect === 'reverted' || a.effect === 'partial') && <span className="agent-effect">{t(`agent_panel.${a.effect}`)}</span>}</div>}
       {a.error && <p className="agent-activity-error">{a.error}</p>}
       {a.kind === 'checkpoint' && <div className="agent-activity-actions"><button type="button" disabled={!valid || locked || busy !== null}
         title={!valid ? t('agent_panel.checkpoint_missing') : locked ? t('agent_panel.locked') : t('agent_mode.restore_hint')}
@@ -195,4 +206,16 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
       {sections.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p>}</div></>}
     {settings && <AppDialog title={t('agent_panel.connection_settings')} onClose={() => setSettings(false)} panelClassName="agent-connect-dialog"><div className="agent-connect-dialog-body"><AgentSection /></div></AppDialog>}
   </div>
+}
+
+/** A running clip-compute row's job: the live one from the mirror when it is
+ *  there, else the row's own last copy. Null for every other row, and once the
+ *  row has ended (an ended row reads as any other). The row's own disconnect
+ *  counts as well as the job's: it is this caller that went away. */
+function computeSubject(a: AgentActivity, jobs: Record<string, ComputeJob>): ComputeJobSubject | null {
+  if (a.state !== 'running' || !a.compute || !COMPUTE_TOOLS.has(a.tool)) return null
+  const live = jobs[a.compute.job_id]
+  const base = live ?? { job_id: a.compute.job_id, tool: a.tool as ComputeTool, phase: a.compute.phase, phase_since: a.compute.phase_since }
+  return { job_id: base.job_id, tool: base.tool, phase: base.phase, phase_since: base.phase_since,
+    caller_disconnected: a.caller_disconnected === true || live?.caller_disconnected === true }
 }

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import "../i18n";
-import { MEDIA_JOB_EVENTS, type MediaJobEvent } from "../ipc";
+import { MEDIA_JOB_EVENTS, type ComputeJob, type ComputeOrigin, type ComputePhase, type MediaJobEvent } from "../ipc";
 import { StatusBar } from "./StatusBar";
 import type { Change } from "../../shared/review";
 
@@ -64,4 +64,66 @@ it("shows the unreviewed change count while there is one; a click opens the agen
   expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
   unregister();
   resetReviewForTests();
+});
+
+describe("clip-compute pill", () => {
+  let revision = 2_000_000;
+  const jobFixture = (id: string, phase: ComputePhase, origin: ComputeOrigin = { kind: "user" }): ComputeJob => ({
+    job_id: id, tool: "transcribe_clip", layer_id: `layer-${id}`, media_id: "m", window: { t_start_us: 0, t_end_us: 1 },
+    phase, phase_since: new Date(Date.now() - 70_000).toISOString(), started_at: `2026-10-18T00:00:0${id.length}Z`,
+    origin, callers: 1, caller_disconnected: false, request_ids: [],
+  });
+  const publish = async (jobs: ComputeJob[]) => {
+    const { receiveComputeJobs } = await import("../compute/computeJobsStore");
+    act(() => receiveComputeJobs({ revision: ++revision, jobs }));
+  };
+  afterEach(async () => { await publish([]); });
+
+  it("shows an hourglass while every job waits, lists each job's reason, and links a budget wait to the derivatives pill", async () => {
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="status-bar-compute"]')).toBeNull();
+    act(() => handlers.get(MEDIA_JOB_EVENTS.started)!({ payload: { media_id: "long", kind: "proxy" } }));
+    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).not.toContain("waiting for these");
+    await publish([jobFixture("a", { kind: "queued", reason: "budget" }), jobFixture("bb", { kind: "queued", reason: "memory" })]);
+    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
+    expect(pill.dataset.state).toBe("waiting");
+    expect(pill.textContent).toBe("2 clip jobs waiting");
+    expect(pill.querySelector(".lucide-hourglass")).not.toBeNull();
+    expect(pill.querySelector(".status-bar-spinner")).toBeNull();
+    expect(pill.title).toContain("Transcribe: Waiting for processing capacity — background work such as proxy generation is using it · waiting 1m 10s");
+    expect(pill.title).toContain("Transcribe: Waiting for memory to free up");
+    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).toContain("A transcription or description is waiting for these to finish.");
+  });
+
+  it("spins once any job works, names a single job by what it does, and opens the log for a person's job", async () => {
+    const onToggleLogs = vi.fn();
+    const { container } = render(<StatusBar onToggleLogs={onToggleLogs} />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "inferring", done: 30, total: 100 })]);
+    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
+    expect(pill.dataset.state).toBe("working");
+    expect(pill.textContent).toBe("Transcribing");
+    expect(pill.querySelector(".status-bar-spinner")).not.toBeNull();
+    expect(pill.title).toContain("Transcribe: Transcribing 30%");
+    act(() => pill.click());
+    expect(onToggleLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the agent panel's Activity tab when an agent's job is running", async () => {
+    const { useAgentActivity } = await import("../agent/activityStore");
+    const { registerCommandProvider } = await import("../commands/registry");
+    const open = vi.fn();
+    const unregister = registerCommandProvider(() => [{ id: "openAgentPanel", run: open } as never]);
+    useAgentActivity.setState({ tab: "changes" });
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "queued", reason: null }), jobFixture("bb", { kind: "loading_model" }, { kind: "agent", client: "claude" })]);
+    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
+    expect(pill.textContent).toBe("2 clip jobs");
+    act(() => pill.click());
+    expect(useAgentActivity.getState().tab).toBe("activity");
+    expect(open).toHaveBeenCalledTimes(1);
+    unregister();
+  });
 });

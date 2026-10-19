@@ -51,6 +51,10 @@
 p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); overflow-wrap: anywhere; white-space: pre-wrap; max-height: calc(140 * var(--ui-px)); overflow: auto; }
 .agent-activity.state-error > .agent-activity-main > svg { color: var(--destructive); }
 .agent-activity.state-running > .agent-activity-main > svg { color: var(--primary); }
+/* A clip-compute row waiting for admission: muted, no spin (ComputeJobStatus). */
+.agent-activity.state-running.is-waiting > .agent-activity-main > svg { color: var(--muted-foreground); }
+.agent-activity-compute { padding-left: calc(27 * var(--ui-px)); }
+.agent-disconnected { display: inline-flex; align-items: center; gap: calc(3 * var(--ui-px)); }
 .agent-activity-actions { margin: calc(5 * var(--ui-px)) 0 0 calc(27 * var(--ui-px)); }
 .agent-activity-details { margin: calc(7 * var(--ui-px)) calc(7 * var(--ui-px)) 0 calc(27 * var(--ui-px)); padding: calc(8 * var(--ui-px)); background: var(--background); border-radius: 4px; }
 .agent-activity-details dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: calc(4 * var(--ui-px)) calc(10 * var(--ui-px)); margin: 0 0 calc(8 * var(--ui-px)); font-size: var(--font-size-micro); }

@@ -52,15 +52,20 @@ interface TranscribeRunState {
   /// The tag of the read in flight, or null — `useComputeJobForRequest` turns
   /// it into the job and its phase.
   requestId: string | null;
+  /// The clips whose transcripts are being written as captions, or null. The
+  /// write runs after every job has ended, so no job carries it: a surface
+  /// shows these clips as `{ kind: 'applying' }`.
+  applying: readonly string[] | null;
 }
 
 export const useTranscribeRunStore = create<TranscribeRunState>(() => ({
   transcribing: false,
   requestId: null,
+  applying: null,
 }));
 
 export function setTranscribing(transcribing: boolean): void {
-  useTranscribeRunStore.setState(transcribing ? { transcribing } : { transcribing, requestId: null });
+  useTranscribeRunStore.setState(transcribing ? { transcribing } : { transcribing, requestId: null, applying: null });
 }
 
 /// The job a tagged read ran under, for a row's `details` — absent when the
@@ -261,10 +266,14 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   // making later text correction unable to resegment after reopening a project.
   let applyError: unknown = null;
   if (transcripts.length > 0) {
+    const layerIds = clips.slice(0, transcripts.length).map(c => c.layerId);
+    useTranscribeRunStore.setState({ applying: layerIds });
     try {
-      await applyTranscripts(transcripts, target.projectId, target.compositionId, clips.slice(0, transcripts.length).map(c => c.layerId));
+      await applyTranscripts(transcripts, target.projectId, target.compositionId, layerIds);
     } catch (err) {
       applyError = err;
+    } finally {
+      useTranscribeRunStore.setState({ applying: null });
     }
   }
 

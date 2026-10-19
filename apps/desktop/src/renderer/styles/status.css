@@ -152,6 +152,21 @@
   color: var(--color-blue-300);
 }
 
+/* Running clip-compute jobs (transcribe / describe). Working shares the
+   running badge's hue; waiting for admission is muted, with an hourglass in
+   place of the spinner, so a queued job never reads as busy. */
+.compute-jobs-pill {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  white-space: nowrap;
+}
+
+.compute-jobs-pill.is-waiting {
+  background: var(--surface-tint);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
+
 /* Unreviewed agent changes: opens the agent panel's Changes tab. */
 .status-bar-badge-review {
   background: color-mix(in srgb, var(--review-modified) 12%, transparent);

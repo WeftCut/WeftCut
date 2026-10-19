@@ -1,0 +1,31 @@
+/* One clip-compute job's status (ComputeJobStatus). Working is the primary
+   hue and spins; waiting is muted with an hourglass, so a queued job never
+   reads as busy. A stall is a warning, a disconnected caller a quiet note. */
+
+.compute-job-status { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); min-width: 0; font-size: var(--font-size-caption); color: var(--foreground); }
+.compute-job-status.variant-row { flex-direction: column; align-items: stretch; gap: calc(3 * var(--ui-px)); }
+.compute-job-status.variant-compact { gap: calc(4 * var(--ui-px)); font-size: var(--font-size-micro); }
+.compute-job-line { display: flex; align-items: flex-start; gap: calc(6 * var(--ui-px)); min-width: 0; }
+.compute-job-icon { flex: none; }
+.compute-job-status.variant-row .compute-job-icon { margin-top: calc(1 * var(--ui-px)); }
+.compute-job-status.state-working .compute-job-icon { color: var(--primary); }
+.compute-job-status.state-waiting .compute-job-icon { color: var(--muted-foreground); }
+.compute-job-status.state-waiting .compute-job-text { color: var(--muted-foreground); }
+.compute-job-text { min-width: 0; overflow-wrap: anywhere; }
+.compute-job-status.variant-compact .compute-job-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compute-job-notes { display: flex; flex-wrap: wrap; align-items: center; gap: calc(4 * var(--ui-px)) calc(8 * var(--ui-px)); font-size: var(--font-size-micro); color: var(--muted-foreground); }
+.compute-job-status.variant-row .compute-job-notes { padding-left: calc(20 * var(--ui-px)); }
+.compute-job-status:not(.variant-row) .compute-job-notes { display: contents; }
+.compute-job-waited { white-space: nowrap; }
+.compute-job-stalled, .compute-job-disconnected { display: inline-flex; align-items: center; gap: calc(3 * var(--ui-px)); white-space: nowrap; }
+.compute-job-stalled { color: var(--warning); }
+.compute-job-flag { flex: none; color: var(--warning); }
+.compute-job-error { color: var(--destructive); overflow-wrap: anywhere; }
+.compute-job-cancel { display: inline-flex; align-items: center; gap: calc(3 * var(--ui-px)); font-size: var(--font-size-micro); padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px)); white-space: nowrap; }
+.compute-job-status.variant-row .compute-job-cancel { margin-left: auto; }
+.compute-job-status.variant-compact .compute-job-cancel { padding: calc(1 * var(--ui-px)); }
+.compute-job-cancel:disabled { cursor: default; opacity: 0.7; }
+.compute-job-spin { animation: compute-job-spin 1.2s linear infinite; }
+@keyframes compute-job-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .compute-job-spin { animation: none; } }
+.compute-job-status.variant-row.no-icon .compute-job-notes { padding-left: 0; }
