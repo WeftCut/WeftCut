@@ -20,10 +20,17 @@ import { AppNumberField } from "../components/AppNumberField";
 import { TextCorrectionDialog } from "../speech/TextCorrectionDialog";
 import { Button } from "../components/ui/button";
 import { useProjectStore } from "../state/projectStore";
+import { ComputeJobStatus } from "../compute/ComputeJobStatus";
+import { useComputeJobsStore } from "../compute/computeJobsStore";
+import type { ComputeJobSubject } from "../compute/computeJobView";
+import { layerDisplayName } from "../lib/layerName";
+import { useTranscribeRunStore } from "../speech/transcribeRun";
+import "../compute/compute.css";
 import {
   updateLayerParams,
   restyleCaptions,
   trackStatic,
+  type CompositionSummary,
   type LayerSummary,
   type Rgba,
 } from "../ipc";
@@ -88,6 +95,61 @@ function CaptionCueRow({
       />
     </li>
   );
+}
+
+/// The captions on their way: a line per transcription job reading a clip of
+/// this composition — a person's or an agent's — naming the clip, with the
+/// job's phase and Cancel, then "Adding captions" while a finished run writes
+/// its cues (ADR 0121). The list below fills when the write lands; until then
+/// this is what says something is coming, and what it is waiting for.
+///
+/// Its own component, so the job mirror's updates re-render this line and not
+/// every cue row.
+function CaptionsComputeStatus({ comp }: { comp: CompositionSummary | null }) {
+  const { t } = useTranslation();
+  const jobs = useComputeJobsStore((s) => s.jobs);
+  const applying = useTranscribeRunStore((s) => s.applying);
+  const ordinals = useProjectStore((s) => s.groupOrdinals);
+  if (comp === null) return null;
+  const here = new Map<string, LayerSummary>();
+  for (const track of comp.tracks) for (const layer of track.layers) here.set(layer.id, layer);
+  const running = Object.values(jobs)
+    .filter((job) => job.tool === "transcribe_clip" && here.has(job.layer_id))
+    .sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const writing = (applying ?? []).filter((id) => here.has(id));
+  if (running.length === 0 && writing.length === 0) return null;
+  const name = (id: string) => layerDisplayName(here.get(id)!, t, ordinals);
+  return (
+    <div className="captions-compute" data-testid="captions-compute">
+      {running.map((job) => (
+        <div className="captions-compute-line" key={job.job_id}>
+          <span className="captions-compute-clip" title={name(job.layer_id)}>{name(job.layer_id)}</span>
+          <ComputeJobStatus job={job} variant="inline" />
+        </div>
+      ))}
+      {writing.length > 0 && (
+        <div className="captions-compute-line" key="applying">
+          <span className="captions-compute-clip" title={writing.map(name).join(", ")}>
+            {writing.map(name).join(", ")}
+          </span>
+          <ApplyingStatus />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/// The write-back's line. Not a job, so it has no Cancel and its "since" is
+/// when this line appeared.
+function ApplyingStatus() {
+  const [since] = useState(() => new Date().toISOString());
+  const subject: ComputeJobSubject = {
+    job_id: "applying",
+    tool: "transcribe_clip",
+    phase: { kind: "applying" },
+    phase_since: since,
+  };
+  return <ComputeJobStatus job={subject} variant="inline" hideCancel />;
 }
 
 export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: CaptionPanelProps) {
@@ -220,6 +282,7 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
           />
         </div>
       </section>
+      <CaptionsComputeStatus comp={comp} />
       {cues.length === 0 ? (
         <p className="placeholder">{t("captions.empty")}</p>
       ) : (

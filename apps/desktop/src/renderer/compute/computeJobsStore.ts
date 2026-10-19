@@ -96,6 +96,17 @@ export function jobForLayer(
   return null;
 }
 
+/// Stable empty answer for the list selectors, so a subscriber with no job
+/// bails out instead of re-rendering on every update.
+const NO_JOBS: readonly ComputeJob[] = [];
+
+/// Every running job over `layerId`, oldest first. Each update replaces the job
+/// records, so read it under `useShallow`: a layer with no job keeps `NO_JOBS`.
+export function jobsForLayer(s: ComputeJobsState, layerId: string): readonly ComputeJob[] {
+  const found = Object.values(s.jobs).filter((j) => j.layer_id === layerId);
+  return found.length === 0 ? NO_JOBS : found.sort((a, b) => a.started_at.localeCompare(b.started_at));
+}
+
 /// Every running job reading `mediaId`, oldest first.
 export function jobsForMedia(s: ComputeJobsState, mediaId: string): ComputeJob[] {
   return Object.values(s.jobs)

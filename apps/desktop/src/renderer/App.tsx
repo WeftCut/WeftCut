@@ -122,6 +122,7 @@ import {
   ungroupSelected,
 } from "./commands/groupCommands";
 import { describeSelected } from "./commands/describeCommands";
+import { ComputeJobNotice } from "./compute/ComputeJobNotice";
 import { openPausesForSelection } from "./commands/pauseCommands";
 import {
   openVoiceoverPrompt,
@@ -1156,6 +1157,7 @@ export function App({ onCloseProject }: AppProps) {
           summary={summary}
           onExit={exitAgentMode}
         />
+        <ComputeJobNotice />
       </ShortcutBindingsProvider>
     );
   }
@@ -1354,6 +1356,7 @@ export function App({ onCloseProject }: AppProps) {
         onOpenSystemStatus={toggleSystemStatus}
         onToggleLogs={toggleLogConsole}
       />
+      <ComputeJobNotice />
     </div>
     </ShortcutBindingsProvider>
   );

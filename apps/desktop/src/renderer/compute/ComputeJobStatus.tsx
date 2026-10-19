@@ -10,8 +10,8 @@ import { useTranslation } from "react-i18next";
 import { Hourglass, Loader2, TriangleAlert, Unplug, X } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { refusalText } from "../errors/tryMutate";
-import { cancelComputeJob } from "../ipc";
 import { useNow } from "../hooks/useNow";
+import { cancelComputeJobHere } from "./computeJobNotices";
 import {
   computePhaseText,
   formatComputeDuration,
@@ -31,7 +31,7 @@ export interface ComputeJobStatusProps {
   /// icon, short text and an icon-only Cancel; the reason and notes go in the
   /// title (an overlay on a clip).
   variant?: ComputeJobStatusVariant;
-  /// Replaces the default force-cancel (`cancelComputeJob`). Its promise holds
+  /// Replaces the default force-cancel (`cancelComputeJobHere`). Its promise holds
   /// the button in its pending state.
   onCancel?: () => Promise<unknown> | void;
   /// No Cancel at all — a surface that only reports.
@@ -69,7 +69,7 @@ export function ComputeJobStatus({ job, variant = "row", onCancel, hideCancel = 
     setPending(true);
     setError(null);
     try {
-      const result = await (onCancel ? onCancel() : cancelComputeJob(job.job_id));
+      const result = await (onCancel ? onCancel() : cancelComputeJobHere(job.job_id));
       // Cancelled: the job ends and this status goes with it, so the button
       // stays pending until then. `false` = it had already ended — nothing
       // to report, and nothing left to wait for.

@@ -6,7 +6,7 @@
 // leave the resolution itself untested.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Partial, for `MarkerPanel.test.tsx`'s reason: the composition switch under
@@ -32,6 +32,7 @@ const shots = vi.hoisted(() => ({
   getProjectSettings: vi.fn(),
   updateProjectSettings: vi.fn(),
   logEmit: vi.fn<(input: LogEntryInput) => Promise<void>>(),
+  cancelComputeJob: vi.fn<(jobId: string) => Promise<boolean>>(),
 }));
 vi.mock("../ipc", async (importActual) => ({
   ...(await importActual<typeof import("../ipc")>()),
@@ -71,6 +72,8 @@ import type {
   TrackSummary,
 } from "../ipc";
 import { resetDescriptionsStore } from "../describe/descriptionsStore";
+import { receiveComputeJobs } from "../compute/computeJobsStore";
+import type { ComputeJob, ComputePhase } from "../ipc";
 import { resetShotsStore } from "./shotsStore";
 import { ShotsPanel, cutConfidence, shotDescribeBlocker } from "./ShotsPanel";
 
@@ -1601,5 +1604,103 @@ describe("ShotsPanel — the score strip and its line", () => {
     );
     // No line to drag over an empty plot.
     expect(screen.queryByRole("slider")).toBeNull();
+  });
+});
+
+// A running description JOB over a row (ADR 0121): this window's or an
+// agent's, found by mapping the job's timeline window through its layer into
+// source time. Rows: shot 1 over source [0, 2 s), shot 2 over [2 s, 6 s); the
+// clip `l1` sits at 1 s, so source 2 s is timeline 3 s.
+describe("ShotsPanel — a running description job", () => {
+  let revision = 5_000_000;
+  const job = (over: Partial<ComputeJob> & { phase: ComputePhase }): ComputeJob => ({
+    job_id: "job-1",
+    tool: "describe_clip",
+    layer_id: "l1",
+    media_id: "m1",
+    window: { t_start_us: 3_000_000, t_end_us: 7_000_000 },
+    phase_since: new Date().toISOString(),
+    started_at: new Date().toISOString(),
+    origin: { kind: "agent", client: "claude" },
+    callers: 1,
+    caller_disconnected: false,
+    request_ids: [],
+    ...over,
+  });
+  const publish = (jobs: ComputeJob[]) =>
+    act(() => receiveComputeJobs({ revision: ++revision, jobs }));
+
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+    shots.cancelComputeJob.mockResolvedValue(true);
+  });
+  afterEach(() => publish([]));
+
+  async function review(): Promise<HTMLElement[]> {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    return await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+  }
+  const statusIn = (row: HTMLElement | undefined) =>
+    row?.querySelector<HTMLElement>(".shots-description .compute-job-status") ?? null;
+
+  it("shows an agent's job on the rows its window covers, with Cancel, and nowhere else", async () => {
+    const rows = await review();
+    publish([job({ phase: { kind: "extracting", done: 3, total: 10 } })]);
+    const status = statusIn(rows[1]);
+    expect(status?.textContent).toContain("Sampling frames 3/10");
+    expect(status?.dataset.phase).toBe("extracting");
+    // In place of "Describing": the job line is the transient now.
+    expect(rows[1]?.querySelector(".shots-description-empty")).toBeNull();
+    expect(statusIn(rows[0])).toBeNull();
+    expect(rows[0]?.textContent).toContain("Not described");
+
+    fireEvent.click(within(rows[1]!).getByRole("button", { name: "Cancel description" }));
+    await waitFor(() => expect(shots.cancelComputeJob).toHaveBeenCalledWith("job-1"));
+  });
+
+  it("shows the waiting state on every row a queued job covers", async () => {
+    const rows = await review();
+    // A whole-clip window from another clip of the same source: `lg1` is not
+    // m1, so a second m1 layer is placed on the root for the job to name.
+    act(() => {
+      const other = clip({ id: "l9", mediaId: "m1", tStartUs: 10_000_000 });
+      const summary = fixture();
+      summary.compositions[ROOT_ID]!.tracks.push(track("t9", [other]));
+      useProjectStore.getState().apply(summary);
+    });
+    publish([
+      job({
+        layer_id: "l9",
+        window: { t_start_us: 10_000_000, t_end_us: 16_000_000 },
+        phase: { kind: "queued", reason: "memory" },
+      }),
+    ]);
+    for (const row of rows) {
+      const status = statusIn(row);
+      expect(status?.classList.contains("state-waiting")).toBe(true);
+      expect(status?.textContent).toContain("Waiting for memory to free up");
+      expect(status?.querySelector(".lucide-hourglass")).not.toBeNull();
+    }
+  });
+
+  it("says what this window's own run is doing on the buttons it greys", async () => {
+    shots.describeClip.mockReturnValue(new Promise(() => {}));
+    await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    await waitFor(() => expect(shots.describeClip).toHaveBeenCalled());
+    const { requestId } = shots.describeClip.mock.calls[0]![0] as { requestId: string };
+    const other = screen.getByTestId("shots-describe-0") as HTMLButtonElement;
+    expect(other.disabled).toBe(true);
+    // Before the job is mirrored, the generic reason.
+    expect(other.title).toBe("A description is already running");
+    publish([job({ origin: { kind: "user" }, request_ids: [requestId], phase: { kind: "loading_model" } })]);
+    expect(other.title).toBe("Loading model");
+    expect(screen.getByTestId("shots-describe-all").title).toBe("Loading model");
   });
 });

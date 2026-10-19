@@ -27,6 +27,7 @@ import { formatMediaDuration, formatTimecode } from "../frames";
 import {
   getMediaFrame,
   type CompositionSummary,
+  type ComputeJob,
   type DescSegment,
   type LayerSummary,
   type ShotFlag,
@@ -49,6 +50,10 @@ import {
   type DescribingSpan,
 } from "../describe/descriptionsStore";
 import { segmentsForSpan } from "../describe/segmentsForSpan";
+import { ComputeJobStatus } from "../compute/ComputeJobStatus";
+import { useComputeJobsStore } from "../compute/computeJobsStore";
+import { jobOverSourceSpan } from "../compute/jobSourceSpan";
+import { useDescribeRunPhaseHint } from "../compute/runPhaseHint";
 import { layerDisplayName } from "../lib/layerName";
 import {
   focusedCompositionId,
@@ -254,7 +259,9 @@ function ShotStatsCells({ row }: { row: ShotRow }) {
 }
 
 /// What a vision model has said over this row's span, and whether a run that
-/// overlaps it is still in flight.
+/// overlaps it is still in flight — and, when one is, the running description
+/// JOB over the span: this window's run or an agent's, on this clip or on
+/// another clip of the same source (`compute/jobSourceSpan.ts`).
 ///
 /// Hoisted out of the prose cell because the card's action gutter needs the same
 /// two answers: the button's name says whether a press would be a first ask or a
@@ -263,20 +270,28 @@ function ShotStatsCells({ row }: { row: ShotRow }) {
 function useShotDescriptionState(
   row: ShotRow,
   mediaId: string,
-): { overlapping: readonly DescSegment[]; waiting: boolean } {
+): { overlapping: readonly DescSegment[]; waiting: boolean; job: ComputeJob | null } {
   const segments = useDescription(mediaId);
   const describing = useDescribing();
+  // One Map per summary; the job selector answers a job record or null, so a
+  // phase tick re-renders the rows the job covers and no other.
+  const layerById = useProjectStore((s) => s.layerById);
+  const job = useComputeJobsStore((s) =>
+    jobOverSourceSpan(s, layerById, {
+      tool: "describe_clip",
+      mediaId,
+      srcStartUs: row.srcStartUs,
+      srcEndUs: row.srcEndUs,
+    }),
+  );
   const overlapping = useMemo(
     () => segmentsForSpan(segments, row.srcStartUs, row.srcEndUs),
     [segments, row.srcStartUs, row.srcEndUs],
   );
-  const waiting = isDescribingSpan(
-    describing,
-    mediaId,
-    row.srcStartUs,
-    row.srcEndUs,
-  );
-  return { overlapping, waiting };
+  const waiting =
+    job !== null ||
+    isDescribingSpan(describing, mediaId, row.srcStartUs, row.srcEndUs);
+  return { overlapping, waiting, job };
 }
 
 /// What a vision model said about this shot's stretch of the source, plus the
@@ -302,22 +317,35 @@ function useShotDescriptionState(
 /// action gutter ([`ShotDescribeAction`]): a filled button under the prose of
 /// every card was the single loudest thing in a forty-shot list, and it sat in
 /// the one place whose width the prose itself decides.
+///
+/// The one control is a running job's Cancel: while a description JOB covers
+/// the row, its status line — waiting for what, or how far — stands where
+/// "Describing" would, above any prose already there (ADR 0121). It cancels
+/// the job for everyone; a sweep stops with it.
 function ShotDescriptionCell({
   overlapping,
   waiting,
+  job,
 }: {
   overlapping: readonly DescSegment[];
   waiting: boolean;
+  job: ComputeJob | null;
 }) {
   const { t } = useTranslation();
   return (
     <div className="shots-description">
+      {job !== null && (
+        <ComputeJobStatus job={job} variant="inline" className="shots-description-job" />
+      )}
       {overlapping.length === 0 ? (
-        <p className="shots-description-empty">
-          {waiting
-            ? t("shots_panel.describing")
-            : t("shots_panel.not_described")}
-        </p>
+        // The job line, when there is one, is already the transient.
+        job === null && (
+          <p className="shots-description-empty">
+            {waiting
+              ? t("shots_panel.describing")
+              : t("shots_panel.not_described")}
+          </p>
+        )
       ) : (
         overlapping.map((segment) => (
           <p
@@ -368,6 +396,7 @@ function ShotDescribeAction({
   onDescribe: (row: ShotRow) => void;
 }) {
   const { t } = useTranslation();
+  const runPhase = useDescribeRunPhaseHint();
   const name = waiting
     ? t("shots_panel.describing")
     : overlapping.length === 0
@@ -386,7 +415,7 @@ function ShotDescribeAction({
         title={
           describeBlocker === null
             ? t("shots_panel.describe_shot_hint")
-            : t(describeBlocker)
+            : blockerTitle(t, describeBlocker, runPhase)
         }
         onClick={() => onDescribe(row)}
       >
@@ -607,7 +636,7 @@ function ShotRowView({
   const { t } = useTranslation();
   const candidate = row.openingCandidate;
   const timecode = formatTimecode(row.tStartUs, fpsNum, fpsDen);
-  const { overlapping, waiting } = useShotDescriptionState(row, mediaId);
+  const { overlapping, waiting, job } = useShotDescriptionState(row, mediaId);
   return (
     <li className="shots-row" data-kept={row.keep} data-index={row.index}>
       <div className="shots-card-head">
@@ -687,7 +716,7 @@ function ShotRowView({
             <ShotStatsCells row={row} />
             <ShotFlags flags={row.flags} />
           </div>
-          <ShotDescriptionCell overlapping={overlapping} waiting={waiting} />
+          <ShotDescriptionCell overlapping={overlapping} waiting={waiting} job={job} />
         </div>
       </div>
     </li>
@@ -838,6 +867,20 @@ export function shotDescribeBlocker(
   return null;
 }
 
+/// A greyed describe button's tooltip. Greyed because this window's run is in
+/// flight, it says what that run is doing (`compute/runPhaseHint.ts`) rather
+/// than only that it is running.
+function blockerTitle(
+  t: (key: string) => string,
+  blocker: string,
+  runPhase: string | null,
+): string {
+  const running =
+    blocker === "shots_panel.describe_running" ||
+    blocker === "shots_panel.describe_sweep_running";
+  return running && runPhase !== null ? runPhase : t(blocker);
+}
+
 /// The sweep: describe every shot that has nothing yet, one after another.
 ///
 /// Beside *Measure shots* and for its reasons — it writes no project state and
@@ -864,6 +907,7 @@ function DescribeShotsButton({
   const { t } = useTranslation();
   const segments = useDescription(mediaId);
   const batch = useDescribeBatch();
+  const runPhase = useDescribeRunPhaseHint();
   // The rows with no prose over their span — the same intersection the cells
   // render by, so the count names exactly the cells that would fill.
   const undescribed = useMemo(
@@ -904,7 +948,7 @@ function DescribeShotsButton({
       size="sm"
       data-testid="shots-describe-all"
       disabled={blocker !== null}
-      title={blocker === null ? t("shots_panel.describe_all_hint") : t(blocker)}
+      title={blocker === null ? t("shots_panel.describe_all_hint") : blockerTitle(t, blocker, runPhase)}
       onClick={() => onSweep(undescribed)}
     >
       {t("shots_panel.describe_all", { count: undescribed.length })}

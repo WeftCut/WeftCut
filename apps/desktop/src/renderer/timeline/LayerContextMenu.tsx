@@ -15,6 +15,7 @@ import {
   type DescribeState,
 } from "../describe/describeEligibility";
 import { groupDisplayName } from "../lib/layerName";
+import { useDescribeRunPhaseHint, useTranscribeRunPhaseHint } from "../compute/runPhaseHint";
 import { CommandContextItem } from "../menu/CommandContextItem";
 import {
   closeContextMenuOn,
@@ -409,8 +410,15 @@ export function LayerContextMenu({
   // The *Transcribe* row's tooltip. Subscribed so a greyed row re-labels
   // under an open popup — a transcription started elsewhere flips the state.
   const autoCaption = useAutoCaptionState();
+  // Greyed because this window's run is in flight: what that run is doing —
+  // waiting for memory, 40% through — says more than "already running".
+  const transcribePhase = useTranscribeRunPhaseHint();
   const autoCaptionHint =
-    autoCaption === "auto_caption" ? undefined : t(AUTO_CAPTION_REASON[autoCaption]);
+    autoCaption === "auto_caption"
+      ? undefined
+      : autoCaption === "transcribing" && transcribePhase !== null
+        ? transcribePhase
+        : t(AUTO_CAPTION_REASON[autoCaption]);
   // The *Detect pauses* row's tooltip. Subscribed like the row above it, on
   // the shared half of the same gate plus its own subject rule — a selection
   // change under an open popup has to re-label both rows or one of them would
@@ -421,8 +429,13 @@ export function LayerContextMenu({
   // The *Describe clip content* row's tooltip. Subscribed like the two above it, on
   // its own picture-clip gate.
   const describe = useDescribeState();
+  const describePhase = useDescribeRunPhaseHint();
   const describeHint =
-    describe === "describe" ? undefined : t(DESCRIBE_REASON[describe]);
+    describe === "describe"
+      ? undefined
+      : describe === "already_running" && describePhase !== null
+        ? describePhase
+        : t(DESCRIBE_REASON[describe]);
   // The *Move to… ›* trigger. Live it is a submenu — a destination is the
   // content of the gesture, and only a list can carry one — and greyed it falls
   // back to the flat registry row, which is what can show WHY. The command is

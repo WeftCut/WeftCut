@@ -34,6 +34,7 @@ import {
 } from "./geometry";
 import { AudioRegionBand } from "./AudioRegionBand";
 import { PauseBands } from "./PauseBands";
+import { ComputeJobBands } from "./ComputeJobBands";
 import { ReviewClipMarkLayer, ReviewGroupBadge, useLayerReviewTitle } from "./ReviewMarks";
 import { compUsFromSourceUs } from "./audioRegionGeometry";
 import { useArmedRegionSelect } from "./audioRegionArmStore";
@@ -1014,6 +1015,18 @@ export function LayerBlock({
           tStartUs={layer.t_start_us}
           blockLoUs={liveStart}
           blockHiUs={liveEnd}
+        />
+      )}
+      {/* A transcription or description reading this clip, over the window
+          it reads (ADR 0121). Subscribed per clip and empty for every clip
+          without a job; a duplicate ghost stays blank like the bands above. */}
+      {!previewOnly && (
+        <ComputeJobBands
+          layerId={layer.id}
+          pxPerSec={pxPerSec}
+          blockLoUs={liveStart}
+          blockHiUs={liveEnd}
+          heightPx={sliceHeight}
         />
       )}
       {regionBandCard && (

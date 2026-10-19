@@ -13,6 +13,7 @@ import {
 } from "../ipc";
 import { useAgentActivity, wireAgentActivity } from "../agent/activityStore";
 import { wireComputeJobs } from "../compute/computeJobsStore";
+import { wireComputeJobNotices } from "../compute/computeJobNotices";
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { bootAudioFxStore } from "../state/audioFxStore";
@@ -81,7 +82,9 @@ export function useAppWiring(): {
     void wireComputeJobs().then(unlisten => {
       if (cancelled) unlisten(); else stop = unlisten;
     });
-    return () => { cancelled = true; stop?.(); };
+    // The completion notice watches the same mirror (`computeJobNotices.ts`).
+    const stopNotices = wireComputeJobNotices();
+    return () => { cancelled = true; stop?.(); stopNotices(); };
   }, []);
 
   const exitAgentMode = useCallback(async () => { useAgentActivity.setState({ mode: "editor" }); }, []);

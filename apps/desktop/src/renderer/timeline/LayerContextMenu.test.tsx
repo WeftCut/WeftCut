@@ -10,7 +10,7 @@
 // special" answers: this file is about which rows the KIND produces, and a live
 // registry would only make the assertions depend on the selection state too.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 /// The registry rows this file must keep on screen — the kind-gated tiers'
@@ -65,14 +65,16 @@ vi.mock("../state/projectStore", async (importActual) => ({
   ...(await importActual<typeof import("../state/projectStore")>()),
   useGroupOrdinals: () => new Map(),
 }));
+/// The two run gates, settable so the in-flight tooltips can be covered.
+const gates = vi.hoisted(() => ({ autoCaption: "auto_caption", describe: "describe" }));
 vi.mock("../speech/autoCaptionEligibility", () => ({
-  useAutoCaptionState: () => "auto_caption",
+  useAutoCaptionState: () => gates.autoCaption,
 }));
 vi.mock("../commands/pauseCommands", () => ({
   usePauseSubjectState: () => "ok",
 }));
 vi.mock("../describe/describeEligibility", () => ({
-  useDescribeState: () => "describe",
+  useDescribeState: () => gates.describe,
 }));
 vi.mock("./moveToCompositionEligibility", () => ({
   useMoveToCompositionState: () => "needs_selection",
@@ -86,6 +88,10 @@ import { clearLayerSelection, setLayerSelection } from "../state/selectionStore"
 import { setLinkOverride } from "../state/linkOverrideStore";
 import { groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
 import { LayerContextMenu } from "./LayerContextMenu";
+import { receiveComputeJobs } from "../compute/computeJobsStore";
+import { useTranscribeRunStore } from "../speech/transcribeRun";
+import { setDescribing } from "../describe/descriptionsStore";
+import type { ComputeJob, ComputePhase } from "../ipc";
 
 const handlers = {
   onClose: vi.fn(),
@@ -469,5 +475,63 @@ describe("LayerContextMenu — selection eligibility", () => {
     expect(row().getAttribute("title")).toBe(
       "Select the clips to remove and close the gap after, or click a gap to close it",
     );
+  });
+});
+
+// Greyed because this window's own run is in flight, a row says what that run
+// is doing — its job's phase (ADR 0121) — rather than only that it is running.
+// Before the run's job is mirrored, the generic reason is still the answer.
+describe("LayerContextMenu — a run in flight", () => {
+  let revision = 6_000_000;
+  const job = (over: Partial<ComputeJob> & { phase: ComputePhase }): ComputeJob => ({
+    job_id: "job-1",
+    tool: "transcribe_clip",
+    layer_id: "layer-1",
+    media_id: "m1",
+    window: { t_start_us: 0, t_end_us: 1 },
+    phase_since: new Date().toISOString(),
+    started_at: new Date().toISOString(),
+    origin: { kind: "user" },
+    callers: 1,
+    caller_disconnected: false,
+    request_ids: ["r1"],
+    ...over,
+  });
+  const publish = (jobs: ComputeJob[]) => act(() => receiveComputeJobs({ revision: ++revision, jobs }));
+  afterEach(() => {
+    publish([]);
+    gates.autoCaption = "auto_caption";
+    gates.describe = "describe";
+    useTranscribeRunStore.setState({ transcribing: false, requestId: null, applying: null });
+    setDescribing(null);
+  });
+
+  it("names the transcription's phase on the greyed Transcribe row", () => {
+    gates.autoCaption = "transcribing";
+    useTranscribeRunStore.setState({ transcribing: true, requestId: "r1" });
+    renderMenu("Audio");
+    const row = () => screen.getByRole("menuitem", { name: /Transcribe selected clip/ });
+    expect(row().getAttribute("title")).toBe("A transcription is already running");
+    publish([job({ phase: { kind: "queued", reason: "memory" } })]);
+    expect(row().getAttribute("title")).toBe("Waiting for memory to free up");
+    publish([job({ phase: { kind: "inferring", done: 1, total: 2 } })]);
+    expect(row().getAttribute("title")).toBe("Transcribing 50%");
+  });
+
+  it("says Adding captions while the transcription writes", () => {
+    gates.autoCaption = "transcribing";
+    useTranscribeRunStore.setState({ transcribing: true, requestId: null, applying: ["layer-1"] });
+    renderMenu("Audio");
+    expect(screen.getByRole("menuitem", { name: /Transcribe selected clip/ }).getAttribute("title")).toBe("Adding captions");
+  });
+
+  it("names the description's phase on the greyed Describe row", () => {
+    gates.describe = "already_running";
+    setDescribing({ mediaId: "m1", srcStartUs: 0, srcEndUs: 1, requestId: "r1" });
+    publish([job({ tool: "describe_clip", phase: { kind: "extracting", done: 4, total: 9 } })]);
+    renderMenu("VideoClip");
+    expect(
+      screen.getByRole("menuitem", { name: /Describe selected clip content/ }).getAttribute("title"),
+    ).toBe("Sampling frames 4/9");
   });
 });

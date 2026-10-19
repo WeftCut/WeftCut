@@ -11,10 +11,13 @@ vi.mock("../ipc", async (importActual) => {
     ...actual,
     updateLayerParams: vi.fn().mockResolvedValue(undefined),
     restyleCaptions: vi.fn().mockResolvedValue(undefined),
+    cancelComputeJob: vi.fn().mockResolvedValue(true),
   };
 });
 
-import { updateLayerParams, restyleCaptions } from "../ipc";
+import { updateLayerParams, restyleCaptions, cancelComputeJob, type ComputeJob, type ComputePhase } from "../ipc";
+import { receiveComputeJobs } from "../compute/computeJobsStore";
+import { useTranscribeRunStore } from "../speech/transcribeRun";
 import { summaryFixture } from "../testing/summaryFixture";
 
 const ignoreCueActivation = () => {};
@@ -252,5 +255,69 @@ describe("CaptionsPanel", () => {
     expect(screen.getByDisplayValue("Restored")).toBeTruthy();
     expect((screen.getByLabelText("Font size (px)") as HTMLInputElement).value).toBe("72");
     expect((screen.getByLabelText("Outline width (px), 0 for none") as HTMLInputElement).value).toBe("5");
+  });
+});
+
+// Captions on their way (ADR 0121): a transcription job reading a clip of this
+// composition — a person's or an agent's — shows above the list, naming the
+// clip, with its phase and Cancel; the write-back after it reads "Adding
+// captions".
+describe("CaptionsPanel — transcription in progress", () => {
+  let revision = 8_000_000;
+  const job = (over: Partial<ComputeJob> & { phase: ComputePhase }): ComputeJob => ({
+    job_id: "job-1",
+    tool: "transcribe_clip",
+    layer_id: "V1",
+    media_id: "m1",
+    window: { t_start_us: 0, t_end_us: 1_000_000 },
+    phase_since: new Date().toISOString(),
+    started_at: new Date().toISOString(),
+    origin: { kind: "agent", client: "claude" },
+    callers: 1,
+    caller_disconnected: false,
+    request_ids: [],
+    ...over,
+  });
+  const publish = (jobs: ComputeJob[]) => act(() => receiveComputeJobs({ revision: ++revision, jobs }));
+  /// A caption track plus a plain track holding the clip being transcribed.
+  function seedWithClip() {
+    const speech = { ...textLayer("V1", 0, "x"), label: "Interview" } as unknown as ReturnType<typeof textLayer>;
+    apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Hello")]), { ...captionTrack("t2", [speech]), role: "a-roll" } as never]);
+  }
+  afterEach(() => {
+    publish([]);
+    useTranscribeRunStore.setState({ applying: null });
+  });
+
+  it("shows nothing while no transcription reads a clip here", () => {
+    seedWithClip();
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    publish([job({ layer_id: "elsewhere", phase: { kind: "loading_model" } }), job({ job_id: "d", tool: "describe_clip", phase: { kind: "loading_model" } })]);
+    expect(screen.queryByTestId("captions-compute")).toBeNull();
+  });
+
+  it("names the clip an agent is transcribing, with its phase and Cancel", async () => {
+    seedWithClip();
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    publish([job({ phase: { kind: "queued", reason: "memory" } })]);
+    const line = screen.getByTestId("captions-compute");
+    expect(line.textContent).toContain("Interview");
+    const status = line.querySelector<HTMLElement>(".compute-job-status")!;
+    expect(status.classList.contains("variant-inline")).toBe(true);
+    expect(status.classList.contains("state-waiting")).toBe(true);
+    expect(status.textContent).toContain("Waiting for memory to free up");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel transcription" }));
+    await act(async () => {});
+    expect(cancelComputeJob).toHaveBeenCalledWith("job-1");
+  });
+
+  it("says Adding captions while the run writes, without a Cancel", () => {
+    seedWithClip();
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    act(() => useTranscribeRunStore.setState({ applying: ["V1"] }));
+    const line = screen.getByTestId("captions-compute");
+    expect(line.textContent).toContain("Interview");
+    expect(line.textContent).toContain("Adding captions");
+    expect(line.querySelector("button")).toBeNull();
   });
 });
