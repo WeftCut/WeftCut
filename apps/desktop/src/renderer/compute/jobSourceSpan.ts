@@ -40,3 +40,24 @@ export function jobOverSourceSpan(
   }
   return found;
 }
+
+/// The running `tool` jobs on `mediaId` that no span in `spans` would show —
+/// the ones a panel listing per-span status has nowhere to put: a source never
+/// scanned for shots has no rows at all, a scan may find none, and a job may
+/// read a stretch outside every row. A job whose layer the summary no longer
+/// has cannot be placed on any span, so it is listed too. Oldest first.
+export function jobsOutsideSpans(
+  s: ComputeJobsState,
+  layerById: ReadonlyMap<string, LayerSummary>,
+  q: { tool: ComputeTool; mediaId: string; spans: readonly { srcStartUs: number; srcEndUs: number }[] },
+): ComputeJob[] {
+  return Object.values(s.jobs)
+    .filter((job) => {
+      if (job.tool !== q.tool || job.media_id !== q.mediaId) return false;
+      const layer = layerById.get(job.layer_id);
+      if (!layer) return true;
+      const span = jobSourceSpan(job, layer);
+      return !q.spans.some((r) => span.srcStartUs < r.srcEndUs && span.srcEndUs > r.srcStartUs);
+    })
+    .sort((a, b) => a.started_at.localeCompare(b.started_at));
+}

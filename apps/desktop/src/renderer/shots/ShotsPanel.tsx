@@ -16,6 +16,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { Checkbox } from "@base-ui/react/checkbox";
 import { Link2, Scissors, Sparkles } from "lucide-react";
 
@@ -51,8 +52,9 @@ import {
 } from "../describe/descriptionsStore";
 import { segmentsForSpan } from "../describe/segmentsForSpan";
 import { ComputeJobStatus } from "../compute/ComputeJobStatus";
+import { ComputeRefusal } from "../compute/ComputeRefusal";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
-import { jobOverSourceSpan } from "../compute/jobSourceSpan";
+import { jobOverSourceSpan, jobsOutsideSpans } from "../compute/jobSourceSpan";
 import { useDescribeRunPhaseHint } from "../compute/runPhaseHint";
 import { layerDisplayName } from "../lib/layerName";
 import {
@@ -105,6 +107,7 @@ import { AppIcon } from "@/components/AppIcon";
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
 /// reference-equality bail-out the subject hooks rely on.
 const NO_TRACKS: readonly TrackSummary[] = [];
+const NO_ROWS: readonly ShotRow[] = [];
 
 /// How many cover / pair frames may be in flight at once. Each one is an ffmpeg
 /// extract on a cold cache, so an unbounded burst on a 40-shot clip would
@@ -292,6 +295,46 @@ function useShotDescriptionState(
     job !== null ||
     isDescribingSpan(describing, mediaId, row.srcStartUs, row.srcEndUs);
   return { overlapping, waiting, job };
+}
+
+/// The description jobs on this source that no row can show — the panel-level
+/// home for their status and Cancel (ADR 0121). Rows carry a job's line where
+/// its span lands, but a source never scanned for shots has no rows, a scan may
+/// find none, and a job may read a stretch outside every row; without this a
+/// running description had no progress and no way to stop it here at all.
+/// Names the clip each job reads, which need not be the one selected.
+function ShotsDescribeJobs({
+  mediaId,
+  rows,
+}: {
+  mediaId: string;
+  rows: readonly ShotRow[];
+}) {
+  const { t } = useTranslation();
+  const layerById = useProjectStore((s) => s.layerById);
+  const ordinals = useProjectStore((s) => s.groupOrdinals);
+  const jobs = useComputeJobsStore(
+    useShallow((s) =>
+      jobsOutsideSpans(s, layerById, { tool: "describe_clip", mediaId, spans: rows }),
+    ),
+  );
+  if (jobs.length === 0) return null;
+  return (
+    <div className="captions-compute shots-compute" data-testid="shots-describe-jobs">
+      {jobs.map((job) => {
+        const layer = layerById.get(job.layer_id);
+        const name = layer ? layerDisplayName(layer, t, ordinals) : "";
+        return (
+          <div className="captions-compute-line" key={job.job_id}>
+            {name !== "" && (
+              <span className="captions-compute-clip" title={name}>{name}</span>
+            )}
+            <ComputeJobStatus job={job} variant="inline" />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /// What a vision model said about this shot's stretch of the source, plus the
@@ -1145,13 +1188,17 @@ export function ShotsPanel() {
   // selecting a clip costs no model time — `descriptionsStore.ts` is where that
   // rule is enforced.
   useEffect(() => {
-    // A refusal is about the clip it was raised on, so it goes when the subject
-    // does — `shotsStore` clears its own slot on the same event, and a sentence
-    // that outlived its clip would read as a fresh failure on the new one.
-    setDescribeError("");
     if (mediaId === null) return;
     void hydrateDescription(mediaId);
   }, [mediaId]);
+  // A refusal is about the clip it was raised on, so it goes when the subject
+  // does — `shotsStore` clears its own slot on the same event, and a sentence
+  // that outlived its clip would read as a fresh failure on the new one. Keyed
+  // on the LAYER: two clips of one source (a split's halves) are two subjects.
+  const subjectLayerId = layer?.id ?? null;
+  useEffect(() => {
+    setDescribeError("");
+  }, [subjectLayerId]);
 
   // The subject, restated on every summary tick. `setShotSubject` is idempotent
   // on an unchanged one, which is what keeps that from re-probing per keystroke
@@ -1255,6 +1302,17 @@ export function ShotsPanel() {
               record (`docs/status-log.md`). */}
           {error !== "" && <p className="shots-error">{error}</p>}
         </div>
+        <ShotsDescribeJobs mediaId={clip.media_id} rows={NO_ROWS} />
+        {/* A whole-clip description needs no scan, so its refusal must have a
+            home before one too. */}
+        {describeError !== "" && (
+          <ComputeRefusal
+            text={describeError}
+            tool="describe_clip"
+            className="shots-error"
+            testId="shots-describe-error"
+          />
+        )}
       </div>
     );
   }
@@ -1301,11 +1359,15 @@ export function ShotsPanel() {
           and a description greys none of them — so it would be the first thing
           able to overwrite a refusal the reviewer had not read yet. */}
       {describeError !== "" && (
-        <p className="shots-error" data-testid="shots-describe-error">
-          {describeError}
-        </p>
+        <ComputeRefusal
+          text={describeError}
+          tool="describe_clip"
+          className="shots-error"
+          testId="shots-describe-error"
+        />
       )}
       <ShotApplyBar rows={rows} clipName={clipName} />
+      <ShotsDescribeJobs mediaId={clip.media_id} rows={rows} />
       <ul className="shots-list" data-testid="shots-list">
         {rows.map((row) => (
           <ShotRowView

@@ -123,6 +123,7 @@ import {
 } from "./commands/groupCommands";
 import { describeSelected } from "./commands/describeCommands";
 import { ComputeJobNotice } from "./compute/ComputeJobNotice";
+import { useSettingsRequest } from "./settings/settingsRequest";
 import { openPausesForSelection } from "./commands/pauseCommands";
 import {
   openVoiceoverPrompt,
@@ -425,6 +426,15 @@ export function App({ onCloseProject }: AppProps) {
     setSettingsCategory(category);
     setSettingsOpen(true);
   }, []);
+  // Surfaces with no `openSettings` dep (a panel's refusal, a notice card) ask
+  // through the request store (`settings/settingsRequest.ts`).
+  useEffect(
+    () =>
+      useSettingsRequest.subscribe((s, prev) => {
+        if (s.request !== null && s.request !== prev.request) openSettings(s.request.category);
+      }),
+    [openSettings],
+  );
 
   // Capability notices are current state first, but they also belong in the
   // workspace's System log as an auditable session event. The backend log bus

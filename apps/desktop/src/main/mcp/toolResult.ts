@@ -67,8 +67,8 @@ export function toolErrorText(r: ToolErrorResult): string {
 
 /** The envelope code an error result was minted from, when it carries one. */
 export function toolErrorCode(r: ToolErrorResult): McpErrorCode | undefined {
-  const c = r.structuredContent.code
-  return c === 'invalid_params' || c === 'invalid_request' || c === 'not_found' || c === 'internal' ? c : undefined
+  const c = (r.structuredContent as Record<string, unknown> | undefined)?.code
+  return c === 'invalid_params' || c === 'invalid_request' || c === 'not_found' || c === 'internal' || c === 'cancelled' ? c : undefined
 }
 
 /** serde's own position suffix. The caller never saw the buffer it indexes —

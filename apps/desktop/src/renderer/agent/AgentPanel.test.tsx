@@ -52,6 +52,15 @@ describe('AgentPanel', () => {
     expect(screen.getByText('http://127.0.0.1:1234/mcp')).toBeTruthy()
   })
 
+  it('shows a cancelled call as Cancelled, never as a failure', () => {
+    seed([activity({ state: 'cancelled', error: null })])
+    const { container } = render(<AgentPanel />)
+    expect(screen.getByText('Cancelled')).toBeTruthy()
+    expect(screen.queryByText('Failed')).toBeNull()
+    expect(container.querySelector('.agent-activity.state-cancelled')).toBeTruthy()
+    expect(container.querySelector('.agent-activity-error')).toBeNull()
+  })
+
   it('keeps expansion when switching layouts and disables navigation for missing objects', () => {
     seed([activity()])
     const first = render(<AgentPanel />)

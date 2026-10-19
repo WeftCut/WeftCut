@@ -8,6 +8,7 @@ import type { AgentActivity, AgentActivityCompute, AgentActivitySnapshot, AgentW
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../shared/agent-activity'
 import { appendToolResultField } from '../state/mcp-results'
 import { TackStore, type TackAttribution } from './tacks'
+import { isToolError, toolErrorCode } from '../mcp/toolResult'
 
 const CAPACITY = 1000
 /** `committed`: the call reached the actor's commit path at least once. */
@@ -193,7 +194,11 @@ export class AgentActivityService {
     return this.context.run(ctx, async () => {
       try {
         let result = await fn()
-        if (result && typeof result === 'object' && 'isError' in result && result.isError) {
+        if (isToolError(result) && toolErrorCode(result) === 'cancelled') {
+          // A job someone cancelled ended on purpose: not a failure, and the
+          // "Cancelled" text is the state itself, not an error to show.
+          activity.state = 'cancelled'
+        } else if (result && typeof result === 'object' && 'isError' in result && result.isError) {
           activity.state = 'error'
           const errorResult = result as { content?: Array<{ text?: string }> }
           activity.error = String(activityDetails(errorResult.content?.map(c => c.text ?? '').join('\n') || 'Tool failed'))

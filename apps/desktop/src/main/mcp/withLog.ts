@@ -289,7 +289,7 @@ export function withLog<Req extends RequestLike, Res>(
       })
     }, SLOW_OP_MS)
 
-    const finish = (failed: boolean, err: unknown): void => {
+    const finish = (failed: boolean, err: unknown, cancelled = false): void => {
       // An op that crossed a workspace switch loses its `op_id`:
       // `LogBusSlot::install` REPLACES the bus and drops the ring, so the
       // terminal entry would land in a fresh bus with no `Started` to group
@@ -301,6 +301,7 @@ export function withLog<Req extends RequestLike, Res>(
       // the key goes with it rather than contradicting the line beside it.
       const text: Pick<McpLogEntryInput, 'message' | 'i18n_key' | 'i18n_args'> = crossed
         ? { message: `${rowText().message} (crossed a workspace switch)` }
+        : cancelled ? { message: `${rowText().message} (cancelled)` }
         : rowText()
       safeEmit(deps, {
         level: levelFor(method, tool, failed, opId !== null),
@@ -308,7 +309,7 @@ export function withLog<Req extends RequestLike, Res>(
         source: source(),
         ...text,
         ...(groupId ? { op_id: groupId, op_state: { state: failed ? 'Err' as const : 'Ok' as const } } : {}),
-        details: details(failed ? errorDetail(err) : undefined),
+        details: { ...details(failed ? errorDetail(err) : undefined), ...(cancelled ? { cancelled: true } : {}) },
       })
     }
 
@@ -317,8 +318,10 @@ export function withLog<Req extends RequestLike, Res>(
       settled = true
       // A refusal travels as an `isError` RESULT, not a throw (`toolResult.ts`),
       // and it is still a failed call: the row is `Error` and carries the
-      // refusal's text and code.
-      if (method === 'tools/call' && isToolError(out)) finish(true, { code: toolErrorCode(out), message: toolErrorText(out) })
+      // refusal's text and code. A cancelled clip-compute job is the exception:
+      // it ended on purpose, so the op closes `Ok` and the row says so.
+      if (method === 'tools/call' && isToolError(out) && toolErrorCode(out) === 'cancelled') finish(false, null, true)
+      else if (method === 'tools/call' && isToolError(out)) finish(true, { code: toolErrorCode(out), message: toolErrorText(out) })
       else finish(false, null)
       return out
     } catch (err) {

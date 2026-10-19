@@ -25,6 +25,7 @@ import { cancelComputeJob, type ComputeJob, type ComputeJobEnded } from "../ipc"
 import { layerDisplayName } from "../lib/layerName";
 import { useProjectStore } from "../state/projectStore";
 import { useComputeJobsStore, type ComputeJobsState } from "./computeJobsStore";
+import { computeFailureText, computeResourceReason, settingsCanHelp } from "./computeRefusal";
 
 /// A job shorter than this ended while the person was still looking at it: the
 /// surface they pressed already shows the result, and a notice would only
@@ -64,6 +65,9 @@ export interface ComputeJobNoticeContent {
   outcome: ComputeJobEnded["outcome"];
   title: string;
   body: string;
+  /// A resource refusal a Performance setting can help with: the card offers
+  /// the pane (`computeRefusal.ts`).
+  settings?: true;
 }
 
 /// Whether a person waits on this job: they started it, or a press of theirs
@@ -94,12 +98,17 @@ export function computeJobNotice(
   switch (ended.outcome) {
     case "ok":
       return { ...base, title: t(`compute.ui.notice_${tool}_done_title`), body: t(`compute.ui.notice_${tool}_done_body`, { clip }) };
-    case "error":
+    case "error": {
+      // A resource refusal reads as its summary, not the native sentence.
+      const raw = ended.error ?? "";
+      const reason = computeResourceReason(raw);
       return {
         ...base,
         title: t(`compute.ui.notice_${tool}_failed_title`),
-        body: t(`compute.ui.notice_${tool}_failed_body`, { clip, reason: ended.error ?? "" }),
+        body: t(`compute.ui.notice_${tool}_failed_body`, { clip, reason: computeFailureText(t, ended.job.tool, raw) }),
+        ...(reason !== null && settingsCanHelp(reason) ? { settings: true as const } : {}),
       };
+    }
     case "cancelled":
       return { ...base, title: t(`compute.ui.notice_${tool}_cancelled_title`), body: t(`compute.ui.notice_${tool}_cancelled_body`, { clip }) };
   }

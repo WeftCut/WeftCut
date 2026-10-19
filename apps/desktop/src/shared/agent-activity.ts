@@ -24,7 +24,9 @@ export interface AgentActivity {
   kind: 'read' | 'operation' | 'checkpoint' | 'restore'
   started_at: string
   ended_at: string | null
-  state: 'running' | 'done' | 'error'
+  /** `cancelled`: a clip-compute call whose job was cancelled (ADR 0121) —
+   *  ended on purpose, so neither done nor a failure. */
+  state: 'running' | 'done' | 'error' | 'cancelled'
   duration_ms: number | null
   message: string
   label_key?: string

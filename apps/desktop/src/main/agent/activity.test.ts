@@ -157,6 +157,12 @@ describe('structured activity', () => {
     expect(Buffer.byteLength(JSON.stringify(activityDetails(wide)))).toBeLessThanOrEqual(4096)
   })
 
+  it('a cancelled clip-compute job ends as cancelled, not as a failure', async () => {
+    const { service, run } = setup()
+    await run('one', () => ({ isError: true, content: [{ type: 'text', text: 'Cancelled' }], structuredContent: { code: 'cancelled', message: 'Cancelled' } }))
+    expect(service.snapshot().activities[0]).toMatchObject({ state: 'cancelled', error: null })
+  })
+
   it('associates restore with its real history ID and does not associate unrecorded preferences', async () => {
     const { actor, service, run, add } = setup()
     const cp = actor.checkpoint('Before')

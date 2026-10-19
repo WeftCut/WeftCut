@@ -6,6 +6,8 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { CircleAlert, CircleCheck, CircleSlash, X } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
+import { Button } from "@/components/ui/button";
+import { requestSettings } from "../settings/settingsRequest";
 import { dismissComputeJobNotice, useComputeJobNoticeStore } from "./computeJobNotices";
 import "./compute.css";
 
@@ -33,6 +35,19 @@ export function ComputeJobNotice() {
       <div role="status" className="compute-notice-copy">
         <strong>{notice.title}</strong>
         <p>{notice.body}</p>
+        {notice.settings && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="compute-notice-action"
+            onClick={() => {
+              requestSettings("performance");
+              dismissComputeJobNotice(notice.jobId);
+            }}
+          >
+            {t("compute.refusal.open_settings")}
+          </Button>
+        )}
       </div>
       <button
         type="button"

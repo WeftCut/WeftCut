@@ -1458,6 +1458,7 @@ const enUS = {
   "running": "Running",
   "done": "Completed",
   "error": "Failed",
+  "cancelled": "Cancelled",
   "reverted": "Reverted",
   "partial": "Partly reverted",
   "reads": "Project and media reads · {{count}}",
@@ -2716,6 +2717,20 @@ const enUS = {
     },
     // What job surfaces (the Activity row, the status bar, in-context
     // indicators) draw. They know the tool, so a phase can say what it does.
+    // A resource refusal, summarized (`compute/computeRefusal.ts`). {{task}} is
+    // "Transcription" / "Description".
+    refusal: {
+      task_transcribe: "Transcription",
+      task_describe: "Description",
+      memory: "{{task}} could not start: the computer is short of memory. Close other apps or wait for memory to recover, then retry. If it keeps happening, adjust the Memory target in Settings → Performance.",
+      finalization: "{{task}} is waiting for an export to finish. Retry when the export completes.",
+      budget: "{{task}} could not start within 60 s: processing capacity is in use by other work, such as proxy generation. Retry when it finishes, or raise Processing effort or the Memory target in Settings → Performance.",
+      allowance: "{{task}} needs more working memory than the current Memory target allows. Raise the Memory target in Settings → Performance, then retry.",
+      queue: "Too many tasks are queued. Retry when the current work finishes.",
+      busy: "{{task}} could not get processing resources. Retry shortly; if it keeps happening, check Settings → Performance.",
+      open_settings: "Open Performance settings",
+      details: "Technical details",
+    },
     ui: {
       // The budget wait names what holds the capacity: the derivatives pill
       // beside it is usually the answer.
@@ -2977,6 +2992,9 @@ const enUS = {
     describe_done:
       "{{segments}} described spans in “{{clip}}” ({{engine}}, {{model}})",
     describe_cancelled: "Describing “{{clip}}” was cancelled",
+    // A resource refusal, summarized (`compute/computeRefusal.ts`); the native
+    // sentence stays in the row's details.
+    describe_failed: "Describing “{{clip}}” failed: {{reason}}",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three

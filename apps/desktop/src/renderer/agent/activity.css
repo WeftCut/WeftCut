@@ -51,6 +51,8 @@
 p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); overflow-wrap: anywhere; white-space: pre-wrap; max-height: calc(140 * var(--ui-px)); overflow: auto; }
 .agent-activity.state-error > .agent-activity-main > svg { color: var(--destructive); }
 .agent-activity.state-running > .agent-activity-main > svg { color: var(--primary); }
+/* Cancelled on purpose: muted, never the failure colour. */
+.agent-activity.state-cancelled > .agent-activity-main > svg { color: var(--muted-foreground); }
 /* A clip-compute row waiting for admission: muted, no spin (ComputeJobStatus). */
 .agent-activity.state-running.is-waiting > .agent-activity-main > svg { color: var(--muted-foreground); }
 .agent-activity-compute { padding-left: calc(27 * var(--ui-px)); }
@@ -151,3 +153,5 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
    sorts to the foot of its group, muted. */
 .agent-tack-outdated { flex: none; margin-top: calc(1 * var(--ui-px)); padding: 0 calc(5 * var(--ui-px)); border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: 999px; color: var(--warning); font-size: var(--font-size-micro); white-space: nowrap; }
 .agent-tack.unplaced:not([data-selected="true"]) { opacity: .7; }
+/* A compute refusal's Settings button and details, under the row's error line. */
+.agent-activity .compute-refusal-actions { margin: 0 calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); }

@@ -23,6 +23,8 @@
 // run's own: an agent describing some clip must not grey out the user's press.
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
+import i18n from "../i18n";
+import { computeFailureText, computeResourceReason } from "../compute/computeRefusal";
 import { ComputeCancelledError, describeClip, logEmit } from "../ipc";
 import { jobIdForRequest, useComputeJobsStore } from "../compute/computeJobsStore";
 import {
@@ -153,8 +155,22 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
     setDescribeError(message);
     setDescribing(null);
     // Under the run's own `op_id`, or the Started row above never closes and the
-    // status bar keeps a description spinning that has already failed.
-    logMutationFailure(err, "describe_clip", opId);
+    // status bar keeps a description spinning that has already failed. A
+    // resource refusal is its summary, the native sentence in `details`.
+    if (computeResourceReason(message) !== null) {
+      const reason = computeFailureText(i18n.t, "describe_clip", message);
+      void logEmit({
+        level: "error",
+        category: { kind: "Project" },
+        source: { kind: "User" },
+        message: `Describing ${target.label} failed: ${message}`,
+        i18n_key: "log.describe_failed",
+        i18n_args: { clip: target.label, reason },
+        details: { context: "describe_clip", layer_id: target.layerId, refusal: message, ...jobDetails(requestId).details },
+        op_id: opId,
+        op_state: { state: "Err" },
+      });
+    } else logMutationFailure(err, "describe_clip", opId);
     return message;
   }
 }

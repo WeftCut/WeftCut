@@ -37,6 +37,8 @@ import { create } from "zustand";
 import type { TranscriptionInputDecision } from "./transcriptionInput";
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
+import i18n from "../i18n";
+import { computeFailureText, computeResourceReason } from "../compute/computeRefusal";
 import {
   applyTranscripts,
   ComputeCancelledError,
@@ -153,14 +155,18 @@ function doneRow(transcripts: readonly TranscriptResult[], opId: string | null):
 /// six-clip run's user guessing which one to fix. Terminal (closes the op as
 /// `Err`) unless the write step failed too, in which case that row closes it.
 function failedRow(clip: TranscribeClip, err: unknown, requestId: string, opId: string | null): LogEntryInput {
-  const reason = refusalText(err);
+  const raw = refusalText(err);
+  // A resource refusal reads as its summary; the native sentence stays the
+  // record, in `details` (`compute/computeRefusal.ts`).
+  const reason = computeFailureText(i18n.t, "transcribe_clip", raw);
+  const resource = computeResourceReason(raw) !== null;
   return {
     level: "error",
     ...ROW,
-    message: `Transcribing ${clip.label} failed: ${reason}`,
+    message: `Transcribing ${clip.label} failed: ${raw}`,
     i18n_key: "log.auto_caption_failed",
     i18n_args: { clip: clip.label, reason },
-    details: { context: "transcribe_clip", layer_id: clip.layerId, ...jobDetails(requestId) },
+    details: { context: "transcribe_clip", layer_id: clip.layerId, ...jobDetails(requestId), ...(resource ? { refusal: raw } : {}) },
     ...(opId === null ? {} : { op_id: opId, op_state: { state: "Err" } }),
   };
 }

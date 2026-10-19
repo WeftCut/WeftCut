@@ -83,6 +83,16 @@ describe("computeJobNotice", () => {
     });
   });
 
+  it("summarizes a resource refusal instead of the native sentence, and offers Performance settings", () => {
+    const raw = "audio extract: resource-capacity-exceeded: Waited 60 s before extracting clip audio: memory is under pressure. Close other work or wait for memory to recover, then retry";
+    const notice = computeJobNotice(t, ended(job(), "error", 60_000, raw), ctx)!;
+    expect(notice.body).toContain("short of memory");
+    expect(notice.body).not.toContain("resource-capacity-exceeded");
+    expect(notice.settings).toBe(true);
+    // Any other failure keeps its own sentence and offers nothing.
+    expect(computeJobNotice(t, ended(job(), "error", 60_000, "no model"), ctx)!.settings).toBeUndefined();
+  });
+
   it("announces a cancel someone else made, but not one pressed in this window", () => {
     const j = job();
     expect(computeJobNotice(t, ended(j, "cancelled", 60_000), ctx)).toMatchObject({

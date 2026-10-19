@@ -91,3 +91,12 @@
 .compute-notice-copy strong { font-size: var(--font-size-label); }
 .compute-notice-copy p { margin: calc(4 * var(--ui-px)) 0 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .compute-notice-dismiss { flex: none; display: inline-flex; padding: calc(2 * var(--ui-px)); color: var(--muted-foreground); }
+
+/* A resource refusal: the summary on the surface's own error line, then the
+   way to Settings and the native sentence folded away (ComputeRefusal). */
+.compute-refusal { display: flex; flex-direction: column; gap: calc(4 * var(--ui-px)); min-width: 0; }
+.compute-refusal-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: calc(6 * var(--ui-px)); }
+.compute-refusal-details { min-width: 0; flex: 1; font-size: var(--font-size-micro); color: var(--muted-foreground); }
+.compute-refusal-details > summary { cursor: pointer; padding: calc(3 * var(--ui-px)) 0; }
+.compute-refusal-details > pre { margin: calc(4 * var(--ui-px)) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(120 * var(--ui-px)); overflow: auto; }
+.compute-notice-action { margin-top: calc(6 * var(--ui-px)); }

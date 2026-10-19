@@ -248,6 +248,16 @@ describe('level follows the tool route', () => {
     expect((detailsOf(entries[0]).error as { message: string }).message).toContain('track_id')
   })
 
+  it('a cancelled clip-compute job is not an Error: info, and the row says cancelled', async () => {
+    const { entries, deps } = collector()
+    const cancelled = { isError: true, content: [{ type: 'text', text: 'Cancelled' }], structuredContent: { code: 'cancelled', message: 'Cancelled' } }
+    await withLog('tools/call', async () => cancelled, deps)({ params: { name: 'describe_clip', arguments: {} } }, undefined)
+    expect(entries[0].level).not.toBe('error')
+    expect(entries[0].message).toContain('(cancelled)')
+    expect(detailsOf(entries[0])).toMatchObject({ cancelled: true })
+    expect(detailsOf(entries[0]).error).toBeUndefined()
+  })
+
   it('a throw is Error too, and carries the JSON-RPC number when the throw has one', async () => {
     const { entries, deps } = collector()
     const boom = Object.assign(new Error('boom'), { code: -32603 })

@@ -1274,6 +1274,7 @@ const zhCN: Resources = {
   "running": "进行中",
   "done": "已完成",
   "error": "失败",
+  "cancelled": "已取消",
   "reverted": "已回退",
   "partial": "部分已回退",
   "reads": "读取项目与素材 · {{count}} 次",
@@ -2462,6 +2463,19 @@ const zhCN: Resources = {
       inferring_counted: "模型运行中 {{done}}/{{total}}",
       applying: "正在写入结果",
     },
+    // 资源不足导致的拒绝，摘要版（`compute/computeRefusal.ts`）。{{task}} 为“转写”/“描述”。
+    refusal: {
+      task_transcribe: "转写",
+      task_describe: "描述",
+      memory: "{{task}}未能开始：电脑可用内存不足。请关闭其他应用或等待内存恢复后重试；若反复出现，可在“设置 → 性能”调整“内存使用目标”。",
+      finalization: "{{task}}正在等待导出完成，请在导出结束后重试。",
+      budget: "{{task}}在 60 秒内未能开始：处理资源正被代理文件生成等其他任务占用。请等这些任务完成后重试，或在“设置 → 性能”调高“处理强度”或“内存使用目标”。",
+      allowance: "{{task}}所需的工作内存超过了当前“内存使用目标”的上限。请在“设置 → 性能”调高“内存使用目标”后重试。",
+      queue: "排队的任务过多，请等当前任务完成后重试。",
+      busy: "{{task}}暂时无法获得处理资源，请稍后重试；若反复出现，请检查“设置 → 性能”。",
+      open_settings: "打开性能设置",
+      details: "技术详情",
+    },
     ui: {
       queued_budget_detail: "等待处理资源——代理文件生成等后台任务正在占用",
       extracting_audio: "正在提取音频",
@@ -2692,6 +2706,7 @@ const zhCN: Resources = {
     // 模型，只写引擎标签说不清是哪套权重回答的。
     describe_done: "已从“{{clip}}”得到 {{segments}} 段描述（{{engine}}，{{model}}）",
     describe_cancelled: "已取消描述“{{clip}}”",
+    describe_failed: "描述“{{clip}}”失败：{{reason}}",
   },
   history: {
     initial: "初始状态",

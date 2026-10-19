@@ -884,6 +884,19 @@ describe("ShotsPanel — describing one shot", () => {
     );
   });
 
+  it("summarizes a resource refusal and offers Performance settings, the native sentence folded away", async () => {
+    const raw =
+      "frame sample: resource-capacity-exceeded: Waited 60 s before sampling clip frames: the CPU and memory budget is held by 2 other lease(s), 1 of them background processing such as proxy generation. Retry when it finishes, or raise Processing effort or the Memory target in Settings";
+    shots.describeClip.mockRejectedValue(new Error(raw));
+    await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    const refusal = await screen.findByTestId("shots-describe-error");
+    expect(refusal.dataset.reason).toBe("budget");
+    expect(within(refusal).getByText(/could not start within 60 s/).tagName).toBe("P");
+    expect(within(refusal).getByRole("button", { name: "Open Performance settings" })).toBeTruthy();
+    expect(within(refusal).getByText(/resource-capacity-exceeded/).closest("details")).not.toBeNull();
+  });
+
   it("keeps description controls available on a retimed clip", async () => {
     // A speed != 1 clip is refused by the tool itself, so the gate says so
     // before the press rather than after the run.
@@ -1687,6 +1700,33 @@ describe("ShotsPanel — a running description job", () => {
       expect(status?.textContent).toContain("Waiting for memory to free up");
       expect(status?.querySelector(".lucide-hourglass")).not.toBeNull();
     }
+  });
+
+  it("shows a job's status and Cancel on a source never analyzed for shots", async () => {
+    // No scan, so no rows: the job's line must still have a home (#67).
+    shots.shotFloorReportCached.mockResolvedValue(false);
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    await screen.findByText(/has not been analyzed for shot cuts yet/);
+    publish([job({ phase: { kind: "extracting", done: 2, total: 8 } })]);
+    const panel = await screen.findByTestId("shots-describe-jobs");
+    expect(panel.textContent).toContain("Sampling frames 2/8");
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel description" }));
+    await waitFor(() => expect(shots.cancelComputeJob).toHaveBeenCalledWith("job-1"));
+  });
+
+  it("lists a job no row covers at the panel level, and a covered one only on its rows", async () => {
+    const rows = await review();
+    // Timeline [8 s, 9 s) through l1 (at 1 s) is source [7 s, 8 s): past both rows.
+    publish([
+      job({ job_id: "job-out", window: { t_start_us: 8_000_000, t_end_us: 9_000_000 }, phase: { kind: "loading_model" } }),
+      job({ job_id: "job-in", phase: { kind: "inferring" } }),
+    ]);
+    const panel = await screen.findByTestId("shots-describe-jobs");
+    expect(panel.querySelectorAll(".compute-job-status")).toHaveLength(1);
+    expect(panel.textContent).toContain("Loading model");
+    expect(statusIn(rows[1])).not.toBeNull();
   });
 
   it("says what this window's own run is doing on the buttons it greys", async () => {

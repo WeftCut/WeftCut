@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X, Hourglass, Unplug } from 'lucide-react'
+import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X, Hourglass, Unplug, Ban } from 'lucide-react'
 import { invoke } from '@/bridge/ipc'
 import type { AgentActivity, AgentConnectionSnapshot } from '../../shared/agent-activity'
 import { agentSessionEnd, projectRestoreCheckpoint, type HistoryEntityRef } from '../ipc'
@@ -20,6 +20,7 @@ import { sessionSectionKey, sessionSectionOpenByDefault } from './expansion'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
 import { ComputeJobStatus } from '../compute/ComputeJobStatus'
+import { ComputeRefusal } from '../compute/ComputeRefusal'
 import { isWaiting, type ComputeJobSubject } from '../compute/computeJobView'
 import { useComputeJobsStore } from '../compute/computeJobsStore'
 import { COMPUTE_TOOLS, type ComputeJob, type ComputeTool } from '../../shared/compute-jobs'
@@ -104,7 +105,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     const valid = snapshot?.checkpoints.some(cp => cp.id === a.checkpoint_id) ?? false
     const compute = computeSubject(a, computeJobs)
     const waiting = compute !== null && isWaiting(compute.phase)
-    const Icon = a.state === 'running' ? (waiting ? Hourglass : Loader2) : a.state === 'error' ? AlertCircle : Check
+    const Icon = a.state === 'running' ? (waiting ? Hourglass : Loader2) : a.state === 'error' ? AlertCircle : a.state === 'cancelled' ? Ban : Check
     return <article key={a.id} data-agent-anchor={a.id} className={`agent-activity state-${a.state}${waiting ? ' is-waiting' : ''}`}>
       <button type="button" className="agent-activity-main" aria-expanded={open} onClick={() => toggle(a.id)}>
         <AppIcon icon={Icon} size="title" className={a.state === 'running' && !waiting ? 'agent-spin' : ''} aria-hidden />
@@ -117,7 +118,9 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
         : <div className="agent-activity-status"><span>{t(`agent_panel.${a.state}`)}</span>
           {a.state === 'running' && a.caller_disconnected && <span className="agent-effect agent-disconnected" title={t('compute.ui.caller_disconnected_hint')}><AppIcon icon={Unplug} size="label" aria-hidden /> {t('compute.ui.caller_disconnected')}</span>}
           {(a.effect === 'reverted' || a.effect === 'partial') && <span className="agent-effect">{t(`agent_panel.${a.effect}`)}</span>}</div>}
-      {a.error && <p className="agent-activity-error">{a.error}</p>}
+      {a.error && (COMPUTE_TOOLS.has(a.tool)
+        ? <ComputeRefusal text={a.error} tool={a.tool as ComputeTool} className="agent-activity-error" />
+        : <p className="agent-activity-error">{a.error}</p>)}
       {a.kind === 'checkpoint' && <div className="agent-activity-actions"><button type="button" disabled={!valid || locked || busy !== null}
         title={!valid ? t('agent_panel.checkpoint_missing') : locked ? t('agent_panel.locked') : t('agent_mode.restore_hint')}
         onClick={() => void action('project_restore_checkpoint', () => projectRestoreCheckpoint(a.checkpoint_id!))}>{valid ? t('agent_mode.restore') : t('agent_panel.checkpoint_missing')}</button></div>}
