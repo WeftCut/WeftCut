@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "../i18n";
 import { useSettingsRequest } from "../settings/settingsRequest";
 import { ComputeRefusal } from "./ComputeRefusal";
-import { computeFailureText, computeRefusalSummary, computeResourceReason } from "./computeRefusal";
+import { computeFailureText, computeRefusalSummary, computeResourceReason } from "./computeRefusalMessage";
 
 // The native sentences, verbatim from `native/src/resources.rs` (and the
 // `audio extract:` prefix `transcribe_clip` puts on them): the wording is the

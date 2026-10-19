@@ -2717,7 +2717,7 @@ const enUS = {
     },
     // What job surfaces (the Activity row, the status bar, in-context
     // indicators) draw. They know the tool, so a phase can say what it does.
-    // A resource refusal, summarized (`compute/computeRefusal.ts`). {{task}} is
+    // A resource refusal, summarized (`compute/computeRefusalMessage.ts`). {{task}} is
     // "Transcription" / "Description".
     refusal: {
       task_transcribe: "Transcription",
@@ -2992,7 +2992,7 @@ const enUS = {
     describe_done:
       "{{segments}} described spans in “{{clip}}” ({{engine}}, {{model}})",
     describe_cancelled: "Describing “{{clip}}” was cancelled",
-    // A resource refusal, summarized (`compute/computeRefusal.ts`); the native
+    // A resource refusal, summarized (`compute/computeRefusalMessage.ts`); the native
     // sentence stays in the row's details.
     describe_failed: "Describing “{{clip}}” failed: {{reason}}",
   },

@@ -25,7 +25,7 @@ import { cancelComputeJob, type ComputeJob, type ComputeJobEnded } from "../ipc"
 import { layerDisplayName } from "../lib/layerName";
 import { useProjectStore } from "../state/projectStore";
 import { useComputeJobsStore, type ComputeJobsState } from "./computeJobsStore";
-import { computeFailureText, computeResourceReason, settingsCanHelp } from "./computeRefusal";
+import { computeFailureText, computeResourceReason, settingsCanHelp } from "./computeRefusalMessage";
 
 /// A job shorter than this ended while the person was still looking at it: the
 /// surface they pressed already shows the result, and a notice would only
@@ -66,7 +66,7 @@ export interface ComputeJobNoticeContent {
   title: string;
   body: string;
   /// A resource refusal a Performance setting can help with: the card offers
-  /// the pane (`computeRefusal.ts`).
+  /// the pane (`computeRefusalMessage.ts`).
   settings?: true;
 }
 

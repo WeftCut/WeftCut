@@ -1,14 +1,14 @@
 // A transcription or description failure, as a person reads it: for a
 // resource refusal the localized summary, a way to the Performance pane when a
 // setting there can help, and the native sentence folded away as technical
-// detail (`computeRefusal.ts`). Any other failure is its own sentence, as before.
+// detail (`computeRefusalMessage.ts`). Any other failure is its own sentence, as before.
 
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import type { ComputeTool } from "../ipc";
 import { requestSettings } from "../settings/settingsRequest";
-import { computeRefusalSummary, computeResourceReason, settingsCanHelp } from "./computeRefusal";
+import { computeRefusalSummary, computeResourceReason, settingsCanHelp } from "./computeRefusalMessage";
 
 export function ComputeRefusal({
   text,

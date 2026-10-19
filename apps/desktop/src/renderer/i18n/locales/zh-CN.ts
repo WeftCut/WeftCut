@@ -2463,7 +2463,7 @@ const zhCN: Resources = {
       inferring_counted: "模型运行中 {{done}}/{{total}}",
       applying: "正在写入结果",
     },
-    // 资源不足导致的拒绝，摘要版（`compute/computeRefusal.ts`）。{{task}} 为“转写”/“描述”。
+    // 资源不足导致的拒绝，摘要版（`compute/computeRefusalMessage.ts`）。{{task}} 为“转写”/“描述”。
     refusal: {
       task_transcribe: "转写",
       task_describe: "描述",

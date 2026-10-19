@@ -38,7 +38,7 @@ import type { TranscriptionInputDecision } from "./transcriptionInput";
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import i18n from "../i18n";
-import { computeFailureText, computeResourceReason } from "../compute/computeRefusal";
+import { computeFailureText, computeResourceReason } from "../compute/computeRefusalMessage";
 import {
   applyTranscripts,
   ComputeCancelledError,
@@ -157,7 +157,7 @@ function doneRow(transcripts: readonly TranscriptResult[], opId: string | null):
 function failedRow(clip: TranscribeClip, err: unknown, requestId: string, opId: string | null): LogEntryInput {
   const raw = refusalText(err);
   // A resource refusal reads as its summary; the native sentence stays the
-  // record, in `details` (`compute/computeRefusal.ts`).
+  // record, in `details` (`compute/computeRefusalMessage.ts`).
   const reason = computeFailureText(i18n.t, "transcribe_clip", raw);
   const resource = computeResourceReason(raw) !== null;
   return {

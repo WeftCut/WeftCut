@@ -24,7 +24,7 @@
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import i18n from "../i18n";
-import { computeFailureText, computeResourceReason } from "../compute/computeRefusal";
+import { computeFailureText, computeResourceReason } from "../compute/computeRefusalMessage";
 import { ComputeCancelledError, describeClip, logEmit } from "../ipc";
 import { jobIdForRequest, useComputeJobsStore } from "../compute/computeJobsStore";
 import {
