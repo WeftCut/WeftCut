@@ -12,4 +12,5 @@ Re-verify an entry before relying on it when the engine major version changes (a
 - `napi-rs-multiplatform-testing.md` — how the two napi-rs addons are tested on all three OSes (`test-noop`, `dyn-symbols`, per-OS loader variables), with the macOS checklist.
 - `mcp-2026-07-28-spec-upgrade-assessment.md` — assessment of moving the MCP server to the 2026-07-28 protocol revision.
 - `react-electron-docking-layout-research.md` — docking-layout library research for the React/Electron renderer (why dockview).
+- `agent-bench-baseline-2026-10-20.md` — first agent-bench baseline (ADR 0123): six tasks × Opus/Sonnet/Haiku 5.5 on main's skill; engagement gaps, the tool defaults every model converges on, and the first craft candidates.
 - `macos-resource-verification-2026-10-07.md` — physical M1 resource/settings and codec verification, cache-link and numeric-admission fixes, and portable graphics identity.
