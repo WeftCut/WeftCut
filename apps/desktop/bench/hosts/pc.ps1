@@ -375,18 +375,25 @@ try {
       # fetch.mjs reports progress on stderr; under 'Stop' PowerShell 5.1
       # would turn the first such line into a terminating error.
       $ErrorActionPreference = 'Continue'
-      $out = & $node (Join-Path $Root 'fixtures\fetch.mjs') @($A.ids) 2>&1
+      $out = & $node (Join-Path $Root 'fixtures\fetch.mjs') --json @($A.ids) 2>&1
       $code = $LASTEXITCODE
       $ErrorActionPreference = 'Stop'
       $paths = @{}
-      foreach ($line in $out) { if ("$line" -match '^ok\s+(\S+)\s+.*\s(\S:\\.+)$') { $paths[$Matches[1]] = $Matches[2] } }
+      $meta = $null
+      foreach ($line in $out) {
+        if ("$line" -match '^ok\s+(\S+)\s+.*\s(\S:\\.+)$') { $paths[$Matches[1]] = $Matches[2] }
+        # Passed through as text: the runner parses it (no PowerShell JSON round trip).
+        if ("$line".StartsWith('@@META@@')) { $meta = "$line".Substring(8) }
+      }
       if ($code -ne 0) { throw "fetch.mjs exited $code`n$($out -join "`n")" }
-      Out-Result @{ paths = $paths; log = @($out | ForEach-Object { "$_" }) }
+      Out-Result @{ paths = $paths; meta_json = $meta; log = @($out | Where-Object { -not "$_".StartsWith('@@META@@') } | ForEach-Object { "$_" }) }
     }
 
     'template-status' {
       $meta = Join-Path $Root ('templates\' + $A.key + '\template.json')
-      if (Test-Path $meta) { Out-Result @{ meta = (Read-Json $meta); baseline = (Read-Text (Join-Path (Split-Path $meta) 'baseline.json')) } }
+      $tasksFile = Join-Path (Split-Path $meta) 'tasks.txt'
+      if (Test-Path $meta) { Out-Result @{ meta = (Read-Json $meta); baseline = (Read-Text (Join-Path (Split-Path $meta) 'baseline.json'))
+        tasks = @($(if (Test-Path $tasksFile) { (Read-Text $tasksFile) -split "`r?`n" | Where-Object { $_ } } else { @() })) } }
       else { Out-Result @{ meta = $null } }
     }
 
@@ -402,9 +409,18 @@ try {
       # Uploaded beside the run by sftp: a baseline outgrows cmd.exe's 8191-char line.
       Copy-Item -LiteralPath $A.meta_file -Destination (Join-Path $tmp 'template.json')
       Copy-Item -LiteralPath $A.baseline_file -Destination (Join-Path $tmp 'baseline.json')
+      Write-Text (Join-Path $tmp 'tasks.txt') ($A.task + "`n")
       if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
       Rename-Item -LiteralPath $tmp -NewName (Split-Path $dir -Leaf)
       Out-Result @{ ms = $sw.ElapsedMilliseconds; bytes = (Dir-Bytes (Join-Path $dir 'project')); dir = $dir }
+    }
+
+    # The template's human-readable label: every task id that has used it.
+    'template-label' {
+      $file = Join-Path $Root ('templates\' + $A.key + '\tasks.txt')
+      $tasks = @($(if (Test-Path $file) { (Read-Text $file) -split "`r?`n" | Where-Object { $_ } } else { @() }))
+      if ($tasks -notcontains $A.task) { $tasks += $A.task; Write-Text $file (($tasks -join "`n") + "`n") }
+      Out-Result @{ tasks = $tasks }
     }
 
     'template-restore' {

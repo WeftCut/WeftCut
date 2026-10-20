@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { createMirror, sftpBatch } from '../proxy/mirror.mjs'
 import { startMcpProxy, type McpProxy } from '../proxy/proxy'
 import { Ssh, freePort, hostHeaderFetch, sftpPath } from './ssh'
-import type { HostSession, HostStartOptions, TemplateMeta, TemplateStore } from './types'
+import type { FixtureMeta, HostSession, HostStartOptions, TemplateMeta, TemplateStore } from './types'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BENCH_DIR = path.dirname(HERE)
@@ -190,10 +190,11 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
 
     const templates: TemplateStore = {
       async get(key) {
-        const r = await op<{ meta: TemplateMeta | null; baseline?: string }>(ssh, root, 'template-status', { key })
-        return r.meta ? { meta: r.meta, baseline: JSON.parse(r.baseline!) } : null
+        const r = await op<{ meta: TemplateMeta | null; baseline?: string; tasks?: string[] }>(ssh, root, 'template-status', { key })
+        return r.meta ? { meta: r.meta, baseline: JSON.parse(r.baseline!), tasks: r.tasks ?? [] } : null
       },
-      async save(key, projectDir, meta, baseline) {
+      label: async (key, taskId) => (await op<{ tasks: string[] }>(ssh, root, 'template-label', { key, task: taskId })).tasks,
+      async save(key, projectDir, meta, baseline, taskId) {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-tpl-'))
         try {
           fs.writeFileSync(path.join(tmp, 'meta.json'), JSON.stringify(meta, null, 2) + '\n')
@@ -201,7 +202,7 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
           const metaFile = win.join(runDir, 'template-meta.json')
           const baselineFile = win.join(runDir, 'template-baseline.json')
           await ssh.sftp(`put "${path.join(tmp, 'meta.json')}" "${sftpPath(metaFile)}"\nput "${path.join(tmp, 'baseline.json')}" "${sftpPath(baselineFile)}"\n`)
-          return await op<{ ms: number; bytes: number }>(ssh, root, 'template-save', { key, project_dir: projectDir, meta_file: metaFile, baseline_file: baselineFile })
+          return await op<{ ms: number; bytes: number }>(ssh, root, 'template-save', { key, project_dir: projectDir, meta_file: metaFile, baseline_file: baselineFile, task: taskId })
         } finally {
           fs.rmSync(tmp, { recursive: true, force: true })
         }
@@ -226,10 +227,11 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
       projectsDir: win.join(runDir, 'projects'),
       joinPath: (...p) => win.join(...p),
       async resolveFixtures(ids) {
-        if (!ids.length) return new Map()
-        const r = await op<{ paths: Record<string, string> }>(ssh, root, 'fixtures', { ids, ...(opts.node ? { node: opts.node } : {}) }, 60 * 60_000)
-        for (const id of ids) if (!r.paths[id]) throw new Error(`fixture ${id} did not resolve on ${opts.alias}`)
-        return new Map(ids.map((id) => [id, r.paths[id]!]))
+        if (!ids.length) return { paths: new Map(), meta: {} }
+        const r = await op<{ paths: Record<string, string>; meta_json: string | null }>(ssh, root, 'fixtures', { ids, ...(opts.node ? { node: opts.node } : {}) }, 60 * 60_000)
+        const meta = JSON.parse(r.meta_json ?? '{}') as Record<string, FixtureMeta>
+        for (const id of ids) if (!r.paths[id] || !meta[id]) throw new Error(`fixture ${id} did not resolve on ${opts.alias}`)
+        return { paths: new Map(ids.map((id) => [id, r.paths[id]!])), meta }
       },
       async appResources() {
         const s = (await rawStatus()).app_settings as { resource_policy?: unknown; resource_allocation?: unknown } | null

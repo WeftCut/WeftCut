@@ -92,7 +92,11 @@ export interface RunResult {
   /** The inference/speech model set of the app's profile (remote: seeded from
    *  the user's profile, with weight-file hashes); null when not seeded. */
   models: unknown
-  /** The project template used: `{ key, fresh_build, … }` (templates.mjs), or
+  /** Each fixture's imported MP4 as fetched on the app's host: `file`
+   *  (sha256, bytes, duration, streams), `transcode` (parameters and ffmpeg
+   *  version), `source`, `trim`. Null for a task without fixtures. */
+  fixtures: Record<string, unknown> | null
+  /** The project template used: `{ key, fresh_build, tasks, … }` (templates.mjs), or
    *  `{ key: null, reason }` when the task has nothing to settle. */
   template: Record<string, unknown> | null
   /** What setup produced: the A-roll VideoClip count of the baseline and how

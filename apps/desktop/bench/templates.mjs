@@ -6,12 +6,17 @@
 // instead of importing and transcoding again. A 3.5-minute 1080p explainer
 // costs ~16 minutes of media jobs on a two-core host; a copy costs seconds.
 //
-// The key names everything the settled project depends on:
-//   - the task's setup-relevant fields (id → folder name, fixtures, project,
-//     setup); prompt and checklist edits do not invalidate a template;
-//   - each fixture's pinned content hash (fixtures.json);
+// The key is the setup's CONTENT, so tasks that set up the same project share
+// one template (the three explainer tasks do; so do the three interview ones):
+//   - the project settings and the setup calls, verbatim (canonical JSON);
+//   - each fixture's MP4 sha256 as fetched on that host (fixture.json) — the
+//     transcode is not byte-pinned, so the bytes actually imported decide;
+//   - the project's name, which is derived from the fixtures, never from the
+//     task: a shared project must not carry one task's id (and an agent should
+//     not read its task's name off the project);
 //   - the app build (the host reports a revision and a build fingerprint);
 //   - the host kind and identity: templates live on the host that built them.
+// A label (tasks.txt beside the template) lists the task ids that used it.
 //
 // After a copy is opened, its baseline must equal the fresh build's modulo
 // the project folder's location; `compareBaselines` says where it does not.
@@ -29,32 +34,29 @@ export function canonicalJson(value) {
   return JSON.stringify(value)
 }
 
+/** The project a task's setup creates is named after its fixtures (or, for a
+ *  synthetic task, the task itself), so identical setups make identical
+ *  projects. */
+export function projectNameFor(task) {
+  return task.fixtures.length ? [...task.fixtures].sort().join('--') : task.id
+}
+
 /**
  * @param {{ task: { id: string, fixtures: string[], project: unknown, setup: unknown[] },
  *           fixtureHashes: Record<string, string>, app: { revision: string | null, build: string },
- *           host: string }} parts
+ *           host: string }} parts  fixtureHashes: each fixture's MP4 sha256 on that host
  * @returns {{ key: string, parts: Record<string, unknown> }}
  */
 export function templateKey({ task, fixtureHashes, app, host }) {
-  const setup = { id: task.id, fixtures: task.fixtures, project: task.project, setup: task.setup }
-  const parts = {
-    setup_sha256: sha256(canonicalJson(setup)),
-    fixtures: Object.fromEntries(task.fixtures.map((id) => {
-      const h = fixtureHashes[id]
-      if (!h) throw new Error(`no pinned hash for fixture ${id}`)
-      return [id, h]
-    })),
-    app_revision: app.revision,
-    app_build: app.build,
-    host,
-  }
-  return { key: `${task.id}-${sha256(canonicalJson(parts)).slice(0, 16)}`, parts }
-}
-
-/** The content hash fixtures.json pins for a fixture: the trimmed output's
- *  when it is trimmed, else the download's. */
-export function pinnedFixtureHash(entry) {
-  return entry.output_sha256 ?? entry.sha256
+  const fixtures = Object.fromEntries([...task.fixtures].sort().map((id) => {
+    const h = fixtureHashes[id]
+    if (!h) throw new Error(`no output hash for fixture ${id}`)
+    return [id, h]
+  }))
+  const name = projectNameFor(task)
+  const setup = { name, project: task.project, setup: task.setup, fixtures }
+  const parts = { setup_sha256: sha256(canonicalJson(setup)), fixtures, app_revision: app.revision, app_build: app.build, host }
+  return { key: `${name}-${sha256(canonicalJson(parts)).slice(0, 16)}`, parts }
 }
 
 /** Fields that differ between two openings of the same project for reasons

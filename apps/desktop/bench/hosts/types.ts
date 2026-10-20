@@ -9,6 +9,14 @@
 import type { McpEndpoint } from '../drivers/types'
 import type { JobEvent } from '../mediaReady'
 
+/** fixtures.mjs `fixture.json`, as far as the runner reads it. */
+export interface FixtureMeta {
+  id: string
+  output: { sha256: string; bytes: number; duration_s: number }
+  transcode: Record<string, unknown> & { ffmpeg_version: string }
+  [k: string]: unknown
+}
+
 export interface HostStartOptions {
   /** Short, path-safe id of this run; names the remote run directory. */
   run_slug: string
@@ -30,9 +38,13 @@ export interface TemplateMeta {
 }
 
 export interface TemplateStore {
-  get(key: string): Promise<{ meta: TemplateMeta; baseline: unknown } | null>
-  /** Copy a settled project folder (minus Backups/ and Logs/) into the store. */
-  save(key: string, projectDir: string, meta: TemplateMeta, baseline: unknown): Promise<{ ms: number; bytes: number }>
+  /** The template, its fresh build's baseline and the task ids that used it. */
+  get(key: string): Promise<{ meta: TemplateMeta; baseline: unknown; tasks: string[] } | null>
+  /** Copy a settled project folder (minus Backups/ and Logs/) into the store,
+   *  labelled with the task that built it. */
+  save(key: string, projectDir: string, meta: TemplateMeta, baseline: unknown, taskId: string): Promise<{ ms: number; bytes: number }>
+  /** Add a task id to the template's label; returns every id so far. */
+  label(key: string, taskId: string): Promise<string[]>
   /** Copy a template's project folder to `destDir`, which must not exist. */
   restore(key: string, destDir: string): Promise<{ ms: number; bytes: number }>
 }
@@ -53,7 +65,10 @@ export interface HostSession {
   /** Parent folder for the run's projects, in the host's path spelling. */
   readonly projectsDir: string
   joinPath(...parts: string[]): string
-  resolveFixtures(ids: readonly string[]): Promise<Map<string, string>>
+  /** Each fixture's MP4 on the host and its fetch-time record
+   *  (fixtures.mjs `fixture.json`: transcode parameters, ffmpeg version,
+   *  output sha256). */
+  resolveFixtures(ids: readonly string[]): Promise<{ paths: Map<string, string>; meta: Record<string, FixtureMeta> }>
   appResources(): Promise<{ policy: unknown; allocation: unknown } | null>
   /** The inference/speech models the app's profile carries (remote seeds them
    *  from the user's profile); null when the host does not seed any. */
