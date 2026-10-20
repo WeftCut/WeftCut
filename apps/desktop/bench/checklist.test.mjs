@@ -92,6 +92,15 @@ describe('layer_count and selectors', () => {
     assert.equal(check({ kind: 'text_layer_matching', text_regex: 'warm' }, p).pass, true)
   })
 
+  it('reads a phrase split across props or lines as one phrase', () => {
+    const split = project([track([
+      motif(0, 4, 'card', { line_one: 'What is', line_two: 'a memory?' }),
+      text(5, 8, 'Lisa\nGenzel'),
+    ])])
+    assert.equal(check({ kind: 'text_layer_matching', text_regex: 'what is a memory' }, split).pass, true)
+    assert.equal(check({ kind: 'text_layer_matching', text: 'Lisa Genzel' }, split).pass, true)
+  })
+
   it('excludes captions from text_layer_matching unless asked', () => {
     assert.equal(check({ kind: 'text_layer_matching', text_regex: 'lunch' }, p).pass, false)
     assert.equal(check({ kind: 'text_layer_matching', text_regex: 'lunch', where: { caption: true } }, p).pass, true)

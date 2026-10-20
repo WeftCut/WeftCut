@@ -48,13 +48,21 @@ const runs: PlannedRun[] = loadTasks(plan.tasks).flatMap((task) =>
       }
     })))
 
+/// The client's account limit, as the driver reports it. Once one run hits it,
+/// every later run would fail in seconds and record nothing but the error, so
+/// the rest of the plan is skipped instead (runs go one at a time, in order).
+const ACCOUNT_LIMIT = /session limit|usage limit|weekly limit|rate.?limit/i
+let accountLimit: string | null = null
+
 for (const run of runs) {
   test(run.run_id, async () => {
+    test.skip(accountLimit !== null, `skipped after the client's account limit: ${accountLimit}`)
     // The agent's own budget and the media wait, plus app launch, setup and
     // the closing snapshots.
     test.setTimeout(run.timeout_ms + run.media_timeout_ms + 5 * 60_000)
     const result = await runOne(run)
     process.stdout.write(summaryLine(result, run.out_dir) + '\n')
+    if (result.error && ACCOUNT_LIMIT.test(result.error)) accountLimit = result.error
     if (!result.final_project) throw new Error(`run produced no evidence: ${result.error}`)
   })
 }

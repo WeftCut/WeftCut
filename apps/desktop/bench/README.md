@@ -44,7 +44,11 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 Runs go one at a time. Each prints one summary line: verdict, cost, turns,
 review-diff size and the result folder. Playwright exits non-zero only when a
 run produced no evidence (launch, setup or driver crash). An agent that edits
-badly still counts as a completed run.
+badly still counts as a completed run. When a run fails on the client's
+account limit (a subscription's session or weekly limit, a rate limit), the
+rest of the plan is skipped rather than run into the same error; re-run the
+skipped cells once the limit resets. The client shares that limit with any
+interactive session on the same account.
 
 ## Tasks
 

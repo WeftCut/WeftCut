@@ -119,8 +119,11 @@ function matches(entry, where = {}) {
   if (where.track_role !== undefined && (track.role ?? null) !== where.track_role) return false
   if (where.motif_id !== undefined && (p.kind !== 'Motif' || !asList(where.motif_id).includes(p.motif_id))) return false
   if (where.motif_builtin !== undefined && (p.kind !== 'Motif' || BUILTIN_MOTIF_IDS.includes(p.motif_id) !== where.motif_builtin)) return false
-  if (where.text !== undefined && !visibleText(layer).includes(where.text)) return false
-  if (where.text_regex !== undefined && !new RegExp(where.text_regex, where.text_flags ?? 'i').test(visibleText(layer))) return false
+  // Matched with whitespace collapsed: a viewer reads "What is / a memory?" split
+  // across two lines or two Motif props as one phrase.
+  const seen = visibleText(layer).replace(/\s+/g, ' ')
+  if (where.text !== undefined && !seen.includes(where.text)) return false
+  if (where.text_regex !== undefined && !new RegExp(where.text_regex, where.text_flags ?? 'i').test(seen)) return false
   const t0 = layer.t_start_us, t1 = layer.t_end_us, d = t1 - t0
   if (where.starts_at_or_after_s !== undefined && t0 < where.starts_at_or_after_s * US) return false
   if (where.starts_before_s !== undefined && !(t0 < where.starts_before_s * US)) return false
