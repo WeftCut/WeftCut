@@ -39,7 +39,7 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--remote-node` | `$WEFTCUT_BENCH_REMOTE_NODE` | `node.exe` on the host for fixture fetching, when the default (fnm's v24.20.0, then `PATH`) is wrong. |
 | `--keep-remote` | off | Keep the run's directory on the host (profile, project, mirror) after teardown. |
 | `--rebuild-templates` | off | Set every project up from scratch and replace its template ([Project templates](#project-templates)). |
-| `--probe` | none | `transcribe`: after the evidence, time one `transcribe_clip` on the A-roll clip from the runner's own client (no model spend); recorded as `probes`. |
+| `--probe` | none | After the evidence, model-free, recorded as `probes`: `transcribe` times one `transcribe_clip` on the A-roll clip from the runner's own client; `motif-dir` goes through the endpoint the agent is given (remote: the path proxy), writes a Motif folder in the workdir, opens it as a directory draft, previews it, edits and deletes files locally and previews again (the second frame must differ). |
 
 Runs go one at a time. Each prints one summary line: verdict, cost, turns,
 review-diff size and the result folder. Playwright exits non-zero only when a
