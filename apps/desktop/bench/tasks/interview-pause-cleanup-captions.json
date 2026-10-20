@@ -1,0 +1,21 @@
+{
+  "id": "interview-pause-cleanup-captions",
+  "fixtures": ["talking-head-interview"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 24000, "den": 1001 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:talking-head-interview}" }, "as": "media" },
+    { "tool": "add_track", "args": { "label": "Interview" }, "as": "track" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:track.track_id}", "src_in_us": 0, "src_out_us": 151317833, "t_start_us": 0, "t_end_us": 151317833 } }
+  ],
+  "prompt": "This is a raw interview clip with Ann Matsuuchi from WikiConference North America 2025. There's a lot of dead air between her sentences. Can you tighten that up so it flows, then caption the whole thing? Please don't clip any of her words.",
+  "checklist": [
+    { "id": "pauses-removed", "description": "The clip got shorter than the 151 s source, but not so short that speech must have gone", "check": { "kind": "timeline_duration", "min_s": 120, "max_s": 148.5 } },
+    { "id": "no-gaps", "description": "The cuts were closed up: picture runs continuously from 0 with no black holes", "check": { "kind": "no_gaps" } },
+    { "id": "av-sync", "description": "Every picture segment still has its own sound at the same place", "check": { "kind": "av_sync" } },
+    { "id": "captions-present", "description": "A caption track exists with a real number of cues", "check": { "kind": "caption_track_present", "min_cues": 15 } },
+    { "id": "captions-cover", "description": "Captions run through the clip, not just part of it", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
+    { "id": "captions-on-picture", "description": "No caption sits over a gap or past the end (stale cues from before the cut)", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
+    { "id": "no-clipped-words", "description": "No word is cut off at any edit", "check": { "kind": "human" } },
+    { "id": "caption-accuracy", "description": "Caption text matches what she says, her name spelled right if it appears", "check": { "kind": "human" } }
+  ]
+}

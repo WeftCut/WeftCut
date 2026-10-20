@@ -1,0 +1,66 @@
+{
+  "fixtures": [
+    {
+      "id": "explainer-memory",
+      "kind": "teaching-explainer",
+      "title": "How does your memory work? (University of the Netherlands), 3:35 excerpt",
+      "source_url": "https://commons.wikimedia.org/wiki/File:How_does_your_memory_work.webm",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/7/7e/How_does_your_memory_work.webm",
+      "author": "Universiteit van Nederland (University of the Netherlands); speaker Dr. Lisa Genzel, Radboud University",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attribution": "\"How does your memory work\" by Universiteit van Nederland (speaker: Dr. Lisa Genzel, Radboud University), CC BY-SA 4.0, via Wikimedia Commons. Trimmed to 43.447 s + 215.2 s for the WeftCut bench.",
+      "ext": "webm",
+      "size_bytes": 98502302,
+      "sha1": "ede0a352164d322faf6e22ee736ac440da5c89ad",
+      "sha256": "14c1be79291f76d95d6a598594172f91ba1de2dd8295b70e71e37220de5d866d",
+      "trim": { "start_s": 43.447, "duration_s": 215.2, "mode": "stream-copy" },
+      "output_sha256": "0b01185743bbd0e38f318ac06a3772ef82244b84d9d35f4f5914abb20bbdb5b9",
+      "output_stream_sha256": {
+        "v": "1505456b2783d0ad822682d32a540643428030267948068c4a49d6fc70a66fba",
+        "a": "af0fe22d6ab946ab56f7b7af1470e1cc92dfffc85e58fd9af0a2d5c253a7b8d5"
+      },
+      "media": {
+        "duration_s": 215.214,
+        "on_grid_duration_us": 215200000,
+        "width": 1920,
+        "height": 1080,
+        "fps": { "num": 25, "den": 1 },
+        "video_codec": "vp9",
+        "audio_codec": "opus",
+        "size_bytes": 27613444
+      },
+      "notes": "English lecture from a virtual studio set: one speaker (Lisa Genzel) on camera, cutting between wide shots, a medium close-up to camera and shots of her beside a large slide screen (brain diagrams with labels, then photo/illustration slides). Not a literal screen recording, but long stretches are slide-led. Source window starts on a scene cut and keyframe at source 43.447 s, right at 'let's start at the very beginning: what is a memory', which skips the channel intro and the burned-in name lower third at source ~30 s, so the excerpt carries no on-screen name. Excerpt times (approximate, from the YouTube auto-captions on Commons, +/- 1 s): 0-3 wide establishing shot, speech from ~2.5; 3-22 medium close-up to camera; 22-64 neurons and networks (slide: brain network); ~64-131 first memory hub, the hippocampus ('the first hub is the hippocampus' ~71.5; patient example ~90-121); ~131-176 second hub, the cortex ('this is the second memory hub, the cortex' ~131); ~176-214.7 example of a city walk becoming a spatial map in the cortex, slide of a street photo and a route map. Speech ends at ~214.7; the last ~0.7 s is the next shot (wide), cut at 214.52. Pauses (silencedetect -34 dB, >= 0.4 s): about 60, mostly 0.5-2.0 s between sentences, e.g. 3.8-4.9, 11.6-12.8, 22.1-23.6, 40.1-41.8, 56.7-58.6, 69.7-71.7, 105.2-106.7, 165.3-167.2. Stream-copy trim; ffmpeg may print one 'Error parsing Opus packet header' warning, which is in the source and decodes fine."
+    },
+    {
+      "id": "talking-head-interview",
+      "kind": "talking-head",
+      "title": "WikiConference North America 2025 - Ann Matsuuchi - students have good experiences editing Wikipedia",
+      "source_url": "https://commons.wikimedia.org/wiki/File:WikiConference_North_America_-_2025_-_Ann_Matsuuchi_-_students_have_good_experiences_editing_Wikipedia.webm",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/d/d6/WikiConference_North_America_-_2025_-_Ann_Matsuuchi_-_students_have_good_experiences_editing_Wikipedia.webm",
+      "author": "Lane Rasberry (User:Bluerasberry); videography by Rabbit Hole Productions, LLC; organized by Wikimedia NYC",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "\"WikiConference North America - 2025 - Ann Matsuuchi - students have good experiences editing Wikipedia\" by Lane Rasberry (Bluerasberry), videography by Rabbit Hole Productions, LLC, CC BY 4.0, via Wikimedia Commons.",
+      "ext": "webm",
+      "size_bytes": 14596662,
+      "sha1": "f329d7133c5d4b19e058c8859888782defcf7d26",
+      "sha256": "ed6f1d66a5f595f9a98df837e1b8a724cf6470dc8bdf5292991ae4e305807733",
+      "output_stream_sha256": {
+        "v": "731ff4793334a1636b4a4a5dec7d8c47b027a00616fd71c4085e68cd18b6842d",
+        "a": "fddcd68ad4ca171be7f790bb70dacfd6707dc10709a2d89456a11356621f48ba"
+      },
+      "media": {
+        "duration_s": 151.541,
+        "on_grid_duration_us": 151317833,
+        "width": 1920,
+        "height": 1080,
+        "fps": { "num": 24000, "den": 1001 },
+        "video_codec": "av1",
+        "audio_codec": "opus",
+        "size_bytes": 14596662
+      },
+      "notes": "One continuous take, no cuts and no burned-in titles: Ann Matsuuchi seated, framed wide-ish in a glass-walled conference space, talking (slightly off-camera, interview style) about students editing Wikipedia. English, clear speech, no music. Used whole (no trim). Speech ends at ~151.28 s; on_grid_duration_us is 3628 frames at 24000/1001, which keeps the last word. Pauses (silencedetect -34 dB, >= 0.4 s), 23 of 0.40-0.87 s, ending at: 4.3, 8.8, 13.9, 22.8, 26.7, 40.7, 43.2, 51.2, 58.5, 63.8, 70.0, 74.1, 75.3, 82.0, 86.7, 93.4, 100.9, 106.9, 115.8, 123.0, 126.9, 134.5, 144.7 s; the longest are 13.1-13.9 (0.82 s), 25.9-26.7 (0.80 s) and 133.6-134.5 (0.87 s). Filler words were not verified (no local transcription when this was pinned). AV1 video: the app may route it through a proxy."
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "interview-social-cut",
+  "fixtures": ["talking-head-interview"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 24000, "den": 1001 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:talking-head-interview}" }, "as": "media" },
+    { "tool": "add_track", "args": { "label": "Interview" }, "as": "track" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:track.track_id}", "src_in_us": 0, "src_out_us": 151317833, "t_start_us": 0, "t_end_us": 151317833 } }
+  ],
+  "prompt": "I need a version of this interview for social media that's under a minute, somewhere between 45 and 60 seconds. Pick the strongest part of what she says, make sure it still makes sense on its own, and put captions on it since most people watch with the sound off.",
+  "checklist": [
+    { "id": "target-length", "description": "The programme lands between 45 and 60 s (a little slack either side)", "check": { "kind": "timeline_duration", "min_s": 43, "max_s": 61 } },
+    { "id": "footage-fills-it", "description": "Footage fills most of that length", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 40 } },
+    { "id": "no-gaps", "description": "No black holes between the kept segments", "check": { "kind": "no_gaps" } },
+    { "id": "av-sync", "description": "Each kept segment keeps its own sound", "check": { "kind": "av_sync" } },
+    { "id": "captions-present", "description": "Captions were added", "check": { "kind": "caption_track_present", "min_cues": 5 } },
+    { "id": "captions-cover", "description": "Captions run through the short cut", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
+    { "id": "captions-on-picture", "description": "No caption is left over cut material or past the end", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
+    { "id": "stands-alone", "description": "The selection makes one clear point and starts and ends on whole sentences", "check": { "kind": "human" } },
+    { "id": "no-clipped-words", "description": "No word is cut off at any edit", "check": { "kind": "human" } }
+  ]
+}

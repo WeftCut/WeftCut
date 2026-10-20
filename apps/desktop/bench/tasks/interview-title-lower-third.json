@@ -1,0 +1,23 @@
+{
+  "id": "interview-title-lower-third",
+  "fixtures": ["talking-head-interview"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 24000, "den": 1001 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:talking-head-interview}" }, "as": "media" },
+    { "tool": "add_track", "args": { "label": "Interview" }, "as": "track" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:track.track_id}", "src_in_us": 0, "src_out_us": 151317833, "t_start_us": 0, "t_end_us": 151317833 } }
+  ],
+  "prompt": "I'm posting this interview with Ann Matsuuchi from WikiConference North America 2025 on our channel. Can you give it a short title at the start, a lower third that introduces her by name when she starts talking, and captions all the way through? Leave the interview itself uncut.",
+  "checklist": [
+    { "id": "title-at-start", "description": "A title (text or animated overlay, not a caption) appears within the first 2 s and holds at least 1.5 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "layer_kind": ["Text", "Motif"], "caption": false, "starts_before_s": 2, "min_duration_s": 1.5 } } },
+    { "id": "lower-third-name", "description": "A non-caption overlay spells her name exactly", "check": { "kind": "text_layer_matching", "text_regex": "Ann Matsuuchi", "flags": "" } },
+    { "id": "lower-third-timing", "description": "The name appears in the first 20 s and stays up at least 3 s", "check": { "kind": "text_layer_matching", "text_regex": "Matsuuchi", "where": { "starts_before_s": 20, "min_duration_s": 3 } } },
+    { "id": "lower-third-placement", "description": "If the lower third is a text layer, it sits in the lower part of the frame", "check": { "kind": "layer_region", "where": { "layer_kind": ["Text", "Motif"], "caption": false, "text_regex": "Matsuuchi" }, "y": [0.55, 1.0], "require": "any" } },
+    { "id": "title-and-lower-third-separate", "description": "The title and the lower third are separate layers", "check": { "kind": "layer_count", "op": ">=", "n": 2, "where": { "layer_kind": ["Text", "Motif"], "caption": false } } },
+    { "id": "interview-uncut", "description": "All of the interview is still on the timeline", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 150.5 } },
+    { "id": "av-sync", "description": "Picture and sound still line up", "check": { "kind": "av_sync" } },
+    { "id": "captions-present", "description": "A caption track exists", "check": { "kind": "caption_track_present", "min_cues": 15 } },
+    { "id": "captions-cover", "description": "Captions run through the interview", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
+    { "id": "no-overlap-clutter", "description": "Title, lower third and captions don't sit on top of each other or on her face", "check": { "kind": "human" } }
+  ]
+}

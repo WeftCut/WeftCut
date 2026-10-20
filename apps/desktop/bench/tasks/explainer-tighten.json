@@ -1,0 +1,20 @@
+{
+  "id": "explainer-tighten",
+  "fixtures": ["explainer-memory"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 25, "den": 1 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:explainer-memory}" }, "as": "media" },
+    { "tool": "add_track", "args": { "label": "Lecture" }, "as": "track" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:track.track_id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
+  ],
+  "prompt": "This lecture excerpt runs about three and a half minutes and I need it closer to two and a half for a class module. Tighten it up: take out the pauses and anything that doesn't move the explanation forward, but keep the explanation complete and don't cut her off mid-sentence.",
+  "checklist": [
+    { "id": "target-length", "description": "The programme lands around two and a half minutes (140-170 s)", "check": { "kind": "timeline_duration", "min_s": 140, "max_s": 170 } },
+    { "id": "footage-fills-it", "description": "Footage fills the programme", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 138 } },
+    { "id": "no-gaps", "description": "No black holes between kept segments", "check": { "kind": "no_gaps" } },
+    { "id": "av-sync", "description": "Each kept segment keeps its own sound", "check": { "kind": "av_sync" } },
+    { "id": "explanation-complete", "description": "Still covers what a memory is, the hippocampus, the cortex and the map example, in order", "check": { "kind": "human" } },
+    { "id": "whole-sentences", "description": "No sentence is cut off mid-way and no word is clipped", "check": { "kind": "human" } },
+    { "id": "cuts-not-jarring", "description": "Cuts inside one shot don't jump awkwardly", "check": { "kind": "human" } }
+  ]
+}
