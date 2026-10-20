@@ -4,8 +4,8 @@
   "project": { "width": 1920, "height": 1080, "fps": { "num": 25, "den": 1 } },
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:explainer-memory}" }, "as": "media" },
-    { "tool": "add_track", "args": { "label": "Lecture" }, "as": "track" },
-    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:track.track_id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
+    { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:tracks[role=ARoll].id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
   ],
   "prompt": "Make this lecture excerpt work as a standalone clip. Put a title on it at the beginning, add a lower third introducing the speaker as Dr. Lisa Genzel, neuroscientist at Radboud University, when she's first on camera, and caption the whole thing.",
   "checklist": [

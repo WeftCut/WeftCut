@@ -19,6 +19,8 @@ interface Plan {
   skill: string
   out: string
   timeout_ms: number
+  media_timeout_ms: number
+  app_memory_mib?: number
   budget_usd?: number
 }
 
@@ -36,15 +38,17 @@ const runs: PlannedRun[] = loadTasks(plan.tasks).flatMap((task) =>
       const name = `${task.id}__${slug(plan.driver)}-${slug(model)}__r${i + 1}`
       return {
         run_id: `${plan.session}/${name}`, task, model, driver: plan.driver, skill_path: plan.skill,
-        out_dir: path.join(plan.out, name), timeout_ms: plan.timeout_ms,
+        out_dir: path.join(plan.out, name), timeout_ms: plan.timeout_ms, media_timeout_ms: plan.media_timeout_ms,
+        ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}),
         ...(plan.budget_usd !== undefined ? { budget_usd: plan.budget_usd } : {}),
       }
     })))
 
 for (const run of runs) {
   test(run.run_id, async () => {
-    // The agent's own budget plus app launch, setup and the closing snapshots.
-    test.setTimeout(run.timeout_ms + 5 * 60_000)
+    // The agent's own budget and the media wait, plus app launch, setup and
+    // the closing snapshots.
+    test.setTimeout(run.timeout_ms + run.media_timeout_ms + 5 * 60_000)
     const result = await runOne(run)
     process.stdout.write(summaryLine(result, run.out_dir) + '\n')
     if (!result.final_project) throw new Error(`run produced no evidence: ${result.error}`)

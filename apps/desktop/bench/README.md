@@ -28,6 +28,8 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--repeat` | `1` | Runs per (task, model). |
 | `--out` | `bench/results/` | Results root; each invocation gets a timestamped folder. |
 | `--timeout-min` | `20` | Wall clock per agent session. |
+| `--media-timeout-min` | `30` | Bound on the wait for imported media before the baseline. |
+| `--app-memory-mib` | app default | Pins the app's resource-policy memory (Settings → Resources). The default is 35% of host RAM. |
 | `--budget-usd` | none | Spend cap per session, for clients that enforce one. |
 
 Runs go one at a time. Each prints one summary line: verdict, cost, turns,
@@ -46,7 +48,8 @@ badly still counts as a completed run.
   "project": { "width": 1920, "height": 1080, "fps": { "num": 30, "den": 1 } },
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:fixture-id}" }, "as": "media1" },
-    { "tool": "add_video_layer", "args": { "media_id": "{ref:media1.media_id}" } }
+    { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media1.media_id}", "track_id": "{ref:tracks[role=ARoll].id}" } }
   ],
   "prompt": "what the user would type",
   "checklist": [{ "id": "…", "description": "…", "check": {} }]
@@ -55,11 +58,45 @@ badly still counts as a completed run.
 
 The runner calls `create_project` in a temp folder and then makes each `setup`
 call over its own MCP client, in order. `{fixture:<id>}` becomes the resolved
-path. `{ref:<as>.<field>}` becomes a field of an earlier call's structured
-result (dotted paths work). A string that is exactly one placeholder keeps the
-value's type, so numbers stay numbers. `fixtures/fixtures.mjs` and
+path. `{ref:<as>.<path>}` becomes part of an earlier call's result: its
+`structuredContent`, or its text parsed as JSON when the tool answers in text
+(`read_project` does). A path is dotted fields plus `[key=value]`, which picks
+the first array element whose `key` equals `value`. That is how footage goes
+onto the A roll, where a user would hand it over: `{ref:tracks[role=ARoll].id}`.
+A string that is exactly one placeholder keeps the value's type, so numbers
+stay numbers. `fixtures/fixtures.mjs` and
 `checklist.mjs` are optional. A task with no fixtures needs neither, and a
 missing checklist evaluator records `checklist: null`.
+
+After setup, the runner waits for the background jobs of every imported item
+before it takes the baseline (`mediaReady.ts`). Otherwise the agent would get
+media that is still being processed, and the run would measure the machine.
+For each pool item it waits on:
+
+- the hash (`file_hash_blake3` no longer `pending-…`);
+- thumbnails (`thumbnails_dir`, video only);
+- conform and waveform (`conform_path`, `waveform_path`, when the item has audio);
+- the proxies the decided `decode_route` calls for (`quick_proxy` unless
+  `bypass`, plus `full_proxy` for `proxied` / `native-sw`).
+
+A derivative counts as finished when its field is set, or when the app's
+`media:job_complete` / `media:job_error` event for that job arrives. A job the
+app reported as started and has not ended holds the wait, unless its kind has
+already landed: the timeline re-requests waveforms many times and the event
+counts do not always balance. Such jobs are listed in `media_wait.open_jobs`,
+and the raw event log is saved as `media-jobs.json`. A job that fails does not
+fail the run, because it is part of what the agent is handed; it is recorded.
+If nothing settles within `--media-timeout-min`, the run fails and the error
+names what was still pending. The governor's ledger is saved as
+`media-wait-diagnostics.json`.
+
+On a small host the jobs may never be admitted at all. The app's process tree
+(a GPU-less Linux renderer alone is close to 1 GB) can exceed the default
+allocation, and under memory pressure the resource governor holds every new
+job. When this happens, the timeout error says so; pass `--app-memory-mib`
+(e.g. 3072). The policy each run used is recorded as `app_resources` in
+`run.json`, so runs under different allocations are not mistaken for
+comparable ones.
 
 `smoke-*` tasks use synthetic layers only and exist to check the plumbing. They
 measure nothing.
@@ -73,12 +110,16 @@ One folder per run, `<out>/<timestamp>/<task>__<driver>-<model>__r<n>/`:
 | `run.json` | The result record (`drivers/types.ts` `RunResult`). Written even when the run fails, with `error` set. |
 | `transcript.jsonl` | The client's own event stream, as emitted (Claude: `stream-json`). |
 | `driver-stderr.log` | The client's stderr. |
+| `app.log` | The app's main-process stdout/stderr (job and admission messages). |
+| `media-jobs.json` | The `media:job_*` events recorded from setup to the baseline. |
 | `baseline.json` | `project://current` after setup, before the agent. |
 | `final.json` | `project://current` after the agent exits. |
 | `review-diff.json` | `diffProjects(baseline, final)`: what the agent changed, independent of what it says it changed (`final_message` in `run.json`). |
 | `workdir/` | Whatever the agent wrote in its working directory (a Motif package, for example), if anything. |
 
-`run.json` also carries `motifs`: catalog entries (`motifs://current`) the run
+`run.json` also carries `media_wait`: the wait in ms, how each item's
+derivatives ended (`landed` / `complete` / `failed`), and any job errors. It
+also carries `motifs`: catalog entries (`motifs://current`) the run
 added or changed, read from the app. `audit`, `frames` and `rounds` stay `null`
 until H1/H3.
 

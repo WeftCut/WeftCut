@@ -73,14 +73,38 @@ export function loadTasks(selectors: readonly string[], dir = TASKS_DIR): BenchT
   return [...picked.values()]
 }
 
-/** Substitute `{fixture:<id>}` and `{ref:<name>.<field>}` placeholders in a
+/** One step of a `{ref:…}` path: a field name, or `[key=value]` — the first
+ *  array element whose `key` reads as `value`. The selector is what reaches a
+ *  track by role (`tracks[role=ARoll].id`) without leaning on list order. */
+type RefStep = { field: string } | { where: [string, string] }
+
+function parseRefPath(path: string): RefStep[] {
+  const steps: RefStep[] = []
+  const re = /\[([^=\]]+)=([^\]]*)\]|([^.[\]]+)|\./gy
+  let m: RegExpExecArray | null
+  while (re.lastIndex < path.length && (m = re.exec(path))) {
+    if (m[1] !== undefined) steps.push({ where: [m[1], m[2] ?? ''] })
+    else if (m[3] !== undefined) steps.push({ field: m[3] })
+  }
+  if (re.lastIndex !== path.length) throw new Error(`{ref:${path}}: cannot parse the path`)
+  return steps
+}
+
+function walkRef(value: unknown, step: RefStep): unknown {
+  if ('field' in step) return (value as Record<string, unknown> | null | undefined)?.[step.field]
+  if (!Array.isArray(value)) return undefined
+  const [k, v] = step.where
+  return value.find((el) => String((el as Record<string, unknown> | null)?.[k]) === v)
+}
+
+/** Substitute `{fixture:<id>}` and `{ref:<name>.<path>}` placeholders in a
  *  setup call's args. A string that is exactly one placeholder takes the
  *  referenced value's own type (a numeric field stays a number); one embedded
  *  in longer text is spliced in as a string. */
 export function resolveArgs(
   value: unknown,
   fixtures: ReadonlyMap<string, string>,
-  refs: ReadonlyMap<string, Record<string, unknown>>,
+  refs: ReadonlyMap<string, unknown>,
 ): unknown {
   if (Array.isArray(value)) return value.map((v) => resolveArgs(v, fixtures, refs))
   if (value && typeof value === 'object')
@@ -92,12 +116,10 @@ export function resolveArgs(
       if (p === undefined) throw new Error(`{fixture:${key}} is not in the task's fixtures list`)
       return p
     }
-    const dot = key.indexOf('.')
-    const result = refs.get(dot < 0 ? key : key.slice(0, dot))
-    if (!result) throw new Error(`{ref:${key}} names no earlier setup call's \`as\``)
-    if (dot < 0) return result
-    const field = key.slice(dot + 1).split('.').reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], result)
-    if (field === undefined) throw new Error(`{ref:${key}}: the result has no such field (got ${JSON.stringify(result)})`)
+    const [first, ...rest] = parseRefPath(key)
+    if (!first || !('field' in first) || !refs.has(first.field)) throw new Error(`{ref:${key}} names no earlier setup call's \`as\``)
+    const field = rest.reduce<unknown>(walkRef, refs.get(first.field))
+    if (field === undefined) throw new Error(`{ref:${key}}: the result has no such field (got ${JSON.stringify(refs.get(first.field)).slice(0, 2000)})`)
     return field
   }
   const whole = /^\{(fixture|ref):([^}]+)\}$/.exec(value)

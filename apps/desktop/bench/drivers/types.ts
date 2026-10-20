@@ -7,6 +7,7 @@
 // client, never from the driver. So a second client is a new file here, not a
 // change to the runner, and nothing below may name a Claude-only concept.
 
+import type { MediaWait } from '../mediaReady'
 import type { BenchTask } from '../tasks'
 
 /** Where the agent reaches WeftCut: the app's streamable-HTTP MCP endpoint and
@@ -90,6 +91,12 @@ export interface RunResult {
    *  opening each diff. */
   review_diff_size: number | null
   checklist: unknown
+  /** How long setup's imports took to finish their background jobs before the
+   *  baseline, and how each derivative ended (`mediaReady.ts`). */
+  media_wait: MediaWait | null
+  /** The app's resource policy and the allocation derived from it — what
+   *  the media wait and every agent-started job ran under. */
+  app_resources: { policy: unknown; allocation: unknown } | null
   audit: null
   frames: null
   cost: { usd: number | null; turns: number | null }

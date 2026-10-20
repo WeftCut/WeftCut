@@ -15,11 +15,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { launchApp } from '../e2e/electron/helpers/driver'
+import { resourceDiagnostics } from '../e2e/electron/helpers/resourceDiagnostics'
 import { initEval } from '../src/renderer/eval'
 import { diffProjects } from '../src/main/state/reviewDiff'
 import { parseProject } from '../src/main/state/serialize'
 import type { WeftcutApi } from '../src/shared/ipc'
 import { driverNamed } from './drivers'
+import { mediaJobLog, recordMediaJobs, waitForMedia } from './mediaReady'
 import type { McpEndpoint, RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
 
@@ -34,10 +36,15 @@ export interface PlannedRun {
   skill_path: string
   out_dir: string
   timeout_ms: number
+  /** Bound on the wait for imported media's background jobs. */
+  media_timeout_ms: number
+  /** Pins the app's resource policy memory (Settings → Resources). Unset
+   *  keeps the app's own default, 35% of host RAM. */
+  app_memory_mib?: number
   budget_usd?: number
 }
 
-type McpCall = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
+type McpCall = (name: string, args: Record<string, unknown>) => Promise<unknown>
 
 /** A sibling module another ticket owns, loaded only if it exists yet — the
  *  runner must not need them to run a synthetic task. */
@@ -96,7 +103,7 @@ async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string
     if (!mod) throw new Error(`task ${task.id} needs fixtures but bench/fixtures/fixtures.mjs does not exist`)
     for (const id of task.fixtures) fixtures.set(id, await mod.resolveFixture(id))
   }
-  const refs = new Map<string, Record<string, unknown>>()
+  const refs = new Map<string, unknown>()
   for (const [i, step] of task.setup.entries()) {
     const args = resolveArgs(step.args ?? {}, fixtures, refs) as Record<string, unknown>
     const result = await call(step.tool, args).catch((e: Error) => {
@@ -126,7 +133,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     skill: null, app_revision: appRevision(),
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
-    motifs: null, workdir_copy: null, final_message: null, exit: null, error: null,
+    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, final_message: null, exit: null, error: null,
     started_at: startedAt.toISOString(), duration_ms: 0,
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-bench-'))
@@ -138,6 +145,11 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     const launched = await launchApp()
     app = launched.app
     const page = launched.page
+    // The main process's own log: job failures and admission waits show up
+    // here and nowhere the MCP client can see.
+    const appLog = fs.createWriteStream(path.join(plan.out_dir, 'app.log'))
+    app.process().stdout?.pipe(appLog)
+    app.process().stderr?.pipe(appLog)
     result.skill = { path: plan.skill_path, sha256: hashDir(plan.skill_path) }
     const driver = driverNamed(plan.driver)
     const mcp = (await page.evaluate(() => (window as unknown as { api: WeftcutApi }).api.mcp.getInfo())) as McpEndpoint
@@ -149,7 +161,16 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     const call: McpCall = async (name, args) => {
       const r = await c.callTool({ name, arguments: args })
       if (r.isError) throw new Error(JSON.stringify(r.content))
-      return (r.structuredContent ?? {}) as Record<string, unknown>
+      if (r.structuredContent) return r.structuredContent
+      // Some tools answer JSON as text (read_project's views do); setup refs
+      // must reach into those too, e.g. the A-roll track's id.
+      const text = (r.content as Array<{ type: string; text?: string }>).find((b) => b.type === 'text')?.text
+      if (text === undefined) return {}
+      try {
+        return JSON.parse(text) as unknown
+      } catch {
+        return text
+      }
     }
     const read = async (uri: string): Promise<unknown> => {
       const content = (await c.readResource({ uri })).contents[0]
@@ -158,7 +179,29 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     }
     const readMotifs = () => read('motifs://current') as Promise<Array<Record<string, unknown>>>
 
+    const invoke = (cmd: string, args: Record<string, unknown> = {}) =>
+      page.evaluate(([c, a]) => (window as unknown as { api: WeftcutApi }).api.backend.invoke(c, a), [cmd, args] as const)
+    if (plan.app_memory_mib !== undefined)
+      await invoke('app_settings_set', { patch: { resource_policy: { memory_mib: plan.app_memory_mib } } })
+    const settings = await invoke('app_settings_get') as { resource_policy?: unknown; resource_allocation?: unknown }
+    result.app_resources = { policy: settings.resource_policy ?? null, allocation: settings.resource_allocation ?? null }
+
+    await recordMediaJobs(page)
     await setUpProject(call, plan.task, path.join(scratch, 'projects'))
+    result.media_wait = await waitForMedia(page, () => read('project://media') as never, plan.media_timeout_ms)
+      .finally(async () => { writeJson(plan.out_dir, 'media-jobs.json', await mediaJobLog(page).catch(() => [])) })
+      .catch(async (e: Error) => {
+        // A stuck job is almost always the resource governor declining to
+        // admit it; its ledger says which limit.
+        const diag = await resourceDiagnostics(page).catch((d: Error) => ({ error: d.message }))
+        writeJson(plan.out_dir, 'media-wait-diagnostics.json', diag)
+        const status = (diag as { renderer?: { sampledStatus?: { pressure?: string; memory_mib?: number } } }).renderer?.sampledStatus
+        const alloc = (result.app_resources?.allocation as { memory_mib?: number } | null)?.memory_mib
+        if (status?.pressure === 'constrained')
+          e.message += `; the app reports memory pressure (process tree ${Math.round(status.memory_mib ?? 0)} MiB over its ` +
+            `${alloc ?? '?'} MiB allocation), so background jobs are not admitted — raise it with --app-memory-mib`
+        throw e
+      })
     const baselineWire = await read('project://current')
     result.baseline_project = writeJson(plan.out_dir, 'baseline.json', baselineWire)
     const motifsBefore = await readMotifs()
@@ -207,5 +250,6 @@ export function summaryLine(r: RunResult, outDir: string): string {
   const cost = r.cost.usd === null ? '—' : `$${r.cost.usd.toFixed(4)}`
   const verdict = r.error ? `ERROR ${r.error.split('\n')[0]}` : 'ok'
   return `[bench] ${r.task_id} · ${r.driver}/${r.model} · ${verdict} · cost ${cost} · turns ${r.cost.turns ?? '—'}` +
-    ` · diff ${r.review_diff_size ?? '—'} change(s) · ${Math.round(r.duration_ms / 1000)} s → ${outDir}`
+    ` · diff ${r.review_diff_size ?? '—'} change(s) · media wait ${r.media_wait ? `${Math.round(r.media_wait.waited_ms / 1000)} s` : '—'}` +
+    ` · ${Math.round(r.duration_ms / 1000)} s → ${outDir}`
 }
