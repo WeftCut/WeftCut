@@ -15,7 +15,7 @@ import { resourceDiagnostics } from '../../e2e/electron/helpers/resourceDiagnost
 import type { WeftcutApi } from '../../src/shared/ipc'
 import type { McpEndpoint } from '../drivers/types'
 import { mediaJobLog, recordMediaJobs } from '../mediaReady'
-import type { HostSession, HostStartOptions, TemplateMeta, TemplateStore } from './types'
+import type { FixtureMeta, HostSession, HostStartOptions, TemplateMeta, TemplateStore } from './types'
 
 const BENCH_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const APP_DIR = path.dirname(BENCH_DIR)
@@ -68,12 +68,23 @@ export const localTemplates: TemplateStore = {
   async get(key) {
     const dir = path.join(LOCAL_TEMPLATES_DIR, key)
     if (!fs.existsSync(path.join(dir, 'template.json'))) return null
+    const tasks = path.join(dir, 'tasks.txt')
     return {
       meta: JSON.parse(fs.readFileSync(path.join(dir, 'template.json'), 'utf8')) as TemplateMeta,
       baseline: JSON.parse(fs.readFileSync(path.join(dir, 'baseline.json'), 'utf8')),
+      tasks: fs.existsSync(tasks) ? fs.readFileSync(tasks, 'utf8').split('\n').filter(Boolean) : [],
     }
   },
-  async save(key, projectDir, meta, baseline) {
+  async label(key, taskId) {
+    const file = path.join(LOCAL_TEMPLATES_DIR, key, 'tasks.txt')
+    const tasks = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : []
+    if (!tasks.includes(taskId)) {
+      tasks.push(taskId)
+      fs.writeFileSync(file, tasks.join('\n') + '\n')
+    }
+    return tasks
+  },
+  async save(key, projectDir, meta, baseline, taskId) {
     const started = Date.now()
     const dir = path.join(LOCAL_TEMPLATES_DIR, key)
     const tmp = `${dir}.tmp`
@@ -87,6 +98,7 @@ export const localTemplates: TemplateStore = {
     })
     fs.writeFileSync(path.join(tmp, 'template.json'), JSON.stringify(meta, null, 2) + '\n')
     fs.writeFileSync(path.join(tmp, 'baseline.json'), JSON.stringify(baseline, null, 2) + '\n')
+    fs.writeFileSync(path.join(tmp, 'tasks.txt'), `${taskId}\n`)
     fs.rmSync(dir, { recursive: true, force: true })
     fs.renameSync(tmp, dir)
     return { ms: Date.now() - started, bytes: dirBytes(path.join(dir, 'project')) }
@@ -127,8 +139,10 @@ export async function startLocalHost(opts: HostStartOptions): Promise<HostSessio
       projectsDir: path.join(scratch, 'projects'),
       joinPath: (...p) => path.join(...p),
       async resolveFixtures(ids) {
-        const mod = await import(pathToFileURL(path.join(BENCH_DIR, 'fixtures', 'fixtures.mjs')).href) as { resolveFixture(id: string): Promise<string> }
-        return new Map(await Promise.all(ids.map(async (id) => [id, await mod.resolveFixture(id)] as [string, string])))
+        const mod = await import(pathToFileURL(path.join(BENCH_DIR, 'fixtures', 'fixtures.mjs')).href) as
+          { resolveFixtureWithMeta(id: string): Promise<{ path: string; meta: FixtureMeta }> }
+        const got = await Promise.all(ids.map(async (id) => [id, await mod.resolveFixtureWithMeta(id)] as const))
+        return { paths: new Map(got.map(([id, r]) => [id, r.path])), meta: Object.fromEntries(got.map(([id, r]) => [id, r.meta])) }
       },
       async appResources() {
         const s = await invoke('app_settings_get') as { resource_policy?: unknown; resource_allocation?: unknown }

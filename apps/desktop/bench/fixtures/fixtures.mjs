@@ -1,18 +1,28 @@
 // apps/desktop/bench/fixtures/fixtures.mjs
 //
 // Bench footage: public / CC files listed in fixtures.json, downloaded on first
-// use into a git-ignored cache, verified by sha256, and trimmed when the
-// fixture names a window. Nothing here is committed media.
+// use into a git-ignored cache, verified by sha256, trimmed when the fixture
+// names a window, then transcoded to an H.264/AAC MP4 — the file the bench
+// imports. Nothing here is committed media.
+//
+// Why the transcode: Commons serves VP9/AV1 WebM, which the app routes through
+// a full proxy. Users bring H.264, and a proxied source makes every preview,
+// Motif preview and export of a run slower than real footage would.
 //
 // Trust: a download is untrusted data. It lands in its own empty directory,
 // is hashed before anything reads it, and is only ever handed to ffmpeg /
 // ffprobe as a file argument (no shell). A hash mismatch throws.
 //
-// Trims are stream copies (no re-encode), so they are byte-for-byte
-// deterministic for one ffmpeg build. Another ffmpeg may lay the container out
-// differently; then the per-stream packet hashes (`output_stream_sha256`, the
-// ffmpeg `streamhash` muxer) decide: identical packets are accepted with a
-// warning, anything else throws.
+// What is pinned and what is recorded:
+//   - the SOURCE download: sha256, pinned in fixtures.json, checked every time;
+//   - the TRIM (a stream copy, deterministic for one ffmpeg build): its file
+//     sha256, or else its per-stream packet hashes (`trim.stream_sha256`, the
+//     ffmpeg `streamhash` muxer) — another ffmpeg may lay the container out
+//     differently but must copy identical packets;
+//   - the MP4: NOT pinnable, since x264/aac output differs across ffmpeg
+//     builds. Fetch records the parameters, the ffmpeg version and the
+//     output's sha256 in <cache>/<id>/fixture.json; run.json and the template
+//     key take them from there.
 
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -43,6 +53,11 @@ const HEX64 = /^[0-9a-f]{64}$/
 export function loadManifest() {
   const m = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
   if (!Array.isArray(m.fixtures)) throw new Error(`${MANIFEST_PATH}: expected { fixtures: [...] }`)
+  const t = m.transcode
+  if (!t || t.container !== 'mp4' || t.video?.encoder !== 'libx264' || t.audio?.encoder !== 'aac'
+    || !Number.isInteger(t.video.crf) || typeof t.video.preset !== 'string' || !(t.video.keyframe_interval_s > 0)
+    || !Number.isInteger(t.audio.bitrate) || !Number.isInteger(t.audio.sample_rate) || !Number.isInteger(t.audio.channels))
+    throw new Error(`${MANIFEST_PATH}: transcode must name mp4, libx264 { preset, crf, pix_fmt, keyframe_interval_s } and aac { bitrate, sample_rate, channels }`)
   for (const f of m.fixtures) {
     const where = `${MANIFEST_PATH}: fixture ${JSON.stringify(f.id)}`
     if (typeof f.id !== 'string' || !ID_RE.test(f.id)) throw new Error(`${where}: id must be kebab-case`)
@@ -51,13 +66,16 @@ export function loadManifest() {
     if (!/^[a-z0-9]+$/.test(f.ext ?? '')) throw new Error(`${where}: ext must be a bare extension`)
     for (const k of ['source_url', 'author', 'license', 'attribution'])
       if (typeof f[k] !== 'string' || !f[k].trim()) throw new Error(`${where}: ${k} is required`)
+    const fps = f.media?.fps
+    if (!Number.isInteger(fps?.num) || !Number.isInteger(fps?.den) || !(Number(f.media?.duration_s) > 0))
+      throw new Error(`${where}: media needs duration_s and fps { num, den } (the transcode keeps the source's rate)`)
     if (f.trim) {
       const { start_s, duration_s } = f.trim
       if (!(Number.isFinite(start_s) && start_s >= 0 && Number.isFinite(duration_s) && duration_s > 0))
         throw new Error(`${where}: trim needs start_s >= 0 and duration_s > 0`)
-      if (!HEX64.test(f.output_sha256 ?? '')) throw new Error(`${where}: a trimmed fixture pins output_sha256`)
-      if (!HEX64.test(f.output_stream_sha256?.v ?? '') || !HEX64.test(f.output_stream_sha256?.a ?? ''))
-        throw new Error(`${where}: a trimmed fixture pins output_stream_sha256 { v, a }`)
+      if (!HEX64.test(f.trim.sha256 ?? '')) throw new Error(`${where}: a trim pins its output sha256`)
+      if (!HEX64.test(f.trim.stream_sha256?.v ?? '') || !HEX64.test(f.trim.stream_sha256?.a ?? ''))
+        throw new Error(`${where}: a trim pins stream_sha256 { v, a }`)
     }
   }
   return m
@@ -139,9 +157,9 @@ async function streamHashes(file) {
   return out
 }
 
-/** Duration and stream kinds, as a playability check on the trimmed output. */
+/** Duration and stream kinds, as a playability check. */
 export async function probe(file) {
-  const { stdout } = await run(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,r_frame_rate', '-of', 'json', file], { maxBuffer: 1 << 20 })
+  const { stdout } = await run(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,pix_fmt,sample_rate,channels', '-of', 'json', file], { maxBuffer: 1 << 20 })
   const j = JSON.parse(stdout)
   return { duration_s: Number(j.format?.duration), streams: j.streams ?? [] }
 }
@@ -158,64 +176,139 @@ function trimArgs(src, out, trim) {
     '-avoid_negative_ts', 'make_zero', '-f', 'webm', out]
 }
 
-function trimmedPaths(f) {
+/** The MP4 transcode for fixture `f` under the manifest's `transcode` recipe:
+ *  constant frame rate at the source's own rate, a closed GOP every
+ *  `keyframe_interval_s` (no scene-cut keyframes, so the cadence is fixed),
+ *  AAC at a fixed rate and layout, faststart, no metadata. */
+export function transcodeArgs(src, out, f, t) {
+  const { num, den } = f.media.fps
+  const gop = Math.max(1, Math.round((t.video.keyframe_interval_s * num) / den))
+  return ['-nostdin', '-v', 'error', '-y', '-i', src,
+    '-map', '0:v:0', '-map', '0:a:0',
+    '-c:v', t.video.encoder, '-preset', t.video.preset, '-crf', String(t.video.crf), '-pix_fmt', t.video.pix_fmt,
+    '-r', `${num}/${den}`, '-g', String(gop), '-keyint_min', String(gop),
+    ...(t.video.scene_cut_keyframes ? [] : ['-sc_threshold', '0']),
+    '-c:a', t.audio.encoder, '-b:a', String(t.audio.bitrate), '-ar', String(t.audio.sample_rate), '-ac', String(t.audio.channels),
+    '-map_metadata', '-1', '-map_chapters', '-1',
+    '-movflags', t.movflags, '-f', 'mp4', out]
+}
+
+export async function ffmpegVersion() {
+  const { stdout } = await run(FFMPEG, ['-hide_banner', '-version'], { maxBuffer: 1 << 20 })
+  // `ffmpeg version 8.1.1-full_build-www.gyan.dev`, without the copyright tail.
+  return stdout.split(/\r?\n/)[0].replace(/\s+Copyright.*$/, '').trim()
+}
+
+function paths(f) {
   const dir = path.join(CACHE_DIR, f.id)
   return {
     dir,
-    out: path.join(dir, `${f.id}.${f.ext}`),
-    stamp: path.join(dir, 'verified.json'),
-    key: JSON.stringify({ sha256: f.sha256, trim: f.trim, output_sha256: f.output_sha256, output_stream_sha256: f.output_stream_sha256 }),
+    trimDir: path.join(dir, 'trim'),
+    out: path.join(dir, `${f.id}.mp4`),
+    meta: path.join(dir, 'fixture.json'),
   }
 }
 
-/** The trimmed file when a previous run verified it and it is unchanged since. */
-async function verifiedTrim(f) {
-  const { out, stamp, key } = trimmedPaths(f)
-  if (!fs.existsSync(out) || !fs.existsSync(stamp)) return null
-  const s = JSON.parse(fs.readFileSync(stamp, 'utf8'))
-  return s.key === key && (await sha256File(out)) === s.sha256 ? out : null
+/** What the MP4 depends on: a change to any of it means a new transcode. */
+function cacheKey(f, transcode, version) {
+  return JSON.stringify({ source_sha256: f.sha256, trim: f.trim ?? null, fps: f.media.fps, transcode, ffmpeg: version })
 }
 
-async function ensureTrimmed(f, src, log) {
-  const { dir, out, stamp, key } = trimmedPaths(f)
-  fs.rmSync(stamp, { force: true })
-  const part = path.join(dir, `${f.id}.part.${f.ext}`)
+/** Files of the earlier WebM layout (a trimmed .webm beside verified.json):
+ *  superseded by the MP4, removed so nothing imports them by accident. The
+ *  downloaded source stays. */
+function dropOldLayout(f) {
+  const { dir } = paths(f)
+  for (const name of [`${f.id}.webm`, 'verified.json']) fs.rmSync(path.join(dir, name), { force: true })
+}
+
+/** The trimmed WebM, verified against the trim's pins, in its own folder. */
+async function trimmed(f, src, log) {
+  const { trimDir } = paths(f)
+  fs.rmSync(trimDir, { recursive: true, force: true })
+  fs.mkdirSync(trimDir, { recursive: true })
+  const out = path.join(trimDir, `${f.id}.webm`)
   log(`  trimming ${f.id}: ${f.trim.start_s} s + ${f.trim.duration_s} s (stream copy)`)
   try {
-    await run(FFMPEG, trimArgs(src, part, f.trim))
+    await run(FFMPEG, trimArgs(src, out, f.trim))
   } catch (e) {
-    fs.rmSync(part, { force: true })
     throw new Error(`ffmpeg trim of ${f.id} failed: ${e.stderr?.trim() || e.message}`)
   }
-  const got = await sha256File(part)
-  if (got !== f.output_sha256) {
-    const hashes = await streamHashes(part)
-    if (hashes.v !== f.output_stream_sha256.v || hashes.a !== f.output_stream_sha256.a) {
-      fs.rmSync(part, { force: true })
-      throw new Error(`HASH MISMATCH for trimmed fixture ${f.id}: file sha256 ${got} (pinned ${f.output_sha256}) and stream hashes ${JSON.stringify(hashes)} (pinned ${JSON.stringify(f.output_stream_sha256)}). The source verified, so the local ffmpeg cut a different window; check its version or the trim parameters.`)
-    }
-    log(`  note: ${f.id} container bytes differ from the pinned file (another ffmpeg build), but every video and audio packet matches`)
+  const got = await sha256File(out)
+  if (got !== f.trim.sha256) {
+    const hashes = await streamHashes(out)
+    if (hashes.v !== f.trim.stream_sha256.v || hashes.a !== f.trim.stream_sha256.a)
+      throw new Error(`HASH MISMATCH for trimmed fixture ${f.id}: file sha256 ${got} (pinned ${f.trim.sha256}) and stream hashes ${JSON.stringify(hashes)} (pinned ${JSON.stringify(f.trim.stream_sha256)}). The source verified, so the local ffmpeg cut a different window; check its version or the trim parameters.`)
+    log(`  note: ${f.id} trim container bytes differ from the pinned file (another ffmpeg build), but every video and audio packet matches`)
   }
-  const p = await probe(part)
-  const want = f.media?.duration_s
-  if (!p.streams.some((s) => s.codec_type === 'video') || !p.streams.some((s) => s.codec_type === 'audio'))
-    throw new Error(`trimmed fixture ${f.id} lacks a video or audio stream: ${JSON.stringify(p.streams)}`)
-  if (Number.isFinite(want) && Math.abs(p.duration_s - want) > 0.5)
-    throw new Error(`trimmed fixture ${f.id} is ${p.duration_s} s long, expected ~${want} s`)
-  fs.renameSync(part, out)
-  fs.writeFileSync(stamp, JSON.stringify({ key, sha256: got, verified_at: new Date().toISOString() }, null, 2) + '\n')
   return out
 }
 
-/** Absolute path of the verified local file for fixture `id`; downloads,
- *  verifies and trims on first use. Throws on any hash mismatch. */
-export async function resolveFixture(id, { log = (m) => console.error(m) } = {}) {
+/** The recorded metadata of fixture `id` (fixture.json), or null before its
+ *  first fetch. */
+export function fixtureMeta(id) {
+  const { meta } = paths(fixtureEntry(id))
+  return fs.existsSync(meta) ? JSON.parse(fs.readFileSync(meta, 'utf8')) : null
+}
+
+/** The fixture's MP4 and its recorded metadata; downloads, verifies, trims and
+ *  transcodes on first use (or when the source, trim, recipe or ffmpeg build
+ *  changed). Throws on any hash mismatch. */
+export async function resolveFixtureWithMeta(id, { log = (m) => console.error(m) } = {}) {
   const f = fixtureEntry(id)
-  fs.mkdirSync(path.join(CACHE_DIR, f.id), { recursive: true })
-  if (f.trim) {
-    const ready = await verifiedTrim(f)
-    if (ready) return ready
-  }
+  const { transcode } = loadManifest()
+  const p = paths(f)
+  fs.mkdirSync(p.dir, { recursive: true })
+  dropOldLayout(f)
+  const version = await ffmpegVersion()
+  const key = cacheKey(f, transcode, version)
+  const prior = fixtureMeta(id)
+  if (prior && prior.key === key && fs.existsSync(p.out) && (await sha256File(p.out)) === prior.output.sha256)
+    return { path: p.out, meta: prior }
+
+  // The source is verified even when only the recipe changed: the MP4 is
+  // made from bytes checked now, not from whatever was cached.
   const src = await ensureSource(f, log)
-  return f.trim ? ensureTrimmed(f, src, log) : src
+  const input = f.trim ? await trimmed(f, src, log) : src
+  const part = path.join(p.dir, `${f.id}.part.mp4`)
+  const args = transcodeArgs(input, part, f, transcode)
+  log(`  transcoding ${f.id} to H.264/AAC MP4 (${transcode.video.preset}, crf ${transcode.video.crf})`)
+  const started = Date.now()
+  try {
+    await run(FFMPEG, args, { maxBuffer: 16 << 20 })
+  } catch (e) {
+    fs.rmSync(part, { force: true })
+    throw new Error(`ffmpeg transcode of ${f.id} failed: ${e.stderr?.trim() || e.message}`)
+  }
+  const transcodeMs = Date.now() - started
+  const pr = await probe(part)
+  const v = pr.streams.find((s) => s.codec_type === 'video')
+  const a = pr.streams.find((s) => s.codec_type === 'audio')
+  if (v?.codec_name !== 'h264' || a?.codec_name !== 'aac') {
+    fs.rmSync(part, { force: true })
+    throw new Error(`transcoded fixture ${f.id} is not H.264 + AAC: ${JSON.stringify(pr.streams)}`)
+  }
+  if (Math.abs(pr.duration_s - f.media.duration_s) > 0.5) {
+    fs.rmSync(part, { force: true })
+    throw new Error(`transcoded fixture ${f.id} is ${pr.duration_s} s long, expected ~${f.media.duration_s} s`)
+  }
+  const sha256 = await sha256File(part)
+  fs.renameSync(part, p.out)
+  if (f.trim) fs.rmSync(p.trimDir, { recursive: true, force: true })
+  const meta = {
+    id: f.id, key,
+    source: { url: f.file_url, sha256: f.sha256 },
+    trim: f.trim ?? null,
+    transcode: { ...transcode, ffmpeg_version: version, args: [...args.slice(0, 5), '<input>', ...args.slice(6, -1), '<output>'] },
+    output: { file: path.basename(p.out), sha256, bytes: fs.statSync(p.out).size, duration_s: pr.duration_s, streams: pr.streams },
+    transcode_ms: transcodeMs,
+    created_at: new Date().toISOString(),
+  }
+  fs.writeFileSync(p.meta, JSON.stringify(meta, null, 2) + '\n')
+  return { path: p.out, meta }
+}
+
+/** Absolute path of fixture `id`'s MP4 (resolveFixtureWithMeta's path). */
+export async function resolveFixture(id, opts) {
+  return (await resolveFixtureWithMeta(id, opts)).path
 }

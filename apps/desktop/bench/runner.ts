@@ -24,7 +24,7 @@ import type { HostSession, TemplateMeta } from './hosts/types'
 import { waitForMedia } from './mediaReady'
 import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
-import { compareBaselines, pinnedFixtureHash, templateKey } from './templates.mjs'
+import { compareBaselines, projectNameFor, templateKey } from './templates.mjs'
 
 const BENCH_DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -97,9 +97,9 @@ function writeJson(dir: string, name: string, value: unknown): string {
 /** The project and every setup call, made over the same authenticated MCP
  *  surface the agent will use — so a setup the agent could not have reached
  *  fails here, not as a mystery inside the run. */
-async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string, fixtures: ReadonlyMap<string, string>): Promise<void> {
+async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string, name: string, fixtures: ReadonlyMap<string, string>): Promise<void> {
   await call('create_project', {
-    parent_folder: parentFolder, name: task.id,
+    parent_folder: parentFolder, name,
     width: task.project.width, height: task.project.height, fps: task.project.fps,
   })
   const refs = new Map<string, unknown>()
@@ -212,7 +212,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
   fs.mkdirSync(plan.out_dir, { recursive: true })
   const result: RunResult = {
     run_id: plan.run_id, task_id: plan.task.id, model: plan.model, driver: plan.driver,
-    skill: null, app_revision: null, host: null, models: null, template: null, setup_check: null,
+    skill: null, app_revision: null, host: null, models: null, fixtures: null, template: null, setup_check: null,
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
     app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, exit: null, error: null,
@@ -262,15 +262,18 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     result.app_resources = await s.appResources()
     await s.jobEvents?.start()
 
-    // Fixtures resolve on the app's host ({fixture:id} is a path there).
-    const fixtures = await s.resolveFixtures(plan.task.fixtures)
-    const projectDir = s.joinPath(s.projectsDir, plan.task.id)
+    // Fixtures resolve on the app's host ({fixture:id} is the MP4 there),
+    // with what the fetch recorded about them (transcode, ffmpeg, sha256).
+    const { paths: fixtures, meta: fixtureMeta } = await s.resolveFixtures(plan.task.fixtures)
+    result.fixtures = Object.keys(fixtureMeta).length ? Object.fromEntries(Object.entries(fixtureMeta).map(([id, m]) => [id, {
+      file: m.output, transcode: m.transcode, source: m.source, trim: m.trim, created_at: m.created_at,
+    }])) : null
+    const projectName = projectNameFor(plan.task)
+    const projectDir = s.joinPath(s.projectsDir, projectName)
     // A template only pays where there is media to settle.
-    let template: { key: string; parts: Record<string, unknown>; fresh: boolean; stored: { meta: TemplateMeta; baseline: unknown } | null } | null = null
+    let template: { key: string; parts: Record<string, unknown>; fresh: boolean; stored: { meta: TemplateMeta; baseline: unknown; tasks: string[] } | null } | null = null
     if (plan.task.fixtures.length) {
-      const fx = await optionalModule<{ loadManifest(): { fixtures: Array<{ id: string; sha256: string; output_sha256?: string }> } }>('fixtures/fixtures.mjs')
-      const manifest = fx!.loadManifest()
-      const fixtureHashes = Object.fromEntries(plan.task.fixtures.map((id) => [id, pinnedFixtureHash(manifest.fixtures.find((f) => f.id === id)!)]))
+      const fixtureHashes = Object.fromEntries(plan.task.fixtures.map((id) => [id, fixtureMeta[id]!.output.sha256]))
       const { key, parts } = templateKey({ task: plan.task, fixtureHashes, app: s.app, host: s.hostId })
       const stored = plan.rebuild_templates ? null : await s.templates.get(key)
       template = { key, parts, fresh: !stored, stored }
@@ -280,9 +283,11 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     if (template?.stored) {
       const restored = await s.templates.restore(template.key, projectDir)
       await call('open_project', { path: projectDir })
-      result.template = { key: template.key, fresh_build: false, restore_ms: restored.ms, bytes: restored.bytes, built_at: template.stored.meta.created_at, build_media_wait_ms: template.stored.meta.media_wait_ms }
+      const tasks = await s.templates.label(template.key, plan.task.id)
+      result.template = { key: template.key, fresh_build: false, restore_ms: restored.ms, bytes: restored.bytes, built_at: template.stored.meta.created_at,
+        build_media_wait_ms: template.stored.meta.media_wait_ms, tasks }
     } else {
-      await setUpProject(call, plan.task, s.projectsDir, fixtures)
+      await setUpProject(call, plan.task, s.projectsDir, projectName, fixtures)
       result.template = template
         ? { key: template.key, fresh_build: true, ...(plan.rebuild_templates ? { forced: true } : {}) }
         : { key: null, reason: 'task has no fixtures: nothing to settle' }
@@ -318,8 +323,8 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         // Autosave debounces 500 ms; let the settled state reach project.json.
         await new Promise((r) => setTimeout(r, 2_000))
         const meta: TemplateMeta = { key: template.key, parts: template.parts, project_dir: projectDir, created_at: new Date().toISOString(), media_wait_ms: result.media_wait.waited_ms }
-        const saved = await s.templates.save(template.key, projectDir, meta, baselineWire)
-        Object.assign(result.template, { saved_ms: saved.ms, bytes: saved.bytes })
+        const saved = await s.templates.save(template.key, projectDir, meta, baselineWire, plan.task.id)
+        Object.assign(result.template, { saved_ms: saved.ms, bytes: saved.bytes, tasks: [plan.task.id] })
       } else {
         const cmp = compareBaselines(template.stored!.baseline, template.stored!.meta.project_dir, baselineWire, projectDir)
         Object.assign(result.template, { baseline_equivalent: cmp.equivalent, ...(cmp.equivalent ? {} : { differences: cmp.differences }) })

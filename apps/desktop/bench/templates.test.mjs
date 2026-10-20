@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canonicalJson, compareBaselines, normalizeBaseline, pinnedFixtureHash, templateKey } from './templates.mjs'
+import { canonicalJson, compareBaselines, normalizeBaseline, projectNameFor, templateKey } from './templates.mjs'
 
 const task = {
   id: 'explainer-tighten', fixtures: ['explainer-memory'], project: { width: 1920, height: 1080, fps: { num: 25, den: 1 } },
@@ -11,26 +11,29 @@ const task = {
 }
 const base = { task, fixtureHashes: { 'explainer-memory': 'f'.repeat(64) }, app: { revision: 'abc', build: 'b1' }, host: 'local' }
 
-test('templateKey: stable, ignores prompt/checklist and key order', () => {
+test('templateKey: by setup content, shared across tasks, ignores prompt/checklist and key order', () => {
   const k1 = templateKey(base).key
-  assert.match(k1, /^explainer-tighten-[0-9a-f]{16}$/)
-  assert.equal(templateKey({ ...base, task: { ...task, prompt: 'other', checklist: [] } }).key, k1)
-  const reordered = { setup: task.setup, project: { fps: { den: 1, num: 25 }, height: 1080, width: 1920 }, fixtures: task.fixtures, id: task.id }
+  assert.match(k1, /^explainer-memory-[0-9a-f]{16}$/)
+  // Another task with the same setup lands on the same template.
+  assert.equal(templateKey({ ...base, task: { ...task, id: 'explainer-chapter-callouts', prompt: 'other', checklist: [] } }).key, k1)
+  const reordered = { setup: task.setup, project: { fps: { den: 1, num: 25 }, height: 1080, width: 1920 }, fixtures: task.fixtures, id: 'x' }
   assert.equal(templateKey({ ...base, task: reordered }).key, k1)
 })
 
-test('templateKey: changes with setup, fixture bytes, app build and host', () => {
+test('templateKey: changes with setup, project, fixture output bytes, app build and host', () => {
   const k1 = templateKey(base).key
   assert.notEqual(templateKey({ ...base, task: { ...task, setup: [] } }).key, k1)
+  assert.notEqual(templateKey({ ...base, task: { ...task, project: { ...task.project, width: 1280 } } }).key, k1)
   assert.notEqual(templateKey({ ...base, fixtureHashes: { 'explainer-memory': 'e'.repeat(64) } }).key, k1)
   assert.notEqual(templateKey({ ...base, app: { revision: 'abc', build: 'b2' } }).key, k1)
   assert.notEqual(templateKey({ ...base, host: 'remote:PC' }).key, k1)
-  assert.throws(() => templateKey({ ...base, fixtureHashes: {} }), /no pinned hash/)
+  assert.throws(() => templateKey({ ...base, fixtureHashes: {} }), /no output hash/)
 })
 
-test('pinnedFixtureHash prefers the trimmed output', () => {
-  assert.equal(pinnedFixtureHash({ sha256: 'a', output_sha256: 'b' }), 'b')
-  assert.equal(pinnedFixtureHash({ sha256: 'a' }), 'a')
+test('projectNameFor: from the fixtures, else the task', () => {
+  assert.equal(projectNameFor(task), 'explainer-memory')
+  assert.equal(projectNameFor({ id: 't', fixtures: ['b', 'a'] }), 'a--b')
+  assert.equal(projectNameFor({ id: 'smoke-title-card', fixtures: [] }), 'smoke-title-card')
 })
 
 test('canonicalJson sorts keys at every depth', () => {

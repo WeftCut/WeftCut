@@ -53,7 +53,7 @@ badly still counts as a completed run.
 ```jsonc
 {
   "id": "kebab-id",
-  "fixtures": ["fixture-id"],           // resolveFixture(id) in fixtures/fixtures.mjs → absolute path
+  "fixtures": ["fixture-id"],           // resolveFixture(id) in fixtures/fixtures.mjs → the MP4's path on the app's host
   "project": { "width": 1920, "height": 1080, "fps": { "num": 30, "den": 1 } },
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:fixture-id}" }, "as": "media1" },
@@ -66,8 +66,11 @@ badly still counts as a completed run.
 ```
 
 The runner calls `create_project` in a temp folder and then makes each `setup`
-call over its own MCP client, in order. `{fixture:<id>}` becomes the resolved
-path. `{ref:<as>.<path>}` becomes part of an earlier call's result: its
+call over its own MCP client, in order. The project is named after the task's
+fixtures (`explainer-memory`), or after the task when it has none, so tasks
+with the same setup build the same project and the agent does not read its
+task's id off it. `{fixture:<id>}` becomes the fixture's MP4 on the app's host
+(below). `{ref:<as>.<path>}` becomes part of an earlier call's result: its
 `structuredContent`, or its text parsed as JSON when the tool answers in text
 (`read_project` does). A path is dotted fields plus `[key=value]`, which picks
 the first array element whose `key` equals `value`. That is how footage goes
@@ -76,6 +79,37 @@ A string that is exactly one placeholder keeps the value's type, so numbers
 stay numbers. `fixtures/fixtures.mjs` and
 `checklist.mjs` are optional. A task with no fixtures needs neither, and a
 missing checklist evaluator records `checklist: null`.
+
+### Fixtures
+
+`fixtures/fixtures.json` lists public / CC footage (credits in
+`fixtures/ATTRIBUTION.md`); `node bench/fixtures/fetch.mjs --all` fetches it,
+and the runner does on first use (on a remote host, there). Per fixture:
+
+1. the source download, checked against its pinned sha256;
+2. the trim, when the fixture names a window: a stream copy, checked against
+   its pinned sha256 or, from another ffmpeg build, its per-stream packet
+   hashes;
+3. a transcode to the file the bench imports: H.264 (libx264, `yuv420p`,
+   the source's own constant frame rate, a closed GOP every 2 s, no scene-cut
+   keyframes, fixed preset and CRF) + AAC 48 kHz stereo, `+faststart`, no
+   metadata (`transcode` in `fixtures.json`).
+
+Commons serves only VP9/AV1 WebM, which the app routes through a full proxy:
+unlike users' footage, and slow for every preview and export in a run. As
+H.264 MP4 both fixtures take the `direct-export` route with d3d11va decode on
+the Windows host.
+
+The transcode cannot be pinned (x264/aac output differs across ffmpeg builds),
+so it is recorded instead: `<cache>/<id>/fixture.json` holds the parameters,
+the ffmpeg version and the MP4's sha256, and the MP4 is rebuilt whenever the
+source, trim, recipe or ffmpeg build changes. Each run copies that record
+into `run.json` `fixtures`, and template keys use the MP4's sha256. On the
+Windows host (ffmpeg 8.1.1, i5-13400) the transcode took 47 s for the interview
+(34.6 MB) and 141 s for the explainer (79.5 MB); a cached fetch re-hashes in
+about 4 s, and a rebuild with the same ffmpeg produced the same bytes.
+
+### Media readiness
 
 After setup, the runner waits for the background jobs of every imported item
 before it takes the baseline (`mediaReady.ts`). Otherwise the agent would get
@@ -124,26 +158,29 @@ measure nothing.
 ## Project templates
 
 Setting a fixture task up means importing the footage and waiting for its
-proxies, waveform, thumbnails and conformed audio: 85 s for the interview and
-~16 min for the explainer on a two-core host. That is the same work every run,
+proxies, waveform, thumbnails and conformed audio (on the Windows host: 16 s
+for the interview MP4, 19 s for the explainer MP4; minutes on a two-core
+Linux host). That is the same work every run,
 so after the first fresh setup the runner saves the settled project folder
 (its `Cache/` holds every derivative; `Backups/` and `Logs/` are left out) as a
 template, and later runs copy the template and `open_project` it instead. The
 app re-adopts the cached derivatives by content hash on open, so the media wait
-drops to under a second (interview, local: 85 s → 0.6 s; whole stub run
-97 s → 9 s).
+drops to well under a second (0.06 s on the Windows host).
 
-The key (`templates.mjs`) is the task's setup-relevant fields (`id`,
-`fixtures`, `project`, `setup`; prompt and checklist edits do not invalidate
-it), each fixture's pinned hash from `fixtures.json`, the app build (`git
-describe` plus a fingerprint of `out/` and the native addons) and the host.
-Templates live on the host that built them: `bench/.cache/templates/<key>/`
-locally, `<bench root>\templates\<key>\` on a remote host. Each holds
-`project/`, `template.json` and the fresh build's `baseline.json`.
+The key (`templates.mjs`) is the setup's content, not the task: the project
+settings, the setup calls, the project name (from the fixtures) and each
+fixture's MP4 sha256, plus the app build (`git describe` plus a fingerprint of
+`out/` and the native addons) and the host. Tasks with identical setups share
+one template: the three explainer tasks share `explainer-memory-<hash>`, the
+three interview tasks `talking-head-interview-<hash>`. Prompt and checklist
+edits never invalidate one. Templates live on the host that built them:
+`bench/.cache/templates/<key>/` locally, `<bench root>\templates\<key>\` on a
+remote host. Each holds `project/`, `template.json`, the fresh build's
+`baseline.json` and `tasks.txt`, the label listing every task that used it.
 
 After a copy is opened, its baseline is compared with the fresh build's,
 modulo the project folder's location and `modified_at`. `run.json` `template`
-records `key`, `fresh_build`, the copy time and size, and
+records `key`, `fresh_build`, `tasks`, the copy time and size, and
 `baseline_equivalent` (with `differences` when it is not). `--rebuild-templates`
 forces fresh setups and replaces the templates. Tasks without fixtures always
 set up fresh (`template.key: null`). Delete a template folder to drop it.
@@ -163,7 +200,7 @@ Needs, on the host: OpenSSH server with sftp and **TCP forwarding allowed**
 (`AllowTcpForwarding local` or `yes` in `C:\ProgramData\ssh\sshd_config`;
 `PermitOpen 127.0.0.1:*` in a `Match User` block narrows it to loopback), the
 checkout built (`out\main\index.js`, native addons, `node_modules\electron`),
-`node` (fixtures), ffmpeg/ffprobe on `PATH` (fixture trims), and the user
+`node` (fixtures), ffmpeg with libx264 and ffprobe on `PATH` (fixture trims and transcodes), and the user
 logged on at the console. Here: `ssh`/`sftp`. No `DISPLAY` and no local build
 are needed.
 
@@ -202,8 +239,8 @@ Everything the bench creates on the host is under `%USERPROFILE%\weftcut-bench\`
    runner's client (and the proxy's) send it explicitly. A host that refuses
    forwarding fails here with that reason.
 4. **Fixtures** are fetched and verified on the host by the shipped
-   `fetch.mjs` into `cache\fixtures\`; `{fixture:id}` resolves to that
-   Windows path.
+   `fetch.mjs` into `cache\fixtures\` (sources, verified, and the MP4s);
+   `{fixture:id}` resolves to the MP4's Windows path.
 5. **The agent** gets a local MCP proxy, not the tunnel (below).
 6. **Teardown.** Close MCP and the proxy, stop the app (graceful, then forced)
    — only the recorded pid, only if its command line names the run's profile,
@@ -265,7 +302,8 @@ One folder per run, `<out>/<timestamp>/<task>__<driver>-<model>__r<n>/`:
 derivatives ended (`landed` / `complete` / `failed`), and any job errors. It
 also carries `motifs`: catalog entries (`motifs://current`) the run
 added or changed, read from the app; `host` (where the app ran, and for a
-remote host its launch, GPU status and teardown), `models`, `template`,
+remote host its launch, GPU status and teardown), `models`, `fixtures` (each
+MP4's sha256, transcode parameters and ffmpeg version), `template`,
 `setup_check` (A-roll clips in the baseline, setup time) and `probes`.
 `audit`, `frames` and `rounds` stay `null` until H1/H3.
 
