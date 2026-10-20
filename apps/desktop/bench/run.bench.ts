@@ -7,7 +7,7 @@
 
 import { test } from '@playwright/test'
 import path from 'node:path'
-import { runOne, summaryLine, type PlannedRun } from './runner'
+import { runOne, summaryLine, type HostPlan, type PlannedRun } from './runner'
 import { loadTasks } from './tasks'
 
 interface Plan {
@@ -22,6 +22,9 @@ interface Plan {
   media_timeout_ms: number
   app_memory_mib?: number
   budget_usd?: number
+  host: HostPlan
+  rebuild_templates: boolean
+  probes: string[]
 }
 
 const raw = process.env.WEFTCUT_BENCH_PLAN
@@ -39,6 +42,7 @@ const runs: PlannedRun[] = loadTasks(plan.tasks).flatMap((task) =>
       return {
         run_id: `${plan.session}/${name}`, task, model, driver: plan.driver, skill_path: plan.skill,
         out_dir: path.join(plan.out, name), timeout_ms: plan.timeout_ms, media_timeout_ms: plan.media_timeout_ms,
+        host: plan.host, rebuild_templates: plan.rebuild_templates, probes: plan.probes,
         ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}),
         ...(plan.budget_usd !== undefined ? { budget_usd: plan.budget_usd } : {}),
       }

@@ -2,10 +2,11 @@
 //
 // `npm run bench -- --task <id|glob>[,…] --model <id>[,…] [--skill <dir>]
 //   [--driver claude] [--repeat N] [--out <dir>] [--timeout-min N] [--media-timeout-min N]
-//   [--app-memory-mib N] [--budget-usd X]`
+//   [--app-memory-mib N] [--budget-usd X] [--host local|remote] [--remote <alias>]
+//   [--remote-repo <dir>] [--keep-remote] [--rebuild-templates] [--probe transcribe]`
 //
-// Parses the matrix, runs the e2e preflight (built app, DISPLAY, ffmpeg on
-// PATH) and hands off to Playwright with bench/playwright.bench.config.ts —
+// Parses the matrix, runs the preflight (local host: the e2e one — built app,
+// DISPLAY, ffmpeg on PATH; remote host: ssh and the alias) and hands off to Playwright with bench/playwright.bench.config.ts —
 // Playwright because the e2e launcher it reuses needs a test context and its
 // TypeScript transform. Task selection itself happens in bench.run.ts, where
 // the TypeScript task loader lives.
@@ -24,7 +25,9 @@ const REPO = path.resolve(ROOT, '..', '..')
 
 const USAGE = `usage: npm run bench -- --task <id|glob>[,...] --model <id>[,...] [--skill <dir>]
        [--driver claude] [--repeat N] [--out <dir>] [--timeout-min N] [--media-timeout-min N]
-       [--app-memory-mib N] [--budget-usd X]`
+       [--app-memory-mib N] [--budget-usd X]
+       [--host local|remote] [--remote <ssh alias>] [--remote-repo <checkout on the host>] [--keep-remote]
+       [--rebuild-templates] [--probe transcribe]`
 
 function main(argv) {
   let values
@@ -44,6 +47,15 @@ function main(argv) {
         'media-timeout-min': { type: 'string', default: '30' },
         'app-memory-mib': { type: 'string' },
         'budget-usd': { type: 'string' },
+        // Where the app runs. `--remote <alias>` alone implies `--host remote`;
+        // WEFTCUT_BENCH_REMOTE / WEFTCUT_BENCH_REMOTE_REPO are the defaults.
+        host: { type: 'string' },
+        remote: { type: 'string', default: process.env.WEFTCUT_BENCH_REMOTE },
+        'remote-repo': { type: 'string', default: process.env.WEFTCUT_BENCH_REMOTE_REPO },
+        'remote-node': { type: 'string', default: process.env.WEFTCUT_BENCH_REMOTE_NODE },
+        'keep-remote': { type: 'boolean', default: false },
+        'rebuild-templates': { type: 'boolean', default: false },
+        probe: { type: 'string', multiple: true },
         help: { type: 'boolean', short: 'h' },
       },
     }))
@@ -73,18 +85,39 @@ function main(argv) {
   if (appMemory !== undefined && !(Number.isInteger(appMemory) && appMemory >= 1024 && appMemory <= 262144))
     problems.push('--app-memory-mib must be an integer from 1024 to 262144')
   if (budget !== undefined && !(budget > 0)) problems.push('--budget-usd must be positive')
+  // `--remote <alias>` on the command line implies the remote host; the env
+  // default alone does not (it only supplies the alias for `--host remote`).
+  const hostKind = values.host ?? (argv.some((a) => a === '--remote' || a.startsWith('--remote=')) ? 'remote' : 'local')
+  if (!['local', 'remote'].includes(hostKind)) problems.push('--host must be local or remote')
+  if (hostKind === 'remote' && !values.remote) problems.push('--host remote needs --remote <ssh alias> (or WEFTCUT_BENCH_REMOTE)')
+  if (hostKind === 'remote' && !values['remote-repo']) problems.push('--host remote needs --remote-repo <the built WeftCut checkout on the host> (or WEFTCUT_BENCH_REMOTE_REPO)')
+  if (hostKind === 'local' && values['keep-remote']) problems.push('--keep-remote applies to --host remote only')
+  const probes = list(values.probe)
+  for (const p of probes) if (p !== 'transcribe') problems.push(`unknown --probe ${p} (have: transcribe)`)
   if (problems.length) {
     console.error(`[bench] ${problems.join('; ')}\n${USAGE}`)
     return 2
   }
 
-  const { env, errors, notes } = prepareE2EEnv({ ...process.env })
-  // The e2e notes about test tiers and the analyzer do not apply here; the
-  // ffmpeg one does (the app shells out to it on import).
-  for (const note of notes.filter((n) => /ffmpeg/i.test(n))) console.log(`[bench preflight] ${note}`)
-  if (errors.length) {
-    for (const error of errors) console.error(`[bench preflight] ${error}`)
-    return 1
+  let env = { ...process.env }
+  if (hostKind === 'local') {
+    const prepared = prepareE2EEnv(env)
+    env = prepared.env
+    // The e2e notes about test tiers and the analyzer do not apply here; the
+    // ffmpeg one does (the app shells out to it on import).
+    for (const note of prepared.notes.filter((n) => /ffmpeg/i.test(n))) console.log(`[bench preflight] ${note}`)
+    if (prepared.errors.length) {
+      for (const error of prepared.errors) console.error(`[bench preflight] ${error}`)
+      return 1
+    }
+  } else {
+    // The app, its build, ffmpeg and the fixtures are the host's business
+    // (checked there at the first run); here only ssh has to work.
+    const r = spawnSync('ssh', ['-G', values.remote], { encoding: 'utf8' })
+    if (r.error || r.status !== 0) {
+      console.error(`[bench preflight] ssh cannot resolve '${values.remote}': ${r.error?.message ?? r.stderr.trim()}`)
+      return 1
+    }
   }
   // One stamp for the whole invocation, fixed HERE: Playwright evaluates the
   // test file in more than one process, and every one of them must derive the
@@ -102,8 +135,14 @@ function main(argv) {
     media_timeout_ms: Math.round(mediaTimeoutMin * 60_000),
     ...(appMemory !== undefined ? { app_memory_mib: appMemory } : {}),
     ...(budget !== undefined ? { budget_usd: budget } : {}),
+    host: hostKind === 'remote'
+      ? { kind: 'remote', alias: values.remote, repo: values['remote-repo'], keep: values['keep-remote'],
+          ...(values['remote-node'] ? { node: values['remote-node'] } : {}) }
+      : { kind: 'local' },
+    rebuild_templates: values['rebuild-templates'],
+    probes,
   }
-  console.log(`[bench] results → ${plan.out}`)
+  console.log(`[bench] results → ${plan.out}${hostKind === 'remote' ? ` · app on ${values.remote}` : ''}`)
   const result = spawnSync(
     process.execPath,
     [require.resolve('@playwright/test/cli'), 'test', '-c', path.join(BENCH, 'playwright.bench.config.ts')],

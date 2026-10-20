@@ -1,31 +1,37 @@
 // apps/desktop/bench/runner.ts
 //
-// One bench run: launch the built app, set the task's project up over a real
-// MCP client, snapshot it, hand the session to a driver, snapshot again and
-// record what changed. Everything measured here comes from the app — the
-// agent's own report is kept, but only beside the evidence (ADR 0123: no
-// self-certification).
+// One bench run: start the app on its host (this machine, or a remote one
+// over SSH: hosts/), set the task's project up over a real MCP client — or
+// open a settled copy of it from the template store — snapshot it, hand the
+// session to a driver, snapshot again and record what changed. Everything
+// measured here comes from the app — the agent's own report is kept, but only
+// beside the evidence (ADR 0123: no self-certification).
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { launchApp } from '../e2e/electron/helpers/driver'
-import { resourceDiagnostics } from '../e2e/electron/helpers/resourceDiagnostics'
 import { initEval } from '../src/renderer/eval'
 import { diffProjects } from '../src/main/state/reviewDiff'
 import { parseProject } from '../src/main/state/serialize'
-import type { WeftcutApi } from '../src/shared/ipc'
 import { driverNamed } from './drivers'
-import { mediaJobLog, recordMediaJobs, waitForMedia } from './mediaReady'
-import type { McpEndpoint, RunResult } from './drivers/types'
+import { startLocalHost } from './hosts/local'
+import { runSlug, startRemoteHost } from './hosts/remote'
+import type { HostSession, TemplateMeta } from './hosts/types'
+import { waitForMedia } from './mediaReady'
+import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
+import { compareBaselines, pinnedFixtureHash, templateKey } from './templates.mjs'
 
 const BENCH_DIR = path.dirname(fileURLToPath(import.meta.url))
+
+/** Where the app runs. `remote` is a Windows host reached by an ssh alias. */
+export type HostPlan =
+  | { kind: 'local' }
+  | { kind: 'remote'; alias: string; repo: string; keep: boolean; node?: string }
 
 /** One cell of the matrix, as `run.mjs` plans it. */
 export interface PlannedRun {
@@ -42,6 +48,13 @@ export interface PlannedRun {
    *  keeps the app's own default, 35% of host RAM. */
   app_memory_mib?: number
   budget_usd?: number
+  host: HostPlan
+  /** Set the project up from scratch even when a template exists (and
+   *  replace the template). */
+  rebuild_templates: boolean
+  /** Extra measurements after the evidence is taken: `transcribe` times one
+   *  transcribe_clip on the A-roll clip (no model spend). */
+  probes: string[]
 }
 
 type McpCall = (name: string, args: Record<string, unknown>) => Promise<unknown>
@@ -66,14 +79,6 @@ function hashDir(dir: string): string {
   return h.digest('hex')
 }
 
-function appRevision(): string | null {
-  try {
-    return execFileSync('git', ['describe', '--always', '--dirty'], { cwd: BENCH_DIR, encoding: 'utf8' }).trim()
-  } catch {
-    return null
-  }
-}
-
 /** Catalog entries keyed by id. A Motif the agent opened, edited or installed
  *  shows up as an id the baseline lacked or an entry whose record moved. */
 function diffMotifs(before: Array<Record<string, unknown>>, after: Array<Record<string, unknown>>) {
@@ -92,17 +97,11 @@ function writeJson(dir: string, name: string, value: unknown): string {
 /** The project and every setup call, made over the same authenticated MCP
  *  surface the agent will use — so a setup the agent could not have reached
  *  fails here, not as a mystery inside the run. */
-async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string): Promise<void> {
+async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string, fixtures: ReadonlyMap<string, string>): Promise<void> {
   await call('create_project', {
     parent_folder: parentFolder, name: task.id,
     width: task.project.width, height: task.project.height, fps: task.project.fps,
   })
-  const fixtures = new Map<string, string>()
-  if (task.fixtures.length) {
-    const mod = await optionalModule<{ resolveFixture(id: string): Promise<string> }>('fixtures/fixtures.mjs')
-    if (!mod) throw new Error(`task ${task.id} needs fixtures but bench/fixtures/fixtures.mjs does not exist`)
-    for (const id of task.fixtures) fixtures.set(id, await mod.resolveFixture(id))
-  }
   const refs = new Map<string, unknown>()
   for (const [i, step] of task.setup.entries()) {
     const args = resolveArgs(step.args ?? {}, fixtures, refs) as Record<string, unknown>
@@ -125,41 +124,55 @@ function copyWorkdir(workdir: string, dest: string): string | null {
   return path.basename(dest)
 }
 
+type Wire = { root_id?: string; compositions?: Record<string, { tracks?: Array<{ role?: string; layers?: Array<{ id: string; params?: { kind?: string } }> }> }> }
+
+/** The A-roll VideoClip layers of a project snapshot: where setup must have
+ *  put the footage. */
+function aRollClips(wire: unknown): string[] {
+  const w = wire as Wire
+  const root = w.root_id ? w.compositions?.[w.root_id] : undefined
+  return (root?.tracks ?? []).filter((t) => t.role === 'ARoll')
+    .flatMap((t) => t.layers ?? []).filter((l) => l.params?.kind === 'VideoClip').map((l) => l.id)
+}
+
+function startHost(plan: PlannedRun, workdir: string): Promise<HostSession> {
+  const base = { run_slug: runSlug(plan.run_id), out_dir: plan.out_dir, workdir, ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}) }
+  return plan.host.kind === 'local' ? startLocalHost(base) : startRemoteHost({ ...base, ...plan.host })
+}
+
 export async function runOne(plan: PlannedRun): Promise<RunResult> {
   const startedAt = new Date()
   fs.mkdirSync(plan.out_dir, { recursive: true })
   const result: RunResult = {
     run_id: plan.run_id, task_id: plan.task.id, model: plan.model, driver: plan.driver,
-    skill: null, app_revision: appRevision(),
+    skill: null, app_revision: null, host: null, models: null, template: null, setup_check: null,
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
-    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, final_message: null, exit: null, error: null,
+    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, exit: null, error: null,
     started_at: startedAt.toISOString(), duration_ms: 0,
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-bench-'))
   const workdir = path.join(scratch, 'work')
   fs.mkdirSync(workdir)
-  let app: Awaited<ReturnType<typeof launchApp>>['app'] | undefined
+  let session: HostSession | undefined
   let client: Client | undefined
   try {
-    const launched = await launchApp()
-    app = launched.app
-    const page = launched.page
-    // The main process's own log: job failures and admission waits show up
-    // here and nowhere the MCP client can see.
-    const appLog = fs.createWriteStream(path.join(plan.out_dir, 'app.log'))
-    app.process().stdout?.pipe(appLog)
-    app.process().stderr?.pipe(appLog)
+    session = await startHost(plan, workdir)
+    const s = session
+    result.host = s.record
+    result.app_revision = s.app.revision
+    result.models = s.models ?? null
     result.skill = { path: plan.skill_path, sha256: hashDir(plan.skill_path) }
     const driver = driverNamed(plan.driver)
-    const mcp = (await page.evaluate(() => (window as unknown as { api: WeftcutApi }).api.mcp.getInfo())) as McpEndpoint
     client = new Client({ name: 'weftcut-bench', version: '1' }, { capabilities: {} })
-    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.url), {
-      requestInit: { headers: { Authorization: `Bearer ${mcp.bearer_token}` } },
+    await client.connect(new StreamableHTTPClientTransport(new URL(s.runnerTransport.url), {
+      requestInit: { headers: { Authorization: `Bearer ${s.runnerTransport.bearer_token}` } },
+      ...(s.runnerTransport.fetch ? { fetch: s.runnerTransport.fetch } : {}),
     }))
     const c = client
     const call: McpCall = async (name, args) => {
-      const r = await c.callTool({ name, arguments: args })
+      // Setup imports and transcription can outlast the SDK's 60 s default.
+      const r = await c.callTool({ name, arguments: args }, undefined, { timeout: 30 * 60_000, resetTimeoutOnProgress: true })
       if (r.isError) throw new Error(JSON.stringify(r.content))
       if (r.structuredContent) return r.structuredContent
       // Some tools answer JSON as text (read_project's views do); setup refs
@@ -179,35 +192,79 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     }
     const readMotifs = () => read('motifs://current') as Promise<Array<Record<string, unknown>>>
 
-    const invoke = (cmd: string, args: Record<string, unknown> = {}) =>
-      page.evaluate(([c, a]) => (window as unknown as { api: WeftcutApi }).api.backend.invoke(c, a), [cmd, args] as const)
-    if (plan.app_memory_mib !== undefined)
-      await invoke('app_settings_set', { patch: { resource_policy: { memory_mib: plan.app_memory_mib } } })
-    const settings = await invoke('app_settings_get') as { resource_policy?: unknown; resource_allocation?: unknown }
-    result.app_resources = { policy: settings.resource_policy ?? null, allocation: settings.resource_allocation ?? null }
+    result.app_resources = await s.appResources()
+    await s.jobEvents?.start()
 
-    await recordMediaJobs(page)
-    await setUpProject(call, plan.task, path.join(scratch, 'projects'))
-    result.media_wait = await waitForMedia(page, () => read('project://media') as never, plan.media_timeout_ms)
-      .finally(async () => { writeJson(plan.out_dir, 'media-jobs.json', await mediaJobLog(page).catch(() => [])) })
-      .catch(async (e: Error) => {
-        // A stuck job is almost always the resource governor declining to
-        // admit it; its ledger says which limit.
-        const diag = await resourceDiagnostics(page).catch((d: Error) => ({ error: d.message }))
-        writeJson(plan.out_dir, 'media-wait-diagnostics.json', diag)
-        const status = (diag as { renderer?: { sampledStatus?: { pressure?: string; memory_mib?: number } } }).renderer?.sampledStatus
-        const alloc = (result.app_resources?.allocation as { memory_mib?: number } | null)?.memory_mib
-        if (status?.pressure === 'constrained')
-          e.message += `; the app reports memory pressure (process tree ${Math.round(status.memory_mib ?? 0)} MiB over its ` +
-            `${alloc ?? '?'} MiB allocation), so background jobs are not admitted — raise it with --app-memory-mib`
-        throw e
+    // Fixtures resolve on the app's host ({fixture:id} is a path there).
+    const fixtures = await s.resolveFixtures(plan.task.fixtures)
+    const projectDir = s.joinPath(s.projectsDir, plan.task.id)
+    // A template only pays where there is media to settle.
+    let template: { key: string; parts: Record<string, unknown>; fresh: boolean; stored: { meta: TemplateMeta; baseline: unknown } | null } | null = null
+    if (plan.task.fixtures.length) {
+      const fx = await optionalModule<{ loadManifest(): { fixtures: Array<{ id: string; sha256: string; output_sha256?: string }> } }>('fixtures/fixtures.mjs')
+      const manifest = fx!.loadManifest()
+      const fixtureHashes = Object.fromEntries(plan.task.fixtures.map((id) => [id, pinnedFixtureHash(manifest.fixtures.find((f) => f.id === id)!)]))
+      const { key, parts } = templateKey({ task: plan.task, fixtureHashes, app: s.app, host: s.hostId })
+      const stored = plan.rebuild_templates ? null : await s.templates.get(key)
+      template = { key, parts, fresh: !stored, stored }
+    }
+
+    const setupStarted = Date.now()
+    if (template?.stored) {
+      const restored = await s.templates.restore(template.key, projectDir)
+      await call('open_project', { path: projectDir })
+      result.template = { key: template.key, fresh_build: false, restore_ms: restored.ms, bytes: restored.bytes, built_at: template.stored.meta.created_at, build_media_wait_ms: template.stored.meta.media_wait_ms }
+    } else {
+      await setUpProject(call, plan.task, s.projectsDir, fixtures)
+      result.template = template
+        ? { key: template.key, fresh_build: true, ...(plan.rebuild_templates ? { forced: true } : {}) }
+        : { key: null, reason: 'task has no fixtures: nothing to settle' }
+    }
+    const setupMs = Date.now() - setupStarted
+
+    try {
+      result.media_wait = await waitForMedia({
+        readPool: () => read('project://media') as never,
+        readEvents: s.jobEvents ? () => s.jobEvents!.read() : null,
+        timeoutMs: plan.media_timeout_ms,
+        projectDir,
       })
+    } catch (e) {
+      const diag = await s.timeoutDiagnostics()
+      writeJson(plan.out_dir, 'media-wait-diagnostics.json', diag)
+      const status = (diag as { renderer?: { sampledStatus?: { pressure?: string; memory_mib?: number } } }).renderer?.sampledStatus
+      const alloc = (result.app_resources?.allocation as { memory_mib?: number } | null)?.memory_mib
+      if (status?.pressure === 'constrained')
+        (e as Error).message += `; the app reports memory pressure (process tree ${Math.round(status.memory_mib ?? 0)} MiB over its ` +
+          `${alloc ?? '?'} MiB allocation), so background jobs are not admitted — raise it with --app-memory-mib`
+      throw e
+    } finally {
+      if (s.jobEvents) writeJson(plan.out_dir, 'media-jobs.json', await s.jobEvents.read().catch(() => []))
+    }
     const baselineWire = await read('project://current')
     result.baseline_project = writeJson(plan.out_dir, 'baseline.json', baselineWire)
+    const clips = aRollClips(baselineWire)
+    result.setup_check = { a_roll_video_clips: clips.length, setup_ms: setupMs }
+
+    if (template && result.template && 'fresh_build' in result.template) {
+      if (template.fresh) {
+        // Autosave debounces 500 ms; let the settled state reach project.json.
+        await new Promise((r) => setTimeout(r, 2_000))
+        const meta: TemplateMeta = { key: template.key, parts: template.parts, project_dir: projectDir, created_at: new Date().toISOString(), media_wait_ms: result.media_wait.waited_ms }
+        const saved = await s.templates.save(template.key, projectDir, meta, baselineWire)
+        Object.assign(result.template, { saved_ms: saved.ms, bytes: saved.bytes })
+      } else {
+        const cmp = compareBaselines(template.stored!.baseline, template.stored!.meta.project_dir, baselineWire, projectDir)
+        Object.assign(result.template, { baseline_equivalent: cmp.equivalent, ...(cmp.equivalent ? {} : { differences: cmp.differences }) })
+      }
+    }
+    // Where the app runs and what GPU it holds, with the media work done.
+    const status = await s.status().catch((e: Error) => ({ error: e.message }))
+    if (status) result.host = { ...s.record, gpu: status }
     const motifsBefore = await readMotifs()
 
     const out = await driver.run({
-      task: plan.task, skill_path: plan.skill_path, mcp, model: plan.model, workdir,
+      task: plan.task, skill_path: plan.skill_path, mcp: s.agentEndpoint, model: plan.model, workdir,
       artifacts_dir: plan.out_dir,
       limits: { timeout_ms: plan.timeout_ms, ...(plan.budget_usd !== undefined ? { budget_usd: plan.budget_usd } : {}) },
     })
@@ -232,14 +289,39 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
 
     const checklist = await optionalModule<{ evaluateChecklist(task: BenchTask, project: unknown): unknown }>('checklist.mjs')
     result.checklist = checklist ? await checklist.evaluateChecklist(plan.task, finalWire) : null
+
+    if (plan.probes.includes('transcribe')) {
+      // Read-only (transcribe_clip changes nothing), and after the evidence,
+      // so neither the baseline nor the agent's run sees its cache.
+      const layer = aRollClips(finalWire)[0] ?? clips[0]
+      const started = Date.now()
+      const probe: Record<string, unknown> = { tool: 'transcribe_clip', layer_id: layer ?? null }
+      try {
+        if (!layer) throw new Error('no A-roll VideoClip to transcribe')
+        const r = await call('transcribe_clip', { layer_id: layer }) as { backend?: string; language?: string; word_timing?: string; segments?: Array<{ text: string }> }
+        Object.assign(probe, { ok: true, backend: r.backend, language: r.language, word_timing: r.word_timing, segments: r.segments?.length ?? 0,
+          first_text: r.segments?.[0]?.text ?? null })
+      } catch (e) {
+        Object.assign(probe, { ok: false, error: (e as Error).message.slice(0, 2000) })
+      }
+      probe.ms = Date.now() - started
+      result.probes = { transcribe: probe }
+    }
   } catch (e) {
+    // A host that failed to start still says how far it got.
+    const hostRecord = (e as { hostRecord?: Record<string, unknown> }).hostRecord
+    if (hostRecord && !result.host) result.host = hostRecord
     const msg = e instanceof Error ? e.stack ?? e.message : String(e)
     result.error = result.error ? `${result.error}\n${msg}` : msg
   } finally {
     result.duration_ms = Date.now() - startedAt.getTime()
     writeJson(plan.out_dir, 'run.json', result)
     await client?.close().catch(() => {})
-    await app?.close()
+    await session?.close().catch((e: Error) => { result.error = `${result.error ? `${result.error}\n` : ''}teardown: ${e.message}` })
+    // Teardown facts (what was stopped, what is left on the host) land in
+    // the record close() filled in.
+    if (session) result.host = { ...(result.host ?? {}), ...session.record }
+    writeJson(plan.out_dir, 'run.json', result)
     fs.rmSync(scratch, { recursive: true, force: true })
   }
   return result
@@ -249,7 +331,8 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
 export function summaryLine(r: RunResult, outDir: string): string {
   const cost = r.cost.usd === null ? '—' : `$${r.cost.usd.toFixed(4)}`
   const verdict = r.error ? `ERROR ${r.error.split('\n')[0]}` : 'ok'
+  const tpl = r.template && 'fresh_build' in r.template ? ` · template ${r.template.fresh_build ? 'built' : 'reused'}` : ''
   return `[bench] ${r.task_id} · ${r.driver}/${r.model} · ${verdict} · cost ${cost} · turns ${r.cost.turns ?? '—'}` +
-    ` · diff ${r.review_diff_size ?? '—'} change(s) · media wait ${r.media_wait ? `${Math.round(r.media_wait.waited_ms / 1000)} s` : '—'}` +
+    ` · diff ${r.review_diff_size ?? '—'} change(s) · media wait ${r.media_wait ? `${Math.round(r.media_wait.waited_ms / 1000)} s` : '—'}${tpl}` +
     ` · ${Math.round(r.duration_ms / 1000)} s → ${outDir}`
 }
