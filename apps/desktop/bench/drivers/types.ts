@@ -81,8 +81,23 @@ export interface RunResult {
   /** Absolute skill directory and a content hash of it — the same name can
    *  hold different text across runs being compared. */
   skill: { path: string; sha256: string } | null
-  /** `git describe` of the checkout the app was built from, best effort. */
+  /** `git describe` of the checkout the app was built from, best effort (on
+   *  a remote host, that host's checkout). */
   app_revision: string | null
+  /** Where the app ran: `kind` local/remote, the machine's identity, for a
+   *  remote host the launch (pid, session), `gpu` (session of the process
+   *  tree, its nvidia-smi entries, the app's decode capabilities) and
+   *  `teardown` (what was stopped, what is left there). */
+  host: Record<string, unknown> | null
+  /** The inference/speech model set of the app's profile (remote: seeded from
+   *  the user's profile, with weight-file hashes); null when not seeded. */
+  models: unknown
+  /** The project template used: `{ key, fresh_build, … }` (templates.mjs), or
+   *  `{ key: null, reason }` when the task has nothing to settle. */
+  template: Record<string, unknown> | null
+  /** What setup produced: the A-roll VideoClip count of the baseline and how
+   *  long setup (or the template copy and open) took. */
+  setup_check: { a_roll_video_clips: number; setup_ms: number } | null
   transcript: string | null
   baseline_project: string | null
   final_project: string | null
@@ -105,6 +120,8 @@ export interface RunResult {
    *  folder its working directory was copied to. */
   motifs: { added: unknown[]; changed: unknown[] } | null
   workdir_copy: string | null
+  /** Extra measurements requested with --probe (e.g. `transcribe`). */
+  probes: Record<string, unknown> | null
   final_message: string | null
   exit: DriverExit | null
   error: string | null

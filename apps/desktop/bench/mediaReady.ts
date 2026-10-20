@@ -18,6 +18,15 @@
 // has been seen to end one `started` short of its `complete`s with the
 // waveform long landed. So an open job holds the wait only for a kind that
 // has not landed — which still covers a kind this file does not enumerate.
+//
+// A remote app host has no renderer to listen on, so there the pool is the
+// only source: a derivative must LAND, a failed job holds the wait until the
+// timeout (the error says so, and app.log has the failure).
+//
+// "Landed" also means "inside this project's folder". A project opened from a
+// template copy still carries the derivative paths of the folder it was built
+// in until the app re-adopts its own cached files; those stale paths must not
+// read as ready.
 
 import type { Page } from '@playwright/test'
 
@@ -36,7 +45,7 @@ interface MediaWire {
   thumbnails_dir: string | null
 }
 
-interface JobEvent {
+export interface JobEvent {
   event: 'media:job_started' | 'media:job_complete' | 'media:job_error'
   media_id: string
   /** `JobKind`, serde-lowercased: thumbnails, proxy, quick_proxy,
@@ -51,6 +60,8 @@ type Outcome = 'landed' | 'complete' | 'failed'
 
 export interface MediaWait {
   waited_ms: number
+  /** `pool+events` (local: the renderer's job events) or `pool` (remote). */
+  source: 'pool+events' | 'pool'
   items: Array<{ media_id: string; label: string | null; kind: string; route: string; derivatives: Record<string, Outcome> }>
   job_errors: Array<{ media_id: string; kind: string; error: string }>
   /** `media:kind` jobs reported started and not ended at hand-over, all of a
@@ -82,31 +93,45 @@ export async function recordMediaJobs(page: Page): Promise<void> {
  *  The proxy pair follows the route as it stands: before the decision a video
  *  reads as `proxied` with nothing landed, so it cannot pass early; once the
  *  decision commits `direct-export`, only the quick proxy is still owed. */
-function expected(m: MediaWire): Array<[string, boolean]> {
+function expected(m: MediaWire, landed: (p: string | null | undefined) => boolean): Array<[string, boolean]> {
   const out: Array<[string, boolean]> = [['hash', !m.file_hash_blake3.startsWith('pending-')]]
-  if (m.kind === 'Video') out.push(['thumbnails', m.thumbnails_dir !== null])
-  if (m.metadata.audio) out.push(['conform', m.conform_path !== null], ['waveform', m.waveform_path !== null])
+  if (m.kind === 'Video') out.push(['thumbnails', landed(m.thumbnails_dir)])
+  if (m.metadata.audio) out.push(['conform', landed(m.conform_path)], ['waveform', landed(m.waveform_path)])
   if (m.kind === 'Video') {
     const r = m.decode_route
-    if (r.route !== 'bypass') out.push(['quick_proxy', !!r.quick_proxy])
-    if (r.route === 'proxied' || r.route === 'native-sw') out.push(['proxy', !!r.full_proxy])
+    if (r.route !== 'bypass') out.push(['quick_proxy', landed(r.quick_proxy)])
+    if (r.route === 'proxied' || r.route === 'native-sw') out.push(['proxy', landed(r.full_proxy)])
   }
   return out
+}
+
+/** A derivative path counts when set and, given a project folder, inside it
+ *  (either separator, any case: the host may be Windows). */
+export function landedIn(projectDir: string | undefined): (p: string | null | undefined) => boolean {
+  if (!projectDir) return (p) => !!p
+  const norm = (s: string) => s.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
+  const root = `${norm(projectDir)}/`
+  return (p) => !!p && norm(p).startsWith(root)
 }
 
 /** Poll until every pool item's derivatives have landed, completed or failed
  *  and no started job is still open; past `timeoutMs`, throw naming what is
  *  still pending. A failed job does not fail the run — it is part of the
- *  environment the agent gets — but it is recorded. */
-export async function waitForMedia(
-  page: Page,
-  readPool: () => Promise<Record<string, MediaWire>>,
-  timeoutMs: number,
-): Promise<MediaWait> {
+ *  environment the agent gets — but it is recorded. Without `readEvents`
+ *  (remote host) only landed derivatives settle. */
+export async function waitForMedia(opts: {
+  readPool: () => Promise<Record<string, MediaWire>>
+  readEvents: (() => Promise<JobEvent[]>) | null
+  timeoutMs: number
+  /** The open project's folder, in the host's spelling. */
+  projectDir?: string
+}): Promise<MediaWait> {
+  const { readPool, readEvents, timeoutMs } = opts
+  const landed = landedIn(opts.projectDir)
   const start = Date.now()
   for (;;) {
     const pool = Object.values(await readPool())
-    const events = await page.evaluate(() => window.__benchMediaJobs ?? [])
+    const events = readEvents ? await readEvents() : []
     const ended = (id: string, kind: string, event: JobEvent['event']) =>
       events.some((e) => e.media_id === id && e.kind === kind && e.event === event)
     const open = new Map<string, number>()
@@ -118,8 +143,8 @@ export async function waitForMedia(
     const settled = new Set<string>()
     const items: MediaWait['items'] = pool.map((m) => {
       const derivatives: Record<string, Outcome> = {}
-      for (const [kind, landed] of expected(m)) {
-        if (landed) derivatives[kind] = 'landed'
+      for (const [kind, isLanded] of expected(m, landed)) {
+        if (isLanded) derivatives[kind] = 'landed'
         else if (ended(m.id, kind, 'media:job_error')) derivatives[kind] = 'failed'
         else if (ended(m.id, kind, 'media:job_complete')) derivatives[kind] = 'complete'
         else pending.push(`${m.label ?? m.id}:${kind}`)
@@ -132,10 +157,11 @@ export async function waitForMedia(
     if (!pending.length) {
       const job_errors = events.filter((e) => e.event === 'media:job_error')
         .map((e) => ({ media_id: e.media_id, kind: e.kind, error: e.error ?? '' }))
-      return { waited_ms: Date.now() - start, items, job_errors, open_jobs: running }
+      return { waited_ms: Date.now() - start, source: readEvents ? 'pool+events' : 'pool', items, job_errors, open_jobs: running }
     }
     if (Date.now() - start > timeoutMs)
-      throw new Error(`media still processing after ${Math.round(timeoutMs / 1000)} s: ${pending.join(', ')}`)
+      throw new Error(`media still processing after ${Math.round(timeoutMs / 1000)} s: ${pending.join(', ')}` +
+        (readEvents ? '' : ' (remote host: no job events, so a failed job reads as pending; see app.log)'))
     await new Promise((r) => setTimeout(r, 500))
   }
 }

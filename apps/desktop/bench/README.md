@@ -7,11 +7,13 @@ It launches the built app, sets a project up, hands it to an agent client
 agent did from the app's side: before/after snapshots, the entity-level review
 diff (ADR 0116), the task's checklist, cost and turns.
 
-Local only. Nothing here runs in CI, and results are never committed.
+Local only. Nothing here runs in CI, and results are never committed. The app
+may run on another machine of yours ([Remote app host](#remote-app-host)); the
+agent client always runs here.
 
 ## Running
 
-Needs the e2e build (`npm run build:e2e`), a display (`DISPLAY` on Linux, or
+With the app on this machine (the default), needs the e2e build (`npm run build:e2e`), a display (`DISPLAY` on Linux, or
 `xvfb-run -a`), and an authenticated `claude` CLI on `PATH`. From `apps/desktop`:
 
 ```bash
@@ -31,6 +33,13 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--media-timeout-min` | `30` | Bound on the wait for imported media before the baseline. |
 | `--app-memory-mib` | app default | Pins the app's resource-policy memory (Settings → Resources). The default is 35% of host RAM. |
 | `--budget-usd` | none | Spend cap per session, for clients that enforce one. |
+| `--host` | `local` | `local`, or `remote`: the app runs on another machine ([Remote app host](#remote-app-host)). `--remote <alias>` alone implies `remote`. |
+| `--remote` | `$WEFTCUT_BENCH_REMOTE` | ssh alias of the remote app host (`~/.ssh/config`). |
+| `--remote-repo` | `$WEFTCUT_BENCH_REMOTE_REPO` | The built WeftCut checkout on that host, e.g. `C:\Users\me\src\WeftCut`. |
+| `--remote-node` | `$WEFTCUT_BENCH_REMOTE_NODE` | `node.exe` on the host for fixture fetching, when the default (fnm's v24.20.0, then `PATH`) is wrong. |
+| `--keep-remote` | off | Keep the run's directory on the host (profile, project, mirror) after teardown. |
+| `--rebuild-templates` | off | Set every project up from scratch and replace its template ([Project templates](#project-templates)). |
+| `--probe` | none | `transcribe`: after the evidence, time one `transcribe_clip` on the A-roll clip from the runner's own client (no model spend); recorded as `probes`. |
 
 Runs go one at a time. Each prints one summary line: verdict, cost, turns,
 review-diff size and the result folder. Playwright exits non-zero only when a
@@ -98,8 +107,141 @@ job. When this happens, the timeout error says so; pass `--app-memory-mib`
 `run.json`, so runs under different allocations are not mistaken for
 comparable ones.
 
+On a remote host there is no renderer to listen on, so the wait reads the
+pool alone (`media_wait.source` is `pool`): every derivative must land, and a
+failed job holds the wait until the timeout, whose error says so. The
+diagnostics file then holds the host's process and GPU status instead of the
+ledger, and `app.log` plus `project-logs/` hold the failure.
+
+A derivative only counts as landed when its path is inside the open project's
+folder. A project opened from a template carries the paths of the folder it
+was built in until the app re-adopts its own cached copies; those must not
+read as ready.
+
 `smoke-*` tasks use synthetic layers only and exist to check the plumbing. They
 measure nothing.
+
+## Project templates
+
+Setting a fixture task up means importing the footage and waiting for its
+proxies, waveform, thumbnails and conformed audio: 85 s for the interview and
+~16 min for the explainer on a two-core host. That is the same work every run,
+so after the first fresh setup the runner saves the settled project folder
+(its `Cache/` holds every derivative; `Backups/` and `Logs/` are left out) as a
+template, and later runs copy the template and `open_project` it instead. The
+app re-adopts the cached derivatives by content hash on open, so the media wait
+drops to under a second (interview, local: 85 s → 0.6 s; whole stub run
+97 s → 9 s).
+
+The key (`templates.mjs`) is the task's setup-relevant fields (`id`,
+`fixtures`, `project`, `setup`; prompt and checklist edits do not invalidate
+it), each fixture's pinned hash from `fixtures.json`, the app build (`git
+describe` plus a fingerprint of `out/` and the native addons) and the host.
+Templates live on the host that built them: `bench/.cache/templates/<key>/`
+locally, `<bench root>\templates\<key>\` on a remote host. Each holds
+`project/`, `template.json` and the fresh build's `baseline.json`.
+
+After a copy is opened, its baseline is compared with the fresh build's,
+modulo the project folder's location and `modified_at`. `run.json` `template`
+records `key`, `fresh_build`, the copy time and size, and
+`baseline_equivalent` (with `differences` when it is not). `--rebuild-templates`
+forces fresh setups and replaces the templates. Tasks without fixtures always
+set up fresh (`template.key: null`). Delete a template folder to drop it.
+
+## Remote app host
+
+On a small machine the app is the bottleneck. `--host remote` keeps the agent
+client and the runner here and runs the app on another machine, a Windows PC
+reached as an ssh alias:
+
+```bash
+npm run bench -- --task explainer-tighten --model claude-haiku-5-5 \
+  --remote weftcut-pc --remote-repo 'C:\Users\me\src\WeftCut'
+```
+
+Needs, on the host: OpenSSH server with sftp and **TCP forwarding allowed**
+(`AllowTcpForwarding local` or `yes` in `C:\ProgramData\ssh\sshd_config`;
+`PermitOpen 127.0.0.1:*` in a `Match User` block narrows it to loopback), the
+checkout built (`out\main\index.js`, native addons, `node_modules\electron`),
+`node` (fixtures), ffmpeg/ffprobe on `PATH` (fixture trims), and the user
+logged on at the console. Here: `ssh`/`sftp`. No `DISPLAY` and no local build
+are needed.
+
+Everything the bench creates on the host is under `%USERPROFILE%\weftcut-bench\`
+(`bin\pc.ps1` is the host-side helper, refreshed each invocation; `fixtures\`,
+`cache\`, `templates\`, `runs\<slug>\`). Per run:
+
+1. **Profile.** A fresh userData at `runs\<slug>\profile`, seeded from the
+   user's own profile (`%APPDATA%\WeftCut`), which is only read:
+   `speech_config.json`, `vlm_config.json` and `model_settings.json` are
+   copied with every path naming that profile re-pointed at the run's; the
+   model downloads (`data\downloads\…`) are hard-linked, never copied (same
+   volume, no bytes moved, and deleting the run removes only the links).
+   `--app-memory-mib` becomes the profile's `app_settings.json`
+   `resource_policy`. The active models, their artifact versions and weight
+   hashes (sha256, cached by path, size and mtime in `cache\model-hashes.json`)
+   go to `run.json` `models`.
+2. **Launch in the console session.** An ssh logon lands in session 0, which
+   has no desktop and no GPU for GUI processes. The helper registers a
+   scheduled task (`\WeftCutBench\WeftCutBench-<slug>`) with an
+   *Interactive* principal for the ssh user (what `schtasks /IT` does, without
+   a stored password), so it runs in the user's logged-on session. The task
+   runs `runs\<slug>\launch.ps1`, which sets launchApp's environment
+   (`LANG`/`LC_ALL`, `WEFTCUT_SUPPRESS_ELEVATION_NOTICE`, the checkout's own
+   ffmpeg when fetched), starts `electron.exe --lang=en-US
+   --user-data-dir=<profile> out\main\index.js` with stdout/stderr redirected,
+   writes the pid and exits; the task is deleted as soon as it has. The app
+   window appears on the user's desktop. `run.json` `host.launch` has the pid
+   and its session; `host.gpu` the session of the whole process tree, its rows
+   in `nvidia-smi`'s process table (the GPU process shows as `C+G`) and the
+   decode capabilities the app probed.
+3. **MCP.** The helper waits for the profile's `mcp_auth.json` and returns
+   port and token over the ssh channel; the token is kept in memory and
+   redacted from the copied `app.log`. `ssh -L` forwards a free local port to
+   the app's loopback port; the app accepts only its own `Host` header, so the
+   runner's client (and the proxy's) send it explicitly. A host that refuses
+   forwarding fails here with that reason.
+4. **Fixtures** are fetched and verified on the host by the shipped
+   `fetch.mjs` into `cache\fixtures\`; `{fixture:id}` resolves to that
+   Windows path.
+5. **The agent** gets a local MCP proxy, not the tunnel (below).
+6. **Teardown.** Close MCP and the proxy, stop the app (graceful, then forced)
+   — only the recorded pid, only if its command line names the run's profile,
+   then its process tree and any straggler naming the run directory — delete
+   the task if still there, copy `app.out.log`/`app.err.log` back as
+   `app.log` and the project's `Logs\` as `project-logs/`, and delete the run
+   directory unless `--keep-remote`. `host.teardown.after` lists every bench
+   process, task and run directory still on the host.
+
+Nothing touches the user's own profile beyond reading it, and no process the
+bench did not start is stopped.
+
+### The path proxy
+
+The agent writes Motif working folders in its local working directory and
+passes their paths to tools such as `open_motif_draft`; the app can only open
+paths on its own disk. `proxy/proxy.ts` sits between them: an MCP SDK server
+facing the agent and an SDK client facing the app, both streamable HTTP, one
+upstream session per agent session, opened with the agent's own `clientInfo`
+and capabilities (the app attributes work to the agent's client as usual).
+
+- Before every `tools/call` it mirrors the workdir to `runs\<slug>\work` over
+  sftp, synchronously: additions, changes (by content hash) and deletions,
+  one-way (`proxy/mirror.mjs`; `.claude/`, where the skill is installed, is
+  not mirrored). Files the app itself writes into the mirror (a linked draft
+  written through by `update_motif_files`) are not pulled back.
+- In `tools/call` arguments, a string that is a path inside the workdir becomes
+  the mirror's Windows path; in `tools/call` and `resources/read` results,
+  every occurrence of the mirror root (raw, JSON-escaped, either separator, any
+  case) goes back to the local path (`proxy/pathmap.mjs`). Absolute paths
+  outside the workdir pass through and are logged as `outside`. A path ends at
+  whitespace on the way back: keep folder names free of spaces.
+- Everything else (lists, other resources, prompts, notifications, progress,
+  errors) is forwarded unchanged through the SDK's fallback handlers.
+
+Every sync and rewrite is a line in the run's `proxy.log`; `run.json`
+`host.proxy` counts them. Project and media paths in results stay Windows paths:
+they are the app's, and the agent has no local copy of them anyway.
 
 ## Output
 
@@ -116,12 +258,16 @@ One folder per run, `<out>/<timestamp>/<task>__<driver>-<model>__r<n>/`:
 | `final.json` | `project://current` after the agent exits. |
 | `review-diff.json` | `diffProjects(baseline, final)`: what the agent changed, independent of what it says it changed (`final_message` in `run.json`). |
 | `workdir/` | Whatever the agent wrote in its working directory (a Motif package, for example), if anything. |
+| `proxy.log` | Remote host: the proxy's syncs and path rewrites, one JSON line each. |
+| `project-logs/` | Remote host: the project's own `Logs/`. |
 
 `run.json` also carries `media_wait`: the wait in ms, how each item's
 derivatives ended (`landed` / `complete` / `failed`), and any job errors. It
 also carries `motifs`: catalog entries (`motifs://current`) the run
-added or changed, read from the app. `audit`, `frames` and `rounds` stay `null`
-until H1/H3.
+added or changed, read from the app; `host` (where the app ran, and for a
+remote host its launch, GPU status and teardown), `models`, `template`,
+`setup_check` (A-roll clips in the baseline, setup time) and `probes`.
+`audit`, `frames` and `rounds` stay `null` until H1/H3.
 
 ## Drivers
 
@@ -131,7 +277,9 @@ working directory and an artifacts directory. It returns the transcript path,
 plus cost and turns when the client reports them. Snapshots, the diff and the
 checklist are taken by the runner, so a new client never re-implements them.
 Nothing in the interface is Claude-specific; `drivers/codex.ts` compiles against
-it.
+it. Until it is real, `codex` is a null agent: it changes nothing and reports a
+failed session, so `--driver codex --model stub` runs the whole pipeline
+(launch, setup or template, media wait, baseline, an empty diff) for free.
 
 ## Claude isolation
 
