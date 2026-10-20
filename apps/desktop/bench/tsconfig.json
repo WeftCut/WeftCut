@@ -1,0 +1,30 @@
+{
+  // Type-check for the bench alone: `npx tsc -p bench`. Not referenced from the
+  // root tsconfig, so `npm run typecheck` neither covers nor depends on it —
+  // the bench is local tooling (ADR 0123). It reaches into the e2e launcher and
+  // the renderer-adjacent review diff, hence DOM, JSX and the `@/` alias; their
+  // own projects own those files' errors, so this one checks only that the
+  // bench's uses of them line up.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": { "@/*": ["../src/renderer/*"] },
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    // The e2e launcher imports an untyped .mjs helper.
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "types": ["node", "@webgpu/types"]
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["results"]
+}

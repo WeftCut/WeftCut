@@ -30,6 +30,7 @@
     "typecheck": "npm run build:wasm && tsc -b",
     "test": "npm run build:wasm && vitest run --exclude '**/*.browser.test.ts'",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\" \"e2e/**/*.test.mjs\"",
+    "bench": "node bench/run.mjs",
     "bench:calibration": "node e2e/scripts/performance-calibration-prototype.mjs",
     "bench:calibration:fixtures": "node e2e/scripts/gen-calibration-fixtures.mjs",
     "bench:calibration:controlled": "node e2e/scripts/controlled-playback-calibration.mjs",

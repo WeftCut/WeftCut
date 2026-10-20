@@ -14,6 +14,7 @@ not scattered by neglect.
 | **Rust** | `native/**` — inline `#[cfg(test)]` + `native/tests/` | cargo | see [Rust](#rust) (repo root) |
 | **E2E** | `apps/desktop/e2e/electron/*.spec.ts` | Playwright driving the **real Electron app** | `npm run e2e` (repo root or `apps/desktop`) · add `-- --full` for the `@matrix` tier |
 | **Mutation / PBT** | mutates `src/main/state/**` (config: `apps/desktop/stryker.config.mjs`) | StrykerJS (Vitest runner) | `npm run pbt:stryker` (`apps/desktop`) |
+| **Agent bench** (local, not CI, costs model spend) | `apps/desktop/bench/` (tasks in `bench/tasks/*.json`) | Playwright with its own config, driving the real app and a headless agent client | `npm run bench -- --task <id\|glob> --model <id>[,<id>]` (`apps/desktop`) |
 
 The `apps/desktop` unit script excludes `**/*.browser.test.ts`; there are none
 today — it's a standing guard for a pattern that would need a browser runner.
@@ -120,7 +121,7 @@ large and generated. Merging them would recouple the two and bloat the repo.
 ## Generated output (gitignored — not clutter to tidy, not committable)
 
 These appear in a working tree but are never tracked; they're rebuilt locally or
-in CI: `determinism-artifacts/`, `test-results/`, `playwright-report/`,
+in CI: `apps/desktop/bench/results/`, `determinism-artifacts/`, `test-results/`, `playwright-report/`,
 `e2e-report/`, `apps/desktop/e2e/fixtures/media/`,
 `apps/desktop/e2e/fixtures/decode-bench/`, `reports/`, `.stryker-tmp/`.
 
@@ -128,6 +129,8 @@ in CI: `determinism-artifacts/`, `test-results/`, `playwright-report/`,
 
 - `apps/desktop/e2e/README.md` — authoring/running the E2E suite, the isolation
   model, and known flakes.
+- `apps/desktop/bench/README.md` — the agent bench (ADR 0123): task format,
+  output files, and what the Claude driver can and cannot isolate.
 - `docs/conformance.md` — the Rust `media_conformance` analyzer behind the
   export/color/audio gates.
 - `docs/decode-bench.md` — the decode-strategy benchmark.
