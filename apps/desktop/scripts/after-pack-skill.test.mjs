@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import afterPackSkill from './after-pack-skill.mjs'
-import { stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS } from './build-skills-lib.mjs'
+import { stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS, REQUIRED_LAYERS } from './build-skills-lib.mjs'
 
 const SKILL = `---
 name: weftcut
@@ -17,7 +17,7 @@ description: Drive the WeftCut video editor over its MCP tools.
 /// A packed app whose <resources>/skills holds what the caller asks for.
 /// electron-builder hands the hook an appOutDir and a packager that knows where
 /// resources live under it; both are stubbed to that one relationship.
-function packed(t, { version = '0.1.7', staged = version } = {}) {
+function packed(t, { version = '0.1.7', staged = version, layers = REQUIRED_LAYERS } = {}) {
   const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-packed-'))
   t.after(() => fs.rmSync(appOutDir, { recursive: true, force: true }))
   const resources = path.join(appOutDir, 'resources')
@@ -25,7 +25,7 @@ function packed(t, { version = '0.1.7', staged = version } = {}) {
     const skill = path.join(resources, 'skills', 'weftcut')
     fs.mkdirSync(skill, { recursive: true })
     fs.writeFileSync(path.join(skill, 'SKILL.md'), stampSkillVersion(SKILL, staged))
-    for (const file of [...REQUIRED_DOCS, ...REQUIRED_ASSETS]) {
+    for (const file of [...layers, ...REQUIRED_DOCS, ...REQUIRED_ASSETS]) {
       const target = path.join(skill, file)
       fs.mkdirSync(path.dirname(target), { recursive: true })
       fs.writeFileSync(target, 'the contract')
@@ -40,6 +40,10 @@ test('a package carrying this version of the skill passes the gate', t => {
 
 test('extraResources dropping the bundle stops the build before it becomes a distributable', t => {
   assert.throws(() => afterPackSkill(packed(t, { staged: null })), /afterPack\(skill\).*no skill folders/s)
+})
+
+test('a pack that dropped a skill layer folder fails like a missing doc', t => {
+  assert.throws(() => afterPackSkill(packed(t, { layers: ['craft/README.md'] })), /afterPack\(skill\).*recipes\/README\.md is not inside/s)
 })
 
 test('a bundle left over from an earlier version is caught by its stamp', t => {

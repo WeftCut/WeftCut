@@ -5,11 +5,41 @@ the authoritative authoring spec: the in-app source panel, external editors, and
 MCP agents all write against it. It is self-contained on purpose — a copy ships
 with the app to agent clients, where no other WeftCut document is reachable.
 
-A Motif is a parameterized, time-varying overlay (a lower-third, a countdown, a
-title card) authored as **a real web page**: one HTML document plus a JSON
-manifest. Placed on the timeline, it is captured frame by frame by a harness
-that owns the clock. Any HTML/CSS/SVG/canvas/WebGL and any animation idiom
-(CSS, WAAPI, GSAP-style tweens, rAF loops) work, subject to the one law below.
+A Motif is one parameterized, time-varying overlay element (a lower-third, a
+countdown, a title card), placed as a layer among the user's footage, images
+and text on the WeftCut timeline. It is authored as a real web page — one HTML
+document plus a JSON manifest — and that page is the canvas for this one
+element, not for the whole frame. Placed on the timeline, it is captured frame
+by frame by a harness that owns the clock. Any HTML/CSS/SVG/canvas/WebGL and
+any animation idiom (CSS, WAAPI, GSAP-style tweens, rAF loops) work, subject to
+the scope rule and the one law below.
+
+## Scope: one element
+
+A Motif draws one element with one purpose — a title, a lower third, a
+callout, a credit, a logo, a full-frame background plate — with one entrance
+and one exit. If describing what it shows needs "and", it is several Motifs on
+several layers.
+
+- **The user's media stays outside.** A Motif cannot show the user's footage
+  or photos: project media is blocked in the capture host. Anything that shows
+  project media is a WeftCut video or image layer, and Motifs decorate or
+  annotate it from the layers above.
+- **Plan the layers before writing code.** Overlay work with more than one
+  element starts with a layer plan: for each layer, its kind (video, image,
+  text or Motif), what it is for, and its in and out times on the timeline.
+- **Stagger on the timeline.** Elements that enter one after another are
+  separate layers offset on the timeline, not delays inside one page. A Motif
+  times only its own animation: an element that animates in and then holds
+  declares that entrance as `content_duration_s`, and its layer's placement
+  decides when it appears and for how long.
+- **`size` is the element's own bounds.** Size the manifest to what the
+  element covers — a lower third is a strip, a callout a box — and let the host
+  place it. A frame-sized Motif is for full-frame purposes only: a title card,
+  a background plate.
+
+One element may still be large or intricate — a chart, a title card, a map
+with its route. The rule counts purposes, not pixels.
 
 ## The one law
 

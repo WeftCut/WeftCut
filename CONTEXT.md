@@ -819,6 +819,8 @@ island plus `index.html`, served over the `motif:` scheme and captured frame by
 frame while the harness owns the clock (ADR 0017). Built-in, user-authored and
 agent-authored Motifs are the same kind of document on the same render path;
 placed, one is a `Motif` layer whose props are its entire instance state.
+One Motif draws one element with one purpose; an overlay of several elements is
+several layers, planned before any code, staggered on the timeline (ADR 0123).
 _Avoid_: template (that was the SVG predecessor), overlay, animation preset
 
 **Motif authoring**:
@@ -1117,3 +1119,55 @@ Review view's, or a selected call's own while its highlight is up — and the
 focus stays only while that list shows the item: deleted, approved, another
 tab, another row each let it go. No UI word of its own.
 _Avoid_: selection (that is clips'), highlight (the per-activity highlight)
+
+## Agent harness
+
+What an agent knows about how a result should look and how a job should run,
+in layers with a fixed precedence: etiquette, craft, style, TASTE, recipe
+(ADR 0123). Style, TASTE and graphic role are planned; craft and recipes ship
+as skill folders.
+
+**Craft**:
+Brand-agnostic production rules expressed as numbers or thresholds — title-safe
+area, minimum caption and title hold, cut handles, audio fades, loudness — plus
+named anti-patterns. Lives in the skill's `craft/`. A style may tighten a craft
+number, never loosen it; the user's explicit request may, and the departure is
+reported. Entries are added as observed agent defaults call for them, never in
+one batch.
+_Avoid_: best practices, guidelines, taste (craft is correctness, not look)
+
+**Style**:
+A named look and feel as data — fonts, palette, type scale per graphic role,
+caption style, transition set, motion timings, rhythm — packaged with the
+Motifs it relies on and frozen exemplars, under an identity a project can pin.
+Read by tools and checks; never says what to do in what order.
+_Avoid_: theme (that is the app's layout theme), template, preset (export and
+keyframes own that word), brand
+
+**TASTE**:
+A project's style choice: `TASTE.md` in the project workspace, which extends
+one style and overrides its fields for this project. The agent reads style and
+TASTE merged, with each field's provenance. The user's explicit request
+overrides it. Always written in capitals, as the file is named.
+_Avoid_: taste (lowercase: judgment, not the file), project style, style
+override
+
+**Recipe**:
+How one kind of agent job runs: an ordered subset of the closed stage catalog
+(intake, plan, build, audit, look, critique, handoff), what to do in each stage
+that no tool description says, and an exit condition in the closed signal
+vocabulary (audit.clean, critique.clear, user.confirmed, rounds). Build and its
+checks repeat at most three rounds; what is left becomes tacks and is reported.
+One skill file per kind of job, `recipes/<name>.md`, from which the MCP prompt
+of the same name is generated. Process only: a recipe never names a font or a
+colour.
+_Avoid_: pipeline, workflow, playbook, skill (the skill is the whole bundle)
+
+**Graphic role**:
+What a visual layer is for — title, lower third, callout, credit, logo, plate
+(a full-frame background other layers sit on) — and the key a style's tokens
+and role-specific checks attach to. A Motif has exactly one. Planned as the
+`graphic_role` field on text, Motif and image layers; not yet in the data
+model.
+_Avoid_: role (a track's role: A roll, B roll, caption, audio roles —
+ADR 0023), kind

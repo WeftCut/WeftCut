@@ -77,6 +77,21 @@ to preview or `start_export` to use one; per-job settings override it. Omitting
 the ID keeps saved project settings, falling back to the global default.
 Library edits do not rewrite project settings or jobs already admitted.
 
+## Batch jobs
+
+Before a batch job, look in `recipes/` beside this file for a recipe whose
+description matches the job, and follow it. Read the files in `craft/` that
+touch the job: production rules as numbers, and anti-patterns, that hold under
+every style. Depart from one only when the user explicitly asks, and say so in
+your report.
+
+Without a recipe, a batch job runs the same loop: read the state (tracks, open
+tacks) → plan in plain words and get the user's go-ahead → build inside the
+work session → check the result against the plan → hand off. Build and check
+repeat at most three rounds. Whatever is still wrong after the third becomes
+tacks on the ranges it concerns and is named in your report — never retried
+silently.
+
 ## Working rhythm
 
 Read → analyze → mutate → **verify**: every mutator answers with the committed
@@ -177,6 +192,8 @@ edit settled it, otherwise delete it and tack the new content again.
 
 Read `motif-authoring.md` and `motif-workspaces.md` next to this file before
 creating or changing a Motif. Visible state must be a function of absolute time.
+One Motif draws one element: for overlay work with more than one element, plan
+the layers before writing code (*Scope: one element* in `motif-authoring.md`).
 
 1. Prefer a self-contained working folder with index.html, manifest.json and
    companion code/assets. Call `open_motif_draft` with a directory source once;
