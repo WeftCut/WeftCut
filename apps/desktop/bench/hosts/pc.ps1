@@ -358,8 +358,10 @@ try {
     # Everything of the bench's that is alive or registered on this PC.
     'strays' {
       $needle = $Root.ToLowerInvariant()
+      # Not this query itself (powershell running pc.ps1, and its cmd.exe parent).
+      $self = @($PID, (Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId)
       Out-Result @{
-        processes = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) } |
+        processes = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -notin $self -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) } |
           ForEach-Object { @{ pid = $_.ProcessId; name = $_.Name; session = $_.SessionId } })
         tasks = @(Get-ScheduledTask -TaskPath $TaskPath -ErrorAction SilentlyContinue | ForEach-Object { $_.TaskName })
         runs = @(Get-ChildItem -LiteralPath (Join-Path $Root 'runs') -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })

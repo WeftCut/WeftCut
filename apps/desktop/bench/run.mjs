@@ -93,7 +93,7 @@ function main(argv) {
   if (hostKind === 'remote' && !values['remote-repo']) problems.push('--host remote needs --remote-repo <the built WeftCut checkout on the host> (or WEFTCUT_BENCH_REMOTE_REPO)')
   if (hostKind === 'local' && values['keep-remote']) problems.push('--keep-remote applies to --host remote only')
   const probes = list(values.probe)
-  for (const p of probes) if (p !== 'transcribe') problems.push(`unknown --probe ${p} (have: transcribe)`)
+  for (const p of probes) if (!['transcribe', 'motif-dir'].includes(p)) problems.push(`unknown --probe ${p} (have: transcribe, motif-dir)`)
   if (problems.length) {
     console.error(`[bench] ${problems.join('; ')}\n${USAGE}`)
     return 2

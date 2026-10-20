@@ -135,6 +135,73 @@ function aRollClips(wire: unknown): string[] {
     .flatMap((t) => t.layers ?? []).filter((l) => l.params?.kind === 'VideoClip').map((l) => l.id)
 }
 
+/** A tiny Motif package: a full-frame box of one colour. */
+function probeMotifFiles(color: string): Record<string, string> {
+  return {
+    'manifest.json': JSON.stringify({
+      id: 'bench-probe', name: 'Bench Probe', version: 1, size: [640, 360],
+      default_duration_s: 2, content_duration_s: 1, props_schema: {},
+    }, null, 2),
+    'index.html': '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:640px;height:360px;' +
+      'overflow:hidden;background:transparent}#b{position:absolute;left:0;top:0;width:640px;height:360px}</style></head>' +
+      `<body><div id="b"></div><script>motif.define({ setup: async function () { document.getElementById("b").style.background = "${color}" } })</script></body></html>`,
+  }
+}
+
+/** `--probe motif-dir`: the agent's file path, model-free. Through the
+ *  endpoint the agent is given (remote: the path proxy), write a Motif folder
+ *  in the local workdir, open it as a directory draft, preview it, change it
+ *  locally (and delete a file) and preview again. Shows the mirror and the
+ *  path rewrites against the real app: the second preview must render the
+ *  new file, and no answer may carry the mirror's path. */
+async function motifDirProbe(endpoint: { url: string; bearer_token: string }, workdir: string): Promise<Record<string, unknown>> {
+  const started = Date.now()
+  const out: Record<string, unknown> = {}
+  const pc = new Client({ name: 'weftcut-bench-probe', version: '1' }, { capabilities: {} })
+  try {
+    await pc.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.bearer_token}` } } }))
+    const dir = path.join(workdir, 'bench-probe-motif')
+    fs.mkdirSync(dir, { recursive: true })
+    for (const [f, text] of Object.entries(probeMotifFiles('#e02020'))) fs.writeFileSync(path.join(dir, f), text)
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'deleted before the second preview\n')
+    // callTool's result type is a union with the task form; only content matters.
+    const blocks = (r: unknown) => ((r as { content?: unknown }).content ?? []) as Array<{ type: string; text?: string; data?: string }>
+    const texts = (r: unknown) => (blocks(r) as Array<{ type: string; text?: string }>).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n')
+    const imageHash = (r: unknown) => {
+      const img = blocks(r).find((b) => b.type === 'image')
+      return img?.data ? crypto.createHash('sha256').update(img.data).digest('hex').slice(0, 16) : null
+    }
+    const opened = await pc.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'directory', path: dir } } })
+    const openedJson = (opened.structuredContent ?? JSON.parse(texts(opened) || '{}')) as { draft_id?: string; revision?: string }
+    out.open = { is_error: !!opened.isError, draft_id: openedJson.draft_id ?? null, revision: openedJson.revision ?? null, ...(opened.isError ? { text: texts(opened).slice(0, 1000) } : {}) }
+    if (opened.isError || !openedJson.draft_id) throw new Error(`open_motif_draft failed: ${texts(opened).slice(0, 500)}`)
+    const id = openedJson.draft_id
+    const p1 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
+    fs.writeFileSync(path.join(dir, 'index.html'), probeMotifFiles('#2040e0')['index.html']!)
+    fs.rmSync(path.join(dir, 'notes.txt'))
+    const p2 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
+    const info = await pc.callTool({ name: 'read_motif', arguments: { id } })
+    const infoText = JSON.stringify(info)
+    Object.assign(out, {
+      preview_1: { is_error: !!p1.isError, image_sha: imageHash(p1) },
+      preview_2: { is_error: !!p2.isError, image_sha: imageHash(p2) },
+      preview_changed: imageHash(p1) !== null && imageHash(p1) !== imageHash(p2),
+      read_motif_names_local_dir: infoText.includes(dir),
+      read_motif_has_windows_path: /[A-Za-z]:\\\\/.test(infoText),
+      read_motif_files: (info.structuredContent as { files?: Array<{ path: string }> } | undefined)?.files?.map((f) => f.path)
+        ?? (JSON.parse(texts(info) || '{}') as { files?: Array<{ path: string }> }).files?.map((f) => f.path) ?? null,
+    })
+    out.ok = !p1.isError && !p2.isError && out.preview_changed === true
+  } catch (e) {
+    out.ok = false
+    out.error = (e as Error).message.slice(0, 2000)
+  } finally {
+    await pc.close().catch(() => {})
+  }
+  out.ms = Date.now() - started
+  return out
+}
+
 function startHost(plan: PlannedRun, workdir: string): Promise<HostSession> {
   const base = { run_slug: runSlug(plan.run_id), out_dir: plan.out_dir, workdir, ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}) }
   return plan.host.kind === 'local' ? startLocalHost(base) : startRemoteHost({ ...base, ...plan.host })
@@ -305,8 +372,10 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         Object.assign(probe, { ok: false, error: (e as Error).message.slice(0, 2000) })
       }
       probe.ms = Date.now() - started
-      result.probes = { transcribe: probe }
+      result.probes = { ...(result.probes ?? {}), transcribe: probe }
     }
+    if (plan.probes.includes('motif-dir'))
+      result.probes = { ...(result.probes ?? {}), 'motif-dir': await motifDirProbe(s.agentEndpoint, workdir) }
   } catch (e) {
     // A host that failed to start still says how far it got.
     const hostRecord = (e as { hostRecord?: Record<string, unknown> }).hostRecord

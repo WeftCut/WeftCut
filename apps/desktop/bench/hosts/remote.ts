@@ -135,7 +135,10 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
       }).join('\n'))
       fs.rmSync(got, { recursive: true, force: true })
       // The project's own log folder (one project per run).
-      await ssh.sftp(`-get -r "${sftpPath(win.join(runDir, 'projects'))}/*/Logs" "${path.join(opts.out_dir, 'project-logs')}"\n`).catch(() => {})
+      const projectLogs = path.join(opts.out_dir, 'project-logs')
+      fs.mkdirSync(projectLogs, { recursive: true })
+      await ssh.sftp(`-get -r "${sftpPath(win.join(runDir, 'projects'))}/*/Logs" "${projectLogs}"\n`).catch(() => {})
+      if (!fs.readdirSync(projectLogs).length) fs.rmdirSync(projectLogs)
       t.cleanup = await op(ssh, root, 'cleanup', { run: opts.run_slug, keep: opts.keep })
       t.after = await op(ssh, root, 'strays', {})
     } catch (e) {
