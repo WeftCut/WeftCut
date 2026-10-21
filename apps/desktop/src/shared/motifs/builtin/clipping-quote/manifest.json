@@ -1,0 +1,76 @@
+{
+  "id": "clipping-quote",
+  "name": "Clipping Quote",
+  "version": 1,
+  "size": [
+    1200,
+    560
+  ],
+  "default_duration_s": 6.0,
+  "content_duration_s": 1.6,
+  "settle_rafs": 1,
+  "graphic_role": "callout",
+  "props_schema": {
+    "quote": {
+      "type": "string",
+      "default": "Memories are not stored in one place; they are rebuilt each time we recall them.",
+      "max_length": 220,
+      "multiline": true
+    },
+    "source": {
+      "type": "string",
+      "default": "The Brain Review, 2024",
+      "max_length": 60
+    },
+    "highlight_from": {
+      "type": "number",
+      "default": 7,
+      "min": -1,
+      "max": 60
+    },
+    "highlight_to": {
+      "type": "number",
+      "default": 10,
+      "min": -1,
+      "max": 60
+    },
+    "tilt_deg": {
+      "type": "number",
+      "default": 1.5,
+      "min": -12,
+      "max": 12
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "accent": {
+      "type": "color",
+      "default": "#D2261C"
+    },
+    "highlight": {
+      "type": "color",
+      "default": "#FFE9A6"
+    },
+    "font_body": {
+      "type": "string",
+      "default": "'Noto Serif', 'Source Serif 4', 'Georgia', 'Times New Roman', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif",
+      "max_length": 200
+    },
+    "font_folio": {
+      "type": "string",
+      "default": "'IBM Plex Mono', 'Menlo', 'Consolas', monospace",
+      "max_length": 200
+    },
+    "step_fps": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 30
+    }
+  }
+}

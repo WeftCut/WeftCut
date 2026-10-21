@@ -1,0 +1,73 @@
+{
+  "id": "clipping-headline",
+  "name": "Clipping Headline",
+  "version": 1,
+  "size": [
+    1600,
+    400
+  ],
+  "default_duration_s": 4.0,
+  "content_duration_s": 1.2,
+  "settle_rafs": 1,
+  "graphic_role": "title",
+  "props_schema": {
+    "text": {
+      "type": "string",
+      "default": "HOW MEMORY WORKS",
+      "max_length": 48
+    },
+    "kicker": {
+      "type": "string",
+      "default": "CHAPTER 01",
+      "max_length": 32
+    },
+    "band": {
+      "type": "enum",
+      "options": [
+        "paper",
+        "ink",
+        "red"
+      ],
+      "default": "paper"
+    },
+    "tilt_deg": {
+      "type": "number",
+      "default": -2,
+      "min": -12,
+      "max": 12
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "accent": {
+      "type": "color",
+      "default": "#D2261C"
+    },
+    "font_headline": {
+      "type": "string",
+      "default": "'Anton', 'Bebas Neue', 'Impact', 'Arial Black', 'Noto Sans SC Black', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_cjk": {
+      "type": "string",
+      "default": "'Noto Sans SC Black', 'Source Han Sans SC Heavy', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_folio": {
+      "type": "string",
+      "default": "'IBM Plex Mono', 'Menlo', 'Consolas', monospace",
+      "max_length": 200
+    },
+    "step_fps": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 30
+    }
+  }
+}

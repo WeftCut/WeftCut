@@ -1,0 +1,64 @@
+{
+  "id": "clipping-stamp",
+  "name": "Clipping Stamp",
+  "version": 1,
+  "size": [
+    1100,
+    300
+  ],
+  "default_duration_s": 5.0,
+  "content_duration_s": 1.3,
+  "settle_rafs": 1,
+  "graphic_role": "lower_third",
+  "props_schema": {
+    "name": {
+      "type": "string",
+      "default": "Dr. Ann Matsuuchi",
+      "max_length": 40
+    },
+    "line2": {
+      "type": "string",
+      "default": "Librarian · LaGuardia CC",
+      "max_length": 48
+    },
+    "tilt_deg": {
+      "type": "number",
+      "default": -1,
+      "min": -12,
+      "max": 12
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "accent": {
+      "type": "color",
+      "default": "#D2261C"
+    },
+    "font_headline": {
+      "type": "string",
+      "default": "'Anton', 'Bebas Neue', 'Impact', 'Arial Black', 'Noto Sans SC Black', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_cjk": {
+      "type": "string",
+      "default": "'Noto Sans SC Black', 'Source Han Sans SC Heavy', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_folio": {
+      "type": "string",
+      "default": "'IBM Plex Mono', 'Menlo', 'Consolas', monospace",
+      "max_length": 200
+    },
+    "step_fps": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 30
+    }
+  }
+}
