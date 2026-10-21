@@ -40,7 +40,8 @@ export interface TasteView {
   taste: { path: string | null; present: boolean }
   roles: TasteRole[]
   tokens: Tokens
-  /** Graphic role → the Motifs the style (or TASTE.md) draws it with. */
+  /** Graphic role → the style's example Motifs for it (or TASTE.md's):
+   *  a starting point an agent uses, forks or departs from, not a template. */
   motifs: Record<string, TasteRoleMotifs>
   /** Font slot → which of its families this machine has (with the host's
    *  installed list; absent without one). */
