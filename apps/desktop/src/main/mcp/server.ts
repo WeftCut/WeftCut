@@ -45,6 +45,7 @@ import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 import { TACK_TOOLS, isTacksUri, readTacksResource, readTacksView, runTackTool } from './tackTools.js'
+import { heldForAudit } from '../lint/audits.js'
 import { ComputeCancelledError, type ComputeCaller } from '../compute/jobs.js'
 import { clipJobSpec } from '../compute/clipJob.js'
 import { mcpComputeCaller } from './computeCaller.js'
@@ -392,6 +393,19 @@ async function dispatchTool(
         // takeover says whose work it closed.
         const p = mcpDef('end_agent_session').parseDedicated!(args)
         const active = tsHost.agent.snapshot().session
+        // A handoff is of checked work (spec H1-D6). Agents that never ran the
+        // audit ignored a reported `never` (bench 2026-10-21), so the app runs
+        // it here when the last one is not fresh. Hard or warning findings the
+        // agent has not seen keep its session open and come back to it; the
+        // next call, at a fresh audit, ends the session whatever it found.
+        // A takeover is never held: the owner is gone.
+        if (active !== null && tsHost.audits && p.force !== true && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
+          const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
+          if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') {
+            const check = tsHost.audits.run(snap, snap.root_id, taste)
+            if (check.counts.hard + check.counts.warning > 0) return toolRecord(heldForAudit(check)) as ServerResult
+          }
+        }
         tsHost.agent.end(p.force === true ? 'forced' : 'agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
         // The client's open tacks that no longer point where they were made

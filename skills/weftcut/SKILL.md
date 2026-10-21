@@ -106,8 +106,9 @@ After hand edits, `restyle_to_taste` puts layers back to the style.
 (`craft/rules.md`) or departs from the style. Fix every `hard` finding. Fix a
 `warning`, or leave a tack on it that says why it stays. A `review` finding is
 a departure from the style: keep it only if it was meant, and say so.
-`end_agent_session` tells you whether your last check still matches the
-timeline.
+`end_agent_session` runs the check itself when your last one no longer
+matches the timeline. If that finds `hard` or `warning` findings, it keeps
+the session open and returns them: settle them as above, then call it again.
 
 ## Working rhythm
 
