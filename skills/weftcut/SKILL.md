@@ -199,11 +199,15 @@ the layers before writing code (*Scope: one element* in `motif-authoring.md`).
    companion code/assets. Call `open_motif_draft` with a directory source once;
    keep editing the folder with your normal file tools. The app watches changes.
    Opening the same directory reuses its draft. Use an existing Motif or ZIP
-   source to copy a package; copying does not select an update target.
-2. When you cannot access the app filesystem, start an empty draft or import an
+   source to copy a package; copying does not select an update target. Unsure
+   whether the app can read your folder? Try it: one `open_motif_draft` with the
+   folder's absolute path answers the question. Fall back to step 2 only when the
+   app refuses the path.
+2. When the app cannot read your folder, start an empty draft or import an
    uploaded ZIP. Use `read_motif` for inventory or file content, then
-   `update_motif_files` for a batch of text replacements, uploaded file references
-   or deletions. Always pass the revision you read. Upload binary bytes with
+   `update_motif_files` for a batch of file writes, uploaded file references
+   or deletions. To change part of a file, send `edits` (exact `old` → `new`
+   pairs) instead of the whole file. Always pass the revision you read. Upload binary bytes with
    `begin_file_upload` and `write_file_chunk`; `read_file_transfer` downloads
    content or reports upload progress. `delete_file_transfer` releases temporary
    files after use. Uploads are not model-specific.

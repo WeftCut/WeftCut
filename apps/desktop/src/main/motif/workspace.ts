@@ -20,11 +20,40 @@ export type DraftSource = {
     kind: 'empty';
     name?: string;
 };
+/** An exact-match replacement inside one UTF-8 file: `old` must occur exactly once. */
+export interface TextEdit {
+    old: string;
+    new: string;
+}
 export interface FileChange {
     path: string;
     text?: string;
     file_id?: string;
     delete?: boolean;
+    edits?: TextEdit[];
+}
+/** Apply edits in order, each against the text the previous one left. A miss or
+ *  an ambiguous match refuses the whole batch, so a client resends a small diff
+ *  rather than the complete file. */
+function applyEdits(filePath: string, bytes: Buffer | undefined, edits: TextEdit[]): Buffer {
+    if (!bytes)
+        throw new Error(`Cannot edit ${filePath}: no such file in the draft`);
+    let text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    edits.forEach((edit, i) => {
+        const where = `${filePath} edit ${i + 1}`;
+        if (!edit || typeof edit.old !== 'string' || !edit.old || typeof edit.new !== 'string')
+            throw new Error(`${where}: needs a non-empty old text and a new text`);
+        const at = text.indexOf(edit.old);
+        if (at < 0)
+            throw new Error(`${where}: old text not found; read the file again`);
+        let count = 0;
+        for (let k = at; k >= 0; k = text.indexOf(edit.old, k + 1))
+            count++;
+        if (count > 1)
+            throw new Error(`${where}: old text matches ${count} times; include more surrounding text`);
+        text = text.slice(0, at) + edit.new + text.slice(at + edit.old.length);
+    });
+    return Buffer.from(text);
 }
 interface DraftState {
     directory?: string;
@@ -257,11 +286,14 @@ export class MotifWorkspace {
             if (touched.has(change.path.toLowerCase()))
                 throw new Error('Duplicate file change: ' + change.path);
             touched.add(change.path.toLowerCase());
-            const kinds = Number(typeof change.text === 'string') + Number(typeof change.file_id === 'string') + Number(change.delete === true);
-            if (kinds !== 1)
-                throw new Error('Each file change needs exactly one of text, file_id or delete:true');
+            const hasEdits = Array.isArray(change.edits) && change.edits.length > 0;
+            const kinds = Number(typeof change.text === 'string') + Number(typeof change.file_id === 'string') + Number(change.delete === true) + Number(hasEdits);
+            if (kinds !== 1 || (change.edits !== undefined && !hasEdits))
+                throw new Error('Each file change needs exactly one of text, file_id, edits or delete:true');
             if (change.delete)
                 files.delete(change.path);
+            else if (hasEdits)
+                files.set(change.path, applyEdits(change.path, files.get(change.path), change.edits!));
             else
                 files.set(change.path, change.text !== undefined ? Buffer.from(change.text) : resolveFile ? resolveFile(change.file_id!) : (() => { throw new Error('No file transfer available'); })());
         }

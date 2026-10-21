@@ -65,13 +65,18 @@ Batch edits through update_motif_files:
   "expected_revision":"<revision just read>",
   "files":[
     {"path":"scene.js","text":"/* replacement source */"},
+    {"path":"index.html","edits":[{"old":"font-size: 56px","new":"font-size: 48px"}]},
     {"path":"assets/model.glb","file_id":"<completed upload id>"},
     {"path":"assets/old.png","delete":true}
   ]
 }
 ```
 
-Each entry has exactly one content/delete operation. The complete resulting
+Each entry has exactly one operation: text (the whole file), file_id, edits or
+delete. Edits change part of an existing UTF-8 file: each `old` must occur
+exactly once in the text the previous edit left, or the whole batch is refused
+with the edit's number; read the file again and resend. Prefer edits to
+resending a file you have already written. The complete resulting
 package is validated before writes. Stale revisions fail; read again and merge
 instead of blindly retrying. Linked drafts write changes back to their source
 folder and commit one application snapshot. Source filesystem write failures
