@@ -2214,7 +2214,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it. Answers `{ ended }`, plus `tacks_to_review` when your open tacks are outdated. Unrecorded.",
+    description: "End your work session and release its history lock; the view, activity, running tasks and connection stay. Only the owning connection may end it, unless `force: true` takes over a session whose owner is gone (`read_project { view: \"session\" }` shows the holder). Unless your last `check_composition` is current, the app audits first; hard or warning findings keep the session open (`held: \"audit\"`): settle them and end again. Answers `{ ended, audit }`, plus `tacks_to_review` when open tacks are outdated. Unrecorded.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
   { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
@@ -2227,7 +2227,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // The audit (spec H1-D5): served by the host, which remembers the result so
   // end_agent_session and start_export can say whether it is still fresh.
   { name: 'check_composition', exec: 'dedicated', annotations: ANN_READ,
-    description: "Check a composition against the craft rules (skill craft/rules.md) and the project's taste: `{ composition_id, revision, findings: [{ severity, rule, range, layers, message, fix }], counts }`. `hard`: fix before handoff; `warning`: fix, or leave a tack saying why not; `review`: a departure from the style to confirm. Project data only — text extents are estimated. The whole composition is checked and remembered; `t_start_us`/`t_end_us` only narrow the findings returned. Run it after your edits and again after fixing.",
+    description: "Check a composition against the craft rules (skill craft/rules.md) and the project's taste: `{ composition_id, revision, findings: [{ severity, rule, range, layers, message, fix }], counts }`. `hard`: fix before handoff; `warning`: fix, or leave a tack saying why not; `review`: a departure from the style to confirm. Project data only — text extents are estimated. The whole composition is checked and remembered; `t_start_us`/`t_end_us` only narrow the findings returned. Run it after your edits and after fixing.",
     inputSchema: { type: 'object', properties: {
       composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
       t_start_us: US_SCHEMA('Only findings overlapping from here, timeline'),

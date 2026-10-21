@@ -52,3 +52,19 @@ export class AuditStore {
     return { composition_id: compositionId, state, ...last.counts }
   }
 }
+
+/** `end_agent_session`'s answer when it keeps the session open for the audit
+ *  it just ran: the hard and warning findings (the first `shown`), and what
+ *  ends the session. */
+export function heldForAudit(check: CheckResult, shown = 20): Record<string, unknown> {
+  const findings = check.findings.filter((f) => f.severity !== 'review')
+  return {
+    ended: null,
+    held: 'audit',
+    audit: {
+      composition_id: check.composition_id, state: 'fresh' as AuditState, ...check.counts,
+      findings: findings.slice(0, shown), ...(findings.length > shown ? { more: findings.length - shown } : {}),
+    },
+    next: `The session is still open: the audit of your final state found ${check.counts.hard} hard and ${check.counts.warning} warning finding(s). Fix every hard one, fix each warning or leave a tack saying why not, then call end_agent_session again. With no edit in between, that call ends the session.`,
+  }
+}

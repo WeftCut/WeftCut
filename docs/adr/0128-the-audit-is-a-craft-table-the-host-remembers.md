@@ -35,10 +35,16 @@ the findings returned; the whole composition is always what is checked.
 
 **The host remembers** the last result per composition with a revision —
 a hash of the composition and the taste revision — for the project opening.
-`end_agent_session` reports the root's audit as `fresh`, `stale` or `never`
-with its counts; `start_export` audits the root unless the last audit is
-fresh and returns the summary beside the job. Attended mode reports and never
-blocks (Q10); blocking on `hard` belongs to unattended mode (H5).
+`start_export` audits the root unless the last audit is fresh and returns
+the summary beside the job. `end_agent_session` does the same, and when that
+audit, run at the handoff, finds `hard` or `warning` findings, the session stays
+open and the findings go back to the agent. Ending again with no edit in
+between ends it, so the agent is held once, to see what it is handing over.
+The bench showed why reporting is not enough at the handoff: agents that never
+audited were told `never` and ended anyway, leaving 14–19 sub-second clips
+(`docs/notes/agent-bench-h1-2026-10-21.md`). Nothing blocks the user or an
+export. Attended mode reports (Q10). Blocking on `hard` belongs to unattended
+mode (H5).
 
 ## Consequences
 
