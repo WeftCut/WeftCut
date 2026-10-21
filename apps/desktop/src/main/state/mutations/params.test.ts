@@ -62,6 +62,16 @@ describe('applyUpdateLayerParams (field merge)', () => {
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
   })
+  it('Text patch sets and clears intro/outro, refusing a preset that runs the wrong way', () => {
+    const g = seededGen(); const p = blankProject(g, 'p')
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 2_000_000)
+    applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'SlideUp', outro: 'FadeOut' }, new MotifCatalog())
+    expect([(layerOf(p, id).params as TextParams).intro, (layerOf(p, id).params as TextParams).outro]).toEqual(['SlideUp', 'FadeOut'])
+    applyUpdateLayerParams(p, id, { kind: 'Text', outro: null }, new MotifCatalog())
+    expect((layerOf(p, id).params as TextParams).outro).toBeNull()
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'FadeOut' }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', outro: 'Typewriter' }, new MotifCatalog()), 'InvalidArgument')
+  })
   it('kind mismatch → LayerParamsKindMismatch', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)

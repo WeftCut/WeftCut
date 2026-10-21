@@ -496,6 +496,10 @@ export interface TextView {
   /// re-measure and rebuild the glyph atlas every frame (ADR 0049).
   box_w: number | null;
   box_h: number | null;
+  /// Entrance and exit presets (`shared/textAnimation.ts`); absent on views
+  /// built before they played.
+  intro?: string | null;
+  outro?: string | null;
   /// The text block's placement INSIDE the box — orthogonal to `anchor_y`,
   /// which places the box against `x`/`y`.
   valign: "Top" | "Middle" | "Bottom";

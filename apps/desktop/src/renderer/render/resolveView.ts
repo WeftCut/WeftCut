@@ -7,6 +7,7 @@
 // Fallback constants mirror the view builder's per-property defaults
 // (`src/main/state/summary.ts`) when a track is absent (x/y/rotation -> 0,
 // scale/opacity -> 1, text WHITE, color BLACK).
+import { textAnimationAt } from "../../shared/textAnimation";
 import type {
   ColorView,
   CompositionRefView,
@@ -112,12 +113,22 @@ export function resolveImageOverlayView(
   return { ...v, ...resolveTransform(v, tInLayerUs) };
 }
 
-export function resolveTextView(v: TextView, tInLayerUs: number): ResolvedTextView {
-  return {
+/// `durUs` is the layer's length, which the entrance and exit presets play
+/// against (`shared/textAnimation.ts`); without it the presets are not applied.
+export function resolveTextView(v: TextView, tInLayerUs: number, durUs?: number): ResolvedTextView {
+  const resolved: ResolvedTextView = {
     ...v,
     ...resolveTransform(v, tInLayerUs),
     color: resolveAnimatedColor(v.color, tInLayerUs, WHITE),
   };
+  if ((v.intro || v.outro) && durUs !== undefined) {
+    const chars = [...v.content].length;
+    const a = textAnimationAt(v.intro, v.outro, tInLayerUs, durUs, v.font_size_px, chars);
+    resolved.opacity *= a.opacity;
+    resolved.y += a.dy;
+    if (a.visibleChars !== null) resolved.content = [...v.content].slice(0, a.visibleChars).join("");
+  }
+  return resolved;
 }
 
 export function resolveColorView(v: ColorView, tInLayerUs: number): ResolvedColorView {

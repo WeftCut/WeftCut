@@ -1,8 +1,9 @@
 import { sourceIn, sourceOut, layerRate, layerRateNumber, writeSourceWindow } from '../../../renderer/layerTiming'
 import { approximateTime, exactTime, subtractTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
-import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
+import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
+import { TEXT_INTROS, TEXT_OUTROS } from '../../../shared/textAnimation'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkLayerEditable, applyDurationAutofit, requireLayer } from './helpers'
@@ -27,7 +28,7 @@ import { graphicRoleProblem } from '../../../shared/graphicRole'
  *  `null` is a value distinct from absent — see the `case 'Text'` merge — and
  *  `graphic_role` (Text, ImageOverlay, Motif) is another: null clears the tag. */
 export type LayerParamsPatch =
-  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba; graphic_role?: string | null }
+  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba; graphic_role?: string | null; intro?: TextAnimPreset | null; outro?: TextAnimPreset | null }
   | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number; graphic_role?: string | null }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown>; graphic_role?: string | null }
@@ -123,6 +124,14 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   if ('graphic_role' in patch && patch.graphic_role !== undefined) {
     const problem = graphicRoleProblem(patch.graphic_role)
     if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'graphic_role', detail: problem })
+  }
+  // The presets are directional: FadeOut does not enter and Typewriter does
+  // not leave (`shared/textAnimation.ts`).
+  if (patch.kind === 'Text') {
+    if (patch.intro !== undefined && patch.intro !== null && !(TEXT_INTROS as readonly string[]).includes(patch.intro))
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'intro', detail: `intro must be one of ${TEXT_INTROS.join(', ')} or null — got ${JSON.stringify(patch.intro)}` })
+    if (patch.outro !== undefined && patch.outro !== null && !(TEXT_OUTROS as readonly string[]).includes(patch.outro))
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'outro', detail: `outro must be one of ${TEXT_OUTROS.join(', ')} or null — got ${JSON.stringify(patch.outro)}` })
   }
   switch (patch.kind) {
     case 'Text': {
@@ -265,6 +274,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       }
       if (patch.outline_color !== undefined && t.outline) t.outline = { color: patch.outline_color, width: t.outline.width }
       if (patch.graphic_role !== undefined) t.graphic_role = patch.graphic_role
+      if (patch.intro !== undefined) t.intro = patch.intro
+      if (patch.outro !== undefined) t.outro = patch.outro
       return
     }
     case 'VideoClip': {
