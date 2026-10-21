@@ -8,7 +8,6 @@
  *  question, not the store's — a TASTE edit must never make a project
  *  unwritable. */
 export const BUILTIN_GRAPHIC_ROLES = ['title', 'lower_third', 'callout', 'credit', 'logo', 'plate', 'none'] as const
-export type BuiltinGraphicRole = typeof BUILTIN_GRAPHIC_ROLES[number]
 
 export const GRAPHIC_ROLE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/
 
