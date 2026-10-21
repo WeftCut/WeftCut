@@ -1,3 +1,4 @@
+import { TEXT_INTROS, TEXT_OUTROS } from '../../shared/textAnimation'
 import { validateTimeFraction } from '../../renderer/layerTiming'
 import { readExactTime } from '../../renderer/timeMapping'
 import { cropProblem } from '../../shared/crop'
@@ -337,7 +338,7 @@ type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<Lay
  *  not have and demands every key it does. */
 const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
-  Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true }),
+  Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true, intro: true, outro: true }),
   VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
   ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true, graphic_role: true }),
   Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true, graphic_role: true }),
@@ -365,7 +366,7 @@ function parseOneOf(v: unknown, options: readonly string[], field: string): stri
 function parseLayerParamValue(k: string, v: unknown): unknown {
   const field = `patch.${k}`
   if (v === null) {
-    if (k === 'box_w' || k === 'box_h' || k === 'shadow' || k === 'crop' || k === 'graphic_role') return null
+    if (k === 'box_w' || k === 'box_h' || k === 'shadow' || k === 'crop' || k === 'graphic_role' || k === 'intro' || k === 'outro') return null
     throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
   }
   switch (k) {
@@ -376,6 +377,8 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
     }
     case 'content': case 'font_family': case 'motif_id': return parseStr(v, field)
     case 'graphic_role': return parseGraphicRoleOpt(v, field)
+    case 'intro': return parseOneOf(v, TEXT_INTROS, field)
+    case 'outro': return parseOneOf(v, TEXT_OUTROS, field)
     case 'font_weight': return parseIntNum(v, field)
     case 'italic': return parseBool(v, field)
     case 'shadow': {
@@ -1433,6 +1436,8 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   motif_version: { type: 'integer', description: 'Motif version to bind.' },
   props: { type: 'object', description: "Motif props, matched against its props_schema." },
   graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: 'Graphic role (see add_text_layer); null clears.' },
+  intro: { type: ['string', 'null'], enum: [...TEXT_INTROS, null], description: 'Entrance played from the layer start (400 ms, or a third of a short layer); null: none.' },
+  outro: { type: ['string', 'null'], enum: [...TEXT_OUTROS, null], description: 'Exit played into the layer end; null: none.' },
 }
 const LAYER_PARAMS_PATCH_SCHEMA = {
   type: 'object',

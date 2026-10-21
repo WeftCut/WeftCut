@@ -5,7 +5,7 @@ import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop'
 import { positionView, type PositionAnimation } from '../../shared/position'
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rational, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rational, Rgba, RoleMixSettings, Shadow, TextAlign, TextAnimPreset, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
 import { hasSourceWindow } from './mutations/helpers'
 import { snapFrameRound } from './snap'
@@ -37,6 +37,9 @@ export interface TextView {
   box_w: number | null; box_h: number | null
   valign: VAlign; line_height: number; letter_spacing: number
   graphic_role: string | null
+  /** Entrance and exit presets, played by the renderer from the layer's own
+   *  start and end (`shared/textAnimation.ts`). */
+  intro: TextAnimPreset | null; outro: TextAnimPreset | null
 }
 export interface ColorView { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
 export interface AudioView extends TimingFields {
@@ -273,7 +276,8 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
         anchor_x: t.anchor_x, anchor_y: t.anchor_y, opacity: params.opacity,
         shadow: params.shadow, outline: params.outline,
         box_w: params.box_w, box_h: params.box_h, valign: params.valign,
-        line_height: params.line_height, letter_spacing: params.letter_spacing, graphic_role: params.graphic_role }
+        line_height: params.line_height, letter_spacing: params.letter_spacing, graphic_role: params.graphic_role,
+        intro: params.intro, outro: params.outro }
     }
     case 'Color':
       return { kind: 'Color', color: params.color, width: params.width, height: params.height }
