@@ -1301,6 +1301,7 @@ const zhCN: Resources = {
     "end_agent_session": "结束工作会话",
     "set_history_lock": "设置撤销锁",
     "create_tacks": "添加批注",
+    "check_composition": "检查剪辑",
     "update_tack": "更新批注",
     "delete_tacks": "移除批注",
     "analyze_clip": "分析片段",

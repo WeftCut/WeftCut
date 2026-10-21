@@ -1,0 +1,121 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { checkComposition } from './checkComposition'
+import { blankProject, type Layer, type LayerParams, type Project, type TextParams, type Track } from '../state/model'
+import { uuidV7Gen } from '../state/ids'
+import { textParamsDefault } from '../state/mutations/add'
+import { tasteView } from '../taste/view'
+
+const BUILTIN = path.join(import.meta.dirname, '../../shared/styles/builtin')
+const roots: string[] = []
+afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }) })
+const S = 1_000_000
+
+function setup() {
+  const idGen = uuidV7Gen()
+  const p: Project = blankProject(idGen, 'lint')
+  const comp = p.compositions[p.root_id]!
+  comp.width = 1920; comp.height = 1080
+  const [aRoll, bRoll] = comp.tracks
+  const caption: Track = { ...structuredClone(aRoll!), id: idGen(), role: 'Caption', layers: [] }
+  comp.tracks.push(caption)
+  const put = (track: typeof caption, params: LayerParams, t0: number, t1: number): Layer => {
+    const l: Layer = { id: idGen(), label: null, t_start_us: t0 * S, t_end_us: t1 * S, enabled: true, locked: false, metadata: {}, params, effects: [] }
+    track.layers.push(l)
+    return l
+  }
+  const text = (content: string, over: Partial<TextParams> & { graphic_role?: string | null } = {}) =>
+    ({ ...textParamsDefault(content, comp), ...over }) as TextParams
+  return { p, comp, aRoll: aRoll!, bRoll: bRoll!, caption, put, text }
+}
+const taste = (md?: string) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lint-')); roots.push(dir)
+  if (md) writeFileSync(path.join(dir, 'TASTE.md'), md)
+  return tasteView({ builtin: BUILTIN, user: null }, dir)
+}
+const rules = (r: ReturnType<typeof checkComposition>) => r.findings.map((f) => f.rule).sort()
+
+describe('check_composition v1', () => {
+  it('a styled title and lower third held long enough raise nothing', () => {
+    const { p, bRoll, put, text } = setup()
+    const t = taste()
+    const title = t.tokens.text!.title!, lower = t.tokens.text!.lower_third!
+    put(bRoll, text('A title', { graphic_role: 'title', font: { family: 'Liberation Sans, Noto Sans SC', size_px: title.size_px!, weight: title.weight!, italic: false }, intro: 'FadeIn', outro: 'FadeOut',
+      transform: { ...text('x').transform, position: { mode: 'XY', x: { mode: 'Static', value: 960 }, y: { mode: 'Static', value: 170 } } } }), 0, 4)
+    put(bRoll, text('Ada Lovelace\nAnalyst', { graphic_role: 'lower_third', align: 'Left', font: { family: 'Liberation Sans, Noto Sans SC', size_px: lower.size_px!, weight: lower.weight!, italic: false }, intro: 'SlideUp', outro: 'FadeOut',
+      transform: { ...text('x').transform, anchor_x: { mode: 'Static', value: 0 }, anchor_y: { mode: 'Static', value: 1 }, position: { mode: 'XY', x: { mode: 'Static', value: 154 }, y: { mode: 'Static', value: 907 } } } }), 5, 10)
+    const r = checkComposition(p, p.root_id, t)
+    expect(r.findings).toEqual([])
+    expect(r.counts).toEqual({ hard: 0, warning: 0, review: 0 })
+  })
+
+  it('reports the baseline defaults: a 2 s lower third that pops, a centred untagged-size title that pops', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, text('Title', { graphic_role: 'title' }), 0, 2)
+    put(bRoll, text('Name\nRole', { graphic_role: 'lower_third' }), 3, 5)
+    const r = checkComposition(p, p.root_id, taste())
+    expect(rules(r)).toEqual(['lower-third-hold', 'text-pops', 'text-pops', 'title-hold', 'token-drift', 'token-drift'])
+    const hold = r.findings.find((f) => f.rule === 'lower-third-hold')!
+    expect(hold).toMatchObject({ severity: 'warning', range: [3 * S, 5 * S] })
+    expect(hold.message).toContain('under 4 s')
+    expect(r.findings.find((f) => f.rule === 'token-drift')!.severity).toBe('review')
+  })
+
+  it('checks captions against the craft numbers, tightened by the style', () => {
+    const { p, caption, put, text } = setup()
+    put(caption, text('This transcription cue runs on far past what one caption line should hold'), 0, 3)
+    put(caption, text('Too quick'), 3, 3.4)
+    put(caption, text('one\ntwo\nthree'), 4, 12)
+    const r = checkComposition(p, p.root_id, taste())
+    expect(rules(r)).toEqual(['caption-cue-max', 'caption-cue-min', 'caption-line-length', 'caption-lines'])
+    const tighter = checkComposition(p, p.root_id, taste('---\ntokens:\n  caption: { max_chars_per_line: 8 }\n---\n'))
+    expect(tighter.findings.filter((f) => f.rule === 'caption-line-length')).toHaveLength(2)
+    const looser = checkComposition(p, p.root_id, taste('---\ntokens:\n  floors: { caption-line-length: 100 }\n---\n'))
+    expect(looser.findings.filter((f) => f.rule === 'caption-line-length')).toHaveLength(1)
+  })
+
+  it('flags A-roll fragments under 1 s but not B-roll inserts', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, { kind: 'VideoClip' } as LayerParams, 0, 0.4)
+    put(aRoll, { kind: 'VideoClip' } as LayerParams, 0.4, 3)
+    put(bRoll, { kind: 'VideoClip' } as LayerParams, 1, 1.5)
+    const r = checkComposition(p, p.root_id, taste())
+    expect(r.findings).toEqual([expect.objectContaining({ rule: 'short-clip', range: [0, 0.4 * S] })])
+  })
+
+  it('hard-fails an undeclared role and text wholly off frame', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, text('x', { graphic_role: 'chapter_card' }), 0, 4)
+    put(bRoll, text('gone', { transform: { ...text('x').transform, position: { mode: 'XY', x: { mode: 'Static', value: 4000 }, y: { mode: 'Static', value: 540 } } } }), 0, 4)
+    const r = checkComposition(p, p.root_id, taste())
+    expect(r.findings.filter((f) => f.severity === 'hard').map((f) => f.rule).sort()).toEqual(['text-offscreen', 'undeclared-role'])
+    const declared = checkComposition(p, p.root_id, taste('---\nroles: [chapter_card]\n---\n'))
+    expect(declared.findings.map((f) => f.rule)).not.toContain('undeclared-role')
+  })
+
+  it('reports one role in two looks once, naming both', () => {
+    const { p, bRoll, put, text } = setup()
+    const base = { graphic_role: 'callout', intro: 'FadeIn' as const, outro: 'FadeOut' as const }
+    put(bRoll, text('A', { ...base, font: { family: 'Liberation Sans, Noto Sans SC', size_px: 44, weight: 600, italic: false } }), 0, 3)
+    put(bRoll, text('B', { ...base, font: { family: 'Liberation Sans, Noto Sans SC', size_px: 60, weight: 600, italic: false } }), 4, 7)
+    const r = checkComposition(p, p.root_id, taste())
+    const f = r.findings.filter((x) => x.rule === 'role-inconsistency')
+    expect(f).toHaveLength(1)
+    expect(f[0]!.layers).toHaveLength(2)
+    expect(f[0]!.message).toContain('2 looks')
+  })
+
+  it('keeps the revision while nothing changes, and narrows to a range', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, text('Title', { graphic_role: 'title' }), 0, 2)
+    put(bRoll, text('Later', { graphic_role: 'title' }), 20, 21)
+    const t = taste()
+    const a = checkComposition(p, p.root_id, t)
+    expect(checkComposition(p, p.root_id, t).revision).toBe(a.revision)
+    expect(checkComposition(p, p.root_id, t, [15 * S, 30 * S]).findings.every((f) => f.range[0] >= 20 * S)).toBe(true)
+    p.compositions[p.root_id]!.tracks[1]!.layers[0]!.t_end_us = 5 * S
+    expect(checkComposition(p, p.root_id, t).revision).not.toBe(a.revision)
+  })
+})

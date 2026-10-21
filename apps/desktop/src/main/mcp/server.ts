@@ -368,6 +368,14 @@ async function dispatchTool(
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)
       : await jobs.cancel(args.job_id as string);
     const record = (name === 'get_export_options' ? result : exportWire(result, true)) ?? {job:null};
+    // An export is where unchecked work would leave the app: audit the root
+    // unless its last audit is still fresh, and report — never block, in
+    // attended mode (spec H1-D6, Q10).
+    if (name === 'start_export' && tsHost?.audits) {
+      const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
+      if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') tsHost.audits.run(snap, snap.root_id, taste)
+      ;(record as Record<string, unknown>).audit = tsHost.audits.summary(snap, snap.root_id, taste)
+    }
     return {content:[{type:'text',text:JSON.stringify(record)}],structuredContent:record} as ServerResult;
   }
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
@@ -390,6 +398,12 @@ async function dispatchTool(
         // to — the agent's last chance to fix or resolve them. Omitted when none.
         const review = active === null ? [] : tsHost.agent.tacks.toReview(active.client)
         if (review.length) result.tacks_to_review = review
+        // Whether the work was checked after its last change — the app's
+        // account, not the agent's (spec H1-D6). Omitted with no session.
+        if (active !== null && tsHost.audits) {
+          const snap = tsHost.actor.snapshot()
+          result.audit = tsHost.audits.summary(snap, snap.root_id, tsHost.taste?.() ?? null)
+        }
       } else {
         // The lock is taken here rather than through mcpCall because the OWNER
         // is the connection, which only this seam knows.
@@ -406,6 +420,18 @@ async function dispatchTool(
   // Tacks are runtime review state beside the agent activity, not project
   // state (ADR 0115): the host's store answers, and nothing reaches the actor.
   if (tsHost?.agent && TACK_TOOLS.has(name)) return runTackTool(tsHost.agent.tacks, name, args)
+  if (tsHost?.audits && name === 'check_composition') {
+    try {
+      const p = mcpDef('check_composition').parseDedicated!(args)
+      const snap = tsHost.actor.snapshot()
+      const compositionId = (p.composition_id as string | null) ?? snap.root_id
+      if (!snap.compositions[compositionId]) return toolErrorResult({ code: 'invalid_params', message: `no composition ${compositionId} — project://compositions lists them` })
+      return toolRecord(tsHost.audits.run(snap, compositionId, tsHost.taste?.() ?? null, (p.range as [number, number] | null) ?? undefined) as unknown as Record<string, unknown>) as ServerResult
+    } catch (e) {
+      if (e instanceof McpArgError) return toolErrorResult(e.toJson())
+      throw e
+    }
+  }
   if (tsHost?.agent && name === 'read_project' && args.view === 'tacks') {
     const p = mcpDef('read_project').parseDedicated!(args)
     return readTacksView(tsHost.agent.tacks, p.composition_id as string | null)

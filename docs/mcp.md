@@ -832,6 +832,17 @@ sessions, that are stale, hibernating or outdated — when there are any.
 - `update_tack { tack_id, patch: { label?, body?, kind?, status? } }` → the tack as `project://tacks` reads it. `status` is `open`, `resolved` or `dismissed`. A tack's place is fixed at creation; delete and re-create to move one. `TackNotFound` for an id this opening does not hold.
 - `delete_tacks { tack_ids? , session_id? }` → `{ deleted_tack_ids }` — exactly one selector: the listed ids (all must exist, or none goes), or every tack created in that work session.
 
+### Audit
+
+The craft rules a composition breaks, from project data alone — `hard` must be
+fixed before handoff, `warning` is fixed or left as a tack that says why,
+`review` is a departure from the project's style to confirm. The rules and
+their numbers are one table (`src/shared/craft.ts`), shipped to agents as the
+skill's `craft/rules.md`; a style's `tokens.floors` and caption tokens tighten
+them, never loosen them.
+
+- `check_composition { composition_id?, t_start_us?, t_end_us? }` → `{ composition_id, revision, findings: [{ severity, rule, range, layers, message, fix }], counts: { hard, warning, review } }` — read-only. Checks the whole composition (the root unless `composition_id` names a Group) against the craft table and the project's merged taste (`project://taste`), and the host remembers the result; `t_start_us`/`t_end_us` (both or neither) only narrow the findings returned. Rules: `undeclared-role`, `text-offscreen` (hard); `title-hold`, `lower-third-hold`, `text-pops`, `title-safe`, `caption-line-length`, `caption-lines`, `caption-cue-min`, `caption-cue-max`, `short-clip`, `role-inconsistency` (warning); `token-drift` (review). Text extents are estimated (0.55 em advance, 1.25 em line), since layout runs in the renderer. `revision` hashes the composition and the taste revision: a remembered audit is **fresh** while both are unchanged. `end_agent_session` adds `audit: { composition_id, state: fresh | stale | never, hard?, warning?, review? }` for the root when a session was active; `start_export` audits the root when its last audit is not fresh and adds the same `audit` beside the job — it reports, never blocks.
+
 ### Agent panel and lifecycle
 
 Manual entry and exit (View menu / command palette / Exit to editor) only switch

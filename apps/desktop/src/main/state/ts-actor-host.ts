@@ -34,6 +34,7 @@ import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
+import { AuditStore } from '../lint/audits'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
@@ -154,6 +155,8 @@ export interface TsActorHost {
   /** The open project's merged style tokens (`project://taste`); the default
    *  style alone on the start screen. Read fresh: TASTE.md is the user's file. */
   taste?: () => import("../taste/view").TasteView
+  /** The last `check_composition` result per composition, for freshness. */
+  audits: import("../lint/audits").AuditStore
   /** MCP's `open_project` / `create_project`: the start screen's Open and New,
    *  plus the event that brings the editor along. A `WorkspaceFailure` throws
    *  through untouched, leaving the open record as it was. */
@@ -881,6 +884,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
     },
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null) } : {}),
+    audits: new AuditStore(),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

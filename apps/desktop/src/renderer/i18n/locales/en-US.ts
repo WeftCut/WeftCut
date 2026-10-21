@@ -1484,6 +1484,7 @@ const enUS = {
     "end_agent_session": "End work session",
     "set_history_lock": "Set the undo lock",
     "create_tacks": "Add tacks",
+    "check_composition": "Check the edit",
     "update_tack": "Update tack",
     "delete_tacks": "Remove tacks",
     "analyze_clip": "Analyze clip",
