@@ -18,7 +18,8 @@ it does not need. It never adds one of its own.
 - `plan` — say in plain words what will change, where, and how the user will
   know it worked; wait for the user's go-ahead unless they already gave it.
 - `build` — make the changes, inside a work session.
-- `audit` — check the timeline mechanically against the rules that apply.
+- `audit` — run `check_composition` and settle what it finds: every `hard`
+  finding fixed, every `warning` fixed or tacked with the reason.
 - `look` — inspect rendered frames of what changed.
 - `critique` — have the work reviewed by a reader that did not do it.
 - `handoff` — leave tacks on what is unresolved, end the work session, and
@@ -31,8 +32,8 @@ round. A recipe that uses a check stage says how to run it.
 
 What ends the rounds is written with these signals and nothing else:
 
-- `audit.clean` — the audit left nothing that must be fixed, at the project's
-  current state.
+- `audit.clean` — `check_composition` at the project's current state reports
+  no `hard` finding (the session's end confirms the check is still current).
 - `critique.clear` — the critique raised no blocking finding.
 - `user.confirmed` — the user said the result is what they asked for.
 - `rounds` — the number of rounds run so far.

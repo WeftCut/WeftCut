@@ -95,6 +95,8 @@ const KNOWN_NON_TOOLS = new Set([
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
   // motif-authoring.md — npm package example and private draft metadata file
   'three', 'target', 'model', 'eval',
+  // SKILL.md — Text entrance/exit patch fields
+  'intro', 'outro',
   // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
   'edits', 'old', 'new',
   // craft/rules.md — finding severities and the caption tokens that tighten rules
