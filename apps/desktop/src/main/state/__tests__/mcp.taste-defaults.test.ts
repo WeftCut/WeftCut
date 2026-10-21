@@ -1,8 +1,8 @@
 // apps/desktop/src/main/state/__tests__/mcp.taste-defaults.test.ts
 // Layers are born in the project's style (Q9, spec H1-D4): add_text_layer by
-// graphic role, apply_transcripts by the caption tokens, and restyle_to_taste
-// puts layers back. The default style changes nothing a user made untagged,
-// and reproduces today's transcript captions exactly.
+// graphic role, apply_transcripts by the caption tokens and limits, and
+// restyle_to_taste puts layers back. The default style changes nothing a user
+// made untagged, and keeps the look of today's transcript captions.
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -64,6 +64,36 @@ describe('apply_transcripts is born in the caption tokens', () => {
     const { a } = actor(tokens('---\ntokens:\n  caption: { size_px: 64, weight: 700 }\n---\n'))
     call(a, 'apply_transcripts', transcripts)
     expect(cue(a).font).toMatchObject({ size_px: 64, weight: 700 })
+  })
+
+  // A 77-character, 5 s segment as an engine returns it, word-timed.
+  const said = 'I think the librarians at our college have run edit-a-thons for years, really'
+  const long = { transcripts: [{ word_timing: 'exact', segments: [{ text: said, t_start_us: 0, t_end_us: 5_000_000,
+    words: said.split(' ').map((w, i, all) => ({ text: w, t_start_us: Math.round(i * 5_000_000 / all.length), t_end_us: Math.round((i + 1) * 5_000_000 / all.length) })) }] }] }
+  const cues = (a: ActorHandle) => root(a.snapshot()).tracks.filter((t) => t.role === 'Caption').flatMap((t) => t.layers)
+  const longest = (a: ActorHandle) => Math.max(...cues(a).flatMap((l) => (l.params as TextParams).content.split('\n').map((x) => x.length)))
+
+  it('builds cues to the style\'s caption limits, keeping their word timing', () => {
+    const { a } = actor(tokens())
+    call(a, 'apply_transcripts', long)
+    expect(cues(a)).toHaveLength(1)
+    expect((cues(a)[0]!.params as TextParams).content.split('\n')).toHaveLength(2)
+    expect(longest(a)).toBeLessThanOrEqual(42)
+    expect(cues(a)[0]!.metadata['weftcut.caption_timing']).toMatchObject({ provenance: 'exact', text: (cues(a)[0]!.params as TextParams).content })
+  })
+
+  it('splits cues in time when a TASTE asks for shorter lines', () => {
+    const { a } = actor(tokens('---\ntokens:\n  caption: { max_chars_per_line: 20 }\n---\n'))
+    call(a, 'apply_transcripts', long)
+    expect(cues(a).length).toBeGreaterThan(1)
+    expect(longest(a)).toBeLessThanOrEqual(20)
+    expect(cues(a).map((l) => (l.params as TextParams).content.replace(/\n/g, ' ')).join(' ')).toBe(said)
+  })
+
+  it('lays the transcript as it came without a style', () => {
+    const { a } = actor(null)
+    call(a, 'apply_transcripts', long)
+    expect(cues(a).map((l) => (l.params as TextParams).content)).toEqual([said])
   })
 })
 

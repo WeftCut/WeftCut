@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto'
 import type { Animated } from '../../shared/keyframe'
-import { craftRule, effectiveThreshold, type CraftSeverity } from '../../shared/craft'
+import { captionLimits, craftRule, styleThreshold, type CraftSeverity } from '../../shared/craft'
 import type { Composition, Layer, Project, Rgba, TextParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
 import type { TasteView } from '../taste/view'
@@ -86,16 +86,9 @@ export function checkComposition(project: Project, compositionId: string, taste:
   if (!comp) throw new Error(`no composition ${compositionId}`)
   const findings: Finding[] = []
   const floors = taste?.tokens.floors ?? {}
-  const caption = taste?.tokens.caption ?? {}
+  const captions = captionLimits(taste?.tokens)
   const scale = comp.height / REF_HEIGHT
-  // The craft number, tightened by the style's floor and then by a caption
-  // token that asks for less (a style wanting 32-character lines gets them
-  // checked at 32), never loosened by either.
-  const limit = (id: string, token?: number): number => {
-    const rule = craftRule(id)
-    const floored = effectiveThreshold(rule, floors[id])
-    return effectiveThreshold({ ...rule, threshold: floored }, token) ?? 0
-  }
+  const limit = (id: string): number => styleThreshold(id, floors[id])
   const add = (rule: string, l: Layer | Layer[], message: string, fix: string) => {
     const ls = Array.isArray(l) ? l : [l]
     findings.push({ severity: craftRule(rule).severity, rule, range: [Math.min(...ls.map((x) => x.t_start_us)), Math.max(...ls.map((x) => x.t_end_us))], layers: ls.map((x) => x.id), message, fix })
@@ -130,13 +123,12 @@ export function checkComposition(project: Project, compositionId: string, taste:
         }
       }
       if (isCaption) {
-        const maxChars = limit('caption-line-length', caption.max_chars_per_line)
-        const maxLines = limit('caption-lines', caption.max_lines)
+        const maxChars = captions.max_chars, maxLines = captions.max_lines
         const lines = p.content.split('\n')
         const longest = Math.max(...lines.map((x) => x.length))
         if (longest > maxChars) add('caption-line-length', l, `caption line of ${longest} characters, over ${maxChars}`, `break or split the cue so each line holds at most ${maxChars}`)
         if (lines.length > maxLines) add('caption-lines', l, `caption cue of ${lines.length} lines, over ${maxLines}`, 'split the cue in time')
-        const minS = limit('caption-cue-min', caption.min_cue_s), maxS = limit('caption-cue-max', caption.max_cue_s)
+        const minS = captions.min_cue_s, maxS = captions.max_cue_s
         if (dur < minS - 1e-3) add('caption-cue-min', l, `caption cue on screen ${dur.toFixed(2)} s, under ${minS} s`, 'merge it with a neighbouring cue')
         if (dur > maxS + 1e-3) add('caption-cue-max', l, `caption cue on screen ${dur.toFixed(2)} s, over ${maxS} s`, 'split it at a phrase boundary')
         const list = byRole.get('caption') ?? []; list.push({ layer: l, p }); byRole.set('caption', list)

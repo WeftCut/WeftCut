@@ -2000,7 +2000,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // agent has no reason to hold one, so the arm supplies it from the state it
   // is already reading.
   { name: 'apply_transcripts', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`), or your own cues with `word_timing: 'none'`; `correct_caption_text` needs word offsets to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
+    description: "Lay transcripts on the caption tracks, keeping per-word timing (`correct_caption_text` re-segments by it); returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as is, or your own cues with `word_timing: 'none'`, unsplit: cues are built to the style's caption limits (lines broken, long segments split). Cues pack into the existing caption tracks, opening a lane only when all collide, and snap to frames. `source_layer_ids`, parallel to `transcripts`, tags each cue with its clip so corrections group by take. At most 1000 transcripts. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
         type: 'object',
