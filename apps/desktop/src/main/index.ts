@@ -975,8 +975,14 @@ app.whenReady().then(async () => {
     cancel: (jobId) => backend!.cancelComputeJob(jobId),
     send: emitToRenderer,
   })
+  // The installed families, scanned once in the background; a style's font
+  // slots resolve against them, and read the whole preference list until the
+  // scan lands.
+  let installedFonts: ReadonlySet<string> | null = null
+  void listSystemFontFamilies().then((families) => { installedFonts = new Set(families.map((f) => f.toLowerCase())) }).catch((err) => console.warn('[fonts] system font scan failed', err))
   tsHost = createTsActorHost({
     exportJobs,
+    installedFonts: () => installedFonts,
     // Built-in style packages ride beside the built-in Motifs (electron-builder
     // extraResources); user packages live in the data root.
     styleDirs: {

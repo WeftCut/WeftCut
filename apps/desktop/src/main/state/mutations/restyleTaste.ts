@@ -8,8 +8,14 @@
 // Fields come in three groups so a deliberate placement can survive a restyle:
 // `look` (face, size, weight, colour, alignment, outline, shadow, box width),
 // `position` (position and anchor) and `motion` (intro and outro).
+//
+// A style Motif layer (spec H2-D2) is restyled through its token-backed props:
+// `step_fps` is motion, every other one is look. Its placement is the layer's
+// transform, which no token sets.
 
-import type { Project, TextParams, Uuid } from '../model'
+import type { MotifParams, Project, TextParams, Uuid } from '../model'
+import { canonicalizeProps, type Manifest } from '../../../shared/motifs/catalog'
+import { MOTION_PROPS } from '../../taste/motifProps'
 import { CommandFailure } from '../errors'
 import { checkLayerEditable } from './helpers'
 import { roleTokens, styleText } from '../../taste/apply'
@@ -30,15 +36,29 @@ function pick(t: TextTokens | CaptionTokens | undefined, groups: ReadonlySet<Res
   return Object.fromEntries(Object.entries(t).filter(([k]) => keep.has(k))) as TextTokens
 }
 
+/** A Motif's manifest and the props its tokens give it; null for a Motif the
+ *  catalog no longer holds. */
+export type MotifStyle = (motifId: string) => { manifest: Manifest; props: Record<string, unknown> } | null
+
 /** Restyle `layerIds`; returns the ids whose params changed. */
-export function applyRestyleToTaste(p: Project, layerIds: readonly Uuid[], tokens: Tokens, groups: ReadonlySet<RestyleGroup>, appFont?: string): Uuid[] {
+export function applyRestyleToTaste(p: Project, layerIds: readonly Uuid[], tokens: Tokens, groups: ReadonlySet<RestyleGroup>, appFont?: string, motif?: MotifStyle): Uuid[] {
   const located = layerIds.map((id) => {
     const at = checkLayerEditable(p, id)
-    if (at.layer.params.kind !== 'Text') throw new CommandFailure({ error: 'WrongLayerKind', layer: id, expected: 'Text' })
+    const kind = at.layer.params.kind
+    if (kind !== 'Text' && !(kind === 'Motif' && motif)) throw new CommandFailure({ error: 'WrongLayerKind', layer: id, expected: motif ? 'Text or Motif' : 'Text' })
     return at
   })
   const changed: Uuid[] = []
   for (const { layer, track, comp } of located) {
+    if (layer.params.kind === 'Motif') {
+      const params = layer.params as MotifParams
+      const style = motif!(params.motif_id)
+      if (!style) continue
+      const keep = Object.entries(style.props).filter(([k]) => groups.has(MOTION_PROPS.has(k) ? 'motion' : 'look'))
+      const props = canonicalizeProps(style.manifest, { ...params.props, ...Object.fromEntries(keep) })
+      if (JSON.stringify(props) !== JSON.stringify(params.props)) { layer.params = { ...params, props }; changed.push(layer.id) }
+      continue
+    }
     const params = layer.params as TextParams
     const caption = track.role === 'Caption'
     const source = caption ? tokens.caption : roleTokens(tokens, params.graphic_role)

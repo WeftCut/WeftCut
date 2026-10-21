@@ -61,6 +61,13 @@ export interface Tokens {
   /** Craft rule id → a tightened threshold. Whether a value tightens or
    *  loosens a rule is the lint's to judge (it knows the rule's direction). */
   floors?: Record<string, number>
+  /** Motif prop key → the value every Motif with that prop takes by default
+   *  (spec H2-D2). A string may name a palette colour, resolved against a
+   *  `color` prop; its type is checked against each Motif's schema at use. */
+  motif?: Record<string, string | number>
+  /** Font slot → families in preference order. A Motif string prop
+   *  `font_<slot>` takes the first one installed (spec H2-D4). */
+  fonts?: Record<string, string[]>
 }
 
 export interface RoleDeclaration { name: string; description?: string }
@@ -197,6 +204,9 @@ export function validateRoles(raw: unknown, source: TasteSource, diagnostics: Ta
 }
 
 const MOTIF_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const PROP_KEY = /^[a-z][a-z0-9_]{0,63}$/
+/** One family name, as the system names it: no quotes, commas or semicolons. */
+const FAMILY = /^[^'",;{}<>]{1,100}$/
 
 /** The `motifs` mapping: graphic role → a Motif id or a list of them. Roles
  *  are checked against `knownRoles`; whether an id exists is the view's to
@@ -260,7 +270,28 @@ export function validateTokens(raw: unknown, source: TasteSource, knownRoles: Re
         floors[rule] = n
       }
       out.floors = floors
-    } else bad(o, path, 'unknown token group (palette, text, caption, floors)')
+    } else if (k === 'motif') {
+      if (!isObj(v)) { bad(o, path, 'expected a mapping of Motif prop key → value'); continue }
+      const motif: Record<string, string | number> = {}
+      for (const [key, val] of Object.entries(v)) {
+        if (!PROP_KEY.test(key) || key.startsWith('font_')) { bad(o, `${path}.${key}`, key.startsWith('font_') ? 'font props come from tokens.fonts' : 'Motif prop keys are lower_snake_case'); continue }
+        if ((typeof val === 'number' && Number.isFinite(val)) || (typeof val === 'string' && val.length <= 200)) motif[key] = val
+        else bad(o, `${path}.${key}`, 'expected a number or a string of at most 200 characters')
+      }
+      out.motif = motif
+    } else if (k === 'fonts') {
+      if (!isObj(v)) { bad(o, path, 'expected a mapping of font slot → families'); continue }
+      const fonts: Record<string, string[]> = {}
+      for (const [slot, list] of Object.entries(v)) {
+        if (!PROP_KEY.test(slot)) { bad(o, `${path}.${slot}`, 'font slots are lower_snake_case'); continue }
+        const families = Array.isArray(list) ? list : [list]
+        if (!families.length || families.length > 12 || !families.every((f) => typeof f === 'string' && FAMILY.test(f))) {
+          bad(o, `${path}.${slot}`, 'expected 1 to 12 font family names, without quotes or commas'); continue
+        }
+        fonts[slot] = families as string[]
+      }
+      out.fonts = fonts
+    } else bad(o, path, 'unknown token group (palette, text, caption, floors, motif, fonts)')
   }
   return out
 }

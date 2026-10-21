@@ -41,6 +41,9 @@ export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
   /** Where style packages live. Absent (tests) → no taste view. */
   styleDirs?: import("../taste/view").StyleDirs
+  /** Installed font families, lowercased; null until the system scan lands.
+   *  A style's font slots resolve against it (spec H2-D4). */
+  installedFonts?: () => ReadonlySet<string> | null
   /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
   computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
@@ -242,6 +245,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
     tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }).tokens : null),
+    installedFonts: () => deps.installedFonts?.() ?? null,
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -886,7 +890,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         throw error
       }
     },
-    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }) } : {}),
+    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
     audits: new AuditStore(),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },

@@ -1908,7 +1908,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // the tokens come from the host's taste, which the actor reads through its
   // `tasteTokens` option.
   { name: 'restyle_to_taste', exec: 'dedicated', annotations: ANN_SET,
-    description: "Reset Text layers to the project's style tokens (project://taste), one edit: each takes its role's tokens (untagged: `none`), captions the caption tokens. Select by exactly one of `layer_ids`, `graphic_role`, `captions: true` (the last two within `composition_id`). `groups`: `look` (face, size, colour, outline, shadow, box), `position`, `motion` (intro/outro); default look + motion (placement kept); returns `{ restyled, unchanged }`",
+    description: "Reset Text and style Motif layers to the project's style tokens (project://taste), one edit: text takes its role's tokens (untagged: `none`), captions the caption tokens, a Motif its token-backed props. Select by exactly one of `layer_ids`, `graphic_role`, `captions: true` (the last two within `composition_id`). `groups`: `look` (face, size, colour, outline, shadow, box), `position`, `motion` (intro/outro); default look + motion (placement kept); returns `{ restyled, unchanged }`",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Text layers to restyle.' },
       graphic_role: { type: 'string', description: 'Every Text layer with this role.' },
@@ -2168,7 +2168,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props use defaults. Unknown props reject.",
+    description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props take the style's tokens (project://taste), else defaults. Unknown props reject.",
     inputSchema: { type: 'object',
       properties: {
         motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx").' },
