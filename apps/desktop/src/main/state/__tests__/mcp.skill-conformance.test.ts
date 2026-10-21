@@ -97,6 +97,8 @@ const KNOWN_NON_TOOLS = new Set([
   'three', 'target', 'model', 'eval',
   // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
   'edits', 'old', 'new',
+  // craft/rules.md — finding severities and the caption tokens that tighten rules
+  'hard', 'warning', 'review', 'max_chars_per_line', 'max_lines', 'min_cue_s', 'max_cue_s',
   // recipes/README.md — recipe frontmatter keys
   'description', 'stages', 'until',
 ])

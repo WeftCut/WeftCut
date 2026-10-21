@@ -2199,6 +2199,21 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── tacks (ADR 0115) — served by the MCP host's TackStore beside the agent
   //    activity (`mcp/tackTools.ts`), not by the actor: they are not project
   //    state, record nothing and ignore the history lock. A bare actor refuses. ──
+  // The audit (spec H1-D5): served by the host, which remembers the result so
+  // end_agent_session and start_export can say whether it is still fresh.
+  { name: 'check_composition', exec: 'dedicated', annotations: ANN_READ,
+    description: "Check a composition against the craft rules (skill craft/rules.md) and the project's taste: `{ composition_id, revision, findings: [{ severity, rule, range, layers, message, fix }], counts }`. `hard`: fix before handoff; `warning`: fix, or leave a tack saying why not; `review`: a departure from the style to confirm. Project data only — text extents are estimated. The whole composition is checked and remembered; `t_start_us`/`t_end_us` only narrow the findings returned. Run it after your edits and again after fixing.",
+    inputSchema: { type: 'object', properties: {
+      composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
+      t_start_us: US_SCHEMA('Only findings overlapping from here, timeline'),
+      t_end_us: US_SCHEMA('…to here; give both or neither'),
+    } },
+    parseDedicated: (a) => {
+      const t0 = parseNumOpt(a.t_start_us, 't_start_us'), t1 = parseNumOpt(a.t_end_us, 't_end_us')
+      if ((t0 === undefined) !== (t1 === undefined)) throw new McpArgError('t_start_us and t_end_us go together: give both or neither', 't_end_us')
+      if (t0 !== undefined && t1 !== undefined && !(t1 > t0)) throw new McpArgError('t_end_us must be after t_start_us', 't_end_us')
+      return { composition_id: parseCompositionIdOpt(a.composition_id), range: t0 === undefined ? null : [t0, t1] }
+    } },
   { name: 'create_tacks', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only; the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. It comments on what plays in its range on every track: it moves with that content and is outdated once the range plays anything else. Describe content, never times: the panel shows the live place. One place, one tack. Returns `{ tack_ids, hints? }`; your later edits report your moved or outdated tacks as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
     inputSchema: { type: 'object', properties: {

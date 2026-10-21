@@ -12,6 +12,7 @@ import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnab
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
+import { checkComposition } from '../lint/checkComposition'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
@@ -2127,6 +2128,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'end_agent_session': return { ok: true, result: toolRecord({ ended: null }) }
         // Tacks live in the host's TackStore beside agent activity (ADR 0115),
         // not in project state: a bare actor checks the arguments and refuses.
+        // The host serves this with the project's taste and remembers the
+        // result; a bare actor checks against the craft table alone.
+        case 'check_composition': {
+          const p = mcpDef(name).parseDedicated!(a)
+          const snap = current()
+          const compositionId = (p.composition_id as string | null) ?? snap.root_id
+          if (!snap.compositions[compositionId]) return { ok: false, error: { code: 'invalid_params', message: `no composition ${compositionId}` } }
+          return { ok: true, result: toolRecord(checkComposition(snap, compositionId, null, (p.range as [number, number] | null) ?? undefined) as unknown as Record<string, unknown>) }
+        }
         case 'create_tacks': case 'update_tack': case 'delete_tacks': {
           mcpDef(name).parseDedicated!(a)
           return { ok: false, error: { code: 'invalid_params', message: `${name} is served by the MCP host, not by the state actor — tacks are not project state` } }

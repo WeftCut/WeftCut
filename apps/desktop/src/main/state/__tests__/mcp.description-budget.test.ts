@@ -68,7 +68,9 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // +2 KB: `graphic_role` on the three layer adds and the patch (H1-D1), each a
 // pattern-checked name with the built-ins listed, so an agent tags a layer as
 // it creates it rather than learning the vocabulary from a refusal.
-const CATALOG_BYTE_BUDGET = 153_000
+// +1 KB: `check_composition` (H1-D5) — the audit an agent stops on, with its
+// severity contract in the description so it needs no skill to be read right.
+const CATALOG_BYTE_BUDGET = 154_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
