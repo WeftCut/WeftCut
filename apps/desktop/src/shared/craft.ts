@@ -62,11 +62,14 @@ export const CRAFT_RULES: readonly CraftRule[] = [
     summary: 'An A-roll clip is at least 1 s long.',
     why: 'Aggressive tightening left 0.28 s fragments — a jump-cut stutter.' },
   { id: 'role-inconsistency', severity: 'warning',
-    summary: 'Layers of one graphic role share family, size, weight and colour within a composition.',
+    summary: 'Layers of one graphic role share one look within a composition: text the same family, size, weight and colour; Motifs the same Motif.',
     why: 'Two titles in two looks read as two different videos.' },
   { id: 'token-drift', severity: 'review',
     summary: 'A layer with a graphic role matches its role\'s style tokens.',
     why: 'A deliberate departure is fine; an accidental one is the inconsistency a style exists to prevent.' },
+  { id: 'role-motif', severity: 'review',
+    summary: 'A role the style draws with a Motif is placed as that Motif, not as plain text.',
+    why: 'A plain-text title in a style whose titles are paper cut-outs is the one title that does not match.' },
 ]
 
 export function craftRule(id: string): CraftRule {
