@@ -104,7 +104,9 @@ separates engagement failures, not quality.
 
 All three authored new Motifs (chapter card + a callout used twice), all
 through `open_motif_draft {kind: empty}` + `update_motif_files`; **none wrote
-a local working folder**, so the directory path and its proxy were unused.
+a local working folder** in this batch (Haiku did in batch 2, below). Every fix
+round resent the whole `index.html` (5–10 KB); `update_motif_files` now takes
+exact-match `edits` (ADR 0124).
 None tried to put footage inside a Motif.
 
 | | Canvas | Positioning | Purposes per package |
@@ -157,11 +159,12 @@ Numbers to validate on the bench before they enter `skills/weftcut/craft/`:
 
 ## Batch 2 — repeat (same configuration)
 
-`apps/desktop/bench/results/2026-10-20T19-01-16-850Z/`. The subscription's
-session limit was reached during the 7th run, so only the two interview tasks
-(pause cleanup, social cut) × three models completed; the 12 runs after it
-errored at once and carry no data. Those six pairs answer the run-to-run
-question:
+`apps/desktop/bench/results/2026-10-20T19-01-16-850Z/` (6 runs) and
+`2026-10-21T01-25-37-805Z/` (12 runs). The subscription's session limit was
+reached during the 7th run of the first, so the two interview tasks (pause
+cleanup, social cut) × three models completed there and the other 12 cells
+were run the next morning with the same configuration (31.7 min; Opus $5.04,
+Sonnet $1.52, Haiku $0.12). All 18 pairs answer the run-to-run question.
 
 | Within one model, across two runs | Stable? |
 |---|---|
@@ -172,10 +175,19 @@ question:
 | Caption restyle on the social cut | Sonnet both runs (64 px); Opus second run only; Haiku second run only (68 px) |
 | Process: tacks, exports | Opus left tacks in run 2 only and never exported; Sonnet exported unasked both times |
 | Haiku | Least stable: social cut failed (run 1) then succeeded (run 2) — by **creating a new project**, re-importing the clip and exporting, rather than editing the project the user had open; pause cleanup cost 6× more in run 2 (58 turns, deleted and rebuilt the caption track) |
+| Haiku on `explainer-tighten` | Failed the same way twice (2 turns, never found the app) — the one engagement failure that repeats |
+| Captions from `apply_transcripts` | **Identical** where no model restyled them (same cue count and timing in all 12 later cells) |
+| Text style | Same defaults both runs, every model: system sans, white, outline, no plate, no `intro`/`outro` |
+| Text placement and holds | **Coin flip**: Sonnet's interview title moved from top (y 140) to frame centre over the speaker; Opus centred it over the speaker both times. Explainer lower thirds went from 2.0 s to 5.0 s (Opus, Sonnet); explainer titles 2.5–2.9 s in every run, under the 3 s candidate |
+| Tightening | Same direction, different degree: Opus 76 → 52 clips (median 1.72 → 2.86 s), Sonnet 129 → 79 (median 0.84 → 1.6 s, shortest 0.32 s, now in range at 148 s). Sub-second fragments in both runs of both |
+| Motif route | **Coin flip**: Haiku wrote a local working folder (4 `Write`, 2 `Edit`, two directory opens; no `update_motif_files`) although the project read had shown it the app's Windows paths; in run 1 all three used empty drafts. The remote proxy served the directory route without help |
+| Motif scope | Frame-sized canvases in 5 of 6 packages (Sonnet's chapter card went from 760×420 to 1920×1080); positions as props in Opus's and Haiku's. Opus split its one two-mode package into two one-purpose packages |
 
 So run-to-run divergence lives exactly where model divergence does: in what
-the tools leave to the agent (caption segmentation and style, process steps),
-not in what a tool decides. The same lever applies to both.
+the tools leave to the agent (caption segmentation and style, text placement
+and holds, the Motif route, process steps), not in what a tool decides. The
+same lever applies to both. The intent checklist itself is stable: across the
+12 later cells only Sonnet's `explainer-tighten` changed (3/4 → 4/4).
 
 Finding added to the harness table: Haiku editing a **new** project instead
 of the open one is an etiquette failure (L0) — the skill says to read the
