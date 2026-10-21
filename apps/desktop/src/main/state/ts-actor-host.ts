@@ -33,10 +33,13 @@ import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
+import { tasteView } from '../taste/view'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
+  /** Where style packages live. Absent (tests) → no taste view. */
+  styleDirs?: import("../taste/view").StyleDirs
   /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
   computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
@@ -148,6 +151,9 @@ export interface TsActorHost {
    *  surface gates project work on (`server.ts`). */
   openedProject: () => OpenedProject | null
   projectStatus: () => ProjectStatus
+  /** The open project's merged style tokens (`project://taste`); the default
+   *  style alone on the start screen. Read fresh: TASTE.md is the user's file. */
+  taste?: () => import("../taste/view").TasteView
   /** MCP's `open_project` / `create_project`: the start screen's Open and New,
    *  plus the event that brings the editor along. A `WorkspaceFailure` throws
    *  through untouched, leaving the open record as it was. */
@@ -874,6 +880,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         throw error
       }
     },
+    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null) } : {}),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

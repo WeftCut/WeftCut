@@ -978,6 +978,12 @@ app.whenReady().then(async () => {
   })
   tsHost = createTsActorHost({
     exportJobs,
+    // Built-in style packages ride beside the built-in Motifs (electron-builder
+    // extraResources); user packages live in the data root.
+    styleDirs: {
+      builtin: app.isPackaged ? path.join(process.resourcesPath, 'styles', 'builtin') : path.join(import.meta.dirname, '../../src/shared/styles/builtin'),
+      user: path.join(dataRoot.dataRoot, 'taste', 'styles'),
+    },
     computeJobs,
     onWorkspaceChanging: () => {
       exportJobs.forgetRenderer();
