@@ -119,3 +119,43 @@ describe('check_composition v1', () => {
     expect(checkComposition(p, p.root_id, t).revision).not.toBe(a.revision)
   })
 })
+
+describe('check_composition over Motif layers (H2)', () => {
+  const motif = (text: ReturnType<typeof setup>['text'], motif_id: string, graphic_role: string | null) =>
+    ({ kind: 'Motif', motif_id, motif_version: 1, props: {}, src_in_us: 0, transform: text('x').transform, opacity: { mode: 'Static', value: 1 }, graphic_role }) as LayerParams
+  const styled = () => taste('---\nmotifs: { title: paper-title, lower_third: paper-label }\n---\n')
+
+  it('holds Motif titles and lower thirds to the craft numbers, without asking a Motif for intro or outro', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, motif(text, 'paper-title', 'title'), 0, 2)
+    put(bRoll, motif(text, 'paper-label', 'lower_third'), 3, 10)
+    expect(rules(checkComposition(p, p.root_id, styled()))).toEqual(['title-hold'])
+  })
+
+  it('reports plain text in a role the style draws with a Motif, for review', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, text('A title', { graphic_role: 'title', intro: 'FadeIn', outro: 'FadeOut' }), 0, 4)
+    const f = checkComposition(p, p.root_id, styled()).findings.filter((x) => x.rule === 'role-motif')
+    expect(f).toHaveLength(1)
+    expect(f[0]).toMatchObject({ severity: 'review' })
+    expect(f[0]!.fix).toContain('paper-title')
+    // Under a style with no title Motif, plain text titles are what it wants.
+    expect(rules(checkComposition(p, p.root_id, taste()))).not.toContain('role-motif')
+  })
+
+  it('reports one role drawn with two Motifs', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, motif(text, 'paper-title', 'title'), 0, 4)
+    put(bRoll, motif(text, 'big-title', 'title'), 10, 14)
+    const f = checkComposition(p, p.root_id, styled()).findings.filter((x) => x.rule === 'role-inconsistency')
+    expect(f).toHaveLength(1)
+    expect(f[0]!.message).toContain('2 Motifs')
+    expect(f[0]!.fix).toContain('paper-title')
+  })
+
+  it('still hard-fails an undeclared role on a Motif', () => {
+    const { p, bRoll, put, text } = setup()
+    put(bRoll, motif(text, 'paper-title', 'mascot'), 0, 4)
+    expect(rules(checkComposition(p, p.root_id, styled()))).toEqual(['undeclared-role'])
+  })
+})

@@ -95,6 +95,14 @@ export function checkComposition(project: Project, compositionId: string, taste:
   }
   const known = new Set<string>(taste ? taste.roles.map((r) => r.name) : BUILTIN_GRAPHIC_ROLES)
   const byRole = new Map<string, Array<{ layer: Layer; p: TextParams }>>()
+  const motifsByRole = new Map<string, Layer[]>()
+  // Titles and lower thirds are held long enough to read, whatever draws them.
+  const hold = (l: Layer, role: string | null, dur: number) => {
+    if (role !== 'title' && role !== 'lower_third') return
+    const id = role === 'title' ? 'title-hold' : 'lower-third-hold'
+    const min = limit(id)
+    if (dur < min - 1e-3) add(id, l, `${role.replace('_', ' ')} on screen ${seconds(l.t_end_us - l.t_start_us)} s, under ${min} s`, `extend it to at least ${min} s`)
+  }
 
   for (const track of comp.tracks) {
     const isCaption = track.role === 'Caption'
@@ -108,6 +116,13 @@ export function checkComposition(project: Project, compositionId: string, taste:
       if (l.params.kind === 'VideoClip' && track.role === 'ARoll') {
         const min = limit('short-clip')
         if (dur < min - 1e-3) add('short-clip', l, `A-roll clip is ${dur.toFixed(2)} s, under ${min} s`, 'merge it into a neighbour or extend it; a fragment this short reads as a stutter')
+      }
+      if (l.params.kind === 'Motif' && !isCaption) {
+        // A Motif's entrance is its own, so only the hold and the role's
+        // consistency are checked here.
+        hold(l, role, dur)
+        if (role !== null && role !== 'none') motifsByRole.set(role, [...(motifsByRole.get(role) ?? []), l])
+        continue
       }
       if (l.params.kind !== 'Text') continue
       const p = l.params
@@ -135,13 +150,13 @@ export function checkComposition(project: Project, compositionId: string, taste:
         continue
       }
       if (role === 'title' || role === 'lower_third') {
-        const id = role === 'title' ? 'title-hold' : 'lower-third-hold'
-        const min = limit(id)
-        if (dur < min - 1e-3) add(id, l, `${role.replace('_', ' ')} on screen ${seconds(l.t_end_us - l.t_start_us)} s, under ${min} s`, `extend it to at least ${min} s`)
+        hold(l, role, dur)
         const missing = [p.intro === null ? 'intro' : null, p.outro === null ? 'outro' : null].filter(Boolean)
         if (missing.length) add('text-pops', l, `${role.replace('_', ' ')} has no ${missing.join(' or ')}: it pops ${missing.length === 2 ? 'on and off' : missing[0] === 'intro' ? 'on' : 'off'}`, 'set intro/outro, or restyle_to_taste for the style\'s')
       }
       if (role !== null && role !== 'none') {
+        const drawn = taste?.motifs?.[role]
+        if (drawn) add('role-motif', l, `${role.replace('_', ' ')} is plain text, but the style draws ${role} with the Motif ${drawn.ids.join(' or ')}`, `place ${drawn.ids[0]} with add_motif_layer (its props carry the text), or keep the text if it is meant`)
         const list = byRole.get(role) ?? []; list.push({ layer: l, p }); byRole.set(role, list)
         const tokens = taste?.tokens.text?.[role]
         if (tokens) {
@@ -162,6 +177,11 @@ export function checkComposition(project: Project, compositionId: string, taste:
       const desc = [...variants.keys()].map((k) => { const v = JSON.parse(k); return `${v.family} ${v.size_px}px/${v.weight} ${v.color}` })
       add('role-inconsistency', list.map((x) => x.layer), `${role === 'caption' ? 'captions' : `${role} layers`} use ${variants.size} looks: ${desc.join('; ')}`, 'give them one look (restyle_to_taste sets the style\'s)')
     }
+  }
+
+  for (const [role, list] of motifsByRole) {
+    const ids = [...new Set(list.map((l) => (l.params as { motif_id: string }).motif_id))]
+    if (ids.length > 1) add('role-inconsistency', list, `${role} layers are drawn with ${ids.length} Motifs: ${ids.join(', ')}`, `draw every ${role} with one Motif${taste?.motifs?.[role] ? ` (the style's: ${taste.motifs[role]!.ids[0]})` : ''}`)
   }
 
   const inRange = range ? findings.filter((f) => f.range[0] < range[1] && f.range[1] > range[0]) : findings
