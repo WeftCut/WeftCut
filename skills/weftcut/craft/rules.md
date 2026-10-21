@@ -22,6 +22,5 @@ loosens it; caption tokens (`max_chars_per_line`, `max_lines`,
 | `caption-cue-min` | warning | ≥ 1.2 s | A caption cue stays on screen at least 1.2 s. | Agents left 0.4 s cues that flash past. |
 | `caption-cue-max` | warning | ≤ 6 s | A caption cue stays on screen at most 6 s. | A long cue lags the speech it transcribes. |
 | `short-clip` | warning | ≥ 1 s | An A-roll clip is at least 1 s long. | Aggressive tightening left 0.28 s fragments — a jump-cut stutter. |
-| `role-inconsistency` | warning | — | Layers of one graphic role share one look within a composition: text the same family, size, weight and colour; Motifs the same Motif. | Two titles in two looks read as two different videos. |
+| `role-inconsistency` | warning | — | Text layers of one graphic role share family, size, weight and colour within a composition. | Two titles in two looks read as two different videos. |
 | `token-drift` | review | — | A layer with a graphic role matches its role's style tokens. | A deliberate departure is fine; an accidental one is the inconsistency a style exists to prevent. |
-| `role-motif` | review | — | A role the style draws with a Motif is placed as that Motif, not as plain text. | A plain-text title in a style whose titles are paper cut-outs is the one title that does not match. |

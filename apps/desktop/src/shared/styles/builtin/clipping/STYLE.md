@@ -71,8 +71,26 @@ a rubber stamp and a highlighter, as if pasted onto the frame. The motion is
 calm, not jittery. Everything enters with one shared spring (damping 18, mass
 0.75, stiffness 110), one element after another, never two on the same frame.
 The paper feel is static: a slight tilt, one shared soft shadow, torn edges and
-grain. Elements leave with the cut; fade a layer's opacity when a soft exit is
-wanted.
+grain.
+
+**The Motifs below are examples, not a template.** They show the vocabulary in
+use. Use one as it is, fork it (`open_motif_draft` from a copy) and change what
+the video needs, or write a new Motif in the same vocabulary: the palette and
+fonts through the shared props (`ink`, `paper`, `accent`, `highlight`,
+`font_<slot>`), the spring, the tilt and shadow, torn paper. A fork keeps those
+props, so it takes the project's tokens like the originals.
+
+**Leaving.** Each example knows its layer's length through `duration_s` (keep
+it equal to the layer's), and leaves in its last half second by `exit`:
+- `lift`: taken off the page;
+- `slide_*`: thrown aside;
+- `fade`;
+- `none`: hold to the cut.
+
+Its pieces leave in reverse order of arrival. For a big transition, take the
+elements off one by one, by ending their layers a beat apart, then move the
+page. `clipping-paper` slides in with `enter` and out with `exit`, across the
+whole frame.
 
 - **Titles** (`clipping-headline`) are a torn paper strip carrying a condensed
   headline, with an optional red kicker tag (`CHAPTER 01`) and a piece of
@@ -99,6 +117,9 @@ wanted.
 
 `step_fps` (0 = smooth) holds each pose for 1/step_fps s. Set it to 12 in a
 TASTE for a hand-made, stop-motion feel.
+
+Small text exits mid-shot. Paper inserts and chapter cards should not cut out:
+lift their pieces off and slide the page away.
 
 Fonts are not bundled. Each Motif uses the first of its slot's families that is
 installed, and `project://taste` lists the missing ones. The open faces this

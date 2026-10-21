@@ -132,25 +132,14 @@ describe('check_composition over Motif layers (H2)', () => {
     expect(rules(checkComposition(p, p.root_id, styled()))).toEqual(['title-hold'])
   })
 
-  it('reports plain text in a role the style draws with a Motif, for review', () => {
+  it('leaves the choice of Motif to the agent: plain text and two different title Motifs raise nothing', () => {
     const { p, bRoll, put, text } = setup()
     put(bRoll, text('A title', { graphic_role: 'title', intro: 'FadeIn', outro: 'FadeOut' }), 0, 4)
-    const f = checkComposition(p, p.root_id, styled()).findings.filter((x) => x.rule === 'role-motif')
-    expect(f).toHaveLength(1)
-    expect(f[0]).toMatchObject({ severity: 'review' })
-    expect(f[0]!.fix).toContain('paper-title')
-    // Under a style with no title Motif, plain text titles are what it wants.
-    expect(rules(checkComposition(p, p.root_id, taste()))).not.toContain('role-motif')
-  })
-
-  it('reports one role drawn with two Motifs', () => {
-    const { p, bRoll, put, text } = setup()
-    put(bRoll, motif(text, 'paper-title', 'title'), 0, 4)
+    put(bRoll, motif(text, 'paper-title', 'title'), 5, 9)
     put(bRoll, motif(text, 'big-title', 'title'), 10, 14)
-    const f = checkComposition(p, p.root_id, styled()).findings.filter((x) => x.rule === 'role-inconsistency')
-    expect(f).toHaveLength(1)
-    expect(f[0]!.message).toContain('2 Motifs')
-    expect(f[0]!.fix).toContain('paper-title')
+    const found = rules(checkComposition(p, p.root_id, styled()))
+    expect(found).not.toContain('role-inconsistency')
+    expect(found).not.toContain('role-motif')
   })
 
   it('still hard-fails an undeclared role on a Motif', () => {
