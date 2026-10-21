@@ -193,3 +193,41 @@ Finding added to the harness table: Haiku editing a **new** project instead
 of the open one is an etiquette failure (L0) — the skill says to read the
 open project first; the `initialize` instructions and the skill should say
 plainly that the job is the project already open in the app.
+
+## After the Motif scope rule (ticket 05)
+
+`apps/desktop/bench/results/2026-10-21T02-08-01-820Z/`: `explainer-chapter-callouts`
+× three models × 2 runs, with the branch skill at `fe42f7d6` (Motif scope
+rule, `update_motif_files` edits; snapshot in
+`.scratch/agent-harness/branch-skill/`), app at `1ccbc613`. Compared with the
+six baseline runs of the same task (batch 1 and batch 2). All 12 runs score
+7/7.
+
+| | Baseline (6 runs) | Scope rule (6 runs) |
+|---|---|---|
+| Callout canvas | frame-sized in 4 of 6 runs (Opus ×2, Haiku ×2) | element-sized in all 6 (440×200 – 720×200) |
+| Chapter card canvas | frame-sized in 5 of 6 | Opus element-sized both runs (880×360, 760×280); Sonnet and Haiku r1 frame-sized — a full-frame card, which the rule allows; Haiku r2 1400×260 |
+| Two purposes in one package | Opus batch 1 (`mode: chapter\|callout`) | none |
+| Position baked in (props or hard-coded) | 4 of 6 | 1 of 6 (Haiku r1, `box_x/box_y`) |
+| Working folder | 1 of 6 | 3 of 6 (Haiku ×2, Opus r1); Sonnet r1 tried, below |
+| Revision rounds | whole `index.html` each time (3.8–10 KB) | `edits` of 158–564 characters (Sonnet, 3 rounds); local `Edit` (Opus r1, Haiku r1) |
+| Cost per run | Opus $1.77–1.91, Sonnet $0.61–0.73, Haiku $0.04–0.06 | Opus $1.28–1.37, Sonnet $0.57–0.67, Haiku $0.04 and $0.36 (below) |
+
+The scope rule did what M1–M3 asked of it on this task: no package mixes
+purposes, callouts are sized to themselves, and the host places them. One
+duplicate: Haiku r2 wrote two identical callout packages, one per hub, instead
+of one package placed twice with different props.
+
+Two problems the runs exposed:
+
+- **Sonnet r1 wrote its folder beside the working directory**
+  (`/tmp/weftcut-bench-…/motifs/`, not `…/work/motifs/`); the bench's file
+  permissions refused it, and it fell back to empty drafts. The skill now says
+  the folder goes inside the working directory.
+- **`preview_motif` crops; it does not scale.** `width`/`height` set the
+  capture viewport, so a smaller preview of a frame-sized page shows its
+  top-left corner. Haiku r1 previewed its 1920×1080 card at 640×360, saw an
+  empty plate and spent ~30 turns (9× the cost of r2) debugging a Motif that
+  was fine; Sonnet r1 and Haiku in batch 1 hit the same crop and recovered by
+  previewing at full size. Element-sized canvases make it rarer, not
+  impossible.
