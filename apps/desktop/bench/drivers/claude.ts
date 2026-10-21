@@ -120,6 +120,9 @@ export const claudeDriver: Driver = {
     }
 
     let result: ResultEvent | undefined
+    // Each user turn ends in its own result event: total_cost_usd is the
+    // session's so far, num_turns only that turn's.
+    let turns = 0
     let pending = ''
     child.stdout.on('data', (chunk: Buffer) => {
       transcript.write(chunk)
@@ -131,7 +134,7 @@ export const claudeDriver: Driver = {
         if (!line.includes('"type":"result"')) continue
         try {
           const event = JSON.parse(line) as ResultEvent
-          if (event.type === 'result') { result = event; void afterTurn(event) }
+          if (event.type === 'result') { result = event; turns += event.num_turns ?? 0; void afterTurn(event) }
         } catch {
           // A partial or foreign line; the transcript keeps it regardless.
         }
@@ -161,7 +164,7 @@ export const claudeDriver: Driver = {
       transcript_path: transcriptPath,
       final_message: final?.result,
       cost_usd: final?.total_cost_usd,
-      turns: final?.num_turns,
+      turns: final ? turns : undefined,
       ...(replies.length ? { user_replies: replies } : {}),
       exit: { ok: !error && code === 0, code, signal, timed_out: timedOut, ...(error ? { error } : {}) },
     }
