@@ -65,6 +65,9 @@ export interface Tokens {
 
 export interface RoleDeclaration { name: string; description?: string }
 
+/** Graphic role → the Motifs a style draws it with, in preference order. */
+export type MotifsByRole = Record<string, string[]>
+
 const HEX = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 const PALETTE_NAME = /^[a-z][a-z0-9_]{0,31}$/
 const INTROS: readonly string[] = ['FadeIn', 'SlideUp', 'SlideDown', 'Typewriter']
@@ -190,6 +193,31 @@ export function validateRoles(raw: unknown, source: TasteSource, diagnostics: Ta
     unknownKeys(o, `roles[${i}]`, entry, ['name', 'description'])
     out.push({ name: entry.name, ...(typeof entry.description === 'string' ? { description: entry.description } : {}) })
   })
+  return out
+}
+
+const MOTIF_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
+/** The `motifs` mapping: graphic role → a Motif id or a list of them. Roles
+ *  are checked against `knownRoles`; whether an id exists is the view's to
+ *  judge, since it holds the Motif catalog. */
+export function validateMotifs(raw: unknown, source: TasteSource, knownRoles: ReadonlySet<string>, diagnostics: TasteDiagnostic[]): MotifsByRole {
+  const o: Out = { diagnostics, source }
+  if (raw === undefined || raw === null) return {}
+  if (!isObj(raw)) { bad(o, 'motifs', 'expected a mapping of graphic role → Motif id or list of ids'); return {} }
+  const out: MotifsByRole = {}
+  for (const [role, v] of Object.entries(raw)) {
+    const path = `motifs.${role}`
+    if (!knownRoles.has(role)) { bad(o, path, `undeclared graphic role ${role}; declare it under roles`); continue }
+    const list = typeof v === 'string' ? [v] : v
+    if (!Array.isArray(list) || !list.length) { bad(o, path, 'expected a Motif id or a non-empty list of ids'); continue }
+    const ids: string[] = []
+    list.forEach((id, i) => {
+      if (typeof id === 'string' && MOTIF_ID.test(id)) { if (!ids.includes(id)) ids.push(id) }
+      else bad(o, `${path}[${i}]`, 'expected a Motif id')
+    })
+    if (ids.length) out[role] = ids
+  }
   return out
 }
 

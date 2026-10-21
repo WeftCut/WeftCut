@@ -241,7 +241,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
-    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null).tokens : null),
+    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }).tokens : null),
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -886,7 +886,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         throw error
       }
     },
-    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null) } : {}),
+    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }) } : {}),
     audits: new AuditStore(),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },

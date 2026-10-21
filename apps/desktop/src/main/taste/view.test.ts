@@ -126,6 +126,48 @@ describe('user style packages', () => {
   })
 })
 
+describe('Motifs by role', () => {
+  const manifest = (id: string, role: string | null) => ({ id, name: id.toUpperCase(), version: 1, size: [800, 200] as [number, number], default_duration_s: 4,
+    graphic_role: role, props_schema: { text: { type: 'string' as const, default: 'x' } } })
+  const catalog = new Map([['paper-title', manifest('paper-title', 'title')], ['paper-label', manifest('paper-label', 'lower_third')], ['big-title', manifest('big-title', 'title')]])
+  const motif = (id: string) => catalog.get(id) ?? null
+
+  it('lists the Motifs a style draws each role with, as the catalog describes them', () => {
+    const user = temp()
+    style(user, 'paper', 'motifs:\n  title: paper-title\n  lower_third: [paper-label]')
+    const v = tasteView(dirs(user), project('---\nextends: paper\n---\n'), { motif })
+    expect(v.diagnostics).toEqual([])
+    expect(v.motifs.title).toEqual({ ids: ['paper-title'], source: 'style', motifs: [{ id: 'paper-title', name: 'PAPER-TITLE', size: [800, 200], graphic_role: 'title', props_schema: { text: { type: 'string', default: 'x' } } }] })
+    expect(v.motifs.lower_third?.ids).toEqual(['paper-label'])
+    expect(v.provenance['motifs.title']).toBe('style')
+  })
+
+  it('lets TASTE.md replace one role and keeps the others', () => {
+    const user = temp()
+    style(user, 'paper', 'motifs: { title: paper-title, lower_third: paper-label }')
+    const v = tasteView(dirs(user), project('---\nextends: paper\nmotifs: { title: [big-title, paper-title] }\n---\n'), { motif })
+    expect(v.motifs.title).toMatchObject({ ids: ['big-title', 'paper-title'], source: 'taste' })
+    expect(v.motifs.lower_third).toMatchObject({ ids: ['paper-label'], source: 'style' })
+    expect(v.provenance['motifs.title']).toBe('taste')
+  })
+
+  it('drops an id the catalog lacks, and a role nobody declared, without failing the read', () => {
+    const user = temp()
+    style(user, 'paper', 'motifs: { title: [gone, paper-title], logo: gone-too, mascot: paper-title }')
+    const v = tasteView(dirs(user), project('---\nextends: paper\n---\n'), { motif })
+    expect(v.motifs.title?.ids).toEqual(['paper-title'])
+    expect(v.motifs.logo).toBeUndefined()
+    expect(v.motifs.mascot).toBeUndefined()
+    expect(v.diagnostics.map((d) => d.path)).toEqual(expect.arrayContaining(['motifs.mascot', 'motifs.title', 'motifs.logo']))
+  })
+
+  it('lists ids unchecked when no catalog is given', () => {
+    const user = temp()
+    style(user, 'paper', 'motifs: { title: anything }')
+    expect(tasteView(dirs(user), project('---\nextends: paper\n---\n')).motifs.title).toEqual({ ids: ['anything'], source: 'style' })
+  })
+})
+
 describe('readFrontmatter', () => {
   it('treats a file with no fence as prose and refuses YAML aliases', () => {
     expect(readFrontmatter('just words')).toEqual({ data: null, prose: 'just words' })
