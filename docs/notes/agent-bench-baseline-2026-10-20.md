@@ -74,8 +74,9 @@ separates engagement failures, not quality.
   interview that is over the speaker's face — or top (960, 140). Held
   2.9–5.0 s.
 - Lower thirds: left-aligned at x 120–200, y 720–900, 44–52 px, two lines
-  (name, affiliation). Held **2.0 s** (Opus, Sonnet on the explainer) to
-  6.9 s; the 2.0 s ones are too short to read two lines. Haiku centred the
+  (name, affiliation). Held 4.0–6.9 s in every run of both batches — long
+  enough to read (corrected: an earlier version of this note said 2.0 s, a
+  misread of the analysis's `[start, duration]` pairs). Haiku centred the
   name instead and overlapped it with the title.
 
 ### Captions
@@ -127,7 +128,7 @@ from "think Vox": paper card, serif headline, highlighter sweep, accent rule.
 |---|---|
 | Look converges on tool defaults for every model | **Construction**: style tokens become tool defaults (Q9); write the first style against these defaults |
 | Text pops on/off, no plate; title over the speaker | Construction (token defaults include entrance and plate) + check (title vs. face region, later) |
-| Lower thirds held 2.0 s | Check: role-specific minimum hold |
+| Explainer titles held 2.5–3.0 s in every run | Check: role-specific minimum hold (`title-hold`); `lower-third-hold` is a craft floor the baseline already met |
 | Caption cues up to 80 chars, 0.42 s minimum | Construction (`apply_transcripts` re-segments to the style's caption limits) + check |
 | Sub-second jump-cut fragments after tightening | Check (`hard`: fragment shorter than a floor) + craft number |
 | Frame-sized Motif canvases, positions baked in | Contract (M1–M3 now on the branch) + check (M4) |
@@ -178,7 +179,7 @@ Sonnet $1.52, Haiku $0.12). All 18 pairs answer the run-to-run question.
 | Haiku on `explainer-tighten` | Failed the same way twice (2 turns, never found the app) — the one engagement failure that repeats |
 | Captions from `apply_transcripts` | **Identical** where no model restyled them (same cue count and timing in all 12 later cells) |
 | Text style | Same defaults both runs, every model: system sans, white, outline, no plate, no `intro`/`outro` |
-| Text placement and holds | **Coin flip**: Sonnet's interview title moved from top (y 140) to frame centre over the speaker; Opus centred it over the speaker both times. Explainer lower thirds went from 2.0 s to 5.0 s (Opus, Sonnet); explainer titles 2.5–2.9 s in every run, under the 3 s candidate |
+| Text placement and holds | **Coin flip**: Sonnet's interview title moved from top (y 140) to frame centre over the speaker; Opus centred it over the speaker both times. Lower thirds 4.0–6.9 s in every run; explainer titles 2.5–3.0 s in every run, at or under the 3 s candidate |
 | Tightening | Same direction, different degree: Opus 76 → 52 clips (median 1.72 → 2.86 s), Sonnet 129 → 79 (median 0.84 → 1.6 s, shortest 0.32 s, now in range at 148 s). Sub-second fragments in both runs of both |
 | Motif route | **Coin flip**: Haiku wrote a local working folder (4 `Write`, 2 `Edit`, two directory opens; no `update_motif_files`) although the project read had shown it the app's Windows paths; in run 1 all three used empty drafts. The remote proxy served the directory route without help |
 | Motif scope | Frame-sized canvases in 5 of 6 packages (Sonnet's chapter card went from 760×420 to 1920×1080); positions as props in Opus's and Haiku's. Opus split its one two-mode package into two one-purpose packages |

@@ -9,8 +9,8 @@ Date: 2026-10-21
 ## Context
 
 ADR 0123 asks the app to hold the evidence an agent's loop stops on. The
-first bench showed what agents leave behind unchecked — two-second lower
-thirds, 80-character caption lines, 0.28 s jump-cut fragments
+first bench showed what agents leave behind unchecked — titles held under three
+seconds, 80-character caption lines, 0.28 s jump-cut fragments
 (`docs/notes/agent-bench-baseline-2026-10-20.md`) — and every agent reported
 its work as done. A self-report is not evidence; a check the app runs and
 remembers is.
