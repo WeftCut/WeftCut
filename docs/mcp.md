@@ -722,7 +722,7 @@ Motif authoring (see [motif-workspaces.md](motif-workspaces.md)):
 - `open_motif_draft { source }` — directory association, Motif/ZIP copy or empty package; returns draft id and revision.
 - `read_motif { id, path?, encoding? }` — overview/file inventory, UTF-8 text, or downloadable file reference.
 - `update_motif_files { draft_id, expected_revision, files }` — one validated batch of whole-file writes, exact-match `edits` and deletions.
-- `preview_motif { id, t_sec, props?, width?, height?, expected_revision? }` — PNG and exact revision; rejects invalid linked sources.
+- `preview_motif { id, t_sec, props?, width?, height?, expected_revision? }` — PNG of the whole canvas (width/height bound the image, which keeps the aspect ratio; never a crop), exact revision, canvas and image size; rejects invalid linked sources.
 - `install_motif { draft_id, expected_revision, target_id?, expected_version? }` — publish a snapshot and retain the draft; an explicit replacement target requires its current version.
 - `export_motif { id, expected_revision?, path? }` — complete ZIP as a temporary file reference or a local saved file.
 - `delete_motif { id }` — remove managed content or unlink a directory without deleting its source.

@@ -86,7 +86,8 @@ transaction controlled by the app.
 
 ## Review, publication and export
 
-preview_motif returns a PNG plus the exact revision. Supply expected_revision
+preview_motif returns a PNG plus the exact revision. It always renders the
+whole canvas; width and height only bound the returned image, scaled to fit. Supply expected_revision
 to insist on a previously read version. Dedicated Workers, codecs and the
 absolute-time frame contract are unchanged.
 

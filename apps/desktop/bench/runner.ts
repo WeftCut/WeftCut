@@ -135,7 +135,8 @@ function aRollClips(wire: unknown): string[] {
     .flatMap((t) => t.layers ?? []).filter((l) => l.params?.kind === 'VideoClip').map((l) => l.id)
 }
 
-/** A tiny Motif package: a full-frame box of one colour. */
+/** A tiny Motif package: a full-frame box of one colour, with a white
+ *  square in its bottom-right corner (a cropped preview would miss it). */
 function probeMotifFiles(color: string): Record<string, string> {
   return {
     'manifest.json': JSON.stringify({
@@ -143,8 +144,9 @@ function probeMotifFiles(color: string): Record<string, string> {
       default_duration_s: 2, content_duration_s: 1, props_schema: {},
     }, null, 2),
     'index.html': '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:640px;height:360px;' +
-      'overflow:hidden;background:transparent}#b{position:absolute;left:0;top:0;width:640px;height:360px}</style></head>' +
-      `<body><div id="b"></div><script>motif.define({ setup: async function () { document.getElementById("b").style.background = "${color}" } })</script></body></html>`,
+      'overflow:hidden;background:transparent}#b{position:absolute;left:0;top:0;width:640px;height:360px}' +
+      '#c{position:absolute;left:480px;top:270px;width:160px;height:90px;background:#fff}</style></head>' +
+      `<body><div id="b"></div><div id="c"></div><script>motif.define({ setup: async function () { document.getElementById("b").style.background = "${color}" } })</script></body></html>`,
   }
 }
 
@@ -207,7 +209,7 @@ async function motifDirProbe(endpoint: { url: string; bearer_token: string }, wo
  *  draft, write the probe package whole, preview, change one colour with an
  *  exact-match `edits` entry and preview again (the frame must differ); an
  *  ambiguous edit must be refused without a new revision. */
-async function motifEditsProbe(endpoint: { url: string; bearer_token: string }): Promise<Record<string, unknown>> {
+async function motifEditsProbe(endpoint: { url: string; bearer_token: string }, outDir: string): Promise<Record<string, unknown>> {
   const started = Date.now()
   const out: Record<string, unknown> = {}
   const pc = new Client({ name: 'weftcut-bench-probe', version: '1' }, { capabilities: {} })
@@ -225,6 +227,12 @@ async function motifEditsProbe(endpoint: { url: string; bearer_token: string }):
     const edited = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(written).revision,
       files: [{ path: 'index.html', edits: [{ old: '#e02020', new: '#2040e0' }] }] } })
     const p2 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
+    // The returned PNG's own size (IHDR), and a copy to look at: the white
+    // corner square shows the whole canvas was scaled, not cropped.
+    const png = Buffer.from(blocks(p2).find((b) => b.type === 'image')?.data ?? '', 'base64')
+    if (png.length > 24) fs.writeFileSync(path.join(outDir, 'probe-motif-edits-preview.png'), png)
+    out.preview_png = png.length > 24 ? [png.readUInt32BE(16), png.readUInt32BE(20)] : null
+    out.preview_reported = JSON.parse(blocks(p2).filter((b) => b.type === 'text').map((b) => b.text).join('') || '{}')
     const ambiguous = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(edited).revision,
       files: [{ path: 'index.html', edits: [{ old: '640px', new: '600px' }] }] } })
     const after = json(await pc.callTool({ name: 'read_motif', arguments: { id } }))
@@ -236,6 +244,7 @@ async function motifEditsProbe(endpoint: { url: string; bearer_token: string }):
     })
     await pc.callTool({ name: 'delete_motif', arguments: { id } })
     out.ok = !edited.isError && out.preview_changed === true && !!ambiguous.isError && out.revision_kept === true
+      && JSON.stringify(out.preview_png) === '[320,180]'
   } catch (e) {
     out.ok = false
     out.error = (e as Error).message.slice(0, 2000)
@@ -426,7 +435,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     if (plan.probes.includes('motif-dir'))
       result.probes = { ...(result.probes ?? {}), 'motif-dir': await motifDirProbe(s.agentEndpoint, workdir) }
     if (plan.probes.includes('motif-edits'))
-      result.probes = { ...(result.probes ?? {}), 'motif-edits': await motifEditsProbe(s.agentEndpoint) }
+      result.probes = { ...(result.probes ?? {}), 'motif-edits': await motifEditsProbe(s.agentEndpoint, plan.out_dir) }
   } catch (e) {
     // A host that failed to start still says how far it got.
     const hostRecord = (e as { hostRecord?: Record<string, unknown> }).hostRecord
