@@ -5,7 +5,7 @@ html,body{margin:0;width:640px;height:420px;overflow:hidden;background:transpare
 #root{position:absolute;inset:0}
 .piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
 svg.mark{position:absolute;left:0;top:0;overflow:visible}
-#label{position:absolute;white-space:nowrap;line-height:1;text-transform:uppercase;font-size:40px;padding:10px 16px 8px}
+#label{position:absolute;white-space:nowrap;line-height:1;text-transform:uppercase;font-size:48px;padding:10px 18px 8px}
 </style></head><body><div id="root"></div>
 <script>
 // clipping-common v1 — shared by every clipping-* Motif; the copies must match
@@ -44,6 +44,23 @@ function paperSvg(w,h,fill,r,all){
 function tape(w,h){const e=document.createElement('div');
   Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
     clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+// Exit: the layer's last EXIT_S seconds (`duration_s` is the layer's length).
+// Pieces leave in reverse order of arrival: `order` 0 (the last placed) goes
+// first, each later one 0.08 s after, all gone at the end. Ease-in, so a piece
+// leaves accelerating. A slide moves `travel` px and fades in its second half.
+const EXIT_S=0.5;
+function exitPose(t,dur,kind,order,travel){
+  const pose={dx:0,dy:0,s:1,r:0,o:1};
+  if(!kind||kind==='none'||!(dur>0)) return pose;
+  const start=dur-EXIT_S+order*0.08, u=Math.max(0,Math.min(1,(t-start)/Math.max(0.15,dur-start)));
+  if(u<=0) return pose;
+  const e=u*u*u, late=Math.max(0,(u-0.35)/0.65), d=travel||320;
+  if(kind==='lift') return {dx:18*e,dy:-150*e,s:1+0.1*e,r:5*e,o:1-late};
+  if(kind==='fade') return {...pose,o:1-u};
+  const dir={slide_left:[-1,0],slide_right:[1,0],slide_up:[0,-1],slide_down:[0,1]}[kind];
+  return dir?{dx:dir[0]*d*e,dy:dir[1]*d*e,s:1,r:0,o:1-late}:pose;
+}
+const EXITS=['none','lift','fade','slide_left','slide_right','slide_up','slide_down'];
 const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
 async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
 // end clipping-common
@@ -63,7 +80,7 @@ motif.define({
     const root=document.getElementById('root'); root.textContent='';
     const r=rng(seedOf(props.kind+props.label));
     const m=markPath(props.kind,r);
-    const wrap=document.createElement('div'); wrap.className='piece'; Object.assign(wrap.style,{left:'0px',top:'0px',width:'640px',height:'420px',transform:`rotate(${props.angle_deg}deg)`,transformOrigin:'50% 50%'});
+    const wrap=document.createElement('div'); wrap.className='piece'; Object.assign(wrap.style,{left:'0px',top:'0px',width:'640px',height:'420px',transformOrigin:'50% 50%'});
     wrap.innerHTML=`<svg class="mark" width="640" height="420"><path id="p" d="${m.d}" fill="none" stroke="${props.accent}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>${m.head?`<path id="h" d="${m.head}" fill="none" stroke="${props.accent}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>`:''}</svg>`;
     root.appendChild(wrap);
     const p=wrap.querySelector('#p'), h=wrap.querySelector('#h'), L=p.getTotalLength(), LH=h?h.getTotalLength():0;
@@ -71,17 +88,19 @@ motif.define({
     let label=null;
     if(props.label&&props.kind==='arrow'){
       const cjk=CJK.test(props.label), family=cjk?props.font_cjk:props.font_headline;
-      await loadFace(cjk?900:400,40,family);
+      await loadFace(cjk?900:400,48,family);
       label=document.createElement('div'); label.id='label'; label.className='piece'; label.textContent=props.label;
       Object.assign(label.style,{fontFamily:family,fontWeight:cjk?'900':'400',color:props.paper,background:props.ink,left:'20px',top:'300px'});
       root.appendChild(label);
     }
-    els={p,h,L,LH,label}; P={step:props.step_fps};
+    els={wrap,p,h,L,LH,label}; P={step:props.step_fps,exit:props.exit,angle:props.angle_deg};
   },
-  frame(t){
-    t=stepT(t,P.step); const {p,h,L,LH,label}=els;
+  frame(t,ctx){
+    t=stepT(t,P.step); const {wrap,p,h,L,LH,label}=els, D=ctx.duration;
+    const x1=exitPose(t,D,P.exit,1), x0=exitPose(t,D,P.exit,0);
+    wrap.style.opacity=x1.o; wrap.style.transform=`translate(${x1.dx}px,${x1.dy}px) rotate(${P.angle+x1.r}deg) scale(${x1.s})`;
     // The label lands first; the stroke draws from 0.15 s over 0.45 s, the head after it.
-    if(label){const a=spring(t); label.style.opacity=ramp(t,8/30); label.style.transform=`rotate(-2deg) scale(${1+(1-a)*0.15})`;}
+    if(label){const a=spring(t); label.style.opacity=ramp(t,8/30)*x0.o; label.style.transform=`translate(${x0.dx}px,${x0.dy}px) rotate(${-2+x0.r}deg) scale(${(1+(1-a)*0.15)*x0.s})`;}
     const u=ease((t-(label?0.15:0))/0.45); p.style.strokeDashoffset=L*(1-u); p.style.opacity=u>0?1:0;
     if(h){const v=ease((t-(label?0.6:0.45))/0.18); h.style.strokeDashoffset=LH*(1-v); h.style.opacity=v>0?1:0;}
   },
