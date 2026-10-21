@@ -38,10 +38,10 @@ describe('motifTokenProps', () => {
     }), tokens, null)).toEqual({ accent: '#D2261C', tint: '#FFFFFF80', band: 'ink' })
   })
 
-  it('resolves a font slot to the first installed family, else the whole list', () => {
+  it('resolves a font slot to its installed families in order, else the whole list', () => {
     const s = schema({ font_headline: { type: 'string', default: 'serif', max_length: 200 } })
     expect(motifTokenProps(s, tokens, new Set(['impact']))).toEqual({ font_headline: "'Impact'" })
-    expect(motifTokenProps(s, tokens, new Set(['anton', 'impact']))).toEqual({ font_headline: "'Anton'" })
+    expect(motifTokenProps(s, tokens, new Set(['impact', 'anton']))).toEqual({ font_headline: "'Anton', 'Impact'" })
     expect(motifTokenProps(s, tokens, null)).toEqual({ font_headline: "'Anton', 'Impact'" })
     expect(fontStack(['Noto Sans SC Black'], new Set())).toBe("'Noto Sans SC Black'")
   })

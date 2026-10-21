@@ -115,8 +115,8 @@ describe("resolveMotifContentDurationUs", () => {
 });
 
 describe("BUILTIN_MANIFESTS", () => {
-  it("contains exactly countdown, lower-third, text-fx", () => {
-    expect([...BUILTIN_MANIFESTS.keys()].sort()).toEqual(["countdown", "lower-third", "text-fx"]);
+  it("contains the three generic built-ins and the clipping style's six", () => {
+    expect([...BUILTIN_MANIFESTS.keys()].sort()).toEqual(["clipping-headline", "clipping-paper", "clipping-pointer", "clipping-quote", "clipping-scrap", "clipping-stamp", "countdown", "lower-third", "text-fx"]);
   });
 
   it("countdown has expected shape", () => {

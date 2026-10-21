@@ -2171,7 +2171,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props take the style's tokens (project://taste), else defaults. Unknown props reject.",
     inputSchema: { type: 'object',
       properties: {
-        motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx").' },
+        motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx"; a style\'s role Motifs: `project://taste` → motifs).' },
         t_start_us: { type: 'integer', description: 'Layer start in timeline microseconds.' },
         t_end_us: { type: 'integer', description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
         track_id: { type: 'string', description: 'Target track id. If omitted, a fresh track is spawned; it carries no stored name and is displayed by its position.' },

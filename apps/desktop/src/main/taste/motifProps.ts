@@ -5,10 +5,11 @@
 // has that key and the value fits the prop's type; everything else keeps the
 // manifest default, and an explicit prop from the caller wins over both.
 //
-// Font props (`font_<slot>`) take the first family of the slot's list that is
-// installed here, so frames and cache keys follow what actually renders.
-// Without the installed list, or with none of the family installed, the prop
-// gets the whole list as a CSS stack and the page falls back down it.
+// Font props (`font_<slot>`) take the slot's families that are installed here,
+// in the list's order, so frames and cache keys follow what actually renders
+// and a family without some glyphs (a Latin face, CJK text) still falls back
+// to the next installed one. Without the installed list, or with none of the
+// families installed, the prop gets the whole list.
 
 import type { Manifest, PropSpec } from '../../shared/motifs/catalog'
 import { resolveColor } from './apply'
@@ -22,11 +23,11 @@ function colorValue(tokens: Tokens, v: unknown): string | undefined {
   return c ? `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}${c.a === 255 ? '' : hex2(c.a)}` : undefined
 }
 
-/** A slot's families as a `font-family` value: the first installed one, else
- *  the whole list in order. */
+/** A slot's families as a `font-family` value: the installed ones in order,
+ *  else the whole list. */
 export function fontStack(families: readonly string[], installed: ReadonlySet<string> | null): string {
-  const found = installed ? families.find((f) => installed.has(f.toLowerCase())) : undefined
-  return (found ? [found] : families).map((f) => `'${f}'`).join(', ')
+  const found = installed ? families.filter((f) => installed.has(f.toLowerCase())) : []
+  return (found.length ? found : families).map((f) => `'${f}'`).join(', ')
 }
 
 function fits(spec: PropSpec, v: unknown): boolean {

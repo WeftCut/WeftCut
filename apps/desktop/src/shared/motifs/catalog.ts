@@ -10,6 +10,13 @@
 import countdownJson from "./builtin/countdown/manifest.json";
 import lowerThirdJson from "./builtin/lower-third/manifest.json";
 import textFxJson from "./builtin/text-fx/manifest.json";
+// The `clipping` style's Motifs (spec H2-D4).
+import clippingHeadlineJson from "./builtin/clipping-headline/manifest.json";
+import clippingStampJson from "./builtin/clipping-stamp/manifest.json";
+import clippingQuoteJson from "./builtin/clipping-quote/manifest.json";
+import clippingPointerJson from "./builtin/clipping-pointer/manifest.json";
+import clippingPaperJson from "./builtin/clipping-paper/manifest.json";
+import clippingScrapJson from "./builtin/clipping-scrap/manifest.json";
 import { graphicRoleProblem } from "../graphicRole";
 
 // ---------------------------------------------------------------------------
@@ -288,7 +295,7 @@ export function resolveMotifContentDurationUs(
 }
 
 /** Reserved built-in ids; a user/uploaded Motif may never take one. */
-export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx"];
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-quote", "clipping-pointer", "clipping-paper", "clipping-scrap"];
 const DRAFTS_DIR = "drafts";
 
 /** Slugify a name → safe single path-segment id. */
@@ -332,15 +339,17 @@ export function assignUniqueId(name: string, taken: string[]): string {
 const _countdown = countdownJson as unknown as Manifest;
 const _lowerThird = lowerThirdJson as unknown as Manifest;
 const _textFx = textFxJson as unknown as Manifest;
+const _clipping = [clippingHeadlineJson, clippingStampJson, clippingQuoteJson, clippingPointerJson, clippingPaperJson, clippingScrapJson] as unknown as Manifest[];
 
 /**
- * The 3 built-in motif manifests, keyed by id. ReadonlyMap so callers can't
+ * The built-in motif manifests, keyed by id. ReadonlyMap so callers can't
  * mutate the catalog accidentally.
  */
 export const BUILTIN_MANIFESTS: ReadonlyMap<string, Manifest> = new Map([
   [_countdown.id, _countdown],
   [_lowerThird.id, _lowerThird],
   [_textFx.id, _textFx],
+  ..._clipping.map((m) => [m.id, m] as [string, Manifest]),
 ]);
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:1600px;height:400px;overflow:hidden;background:transparent}
+#root{position:absolute;inset:0}
+.piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
+#text{position:absolute;white-space:nowrap;line-height:1;text-transform:uppercase;letter-spacing:-0.01em}
+#kicker{position:absolute;font-size:30px;letter-spacing:0.08em;padding:8px 16px 7px;white-space:nowrap;text-transform:uppercase}
+</style></head><body><div id="root"></div>
+<script>
+// clipping-common v1 — shared by every clipping-* Motif; the copies must match
+// (motifs.clipping-common test). Closed form in t throughout.
+// One spring for everything (vox-editorial: damping 18, mass 0.75, stiffness 110).
+function spring(t){ if(t<=0) return 0; const m=.75,k=110,c=18, w0=Math.sqrt(k/m), z=c/(2*Math.sqrt(k*m));
+  if(z<1){const wd=w0*Math.sqrt(1-z*z); return 1-Math.exp(-z*w0*t)*(Math.cos(wd*t)+z*w0/wd*Math.sin(wd*t));}
+  if(z===1) return 1-Math.exp(-w0*t)*(1+w0*t);
+  const r1=-w0*(z-Math.sqrt(z*z-1)), r2=-w0*(z+Math.sqrt(z*z-1)); return 1-(r2*Math.exp(r1*t)-r1*Math.exp(r2*t))/(r2-r1); }
+const ramp=(t,d)=>Math.max(0,Math.min(1,t/d));
+const ease=(u)=>{u=Math.max(0,Math.min(1,u));return 1-Math.pow(1-u,3);};
+// Optional stepped motion: hold each pose for 1/step_fps s (0 = smooth).
+const stepT=(t,fps)=>fps>0?Math.floor(t*fps+1e-6)/fps:t;
+function rng(seed){let s=seed>>>0||1;return()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0,((s^s>>>14)>>>0)/4294967296));}
+function seedOf(str){let h=2166136261;for(const ch of String(str)){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return h>>>0;}
+// A paper piece's outline: ragged top and bottom (and sides when `all`), uneven
+// teeth with an occasional deeper bite.
+function tornPath(w,h,r,all){
+  const edge=(x0,y0,x1,y1,nx,ny)=>{const len=Math.hypot(x1-x0,y1-y0),pts=[];let d=0;
+    while(d<len){const j=(r()*2-1)*3.5+(r()<0.12?r()*7:0);pts.push([x0+(x1-x0)*d/len+nx*j,y0+(y1-y0)*d/len+ny*j]);d+=8+r()*22;}return pts;};
+  const pts=[...edge(0,0,w,0,0,1), ...(all?edge(w,0,w,h,-1,0):[[w,0]]), ...edge(w,h,0,h,0,-1), ...(all?edge(0,h,0,0,1,0):[[0,h]])];
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+' Z';
+}
+// Grain and the one shared shadow, as SVG filter defs.
+const PAPER_DEFS=`<filter id="grain" x="-5%" y="-20%" width="110%" height="140%">
+  <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" result="n"/>
+  <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.10 0" result="g"/>
+  <feComposite in="g" in2="SourceGraphic" operator="in" result="g2"/>
+  <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="g2"/></feMerge></filter>
+<filter id="shadow" x="-10%" y="-30%" width="120%" height="170%"><feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="rgb(55,45,31)" flood-opacity="0.28"/></filter>`;
+function paperSvg(w,h,fill,r,all){
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;overflow:visible"><defs>${PAPER_DEFS}</defs>
+    <g filter="url(#shadow)"><path d="${tornPath(w,h,r,all)}" fill="${fill}" filter="url(#grain)"/></g></svg>`;
+}
+// A strip of masking tape, as a positioned element.
+function tape(w,h){const e=document.createElement('div');
+  Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
+    clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
+async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
+// end clipping-common
+
+let els={}, P={};
+motif.define({
+  async setup(props){
+    const root=document.getElementById('root'); root.textContent='';
+    const band={paper:[props.paper,props.ink],ink:[props.ink,props.paper],red:[props.accent,props.paper]}[props.band]||[props.paper,props.ink];
+    const cjk=CJK.test(props.text), family=cjk?props.font_cjk:props.font_headline, weight=cjk?900:400;
+    await loadFace(weight,150,family); await loadFace(400,30,props.font_folio);
+    const text=document.createElement('div'); text.id='text'; text.textContent=props.text;
+    Object.assign(text.style,{fontFamily:family,fontWeight:String(weight),color:band[1],fontSize:'150px'}); root.appendChild(text);
+    const w0=text.getBoundingClientRect().width, size=w0>1360?Math.floor(150*1360/w0):150; text.style.fontSize=size+'px';
+    const tw=text.getBoundingClientRect().width, padX=56, padY=Math.round(size*0.32);
+    const W=Math.round(tw+padX*2), H=Math.round(size*(cjk?1.05:1)+padY*2), x0=(1600-W)/2, y0=(400-H)/2+18;
+    const strip=document.createElement('div'); strip.className='piece';
+    Object.assign(strip.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
+    strip.innerHTML=paperSvg(W,H,band[0],rng(seedOf(props.text)),false);
+    Object.assign(text.style,{left:padX+'px',top:(padY+(cjk?-size*0.02:size*0.02))+'px'}); strip.appendChild(text); root.appendChild(strip);
+    let kicker=null;
+    if(props.kicker){ kicker=document.createElement('div'); kicker.id='kicker'; kicker.className='piece'; kicker.textContent=props.kicker;
+      Object.assign(kicker.style,{fontFamily:props.font_folio,background:props.band==='red'?props.ink:props.accent,color:props.paper,left:(x0+28)+'px',top:(y0-26)+'px'}); root.appendChild(kicker); }
+    const t1=tape(170,50); t1.style.left=(x0+W-110)+'px'; t1.style.top=(y0-20)+'px'; root.appendChild(t1);
+    els={strip,kicker,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps};
+  },
+  frame(t){
+    t=stepT(t,P.step); const {strip,kicker,tape}=els, tilt=P.tilt;
+    const a=spring(t); strip.style.opacity=ramp(t,16/30); strip.style.transform=`rotate(${tilt+(1-a)*3}deg) scale(${1+(1-a)*0.12})`;
+    if(kicker){const b=spring(t-0.18); kicker.style.opacity=ramp(t-0.18,8/30); kicker.style.transform=`rotate(${tilt-1.5}deg) translateY(${(1-b)*-40}px)`;}
+    const c=spring(t-0.36); tape.style.opacity=ramp(t-0.36,6/30); tape.style.transform=`rotate(${tilt+8}deg) scale(${1+(1-c)*0.25})`;
+  },
+});
+</script></body></html>

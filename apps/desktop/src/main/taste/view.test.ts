@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { readFrontmatter } from './packages'
 import { DEFAULT_STYLE, listStyles, tasteView, type StyleDirs } from './view'
+import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
 
 const BUILTIN = path.join(import.meta.dirname, '../../shared/styles/builtin')
 const roots: string[] = []
@@ -122,7 +123,19 @@ describe('user style packages', () => {
     const user = temp()
     style(user, 'weftcut-default', 'tokens: { text: { title: { size_px: 10 } } }')
     expect(tasteView(dirs(user), null).tokens.text?.title?.size_px).toBe(96)
-    expect(listStyles(dirs(user))).toEqual([{ name: 'weftcut-default', origin: 'builtin' }])
+    expect(listStyles(dirs(user))).toEqual([{ name: 'clipping', origin: 'builtin' }, { name: 'weftcut-default', origin: 'builtin' }])
+  })
+})
+
+describe('the built-in clipping style', () => {
+  it('validates against the built-in catalog with no diagnostics and draws four roles with its Motifs', () => {
+    const v = tasteView(dirs(), project('---\nextends: clipping\n---\n'), { motif: (id) => BUILTIN_MANIFESTS.get(id) ?? null, fonts: new Set(['impact', 'microsoft yahei', 'georgia', 'simsun', 'consolas']) })
+    expect(v.diagnostics).toEqual([])
+    expect(v.style).toMatchObject({ name: 'clipping', origin: 'builtin' })
+    expect(Object.fromEntries(Object.entries(v.motifs).map(([r, m]) => [r, m.ids]))).toEqual({
+      title: ['clipping-headline'], lower_third: ['clipping-stamp'], callout: ['clipping-quote', 'clipping-pointer'], plate: ['clipping-paper'] })
+    expect(v.fonts?.headline).toMatchObject({ resolved: 'Impact', missing: ['Anton', 'Bebas Neue', 'Arial Black', 'Noto Sans SC Black'] })
+    expect(v.tokens.caption).toMatchObject({ max_chars_per_line: 42, max_lines: 2 })
   })
 })
 
