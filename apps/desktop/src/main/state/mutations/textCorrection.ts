@@ -1,4 +1,4 @@
-import type { Composition, Layer, Project, Track } from '../model'
+import type { Composition, Layer, Project, TextParams, Track } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { scopeComposition, locateLayer, cloneLayer } from './helpers'
@@ -15,7 +15,7 @@ export function sourceSignature(layer: Layer): string {
 
 /** Transcript ingestion writes timing metadata in the SAME undo transaction as
  * the captions. The old subtitle import path remains valid without metadata. */
-export function applyTranscripts(p: Project, ids: IdGen, transcripts: TranscriptPayload[], compositionId: string, sourceIds: string[] = []): string {
+export function applyTranscripts(p: Project, ids: IdGen, transcripts: TranscriptPayload[], compositionId: string, sourceIds: string[] = [], style?: (t: TextParams) => TextParams): string {
   const c = scopeComposition(p, compositionId)
   if (!Array.isArray(transcripts) || transcripts.length > 1000) throw invalid('transcripts')
   const cues: Cue[] = []
@@ -34,7 +34,7 @@ export function applyTranscripts(p: Project, ids: IdGen, transcripts: Transcript
       cues.push({ text: s.text, start_us: start, end_us: end, metadata: readCaptionTiming(timing) ? { [CAPTION_TIMING_KEY]: timing } : undefined })
     }
   }
-  return applyAddCaptionTrack(p, ids, cues, c.width, c.height, null, c.id)
+  return applyAddCaptionTrack(p, ids, cues, c.width, c.height, null, c.id, style)
 }
 
 function invalid(field: string): CommandFailure { return new CommandFailure({ error: 'InvalidArgument', field, detail: `Invalid ${field}` }) }

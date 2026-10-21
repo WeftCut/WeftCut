@@ -90,7 +90,8 @@ tokens:
     position: [0.5, 0.92]
     anchor: [0.5, 1]
     box_w: 0.84
-    outline: { color: shade, width: 3.24 }
+    # No outline token: the transcription tool's outline is 6 % of the caption
+    # size, so it follows a size override; a TASTE may still set one.
     shadow: null
     max_chars_per_line: 42
     max_lines: 2

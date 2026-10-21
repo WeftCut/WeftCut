@@ -1,3 +1,4 @@
+import { RESTYLE_GROUPS } from './mutations/restyleTaste'
 import { TEXT_INTROS, TEXT_OUTROS } from '../../shared/textAnimation'
 import { validateTimeFraction } from '../../renderer/layerTiming'
 import { readExactTime } from '../../renderer/timeMapping'
@@ -1903,6 +1904,30 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition): caption lanes multiply as cues collide, and restyling them
   // one at a time would leave a film styled in two ways for as long as the
   // batch took.
+  // Q9's restyle: back to the project's style tokens (spec H1-D4). Dedicated:
+  // the tokens come from the host's taste, which the actor reads through its
+  // `tasteTokens` option.
+  { name: 'restyle_to_taste', exec: 'dedicated', annotations: ANN_SET,
+    description: "Reset Text layers to the project's style tokens (project://taste), one edit: each takes its role's tokens (untagged: `none`), captions the caption tokens. Select by exactly one of `layer_ids`, `graphic_role`, `captions: true` (the last two within `composition_id`). `groups`: `look` (face, size, colour, outline, shadow, box), `position`, `motion` (intro/outro); default look + motion (placement kept); returns `{ restyled, unchanged }`",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Text layers to restyle.' },
+      graphic_role: { type: 'string', description: 'Every Text layer with this role.' },
+      captions: { type: 'boolean', description: 'Every caption.' },
+      composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
+      groups: { type: 'array', minItems: 1, items: { type: 'string', enum: [...RESTYLE_GROUPS] }, description: 'Default look, motion.' },
+    } },
+    parseDedicated: (a) => {
+      const selectors = [a.layer_ids !== undefined, a.graphic_role !== undefined, a.captions === true].filter(Boolean).length
+      if (selectors !== 1) throw new McpArgError('select with exactly one of layer_ids, graphic_role or captions: true', 'layer_ids')
+      const groups = a.groups === undefined ? ['look', 'motion'] : asNonEmptyArray(a.groups, 'groups', 'name at least one group').map((g, i) => parseOneOf(g, RESTYLE_GROUPS, `groups[${i}]`))
+      return {
+        layer_ids: a.layer_ids === undefined ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer').map((s) => parseUuid(s, 'layer_ids')),
+        graphic_role: a.graphic_role === undefined ? null : parseGraphicRoleOpt(a.graphic_role) ?? null,
+        captions: a.captions === true,
+        composition_id: parseCompositionIdOpt(a.composition_id),
+        groups,
+      }
+    } },
   { name: 'restyle_captions', exec: 'table', annotations: ANN_SET,
     description: "Restyle the captions in one recorded edit — EVERY Text layer on every caption-role track in every composition, so multiplied caption lanes stay one look, or only `layer_ids` (each must be a caption). Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_text_layer` is not a caption — style it with `update_layer_params`.",
     inputSchema: { type: 'object', properties: {
