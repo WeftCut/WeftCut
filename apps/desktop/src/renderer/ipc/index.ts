@@ -410,6 +410,9 @@ export interface MotifView extends TimingFields {
   /// manifest's `props_schema`. Passed to the Motif's `motif.define({ setup,
   /// frame })` lifecycle when the capture host renders it (see `docs/motifs.md`).
   props: Record<string, unknown>;
+  /// What the layer is for (`shared/graphicRole.ts`); null = untagged. Main
+  /// always sends it; optional here because no renderer code reads it yet.
+  graphic_role?: string | null;
 }
 
 export interface VideoClipView extends TimingFields {
@@ -459,6 +462,9 @@ export interface ImageOverlayView extends TimingFields {
   anchor_y: AnimTrack<number>;
   fade_in_us: number;
   fade_out_us: number;
+  /// What the layer is for (`shared/graphicRole.ts`); null = untagged. Main
+  /// always sends it; optional here because no renderer code reads it yet.
+  graphic_role?: string | null;
 }
 
 export interface TextView {
@@ -496,6 +502,9 @@ export interface TextView {
   /// Line leading; 0 = auto (the font's own metrics).
   line_height: number;
   letter_spacing: number;
+  /// What the layer is for (`shared/graphicRole.ts`); null = untagged. Main
+  /// always sends it; optional here because no renderer code reads it yet.
+  graphic_role?: string | null;
 }
 
 export interface ColorView {
@@ -3131,6 +3140,8 @@ export interface MotifSummary {
   /// include the holdable tail). When present, `syncCatalog` can forward it
   /// to `MotifManifest` without a double-cast.
   content_duration_s?: number;
+  /// The graphic role a placed layer defaults to; absent = untagged.
+  graphic_role?: string | null;
   /// Number of rAF ticks the capture engine waits for settle before
   /// snapshotting. Forwarded verbatim from the Rust manifest.
   settle_rafs?: number;

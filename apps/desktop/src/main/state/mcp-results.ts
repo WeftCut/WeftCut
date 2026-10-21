@@ -40,6 +40,8 @@ export interface LayerRecord {
   src_out_us?: number
   enabled: boolean
   locked: boolean
+  /** Text, Motif and ImageOverlay only: what the layer is for; null = untagged. */
+  graphic_role?: string | null
   /** The link this layer is a member of, or null. What `move_layer` and
    *  `trim_layer` fan out along, and what a transition refuses across. */
   link_id: Uuid | null
@@ -54,13 +56,14 @@ export function layerRecord(p: Project, id: Uuid): LayerRecord | null {
   const hit = located(p, id)
   if (!hit) return null
   const { comp, trackId, layer } = hit
-  const params = layer.params as { kind: string; src_in_us?: number; src_out_us?: number }
+  const params = layer.params as { kind: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null }
   return {
     layer_id: layer.id, track_id: trackId, composition_id: comp.id, kind: params.kind, label: layer.label,
     t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
     ...(typeof params.src_in_us === 'number' ? { src_in_us: params.src_in_us } : {}),
     ...(typeof params.src_out_us === 'number' ? { src_out_us: params.src_out_us } : {}),
     enabled: layer.enabled, locked: layer.locked,
+    ...(params.kind === 'Text' || params.kind === 'Motif' || params.kind === 'ImageOverlay' ? { graphic_role: params.graphic_role ?? null } : {}),
     link_id: comp.links.find((l) => l.members.includes(layer.id))?.id ?? null,
   }
 }

@@ -13,7 +13,7 @@ import type { TimingFields } from '../../shared/timeMapping'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export type Uuid = string
 export type TimeUs = number
@@ -68,6 +68,8 @@ export interface VideoClipParams extends TimingFields {
 export interface ImageOverlayParams extends TimingFields {
   kind: 'ImageOverlay'; media: Uuid; transform: Transform; opacity: Animated<number>
   blend_mode: BlendMode; fade_in_us: number; fade_out_us: number
+  /** What the layer is for (`shared/graphicRole.ts`); null = untagged. */
+  graphic_role: string | null
 }
 export interface TextParams {
   kind: 'Text'; content: string; font: FontSpec; color: Animated<Rgba>; align: TextAlign
@@ -87,10 +89,16 @@ export interface TextParams {
   /** Line leading; 0 = auto (the font's own metrics). */
   line_height: number
   letter_spacing: number
+  /** What the layer is for (`shared/graphicRole.ts`); null = untagged. A
+   *  caption cue is always null — its identity is the caption track. */
+  graphic_role: string | null
 }
 export interface MotifParams extends TimingFields {
   kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>
   src_in_us: TimeUs; transform: Transform; opacity: Animated<number>
+  /** What the layer is for (`shared/graphicRole.ts`); born from the manifest's
+   *  `graphic_role` unless the caller names one; null = untagged. */
+  graphic_role: string | null
 }
 export interface MotifRebindEntry {
   layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown>

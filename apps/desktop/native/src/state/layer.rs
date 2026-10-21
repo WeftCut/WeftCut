@@ -127,6 +127,10 @@ pub struct ImageOverlayParams {
     pub fade_in_us: u64,
     #[serde(default)]
     pub fade_out_us: u64,
+    /// What the layer is for (`shared/graphicRole.ts`); `None` = untagged.
+    /// Opaque to Rust: TS validates it and nothing native reads it.
+    #[serde(default)]
+    pub graphic_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -162,6 +166,10 @@ pub struct TextParams {
     pub line_height: f32,
     #[serde(default)]
     pub letter_spacing: f32,
+    /// What the layer is for (`shared/graphicRole.ts`); `None` = untagged.
+    /// Opaque to Rust: TS validates it and nothing native reads it.
+    #[serde(default)]
+    pub graphic_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -230,6 +238,10 @@ pub struct MotifParams {
     pub src_in_us: TimeUs,
     pub transform: Transform,
     pub opacity: Animated<f64>,
+    /// What the layer is for (`shared/graphicRole.ts`); `None` = untagged.
+    /// Opaque to Rust: TS validates it and nothing native reads it.
+    #[serde(default)]
+    pub graphic_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -571,5 +583,48 @@ mod kf_fields_tests {
         let mut n = 0;
         for_each_animated_f64(&mut p, |_| n += 1);
         assert_eq!(n, 2);
+    }
+}
+
+#[cfg(test)]
+mod graphic_role_tests {
+    use super::*;
+    use crate::state::animated::Animated;
+
+    fn image(graphic_role: Option<String>) -> LayerParams {
+        LayerParams::ImageOverlay(ImageOverlayParams {
+            timing: Default::default(),
+            media: crate::state::ids::new_id(),
+            transform: Transform::default(),
+            opacity: Animated::Static(1.0),
+            blend_mode: BlendMode::default(),
+            fade_in_us: 0,
+            fade_out_us: 0,
+            graphic_role,
+        })
+    }
+
+    #[test]
+    fn graphic_role_round_trips_and_serializes_untagged_as_null() {
+        let tagged = serde_json::to_value(image(Some("lower_third".into()))).unwrap();
+        assert_eq!(tagged["graphic_role"], "lower_third");
+        let back: LayerParams = serde_json::from_value(tagged).unwrap();
+        let LayerParams::ImageOverlay(p) = back else {
+            panic!()
+        };
+        assert_eq!(p.graphic_role.as_deref(), Some("lower_third"));
+
+        let untagged = serde_json::to_value(image(None)).unwrap();
+        assert!(untagged["graphic_role"].is_null());
+    }
+
+    #[test]
+    fn absent_graphic_role_deserializes_to_none() {
+        let mut wire = serde_json::to_value(image(Some("logo".into()))).unwrap();
+        wire.as_object_mut().unwrap().remove("graphic_role");
+        let LayerParams::ImageOverlay(p) = serde_json::from_value(wire).unwrap() else {
+            panic!()
+        };
+        assert_eq!(p.graphic_role, None);
     }
 }

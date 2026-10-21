@@ -4,6 +4,7 @@ import { approximateTime, exactTime, compareTime, ZERO_TIME } from '../../render
 import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
 import { TimeMappingError } from '../../shared/timeMapping'
 import { cropProblem } from '../../shared/crop'
+import { graphicRoleProblem } from '../../shared/graphicRole'
 import { CommandFailure } from './errors'
 // apps/desktop/src/main/state/validate.ts
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
@@ -443,6 +444,10 @@ function validateLayerParams(p: Project, layer: Layer): void {
   if (pa.kind === 'VideoClip' && pa.crop != null) {
     const problem = cropProblem(pa.crop)
     if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: problem })
+  }
+  if (pa.kind === 'Text' || pa.kind === 'ImageOverlay' || pa.kind === 'Motif') {
+    const problem = graphicRoleProblem(pa.graphic_role)
+    if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'graphic_role', detail: problem })
   }
   if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, approximateTime(sourceIn(pa)), approximateTime(sourceOut(layer)))
   else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }

@@ -38,6 +38,8 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(p.box_w).toBe(1613)
     expect(p.box_h).toBeNull()
     expect([p.valign, p.line_height, p.letter_spacing]).toEqual(['Middle', 0, 0])
+    // Caption identity is the caption track, never a graphic role.
+    expect(p.graphic_role).toBeNull()
   })
   it('wrap width tracks the composition, not a hardcoded 1920', () => {
     expect(cueToTextParams(cue(), 640, 360).box_w).toBe(538) // round(640 * 0.84)

@@ -113,6 +113,8 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         valign: VAlign::default(),
         line_height: 0.0,
         letter_spacing: 0.0,
+        // A cue has no graphic role: caption identity is the caption track.
+        graphic_role: None,
     }
 }
 
@@ -166,6 +168,8 @@ mod tests {
         // a shadow nobody asked for was a black smear no inspector field could
         // remove.
         assert!(p.shadow.is_none());
+        // Caption identity is the caption track, never a graphic role.
+        assert!(p.graphic_role.is_none());
         // an2: bottom-center → anchor (0.5, 1.0), x = w/2, y = h - 8%
         assert_eq!(static_anchor(&p.transform), (0.5, 1.0));
         match (

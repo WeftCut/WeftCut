@@ -71,9 +71,11 @@ export function keyframedParams(layer: Layer): string[] {
  *  that inlined whole layers would make a timeline read cost as much as the
  *  project. */
 export function layerEnvelope(layer: Layer, c: Composition): Record<string, unknown> {
-  const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number }
+  const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null }
   return {
     id: layer.id, label: layer.label, kind: p.kind,
+    // What the layer is for — the key style and lint plan by, so it rides the envelope.
+    ...(p.kind === 'Text' || p.kind === 'Motif' || p.kind === 'ImageOverlay' ? { graphic_role: p.graphic_role ?? null } : {}),
     t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
     ...(typeof p.src_in_us === 'number' ? { src_in_us: p.src_in_us } : {}),
     ...(typeof p.src_out_us === 'number' ? { src_out_us: p.src_out_us } : {}),

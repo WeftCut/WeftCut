@@ -687,6 +687,7 @@ struct TextParams {
     valign: VAlign,                   // Top | Middle | Bottom — the block inside the box
     line_height: f32,                 // 0 = auto (the font's own metrics)
     letter_spacing: f32,
+    graphic_role: Option<String>,     // what the layer is for; None = untagged (schema v5)
 }
 ```
 
@@ -726,8 +727,13 @@ struct MotifParams {
     src_in_us: TimeUs,                      // window offset into the Motif's intrinsic content (0 = content frame 0)
     transform: Transform,
     opacity: Animated<f64>,
+    graphic_role: Option<String>,           // the manifest's role unless the placing call names one
 }
 ```
+
+`ImageOverlayParams` carries the same `graphic_role`. The value is null or a
+name matching `^[a-z][a-z0-9_]{0,31}$`; `validate` refuses anything else.
+Built-ins and custom roles are described under *Graphic role* in `docs/mcp.md`.
 
 ### `AudioParams`
 
@@ -1528,7 +1534,7 @@ A successful upgrade must first preserve and verify the exact input bytes in
 `project.pre-vN.json`. An identical backup is reused; a differing existing backup
 is retained and a numbered sibling is created. Failure to preserve the backup
 aborts opening before the current workspace is replaced. These backups have no
-retention cleanup. Saving writes v4; restoring the backup with a compatible old
+retention cleanup. Saving writes the current schema; restoring the backup with a compatible old
 build is the rollback path. There is no automatic downgrade.
 
 ### Where a change belongs
@@ -1544,8 +1550,11 @@ blind pass because the cut-over gate left no alternative, and the on-disk
 shape drifted across three generations while the version sat still. ADR 0047
 has the history.
 
-The current schema is **v4** (ADR 0112). Its v3 → v4 step makes Position the
-anchor for every transformed visual clip. See the migration policy below.
+The current schema is **v5**. Its v4 → v5 step adds `graphic_role: null` to
+every Text, Motif and ImageOverlay layer in every composition; a Motif's
+manifest role applies at placement only and is not back-filled. The v3 → v4
+step (ADR 0112) makes Position the anchor for every transformed visual clip.
+See the migration policy below.
 The v1 → v2 step preserves existing projects when
 the inspector's clip-mute control is removed: in every composition, an Audio
 layer with `params.mute: true` becomes `enabled: false, params.mute: false`.

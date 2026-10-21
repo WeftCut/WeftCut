@@ -170,7 +170,7 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
       shadow: { color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 2, offset_y: 2, blur: 2 },
       outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },
       intro: null, outro: null,
-      box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+      box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0, graphic_role: null,
     }
     const v = layerParamsView(tp, {})
     expect(v.kind).toBe('Text')
@@ -297,7 +297,7 @@ function textParamsLite(): Omit<Extract<LayerParams, { kind: 'Text' }>, 'kind'> 
     content: '', font: { family: 'f', size_px: 10, weight: 400, italic: false },
     color: stat({ r: 0, g: 0, b: 0, a: 255 }), align: 'Center', transform: xf(), opacity: stat(1),
     shadow: null, outline: null, intro: null, outro: null,
-    box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0, graphic_role: null,
   }
 }
 

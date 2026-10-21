@@ -24,6 +24,7 @@ export interface ImageOverlayView extends TimingFields {
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   fade_in_us: number; fade_out_us: number
+  graphic_role: string | null
 }
 export interface TextView {
   kind: 'Text'; content: string; font_family: string; font_size_px: number; weight: number; italic: boolean
@@ -35,6 +36,7 @@ export interface TextView {
    *  the user never drew. */
   box_w: number | null; box_h: number | null
   valign: VAlign; line_height: number; letter_spacing: number
+  graphic_role: string | null
 }
 export interface ColorView { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
 export interface AudioView extends TimingFields {
@@ -46,6 +48,7 @@ export interface MotifView extends TimingFields {
   position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   src_in_us: number; props: Record<string, unknown>
+  graphic_role: string | null
 }
 /** A Group layer's projection. `composition_label` is the referenced
  *  composition's own label (null → the renderer derives "Group N"). */
@@ -260,7 +263,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       return { ...timingView(params), kind: 'ImageOverlay', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
-        fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
+        fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us, graphic_role: params.graphic_role }
     }
     case 'Text': {
       const t = params.transform
@@ -270,7 +273,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
         anchor_x: t.anchor_x, anchor_y: t.anchor_y, opacity: params.opacity,
         shadow: params.shadow, outline: params.outline,
         box_w: params.box_w, box_h: params.box_h, valign: params.valign,
-        line_height: params.line_height, letter_spacing: params.letter_spacing }
+        line_height: params.line_height, letter_spacing: params.letter_spacing, graphic_role: params.graphic_role }
     }
     case 'Color':
       return { kind: 'Color', color: params.color, width: params.width, height: params.height }
@@ -282,7 +285,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { ...timingView(params), kind: 'Motif', motif_id: params.motif_id, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
-        opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
+        opacity: params.opacity, src_in_us: params.src_in_us, props: params.props, graphic_role: params.graphic_role }
     }
     case 'CompositionRef': {
       const t = params.transform

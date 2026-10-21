@@ -10,6 +10,7 @@
 import countdownJson from "./builtin/countdown/manifest.json";
 import lowerThirdJson from "./builtin/lower-third/manifest.json";
 import textFxJson from "./builtin/text-fx/manifest.json";
+import { graphicRoleProblem } from "../graphicRole";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +32,9 @@ export interface Manifest {
   max_duration_prop?: string | null;
   content_duration_s?: number | null;
   props_schema: Record<string, PropSpec>;
+  /// What a placed layer is for (`shared/graphicRole.ts`): the layer's
+  /// `graphic_role` unless the placing call names one. Absent = untagged.
+  graphic_role?: string | null;
   // Extra optional fields present in the renderer's MotifManifest — preserved
   // so its `MotifManifest = Manifest` re-export doesn't drop fields.
   settle_rafs?: number;
@@ -403,6 +407,9 @@ export function coreManifestForHash(m: Manifest): Record<string, unknown> {
     content_duration_s: m.content_duration_s ?? null,
     fonts: m.fonts ?? [],
     props_schema: m.props_schema,
+    // Only when declared: an untagged manifest's island and content hash stay
+    // exactly what they were before the field existed.
+    ...(m.graphic_role != null ? { graphic_role: m.graphic_role } : {}),
   };
 }
 
@@ -453,6 +460,10 @@ export function validateManifest(m: Manifest): void {
     if (val != null && !(Number.isFinite(val) && val > 0)) {
       throw new MotifPropError(`${field} must be finite and > 0 when present`);
     }
+  }
+  if (m.graphic_role !== undefined) {
+    const problem = graphicRoleProblem(m.graphic_role);
+    if (problem) throw new MotifPropError(problem);
   }
   const keys = Object.keys(m.props_schema);
   if (keys.length > MAX_PROPS) {
