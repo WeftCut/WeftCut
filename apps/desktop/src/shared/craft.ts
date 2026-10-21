@@ -83,6 +83,31 @@ export function effectiveThreshold(rule: CraftRule, floor: number | undefined): 
   return rule.direction === 'min' ? Math.max(rule.threshold, floor) : Math.min(rule.threshold, floor)
 }
 
+/** The number a style holds a rule to: the craft threshold tightened by the
+ *  style's floor, then by a token that asks for less (a style wanting
+ *  32-character caption lines gets 32), never loosened by either. */
+export function styleThreshold(id: string, floor?: number, token?: number): number {
+  const rule = craftRule(id)
+  return effectiveThreshold({ ...rule, threshold: effectiveThreshold(rule, floor) }, token) ?? 0
+}
+
+export interface StyleCaptionLimits { max_chars: number; max_lines: number; min_cue_s: number; max_cue_s: number }
+
+/** The caption limits a style holds cues to — what `check_composition`
+ *  checks and what `apply_transcripts` builds to. */
+export function captionLimits(tokens: {
+  floors?: Record<string, number>
+  caption?: { max_chars_per_line?: number; max_lines?: number; min_cue_s?: number; max_cue_s?: number }
+} | null | undefined): StyleCaptionLimits {
+  const floors = tokens?.floors ?? {}, c = tokens?.caption ?? {}
+  return {
+    max_chars: styleThreshold('caption-line-length', floors['caption-line-length'], c.max_chars_per_line),
+    max_lines: styleThreshold('caption-lines', floors['caption-lines'], c.max_lines),
+    min_cue_s: styleThreshold('caption-cue-min', floors['caption-cue-min'], c.min_cue_s),
+    max_cue_s: styleThreshold('caption-cue-max', floors['caption-cue-max'], c.max_cue_s),
+  }
+}
+
 const fmt = (r: CraftRule) => r.threshold === undefined ? '—'
   : `${r.direction === 'min' ? '≥' : '≤'} ${r.unit === 'fraction' ? `${Math.round(r.threshold * 100)} %` : `${r.threshold} ${r.unit === 's' ? 's' : r.unit}`}`
 

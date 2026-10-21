@@ -14,6 +14,8 @@ import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, t
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyRestyleToTaste, type RestyleGroup } from './mutations/restyleTaste'
 import { styleText } from '../taste/apply'
+import { captionLimits } from '../../shared/craft'
+import { buildLimits } from './mutations/captionSegments'
 import type { Tokens } from '../taste/schema'
 import { checkComposition } from '../lint/checkComposition'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
@@ -1542,11 +1544,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'apply_transcripts': {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
           const comp = scopeComposition(current(), a.composition_id as string)
-          // Transcript cues are born in the project's caption tokens (Q9); an
-          // imported subtitle file keeps the styles it carries.
+          // Transcript cues are born in the project's caption tokens (Q9) and
+          // built to its caption limits; an imported subtitle file keeps the
+          // styles and cues it carries.
           const tokens = opts.tasteTokens?.()
           const style = tokens?.caption ? (t: TextParams) => styleText(t, tokens.caption, tokens, comp) : undefined
-          return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, d => applyTranscripts(d, idGen, a.transcripts as TranscriptPayload[], comp.id, a.source_ids as string[], style)) }
+          const build = tokens ? buildLimits(captionLimits(tokens)) : undefined
+          return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, d => applyTranscripts(d, idGen, a.transcripts as TranscriptPayload[], comp.id, a.source_ids as string[], style, build)) }
         }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track in every

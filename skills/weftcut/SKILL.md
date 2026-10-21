@@ -139,7 +139,8 @@ descriptions:
   a positive delta from a time is the ripple insert; then place into the gap.
 - Captions: `transcribe_clip` → inspect the returned `segments` → `apply_transcripts`,
   passing the envelope's `segments` and `word_timing` through (also
-  `/auto-caption`). A subtitle FILE the user already has: `import_media` it,
+  `/auto-caption`). The cues come out within the style's caption limits, so
+  do not break lines or split cues by hand. A subtitle FILE the user already has: `import_media` it,
   then `apply_subtitles { media_id, t_start_us? }` — the whole document, its
   time 0 at `t_start_us`. Correcting names and jargon: put the script or
   notes in `set_project_settings { correction_script }`, then
