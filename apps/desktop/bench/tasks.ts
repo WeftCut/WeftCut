@@ -33,6 +33,10 @@ export interface BenchTask {
    *  Absent: the runner's default; false: never answer (a task where asking
    *  first is the right outcome). */
   go_ahead?: string | false
+  /** The project's TASTE.md, written into the project folder after setup and
+   *  before the agent starts: the style it works in. Absent: none, so
+   *  `weftcut-default`. */
+  taste?: string
   checklist: ChecklistItem[]
 }
 
@@ -50,6 +54,7 @@ function parseTask(file: string, json: unknown): BenchTask {
     fail('project needs integer width, height and fps { num, den }')
   if (!Array.isArray(t.setup) || t.setup.some((c) => typeof c?.tool !== 'string')) fail('setup must be an array of { tool, args }')
   if (typeof t.prompt !== 'string' || !t.prompt.trim()) fail('prompt is required')
+  if (t.taste !== undefined && (typeof t.taste !== 'string' || !t.taste.trim())) fail('taste must be the TASTE.md text')
   if (!Array.isArray(t.checklist)) fail('checklist must be an array')
   return t as BenchTask
 }

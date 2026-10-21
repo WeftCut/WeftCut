@@ -108,6 +108,10 @@ export interface RunResult {
   /** What setup produced: the A-roll VideoClip count of the baseline and how
    *  long setup (or the template copy and open) took. */
   setup_check: { a_roll_video_clips: number; setup_ms: number } | null
+  /** The task's TASTE.md as the app read it: the style it resolved to, any
+   *  diagnostics, and the font slots' installed and missing families. Null
+   *  when the task has none. */
+  taste: { style: string | null; diagnostics: unknown[]; fonts: unknown } | null
   transcript: string | null
   baseline_project: string | null
   final_project: string | null

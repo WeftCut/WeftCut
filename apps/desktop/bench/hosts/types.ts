@@ -65,6 +65,8 @@ export interface HostSession {
   /** Parent folder for the run's projects, in the host's path spelling. */
   readonly projectsDir: string
   joinPath(...parts: string[]): string
+  /** Write a UTF-8 file at a path in the host's spelling. */
+  writeText(hostPath: string, text: string): Promise<void>
   /** Each fixture's MP4 on the host and its fetch-time record
    *  (fixtures.mjs `fixture.json`: transcode parameters, ffmpeg version,
    *  output sha256). */

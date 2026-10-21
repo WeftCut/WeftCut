@@ -126,6 +126,18 @@ describe('layer_count and selectors', () => {
     assert.equal(check({ kind: 'layer_count', op: '>=', n: 1, where: { motif_id: ['callout-pin'] } }, p).pass, true)
   })
 
+  it('selects layers by graphic role, null for untagged', () => {
+    const titled = motif(0, 4, 'clipping-headline', { text: 'What is a memory?' })
+    titled.params.graphic_role = 'title'
+    const card = text(0, 4, 'plain card')
+    card.params.graphic_role = null
+    const q = project([track([titled, card])])
+    assert.equal(check({ kind: 'motif_layer_count', op: '==', n: 1, where: { graphic_role: 'title' } }, q).pass, true)
+    assert.equal(check({ kind: 'layer_count', op: '==', n: 2, where: { graphic_role: ['title', null] } }, q).pass, true)
+    assert.equal(check({ kind: 'layer_count', op: '==', n: 0, where: { graphic_role: 'callout' } }, q).pass, true)
+    assert.equal(check({ kind: 'motif_layer_count', op: '==', n: 1, where: { motif_builtin: true } }, q).pass, true)
+  })
+
   it('supports every comparison op', () => {
     const n = (op, k) => check({ kind: 'layer_count', op, n: k, where: { layer_kind: 'Motif' } }, p).pass
     assert.deepEqual([n('>=', 2), n('<=', 2), n('==', 2), n('!=', 2), n('>', 1), n('<', 3)], [true, true, true, false, true, true])

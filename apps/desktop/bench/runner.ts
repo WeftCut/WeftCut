@@ -268,7 +268,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
   fs.mkdirSync(plan.out_dir, { recursive: true })
   const result: RunResult = {
     run_id: plan.run_id, task_id: plan.task.id, model: plan.model, driver: plan.driver,
-    skill: null, app_revision: null, host: null, models: null, fixtures: null, template: null, setup_check: null,
+    skill: null, app_revision: null, host: null, models: null, fixtures: null, template: null, setup_check: null, taste: null,
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
     app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, user_replies: [], exit: null, error: null,
@@ -385,6 +385,13 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         const cmp = compareBaselines(template.stored!.baseline, template.stored!.meta.project_dir, baselineWire, projectDir)
         Object.assign(result.template, { baseline_equivalent: cmp.equivalent, ...(cmp.equivalent ? {} : { differences: cmp.differences }) })
       }
+    }
+    // The style the agent works in. Written after the template is saved, so
+    // tasks that share a setup share a template whatever their TASTE.md.
+    if (plan.task.taste !== undefined) {
+      await s.writeText(s.joinPath(projectDir, 'TASTE.md'), plan.task.taste)
+      const view = await read('project://taste') as { style?: { name?: string }; diagnostics?: unknown[]; fonts?: unknown }
+      result.taste = { style: view.style?.name ?? null, diagnostics: view.diagnostics ?? [], fonts: view.fonts ?? null }
     }
     // Where the app runs and what GPU it holds, with the media work done.
     const status = await s.status().catch((e: Error) => ({ error: e.message }))

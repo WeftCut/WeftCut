@@ -1,0 +1,34 @@
+{
+  "id": "explainer-clipping-teaching",
+  "fixtures": ["explainer-memory"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 25, "den": 1 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:explainer-memory}" }, "as": "media" },
+    { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:tracks[role=ARoll].id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
+  ],
+  "taste": "---\nextends: clipping\n---\n\nOur channel's explainers: editorial paper cut-outs over the speaker.\n",
+  "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out two or three of the key points as she makes them, use one paper insert (a pull quote or a chapter card), and caption the whole thing. The project is already set up in our channel's style.",
+  "checklist": [
+    { "id": "title-at-start", "description": "A title-role overlay opens the video and holds at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title", "starts_before_s": 3, "min_duration_s": 3 } } },
+    { "id": "name-card", "description": "A lower third names her while she is first on camera (before 25 s) and holds at least 4 s", "check": { "kind": "text_layer_matching", "text_regex": "Genzel", "where": { "graphic_role": "lower_third", "starts_before_s": 25, "min_duration_s": 4 } } },
+    { "id": "callouts", "description": "Two or more callouts, each up at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout", "min_duration_s": 3 } } },
+    { "id": "paper-insert", "description": "At least one paper insert: a plate Motif", "check": { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "plate" } } },
+    { "id": "drawn-as-motifs", "description": "The title, the name card and the callouts are Motif layers (an example, a fork or the agent's own)", "check": { "kind": "all_of", "checks": [
+      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title" } },
+      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "lower_third" } },
+      { "kind": "motif_layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout" } }
+    ] } },
+    { "id": "tightened", "description": "Pauses came out: less footage than the 215 s source, but not gutted", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 120, "max_s": 208 } },
+    { "id": "no-short-clips", "description": "No A-roll clip shorter than 1 s", "check": { "kind": "layer_count", "op": "==", "n": 0, "where": { "layer_kind": "VideoClip", "max_duration_s": 0.999 } } },
+    { "id": "no-gaps", "description": "Picture runs without black holes", "check": { "kind": "no_gaps" } },
+    { "id": "av-sync", "description": "Each kept segment keeps its own sound", "check": { "kind": "av_sync" } },
+    { "id": "captions-present", "description": "A caption track with a real number of cues", "check": { "kind": "caption_track_present", "min_cues": 30 } },
+    { "id": "captions-cover", "description": "Captions run through the clip", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
+    { "id": "captions-on-picture", "description": "Every caption sits over footage", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
+    { "id": "in-the-style", "description": "The overlays read as one clipping look: palette, fonts, spring, paper", "check": { "kind": "human" } },
+    { "id": "exits", "description": "Overlays and the insert leave by being taken off or sliding out, not by hard cuts", "check": { "kind": "human" } },
+    { "id": "clear-of-speaker", "description": "Overlays leave her face clear", "check": { "kind": "human" } },
+    { "id": "quote-exact", "description": "A quote overlay uses her exact words", "check": { "kind": "human" } }
+  ]
+}
