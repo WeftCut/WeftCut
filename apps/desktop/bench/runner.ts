@@ -89,6 +89,9 @@ function diffMotifs(before: Array<Record<string, unknown>>, after: Array<Record<
   }
 }
 
+/** What the stand-in user says to a plan that waits for approval. */
+const DEFAULT_GO_AHEAD = 'Yes, go ahead with your plan. Use your own judgement for any other choice (a local transcription engine is fine), and finish without asking me again.'
+
 function writeJson(dir: string, name: string, value: unknown): string {
   fs.writeFileSync(path.join(dir, name), JSON.stringify(value, null, 2) + '\n')
   return name
@@ -268,7 +271,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     skill: null, app_revision: null, host: null, models: null, fixtures: null, template: null, setup_check: null,
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
-    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, exit: null, error: null,
+    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, user_replies: [], exit: null, error: null,
     started_at: startedAt.toISOString(), duration_ms: 0,
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-bench-'))
@@ -388,14 +391,25 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     if (status) result.host = { ...s.record, gpu: status }
     const motifsBefore = await readMotifs()
 
+    // The stand-in user: an agent that ends its first turn having changed
+    // nothing has almost always planned and asked for a go-ahead, which an
+    // attended user gives. Answered once; a second stop is the result.
+    await initEval()
+    const nextUserTurn = async (turn: number): Promise<string | null> => {
+      if (turn > 1 || plan.task.go_ahead === false) return null
+      const now = await read('project://current')
+      if (diffProjects(parseProject(baselineWire), parseProject(now)).length > 0) return null
+      return plan.task.go_ahead ?? DEFAULT_GO_AHEAD
+    }
     const out = await driver.run({
-      task: plan.task, skill_path: plan.skill_path, mcp: s.agentEndpoint, model: plan.model, workdir,
+      task: plan.task, skill_path: plan.skill_path, mcp: s.agentEndpoint, model: plan.model, workdir, next_user_turn: nextUserTurn,
       artifacts_dir: plan.out_dir,
       limits: { timeout_ms: plan.timeout_ms, ...(plan.budget_usd !== undefined ? { budget_usd: plan.budget_usd } : {}) },
     })
     result.transcript = path.relative(plan.out_dir, out.transcript_path)
     result.cost = { usd: out.cost_usd ?? null, turns: out.turns ?? null }
     result.final_message = out.final_message ?? null
+    result.user_replies = out.user_replies ?? []
     result.exit = out.exit
     // A failed or timed-out session still changed the project; the evidence
     // below is taken regardless, and the exit says how the session ended.

@@ -86,7 +86,9 @@ export const claudeDriver: Driver = {
     }
     const args = [
       '-p',
-      '--output-format', 'stream-json', '--verbose',
+      // Stream-json both ways keeps one session open across the stand-in
+      // user's replies, with nothing persisted to resume from.
+      '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--model', input.model,
       // `project` is the workdir, which holds the skill and nothing else; user
       // and local settings (plugins, hooks, permissions, user skills) stay out.
@@ -105,8 +107,17 @@ export const claudeDriver: Driver = {
     const child = spawn('claude', args, { cwd: input.workdir, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const transcript = fs.createWriteStream(transcriptPath)
     const stderr = fs.createWriteStream(stderrPath)
-    child.stdin.end(input.task.prompt)
+    const say = (text: string) => child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n')
+    say(input.task.prompt)
     child.stderr.pipe(stderr)
+    const replies: string[] = []
+    let turn = 0
+    // After each finished turn, the runner decides whether the user answers.
+    const afterTurn = async (event: ResultEvent) => {
+      turn++
+      const reply = !event.is_error && input.next_user_turn ? await input.next_user_turn(turn, event.result).catch(() => null) : null
+      if (reply) { replies.push(reply); say(reply) } else child.stdin.end()
+    }
 
     let result: ResultEvent | undefined
     let pending = ''
@@ -120,7 +131,7 @@ export const claudeDriver: Driver = {
         if (!line.includes('"type":"result"')) continue
         try {
           const event = JSON.parse(line) as ResultEvent
-          if (event.type === 'result') result = event
+          if (event.type === 'result') { result = event; void afterTurn(event) }
         } catch {
           // A partial or foreign line; the transcript keeps it regardless.
         }
@@ -151,6 +162,7 @@ export const claudeDriver: Driver = {
       final_message: final?.result,
       cost_usd: final?.total_cost_usd,
       turns: final?.num_turns,
+      ...(replies.length ? { user_replies: replies } : {}),
       exit: { ok: !error && code === 0, code, signal, timed_out: timedOut, ...(error ? { error } : {}) },
     }
   },

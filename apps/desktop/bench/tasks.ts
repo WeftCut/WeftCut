@@ -28,6 +28,11 @@ export interface BenchTask {
   project: { width: number; height: number; fps: { num: number; den: number } }
   setup: SetupCall[]
   prompt: string
+  /** What the stand-in user answers, once, when the agent ends its first
+   *  turn having changed nothing — usually a plan waiting for a go-ahead.
+   *  Absent: the runner's default; false: never answer (a task where asking
+   *  first is the right outcome). */
+  go_ahead?: string | false
   checklist: ChecklistItem[]
 }
 
