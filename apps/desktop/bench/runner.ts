@@ -148,6 +148,14 @@ function probeMotifFiles(color: string): Record<string, string> {
   }
 }
 
+// callTool's result type is a union with the task form; only content matters.
+const blocks = (r: unknown) => ((r as { content?: unknown }).content ?? []) as Array<{ type: string; text?: string; data?: string }>
+const texts = (r: unknown) => blocks(r).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n')
+const imageHash = (r: unknown) => {
+  const img = blocks(r).find((b) => b.type === 'image')
+  return img?.data ? crypto.createHash('sha256').update(img.data).digest('hex').slice(0, 16) : null
+}
+
 /** `--probe motif-dir`: the agent's file path, model-free. Through the
  *  endpoint the agent is given (remote: the path proxy), write a Motif folder
  *  in the local workdir, open it as a directory draft, preview it, change it
@@ -164,13 +172,6 @@ async function motifDirProbe(endpoint: { url: string; bearer_token: string }, wo
     fs.mkdirSync(dir, { recursive: true })
     for (const [f, text] of Object.entries(probeMotifFiles('#e02020'))) fs.writeFileSync(path.join(dir, f), text)
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'deleted before the second preview\n')
-    // callTool's result type is a union with the task form; only content matters.
-    const blocks = (r: unknown) => ((r as { content?: unknown }).content ?? []) as Array<{ type: string; text?: string; data?: string }>
-    const texts = (r: unknown) => (blocks(r) as Array<{ type: string; text?: string }>).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n')
-    const imageHash = (r: unknown) => {
-      const img = blocks(r).find((b) => b.type === 'image')
-      return img?.data ? crypto.createHash('sha256').update(img.data).digest('hex').slice(0, 16) : null
-    }
     const opened = await pc.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'directory', path: dir } } })
     const openedJson = (opened.structuredContent ?? JSON.parse(texts(opened) || '{}')) as { draft_id?: string; revision?: string }
     out.open = { is_error: !!opened.isError, draft_id: openedJson.draft_id ?? null, revision: openedJson.revision ?? null, ...(opened.isError ? { text: texts(opened).slice(0, 1000) } : {}) }
@@ -192,6 +193,49 @@ async function motifDirProbe(endpoint: { url: string; bearer_token: string }, wo
         ?? (JSON.parse(texts(info) || '{}') as { files?: Array<{ path: string }> }).files?.map((f) => f.path) ?? null,
     })
     out.ok = !p1.isError && !p2.isError && out.preview_changed === true
+  } catch (e) {
+    out.ok = false
+    out.error = (e as Error).message.slice(0, 2000)
+  } finally {
+    await pc.close().catch(() => {})
+  }
+  out.ms = Date.now() - started
+  return out
+}
+
+/** `--probe motif-edits`: the file-only path, model-free. Start an empty
+ *  draft, write the probe package whole, preview, change one colour with an
+ *  exact-match `edits` entry and preview again (the frame must differ); an
+ *  ambiguous edit must be refused without a new revision. */
+async function motifEditsProbe(endpoint: { url: string; bearer_token: string }): Promise<Record<string, unknown>> {
+  const started = Date.now()
+  const out: Record<string, unknown> = {}
+  const pc = new Client({ name: 'weftcut-bench-probe', version: '1' }, { capabilities: {} })
+  try {
+    await pc.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.bearer_token}` } } }))
+    const json = (r: unknown) => ((r as { structuredContent?: unknown }).structuredContent ?? JSON.parse(texts(r) || '{}')) as { draft_id?: string; revision?: string }
+    const opened = json(await pc.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'empty', name: 'Bench Edits Probe' } } }))
+    const id = opened.draft_id
+    if (!id) throw new Error('open_motif_draft returned no draft_id')
+    const files = probeMotifFiles('#e02020')
+    const written = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: opened.revision,
+      files: Object.entries(files).map(([p, text]) => ({ path: p, text })) } })
+    if (written.isError) throw new Error(`whole-file write failed: ${texts(written).slice(0, 500)}`)
+    const p1 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
+    const edited = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(written).revision,
+      files: [{ path: 'index.html', edits: [{ old: '#e02020', new: '#2040e0' }] }] } })
+    const p2 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
+    const ambiguous = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(edited).revision,
+      files: [{ path: 'index.html', edits: [{ old: '640px', new: '600px' }] }] } })
+    const after = json(await pc.callTool({ name: 'read_motif', arguments: { id } }))
+    Object.assign(out, {
+      edit: { is_error: !!edited.isError, ...(edited.isError ? { text: texts(edited).slice(0, 500) } : {}) },
+      preview_changed: imageHash(p1) !== null && imageHash(p1) !== imageHash(p2),
+      ambiguous: { is_error: !!ambiguous.isError, text: texts(ambiguous).slice(0, 300) },
+      revision_kept: after.revision === json(edited).revision,
+    })
+    await pc.callTool({ name: 'delete_motif', arguments: { id } })
+    out.ok = !edited.isError && out.preview_changed === true && !!ambiguous.isError && out.revision_kept === true
   } catch (e) {
     out.ok = false
     out.error = (e as Error).message.slice(0, 2000)
@@ -381,6 +425,8 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     }
     if (plan.probes.includes('motif-dir'))
       result.probes = { ...(result.probes ?? {}), 'motif-dir': await motifDirProbe(s.agentEndpoint, workdir) }
+    if (plan.probes.includes('motif-edits'))
+      result.probes = { ...(result.probes ?? {}), 'motif-edits': await motifEditsProbe(s.agentEndpoint) }
   } catch (e) {
     // A host that failed to start still says how far it got.
     const hostRecord = (e as { hostRecord?: Record<string, unknown> }).hostRecord
