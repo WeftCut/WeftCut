@@ -19,6 +19,7 @@ import { canonicalString } from '../state/canonical'
 import type { TasteView } from '../taste/view'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
 import type { TextTokens } from '../taste/schema'
+import { motifTokenProps } from '../taste/motifProps'
 
 export interface Finding {
   severity: CraftSeverity
@@ -121,7 +122,11 @@ export function checkComposition(project: Project, compositionId: string, taste:
         // A Motif's entrance is its own, so only the hold and the role's
         // consistency are checked here.
         hold(l, role, dur)
-        if (role !== null && role !== 'none') motifsByRole.set(role, [...(motifsByRole.get(role) ?? []), l])
+        if (role !== null && role !== 'none') {
+          motifsByRole.set(role, [...(motifsByRole.get(role) ?? []), l])
+          const drift = motifDrift(l.params, role, taste)
+          if (drift.length) add('token-drift', l, `${role.replace('_', ' ')} Motif differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
+        }
         continue
       }
       if (l.params.kind !== 'Text') continue
@@ -190,6 +195,16 @@ export function checkComposition(project: Project, compositionId: string, taste:
   const counts = { hard: 0, warning: 0, review: 0 }
   for (const f of inRange) counts[f.severity]++
   return { composition_id: compositionId, revision: compositionRevision(comp, taste), findings: inRange, counts }
+}
+
+/** Token-backed props a role's Motif departs from. Fonts are left out: what
+ *  they resolve to depends on the machine, which the lint does not know. */
+function motifDrift(p: { motif_id: string; props: Record<string, unknown> }, role: string, taste: TasteView | null): string[] {
+  const schema = taste?.motifs?.[role]?.motifs?.find((m) => m.id === p.motif_id)?.props_schema
+  if (!schema) return []
+  const want = motifTokenProps({ props_schema: schema }, taste!.tokens, null)
+  const same = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' ? a.toUpperCase() === b.toUpperCase() : a === b
+  return Object.entries(want).filter(([k, v]) => !k.startsWith('font_') && !same(p.props[k], v)).map(([k, v]) => `${k} ${String(p.props[k])} (style ${String(v)})`)
 }
 
 /** Token fields a tagged text layer departs from, at the composition's scale. */

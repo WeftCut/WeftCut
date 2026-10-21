@@ -42,6 +42,9 @@ export interface TasteView {
   tokens: Tokens
   /** Graphic role → the Motifs the style (or TASTE.md) draws it with. */
   motifs: Record<string, TasteRoleMotifs>
+  /** Font slot → which of its families this machine has (with the host's
+   *  installed list; absent without one). */
+  fonts?: Record<string, { wanted: string[]; resolved: string | null; missing: string[] }>
   /** Dotted token path → the layer that set it. */
   provenance: Record<string, TasteSource>
   prose: { style: string; taste: string | null }
@@ -113,6 +116,9 @@ function leaves(tokens: Tokens, source: TasteSource, into: Map<string, Leaf>) {
     for (const [k, v] of Object.entries(block)) into.set(`text.${role}.${k}`, { value: v, source })
   for (const [k, v] of Object.entries(tokens.caption ?? {})) into.set(`caption.${k}`, { value: v, source })
   for (const [rule, n] of Object.entries(tokens.floors ?? {})) into.set(`floors.${rule}`, { value: n, source })
+  for (const [key, v] of Object.entries(tokens.motif ?? {})) into.set(`motif.${key}`, { value: v, source })
+  // A slot's list is replaced whole: a TASTE that names one face means that face.
+  for (const [slot, list] of Object.entries(tokens.fonts ?? {})) into.set(`fonts.${slot}`, { value: list, source })
 }
 
 function unflatten(flat: Map<string, Leaf>): Tokens {
@@ -168,7 +174,7 @@ function mergeMotifs(style: MotifsByRole, taste: MotifsByRole, lookup: MotifLook
  *  default style alone). Throws only when the default style itself is
  *  missing — a broken install, not an authoring mistake. `motif` looks ids
  *  up in the Motif catalog; without it, role Motifs are listed unchecked. */
-export function tasteView(dirs: StyleDirs, projectDir: string | null, opts: { motif?: MotifLookup } = {}): TasteView {
+export function tasteView(dirs: StyleDirs, projectDir: string | null, opts: { motif?: MotifLookup; fonts?: ReadonlySet<string> | null } = {}): TasteView {
   const diagnostics: TasteDiagnostic[] = []
   const file = readTasteFile(projectDir)
   const tasteData = file && 'frontmatter' in file ? file.frontmatter : null
@@ -205,13 +211,20 @@ export function tasteView(dirs: StyleDirs, projectDir: string | null, opts: { mo
   leaves(tasteTokens, 'taste', flat)
   checkColorNames(flat, diagnostics)
 
+  const tokens = unflatten(flat)
+  const installed = opts.fonts
+  const fonts = installed && tokens.fonts ? Object.fromEntries(Object.entries(tokens.fonts).map(([slot, wanted]) => {
+    const has = (f: string) => installed.has(f.toLowerCase())
+    return [slot, { wanted, resolved: wanted.find(has) ?? null, missing: wanted.filter((f) => !has(f)) }]
+  })) : undefined
   const revision = createHash('sha256').update(pkg.hash).update('\0').update(file && 'text' in file ? file.text : '').digest('hex')
   return {
     style: { name: pkg.name, hash: pkg.hash, origin, pinned: ext.pin, pin_matches: pinMatches },
     taste: { path: file?.path ?? null, present: file !== null },
     roles,
-    tokens: unflatten(flat),
+    tokens,
     motifs,
+    ...(fonts ? { fonts } : {}),
     provenance: Object.fromEntries([...[...flat].map(([k, l]) => [k, l.source] as const), ...Object.entries(motifs).map(([role, m]) => [`motifs.${role}`, m.source] as const)]),
     prose: { style: pkg.frontmatter.prose, taste: tasteData?.prose || null },
     diagnostics,

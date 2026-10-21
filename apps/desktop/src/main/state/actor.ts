@@ -14,6 +14,7 @@ import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, t
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyRestyleToTaste, type RestyleGroup } from './mutations/restyleTaste'
 import { styleText } from '../taste/apply'
+import { motifTokenProps } from '../taste/motifProps'
 import { captionLimits } from '../../shared/craft'
 import { buildLimits } from './mutations/captionSegments'
 import type { Tokens } from '../taste/schema'
@@ -160,6 +161,10 @@ export interface ActorOptions {
   /** The project's merged style tokens (`project://taste`), which new layers
    *  are born in. Absent (tests, a bare actor): today's defaults. */
   tasteTokens?: () => Tokens | null
+  /** Font families installed on this machine, lowercased, for a style's font
+   *  slots (`font_<slot>` Motif props). Absent or null: not known yet, so a
+   *  slot gets its whole preference list. */
+  installedFonts?: () => ReadonlySet<string> | null
   /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
    *  omitted (tests that do not care about logging). Called AFTER a successful
    *  commit is recorded; a throwing emit is caught and must never abort. */
@@ -1765,7 +1770,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Canonicalize props BEFORE any commit (reject-before-commit gate).
           let canonicalProps: Record<string, unknown>
           try {
-            canonicalProps = canonicalizeProps(manifest, (wireArgs.props ?? null) as unknown)
+            canonicalProps = canonicalizeProps(manifest, styledMotifProps(manifest, wireArgs.props))
           } catch (err) {
             if (err instanceof MotifPropError) return { ok: false, error: { error: 'InvalidArgument', field: 'props', detail: `invalid props: ${err.detail}` } }
             throw err
@@ -1792,6 +1797,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
       if (e instanceof McpArgError) return { ok: false, error: { error: 'InvalidArgument', field: e.field ?? 'arguments', detail: e.mcpMessage } }
       throw e
     }
+  }
+
+  /** A Motif's props as placed: the style's tokens for the props the caller
+   *  left out (spec H2-D2), the caller's own on top. */
+  function styledMotifProps(manifest: Manifest, given: unknown): unknown {
+    const styled = motifTokenProps(manifest, opts.tasteTokens?.() ?? null, opts.installedFonts?.() ?? null)
+    if (Object.keys(styled).length === 0) return given ?? null
+    return given && typeof given === 'object' && !Array.isArray(given) ? { ...styled, ...(given as Record<string, unknown>) } : given ?? styled
   }
 
   // spec_to_op — MCP OperationSpec (tagged "kind", snake_case) → DryRunOp.
@@ -2150,13 +2163,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
           let ids = p.layer_ids as Uuid[] | null
           if (!ids) {
             const comp = scopeComposition(snap, p.composition_id as string | null)
-            ids = comp.tracks.flatMap((t) => t.layers.filter((l) => l.params.kind === 'Text' && (p.captions
-              ? t.role === 'Caption'
-              : t.role !== 'Caption' && (l.params as TextParams).graphic_role === p.graphic_role)).map((l) => l.id))
+            ids = comp.tracks.flatMap((t) => t.layers.filter((l) => p.captions
+              ? l.params.kind === 'Text' && t.role === 'Caption'
+              : t.role !== 'Caption' && (l.params.kind === 'Text' || l.params.kind === 'Motif') && l.params.graphic_role === p.graphic_role).map((l) => l.id))
           }
           if (ids.length === 0) return { ok: true, result: toolRecord({ restyled: [], unchanged: 0 }) }
           const groups = new Set(p.groups as RestyleGroup[])
-          const restyled = commit(HISTORY_SUMMARY.styleRestyle, layerRefs(ids), { kind: 'Coarse' }, (d) => applyRestyleToTaste(d, ids!, tokens, groups, opts.defaultTextFont?.()?.trim() || undefined))
+          const restyled = commit(HISTORY_SUMMARY.styleRestyle, layerRefs(ids), { kind: 'Coarse' }, (d) => applyRestyleToTaste(d, ids!, tokens, groups, opts.defaultTextFont?.()?.trim() || undefined, (id) => {
+            const m = motifCatalog.get(id)
+            return m ? { manifest: m, props: motifTokenProps(m, tokens, opts.installedFonts?.() ?? null) } : null
+          }))
           return { ok: true, result: toolRecord({ restyled, unchanged: ids.length - restyled.length }) }
         }
         // The host serves this with the project's taste and remembers the
@@ -2371,7 +2387,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Canonicalize props BEFORE any commit (reject-before-commit gate).
           let canonicalProps: Record<string, unknown>
           try {
-            canonicalProps = canonicalizeProps(manifest, (p.props ?? null) as unknown)
+            canonicalProps = canonicalizeProps(manifest, styledMotifProps(manifest, p.props))
           } catch (err) {
             if (err instanceof MotifPropError) return { ok: false, error: { code: 'invalid_params', message: `invalid props: ${err.detail}` } }
             throw err

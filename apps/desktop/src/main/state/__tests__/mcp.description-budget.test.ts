@@ -71,7 +71,10 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // +1 KB: `check_composition` (H1-D5) — the audit an agent stops on, with its
 // severity contract in the description so it needs no skill to be read right.
 // +1 KB: `restyle_to_taste` (H1-D4) — Q9's way back to the style after edits.
-const CATALOG_BYTE_BUDGET = 155_000
+// +1 KB: style Motifs (H2-D2) — `add_motif_layer` and `restyle_to_taste` name
+// the style's tokens as where a Motif's props come from, so an agent places a
+// role's Motif without copying colours and fonts by hand.
+const CATALOG_BYTE_BUDGET = 156_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
