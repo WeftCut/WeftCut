@@ -32,6 +32,10 @@ export interface DriverRunInput {
   /** The run's result directory. The driver writes its transcript (and any
    *  client-native logs) here; the agent never sees it. */
   artifacts_dir: string
+  /** Asked after each finished agent turn: the next user message, or null to
+   *  end the session. The runner's stand-in for an attended user, who answers
+   *  a plan with a go-ahead (spec stage `plan`). Absent: one turn. */
+  next_user_turn?: (turn: number, finalMessage: string | undefined) => Promise<string | null>
   limits: {
     /** Wall clock for the whole session; the driver kills the client past it. */
     timeout_ms: number
@@ -61,6 +65,8 @@ export interface DriverRunOutput {
   cost_usd?: number
   /** Model round trips, as the client counts them. */
   turns?: number
+  /** User messages after the task prompt (the stand-in's go-aheads). */
+  user_replies?: string[]
   exit: DriverExit
 }
 
@@ -130,6 +136,8 @@ export interface RunResult {
   /** Extra measurements requested with --probe (e.g. `transcribe`). */
   probes: Record<string, unknown> | null
   final_message: string | null
+  /** What the stand-in user said after the prompt (empty: nothing). */
+  user_replies: string[]
   exit: DriverExit | null
   error: string | null
   started_at: string

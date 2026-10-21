@@ -311,6 +311,17 @@ MP4's sha256, transcode parameters and ffmpeg version), `template`,
 `setup_check` (A-roll clips in the baseline, setup time) and `probes`.
 `audit` is the app's own `check_composition` of the final root composition — `{ counts, by_rule, file }`, with every finding in `audit.json` — whatever the agent checked or reported; null on an app without the tool. `frames` and `rounds` stay `null` until H3.
 
+## The stand-in user
+
+The skill tells an agent to plan a batch job and wait for the user's go-ahead;
+a headless run has no user, so such an agent stops having changed nothing.
+The runner answers in the user's place, once: when the agent ends its first
+turn and the project still matches the baseline, it sends the task's
+`go_ahead` text (a default "yes, go ahead, don't ask again" otherwise) into the
+same session. `go_ahead: false` in a task disables it. What was said is
+`user_replies` in `run.json`; a second stop is the result. The Claude driver
+keeps the session open with `--input-format stream-json`.
+
 ## Drivers
 
 `drivers/types.ts` is the whole contract. A driver gets the task, the skill
