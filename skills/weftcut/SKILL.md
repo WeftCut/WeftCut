@@ -89,11 +89,25 @@ every style. Depart from one only when the user explicitly asks, and say so in
 your report.
 
 Without a recipe, a batch job runs the same loop: read the state (tracks, open
-tacks) → plan in plain words and get the user's go-ahead → build inside the
-work session → check the result against the plan → hand off. Build and check
-repeat at most three rounds. Whatever is still wrong after the third becomes
-tacks on the ranges it concerns and is named in your report — never retried
-silently.
+tacks, `project://taste`) → plan in plain words and get the user's go-ahead →
+build inside the work session → check the result against the plan and with
+`check_composition` → hand off. Build and check repeat at most three rounds.
+Whatever is still wrong after the third becomes tacks on the ranges it
+concerns and is named in your report — never retried silently.
+
+**Style.** The project's style is `project://taste`: its tokens are already
+the defaults new text and transcript captions take. Tag what you create with a
+`graphic_role` — title, lower_third, callout, credit, logo, plate — rather than
+styling it by hand; the role is what gives it the style's look and its
+entrance. A role outside those must be declared in the project's TASTE.md.
+After hand edits, `restyle_to_taste` puts layers back to the style.
+
+**Checks.** `check_composition` reports what breaks the craft rules
+(`craft/rules.md`) or departs from the style. Fix every `hard` finding. Fix a
+`warning`, or leave a tack on it that says why it stays. A `review` finding is
+a departure from the style: keep it only if it was meant, and say so.
+`end_agent_session` tells you whether your last check still matches the
+timeline.
 
 ## Working rhythm
 
@@ -157,8 +171,10 @@ descriptions:
   clips, use the returned rational time_map and source_phase for the mapping;
   do not apply that rate-1 formula. Check source bounds and audition: amplitude onsets do
   not identify beats or main melodies. Missing waveform: wait for generation.
-- A title, a lower third, a credit: `add_text_layer`, then style it with
-  `update_layer_params`. Subtitles from a document are `apply_subtitles`.
+- A title, a lower third, a credit: `add_text_layer` with its `graphic_role`;
+  it is born in the project's style, entrance and exit included. Adjust it
+  with `update_layer_params` (`intro`/`outro` set the motion). Subtitles from
+  a document are `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.

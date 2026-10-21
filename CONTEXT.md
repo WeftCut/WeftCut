@@ -1174,3 +1174,20 @@ Built-ins are `title`, `lower_third`, `callout`, `credit`, `logo`, `plate`,
 cues carry none — a caption is identified by its caption track.
 _Avoid_: role (a track's role: A roll, B roll, caption, audio roles —
 ADR 0023), kind
+
+**Audit**:
+`check_composition`'s pass over one composition against the craft rules and the
+project's taste, from project data alone. Its **findings** carry a severity —
+`hard` (fix before handoff), `warning` (fix, or tack with the reason), `review`
+(a departure from the style to confirm) — a rule id, a time range, the layers
+and a fix. The host remembers the last audit per composition; it is **fresh**
+while the composition and the taste are unchanged since, which is what the
+session's end and an export report.
+_Avoid_: lint (the implementation's name, not the user's), validation (that is
+the data model refusing a write), review (the user settling changes, ADR 0119)
+
+**Entrance and exit**:
+A Text layer's `intro` and `outro` presets — fade, slide, typewriter — played
+from the layer's own start and into its own end, so a trim or move keeps them.
+Distinct from keyframed opacity or position, which stay where they were set.
+_Avoid_: transition (that joins two clips), animation (keyframes)
