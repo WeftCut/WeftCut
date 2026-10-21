@@ -309,7 +309,7 @@ added or changed, read from the app; `host` (where the app ran, and for a
 remote host its launch, GPU status and teardown), `models`, `fixtures` (each
 MP4's sha256, transcode parameters and ffmpeg version), `template`,
 `setup_check` (A-roll clips in the baseline, setup time) and `probes`.
-`audit`, `frames` and `rounds` stay `null` until H1/H3.
+`audit` is the app's own `check_composition` of the final root composition — `{ counts, by_rule, file }`, with every finding in `audit.json` — whatever the agent checked or reported; null on an app without the tool. `frames` and `rounds` stay `null` until H3.
 
 ## Drivers
 
