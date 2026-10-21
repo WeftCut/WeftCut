@@ -86,6 +86,7 @@ describe('update_layer_params advertises one variant per kind, from the table th
         if (k === 'valign') probe[k] = 'Top'
         if (k === 'blend_mode') probe[k] = 'Normal'
         if (k === 'role') probe[k] = 'music'
+        if (k === 'graphic_role') probe[k] = 'title'
         expect(() => parseLayerParamsPatch(probe), `${kind}.${k}`).not.toThrow()
       }
     }
@@ -149,6 +150,8 @@ describe('null arms are advertised only where null means something omission does
     'set_marker_anchor.layer_id',
     'set_project_settings.patch.proxy_override.value', 'set_project_settings.patch.shot_review', 'set_project_settings.patch.pause_review',
     'update_layer_params.patch.crop', 'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h', 'update_layer_params.patch.shadow',
+    // null clears the role; on a Motif add it overrides the manifest's with none.
+    'update_layer_params.patch.graphic_role', 'add_motif_layer.graphic_role',
     'update_effect.patch.params.*',
   ])
   it('across the whole advertised catalog, Rust tools included', () => {

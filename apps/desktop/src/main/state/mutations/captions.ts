@@ -92,6 +92,8 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     // sizes. valign is never observable here — the height tracks the content.
     // See ADR 0049.
     box_w: quantizeExtentPx(compW * (1 - 2 * SAFE_AREA_MARGIN)), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    // A cue has no graphic role: caption identity is the caption track.
+    graphic_role: null,
   }
 }
 

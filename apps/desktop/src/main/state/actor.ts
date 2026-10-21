@@ -45,7 +45,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, parseGraphicRoleOpt, GRAPHIC_ROLE_VIDEO_REFUSAL, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
@@ -980,7 +980,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               ? { ...audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')), role: a.role as AudioRole }
               : audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             case 'image': params = imageOverlayParams(a.media as Uuid, mediaExtent(current().media_pool[a.media as Uuid])); break
-            case 'Motif': params = motifLayerParams(a.motif_id as string, a.motif_version as number, (a.props ?? {}) as Record<string, unknown>, motifCatalog.get(a.motif_id as string)?.size); break
+            case 'Motif': { const m = motifCatalog.get(a.motif_id as string); params = motifLayerParams(a.motif_id as string, a.motif_version as number, (a.props ?? {}) as Record<string, unknown>, m?.size, m?.graphic_role ?? null); break }
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
@@ -1759,7 +1759,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const tEndUsRaw = parseNumOpt(wireArgs.tEndUs, 'tEndUs') ?? null
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { error: 'InvalidArgument', field: 't_end_us', detail: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
-          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size)
+          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size, manifest.graphic_role ?? null)
           // Two-commit: if no track_id → spawn the track FIRST (in the named
           // composition, root by default), THEN the Motif layer.
           const scope = scopeComposition(current(), wireCompositionId(wireArgs))
@@ -1804,7 +1804,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // The wet arm's rule too: an Image ignores the source window, a Video
         // needs one.
         if (kind !== 'Image' && (srcIn === null || srcOut === null)) throw new McpArgError(`src_in_us and src_out_us are required for Video media ${media}; only an Image may omit them`, 'src_in_us')
-        const params = kind === 'Image' ? imageOverlayParams(media, mediaExtent(current().media_pool[media])) : videoClipParams(media, srcIn as number, srcOut as number, mediaExtent(current().media_pool[media]))
+        const role = parseGraphicRoleOpt(spec.graphic_role)
+        if (kind !== 'Image' && role != null) throw new McpArgError(GRAPHIC_ROLE_VIDEO_REFUSAL(media), 'graphic_role')
+        const params = kind === 'Image' ? imageOverlayParams(media, mediaExtent(current().media_pool[media]), role ?? null) : videoClipParams(media, srcIn as number, srcOut as number, mediaExtent(current().media_pool[media]))
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
           params,
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
@@ -1827,7 +1829,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const track = parseUuid(spec.track_id, 'track_id')
         const comp = locateTrack(current(), track)?.comp ?? scopeComposition(current(), null)
         return { kind: 'AddLayer', track_id: track,
-          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y }, comp, opts.defaultTextFont?.()),
+          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y, graphic_role: spec.graphic_role }, comp, opts.defaultTextFont?.()),
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       }
       case 'update_layer':
@@ -1918,10 +1920,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
               ? `media ${media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use add_audio_layer with the same track, span and source window.`
               : `media ${media} is a subtitle document, not a picture. Use apply_subtitles to lay its cues onto the caption tracks, or add_text_layer for a single title.` } }
           }
+          const role = p.graphic_role as string | null | undefined
           if (item.kind === 'Image') {
-            const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media, mediaExtent(current().media_pool[media])), t0, t1))
+            const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media, mediaExtent(current().media_pool[media]), role ?? null), t0, t1))
             return { ok: true, result: toolRecord(addedVideo(imageId, null, null, p)) }
           }
+          // A VideoClip carries no graphic role: a tagged picture is an Image.
+          if (role != null) return { ok: false, error: { code: 'invalid_params', message: GRAPHIC_ROLE_VIDEO_REFUSAL(media) } }
           // An Image never needed them, so the schema stopped requiring them;
           // a Video still does, and says so rather than defaulting to a window
           // nobody chose.
@@ -2014,7 +2019,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('add_text_layer').parseDedicated!(a)
           const track = p.track as string
           checkTrackInComposition(track, p.composition_id as string | null)
-          const params = prodTextParams({ content: p.content, x: p.x, y: p.y }, requireTrack(current(), track).comp, opts.defaultTextFont?.())
+          const params = prodTextParams({ content: p.content, x: p.x, y: p.y, graphic_role: p.graphic_role }, requireTrack(current(), track).comp, opts.defaultTextFont?.())
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolRecord(addedLayer(id, p)) }
@@ -2334,7 +2339,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const tEndUsRaw = (p.t_end_us as number | null | undefined) ?? null
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
-          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size)
+          // An explicit role (null included) overrides the manifest's.
+          const role = p.graphic_role as string | null | undefined
+          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size, role !== undefined ? role : manifest.graphic_role ?? null)
           const trackId = (p.track_id as string | null | undefined) ?? null
           const compositionId = p.composition_id as string | null
           if (trackId !== null) checkTrackInComposition(trackId, compositionId)

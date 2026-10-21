@@ -65,7 +65,10 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // +3 KB: the three tack verbs and the `tacks` read (ADR 0115) — a batch item
 // schema with closed kind/status enums, so agents point at review ranges
 // without reaching for markers.
-const CATALOG_BYTE_BUDGET = 151_000
+// +2 KB: `graphic_role` on the three layer adds and the patch (H1-D1), each a
+// pattern-checked name with the built-ins listed, so an agent tags a layer as
+// it creates it rather than learning the vocabulary from a refusal.
+const CATALOG_BYTE_BUDGET = 153_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 

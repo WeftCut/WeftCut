@@ -1,6 +1,7 @@
 import { validateTimeFraction } from '../../renderer/layerTiming'
 import { readExactTime } from '../../renderer/timeMapping'
 import { cropProblem } from '../../shared/crop'
+import { BUILTIN_GRAPHIC_ROLES, GRAPHIC_ROLE_PATTERN, graphicRoleProblem } from '../../shared/graphicRole'
 // apps/desktop/src/main/state/mcp-commands.ts
 // Pure MCP-tool adapter helpers: arg parsing (snake_case MCP vocab → internal
 // dispatch vocab), ToolResult shaping, and CommandError → MCP error mapping.
@@ -291,6 +292,19 @@ export function parseIntNum(v: unknown, field: string): number {
   return v
 }
 
+/** An optional `graphic_role` wire arg: absent → undefined (the default
+ *  applies), null → untagged, else a well-formed role name. Built-in or not is
+ *  not checked here — an undeclared custom role is the lint's to report. */
+export function parseGraphicRoleOpt(v: unknown, field = 'graphic_role'): string | null | undefined {
+  if (v === undefined) return undefined
+  const problem = graphicRoleProblem(v)
+  if (problem) throw new McpArgError(problem, field)
+  return v as string | null
+}
+/** `add_video_layer` over a Video with a role: a VideoClip stores none. */
+export const GRAPHIC_ROLE_VIDEO_REFUSAL = (media: string): string =>
+  `graphic_role applies to an Image item, and media ${media} is a Video: a VideoClip carries no graphic role. Omit graphic_role, or place a still with an Image item`
+
 const LAYER_PATCH_KEYS: readonly string[] = ['label', 't_start_us', 't_end_us', 'locked']
 /** `update_layer`'s envelope patch. `enabled` is refused by name — the
  *  mutation would apply it, but visibility is `set_layers_enabled`'s — and a
@@ -323,10 +337,10 @@ type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<Lay
  *  not have and demands every key it does. */
 const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
-  Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true }),
+  Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true }),
   VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
-  ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true }),
-  Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true }),
+  ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true, graphic_role: true }),
+  Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true, graphic_role: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
   Audio: keysOf('Audio', { src_in_us: true, src_out_us: true, gain_db: true, pan: true, fade_in_us: true, fade_out_us: true, mute: true, role: true }),
   CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, blend_mode: true }),
@@ -344,13 +358,14 @@ function parseOneOf(v: unknown, options: readonly string[], field: string): stri
 
 /** One value of a kind-specific patch, gated by field name. `null` is a value
  *  only where it MEANS something — the text box pair, where it is "back to
- *  auto", and `shadow`, where it is "no shadow" — and is refused everywhere
+ *  auto", `shadow`, where it is "no shadow", and `graphic_role`, where it is
+ *  "untagged" — and is refused everywhere
  *  else: the wire convention is that an omitted field is left alone, so a null
  *  one is a request nothing reads. */
 function parseLayerParamValue(k: string, v: unknown): unknown {
   const field = `patch.${k}`
   if (v === null) {
-    if (k === 'box_w' || k === 'box_h' || k === 'shadow' || k === 'crop') return null
+    if (k === 'box_w' || k === 'box_h' || k === 'shadow' || k === 'crop' || k === 'graphic_role') return null
     throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
   }
   switch (k) {
@@ -360,6 +375,7 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
       return v
     }
     case 'content': case 'font_family': case 'motif_id': return parseStr(v, field)
+    case 'graphic_role': return parseGraphicRoleOpt(v, field)
     case 'font_weight': return parseIntNum(v, field)
     case 'italic': return parseBool(v, field)
     case 'shadow': {
@@ -1159,6 +1175,11 @@ const SRC_IN_SCHEMA = US_SCHEMA('Source in point')
 const SRC_OUT_SCHEMA = US_SCHEMA('Source out point (exclusive)')
 const ESCAPE_LINK_SCHEMA = { type: 'boolean', description: 'Act on this layer alone, leaving its link partners in place. Default false.' }
 const RGBA_SCHEMA = { type: 'object', description: 'Colour, integer channels 0..255.', properties: { r: { type: 'integer', description: 'Red 0..255.' }, g: { type: 'integer', description: 'Green 0..255.' }, b: { type: 'integer', description: 'Blue 0..255.' }, a: { type: 'integer', description: 'Alpha 0..255; 255 opaque.' } }, required: ['r', 'g', 'b', 'a'] }
+// What the layer is for. Any well-formed name is stored; one outside the
+// built-ins is a custom role the project's taste should declare (lint, not here).
+// A null arm only where null differs from omission: the patch (clears) and
+// add_motif_layer (untagged instead of the manifest's role).
+const GRAPHIC_ROLE_SCHEMA = { type: 'string', pattern: GRAPHIC_ROLE_PATTERN.source, description: `What the layer is for: ${BUILTIN_GRAPHIC_ROLES.join(', ')}, or a custom name.` }
 // The composition scope (ADR 0052): the tools that CREATE take it to say where,
 // and the caption tools that address a composition's captions as a body take it
 // to say which. Every layer-addressed tool derives its composition from the
@@ -1411,6 +1432,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   motif_id: { type: 'string', description: 'Motif id from list_motifs.' },
   motif_version: { type: 'integer', description: 'Motif version to bind.' },
   props: { type: 'object', description: "Motif props, matched against its props_schema." },
+  graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: 'Graphic role (see add_text_layer); null clears.' },
 }
 const LAYER_PARAMS_PATCH_SCHEMA = {
   type: 'object',
@@ -1922,9 +1944,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
-    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; ignored for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; ignored for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
+    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; ignored for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; ignored for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Image only.` }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
+      graphic_role: parseGraphicRoleOpt(a.graphic_role),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_audio_layer', exec: 'dedicated', annotations: ANN_WRITE,
@@ -1937,9 +1960,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_text_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a Text layer — a title, a lower third, a credit — and return its record. Born at the app default text font (bundled caption font when unset), 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` (both or neither) override placement and are the layer's ANCHOR point, not clamped to frame. Everything else — font, size, colour, outline, layout box, alignment — is `update_layer_params { kind: 'Text' }`. It cannot overlap another visual layer on the track. Subtitles from a document are `apply_subtitles`; this is the one-off.",
-    inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, x: { type: 'number', description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: 'number', description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
+    inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, x: { type: 'number', description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: 'number', description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, graphic_role: GRAPHIC_ROLE_SCHEMA, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), content: parseStr(a.content, 'content'),
-      x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'),
+      x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'), graphic_role: parseGraphicRoleOpt(a.graphic_role),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   // The two caption tools that carry WORD timing. Both are dedicated because
@@ -2123,6 +2146,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         t_end_us: { type: 'integer', description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
         track_id: { type: 'string', description: 'Target track id. If omitted, a fresh track is spawned; it carries no stored name and is displayed by its position.' },
         props: { type: 'object', description: 'Motif props as a JSON object. Keys must match the motif\'s `props_schema`; unknown keys reject; missing keys fill from defaults. Omit entirely to use all defaults.' },
+        graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: `${GRAPHIC_ROLE_SCHEMA.description} Omitted: the manifest's; null: none.` },
         composition_id: { type: 'string', description: 'The composition the spawned track opens in (a Group\'s id); omit for the root. With `track_id` set, the track must belong to it.' },
       },
       required: ['motif_id', 't_start_us'] },
@@ -2132,6 +2156,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_end_us: parseNumOpt(a.t_end_us, 't_end_us') ?? null,
       track_id: a.track_id != null ? parseUuid(a.track_id, 'track_id') : null,
       props: a.props != null ? parseObj(a.props, 'props') : null,
+      graphic_role: parseGraphicRoleOpt(a.graphic_role),
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'create_checkpoint', exec: 'dedicated', annotations: ANN_WRITE,

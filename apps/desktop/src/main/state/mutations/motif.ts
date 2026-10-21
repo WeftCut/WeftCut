@@ -3,8 +3,9 @@ import { eachLayer, type MotifRebindEntry } from '../model'
 import { defaultTransform } from './add'
 
 /** Build Motif LayerParams from canonicalized props + manifest version.
- *  src_in_us=0, identity transform, Static(1) opacity. */
-export function motifLayerParams(motifId: string, motifVersion: number, canonicalProps: Record<string, unknown>, size: readonly [number, number] = [0, 0]): LayerParams {
+ *  src_in_us=0, identity transform, Static(1) opacity. `graphicRole` is the
+ *  caller's resolved role — the explicit argument, else the manifest's. */
+export function motifLayerParams(motifId: string, motifVersion: number, canonicalProps: Record<string, unknown>, size: readonly [number, number] = [0, 0], graphicRole: string | null = null): LayerParams {
   return {
     kind: 'Motif',
     motif_id: motifId,
@@ -13,6 +14,7 @@ export function motifLayerParams(motifId: string, motifVersion: number, canonica
     src_in_us: 0,
     transform: defaultTransform(size[0] / 2, size[1] / 2),
     opacity: { mode: 'Static', value: 1 },
+    graphic_role: graphicRole,
   }
 }
 

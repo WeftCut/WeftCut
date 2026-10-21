@@ -103,6 +103,7 @@ animation — deleting it breaks seeking back to earlier times.
   "default_duration_s": 5.0,
   "content_duration_s": 0.8,
   "settle_rafs": 1,
+  "graphic_role": "lower_third",
   "props_schema": {
     "title":  { "type": "string", "default": "Jane Doe", "max_length": 40 },
     "accent": { "type": "color",  "default": "#ff4d4d" }
@@ -118,6 +119,12 @@ animation — deleting it breaks seeking back to earlier times.
   placement transform, and layer opacity are all applied by the host.
 - **`default_duration_s`** — the initial placed-layer length. MUST be finite
   and positive (as must every duration field).
+- **`graphic_role`** — optional: what a placed layer of this Motif is for, the
+  role a style's tokens attach to. One of the built-ins (title, lower_third,
+  callout, credit, logo, plate, none) or a custom lowercase name: a letter,
+  then up to 31 letters, digits or underscores (anything else fails
+  validation). A placed layer takes it unless the placing call names its own;
+  absent means untagged.
 - **`settle_rafs`** — real browser frames the harness waits after a seek before
   capturing; clamped to `{0, 1, 2}`, default `2`. CSS/DOM-only Motifs MAY set
   `1`; canvas/WebGL Motifs SHOULD keep `2`.

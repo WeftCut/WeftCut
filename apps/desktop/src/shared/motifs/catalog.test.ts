@@ -7,6 +7,10 @@ import {
   resolveMotifContentDurationUs,
   MotifPropError,
   BUILTIN_MANIFESTS,
+  coreManifestForHash,
+  parseManifestIsland,
+  composeMotifHtml,
+  validateManifest,
 } from "./catalog";
 import type { Manifest } from "./catalog";
 
@@ -120,5 +124,21 @@ describe("BUILTIN_MANIFESTS", () => {
     expect(c.id).toBe("countdown");
     expect(c.size).toEqual([480, 480]);
     expect(c.max_duration_prop).toBe("seconds");
+  });
+});
+
+describe("manifest graphic_role", () => {
+  it("validates the optional field with the layer pattern", () => {
+    expect(() => validateManifest({ ...m, graphic_role: "lower_third" })).not.toThrow();
+    expect(() => validateManifest({ ...m, graphic_role: null })).not.toThrow();
+    expect(() => validateManifest({ ...m, graphic_role: "Lower Third" })).toThrow(MotifPropError);
+  });
+
+  it("is part of the core manifest only when declared, and survives the island", () => {
+    expect(coreManifestForHash(m)).not.toHaveProperty("graphic_role");
+    expect(coreManifestForHash({ ...m, graphic_role: null })).not.toHaveProperty("graphic_role");
+    const tagged = { ...m, graphic_role: "callout" };
+    expect(coreManifestForHash(tagged)).toHaveProperty("graphic_role", "callout");
+    expect(parseManifestIsland(composeMotifHtml(tagged, "<html><head></head></html>")).graphic_role).toBe("callout");
   });
 });
