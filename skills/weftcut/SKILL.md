@@ -195,8 +195,9 @@ creating or changing a Motif. Visible state must be a function of absolute time.
 One Motif draws one element: for overlay work with more than one element, plan
 the layers before writing code (*Scope: one element* in `motif-authoring.md`).
 
-1. Prefer a self-contained working folder with index.html, manifest.json and
-   companion code/assets. Call `open_motif_draft` with a directory source once;
+1. Prefer a self-contained folder inside your working directory (for example
+   motifs/<name>/) with index.html, manifest.json and companion code/assets,
+   never beside it. Call `open_motif_draft` with a directory source once;
    keep editing the folder with your normal file tools. The app watches changes.
    Opening the same directory reuses its draft. Use an existing Motif or ZIP
    source to copy a package; copying does not select an update target. Unsure
