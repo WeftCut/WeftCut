@@ -230,4 +230,5 @@ Two problems the runs exposed:
   empty plate and spent ~30 turns (9× the cost of r2) debugging a Motif that
   was fine; Sonnet r1 and Haiku in batch 1 hit the same crop and recovered by
   previewing at full size. Element-sized canvases make it rarer, not
-  impossible.
+  impossible. Fixed by ADR 0125: the preview renders the whole canvas and
+  scales it to the requested bounds.

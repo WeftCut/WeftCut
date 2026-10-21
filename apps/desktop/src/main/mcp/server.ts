@@ -528,12 +528,20 @@ async function dispatchTool(
     // open → the fields stay unset and the capture falls back to 30.
     const snap = tsHost?.actor.snapshot()
     const rootFps = snap?.compositions?.[snap.root_id]?.fps
+    // The page always renders at the Motif's own canvas, as a placed layer
+    // does; width/height only bound the returned image, which keeps the
+    // aspect ratio (a smaller viewport would crop the page to its top-left
+    // corner, and agents read that as a broken Motif). Upscaling stops at 2×.
+    const [canvasW, canvasH] = entry?.size ?? [a.width ?? 480, a.height ?? 480]
+    const fits = [a.width != null ? a.width / canvasW : null, a.height != null ? a.height / canvasH : null].filter((f): f is number => f !== null)
+    const scale = fits.length ? Math.min(2, ...fits) : 1
     const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
-      width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: source?.revision ?? '',
+      width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: source?.revision ?? '',
       ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
     })
-    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision})}] } as unknown as ServerResult
+    const image = [Math.round(canvasW * scale), Math.round(canvasH * scale)]
+    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision,canvas:[canvasW,canvasH],image})}] } as unknown as ServerResult
   }
   // Decided HERE, from the catalog this process advertises, rather than left to
   // the backend's `not_found` envelope: the name is known or it is not, and a
