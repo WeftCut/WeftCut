@@ -239,6 +239,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
     autoDeleteEmptyTracks: () => deps.appSettings?.get().auto_delete_empty_tracks ?? true,
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
+    // Read at each creation, so an edit to TASTE.md reaches the next layer
+    // without a reload. `opened` is assigned below; this runs only later.
+    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null).tokens : null),
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },

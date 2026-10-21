@@ -12,6 +12,9 @@ import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnab
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
+import { applyRestyleToTaste, type RestyleGroup } from './mutations/restyleTaste'
+import { styleText } from '../taste/apply'
+import type { Tokens } from '../taste/schema'
 import { checkComposition } from '../lint/checkComposition'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
@@ -152,6 +155,9 @@ export interface ActorOptions {
   autoDeleteEmptyTracks?: () => boolean
   /** Live default for authored text, shared by UI, MCP and rehearsals. */
   defaultTextFont?: () => string | undefined
+  /** The project's merged style tokens (`project://taste`), which new layers
+   *  are born in. Absent (tests, a bare actor): today's defaults. */
+  tasteTokens?: () => Tokens | null
   /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
    *  omitted (tests that do not care about logging). Called AFTER a successful
    *  commit is recorded; a throwing emit is caught and must never abort. */
@@ -1536,7 +1542,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'apply_transcripts': {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
           const comp = scopeComposition(current(), a.composition_id as string)
-          return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, d => applyTranscripts(d, idGen, a.transcripts as TranscriptPayload[], comp.id, a.source_ids as string[])) }
+          // Transcript cues are born in the project's caption tokens (Q9); an
+          // imported subtitle file keeps the styles it carries.
+          const tokens = opts.tasteTokens?.()
+          const style = tokens?.caption ? (t: TextParams) => styleText(t, tokens.caption, tokens, comp) : undefined
+          return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, d => applyTranscripts(d, idGen, a.transcripts as TranscriptPayload[], comp.id, a.source_ids as string[], style)) }
         }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track in every
@@ -1622,7 +1632,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(scope, t0, t1)
-          const params = prodTextParams(wireArgs, scope, opts.defaultTextFont?.())
+          const params = prodTextParams(wireArgs, scope, opts.defaultTextFont?.(), opts.tasteTokens?.())
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
@@ -1830,7 +1840,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const track = parseUuid(spec.track_id, 'track_id')
         const comp = locateTrack(current(), track)?.comp ?? scopeComposition(current(), null)
         return { kind: 'AddLayer', track_id: track,
-          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y, graphic_role: spec.graphic_role }, comp, opts.defaultTextFont?.()),
+          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y, graphic_role: spec.graphic_role }, comp, opts.defaultTextFont?.(), opts.tasteTokens?.()),
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       }
       case 'update_layer':
@@ -2020,7 +2030,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('add_text_layer').parseDedicated!(a)
           const track = p.track as string
           checkTrackInComposition(track, p.composition_id as string | null)
-          const params = prodTextParams({ content: p.content, x: p.x, y: p.y, graphic_role: p.graphic_role }, requireTrack(current(), track).comp, opts.defaultTextFont?.())
+          const params = prodTextParams({ content: p.content, x: p.x, y: p.y, graphic_role: p.graphic_role }, requireTrack(current(), track).comp, opts.defaultTextFont?.(), opts.tasteTokens?.())
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolRecord(addedLayer(id, p)) }
@@ -2128,6 +2138,23 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'end_agent_session': return { ok: true, result: toolRecord({ ended: null }) }
         // Tacks live in the host's TackStore beside agent activity (ADR 0115),
         // not in project state: a bare actor checks the arguments and refuses.
+        case 'restyle_to_taste': {
+          const p = mcpDef(name).parseDedicated!(a)
+          const tokens = opts.tasteTokens?.()
+          if (!tokens) return { ok: false, error: { code: 'invalid_request', message: 'No project style is available here; restyle_to_taste needs the app host (project://taste)' } }
+          const snap = current()
+          let ids = p.layer_ids as Uuid[] | null
+          if (!ids) {
+            const comp = scopeComposition(snap, p.composition_id as string | null)
+            ids = comp.tracks.flatMap((t) => t.layers.filter((l) => l.params.kind === 'Text' && (p.captions
+              ? t.role === 'Caption'
+              : t.role !== 'Caption' && (l.params as TextParams).graphic_role === p.graphic_role)).map((l) => l.id))
+          }
+          if (ids.length === 0) return { ok: true, result: toolRecord({ restyled: [], unchanged: 0 }) }
+          const groups = new Set(p.groups as RestyleGroup[])
+          const restyled = commit(HISTORY_SUMMARY.styleRestyle, layerRefs(ids), { kind: 'Coarse' }, (d) => applyRestyleToTaste(d, ids!, tokens, groups, opts.defaultTextFont?.()?.trim() || undefined))
+          return { ok: true, result: toolRecord({ restyled, unchanged: ids.length - restyled.length }) }
+        }
         // The host serves this with the project's taste and remembers the
         // result; a bare actor checks against the craft table alone.
         case 'check_composition': {

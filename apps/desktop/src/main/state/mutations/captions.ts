@@ -153,8 +153,9 @@ export interface CaptionStylePatch {
  *  → idGen) — the seeded-id tests pin that order. No explicit autofit
  *  (applyAddLayer autofits per layer). Scoped to `compositionId`, the root by
  *  default: only THAT composition's caption tracks are candidates, and a new lane
- *  opens there. */
-export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null, compositionId?: Uuid | null): Uuid {
+ *  opens there. `style`, when given, restyles each cue's params before it lands
+ *  (the project's caption tokens, for transcripts). */
+export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null, compositionId?: Uuid | null, style?: (t: TextParams) => TextParams): Uuid {
   const c = scopeComposition(p, compositionId)
   const grid = gridForLayerKind('Text', c.fps)
   const sorted = cues.slice().sort((a, b) => (a.start_us < b.start_us ? -1 : a.start_us > b.start_us ? 1 : 0)) // stable by start_us
@@ -167,7 +168,8 @@ export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], comp
     const e = snapOnGrid(cue.end_us, grid)
     let lane = lanes.find((t) => spanFree(t, s, e))
     if (!lane) { lane = newCaptionTrack(c, idGen, label); lanes.push(lane) }
-    const layerId = applyAddLayer(p, idGen, lane.id, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
+    const params = cueToTextParams(cue, compW, compH)
+    const layerId = applyAddLayer(p, idGen, lane.id, style ? style(params) : params, cue.start_us, cue.end_us)
     if (cue.metadata) lane.layers.find(l => l.id === layerId)!.metadata = cue.metadata
     first ??= lane.id
   }
