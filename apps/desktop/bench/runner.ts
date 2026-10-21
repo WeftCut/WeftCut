@@ -415,6 +415,17 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     const checklist = await optionalModule<{ evaluateChecklist(task: BenchTask, project: unknown): unknown }>('checklist.mjs')
     result.checklist = checklist ? await checklist.evaluateChecklist(plan.task, finalWire) : null
 
+    // The app's audit of what the agent left, whatever the agent checked or
+    // reported itself: the H1 measure of craft and style compliance.
+    try {
+      const audit = await call('check_composition', {}) as { counts: Record<string, number>; findings: Array<{ rule: string }> }
+      const byRule: Record<string, number> = {}
+      for (const f of audit.findings) byRule[f.rule] = (byRule[f.rule] ?? 0) + 1
+      result.audit = { counts: audit.counts, by_rule: byRule, file: writeJson(plan.out_dir, 'audit.json', audit) }
+    } catch (e) {
+      if (!/unknown tool|check_composition/i.test(String(e))) throw e
+    }
+
     if (plan.probes.includes('transcribe')) {
       // Read-only (transcribe_clip changes nothing), and after the evidence,
       // so neither the baseline nor the agent's run sees its cache.

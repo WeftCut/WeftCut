@@ -116,7 +116,10 @@ export interface RunResult {
   /** The app's resource policy and the allocation derived from it — what
    *  the media wait and every agent-started job ran under. */
   app_resources: { policy: unknown; allocation: unknown } | null
-  audit: null
+  /** The app's own `check_composition` of the final root composition (H1):
+   *  counts, findings by rule, and `audit.json` beside it with every finding.
+   *  Null on an app without the tool. */
+  audit: { counts: Record<string, number>; by_rule: Record<string, number>; file: string } | null
   frames: null
   cost: { usd: number | null; turns: number | null }
   rounds: null
