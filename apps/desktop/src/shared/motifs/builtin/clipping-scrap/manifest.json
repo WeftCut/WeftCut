@@ -7,9 +7,28 @@
     300
   ],
   "default_duration_s": 5.0,
-  "content_duration_s": 0.8,
+  "max_duration_prop": "duration_s",
   "settle_rafs": 1,
   "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 5.0,
+      "min": 0.5,
+      "max": 600
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "lift"
+    },
     "kind": {
       "type": "enum",
       "options": [

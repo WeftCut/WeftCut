@@ -5,7 +5,7 @@ html,body{margin:0;width:1600px;height:400px;overflow:hidden;background:transpar
 #root{position:absolute;inset:0}
 .piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
 #text{position:absolute;white-space:nowrap;line-height:1;text-transform:uppercase;letter-spacing:-0.01em}
-#kicker{position:absolute;font-size:30px;letter-spacing:0.08em;padding:8px 16px 7px;white-space:nowrap;text-transform:uppercase}
+#kicker{position:absolute;font-size:36px;letter-spacing:0.08em;padding:8px 16px 7px;white-space:nowrap;text-transform:uppercase}
 </style></head><body><div id="root"></div>
 <script>
 // clipping-common v1 — shared by every clipping-* Motif; the copies must match
@@ -44,6 +44,23 @@ function paperSvg(w,h,fill,r,all){
 function tape(w,h){const e=document.createElement('div');
   Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
     clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+// Exit: the layer's last EXIT_S seconds (`duration_s` is the layer's length).
+// Pieces leave in reverse order of arrival: `order` 0 (the last placed) goes
+// first, each later one 0.08 s after, all gone at the end. Ease-in, so a piece
+// leaves accelerating. A slide moves `travel` px and fades in its second half.
+const EXIT_S=0.5;
+function exitPose(t,dur,kind,order,travel){
+  const pose={dx:0,dy:0,s:1,r:0,o:1};
+  if(!kind||kind==='none'||!(dur>0)) return pose;
+  const start=dur-EXIT_S+order*0.08, u=Math.max(0,Math.min(1,(t-start)/Math.max(0.15,dur-start)));
+  if(u<=0) return pose;
+  const e=u*u*u, late=Math.max(0,(u-0.35)/0.65), d=travel||320;
+  if(kind==='lift') return {dx:18*e,dy:-150*e,s:1+0.1*e,r:5*e,o:1-late};
+  if(kind==='fade') return {...pose,o:1-u};
+  const dir={slide_left:[-1,0],slide_right:[1,0],slide_up:[0,-1],slide_down:[0,1]}[kind];
+  return dir?{dx:dir[0]*d*e,dy:dir[1]*d*e,s:1,r:0,o:1-late}:pose;
+}
+const EXITS=['none','lift','fade','slide_left','slide_right','slide_up','slide_down'];
 const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
 async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
 // end clipping-common
@@ -54,7 +71,7 @@ motif.define({
     const root=document.getElementById('root'); root.textContent='';
     const band={paper:[props.paper,props.ink],ink:[props.ink,props.paper],red:[props.accent,props.paper]}[props.band]||[props.paper,props.ink];
     const cjk=CJK.test(props.text), family=cjk?props.font_cjk:props.font_headline, weight=cjk?900:400;
-    await loadFace(weight,150,family); await loadFace(400,30,props.font_folio);
+    await loadFace(weight,150,family); await loadFace(400,36,props.font_folio);
     const text=document.createElement('div'); text.id='text'; text.textContent=props.text;
     Object.assign(text.style,{fontFamily:family,fontWeight:String(weight),color:band[1],fontSize:'150px'}); root.appendChild(text);
     const w0=text.getBoundingClientRect().width, size=w0>1360?Math.floor(150*1360/w0):150; text.style.fontSize=size+'px';
@@ -68,13 +85,14 @@ motif.define({
     if(props.kicker){ kicker=document.createElement('div'); kicker.id='kicker'; kicker.className='piece'; kicker.textContent=props.kicker;
       Object.assign(kicker.style,{fontFamily:props.font_folio,background:props.band==='red'?props.ink:props.accent,color:props.paper,left:(x0+28)+'px',top:(y0-26)+'px'}); root.appendChild(kicker); }
     const t1=tape(170,50); t1.style.left=(x0+W-110)+'px'; t1.style.top=(y0-20)+'px'; root.appendChild(t1);
-    els={strip,kicker,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps};
+    els={strip,kicker,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
   },
-  frame(t){
-    t=stepT(t,P.step); const {strip,kicker,tape}=els, tilt=P.tilt;
-    const a=spring(t); strip.style.opacity=ramp(t,16/30); strip.style.transform=`rotate(${tilt+(1-a)*3}deg) scale(${1+(1-a)*0.12})`;
-    if(kicker){const b=spring(t-0.18); kicker.style.opacity=ramp(t-0.18,8/30); kicker.style.transform=`rotate(${tilt-1.5}deg) translateY(${(1-b)*-40}px)`;}
-    const c=spring(t-0.36); tape.style.opacity=ramp(t-0.36,6/30); tape.style.transform=`rotate(${tilt+8}deg) scale(${1+(1-c)*0.25})`;
+  frame(t,ctx){
+    t=stepT(t,P.step); const {strip,kicker,tape}=els, tilt=P.tilt, D=ctx.duration;
+    const x2=exitPose(t,D,P.exit,2), x1=exitPose(t,D,P.exit,1), x0=exitPose(t,D,P.exit,0);
+    const a=spring(t); strip.style.opacity=ramp(t,16/30)*x2.o; strip.style.transform=`translate(${x2.dx}px,${x2.dy}px) rotate(${tilt+(1-a)*3+x2.r}deg) scale(${(1+(1-a)*0.12)*x2.s})`;
+    if(kicker){const b=spring(t-0.18); kicker.style.opacity=ramp(t-0.18,8/30)*x1.o; kicker.style.transform=`translate(${x1.dx}px,${x1.dy+(1-b)*-40}px) rotate(${tilt-1.5+x1.r}deg) scale(${x1.s})`;}
+    const c=spring(t-0.36); tape.style.opacity=ramp(t-0.36,6/30)*x0.o; tape.style.transform=`translate(${x0.dx}px,${x0.dy}px) rotate(${tilt+8+x0.r}deg) scale(${(1+(1-c)*0.25)*x0.s})`;
   },
 });
 </script></body></html>

@@ -7,10 +7,40 @@
     1080
   ],
   "default_duration_s": 5.0,
-  "content_duration_s": 0.1,
+  "max_duration_prop": "duration_s",
   "settle_rafs": 1,
   "graphic_role": "plate",
   "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 5.0,
+      "min": 0.5,
+      "max": 600
+    },
+    "enter": {
+      "type": "enum",
+      "options": [
+        "cut",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "cut"
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "none"
+    },
     "ground": {
       "type": "enum",
       "options": [

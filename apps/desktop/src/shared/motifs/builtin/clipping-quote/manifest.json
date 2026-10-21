@@ -7,10 +7,29 @@
     560
   ],
   "default_duration_s": 6.0,
-  "content_duration_s": 1.6,
+  "max_duration_prop": "duration_s",
   "settle_rafs": 1,
   "graphic_role": "callout",
   "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 6.0,
+      "min": 0.5,
+      "max": 600
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "lift"
+    },
     "quote": {
       "type": "string",
       "default": "Memories are not stored in one place; they are rebuilt each time we recall them.",
