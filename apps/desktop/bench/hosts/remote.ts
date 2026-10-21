@@ -226,6 +226,15 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
       agentEndpoint: proxy.endpoint,
       projectsDir: win.join(runDir, 'projects'),
       joinPath: (...p) => win.join(...p),
+      async writeText(hostPath, text) {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-put-'))
+        try {
+          fs.writeFileSync(path.join(tmp, 'file'), text)
+          await ssh.sftp(`put "${path.join(tmp, 'file')}" "${sftpPath(hostPath)}"\n`)
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true })
+        }
+      },
       async resolveFixtures(ids) {
         if (!ids.length) return { paths: new Map(), meta: {} }
         const r = await op<{ paths: Record<string, string>; meta_json: string | null }>(ssh, root, 'fixtures', { ids, ...(opts.node ? { node: opts.node } : {}) }, 60 * 60_000)

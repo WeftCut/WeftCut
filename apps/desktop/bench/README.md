@@ -65,6 +65,7 @@ interactive session on the same account.
     { "tool": "add_video_layer", "args": { "media_id": "{ref:media1.media_id}", "track_id": "{ref:tracks[role=ARoll].id}" } }
   ],
   "prompt": "what the user would type",
+  "taste": "---\nextends: clipping\n---\n",   // optional: the project's TASTE.md
   "checklist": [{ "id": "…", "description": "…", "check": {} }]
 }
 ```
@@ -83,6 +84,11 @@ A string that is exactly one placeholder keeps the value's type, so numbers
 stay numbers. `fixtures/fixtures.mjs` and
 `checklist.mjs` are optional. A task with no fixtures needs neither, and a
 missing checklist evaluator records `checklist: null`.
+
+`taste` is written as the project's `TASTE.md` after setup (and after the
+template is saved, so it never enters one), before the agent starts. The
+run records what the app made of it in `run.json` `taste`: the style it
+resolved to, any diagnostics, and the font slots (`project://taste`).
 
 ### Fixtures
 

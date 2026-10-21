@@ -22,8 +22,10 @@
 //   caption           true: only layers on caption tracks; false: none of them
 //   track_role        'ARoll' | 'BRoll' | 'Caption' | … | null (a plain track)
 //   motif_id          a Motif id, or an array
-//   motif_builtin     true: a built-in Motif (countdown, lower-third, text-fx);
+//   motif_builtin     true: a built-in Motif (BUILTIN_MOTIF_IDS);
 //                     false: an authored or installed one
+//   graphic_role      the layer's role ('title', 'lower_third', …), an array
+//                     of them, or null for untagged
 //   text              substring of the layer's visible text (case-sensitive)
 //   text_regex        regex on the visible text; `text_flags` default "i"
 //                     (visible text = Text content, or every string prop of a Motif)
@@ -61,7 +63,10 @@
 //   all_of / any_of      { checks: [check, ...] }
 //   human                { }                   pass null; a person judges it
 
-export const BUILTIN_MOTIF_IDS = Object.freeze(['countdown', 'lower-third', 'text-fx'])
+export const BUILTIN_MOTIF_IDS = Object.freeze([
+  'countdown', 'lower-third', 'text-fx',
+  'clipping-headline', 'clipping-stamp', 'clipping-quote', 'clipping-pointer', 'clipping-paper', 'clipping-scrap',
+])
 
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
@@ -118,6 +123,7 @@ function matches(entry, where = {}) {
   if (where.caption !== undefined && isCaptionTrack(track) !== where.caption) return false
   if (where.track_role !== undefined && (track.role ?? null) !== where.track_role) return false
   if (where.motif_id !== undefined && (p.kind !== 'Motif' || !asList(where.motif_id).includes(p.motif_id))) return false
+  if (where.graphic_role !== undefined && !asList(where.graphic_role).includes(p.graphic_role ?? null)) return false
   if (where.motif_builtin !== undefined && (p.kind !== 'Motif' || BUILTIN_MOTIF_IDS.includes(p.motif_id) !== where.motif_builtin)) return false
   // Matched with whitespace collapsed: a viewer reads "What is / a memory?" split
   // across two lines or two Motif props as one phrase.
