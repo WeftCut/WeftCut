@@ -13,17 +13,35 @@
 import { createHash } from 'node:crypto'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
 import { listStyleDirs, readStylePackage, readTasteFile, type StylePackage } from './packages'
-import { validateRoles, validateTokens, type RoleDeclaration, type TasteDiagnostic, type TasteSource, type Tokens } from './schema'
+import { validateMotifs, validateRoles, validateTokens, type MotifsByRole, type RoleDeclaration, type TasteDiagnostic, type TasteSource, type Tokens } from './schema'
+import type { Manifest } from '../../shared/motifs/catalog'
 
 export const DEFAULT_STYLE = 'weftcut-default'
 
 export interface TasteRole { name: string; builtin: boolean; declared_by: 'builtin' | TasteSource; description?: string }
+
+/** What the view says about one Motif a role is drawn with. */
+export interface TasteMotif {
+  id: string
+  name: string
+  size: [number, number]
+  graphic_role: string | null
+  props_schema: Manifest['props_schema']
+}
+
+/** A role's Motifs, in preference order, and which file named them. */
+export interface TasteRoleMotifs { ids: string[]; source: TasteSource; motifs?: TasteMotif[] }
+
+/** Looks a Motif up in the app's catalog; null when there is none by that id. */
+export type MotifLookup = (id: string) => Manifest | null
 
 export interface TasteView {
   style: { name: string; hash: string; origin: 'builtin' | 'user'; pinned: string | null; pin_matches: boolean | null }
   taste: { path: string | null; present: boolean }
   roles: TasteRole[]
   tokens: Tokens
+  /** Graphic role → the Motifs the style (or TASTE.md) draws it with. */
+  motifs: Record<string, TasteRoleMotifs>
   /** Dotted token path → the layer that set it. */
   provenance: Record<string, TasteSource>
   prose: { style: string; taste: string | null }
@@ -34,8 +52,8 @@ export interface TasteView {
 
 export interface StyleDirs { builtin: string; user: string | null }
 
-const STYLE_KEYS = ['name', 'version', 'description', 'roles', 'tokens']
-const TASTE_KEYS = ['extends', 'roles', 'tokens']
+const STYLE_KEYS = ['name', 'version', 'description', 'roles', 'tokens', 'motifs']
+const TASTE_KEYS = ['extends', 'roles', 'tokens', 'motifs']
 
 type Located = { pkg: StylePackage; origin: 'builtin' | 'user' }
 
@@ -65,14 +83,14 @@ function styleLayer(pkg: StylePackage, diagnostics: TasteDiagnostic[]) {
   const fm = pkg.frontmatter
   if (fm.error || !fm.data) {
     diagnostics.push({ severity: 'error', source: 'style', message: `${pkg.name}/STYLE.md: ${fm.error ?? 'no frontmatter'}` })
-    return { roles: [] as RoleDeclaration[], tokens: {} as Tokens }
+    return { roles: [] as RoleDeclaration[], tokens: {} as Tokens, motifs: {} as MotifsByRole }
   }
   unknownKeys(fm.data, STYLE_KEYS, 'style', diagnostics)
   if (fm.data.name !== undefined && fm.data.name !== pkg.name)
     diagnostics.push({ severity: 'warning', source: 'style', path: 'name', message: `name ${String(fm.data.name)} differs from the package folder ${pkg.name}; the folder name is the style's name` })
   const roles = validateRoles(fm.data.roles, 'style', diagnostics)
   const known = new Set<string>([...BUILTIN_GRAPHIC_ROLES, ...roles.map((r) => r.name)])
-  return { roles, tokens: validateTokens(fm.data.tokens, 'style', known, diagnostics) }
+  return { roles, tokens: validateTokens(fm.data.tokens, 'style', known, diagnostics), motifs: validateMotifs(fm.data.motifs, 'style', known, diagnostics) }
 }
 
 /** `name` or `name@<hex>`; the hex is a prefix of the package hash. */
@@ -127,10 +145,30 @@ function checkColorNames(flat: Map<string, Leaf>, diagnostics: TasteDiagnostic[]
   }
 }
 
+/** Each role's Motifs: a TASTE.md list replaces its style's for that role.
+ *  With a catalog to look in, an id it does not hold is dropped with a
+ *  diagnostic, and the rest carry what the agent needs to place them. */
+function mergeMotifs(style: MotifsByRole, taste: MotifsByRole, lookup: MotifLookup | undefined, diagnostics: TasteDiagnostic[]): Record<string, TasteRoleMotifs> {
+  const out: Record<string, TasteRoleMotifs> = {}
+  for (const [role, ids] of Object.entries({ ...style, ...taste })) {
+    const source: TasteSource = role in taste ? 'taste' : 'style'
+    if (!lookup) { out[role] = { ids, source }; continue }
+    const motifs: TasteMotif[] = []
+    for (const id of ids) {
+      const m = lookup(id)
+      if (!m) { diagnostics.push({ severity: 'error', source, path: `motifs.${role}`, message: `no Motif ${id} in the app's catalog; dropped` }); continue }
+      motifs.push({ id, name: m.name, size: m.size, graphic_role: m.graphic_role ?? null, props_schema: m.props_schema })
+    }
+    if (motifs.length) out[role] = { ids: motifs.map((m) => m.id), source, motifs }
+  }
+  return out
+}
+
 /** The merged view for a project folder (null: no project open, so the
  *  default style alone). Throws only when the default style itself is
- *  missing — a broken install, not an authoring mistake. */
-export function tasteView(dirs: StyleDirs, projectDir: string | null): TasteView {
+ *  missing — a broken install, not an authoring mistake. `motif` looks ids
+ *  up in the Motif catalog; without it, role Motifs are listed unchecked. */
+export function tasteView(dirs: StyleDirs, projectDir: string | null, opts: { motif?: MotifLookup } = {}): TasteView {
   const diagnostics: TasteDiagnostic[] = []
   const file = readTasteFile(projectDir)
   const tasteData = file && 'frontmatter' in file ? file.frontmatter : null
@@ -158,7 +196,9 @@ export function tasteView(dirs: StyleDirs, projectDir: string | null): TasteView
     ...style.roles.map((r) => ({ ...r, builtin: false, declared_by: 'style' as const })),
     ...tasteRoles.filter((r) => !style.roles.some((s) => s.name === r.name)).map((r) => ({ ...r, builtin: false, declared_by: 'taste' as const })),
   ]
-  const tasteTokens = data ? validateTokens(data.tokens, 'taste', new Set(roles.map((r) => r.name)), diagnostics) : {}
+  const roleNames = new Set(roles.map((r) => r.name))
+  const tasteTokens = data ? validateTokens(data.tokens, 'taste', roleNames, diagnostics) : {}
+  const motifs = mergeMotifs(style.motifs, data ? validateMotifs(data.motifs, 'taste', roleNames, diagnostics) : {}, opts.motif, diagnostics)
 
   const flat = new Map<string, Leaf>()
   leaves(style.tokens, 'style', flat)
@@ -171,7 +211,8 @@ export function tasteView(dirs: StyleDirs, projectDir: string | null): TasteView
     taste: { path: file?.path ?? null, present: file !== null },
     roles,
     tokens: unflatten(flat),
-    provenance: Object.fromEntries([...flat].map(([k, l]) => [k, l.source])),
+    motifs,
+    provenance: Object.fromEntries([...[...flat].map(([k, l]) => [k, l.source] as const), ...Object.entries(motifs).map(([role, m]) => [`motifs.${role}`, m.source] as const)]),
     prose: { style: pkg.frontmatter.prose, taste: tasteData?.prose || null },
     diagnostics,
     revision,
