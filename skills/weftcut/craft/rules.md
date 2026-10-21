@@ -13,8 +13,8 @@ loosens it; caption tokens (`max_chars_per_line`, `max_lines`,
 |---|---|---|---|---|
 | `undeclared-role` | hard | — | Every graphic role on a layer is built in or declared by the project's style or TASTE.md. | An undeclared role has no tokens and no checks; it is usually a typo. |
 | `text-offscreen` | hard | — | A text layer has some part inside the frame. | Text placed wholly outside the frame renders nothing and still costs a layer. |
-| `title-hold` | warning | ≥ 3 s | A title stays on screen at least 3 s. | Shorter titles cannot be read once, let alone twice. |
-| `lower-third-hold` | warning | ≥ 4 s | A lower third stays on screen at least 4 s. | Agents held two-line lower thirds for 2 s — too short to read a name and an affiliation. |
+| `title-hold` | warning | ≥ 3 s | A title stays on screen at least 3 s. | Every baseline explainer title was held 2.5–3.0 s, read once at best. |
+| `lower-third-hold` | warning | ≥ 4 s | A lower third stays on screen at least 4 s. | Two lines — a name and an affiliation — need about 4 s to be read twice; the baseline met it (4–7 s), the floor keeps it. |
 | `text-pops` | warning | — | Titles and lower thirds enter and exit (intro and outro), never pop. | Every baseline run left intro and outro empty, so text cut on and off. |
 | `title-safe` | warning | ≤ 90 % | Text stays inside the title-safe area, the centred 90 % of the frame. | Text at the frame edge is cropped by some players and crowds the picture. |
 | `caption-line-length` | warning | ≤ 42 chars | A caption line holds at most 42 characters. | Transcription cues of 68–80 characters were laid down unbroken. |
