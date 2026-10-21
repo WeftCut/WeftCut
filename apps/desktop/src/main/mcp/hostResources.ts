@@ -29,6 +29,8 @@ export const HOST_RESOURCE_DEFS = [
     description: 'Every effect kind `add_effect` takes — the visual kinds and the `audio.*` kinds — with each param\'s default and range (a unit or a sample region where it has one). The kinds are `add_effect`\'s enum, the params are `update_effect` keys and the `effects[<id>].params[<key>]` keyframe path.' },
   { uri: 'project://session', name: 'Work session', mimeType: APP_JSON,
     description: 'The active agent work session (or null): owner client, connection, reason, started_at, checkpoint — plus recent sessions and the history lock. Read it after AgentSessionBusy.' },
+  { uri: 'project://taste', name: 'Taste', mimeType: APP_JSON,
+    description: "The style tokens new layers take: the project's style (TASTE.md `extends`, else weftcut-default) merged with its TASTE.md overrides — { style: { name, hash, origin, pinned, pin_matches }, taste: { path, present }, roles, tokens, provenance (token path → style | taste), prose, diagnostics, revision }. With no project open, the default style alone." },
   { uri: 'project://tacks', name: 'Tacks', mimeType: APP_JSON,
     description: 'Every review tack of this project opening, oldest first — { id, label, body, kind, status, range (as created), session_id, client, created_at } plus what is derived now: composition_id, t_us, end_t_us (null only when its composition is gone), follows (the clip its range moves with) and outdated (its range no longer plays what it did at creation, on any track). status shows what the user resolved or dismissed. `?composition=<id>` keeps the tacks placed there.' },
 ]

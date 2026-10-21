@@ -79,6 +79,9 @@ extraResources:
   - from: src/shared/motifs/builtin
     to: motifs/builtin
     filter: ["**/*"]
+  - from: src/shared/styles/builtin
+    to: styles/builtin
+    filter: ["**/*"]
 # App icon. build/icon.png is the 1024x1024 raster master, generated from the
 # canonical brand SVG (src/renderer/public/icons/icon.svg) by `npm run
 # gen:icons`. electron-builder derives the multi-resolution Windows .ico, the

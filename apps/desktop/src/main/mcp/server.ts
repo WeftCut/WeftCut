@@ -416,6 +416,9 @@ async function dispatchTool(
     if (PROJECT_TOOLS.has(name) && tsHost.projects) return runProjectTool(tsHost, name, args)
     // The session view lives in the host's activity service, not the actor, so
     // it is answered here — the same record `project://session` serves.
+    if (name === 'read_project' && args.view === 'taste' && tsHost.taste) {
+      return toolRecord(tsHost.taste() as unknown as Record<string, unknown>) as unknown as ServerResult
+    }
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
       return toolRecord(sessionView(tsHost)) as unknown as ServerResult
     }
@@ -582,6 +585,9 @@ export async function handleReadResource(
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost), null, 2) }] } as unknown as ServerResult
+    }
+    if (uri === 'project://taste' && tsHost.taste) {
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tsHost.taste(), null, 2) }] } as unknown as ServerResult
     }
     if (uri === 'effects://catalog') {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(effectsCatalogView(), null, 2) }] } as unknown as ServerResult

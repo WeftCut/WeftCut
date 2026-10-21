@@ -2290,7 +2290,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // no snapshot. The work session and the two picture views live in the
           // MCP host, which answers them before a call reaches the actor.
           if (view === 'effects') return { ok: true, result: toolRecord(effectsCatalogView()) }
-          if (view === 'session' || view === 'tacks' || view === 'media_thumbnail' || view === 'media_frame')
+          if (view === 'session' || view === 'tacks' || view === 'taste' || view === 'media_thumbnail' || view === 'media_frame')
             return { ok: false, error: { code: 'invalid_params', message: `view '${view}' is served by the MCP host, not by the state actor — call it over MCP, or read the matching resource` } }
           const compositionId = p.composition_id as string | null
           const scoped = compositionId !== null && SCOPED_PROJECT_VIEWS.has(view) ? `?composition=${compositionId}` : ''
