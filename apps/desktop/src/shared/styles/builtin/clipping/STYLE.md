@@ -30,8 +30,8 @@ tokens:
     cjk: [Noto Sans SC Black, Source Han Sans SC Heavy, PingFang SC, Microsoft YaHei]
     body: [Noto Serif, Source Serif 4, Georgia, Times New Roman, Noto Serif SC, Source Han Serif SC, Songti SC, SimSun]
     folio: [IBM Plex Mono, Menlo, Consolas]
-  # Plain text is the fallback for a role drawn without its Motif (the audit
-  # reports it as role-motif). It keeps the default style's legible look.
+  # Plain text, for a role an agent chooses to set as Text rather than a
+  # Motif. It keeps the default style's legible look.
   text:
     none:
       family: null

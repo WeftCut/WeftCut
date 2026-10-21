@@ -169,6 +169,43 @@ manifest's authored key order, keys title-cased (`bg_color` → "Bg Color"),
 widget switched on the variant. Design prop keys to read well through that
 transform.
 
+## Style Motifs
+
+A project's style (`project://taste`) reaches a Motif through its prop keys,
+not its id. That holds for a built-in, a fork or a Motif written from scratch.
+The style also names example Motifs for some roles (the taste's motifs).
+They show its vocabulary in use: place one as it is, fork it, or write a new
+one with the same keys.
+
+- **Shared keys.** A prop whose key is in the taste's `tokens.motif` (for the
+  clipping style: ink, paper, accent, highlight and step_fps) is
+  filled from it when the layer is placed or restyled, if the value fits the
+  prop's type. A colour token may name a palette entry. The manifest default
+  should be the style's own value, so a preview without a project looks
+  right.
+- **Font slots.** A `string` prop named `font_<slot>` gets the families of
+  `tokens.fonts.<slot>` installed on the machine, in order, as a CSS stack
+  (`'Anton', 'Impact'`). Give it a `max_length` of about 200. Use it as a
+  `font-family` value with a generic family appended, and `document.fonts.load`
+  it per weight and size in `setup`. Installed families need no
+  `@font-face`. Frames follow the machine's fonts, which is the price of not
+  bundling them.
+- **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
+  `duration_s` as its `max_duration_prop`. `ctx.duration` is then the
+  layer's length, and the layer is capped to it. Play the exit in the last
+  ~0.5 s, chosen by an `enum` prop `exit` (none, lift, fade,
+  slide_left … slide_down). Take the pieces off in reverse order of entry,
+  a few frames apart. A slide fades as it goes unless the Motif is
+  frame-sized, since nothing can travel past its own canvas.
+
+  The placing call sets `duration_s` to the layer's length. A held Motif
+  without an exit keeps `content_duration_s` instead.
+- **Spring, tilt, shadow.** Motion and paper detail that are not tokens
+  live in the Motif's code. A fork keeps them by keeping that code.
+
+Dropping a shared key is a departure from the style: `check_composition`
+reports drift only on the keys a layer has.
+
 ## Runtime environment
 
 The document renders in an offline, isolated capture host. Hard limits:
@@ -247,7 +284,8 @@ await document.fonts.load('700 56px "Inter"');
 ```
 
 Embedded `data:` fonts are the deterministic choice; `system-ui` stacks render
-differently across machines.
+differently across machines. A Style Motif's `font_<slot>` props name installed
+families on purpose (*Style Motifs* above).
 
 ## Parameter UI
 
