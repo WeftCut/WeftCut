@@ -1124,8 +1124,8 @@ _Avoid_: selection (that is clips'), highlight (the per-activity highlight)
 
 What an agent knows about how a result should look and how a job should run,
 in layers with a fixed precedence: etiquette, craft, style, TASTE, recipe
-(ADR 0123). Style, TASTE and graphic role are planned; craft and recipes ship
-as skill folders.
+(ADR 0123). Styles ship with the app or in the data root and TASTE in the
+project (ADR 0126); craft and recipes ship as skill folders.
 
 **Craft**:
 Brand-agnostic production rules expressed as numbers or thresholds — title-safe
@@ -1151,6 +1151,15 @@ TASTE merged, with each field's provenance. The user's explicit request
 overrides it. Always written in capitals, as the file is named.
 _Avoid_: taste (lowercase: judgment, not the file), project style, style
 override
+
+**Style Motif**:
+A Motif that draws in a style's vocabulary by carrying its shared prop keys —
+colours such as `ink` and `accent` from the `motif` tokens, `font_<slot>` from
+the `fonts` tokens — so placing or restyling it fills them from the project's
+TASTE. A style names some per graphic role as examples; an agent uses one,
+forks one, or writes its own with the same keys (ADR 0130). Leaves through its
+own `exit` prop over the last half second before its `duration_s`.
+_Avoid_: template (the examples are not one), style asset, theme Motif
 
 **Recipe**:
 How one kind of agent job runs: an ordered subset of the closed stage catalog
@@ -1190,4 +1199,5 @@ the data model refusing a write), review (the user settling changes, ADR 0119)
 A Text layer's `intro` and `outro` presets — fade, slide, typewriter — played
 from the layer's own start and into its own end, so a trim or move keeps them.
 Distinct from keyframed opacity or position, which stay where they were set.
+A Motif plays its own; a Style Motif's `exit` prop picks how it leaves.
 _Avoid_: transition (that joins two clips), animation (keyframes)

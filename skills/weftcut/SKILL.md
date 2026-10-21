@@ -102,6 +102,16 @@ styling it by hand; the role is what gives it the style's look and its
 entrance. A role outside those must be declared in the project's TASTE.md.
 After hand edits, `restyle_to_taste` puts layers back to the style.
 
+**Style Motifs.** A style that is mostly drawn (paper, stamps, highlighter)
+lists example Motifs per role in the taste's motifs. They are examples, not a
+template: place one, fork it, or write a new Motif when the video needs
+something they do not show. The style reaches any Motif through its shared
+props (colours such as ink and accent, and font_ props). Leave them unset
+when placing, and keep them in a fork. A Motif that has a duration_s prop
+plays its exit before its layer ends: set duration_s to the layer's length,
+and its exit prop. A set of elements leaves by ending their layers one after
+another. *Style Motifs* in `motif-authoring.md` says how to write one.
+
 **Checks.** `check_composition` reports what breaks the craft rules
 (`craft/rules.md`) or departs from the style. Fix every `hard` finding. Fix a
 `warning`, or leave a tack on it that says why it stays. A `review` finding is
