@@ -4,6 +4,7 @@ import { layerRateNumber } from '../../renderer/layerTiming'
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop'
 import { positionView, type PositionAnimation } from '../../shared/position'
+import { mediaPictureKey, parseMediaRef } from '../../shared/motifs/mediaProp'
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rational, Rgba, RoleMixSettings, Shadow, TextAlign, TextAnimPreset, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
@@ -52,6 +53,11 @@ export interface MotifView extends TimingFields {
   anchor_x: Animated<number>; anchor_y: Animated<number>
   src_in_us: number; props: Record<string, unknown>
   graphic_role: string | null
+  /** Prop key → the picture a `media` prop names (`mediaPictureKey`: the
+   *  file's content hash, and the frame time for a video). Present only when
+   *  some prop names a pool item. Frame cache keys include it, so replacing
+   *  the file redraws the Motif. */
+  media_keys?: Record<string, string>
 }
 /** A Group layer's projection. `composition_label` is the referenced
  *  composition's own label (null → the renderer derives "Group N"). */
@@ -251,6 +257,19 @@ function mediaLabelFor(id: Uuid, pool: Record<Uuid, MediaItem>): string {
 /** Kind-matched UI projection. NOTE: the Motif arm is covered by unit tests
  *  only (summary.test.ts) — no integration fixture builds a Motif layer.
  *  `compositions` resolves a CompositionRef's label; the other arms never read it. */
+/** `media_keys` for a Motif view: every prop whose value names a pool item.
+ *  It reads values, not the manifest, so a string prop that happens to hold a
+ *  media id only adds to a cache key. */
+function motifMediaKeys(props: Record<string, unknown>, pool: Record<Uuid, MediaItem>): { media_keys?: Record<string, string> } {
+  let keys: Record<string, string> | undefined
+  for (const [k, v] of Object.entries(props)) {
+    const ref = parseMediaRef(v)
+    const item = ref ? pool[ref.media_id] : undefined
+    if (ref && item) (keys ??= {})[k] = mediaPictureKey(item.file_hash_blake3, ref)
+  }
+  return keys ? { media_keys: keys } : {}
+}
+
 export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaItem>, compositions: Record<Uuid, Composition> = {}): LayerParamsView {
   switch (params.kind) {
     case 'VideoClip': {
@@ -289,7 +308,8 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { ...timingView(params), kind: 'Motif', motif_id: params.motif_id, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
-        opacity: params.opacity, src_in_us: params.src_in_us, props: params.props, graphic_role: params.graphic_role }
+        opacity: params.opacity, src_in_us: params.src_in_us, props: params.props, graphic_role: params.graphic_role,
+        ...motifMediaKeys(params.props, pool) }
     }
     case 'CompositionRef': {
       const t = params.transform

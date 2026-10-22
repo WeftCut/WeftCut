@@ -1,6 +1,8 @@
 import { protocol } from 'electron'
 import { PARAMS_PAGE_FILE } from '../../shared/motifs/catalog.js'
+import fs from 'node:fs'
 import { resolveMotifFile } from './builtinAssets.js'
+import { servedMotifMedia } from './mediaProps.js'
 import type { UserMotifStore } from './store.js'
 
 /// CSP served with every Motif RENDER document (`index.html` and friends).
@@ -56,6 +58,16 @@ export function registerMotifProtocol(builtinDir: string, store: UserMotifStore)
     let rest: string
     try { rest = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html' }
     catch { return new Response('invalid path', { status: 400 }) }
+    // A picture a `media` prop names (./mediaProps.ts), on the Motif's own origin.
+    const picture = servedMotifMedia(rest)
+    if (picture) {
+      try {
+        return new Response(new Uint8Array(await fs.promises.readFile(picture.file)), {
+          status: 200,
+          headers: { 'Content-Type': picture.mime, 'Content-Security-Policy': MOTIF_CSP, 'Cache-Control': 'no-store' },
+        })
+      } catch { return new Response('not found: ' + id + '/' + rest, { status: 404 }) }
+    }
     const file = resolveMotifFile(builtinDir, store, id, rest)
     if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })
     return new Response(new Uint8Array(file.bytes), {

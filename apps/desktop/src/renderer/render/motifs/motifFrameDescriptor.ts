@@ -48,7 +48,7 @@ export function motifFrameDescriptor(
   // Only the non-animated identity fields — the cache key must not (and
   // cannot) vary with per-frame transform/opacity resolution, so both the
   // raw IPC view and the per-frame resolved view satisfy this.
-  view: Pick<MotifView, "props" | "src_in_us"> & TimingFields,
+  view: Pick<MotifView, "props" | "src_in_us" | "media_keys"> & TimingFields,
   tInLayerUs: number,
   durationUs: number,
   fpsNum: number,
@@ -86,6 +86,7 @@ export function motifFrameDescriptor(
     ...(motif.manifest.content_hash !== undefined && { contentHash: motif.manifest.content_hash }),
     canonicalProps, renderW, renderH, fpsNum, fpsDen,
     durationFrames: contentDurationFrames,
+    ...(view.media_keys && { mediaKeys: view.media_keys }),
   });
   return {
     cacheKey, contentFrame: frame, contentDurationFrames, contentDurationUs, srcInUs,

@@ -25,6 +25,7 @@ import {
 import { captureMotifFrameB64 } from '../motif/capture.js'
 import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'
 import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
+import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
@@ -565,7 +566,11 @@ async function dispatchTool(
     // text), an unknown key is refused naming it.
     let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>
     if (entry) {
-      try { props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null) }
+      try {
+        props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null)
+        const media = mediaPropProblem((entry as unknown as Manifest).props_schema, props, tsHost?.actor.snapshot().media_pool ?? {})
+        if (media) throw new MotifPropError(media)
+      }
       catch (e) { if (e instanceof MotifPropError) return toolErrorResult({ code: 'invalid_params', message: `invalid props for '${motifId}': ${e.detail} — list_motifs reports its props_schema` }); throw e }
     }
     // meta.fps names the open project's root-composition rate, so a Motif

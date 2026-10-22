@@ -92,6 +92,9 @@ export interface MotifFrameCacheKeyInput {
   fpsNum: number;
   fpsDen: number;
   durationFrames: number;
+  /// The pictures `media` props name (`MotifView.media_keys`). Absent for a
+  /// Motif without one, so its key is unchanged.
+  mediaKeys?: Record<string, string>;
 }
 
 /// Stable opaque key for `MotifFrameCache`. The cache appends `#<frame>`;
@@ -111,5 +114,6 @@ export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
     String(input.fpsDen),
     String(input.durationFrames),
     JSON.stringify(input.canonicalProps),
+    ...(input.mediaKeys ? [JSON.stringify(input.mediaKeys)] : []),
   ].join("|");
 }

@@ -36,6 +36,7 @@ function fits(spec: PropSpec, v: unknown): boolean {
     case 'enum': return typeof v === 'string' && spec.options.includes(v)
     case 'string': return typeof v === 'string' && (spec.max_length === undefined || [...v].length <= spec.max_length)
     case 'color': return typeof v === 'string'
+    case 'media': return false
   }
   return false
 }

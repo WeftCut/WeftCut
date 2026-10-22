@@ -410,6 +410,10 @@ export interface MotifView extends TimingFields {
   /// manifest's `props_schema`. Passed to the Motif's `motif.define({ setup,
   /// frame })` lifecycle when the capture host renders it (see `docs/motifs.md`).
   props: Record<string, unknown>;
+  /// Prop key → the picture a `media` prop names (content hash, and frame time
+  /// for a video); present only when some prop names a pool item. Part of the
+  /// frame cache key.
+  media_keys?: Record<string, string>;
   /// What the layer is for (`shared/graphicRole.ts`); null = untagged. Main
   /// always sends it; optional here because no renderer code reads it yet.
   graphic_role?: string | null;
@@ -3119,7 +3123,8 @@ export type PropSpec =
   | { type: "string"; default: string; max_length?: number; multiline?: boolean }
   | { type: "color"; default: string }
   | { type: "number"; default: number; min?: number; max?: number }
-  | { type: "enum"; default: string; options: string[] };
+  | { type: "enum"; default: string; options: string[] }
+  | { type: "media"; default: "" };
 
 /// One catalog entry from `list_motifs()`. Mirrors the MCP `list_motifs`
 /// manifest payload.

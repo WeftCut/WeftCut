@@ -18,7 +18,9 @@ import clippingPointerJson from "./builtin/clipping-pointer/manifest.json";
 import clippingPaperJson from "./builtin/clipping-paper/manifest.json";
 import clippingScrapJson from "./builtin/clipping-scrap/manifest.json";
 import clippingRevealJson from "./builtin/clipping-reveal/manifest.json";
+import clippingStickerJson from "./builtin/clipping-sticker/manifest.json";
 import { graphicRoleProblem } from "../graphicRole";
+import { isMediaPropValue } from "./mediaProp";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,7 +30,10 @@ export type PropSpec =
   | { type: "string"; default: string; max_length?: number; multiline?: boolean }
   | { type: "color"; default: string }
   | { type: "number"; default: number; min?: number; max?: number }
-  | { type: "enum"; default: string; options: string[] };
+  | { type: "enum"; default: string; options: string[] }
+  /// A still picture from the media pool (`./mediaProp.ts`, ADR 0132): "",
+  /// "<media_id>" for an image, or "<media_id>@<t_us>" for a video frame.
+  | { type: "media"; default: "" };
 
 export interface Manifest {
   id: string;
@@ -116,6 +121,12 @@ function validateProp(key: string, spec: PropSpec, value: unknown): void {
       }
       if (spec.max != null && value > spec.max) {
         throw new MotifPropError(`prop \`${key}\` out of range [${spec.min ?? null}, ${spec.max}]`);
+      }
+      break;
+    }
+    case "media": {
+      if (!isMediaPropValue(value)) {
+        throw new MotifPropError(`prop \`${key}\` must be "", a media id, or "<media id>@<t_us>"`);
       }
       break;
     }
@@ -296,7 +307,7 @@ export function resolveMotifContentDurationUs(
 }
 
 /** Reserved built-in ids; a user/uploaded Motif may never take one. */
-export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-quote", "clipping-pointer", "clipping-paper", "clipping-scrap", "clipping-reveal"];
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-quote", "clipping-pointer", "clipping-paper", "clipping-scrap", "clipping-reveal", "clipping-sticker"];
 const DRAFTS_DIR = "drafts";
 
 /** Slugify a name → safe single path-segment id. */
@@ -340,7 +351,7 @@ export function assignUniqueId(name: string, taken: string[]): string {
 const _countdown = countdownJson as unknown as Manifest;
 const _lowerThird = lowerThirdJson as unknown as Manifest;
 const _textFx = textFxJson as unknown as Manifest;
-const _clipping = [clippingHeadlineJson, clippingStampJson, clippingQuoteJson, clippingPointerJson, clippingPaperJson, clippingScrapJson, clippingRevealJson] as unknown as Manifest[];
+const _clipping = [clippingHeadlineJson, clippingStampJson, clippingQuoteJson, clippingPointerJson, clippingPaperJson, clippingScrapJson, clippingRevealJson, clippingStickerJson] as unknown as Manifest[];
 
 /**
  * The built-in motif manifests, keyed by id. ReadonlyMap so callers can't

@@ -1,0 +1,101 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:900px;height:760px;overflow:hidden;background:transparent}
+#root{position:absolute;inset:0}
+.piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
+#pic{position:absolute;display:block}
+</style></head><body><div id="root"></div>
+<script>
+// clipping-common v1 — shared by every clipping-* Motif; the copies must match
+// (motifs.clipping-common test). Closed form in t throughout.
+// One spring for everything (vox-editorial: damping 18, mass 0.75, stiffness 110).
+function spring(t){ if(t<=0) return 0; const m=.75,k=110,c=18, w0=Math.sqrt(k/m), z=c/(2*Math.sqrt(k*m));
+  if(z<1){const wd=w0*Math.sqrt(1-z*z); return 1-Math.exp(-z*w0*t)*(Math.cos(wd*t)+z*w0/wd*Math.sin(wd*t));}
+  if(z===1) return 1-Math.exp(-w0*t)*(1+w0*t);
+  const r1=-w0*(z-Math.sqrt(z*z-1)), r2=-w0*(z+Math.sqrt(z*z-1)); return 1-(r2*Math.exp(r1*t)-r1*Math.exp(r2*t))/(r2-r1); }
+const ramp=(t,d)=>Math.max(0,Math.min(1,t/d));
+const ease=(u)=>{u=Math.max(0,Math.min(1,u));return 1-Math.pow(1-u,3);};
+// Optional stepped motion: hold each pose for 1/step_fps s (0 = smooth).
+const stepT=(t,fps)=>fps>0?Math.floor(t*fps+1e-6)/fps:t;
+function rng(seed){let s=seed>>>0||1;return()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0,((s^s>>>14)>>>0)/4294967296));}
+function seedOf(str){let h=2166136261;for(const ch of String(str)){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return h>>>0;}
+// A paper piece's outline: ragged top and bottom (and sides when `all`), uneven
+// teeth with an occasional deeper bite.
+function tornPath(w,h,r,all){
+  const edge=(x0,y0,x1,y1,nx,ny)=>{const len=Math.hypot(x1-x0,y1-y0),pts=[];let d=0;
+    while(d<len){const j=(r()*2-1)*3.5+(r()<0.12?r()*7:0);pts.push([x0+(x1-x0)*d/len+nx*j,y0+(y1-y0)*d/len+ny*j]);d+=8+r()*22;}return pts;};
+  const pts=[...edge(0,0,w,0,0,1), ...(all?edge(w,0,w,h,-1,0):[[w,0]]), ...edge(w,h,0,h,0,-1), ...(all?edge(0,h,0,0,1,0):[[0,h]])];
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+' Z';
+}
+// Grain and the one shared shadow, as SVG filter defs.
+const PAPER_DEFS=`<filter id="grain" x="-5%" y="-20%" width="110%" height="140%">
+  <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" result="n"/>
+  <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.10 0" result="g"/>
+  <feComposite in="g" in2="SourceGraphic" operator="in" result="g2"/>
+  <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="g2"/></feMerge></filter>
+<filter id="shadow" x="-10%" y="-30%" width="120%" height="170%"><feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="rgb(55,45,31)" flood-opacity="0.28"/></filter>`;
+function paperSvg(w,h,fill,r,all){
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;overflow:visible"><defs>${PAPER_DEFS}</defs>
+    <g filter="url(#shadow)"><path d="${tornPath(w,h,r,all)}" fill="${fill}" filter="url(#grain)"/></g></svg>`;
+}
+// A strip of masking tape, as a positioned element.
+function tape(w,h){const e=document.createElement('div');
+  Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
+    clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+// Exit: the layer's last EXIT_S seconds (`duration_s` is the layer's length).
+// Pieces leave in reverse order of arrival: `order` 0 (the last placed) goes
+// first, each later one 0.08 s after, all gone at the end. Ease-in, so a piece
+// leaves accelerating. A slide moves `travel` px and fades in its second half.
+const EXIT_S=0.5;
+function exitPose(t,dur,kind,order,travel){
+  const pose={dx:0,dy:0,s:1,r:0,o:1};
+  if(!kind||kind==='none'||!(dur>0)) return pose;
+  const start=dur-EXIT_S+order*0.08, u=Math.max(0,Math.min(1,(t-start)/Math.max(0.15,dur-start)));
+  if(u<=0) return pose;
+  const e=u*u*u, late=Math.max(0,(u-0.35)/0.65), d=travel||320;
+  if(kind==='lift') return {dx:18*e,dy:-150*e,s:1+0.1*e,r:5*e,o:1-late};
+  if(kind==='fade') return {...pose,o:1-u};
+  const dir={slide_left:[-1,0],slide_right:[1,0],slide_up:[0,-1],slide_down:[0,1]}[kind];
+  return dir?{dx:dir[0]*d*e,dy:dir[1]*d*e,s:1,r:0,o:1-late}:pose;
+}
+const EXITS=['none','lift','fade','slide_left','slide_right','slide_up','slide_down'];
+const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
+async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
+// end clipping-common
+
+// One element: a picture pasted on as a paper cut-out. `photo` is a `media`
+// prop, a pool image or a video frame that arrives as a URL; without one the
+// Motif draws its own art.svg, so a fork can swap in a drawing of its own.
+const BOX_W=700, BOX_H=560, BORDER=18;
+let els={}, P={};
+function loadImage(src){ return new Promise((resolve)=>{ const i=new Image(); i.onload=()=>resolve(i); i.onerror=()=>resolve(null); i.src=src; }); }
+motif.define({
+  async setup(props){
+    const root=document.getElementById('root'); root.textContent='';
+    let img=props.photo?await loadImage(props.photo):null;
+    if(!img) img=await loadImage('art.svg');
+    if(img&&img.decode) await img.decode().catch(()=>{});
+    const nw=img?img.naturalWidth||600:600, nh=img?img.naturalHeight||480:480;
+    // Fit the picture to the box, keeping its shape.
+    const k=Math.min(BOX_W/nw, BOX_H/nh), w=Math.round(nw*k), h=Math.round(nh*k);
+    const W=w+BORDER*2, H=h+BORDER*2, x0=Math.round((900-W)/2), y0=Math.round((760-H)/2+12);
+    const card=document.createElement('div'); card.className='piece';
+    Object.assign(card.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
+    const r=rng(seedOf(String(props.photo)+w+'x'+h));
+    if(props.frame!=='none') card.innerHTML=paperSvg(W,H,props.paper,r,props.frame==='torn');
+    if(img){ img.id='pic'; Object.assign(img.style,{left:BORDER+'px',top:BORDER+'px',width:w+'px',height:h+'px'}); card.appendChild(img); }
+    root.appendChild(card);
+    let t1=null;
+    if(props.frame!=='none'){ t1=tape(150,48); Object.assign(t1.style,{left:(x0+W/2-75)+'px',top:(y0-22)+'px'}); root.appendChild(t1); }
+    els={card,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
+  },
+  frame(t,ctx){
+    t=stepT(t,P.step); const {card,tape}=els, tilt=P.tilt, D=ctx.duration;
+    const x1=exitPose(t,D,P.exit,1,520), x0=exitPose(t,D,P.exit,0,520);
+    // Slapped on: it lands a little large and turned, then the tape.
+    const a=spring(t); card.style.opacity=ramp(t,8/30)*x1.o; card.style.transform=`translate(${x1.dx}px,${x1.dy}px) rotate(${tilt+(1-a)*-6+x1.r}deg) scale(${(1+(1-a)*0.18)*x1.s})`;
+    if(tape){const c=spring(t-0.25); tape.style.opacity=ramp(t-0.25,6/30)*x0.o; tape.style.transform=`translate(${x0.dx}px,${x0.dy}px) rotate(${tilt-4+x0.r}deg) scale(${(1+(1-c)*0.25)*x0.s})`;}
+  },
+});
+</script></body></html>

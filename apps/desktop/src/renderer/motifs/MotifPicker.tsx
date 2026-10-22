@@ -372,6 +372,7 @@ function defaultPropValue(spec: PropSpec): unknown {
     case "string":
     case "color":
     case "enum":
+    case "media":
       return spec.default;
     case "number":
       return spec.default;

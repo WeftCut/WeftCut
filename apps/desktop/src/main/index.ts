@@ -30,6 +30,7 @@ import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
 import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setMotifMediaSource } from './motif/mediaProps.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
@@ -751,6 +752,8 @@ app.whenReady().then(async () => {
   const motifStore = new UserMotifStore(dataRoot.motifsDir)
   const motifBuiltinDir = builtinAssetDir()
   setMotifStore(motifStore)
+  // `media` props resolve against the open project's pool; video frames are kept here.
+  setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
 
   // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
   // the actor (the sole owner of project state — it serves every MCP state view and

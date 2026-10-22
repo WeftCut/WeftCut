@@ -17,8 +17,8 @@ const common = (id: string) => {
 }
 
 describe('clipping Motifs', () => {
-  it('are seven, each valid, with token-backed props of the shared keys and types', () => {
-    expect(IDS.sort()).toEqual(['clipping-headline', 'clipping-paper', 'clipping-pointer', 'clipping-quote', 'clipping-reveal', 'clipping-scrap', 'clipping-stamp'])
+  it('are eight, each valid, with token-backed props of the shared keys and types', () => {
+    expect(IDS.sort()).toEqual(['clipping-headline', 'clipping-paper', 'clipping-pointer', 'clipping-quote', 'clipping-reveal', 'clipping-scrap', 'clipping-stamp', 'clipping-sticker'])
     const TYPES: Record<string, string> = { ink: 'color', paper: 'color', accent: 'color', highlight: 'color', tilt_deg: 'number', step_fps: 'number' }
     for (const id of IDS) {
       const m = BUILTIN_MANIFESTS.get(id)!
