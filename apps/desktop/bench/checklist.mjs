@@ -12,6 +12,7 @@
 // list for a person to review.
 //
 // Everything is read from the ROOT composition, which is what export renders.
+// Role-tagged overlays are also found inside Groups (see `graphic_role`).
 // Times in checks are seconds; layer times in the project are microseconds.
 // Disabled layers and layers on hidden tracks do not count unless a selector
 // sets `include_disabled`.
@@ -25,7 +26,9 @@
 //   motif_builtin     true: a built-in Motif (BUILTIN_MOTIF_IDS);
 //                     false: an authored or installed one
 //   graphic_role      the layer's role ('title', 'lower_third', …), an array
-//                     of them, or null for untagged
+//                     of them, or null for untagged. In the counting checks
+//                     (layer_count and the two built on it) a role also finds
+//                     layers inside Groups, at their time on the root.
 //   text              substring of the layer's visible text (case-sensitive)
 //   text_regex        regex on the visible text; `text_flags` default "i"
 //                     (visible text = Text content, or every string prop of a Motif)
@@ -68,7 +71,8 @@
 //                        scene's elements included) over the A roll's span; pass
 //                        null without a threshold
 //   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
-//                        visual layers inside) that hold a picture: footage, an
+//                        visual layers inside; a title card of a plate and a
+//                        title is not a scene) that hold a picture: footage, an
 //                        image, a nested Group, or a Motif tagged illustration or
 //                        whose prop names a pool item (ADR 0132); pass null
 //                        without scenes or without a threshold
@@ -157,6 +161,31 @@ function matches(entry, where = {}) {
 }
 
 const select = (root, where) => entries(root).filter((e) => matches(e, where))
+
+/** `entries`, plus the layers inside each enabled Group on the root, mapped
+ *  to root time and clipped to the Group's window (nested Groups too). A title
+ *  on a paper ground is a title even when the two are grouped as a card. */
+function deepEntries(root, project, depth = 0) {
+  const out = entries(root)
+  if (!project || depth > 4) return out
+  for (const { track, layer } of entries(root)) {
+    if (layer.params?.kind !== 'CompositionRef' || layer.enabled === false || track.enabled === false) continue
+    const child = project.compositions?.[layer.params.composition]
+    if (!child) continue
+    const w0 = layer.params.src_in_us ?? 0, w1 = w0 + (layer.t_end_us - layer.t_start_us)
+    for (const e of deepEntries(child, project, depth + 1)) {
+      const a = Math.max(e.layer.t_start_us, w0), b = Math.min(e.layer.t_end_us, w1)
+      if (b <= a) continue
+      out.push({ track: e.track, layer: { ...e.layer, t_start_us: layer.t_start_us + a - w0, t_end_us: layer.t_start_us + b - w0 } })
+    }
+  }
+  return out
+}
+
+/** `select` for role-tagged overlays: a `where` naming a `graphic_role` also
+ *  finds them inside Groups. Other selectors read the root alone. */
+const selectOverlays = (root, where, project) =>
+  (where?.graphic_role !== undefined ? deepEntries(root, project) : entries(root)).filter((e) => matches(e, where))
 
 function describe(list, max = 4) {
   const shown = list.slice(0, max).map(({ layer }) => {
@@ -251,19 +280,19 @@ function holes(spans, tol) {
 // ── Check kinds ────────────────────────────────────────────────────────────
 
 const KINDS = {
-  layer_count(check, root) {
+  layer_count(check, root, project) {
     const op = check.op ?? '>=', n = check.n ?? 1
-    const hits = select(root, check.where)
+    const hits = selectOverlays(root, check.where, project)
     return { pass: compare(hits.length, op, n), detail: `${hits.length} matching layer(s), want ${op} ${n}${hits.length ? `: ${describe(hits)}` : ''}` }
   },
 
-  motif_layer_count(check, root) {
-    return KINDS.layer_count({ ...check, where: { ...(check.where ?? {}), layer_kind: 'Motif' } }, root)
+  motif_layer_count(check, root, project) {
+    return KINDS.layer_count({ ...check, where: { ...(check.where ?? {}), layer_kind: 'Motif' } }, root, project)
   },
 
-  text_layer_matching(check, root) {
+  text_layer_matching(check, root, project) {
     const where = { caption: false, ...(check.where ?? {}), layer_kind: check.where?.layer_kind ?? ['Text', 'Motif'], text_regex: check.text_regex, text_flags: check.flags ?? check.where?.text_flags }
-    return KINDS.layer_count({ op: check.op ?? '>=', n: check.n ?? 1, where }, root)
+    return KINDS.layer_count({ op: check.op ?? '>=', n: check.n ?? 1, where }, root, project)
   },
 
   text_layer_contains(check, root) {
@@ -401,6 +430,7 @@ const KINDS = {
   },
 
   scene_pictures(check, root, project) {
+    const titleCard = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
     const pool = project.media_pool ?? {}
     const names = (v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined
     const picture = (l) => ['VideoClip', 'ImageOverlay', 'CompositionRef'].includes(l.params?.kind) ||
@@ -409,7 +439,8 @@ const KINDS = {
       const child = project.compositions?.[layer.params.composition]
       const visual = (child?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio')
       return { at: layer.t_start_us, visual }
-    }).filter((x) => x.visual.length >= 2)
+    // A title on its paper ground is a title card, not a scene.
+    }).filter((x) => x.visual.length >= 2 && !titleCard(x.visual))
     if (!scenes.length) return { pass: null, detail: 'no scene Groups' }
     const bare = scenes.filter((x) => !x.visual.some(picture))
     const f = (scenes.length - bare.length) / scenes.length

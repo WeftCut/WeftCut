@@ -259,10 +259,12 @@ function arollSpan(comp: Composition): [number, number] | null {
 }
 
 /** The layer count of a scene Group made only of words, else 0. A Group of
- *  one layer is not a scene. */
+ *  one layer is not a scene, nor is a title card: a title on its plate. */
 function allWords(c: Composition, motif: MotifLookup): number {
   const visual = visualLayers(c)
   if (visual.length < 2 || visual.some((l) => isPicture(l, motif))) return 0
+  const roles = visual.map((l) => roleOf(l) ?? (l.params.kind === 'Motif' ? motif(l.params.motif_id)?.graphic_role : null) ?? null)
+  if (roles.includes('plate') && roles.every((r) => r === 'plate' || r === 'title')) return 0
   return visual.some((l) => shownTexts(l, motif).length > 0) ? visual.length : 0
 }
 
