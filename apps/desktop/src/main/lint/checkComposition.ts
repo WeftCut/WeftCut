@@ -12,14 +12,15 @@
 // that is wrong costs the agent a round, a missed one costs nothing new.
 
 import { createHash } from 'node:crypto'
-import type { Animated } from '../../shared/keyframe'
 import { captionLimits, craftRule, styleThreshold, type CraftSeverity } from '../../shared/craft'
-import type { Composition, Layer, Project, Rgba, TextParams } from '../state/model'
+import type { Animated, Composition, Layer, MotifParams, Project, Rgba, TextParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
 import type { TasteView } from '../taste/view'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
 import type { TextTokens } from '../taste/schema'
 import { motifTokenProps } from '../taste/motifProps'
+import { keyTimeUs } from '../../shared/keyframe'
+import { resolveAnimated } from '../../renderer/render/animated'
 
 export interface Finding {
   severity: CraftSeverity
@@ -43,6 +44,9 @@ export interface CheckResult {
 const ADVANCE_EM = 0.55
 const LINE_EM = 1.25
 const REF_HEIGHT = 1080
+/** How far a Motif's canvas may reach past the frame before it is reported:
+ *  room for the empty margin and shadow most canvases keep (1080 px frame). */
+const MOTIF_MARGIN_PX = 24
 
 const first = <T>(a: Animated<T>): T => (a.mode === 'Static' ? a.value : a.value[0]!.value)
 const seconds = (us: number) => Math.round(us / 1e4) / 100
@@ -82,7 +86,48 @@ function look(p: TextParams) {
   return { family: p.font.family, size_px: p.font.size_px, weight: p.font.weight, color: hex(first(p.color)) }
 }
 
-export function checkComposition(project: Project, compositionId: string, taste: TasteView | null, range?: [number, number]): CheckResult {
+/** A Motif's manifest canvas size, [w, h] in its own px; null when unknown. */
+export type MotifSize = (motifId: string) => readonly [number, number] | null
+
+/** Where a Motif layer's canvas reaches past the frame, at its start and at
+ *  each of its transform keyframes: the canvas is size × scale around the
+ *  anchor, turned about it, with the anchor at the position. The canvas, not
+ *  the drawing: a margin the Motif leaves empty counts, hence the tolerance.
+ *  Null when the canvas stays in, covers the whole frame (a plate), or is
+ *  placed along a motion path. */
+function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [number, number], comp: Composition, tol: number) {
+  const t = l.params.transform
+  if (t.position.mode !== 'XY') return null
+  const tracks = [t.position.x, t.position.y, t.scale_x, t.scale_y, t.rotation_deg, t.anchor_x, t.anchor_y]
+  const times = new Set([l.t_start_us])
+  for (const a of tracks) if (a.mode === 'Keyframed') for (const k of a.value) { const at = keyTimeUs(k); if (at > l.t_start_us && at < l.t_end_us) times.add(at) }
+  let worst: { at: number; edges: Array<[string, number]> } | null = null
+  for (const at of times) {
+    const v = (a: Animated<number>, d: number) => resolveAnimated(a, at, d)
+    const w = size[0] * Math.abs(v(t.scale_x, 1)), h = size[1] * Math.abs(v(t.scale_y, 1))
+    const ax = v(t.anchor_x, 0.5) * w, ay = v(t.anchor_y, 0.5) * h
+    const r = (v(t.rotation_deg, 0) * Math.PI) / 180, cos = Math.cos(r), sin = Math.sin(r)
+    const px = v(t.position.x, 0), py = v(t.position.y, 0)
+    const xs: number[] = [], ys: number[] = []
+    for (const [cx, cy] of [[0, 0], [w, 0], [w, h], [0, h]] as const) {
+      const dx = cx - ax, dy = cy - ay
+      xs.push(px + dx * cos - dy * sin); ys.push(py + dx * sin + dy * cos)
+    }
+    const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys)
+    if (left <= 0 && top <= 0 && right >= comp.width && bottom >= comp.height) continue
+    const edges = ([['left', -left], ['right', right - comp.width], ['top', -top], ['bottom', bottom - comp.height]] as Array<[string, number]>)
+      .filter(([, by]) => by > tol)
+    if (edges.length && (!worst || Math.max(...edges.map((e) => e[1])) > Math.max(...worst.edges.map((e) => e[1])))) worst = { at, edges }
+  }
+  return worst
+}
+
+export interface CheckOptions {
+  /** Looks up a Motif's canvas size; without it Motif bounds are not checked. */
+  motifSize?: MotifSize
+}
+
+export function checkComposition(project: Project, compositionId: string, taste: TasteView | null, range?: [number, number], opts: CheckOptions = {}): CheckResult {
   const comp = project.compositions[compositionId]
   if (!comp) throw new Error(`no composition ${compositionId}`)
   const findings: Finding[] = []
@@ -122,6 +167,12 @@ export function checkComposition(project: Project, compositionId: string, taste:
         // agent's to choose (the style's are examples): only the hold and the
         // style's token-backed props are checked.
         hold(l, role, dur)
+        const size = opts.motifSize?.(l.params.motif_id)
+        const over = size ? motifOverflow(l as Layer & { params: MotifParams }, size, comp, MOTIF_MARGIN_PX * scale) : null
+        if (over) {
+          const by = over.edges.map(([edge, px]) => `${Math.round(px)} px past the ${edge}`).join(', ')
+          add('motif-off-frame', l, `Motif canvas reaches ${by} edge${over.edges.length > 1 ? 's' : ''} at ${seconds(over.at)} s (position is where its anchor lands)`, 'move it in or scale it down; keep it only if that part of the canvas is empty or the bleed is meant')
+        }
         if (role !== null && role !== 'none') {
           const drift = motifDrift(l.params, role, taste)
           if (drift.length) add('token-drift', l, `${role.replace('_', ' ')} Motif differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
