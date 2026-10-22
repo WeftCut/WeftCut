@@ -341,6 +341,12 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     // A sticker, even one drawing its own art, is a picture.
     second.params = { ...second.params, motif_id: 'sticker', props: {} } as LayerParams
     expect(asks()).toEqual([])
+    // A title on its plate is a title card, not a scene.
+    second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' }, graphic_role: 'title' } as LayerParams
+    inner.params = { ...inner.params, graphic_role: 'plate' } as LayerParams
+    expect(asks()).toEqual([])
+    inner.params = { ...inner.params, graphic_role: 'callout' } as LayerParams
+    expect(asks()).toHaveLength(1)
     // Without Motif manifests, nothing is judged.
     second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' } } as LayerParams
     expect(checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'scene-all-words')).toEqual([])

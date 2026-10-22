@@ -175,6 +175,24 @@ describe('layer_count and selectors', () => {
     assert.match(r.detail, /^1 of 2 scene\(s\) hold a picture; words only at 5s$/)
     assert.equal(check({ kind: 'scene_pictures' }, p).pass, null)
     assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, project([track([video(0, 10)])])).detail, /no scene Groups/)
+    // A title on its plate is a title card, not a scene.
+    const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
+    p.compositions.words.tracks[0].layers = [role(motif(0, 6, 'clipping-paper'), 'plate'), role(motif(1, 6, 'clipping-headline', { text: 'HOW MEMORY WORKS' }), 'title')]
+    assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, p).detail, /^1 of 1 scene\(s\) hold a picture$/)
+  })
+
+  it('finds role-tagged overlays inside Groups, at their time on the root', () => {
+    const card = { id: 'card', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
+      tracks: [track([{ ...motif(0, 10, 'clipping-paper'), params: { ...motif(0, 10, 'clipping-paper').params, graphic_role: 'plate' } }, { ...motif(1, 10, 'clipping-headline'), params: { ...motif(1, 10, 'clipping-headline').params, graphic_role: 'title' } }])] }
+    // The Group shows its source from 2 s, so the title is up from 0 s to 4 s on the root.
+    const group = layer(0, 4, { kind: 'CompositionRef', composition: 'card', src_in_us: 2 * S, src_out_us: 6 * S, transform: transform() })
+    const p = project([track([video(0, 60)], { role: 'ARoll' }), track([group])])
+    p.compositions.card = card
+    const title = (where) => check({ kind: 'motif_layer_count', op: '>=', n: 1, where: { graphic_role: 'title', ...where } }, p)
+    assert.match(title({ starts_before_s: 3, min_duration_s: 3 }).detail, /^1 matching layer\(s\), want >= 1: Motif clipping-headline 0-4s$/)
+    assert.equal(title({ min_duration_s: 4.5 }).pass, false)
+    // Without a role the selector reads the root alone.
+    assert.equal(check({ kind: 'layer_count', op: '==', n: 0, where: { layer_kind: 'Motif' } }, p).pass, true)
   })
 
   it('measures the longest stretch of bare A roll', () => {
