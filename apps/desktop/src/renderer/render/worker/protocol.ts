@@ -131,6 +131,10 @@ export type ExportRequest =
       /// chunk/ack channel to the ffmpeg video sink (no WebCodecs encoder).
       /// Absent ⇒ the WebCodecs EncoderSink/fMP4 path.
       nativeSink?: { pixFmt: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le" };
+      /// Present ⇒ no encoder at all: every rendered frame is posted as a JPEG
+      /// still (`still` events) at `width` px wide — what `render_frames` shows
+      /// an agent, composited exactly as export would. Excludes `nativeSink`.
+      stills?: { width: number; quality: number };
       /// Platform verdict for the 8-bit WebCodecs decode lane, resolved ONCE
       /// on the renderer main thread (the Worker has no OS signal of its own).
       /// True ⇒ the lane may configure prefer-hardware; absent/false ⇒ it pins
@@ -227,6 +231,8 @@ export type ExportEvent =
   /// appends fMP4 slices to the temp file and forwards raw frames to
   /// export_video_sink_write. Replies with chunk-ack in both cases.
   | { type: "chunk"; data: ArrayBuffer }
+  /// Stills mode: one rendered frame as a JPEG, at output-grid index `index`.
+  | { type: "still"; index: number; tUs: number; width: number; height: number; jpeg: ArrayBuffer }
   /// Encode + mux complete; the temp file is fully written on the main side.
   /// `perf` carries aggregate decode/timing counters for the E2E harness.
   | { type: "done"; perf?: ExportPerf }

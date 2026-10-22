@@ -991,6 +991,9 @@ async function handlePixiExport(
     signal?: AbortSignal;
     bitDepth?: 8 | 10;
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+    /// Stills mode (`render_frames`): no encoder; each frame comes back as a JPEG.
+    stills?: import("./worker/runExport").RunExportInit["stills"];
+    onStill?: import("./worker/runExport").RunExportInit["onStill"];
     decodeRouting?: ExportDecodeRouting;
   },
 ): Promise<PixiExportResult> {
@@ -1021,6 +1024,8 @@ async function handlePixiExport(
       ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
       : {}),
     ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
+    ...(opts.stills ? { stills: opts.stills } : {}),
+    ...(opts.onStill ? { onStill: opts.onStill } : {}),
   });
   const outFpsNum = opts.outputFps?.num ?? rootCompositionOf(summary).fps_num;
   const outFpsDen = opts.outputFps?.den ?? rootCompositionOf(summary).fps_den;

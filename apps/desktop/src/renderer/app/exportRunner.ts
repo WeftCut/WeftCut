@@ -156,6 +156,129 @@ export function createExportRunner(deps: {
       });
 
 
+  /// Confirms every video source a render of [startUs, endUs) decodes is
+  /// ready: resolves the decode routing once (Decode-engine resolution runs
+  /// BEFORE the readiness gate so native-routed blind-spot media never enter
+  /// the probe / full-proxy machinery — they export straight off their
+  /// originals; rules in exportDecodeRouting.ts), then waits for any proxy
+  /// still encoding. `detail: null` is a cancel.
+  async function videoGate(
+    proj: ProjectSummary, startUs: number, endUs: number, settings: ExportRun["settings"],
+    signal: AbortSignal, onWaiting: (labels: string[]) => void,
+  ): Promise<{ ok: true; decodeRouting: ExportDecodeRouting } | { ok: false; detail: string | null }> {
+    const store = useProjectStore.getState();
+    const referencedMedia = [...referencedVideoMediaIds(proj, startUs, endUs)]
+      .map((id) => store.mediaById.get(id))
+      .filter((m): m is MediaSummary => !!m);
+    const decodeRouting = resolveExportDecodeRouting({
+      setting: settings.decodeEngine,
+      componentAvailable: useDecodeComponentStore.getState().available,
+      bitDepth: compositeBitDepth(settings),
+      media: referencedMedia,
+    });
+    const prep = await prepareExportMedia(proxyWaitScope(referencedMedia, decodeRouting), {
+      probe: (url) => classifyWebcodecsDecodability(url),
+      ensureFullProxy: (id) => ensureFullProxy(id),
+      proxyStateOf: (id) => proxyStateRef.current.get(id),
+      urlForOriginal: (m) => convertFileSrc(m.path),
+      memo: decodeProbeMemo.current,
+    });
+    if (prep.failed.length > 0) {
+      const labels = prep.failed.map((id) => store.mediaById.get(id)?.label ?? id).join(", ");
+      return { ok: false, detail: t("export.failed_prepare", { labels }) };
+    }
+    if (prep.waiting.length > 0) {
+      onWaiting(prep.waiting.map((id) => store.mediaById.get(id)?.label ?? id));
+      try {
+        await waitForProxies(prep.waiting, {
+          pathReady: (id) => {
+            const m = useProjectStore.getState().mediaById.get(id);
+            return m != null && resolveDecode(m).exportPath != null;
+          },
+          subscribeStore: (cb) => useProjectStore.subscribe(cb),
+          onProxyError: (cb) => {
+            // `listen` is async; guard against it resolving after cleanup
+            // (which would leak the listener).
+            let off: (() => void) | null = null;
+            let disposed = false;
+            void listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
+              if (e.payload.kind === "proxy") cb(e.payload.media_id);
+            }).then((u) => {
+              if (disposed) u();
+              else off = u;
+            });
+            return () => {
+              disposed = true;
+              off?.();
+            };
+          },
+          signal,
+        });
+      } catch (e) {
+        if (e instanceof ExportCancelled) return { ok: false, detail: null };
+        return { ok: false, detail: gateFailureDetail(e, (id) => t("export.failed_prepare", { labels: store.mediaById.get(id)?.label ?? id })) };
+      }
+    }
+    return { ok: true, decodeRouting };
+  }
+
+  /// `render_frames`: the composition at each time, rendered by the export
+  /// pipeline (same decode routing, Motif frames and compositor) and handed
+  /// back as JPEGs instead of encoded. One frame-long range per time. Never
+  /// alongside an export, and invisible to the export panel.
+  async function runStills(
+    request: { times_us: number[]; width: number; settings: ExportRun["settings"] },
+    signal: AbortSignal,
+  ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }>> {
+    if (runningRef.current || pendingFinalization.current) throw new Error("an export is running; render frames after it finishes");
+    runningRef.current = true;
+    const restorePreview = previewRef.current?.suspendForExport();
+    try {
+      const summary = await projectSummary().catch(() => useProjectStore.getState().summary);
+      if (!summary) throw new Error("No project loaded.");
+      const comp = rootCompositionOf(summary);
+      const frameUs = Math.ceil((1_000_000 * comp.fps_den) / comp.fps_num);
+      const times = [...new Set(request.times_us.map((t) => Math.max(0, Math.min(Math.round(t), Math.max(0, comp.duration_us - frameUs)))))].sort((a, b) => a - b);
+      if (!times.length) return [];
+      const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, signal, () => { });
+      if (!gate.ok) throw new Error(gate.detail ?? "render cancelled");
+      const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }> = [];
+      for (const t of times) {
+        if (signal.aborted) throw new Error("render cancelled");
+        const range = { startUs: t, endUs: t + frameUs };
+        const plans = await prepareExportResourcePlans({
+          summary, media: useProjectStore.getState().mediaById, routing: gate.decodeRouting, ...range,
+          bitDepth: 8, nativeEncoder: false, outputWidth: comp.width, outputHeight: comp.height, signal,
+        });
+        const reservation = await admitExportResources(plans, false, signal, () => { });
+        try {
+          let got: { width: number; height: number; jpeg: ArrayBuffer } | null = null;
+          await previewRef.current?.runPixiExport({
+            finalizationToken: reservation.token,
+            resourcePlan: reservation.plan,
+            encoderConfig: { codec: "", width: comp.width, height: comp.height, bitrate: 1, framerate: comp.fps_num / comp.fps_den },
+            outputFps: { num: comp.fps_num, den: comp.fps_den },
+            ...range,
+            writeChunk: async () => { },
+            signal,
+            bitDepth: 8,
+            decodeRouting: gate.decodeRouting,
+            stills: { width: request.width },
+            onStill: (s) => { if (!got) got = { width: s.width, height: s.height, jpeg: s.jpeg }; },
+          });
+          if (!got) throw new Error(`no frame rendered at ${t} µs`);
+          out.push({ t_us: t, ...(got as { width: number; height: number; jpeg: ArrayBuffer }) });
+        } finally {
+          reservation.release();
+        }
+      }
+      return out;
+    } finally {
+      restorePreview?.();
+      runningRef.current = false;
+    }
+  }
+
   async function run(request: ExportRun, controller: AbortController) {
     const { settings, range, agent, staging_path: path } = request;
     // A double click or stale command cannot replace an unfinished export.
@@ -302,92 +425,17 @@ export function createExportRunner(deps: {
         }
         const startUs = range?.startUs ?? 0;
         const endUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
-        const referencedIds = referencedVideoMediaIds(proj, startUs, endUs);
-        const referencedMedia = [...referencedIds]
-          .map((id) => store.mediaById.get(id))
-          .filter((m): m is MediaSummary => !!m);
-
-        // ---- Decode-engine resolution (ONCE, frozen for this export) --------
-        // Runs BEFORE the readiness gate so native-routed blind-spot media
-        // never enter the probe / full-proxy machinery below — they export
-        // immediately off their originals. Rationale + rules live in
-        // exportDecodeRouting.ts.
-        decodeRouting = resolveExportDecodeRouting({
-          setting: settings.decodeEngine,
-          componentAvailable: useDecodeComponentStore.getState().available,
-          bitDepth: compositeBitDepth(settings),
-          media: referencedMedia,
-        });
-
+        // ---- Decode-engine resolution + proxy readiness ---------------------
+        // Shared with stills (`videoGate`), so `render_frames` decodes exactly
+        // as this export will.
         setExportState({ kind: "starting" });
-        const prep = await prepareExportMedia(proxyWaitScope(referencedMedia, decodeRouting), {
-          probe: (url) => classifyWebcodecsDecodability(url),
-          ensureFullProxy: (id) => ensureFullProxy(id),
-          proxyStateOf: (id) => proxyStateRef.current.get(id),
-          urlForOriginal: (m) => convertFileSrc(m.path),
-          memo: decodeProbeMemo.current,
-        });
-
-        if (prep.failed.length > 0) {
-          const labels = prep.failed
-            .map((id) => store.mediaById.get(id)?.label ?? id)
-            .join(", ");
-          setExportState({
-            kind: "error",
-            detail: t("export.failed_prepare", { labels }),
-          });
+        const gate = await videoGate(proj, startUs, endUs, settings, exportController.signal, (labels) =>
+          setExportState({ kind: "preparing", labels, onCancel: deps.cancel }));
+        if (!gate.ok) {
+          setExportState(gate.detail === null ? null : { kind: "error", detail: gate.detail });
           return;
         }
-
-        if (prep.waiting.length > 0) {
-          const ctrl = exportController;
-          const labels = prep.waiting.map(
-            (id) => store.mediaById.get(id)?.label ?? id,
-          );
-          setExportState({
-            kind: "preparing",
-            labels,
-            onCancel: deps.cancel,
-          });
-          try {
-            await waitForProxies(prep.waiting, {
-              pathReady: (id) => {
-                const m = useProjectStore.getState().mediaById.get(id);
-                return m != null && resolveDecode(m).exportPath != null;
-              },
-              subscribeStore: (cb) => useProjectStore.subscribe(cb),
-              onProxyError: (cb) => {
-                // `listen` is async; guard against it resolving after cleanup
-                // (which would leak the listener).
-                let off: (() => void) | null = null;
-                let disposed = false;
-                void listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
-                  if (e.payload.kind === "proxy") cb(e.payload.media_id);
-                }).then((u) => {
-                  if (disposed) u();
-                  else off = u;
-                });
-                return () => {
-                  disposed = true;
-                  off?.();
-                };
-              },
-              signal: ctrl.signal,
-            });
-          } catch (e) {
-            if (e instanceof ExportCancelled) {
-              setExportState(null);
-              return;
-            }
-            setExportState({
-              kind: "error",
-              detail: gateFailureDetail(e, (id) =>
-                t("export.failed_prepare", { labels: store.mediaById.get(id)?.label ?? id }),
-              ),
-            });
-            return;
-          }
-        }
+        decodeRouting = gate.decodeRouting;
 
         // ---- Audio conform gate ---------------------------------------------
         // Every audible Audio layer in range needs its conform PCM — the Rust
@@ -747,6 +795,7 @@ export function createExportRunner(deps: {
   }
   return {
     run,
+    runStills,
     state: () => state,
     retry: async () => { await pendingFinalization.current?.retry(); },
     discard: async () => { await pendingFinalization.current?.discard(); setExportState(null); },

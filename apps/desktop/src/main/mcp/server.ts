@@ -1,4 +1,5 @@
 import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, exportSettingsSchema } from "./exportTools";
+import { beatSamples } from "./frameSamples";
 import { runExportPresetTool } from './exportPresetTools';
 import { ExportJobError } from "../exportJobs";
 import { ExportValidationError } from "../../shared/exportValidation";
@@ -361,6 +362,7 @@ async function dispatchTool(
     }
     const jobs = tsHost?.exportJobs;
     if (!jobs) throw new ExportJobError('export_unavailable', 'Export jobs are unavailable');
+    if (name === 'render_frames') return await renderFrames(backend, getTsHost, tsHost!, jobs, args);
     for (const field of ['job_id','filename']) if (args[field] !== undefined && (typeof args[field] !== 'string' || !args[field])) throw new ExportJobError('invalid_params',`${field} must be a nonempty string`);
     if (['cancel_export','retry_export'].includes(name) && typeof args.job_id !== 'string') throw new ExportJobError('invalid_params','job_id is required');
     const result = name === 'get_export_options' ? {...await jobs.options(args.preset_id) as Record<string,unknown>, settings_schema:exportSettingsSchema()}
@@ -706,6 +708,41 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
  *  `t_us` is truncated because the resource path parses an integer; a
  *  fractional microsecond would be refused as a malformed URI rather than
  *  rounded. */
+/** `render_frames`: export-path stills of the root, at given times or sampled
+ *  over beats' spans (`frameSamples.ts`), as images plus what each shows. */
+async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | null, tsHost: TsActorHost, jobs: NonNullable<TsActorHost['exportJobs']>, args: Record<string, unknown>): Promise<ServerResult> {
+  const times = args.times_us, ids = args.layer_ids
+  if ((times === undefined) === (ids === undefined)) throw new ExportJobError('invalid_params', 'Pass exactly one of times_us or layer_ids')
+  const width = args.width === undefined ? 640 : args.width
+  if (!Number.isInteger(width) || (width as number) < 160 || (width as number) > 1920) throw new ExportJobError('invalid_params', 'width must be an integer from 160 to 1920')
+  const sheet = args.sheet === undefined ? true : args.sheet
+  if (typeof sheet !== 'boolean') throw new ExportJobError('invalid_params', 'sheet must be a boolean')
+  let samples: Array<{ t_us: number; layer_id?: string; why?: string }>
+  if (ids !== undefined) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 12 || ids.some((x) => typeof x !== 'string' || !x)) throw new ExportJobError('invalid_params', 'layer_ids must be 1 to 12 layer ids')
+    const snap = tsHost.actor.snapshot()
+    const root = snap.compositions[snap.root_id]!
+    const media = new Set(root.tracks.filter((t) => t.role === 'ARoll').flatMap((t) => t.layers).map((l) => (l.params.kind === 'VideoClip' ? l.params.media : null)).filter((m): m is string => !!m))
+    const shots = new Map<string, number[] | null>()
+    for (const m of media) {
+      const res = await handleReadResource(backend, getTsHost, `media://${m}/analysis`).catch(() => null)
+      const text = (res as { contents?: Array<{ text?: string }> } | null)?.contents?.[0]?.text
+      try { shots.set(m, text ? (JSON.parse(text) as { shots?: Array<{ t_start_us: number }> }).shots?.map((s) => s.t_start_us) ?? null : null) } catch { shots.set(m, null) }
+    }
+    try { samples = beatSamples(snap, ids as string[], (m) => shots.get(m) ?? null) } catch (e) { throw new ExportJobError('invalid_params', (e as Error).message) }
+  } else {
+    if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 'times_us must be 1 to 24 non-negative integers')
+    samples = (times as number[]).map((t_us) => ({ t_us }))
+  }
+  const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet })
+  const near = (t: number) => samples.reduce((best, s) => (Math.abs(s.t_us - t) < Math.abs(best.t_us - t) ? s : best), samples[0]!)
+  const frames = r.frames.map((f) => { const s = near(f.t_us); return { t_us: f.t_us, ...(s.layer_id ? { layer_id: s.layer_id, why: s.why } : {}) } })
+  const b64 = (u: Uint8Array) => Buffer.from(u.buffer, u.byteOffset, u.byteLength).toString('base64')
+  const images = r.sheet ? [{ type: 'image', data: b64(r.sheet.jpeg), mimeType: 'image/jpeg' }] : r.frames.map((f) => ({ type: 'image', data: b64(f.jpeg!), mimeType: 'image/jpeg' }))
+  const record = { frames, ...(r.sheet ? { sheet: { width: r.sheet.width, height: r.sheet.height, columns: Math.min(4, frames.length) } } : {}) }
+  return { content: [...images, { type: 'text', text: JSON.stringify(record) }] } as unknown as ServerResult
+}
+
 export async function readMediaFrameDataUrl(
   backend: Backend,
   getTsHost: () => TsActorHost | null,

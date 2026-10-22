@@ -67,6 +67,9 @@ export interface PreviewSurfaceHandle {
     /// Present ⇒ the worker packs frames to this format and streams them to
     /// the native ffmpeg sink instead of WebCodecs-encoding.
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+    /// Stills mode (`render_frames`): no encoder; each frame comes back as a JPEG.
+    stills?: import("../render/worker/runExport").RunExportInit["stills"];
+    onStill?: import("../render/worker/runExport").RunExportInit["onStill"];
     /// Per-media decode routing table (see render/exportDecodeRouting.ts).
     decodeRouting?: import("../render/exportDecodeRouting").ExportDecodeRouting;
   }): Promise<PixiExportResult>;

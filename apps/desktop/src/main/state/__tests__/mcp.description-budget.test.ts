@@ -74,7 +74,9 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // +1 KB: style Motifs (H2-D2) — `add_motif_layer` and `restyle_to_taste` name
 // the style's tokens as where a Motif's props come from, so an agent places a
 // role's Motif without copying colours and fonts by hand.
-const CATALOG_BYTE_BUDGET = 156_000
+// +1 KB: `render_frames` (H3-D3) — the agent sees the composed frame export
+// renders; H2 placed titles over faces and cards off frame without it.
+const CATALOG_BYTE_BUDGET = 157_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 

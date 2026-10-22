@@ -57,6 +57,12 @@ export const EXPORT_TOOL_DEFS = [
     range: { ...schema({ start_us: { type: 'integer', minimum: 0, description: 'Inclusive start in microseconds.' }, end_us: { type: 'integer', minimum: 1, description: 'Exclusive end in microseconds.' } }, ['start_us', 'end_us']), description: 'Span inside the root composition, snapped to its frame grid. Omit for the whole composition.' },
     allow_experimental_10bit: { type: 'boolean', description: 'Explicit opt-in for experimental HEVC/AV1 10-bit export.' },
   }), false, false),
+  definition('render_frames', 'See the root composition as export renders it — footage, Motifs, text, captions and Groups composited — as JPEGs. Pass times_us, or layer_ids to judge beats over their whole span: each is sampled settled, in the middle, in its exit, and just after every cut or shot change under it. Returns one labelled contact sheet (default) or one image per frame, plus the times and why each was taken. Read-only; refused while an export runs. Seconds per frame.', schema({
+    times_us: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1, maxItems: 24, description: 'Composition times in µs.' },
+    layer_ids: { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 12, description: 'Root layers to sample over their spans (at most 24 frames in all).' },
+    width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
+    sheet: { type: 'boolean', description: 'One contact sheet (default true) or one image per frame.' },
+  }), true, true),
   definition('get_export_status', 'Read an export job. Omit job_id to discover the current UI or MCP job. Records survive MCP reconnects until the app exits.', schema({ job_id: id }), true, true),
   definition('retry_export', 'Retry only finalization of an awaiting_retry job. Optional filename changes the basename in the same directory; keep its extension.', schema({ job_id: id, filename: { ...id, description: 'New basename including matching extension. Directory and encoded settings cannot change.' } }, ['job_id']), false, false),
   definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; poll status until terminal.', schema({ job_id: id }, ['job_id']), false, true),

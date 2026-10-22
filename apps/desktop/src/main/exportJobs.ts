@@ -10,6 +10,13 @@ import { snapFrameRound } from './state/snap';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
 import { exportTerminal, exportWire, type ExportJob, type ExportRun } from '../shared/exportJob';
 
+/** Rendered stills: JPEG bytes per time, or one labelled sheet of them. */
+export interface StillsResult {
+  /** Without `sheet`, each frame's JPEG; with it, the times and sizes only. */
+  frames: Array<{ t_us: number; width: number; height: number; jpeg?: Uint8Array }>;
+  sheet?: { width: number; height: number; jpeg: Uint8Array };
+}
+
 export class ExportJobError extends Error {
   constructor(readonly code: string, message: string, readonly data?: unknown) { super(message); }
 }
@@ -56,7 +63,37 @@ export class ExportJobs {
   private ready?: { token: string; session: string };
   private idleWaiters = new Set<() => void>();
   private stopping = false;
+  private stills = new Map<string, { token: string; resolve: (v: StillsResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private deps: Deps) { }
+
+  /** `render_frames`: the root at each time, rendered by the export pipeline
+   *  in the app window and handed back as JPEGs (one contact sheet with
+   *  `sheet`). Never alongside an export; the renderer must have announced the
+   *  open project's session. */
+  async renderStills(req: { times_us: number[]; width: number; sheet: boolean }): Promise<StillsResult> {
+    const h = this.host();
+    if (this.active) throw new ExportJobError('export_active', 'An export is running; render frames after it finishes');
+    if (!this.ready || this.ready.session !== this.session(h)) throw new ExportJobError('renderer_unavailable', 'The app window is not ready to render this project yet; retry in a moment');
+    const settings = await this.savedSettings(h);
+    const id = randomUUID(), token = this.ready.token;
+    return new Promise<StillsResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.stills.delete(id);
+        reject(new ExportJobError('render_timeout', `Rendering ${req.times_us.length} frame(s) did not finish in time`));
+      }, 60_000 + 20_000 * req.times_us.length);
+      this.stills.set(id, { token, resolve, reject, timer });
+      this.deps.send('render_frames:run', { request_id: id, renderer_token: token, ...req, settings });
+    });
+  }
+  /** The renderer's answer to `render_frames:run`. */
+  stillsResult(p: { request_id: string; renderer_token: string; frames?: StillsResult['frames']; sheet?: StillsResult['sheet']; error?: string }) {
+    const pending = this.stills.get(p.request_id);
+    if (!pending || pending.token !== p.renderer_token) return;
+    this.stills.delete(p.request_id);
+    clearTimeout(pending.timer);
+    if (p.error !== undefined) pending.reject(new ExportJobError('render_failed', p.error));
+    else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
+  }
   isActive() { return !!this.active; }
   assertWritable() {
     if (this.active) throw new ExportJobError('export_busy', 'An export is active; finish or discard it before editing or switching projects', this.status());

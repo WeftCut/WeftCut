@@ -1425,6 +1425,7 @@ app.whenReady().then(async () => {
         case 'export_job_start': return exportJobs.start(a, false);
         case 'export_job_ready': return exportJobs.rendererReady(a.renderer_token, a.root_id, a.generation);
         case 'export_job_session': return exportJobs.rendererSession();
+        case 'export_job_stills': return exportJobs.stillsResult(a as Parameters<ExportJobs['stillsResult']>[0]);
         case 'export_job_detaching': return exportJobs.rendererGone(a.renderer_token);
         case 'export_job_update': return exportJobs.update(a.job_id, a.renderer_token, a.update);
         case 'export_job_publish': return exportJobs.publish(a.job_id, a.renderer_token);

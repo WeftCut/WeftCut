@@ -61,7 +61,7 @@ describe('the read set', () => {
   const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/
   // Reads whose names the pattern does not match — each one a review
   // decision, listed here so a stray annotation is still caught.
-  const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition']
+  const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition', 'render_frames']
   it('is exactly the set the retired name regex named, plus the reads added since', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()

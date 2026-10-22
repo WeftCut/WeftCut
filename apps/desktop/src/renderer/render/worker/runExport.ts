@@ -69,6 +69,11 @@ export interface RunExportInit {
   /// Present ⇒ the worker packs frames to this format and streams them to the
   /// native ffmpeg sink instead of WebCodecs-encoding.
   nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+  /// Present ⇒ no encoder: every frame in the range comes back through
+  /// `onStill` as a JPEG `width` px wide (`render_frames`). `writeChunk` is
+  /// never called.
+  stills?: { width: number; quality?: number };
+  onStill?: (still: { index: number; tUs: number; width: number; height: number; jpeg: ArrayBuffer }) => void;
   /// Per-media decode routing table (see exportDecodeRouting.ts). Native
   /// entries decode their ORIGINAL via the napi session; everything else
   /// (and every media when absent) takes the in-worker WebCodecs path.
@@ -268,6 +273,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
     allowHwExportDecode: hwExportDecodeAllowed(rendererOS),
     ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
+    ...(init.stills ? { stills: { width: init.stills.width, quality: init.stills.quality ?? 0.85 } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     // The routing table's native slice (see above); absent when nothing
     // routes native so the WebCodecs path is unchanged. `outFormat` follows
@@ -424,6 +430,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         framesEncoded = ev.framesEncoded;
         totalFrames = ev.totalFrames;
         init.onProgress?.(framesEncoded, totalFrames);
+      } else if (ev.type === "still") {
+        init.onStill?.({ index: ev.index, tUs: ev.tUs, width: ev.width, height: ev.height, jpeg: ev.jpeg });
       } else if (ev.type === "chunk") {
         // Append the slice to disk, then ack so the Worker releases the next
         // write. Errors abort the export. Serialized by the Worker (one

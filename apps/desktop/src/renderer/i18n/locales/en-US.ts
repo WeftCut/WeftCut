@@ -1485,6 +1485,7 @@ const enUS = {
     "set_history_lock": "Set the undo lock",
     "create_tacks": "Add tacks",
     "check_composition": "Check the edit",
+    "render_frames": "Look at frames",
     "update_tack": "Update tack",
     "delete_tacks": "Remove tacks",
     "analyze_clip": "Analyze clip",
