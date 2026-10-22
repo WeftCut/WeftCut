@@ -152,6 +152,17 @@ describe('layer_count and selectors', () => {
     assert.match(check({ kind: 'jump_cuts' }, project([aroll([video(0, 5, 0), video(5, 10, 5)])])).detail, /no jump cuts/)
   })
 
+  it('measures the longest wait for something new, scene elements included', () => {
+    const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track([motif(0, 20, 'clipping-paper'), motif(8, 20, 'clipping-sticker')])], markers: [], transitions: [], links: [] }
+    const group = layer(30, 50, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 20 * S, transform: transform() })
+    const p = project([track([video(0, 60)], { role: 'ARoll' }), captionTrack([text(0, 60, 'all')]), track([motif(10, 14, 'callout-pin'), group])])
+    p.compositions.c1 = scene
+    const r = check({ kind: 'beat_gaps', max_s: 15 }, p)
+    // Arrivals at 10, 30 (the scene) and 38 (its sticker); the wait from 38 s to the end is the longest.
+    assert.equal(r.pass, false)
+    assert.match(r.detail, /^longest wait for something new on screen: 22 s from 38 s, 3 arrival\(s\), want <= 15 s$/)
+  })
+
   it('asks each scene Group for a picture', () => {
     const scene = (cid, layers) => ({ id: cid, label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track(layers)], markers: [], transitions: [], links: [] })
     const group = (t0, cid) => layer(t0, t0 + 6, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: transform() })

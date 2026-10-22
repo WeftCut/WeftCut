@@ -36,6 +36,16 @@ describe('the built-in default style', () => {
 })
 
 describe('TASTE.md over its style', () => {
+  it('takes a pace, and refuses keys and values it does not know', () => {
+    const v = tasteView(dirs(), project('---\ntokens:\n  pace: { beat_every_s: 6, scenes_per_min: 1, tempo: 3, bare_talk_max_s: -1 }\n---\n'))
+    expect(v.tokens.pace).toEqual({ beat_every_s: 6, scenes_per_min: 1 })
+    expect(v.provenance['pace.beat_every_s']).toBe('taste')
+    expect(v.diagnostics.map((d) => [d.path, d.message])).toEqual([
+      ['tokens.pace.tempo', 'unknown pace key (beat_every_s, bare_talk_max_s, scenes_per_min)'],
+      ['tokens.pace.bare_talk_max_s', 'expected a positive number'],
+    ])
+  })
+
   it('overrides one field at a time and records which layer set each', () => {
     const v = tasteView(dirs(), project('---\nextends: weftcut-default\ntokens:\n  palette: { accent: "#E04329" }\n  text:\n    title: { size_px: 110 }\n---\nOur titles run large.\n'))
     expect(v.diagnostics).toEqual([])

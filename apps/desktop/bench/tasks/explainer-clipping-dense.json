@@ -1,0 +1,39 @@
+{
+  "id": "explainer-clipping-dense",
+  "fixtures": ["explainer-memory"],
+  "project": { "width": 1920, "height": 1080, "fps": { "num": 25, "den": 1 } },
+  "setup": [
+    { "tool": "import_media", "args": { "path": "{fixture:explainer-memory}" }, "as": "media" },
+    { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
+    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:tracks[role=ARoll].id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
+  ],
+  "taste": "---\nextends: clipping\ntokens:\n  pace: { beat_every_s: 8, bare_talk_max_s: 12, scenes_per_min: 1 }\n---\n\nOur channel's explainers: editorial paper cut-outs over the speaker, busy and animated.\n",
+  "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out the key points as she makes them, explain her main concepts visually instead of leaving it all to her talking, and caption the whole thing. The project is already set up in our channel's style.",
+  "checklist": [
+    { "id": "title-at-start", "description": "A title-role overlay opens the video and holds at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title", "starts_before_s": 3, "min_duration_s": 3 } } },
+    { "id": "name-card", "description": "A lower third names her while she is first on camera (before 25 s) and holds at least 4 s", "check": { "kind": "text_layer_matching", "text_regex": "Genzel", "where": { "graphic_role": "lower_third", "starts_before_s": 25, "min_duration_s": 4 } } },
+    { "id": "callouts", "description": "Two or more callouts, each up at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout", "min_duration_s": 3 } } },
+    { "id": "drawn-as-motifs", "description": "The title, the name card and the callouts are Motif layers (an example, a fork or the agent's own)", "check": { "kind": "all_of", "checks": [
+      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title" } },
+      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "lower_third" } },
+      { "kind": "motif_layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout" } }
+    ] } },
+    { "id": "tightened", "description": "Pauses came out: less footage than the 215 s source, but not gutted", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 120, "max_s": 208 } },
+    { "id": "no-short-clips", "description": "No A-roll clip shorter than 1 s", "check": { "kind": "layer_count", "op": "==", "n": 0, "where": { "layer_kind": "VideoClip", "max_duration_s": 0.999 } } },
+    { "id": "no-gaps", "description": "Picture runs without black holes", "check": { "kind": "no_gaps" } },
+    { "id": "av-sync", "description": "Each kept segment keeps its own sound", "check": { "kind": "av_sync" } },
+    { "id": "captions-present", "description": "A caption track with a real number of cues", "check": { "kind": "caption_track_present", "min_cues": 30 } },
+    { "id": "captions-cover", "description": "Captions run through the clip", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
+    { "id": "captions-on-picture", "description": "Every caption sits over footage", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
+    { "id": "scenes-per-minute", "description": "At least three animated scenes (the pace asks one per minute of a ~3 min cut): Groups over the A roll, each at least 4 s", "check": { "kind": "layer_count", "op": ">=", "n": 3, "where": { "layer_kind": "CompositionRef", "caption": false, "min_duration_s": 4 } } },
+    { "id": "scene-pictures", "description": "Every scene shows its idea in a picture (a sticker of a pool image or a still from the footage, or a drawing), and words label it", "check": { "kind": "scene_pictures", "min_fraction": 1 } },
+    { "id": "jump-cuts-covered", "description": "Most jump cuts left by tightening are covered by a scene, an insert or a punch-in (provisional: H2 left 97-100% bare)", "check": { "kind": "jump_cuts", "max_uncovered_fraction": 0.6 } },
+    { "id": "no-long-bare-talk", "description": "No stretch over 12 s with nothing on screen but the speaker (the pace's bare_talk_max_s)", "check": { "kind": "bare_talk", "max_s": 12 } },
+    { "id": "beats-every-8s", "description": "Something new arrives on screen at least every 8 s (the pace's beat_every_s)", "check": { "kind": "beat_gaps", "max_s": 8 } },
+    { "id": "overlays-add", "description": "Overlays add what the speech does not, never the line being said", "check": { "kind": "human" } },
+    { "id": "in-the-style", "description": "The overlays read as one clipping look: palette, fonts, spring, paper", "check": { "kind": "human" } },
+    { "id": "exits", "description": "Overlays and the insert leave by being taken off or sliding out, not by hard cuts", "check": { "kind": "human" } },
+    { "id": "clear-of-speaker", "description": "Overlays leave her face clear", "check": { "kind": "human" } },
+    { "id": "quote-exact", "description": "A quote overlay uses her exact words", "check": { "kind": "human" } }
+  ]
+}
