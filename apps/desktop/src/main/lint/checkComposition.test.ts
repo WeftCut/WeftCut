@@ -146,14 +146,14 @@ describe('check_composition over Motif layers (H2)', () => {
 
   describe('motif-off-frame', () => {
     const SIZES: Record<string, [number, number]> = { stamp: [1100, 300], plate: [1920, 1080] }
-    const motifSize = (id: string) => SIZES[id] ?? null
+    const lookup = (id: string) => (SIZES[id] ? { size: SIZES[id], props_schema: {} } : null) as never
     const stat = (value: number) => ({ mode: 'Static' as const, value })
     const placed = (text: ReturnType<typeof setup>['text'], id: string, over: Record<string, unknown>) => {
       const m = motif(text, id, 'lower_third') as Extract<LayerParams, { kind: 'Motif' }>
       return { ...m, transform: { ...m.transform, ...over } } as LayerParams
     }
     const at = (x: number, y: number) => ({ position: { mode: 'XY', x: stat(x), y: stat(y) } })
-    const check = (p: Project) => checkComposition(p, p.root_id, styled(), undefined, { motifSize }).findings.filter((f) => f.rule === 'motif-off-frame')
+    const check = (p: Project) => checkComposition(p, p.root_id, styled(), undefined, { motif: lookup }).findings.filter((f) => f.rule === 'motif-off-frame')
 
     it('reports a canvas placed with its centre near the edge, from the real anchor', () => {
       const { p, bRoll, put, text } = setup()
@@ -190,6 +190,42 @@ describe('check_composition over Motif layers (H2)', () => {
       put(bRoll, placed(text, 'plate', { ...at(960, 540), scale_x: stat(1.1), scale_y: stat(1.1) }), 0, 4)
       put(bRoll, placed(text, 'unknown', at(0, 0)), 0, 4)
       expect(check(p)).toEqual([])
+    })
+  })
+
+  describe('overlay-echoes-speech', () => {
+    const quoteSchema = { quote: { type: 'string', default: '' }, source: { type: 'string', default: '' }, exit: { type: 'enum', options: ['lift', 'fade'], default: 'lift' }, font_body: { type: 'string', default: '' } }
+    const lookup = (id: string) => (id === 'quote' ? { size: [1200, 560], props_schema: quoteSchema } : null) as never
+    const withProps = (text: ReturnType<typeof setup>['text'], props: Record<string, unknown>) => ({ ...(motif(text, 'quote', 'callout') as object), props }) as LayerParams
+    const echoes = (p: Project) => checkComposition(p, p.root_id, styled(), undefined, { motif: lookup }).findings.filter((f) => f.rule === 'overlay-echoes-speech')
+
+    it('reports a quote card of the line being said, from the captions in its span', () => {
+      const { p, bRoll, caption, put, text } = setup()
+      put(caption, text('A memory is such\na unique network.'), 32, 34.5)
+      put(bRoll, withProps(text, { quote: 'A memory is such a unique network.', source: 'Lisa Genzel, on how memory works', exit: 'lift', font_body: 'Georgia' }), 32.2, 36.8)
+      const [f] = echoes(p)
+      expect(f).toMatchObject({ severity: 'warning', layers: [p.compositions[p.root_id]!.tracks[1]!.layers[0]!.id] })
+      expect(f!.message).toContain('A memory is such a unique network.')
+    })
+
+    it('leaves alone what adds to the speech, short titles and names, and anything without captions', () => {
+      const { p, bRoll, caption, put, text } = setup()
+      put(caption, text('The first hub is the hippocampus,\non the left side and on the right.'), 64, 68)
+      put(bRoll, withProps(text, { quote: 'Seahorse-shaped, about 4 cm long, one per hemisphere', source: '' }), 64, 68)
+      put(bRoll, text('The hippocampus', { graphic_role: 'title' }), 64, 68)
+      put(bRoll, withProps(text, { quote: 'The first hub is the hippocampus', source: '' }), 90, 94)
+      expect(echoes(p)).toEqual([])
+      const { p: q, bRoll: b2, put: put2, text: text2 } = setup()
+      put2(b2, withProps(text2, { quote: 'A memory is such a unique network.', source: '' }), 0, 4)
+      expect(echoes(q)).toEqual([])
+    })
+
+    it('counts CJK by character', () => {
+      const { p, bRoll, caption, put, text } = setup()
+      put(caption, text('记忆是一个独特的神经网络'), 0, 3)
+      put(bRoll, withProps(text, { quote: '记忆是独特的网络', source: '' }), 0, 3)
+      put(bRoll, withProps(text, { quote: '海马体', source: '' }), 0, 3)
+      expect(echoes(p)).toHaveLength(1)
     })
   })
 

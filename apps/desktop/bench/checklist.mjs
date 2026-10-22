@@ -56,6 +56,13 @@
 //   av_sync              { tolerance_s? }      every VideoClip whose media has
 //                        sound has an Audio layer of the same media with the
 //                        same timeline span and source window
+//   jump_cuts            { max_uncovered_fraction? }  cuts between consecutive A-roll
+//                        clips of one media whose source does not continue, and the
+//                        share no full-frame layer above (scene Group, B roll, image,
+//                        plate Motif) or punch-in (scale change >= 5 %) covers; pass
+//                        null (measured only) without a threshold
+//   bare_talk            { max_s? }            longest stretch with nothing on screen but
+//                        the A roll (captions aside); pass null without a threshold
 //   layer_region         { where, x?: [lo, hi], y?: [lo, hi], require?: 'all' | 'any' }
 //                        resting anchor of matching Text layers, as fractions of
 //                        the frame; null when only Motifs matched (a Motif draws
@@ -71,7 +78,7 @@ export const BUILTIN_MOTIF_IDS = Object.freeze([
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
-  'no_gaps', 'no_gaps_on_track', 'av_sync', 'layer_region', 'all_of', 'any_of', 'human',
+  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -174,6 +181,31 @@ function intersectLength(a, b) {
     else j++
   }
   return n
+}
+
+/** Cuts between consecutive A-roll clips of one media whose source does not
+ *  continue (a pause or a passage removed), and which of them something
+ *  covers: a full-frame layer above spanning the cut (a scene Group, B roll,
+ *  an image, a plate Motif), or a punch-in (the next clip's scale differs by
+ *  5 % or more). */
+function jumpCuts(root) {
+  const frame = frameUs(root)
+  const clips = select(root, { layer_kind: 'VideoClip', track_role: 'ARoll' }).map(({ layer }) => layer).sort((a, b) => a.t_start_us - b.t_start_us)
+  const scaleOf = (l) => { const v = l.params.transform?.scale_x; return v?.mode === 'Static' ? v.value : v?.value?.[0]?.value ?? 1 }
+  const cover = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' &&
+    (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(layer.params?.kind) || (layer.params?.kind === 'Motif' && layer.params.graphic_role === 'plate')))
+  const cuts = [], covered = new Map()
+  for (let i = 1; i < clips.length; i++) {
+    const a = clips[i - 1], b = clips[i]
+    if (Math.abs(b.t_start_us - a.t_end_us) > frame || a.params.media !== b.params.media) continue
+    if (Math.abs(b.params.src_in_us - a.params.src_out_us) <= frame) continue
+    const t = b.t_start_us
+    cuts.push(t)
+    const over = cover.find(({ layer }) => layer.t_start_us <= t - frame && layer.t_end_us >= t + frame)
+    if (over) covered.set(t, over.layer.params.kind === 'CompositionRef' ? 'scene' : over.layer.params.kind === 'Motif' ? 'plate' : 'insert')
+    else if (Math.abs(scaleOf(b) / scaleOf(a) - 1) >= 0.05) covered.set(t, 'punch-in')
+  }
+  return { cuts, covered }
 }
 
 const spansOf = (list) => list.map(({ layer }) => [layer.t_start_us, layer.t_end_us])
@@ -311,6 +343,30 @@ const KINDS = {
       if (!twin) off.push(`${s(v.t_start_us)}-${s(v.t_end_us)}s`)
     }
     return { pass: off.length === 0, detail: off.length ? `${off.length} of ${videos.length} clip(s) without matching sound: ${off.slice(0, 5).join(', ')}` : `${videos.length} clip(s) in sync` }
+  },
+
+  jump_cuts(check, root) {
+    const { cuts, covered } = jumpCuts(root)
+    if (!cuts.length) return { pass: true, detail: 'no jump cuts' }
+    const bare = cuts.filter((c) => !covered.has(c))
+    const f = bare.length / cuts.length
+    const pass = check.max_uncovered_fraction === undefined ? null : f <= check.max_uncovered_fraction
+    const by = [...covered.values()].reduce((m, how) => ({ ...m, [how]: (m[how] ?? 0) + 1 }), {})
+    return { pass, detail: `${cuts.length} jump cut(s), ${cuts.length - bare.length} covered (${Object.entries(by).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}), ${(f * 100).toFixed(0)}% bare` +
+      (check.max_uncovered_fraction === undefined ? '' : `, want <= ${(check.max_uncovered_fraction * 100).toFixed(0)}%`) +
+      (bare.length ? `; bare at ${bare.slice(0, 6).map((c) => `${s(c)}s`).join(', ')}${bare.length > 6 ? ', …' : ''}` : '') }
+  },
+
+  bare_talk(check, root) {
+    const end = contentEndUs(root)
+    const dressed = union(spansOf(select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' && layer.params?.kind !== 'Audio')))
+    let longest = 0, at = 0, from = 0
+    for (const [a, b] of [...dressed, [end, end]]) {
+      if (a - from > longest) { longest = a - from; at = from }
+      from = Math.max(from, b)
+    }
+    const pass = check.max_s === undefined ? null : longest <= check.max_s * US
+    return { pass, detail: `longest stretch with nothing but the A roll: ${s(longest)} s from ${s(at)} s` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
   },
 
   layer_region(check, root) {
