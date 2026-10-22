@@ -14,12 +14,24 @@ by frame by a harness that owns the clock. Any HTML/CSS/SVG/canvas/WebGL and
 any animation idiom (CSS, WAAPI, GSAP-style tweens, rAF loops) work, subject to
 the scope rule and the one law below.
 
-## Scope: one element
+## Scope: one element or one interaction
 
 A Motif draws one element with one purpose — a title, a lower third, a
 callout, a credit, a logo, a full-frame background plate — with one entrance
 and one exit. If describing what it shows needs "and", it is several Motifs on
 several layers.
+
+The one exception is an **interaction**: elements whose motion depends on each
+other may share a Motif, because a Motif cannot see another layer. Examples
+are a cover torn off to reveal a word, a lid that opens and what spills out,
+and a leader line tied to a moving object. An interaction Motif:
+
+- says in a comment why its pieces share it;
+- exposes its text as props;
+- exposes its key times as number props named `cue_<name>_s`, in seconds of
+  its own time, so the user can retime it in the inspector.
+
+Anything that enters, holds and leaves on its own is still its own layer.
 
 - **The user's media stays outside.** A Motif cannot show the user's footage
   or photos: project media is blocked in the capture host. Anything that shows
@@ -40,6 +52,19 @@ several layers.
 
 One element may still be large or intricate — a chart, a title card, a map
 with its route. The rule counts purposes, not pixels.
+
+**A scene is a Group.** A full-frame animated scene that explains a concept is
+a Group (`create_group`) of a plate, one layer per independent element, and at
+most a few interaction Motifs. The editor moves and trims it as one clip and
+opens it to change an element. Author it in this order:
+
+1. **Treatment:** the scene's one idea, its hero moment, and its cues, taken
+   from the words they go with.
+2. **Key stills:** `preview_motif` of each element and of the plate, looked
+   at before anything moves.
+3. **Layers:** each element placed in the Group at its cue.
+4. **Motion:** entrances, interactions and exits.
+5. **Look:** the rendered frames of the Group (`render_frames`).
 
 ## The one law
 

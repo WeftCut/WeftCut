@@ -36,9 +36,10 @@ Read `craft/editing.md` first. Then:
    - in and out times, taken from the words it belongs to (the word
      timestamps from `transcribe_clip`);
    - where it sits.
-3. **For each scene, also give:**
+3. **For each scene, also give its treatment:**
    - its one idea, and its hero moment;
-   - the elements it shows, each with the word it enters on.
+   - the elements it shows, each with the word it enters on;
+   - which elements interact and share a Motif, and why.
 
 A plan usually has:
 - **Title**: in the first seconds, over the speaker in the top third, or as
@@ -84,15 +85,20 @@ Inside a work session, with the history lock held:
      where its anchor lands, the centre unless the anchor is moved.
    - To change an example, fork it into a draft, edit, and place the draft.
      Keep the shared props so the style still reaches it.
-4. **Build each scene as a group.**
-   1. Place the plate on a track above the A-roll; its enter and exit props
+4. **Build each scene as a group,** in the order of *Scope* in
+   `motif-authoring.md`:
+   1. Look at a key still of each element with `preview_motif`, with its
+      real text, before placing anything.
+   2. Place the plate on a track above the A-roll; its enter and exit props
       slide it.
-   2. Place one layer per element on the tracks above it. Each element is
-      its own Motif: an example, a fork, or one you write in the style's
-      vocabulary (`motif-authoring.md`). Check new ones with
-      `preview_motif` before placing them.
-   3. Time each element from its word.
-   4. Group the plate and its elements with `create_group`, so the scene
+   3. Place one layer per element on the tracks above it: an example, a
+      fork, or a Motif you write in the style's vocabulary. Only elements
+      that move because of each other share a Motif, an interaction such
+      as a cover torn off a word. Set its `cue_<name>_s` props from the
+      word times; say in your report why its pieces share it.
+   4. Time each element from its word, and end the elements a beat apart
+      before the plate leaves.
+   5. Group the plate and its elements with `create_group`, so the scene
       moves and trims as one clip.
 
 Check each committed record: the span as it landed, and the props.

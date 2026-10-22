@@ -6,7 +6,7 @@ roles: []
 motifs:
   title: clipping-headline
   lower_third: clipping-stamp
-  callout: [clipping-quote, clipping-pointer]
+  callout: [clipping-quote, clipping-pointer, clipping-reveal]
   plate: clipping-paper
 tokens:
   palette:
@@ -110,9 +110,27 @@ whole frame.
   - `clipping-pointer` is a red marker arrow with a label, a circle, or an
     underline drawn onto the footage. Turn it with `angle_deg` to point at
     the thing.
+  - `clipping-reveal` is a word on a torn strip, hidden under a newsprint,
+    kraft or paper cover that is torn off at `cue_tear_s`. Set the cue to
+    the word's time, so the tear lands as she says it. It is an
+    interaction: the cover and the word share one Motif because the tear
+    shows the word.
 - **Plates** (`clipping-paper`) are full-frame kraft, newsprint or paper grounds.
   Put one between on-camera stretches as an insert, and lay titles, quotes and
   images on it.
+- **Scenes** explain a concept in full frame while she talks. A scene is a
+  Group, and every piece in it that moves on its own is its own layer. For
+  example, "events become facts":
+  - a `clipping-paper` kraft plate;
+  - a `clipping-headline` kicker strip at the top;
+  - a `clipping-reveal` of HIPPOCAMPUS on the left, torn on "hippocampus";
+  - a small `clipping-headline` tag under it, EVENTS, IN ORDER;
+  - a `clipping-pointer` arrow, CONSOLIDATE, drawn on "consolidate";
+  - a `clipping-reveal` of CORTEX on the right, torn on "cortex";
+  - a tag under it, ONLY THE GIST.
+
+  The pieces leave a beat apart, then the plate slides out. Build scenes from
+  what the talk explains, not from this list.
 - **Decoration** (`clipping-scrap`: a newsprint strip, a torn piece, tape) is
   untagged. Use it sparingly, to tuck behind an image or a quote.
 - **Captions** stay plain white type at the bottom, at most two lines of 42

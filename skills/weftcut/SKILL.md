@@ -226,8 +226,11 @@ edit settled it, otherwise delete it and tack the new content again.
 
 Read `motif-authoring.md` and `motif-workspaces.md` next to this file before
 creating or changing a Motif. Visible state must be a function of absolute time.
-One Motif draws one element: for overlay work with more than one element, plan
-the layers before writing code (*Scope: one element* in `motif-authoring.md`).
+One Motif draws one element, or one interaction of elements that move because
+of each other. For overlay work with more than one element, plan the layers
+before writing code. A concept scene is a Group of a plate, one layer per
+independent element, and at most a few interaction Motifs (*Scope* in
+`motif-authoring.md`).
 
 1. Prefer a self-contained folder inside your working directory (for example
    motifs/<name>/) with index.html, manifest.json and companion code/assets,
