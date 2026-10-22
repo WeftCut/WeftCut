@@ -1,7 +1,7 @@
 ---
 name: teaching-explainer
 description: Cut a lecture or talking-head explainer into a tight, captioned piece that switches between the speaker with the style's overlays and full-frame animated scenes for its concepts.
-stages: [intake, plan, build, audit, handoff]
+stages: [intake, plan, build, audit, look, handoff]
 until: "audit.clean || rounds >= 3"
 ---
 
@@ -109,6 +109,25 @@ Run `check_composition` and settle what it finds.
 - A `bare-jump-cuts` or `bare-talk` finding means the passage plays as plain
   talking head with stutters. Cover it with a scene or an insert, punch in on
   alternate clips, or give its key point an overlay.
+
+## look
+
+The audit reads the project data; it cannot see a face, a slide or a busy
+background. Look at the frames export will render.
+
+- **Render each beat.** Call `render_frames` with the layer ids of the
+  beats, a few at a time. Each beat is sampled settled, in the middle, in its
+  exit, and just after every cut or shot change under it. A framing change
+  under a title is where it lands on a face.
+- **Check every sample:**
+  - on frame, with nothing cropped;
+  - clear of the speaker's face, and of what she points at on a slide;
+  - legible against what is under it;
+  - its exit reads.
+- **Check each scene against its plan:** its one idea is clear, and its
+  elements arrive on their words.
+- **Fix in build, then look again** at what changed. Build, audit and look
+  together are one round.
 
 ## handoff
 

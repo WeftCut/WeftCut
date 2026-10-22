@@ -119,6 +119,9 @@ a departure from the style: keep it only if it was meant, and say so.
 `end_agent_session` runs the check itself when your last one no longer
 matches the timeline. If that finds `hard` or `warning` findings, it keeps
 the session open and returns them: settle them as above, then call it again.
+The audit cannot see pixels: after placing overlays, look at what export
+will render with `render_frames`. Pass the layer ids, and each one is sampled
+over its span, including just after cuts and shot changes under it.
 
 ## Working rhythm
 
