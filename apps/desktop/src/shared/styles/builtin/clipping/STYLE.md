@@ -8,6 +8,7 @@ motifs:
   lower_third: clipping-stamp
   callout: [clipping-quote, clipping-pointer, clipping-reveal]
   plate: clipping-paper
+  illustration: clipping-sticker
 tokens:
   palette:
     ink: "#16130F"
@@ -118,16 +119,26 @@ whole frame.
 - **Plates** (`clipping-paper`) are full-frame kraft, newsprint or paper grounds.
   Put one between on-camera stretches as an insert, and lay titles, quotes and
   images on it.
-- **Scenes** explain a concept in full frame while she talks. A scene is a
-  Group, and every piece in it that moves on its own is its own layer. For
-  example, "events become facts":
+- **Illustrations** (`clipping-sticker`) are a picture pasted on as a paper
+  cut-out with tape: a pool image or a still from the footage through its
+  `photo` media prop, cropped with `crop_*` to what matters (the slide behind
+  the speaker, not the whole frame). Without a photo it draws its own
+  `art.svg`, an ink drawing in flat colour. To draw a picture of your own,
+  fork it and replace that file, keeping the heavy ink line and flat fills.
+- **Scenes** explain a concept in full frame while she talks. A scene shows
+  its idea in pictures, and words label them. It is a Group, and every piece
+  in it that moves on its own is its own layer. For example, "events become
+  facts":
   - a `clipping-paper` kraft plate;
   - a `clipping-headline` kicker strip at the top;
-  - a `clipping-reveal` of HIPPOCAMPUS on the left, torn on "hippocampus";
-  - a small `clipping-headline` tag under it, EVENTS, IN ORDER;
-  - a `clipping-pointer` arrow, CONSOLIDATE, drawn on "consolidate";
-  - a `clipping-reveal` of CORTEX on the right, torn on "cortex";
-  - a tag under it, ONLY THE GIST.
+  - a `clipping-sticker` of her hippocampus slide on the left, slapped on at
+    "hippocampus", with a `clipping-reveal` of HIPPOCAMPUS torn open beside
+    it;
+  - a small `clipping-headline` tag, EVENTS, IN ORDER;
+  - a `clipping-pointer` arrow drawn on "consolidate";
+  - a `clipping-sticker` of her network slide on the right, with a reveal of
+    CORTEX torn on "cortex";
+  - a tag, ONLY THE GIST.
 
   The pieces leave a beat apart, then the plate slides out. Build scenes from
   what the talk explains, not from this list.

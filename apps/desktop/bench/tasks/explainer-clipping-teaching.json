@@ -26,6 +26,7 @@
     { "id": "captions-cover", "description": "Captions run through the clip", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
     { "id": "captions-on-picture", "description": "Every caption sits over footage", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
     { "id": "concept-scene", "description": "At least one animated scene: a Group over the A roll, at least 4 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "layer_kind": "CompositionRef", "caption": false, "min_duration_s": 4 } } },
+    { "id": "scene-pictures", "description": "Every scene shows its idea in a picture (a sticker of a pool image or a still from the footage, or a drawing), and words label it", "check": { "kind": "scene_pictures", "min_fraction": 1 } },
     { "id": "jump-cuts-covered", "description": "Most jump cuts left by tightening are covered by a scene, an insert or a punch-in (provisional: H2 left 97-100% bare)", "check": { "kind": "jump_cuts", "max_uncovered_fraction": 0.6 } },
     { "id": "no-long-bare-talk", "description": "No stretch over 30 s with nothing on screen but the speaker (provisional: H2 had 59-75 s)", "check": { "kind": "bare_talk", "max_s": 30 } },
     { "id": "overlays-add", "description": "Overlays add what the speech does not, never the line being said", "check": { "kind": "human" } },

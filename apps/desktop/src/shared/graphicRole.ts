@@ -7,7 +7,7 @@
  *  is a custom role, and whether the project's taste declares it is the lint's
  *  question, not the store's — a TASTE edit must never make a project
  *  unwritable. */
-export const BUILTIN_GRAPHIC_ROLES = ['title', 'lower_third', 'callout', 'credit', 'logo', 'plate', 'none'] as const
+export const BUILTIN_GRAPHIC_ROLES = ['title', 'lower_third', 'callout', 'credit', 'logo', 'plate', 'illustration', 'none'] as const
 
 export const GRAPHIC_ROLE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/
 

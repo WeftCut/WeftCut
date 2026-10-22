@@ -63,6 +63,11 @@
 //                        null (measured only) without a threshold
 //   bare_talk            { max_s? }            longest stretch with nothing on screen but
 //                        the A roll (captions aside); pass null without a threshold
+//   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
+//                        visual layers inside) that hold a picture: footage, an
+//                        image, a nested Group, or a Motif tagged illustration or
+//                        whose prop names a pool item (ADR 0132); pass null
+//                        without scenes or without a threshold
 //   layer_region         { where, x?: [lo, hi], y?: [lo, hi], require?: 'all' | 'any' }
 //                        resting anchor of matching Text layers, as fractions of
 //                        the frame; null when only Motifs matched (a Motif draws
@@ -78,7 +83,7 @@ export const BUILTIN_MOTIF_IDS = Object.freeze([
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
-  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'layer_region', 'all_of', 'any_of', 'human',
+  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'scene_pictures', 'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -367,6 +372,23 @@ const KINDS = {
     }
     const pass = check.max_s === undefined ? null : longest <= check.max_s * US
     return { pass, detail: `longest stretch with nothing but the A roll: ${s(longest)} s from ${s(at)} s` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
+  },
+
+  scene_pictures(check, root, project) {
+    const pool = project.media_pool ?? {}
+    const names = (v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined
+    const picture = (l) => ['VideoClip', 'ImageOverlay', 'CompositionRef'].includes(l.params?.kind) ||
+      (l.params?.kind === 'Motif' && (l.params.graphic_role === 'illustration' || Object.values(l.params.props ?? {}).some(names)))
+    const scenes = select(root, { layer_kind: 'CompositionRef' }).map(({ layer }) => {
+      const child = project.compositions?.[layer.params.composition]
+      const visual = (child?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio')
+      return { at: layer.t_start_us, visual }
+    }).filter((x) => x.visual.length >= 2)
+    if (!scenes.length) return { pass: null, detail: 'no scene Groups' }
+    const bare = scenes.filter((x) => !x.visual.some(picture))
+    const f = (scenes.length - bare.length) / scenes.length
+    const pass = check.min_fraction === undefined ? null : f >= check.min_fraction
+    return { pass, detail: `${scenes.length - bare.length} of ${scenes.length} scene(s) hold a picture` + (bare.length ? `; words only at ${bare.map((x) => `${s(x.at)}s`).join(', ')}` : '') }
   },
 
   layer_region(check, root) {

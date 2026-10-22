@@ -1174,12 +1174,13 @@ _Avoid_: pipeline, workflow, playbook, skill (the skill is the whole bundle)
 
 **Graphic role**:
 What a visual layer is for — title, lower third, callout, credit, logo, plate
-(a full-frame background other layers sit on) — and the key a style's tokens
+(a full-frame background other layers sit on), illustration (a picture: a
+photo, a still, a drawing) — and the key a style's tokens
 and role-specific checks attach to. A Motif has exactly one. Stored as the
 `graphic_role` field on text, Motif and image layers (schema v5), null when
 untagged; a Motif manifest may declare the role its placed layers default to.
 Built-ins are `title`, `lower_third`, `callout`, `credit`, `logo`, `plate`,
-`none`; any other well-formed name is a custom role a taste declares. Caption
+`illustration`, `none`; any other well-formed name is a custom role a taste declares. Caption
 cues carry none — a caption is identified by its caption track.
 _Avoid_: role (a track's role: A roll, B roll, caption, audio roles —
 ADR 0023), kind

@@ -152,6 +152,20 @@ describe('layer_count and selectors', () => {
     assert.match(check({ kind: 'jump_cuts' }, project([aroll([video(0, 5, 0), video(5, 10, 5)])])).detail, /no jump cuts/)
   })
 
+  it('asks each scene Group for a picture', () => {
+    const scene = (cid, layers) => ({ id: cid, label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track(layers)], markers: [], transitions: [], links: [] })
+    const group = (t0, cid) => layer(t0, t0 + 6, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: transform() })
+    const p = project([track([video(0, 60)], { role: 'ARoll' }), track([group(5, 'words'), group(20, 'sticker'), group(40, 'one')])])
+    p.compositions.words = scene('words', [motif(0, 6, 'clipping-paper'), motif(1, 6, 'clipping-reveal', { text: 'CORTEX' })])
+    p.compositions.sticker = scene('sticker', [motif(0, 6, 'clipping-paper'), motif(1, 6, 'clipping-sticker', { photo: 'm1@60000000' })])
+    p.compositions.one = scene('one', [motif(0, 6, 'clipping-headline')])
+    const r = check({ kind: 'scene_pictures', min_fraction: 1 }, p)
+    assert.equal(r.pass, false)
+    assert.match(r.detail, /^1 of 2 scene\(s\) hold a picture; words only at 5s$/)
+    assert.equal(check({ kind: 'scene_pictures' }, p).pass, null)
+    assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, project([track([video(0, 10)])])).detail, /no scene Groups/)
+  })
+
   it('measures the longest stretch of bare A roll', () => {
     const p = project([track([video(0, 60)], { role: 'ARoll' }), captionTrack([text(0, 60, 'all of it')]), track([motif(10, 14, 'callout-pin'), motif(40, 44, 'callout-pin')])])
     const r = check({ kind: 'bare_talk', max_s: 20 }, p)

@@ -237,6 +237,24 @@ function shownTexts(l: Layer, motif: MotifLookup | undefined): string[] {
   return Object.entries(schema).filter(([k, s]) => s.type === 'string' && !k.startsWith('font_') && typeof props[k] === 'string').map(([k]) => props[k] as string)
 }
 
+/** A picture in a scene: footage, an image, a nested Group (not judged), or
+ *  a Motif that takes a `media` prop or is tagged `illustration`. */
+function isPicture(l: Layer, motif: MotifLookup): boolean {
+  const k = l.params.kind
+  if (k === 'VideoClip' || k === 'ImageOverlay' || k === 'CompositionRef') return true
+  if (k !== 'Motif') return false
+  const m = motif(l.params.motif_id)
+  return roleOf(l) === 'illustration' || m?.graphic_role === 'illustration' || Object.values(m?.props_schema ?? {}).some((s) => s.type === 'media')
+}
+
+/** The layer count of a scene Group made only of words, else 0. A Group of
+ *  one layer is not a scene. */
+function allWords(c: Composition, motif: MotifLookup): number {
+  const visual = c.tracks.filter((t) => t.role !== 'Caption').flatMap((t) => t.layers).filter((l) => l.enabled && l.params.kind !== 'Audio')
+  if (visual.length < 2 || visual.some((l) => isPicture(l, motif))) return 0
+  return visual.some((l) => shownTexts(l, motif).length > 0) ? visual.length : 0
+}
+
 export interface CheckOptions {
   /** Looks up a Motif's manifest (built-in, installed or draft): its canvas
    *  size for the bounds and its string props for the text it shows. Without
@@ -292,6 +310,8 @@ export function checkComposition(project: Project, compositionId: string, taste:
 
         if (l.params.kind === 'CompositionRef') {
           const child = project.compositions[l.params.composition]
+          const wordy = child && opts.motif ? allWords(child, opts.motif) : 0
+          if (wordy) add('scene-all-words', x, `scene of ${wordy} layers shows only words: no photo, still or drawing`, 'show its idea in a picture (clipping-sticker with a pool image or a still from the footage, or a drawing) and let words label it')
           if (child) walk(child, l.params.composition, enterGroup(at, l as Layer & { params: CompositionRefParams }, child), [l.params.src_in_us, l.params.src_in_us + (l.t_end_us - l.t_start_us)])
           continue
         }

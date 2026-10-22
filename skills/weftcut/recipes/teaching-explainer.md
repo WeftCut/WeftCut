@@ -38,8 +38,18 @@ Read `craft/editing.md` first. Then:
    - where it sits.
 3. **For each scene, also give its treatment:**
    - its one idea, and its hero moment;
+   - the picture that shows the idea, and where it comes from (below);
    - the elements it shows, each with the word it enters on;
    - which elements interact and share a Motif, and why.
+
+   **A scene shows its idea in a picture, and words label it.** A scene of
+   words alone reads as a slide. Take the picture from, in order:
+   1. the user's media in the pool;
+   2. a still from the footage: a slide or an object behind the speaker
+      (`read_project { view: "media_frame" }` finds it), cropped to it;
+   3. an image you generate, if your model can output images: save it to a
+      file and `import_media` it;
+   4. otherwise a drawing: fork the style's sticker and replace its SVG.
 
 A plan usually has:
 - **Title**: in the first seconds, over the speaker in the top third, or as
@@ -92,7 +102,9 @@ Inside a work session, with the history lock held:
    2. Place the plate on a track above the A-roll; its enter and exit props
       slide it.
    3. Place one layer per element on the tracks above it: an example, a
-      fork, or a Motif you write in the style's vocabulary. Only elements
+      fork, or a Motif you write in the style's vocabulary. A picture goes in
+      the style's sticker through its `media` prop: `"<media_id>"` for an
+      image, `"<media_id>@<t_us>"` for a frame of a video. Only elements
       that move because of each other share a Motif, an interaction such
       as a cover torn off a word. Set its `cue_<name>_s` props from the
       word times; say in your report why its pieces share it.
@@ -145,5 +157,6 @@ The deliverable is the edited project in WeftCut.
   - the cut length;
   - each beat placed, with its time and mode;
   - every fact an overlay adds from outside the talk, with its source;
+  - every picture you generated or drew, so the user can check it;
   - what became a tack;
   - any style fonts the user may want to install.
