@@ -47,6 +47,13 @@ Plan which passages are which before placing anything.
   to it or a scene. Vary the rhythm: short overlays, a longer scene, a
   stretch of plain footage.
 
+**A fact from outside the talk, slipped in.**
+- **Example:** an overlay that adds what the speech leaves out can add
+  something the speaker never said: a date, a coined term, a study.
+- **Instead:** add an outside fact only when you are sure of it, and list
+  every one in your report with where it comes from, so the user can check
+  it before it ships. When unsure, label what she says instead.
+
 **Overlays timed to round numbers.**
 - **Example:** an element that arrives a second before or after its word
   feels unrelated to what is said.

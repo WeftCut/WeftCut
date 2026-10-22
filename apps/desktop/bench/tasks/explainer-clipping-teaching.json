@@ -8,12 +8,11 @@
     { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:tracks[role=ARoll].id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
   ],
   "taste": "---\nextends: clipping\n---\n\nOur channel's explainers: editorial paper cut-outs over the speaker.\n",
-  "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out two or three of the key points as she makes them, use one paper insert (a pull quote or a chapter card), and caption the whole thing. The project is already set up in our channel's style.",
+  "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out the key points as she makes them, explain her main concepts visually instead of leaving it all to her talking, and caption the whole thing. The project is already set up in our channel's style.",
   "checklist": [
     { "id": "title-at-start", "description": "A title-role overlay opens the video and holds at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title", "starts_before_s": 3, "min_duration_s": 3 } } },
     { "id": "name-card", "description": "A lower third names her while she is first on camera (before 25 s) and holds at least 4 s", "check": { "kind": "text_layer_matching", "text_regex": "Genzel", "where": { "graphic_role": "lower_third", "starts_before_s": 25, "min_duration_s": 4 } } },
     { "id": "callouts", "description": "Two or more callouts, each up at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout", "min_duration_s": 3 } } },
-    { "id": "paper-insert", "description": "At least one paper insert: a plate Motif", "check": { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "plate" } } },
     { "id": "drawn-as-motifs", "description": "The title, the name card and the callouts are Motif layers (an example, a fork or the agent's own)", "check": { "kind": "all_of", "checks": [
       { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title" } },
       { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "lower_third" } },

@@ -52,7 +52,7 @@ export class AuditStore {
     const comp = p.compositions[compositionId]
     const last = this.last.get(compositionId)
     if (!comp || !last) return { composition_id: compositionId, state: 'never' }
-    const state: AuditState = compositionRevision(comp, taste) === last.revision ? 'fresh' : 'stale'
+    const state: AuditState = compositionRevision(p, compositionId, taste) === last.revision ? 'fresh' : 'stale'
     return { composition_id: compositionId, state, ...last.counts }
   }
 }
