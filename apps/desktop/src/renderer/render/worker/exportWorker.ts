@@ -544,7 +544,13 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
               encodeMs += performance.now() - encT0;
             }
           } else if (stills) {
-            // Stills: the same composite, scaled down and posted as a JPEG.
+            // Stills: the same composite, scaled down and posted as a JPEG. A
+            // still is the first frame its sprites ever composite, and a
+            // sprite places itself against its anchor only once its texture's
+            // size is known, so the frame is composited twice: the first pass
+            // binds the textures, the second is the one captured.
+            app.render();
+            compositor.compositeFrame(tUs);
             app.render();
             compositeMs += performance.now() - compT0;
             const capT0 = performance.now();
