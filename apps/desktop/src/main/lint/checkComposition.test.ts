@@ -306,6 +306,25 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     const bare = checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-talk')
     expect(bare.map((f) => f.range)).toEqual([[0, 40 * S], [44 * S, 90 * S]])
   })
+  it('holds the cut to its pace: new arrivals, bare talk and scenes per minute', () => {
+    const { p, aRoll, bRoll, put, text } = setup()
+    put(aRoll, clip(0, 120), 0, 120)
+    // Something arrives at 10 and 20 s, then a 40 s gap, then a held card to the end.
+    for (const t of [10, 20]) put(bRoll, { ...text('note'), graphic_role: 'callout' } as LayerParams, t, t + 4)
+    put(bRoll, { ...text('held'), graphic_role: 'callout' } as LayerParams, 64, 120)
+    const found = (md?: string) => checkComposition(p, p.root_id, md ? taste(md) : null).findings
+      .filter((f) => ['sparse-beats', 'bare-talk', 'scene-count'].includes(f.rule)).map((f) => [f.rule, f.range.map((v) => v / S)])
+    // By default: the 40 s gap is bare talk (reported once), the 56 s held card is sparse.
+    expect(found()).toEqual([['bare-talk', [24, 64]], ['sparse-beats', [64, 120]]])
+    // A dense pace tightens all three.
+    // 0–10 s is bare talk; 10–20 s has an overlay up but nothing new for 10 s.
+    expect(found('---\ntokens:\n  pace: { beat_every_s: 9, bare_talk_max_s: 9, scenes_per_min: 1 }\n---\n')).toEqual([
+      ['bare-talk', [0, 10]], ['scene-count', [0, 120]], ['sparse-beats', [10, 20]], ['bare-talk', [24, 64]], ['sparse-beats', [64, 120]],
+    ])
+    // A pace never loosens the craft table.
+    expect(found('---\ntokens:\n  pace: { beat_every_s: 600, bare_talk_max_s: 600 }\n---\n')).toEqual(found())
+  })
+
   it('asks a scene of words alone for a picture', () => {
     const MOTIFS: Record<string, unknown> = {
       headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },

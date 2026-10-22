@@ -12,7 +12,7 @@
 // that is wrong costs the agent a round, a missed one costs nothing new.
 
 import { createHash } from 'node:crypto'
-import { captionLimits, craftRule, styleThreshold, type CraftSeverity } from '../../shared/craft'
+import { captionLimits, craftRule, paceThreshold, type CraftSeverity } from '../../shared/craft'
 import type { Animated, Composition, CompositionRefParams, Layer, MotifParams, Project, Rgba, TextParams, VideoClipParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
 import type { MotifLookup, TasteView } from '../taste/view'
@@ -247,10 +247,21 @@ function isPicture(l: Layer, motif: MotifLookup): boolean {
   return roleOf(l) === 'illustration' || m?.graphic_role === 'illustration' || Object.values(m?.props_schema ?? {}).some((s) => s.type === 'media')
 }
 
+/** A Group's enabled visual layers, captions aside. */
+function visualLayers(c: Composition | undefined): Layer[] {
+  return (c?.tracks ?? []).filter((t) => t.role !== 'Caption').flatMap((t) => t.layers).filter((l) => l.enabled && l.params.kind !== 'Audio')
+}
+
+/** The A roll's extent, the cut's length. */
+function arollSpan(comp: Composition): [number, number] | null {
+  const aroll = comp.tracks.filter((t) => t.role === 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled)
+  return aroll.length ? [Math.min(...aroll.map((l) => l.t_start_us)), Math.max(...aroll.map((l) => l.t_end_us))] : null
+}
+
 /** The layer count of a scene Group made only of words, else 0. A Group of
  *  one layer is not a scene. */
 function allWords(c: Composition, motif: MotifLookup): number {
-  const visual = c.tracks.filter((t) => t.role !== 'Caption').flatMap((t) => t.layers).filter((l) => l.enabled && l.params.kind !== 'Audio')
+  const visual = visualLayers(c)
   if (visual.length < 2 || visual.some((l) => isPicture(l, motif))) return 0
   return visual.some((l) => shownTexts(l, motif).length > 0) ? visual.length : 0
 }
@@ -266,10 +277,9 @@ export function checkComposition(project: Project, compositionId: string, taste:
   const comp = project.compositions[compositionId]
   if (!comp) throw new Error(`no composition ${compositionId}`)
   const findings: Finding[] = []
-  const floors = taste?.tokens.floors ?? {}
   const captions = captionLimits(taste?.tokens)
   const scale = comp.height / REF_HEIGHT
-  const limit = (id: string): number => styleThreshold(id, floors[id])
+  const limit = (id: string): number => paceThreshold(id, taste?.tokens)
   type At = { l: Layer; at: Place }
   // A finding's range is in the audited composition's time; one about a layer
   // inside a Group says so.
@@ -283,6 +293,8 @@ export function checkComposition(project: Project, compositionId: string, taste:
   const known = new Set<string>(taste ? taste.roles.map((r) => r.name) : BUILTIN_GRAPHIC_ROLES)
   const byRole = new Map<string, Array<At & { p: TextParams }>>()
   const overlays: At[] = []
+  // When something new arrives on screen, in the audited composition's time.
+  const arrivals: number[] = []
   const cues: Array<{ span: [number, number]; text: string }> = []
   // Titles and lower thirds are held long enough to read, whatever draws them.
   const hold = (x: At, role: string | null, dur: number) => {
@@ -303,6 +315,8 @@ export function checkComposition(project: Project, compositionId: string, taste:
         // Inside a Group, only what its window shows.
         if (window && (l.t_end_us <= window[0] || l.t_start_us >= window[1])) continue
         const x: At = { l, at }
+        if (!isCaption && l.params.kind !== 'Audio' && !(c === comp && track.role === 'ARoll'))
+          arrivals.push((window && l.t_start_us < window[0] ? window[0] : l.t_start_us) + at.offsetUs)
         const dur = (l.t_end_us - l.t_start_us) / 1e6
         const role = roleOf(l)
         if (role !== null && !known.has(role))
@@ -407,11 +421,37 @@ export function checkComposition(project: Project, compositionId: string, taste:
     i = j + 1
   }
   const maxBare = limit('bare-talk')
+  const bareFound: Array<[number, number]> = []
   for (const [a, b] of bareStretches(comp)) {
     if ((b - a) / 1e6 <= maxBare + 1e-3) continue
+    bareFound.push([a, b])
     const clips = comp.tracks.filter((t) => t.role === 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled && l.t_start_us < b && l.t_end_us > a)
     findings.push({ severity: craftRule('bare-talk').severity, rule: 'bare-talk', range: [a, b], layers: clips.map((l) => l.id),
       message: `${seconds(b - a)} s with nothing on screen but the speaker`, fix: 'give its key points overlays that add to them, or cover the passage with a scene' })
+  }
+
+  // Pace: how often something new arrives, and how many scenes the cut has.
+  const span = arollSpan(comp)
+  if (span) {
+    const maxGap = limit('sparse-beats')
+    const points = [span[0], ...arrivals.filter((t) => t > span[0] && t < span[1]).sort((a, b) => a - b), span[1]]
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1]!, b = points[i]!
+      if ((b - a) / 1e6 <= maxGap + 1e-3) continue
+      // A stretch already reported as bare talk is not reported twice.
+      if (bareFound.some(([x, y]) => Math.min(y, b) - Math.max(x, a) >= 0.8 * (b - a))) continue
+      findings.push({ severity: craftRule('sparse-beats').severity, rule: 'sparse-beats', range: [a, b], layers: [],
+        message: `${seconds(b - a)} s with nothing new arriving on screen, over ${maxGap} s`, fix: 'give a key point in it an overlay, bring in a scene element or an insert, or start a scene' })
+    }
+    const rate = limit('scene-count')
+    const minutes = (span[1] - span[0]) / 60e6
+    const need = Math.floor(rate * minutes + 1e-9)
+    const scenes = comp.tracks.filter((t) => t.role !== 'Caption').flatMap((t) => t.layers)
+      .filter((l) => l.enabled && l.params.kind === 'CompositionRef' && visualLayers(project.compositions[l.params.composition]).length >= 2)
+    if (scenes.length < need)
+      findings.push({ severity: craftRule('scene-count').severity, rule: 'scene-count', range: span, layers: scenes.map((l) => l.id),
+        message: `${scenes.length} scene${scenes.length === 1 ? '' : 's'} in ${minutes.toFixed(1)} min of cut, under the ${need} the pace asks (${rate} per min)`,
+        fix: 'turn a concept passage into a full-frame scene Group: a plate, a picture and its labels' })
   }
 
   for (const [role, list] of byRole) {

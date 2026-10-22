@@ -51,6 +51,17 @@ Read `craft/editing.md` first. Then:
       file and `import_media` it;
    4. otherwise a drawing: fork the style's sticker and replace its SVG.
 
+**Meet the pace.** `project://taste` → `tokens.pace` says how dense the
+edit is:
+- `beat_every_s`: something new arrives on screen at least this often;
+- `bare_talk_max_s`: at most this long with only the speaker on screen;
+- `scenes_per_min`: this many scenes per minute of cut.
+
+Count your beat list against it before asking for the go-ahead; the audit
+checks the same numbers. A pace the user asks for in words counts the same:
+follow it, and suggest they write it into TASTE.md so it holds next time.
+Without a pace, the counts below are the default.
+
 A plan usually has:
 - **Title**: in the first seconds, over the speaker in the top third, or as
   a card. At least 3 s.
@@ -124,6 +135,9 @@ Run `check_composition` and settle what it finds.
   `restyle_to_taste` unless the departure is meant.
 - An `overlay-echoes-speech` finding means an overlay repeats the line being
   said. Replace its text with what the speech leaves out, or drop it.
+- A `sparse-beats` or `scene-count` finding means the edit is thinner than
+  its pace: add overlays where the talk makes a point, or turn a concept
+  passage into a scene.
 - A `bare-jump-cuts` or `bare-talk` finding means the passage plays as plain
   talking head with stutters. Cover it with a scene or an insert, punch in on
   alternate clips, or give its key point an overlay.

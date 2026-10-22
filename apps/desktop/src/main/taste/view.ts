@@ -117,6 +117,7 @@ function leaves(tokens: Tokens, source: TasteSource, into: Map<string, Leaf>) {
     for (const [k, v] of Object.entries(block)) into.set(`text.${role}.${k}`, { value: v, source })
   for (const [k, v] of Object.entries(tokens.caption ?? {})) into.set(`caption.${k}`, { value: v, source })
   for (const [rule, n] of Object.entries(tokens.floors ?? {})) into.set(`floors.${rule}`, { value: n, source })
+  for (const [key, n] of Object.entries(tokens.pace ?? {})) into.set(`pace.${key}`, { value: n, source })
   for (const [key, v] of Object.entries(tokens.motif ?? {})) into.set(`motif.${key}`, { value: v, source })
   // A slot's list is replaced whole: a TASTE that names one face means that face.
   for (const [slot, list] of Object.entries(tokens.fonts ?? {})) into.set(`fonts.${slot}`, { value: list, source })

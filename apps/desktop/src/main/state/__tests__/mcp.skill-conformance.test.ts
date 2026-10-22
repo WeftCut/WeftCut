@@ -99,6 +99,8 @@ const KNOWN_NON_TOOLS = new Set([
   'duration_s', 'exit',
   // The `media` prop variant and its frame time (ADR 0132).
   'media', 't_us',
+  // TASTE.md pace tokens (`tokens.pace`), named in the recipe and craft/rules.md.
+  'beat_every_s', 'bare_talk_max_s', 'scenes_per_min',
   // SKILL.md — Text entrance/exit patch fields
   'intro', 'outro',
   // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields

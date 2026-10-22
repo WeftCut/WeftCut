@@ -63,6 +63,10 @@
 //                        null (measured only) without a threshold
 //   bare_talk            { max_s? }            longest stretch with nothing on screen but
 //                        the A roll (captions aside); pass null without a threshold
+//   beat_gaps            { max_s? }            longest time between new arrivals on
+//                        screen (layer starts off the A roll and captions, a
+//                        scene's elements included) over the A roll's span; pass
+//                        null without a threshold
 //   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
 //                        visual layers inside) that hold a picture: footage, an
 //                        image, a nested Group, or a Motif tagged illustration or
@@ -83,7 +87,7 @@ export const BUILTIN_MOTIF_IDS = Object.freeze([
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
-  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'scene_pictures', 'layer_region', 'all_of', 'any_of', 'human',
+  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'beat_gaps', 'scene_pictures', 'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -372,6 +376,28 @@ const KINDS = {
     }
     const pass = check.max_s === undefined ? null : longest <= check.max_s * US
     return { pass, detail: `longest stretch with nothing but the A roll: ${s(longest)} s from ${s(at)} s` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
+  },
+
+  beat_gaps(check, root, project) {
+    const aroll = select(root, {}).filter(({ track, layer }) => track.role === 'ARoll' && layer.params?.kind !== 'Audio').map((e) => e.layer)
+    if (!aroll.length) return { pass: null, detail: 'no A roll' }
+    const a0 = Math.min(...aroll.map((l) => l.t_start_us)), a1 = Math.max(...aroll.map((l) => l.t_end_us))
+    const arrivals = []
+    for (const { track, layer } of select(root, {})) {
+      if (isCaptionTrack(track) || track.role === 'ARoll' || layer.params?.kind === 'Audio') continue
+      arrivals.push(layer.t_start_us)
+      if (layer.params?.kind !== 'CompositionRef') continue
+      // A scene's elements arrive too, mapped through the Group's window.
+      const child = project.compositions?.[layer.params.composition]
+      const w0 = layer.params.src_in_us ?? 0, w1 = w0 + (layer.t_end_us - layer.t_start_us)
+      for (const t of child?.tracks ?? []) for (const l of t.layers)
+        if (!isCaptionTrack(t) && l.enabled !== false && l.params?.kind !== 'Audio' && l.t_start_us > w0 && l.t_start_us < w1) arrivals.push(layer.t_start_us + l.t_start_us - w0)
+    }
+    const points = [a0, ...arrivals.filter((t) => t > a0 && t < a1).sort((x, y) => x - y), a1]
+    let longest = 0, at = a0
+    for (let i = 1; i < points.length; i++) if (points[i] - points[i - 1] > longest) { longest = points[i] - points[i - 1]; at = points[i - 1] }
+    const pass = check.max_s === undefined ? null : longest <= check.max_s * US
+    return { pass, detail: `longest wait for something new on screen: ${s(longest)} s from ${s(at)} s, ${arrivals.length} arrival(s)` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
   },
 
   scene_pictures(check, root, project) {
