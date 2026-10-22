@@ -221,4 +221,4 @@ export function routeChannel(channel: string): Route {
   return { kind: 'reject', reason: 'unclassified channel — classify in router.ts' }
 }
 
-export const EXPORT_JOB_CHANNELS: ReadonlySet<string> = new Set(["export_job_start","export_job_session","export_job_ready","export_job_detaching","export_job_update","export_job_publish","export_job_status","export_job_cancel","export_job_retry","export_job_path_exists","export_job_suggest_name","project_open_state","project_startup_open"]);
+export const EXPORT_JOB_CHANNELS: ReadonlySet<string> = new Set(["export_job_start","export_job_session","export_job_ready","export_job_detaching","export_job_update","export_job_publish","export_job_stills","export_job_status","export_job_cancel","export_job_retry","export_job_path_exists","export_job_suggest_name","project_open_state","project_startup_open"]);

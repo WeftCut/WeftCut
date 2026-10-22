@@ -124,6 +124,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const tenBit = req.bitDepth === 10;
   const sinkFmt = req.nativeSink?.pixFmt ?? null;
   const nativeSink = sinkFmt !== null;
+  // Stills: render as export does, then hand each frame back as a JPEG.
+  const stills = !nativeSink ? req.stills ?? null : null;
 
   // Register bundled fonts into the Worker's font set BEFORE the renderer
   // initializes. OffscreenCanvas has no system-font fallback chain, so
@@ -278,7 +280,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // 4. Encoder pipeline. Dims/fps come from the encoder config + output fps.
   // For the native-sink path, encoding rides the Rust ffmpeg sink (pack +
   // IPC write), so the WebCodecs EncoderSink is not created.
-  const encoder = nativeSink
+  const encoder = nativeSink || stills
     ? null
     : new EncoderSink({
         config: req.encoderConfig,
@@ -331,9 +333,13 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // Reusable downscale target — allocated once, drawn into per frame.
   // Not used on the native-sink path: the pack shaders (PackYuv420p10 /
   // PackYuvPlanar) sample the composite at output dims directly.
-  const scaleCanvas = !nativeSink && needsScale
+  const scaleCanvas = !nativeSink && !stills && needsScale
     ? new OffscreenCanvas(outWidth, outHeight)
     : null;
+  const stillWidth = stills ? Math.max(16, Math.min(req.project.width, Math.round(stills.width))) : 0;
+  const stillHeight = stills ? Math.max(16, Math.round((req.project.height * stillWidth) / req.project.width)) : 0;
+  const stillCanvas = stills ? new OffscreenCanvas(stillWidth, stillHeight) : null;
+  const stillCtx = stillCanvas ? stillCanvas.getContext("2d", { alpha: false }) : null;
   const scaleCtx = scaleCanvas
     ? scaleCanvas.getContext("2d", { alpha: false })
     : null;
@@ -537,6 +543,16 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
               inflightAck = postChunk(bytes);
               encodeMs += performance.now() - encT0;
             }
+          } else if (stills) {
+            // Stills: the same composite, scaled down and posted as a JPEG.
+            app.render();
+            compositeMs += performance.now() - compT0;
+            const capT0 = performance.now();
+            stillCtx!.drawImage(req.canvas as unknown as CanvasImageSource, 0, 0, stillWidth, stillHeight);
+            const blob = await stillCanvas!.convertToBlob({ type: "image/jpeg", quality: stills.quality });
+            const jpeg = await blob.arrayBuffer();
+            post({ type: "still", index: i, tUs, width: stillWidth, height: stillHeight, jpeg }, [jpeg]);
+            captureMs += performance.now() - capT0;
           } else {
             // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
             // push to the WebCodecs EncoderSink.
@@ -600,8 +616,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           post({ type: "progress", framesEncoded: i + 1, totalFrames });
         }
         const qT0 = performance.now();
-        if (!nativeSink) {
-          await encoder!.awaitQueueBelow(8);
+        if (encoder) {
+          await encoder.awaitQueueBelow(8);
         }
         queueWaitMs += performance.now() - qT0;
       }
@@ -686,8 +702,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // main thread calls exportVideoSinkFinish after receiving `done`.
     // WebCodecs: flush the encoder and finalize the mediabunny mux (flushes
     // trailing fMP4 fragments through the same onChunk path).
-    if (!nativeSink) {
-      await encoder!.finalize();
+    if (encoder) {
+      await encoder.finalize();
     }
     post({ type: "progress", framesEncoded: totalFrames, totalFrames });
 
