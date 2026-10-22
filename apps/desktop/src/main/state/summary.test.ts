@@ -356,3 +356,13 @@ describe('buildProjectSummary carries every composition', () => {
     expect(Object.values(s.compositions).map((c) => c.fps_locked)).toEqual([true, true])
   })
 })
+
+describe('Motif view media_keys', () => {
+  it('names the picture each media prop resolves to, and is absent without one', async () => {
+    const { motifLayerParams } = await import('./mutations/motif')
+    const pool = { img: { kind: 'Image', file_hash_blake3: 'h1' }, vid: { kind: 'Video', file_hash_blake3: 'h2' } } as unknown as Parameters<typeof layerParamsView>[1]
+    const view = (props: Record<string, unknown>) => layerParamsView(motifLayerParams('clipping-sticker', 1, props, [600, 600], null), pool) as { media_keys?: Record<string, string> }
+    expect(view({ photo: 'img', back: 'vid@40000', label: 'hi' }).media_keys).toEqual({ photo: 'h1', back: 'h2@40000' })
+    expect(view({ photo: '', label: 'gone' })).not.toHaveProperty('media_keys')
+  })
+})

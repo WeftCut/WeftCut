@@ -24,6 +24,12 @@
       "spec": { "type": "enum", "default": "a", "options": ["a", "b", "c"] },
       "valid": ["b", "c"],
       "invalid": ["x"]
+    },
+    {
+      "type": "media",
+      "spec": { "type": "media", "default": "" },
+      "valid": ["01a16264-9ec6-7eb3-9edc-f39041803cf5", "01a16264-9ec6-7eb3-9edc-f39041803cf5@1200000"],
+      "invalid": ["../etc/passwd", "01a16264@-5", "01a16264@1.5", 5, null, "a b"]
     }
   ]
 }

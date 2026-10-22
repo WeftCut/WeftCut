@@ -2290,6 +2290,9 @@ const zhCN: Resources = {
     vertical: "垂直",
     fades: "淡入与淡出",
     motif_management: "管理 Motif",
+    // A Motif `media` prop: pick a pool image, or a video and the frame to take.
+    motif_media_none: "无图片",
+    motif_media_frame_at: "取帧时间（秒）",
     text_layout: "文本框与间距",
     text_outline: "描边",
     advanced: "高级",

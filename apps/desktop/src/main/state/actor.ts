@@ -51,6 +51,7 @@ import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
+import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, parseGraphicRoleOpt, GRAPHIC_ROLE_VIDEO_REFUSAL, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
@@ -1771,6 +1772,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           let canonicalProps: Record<string, unknown>
           try {
             canonicalProps = canonicalizeProps(manifest, styledMotifProps(manifest, wireArgs.props))
+            const media = mediaPropProblem(manifest.props_schema, canonicalProps, current().media_pool)
+            if (media) throw new MotifPropError(media)
           } catch (err) {
             if (err instanceof MotifPropError) return { ok: false, error: { error: 'InvalidArgument', field: 'props', detail: `invalid props: ${err.detail}` } }
             throw err
@@ -2388,6 +2391,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           let canonicalProps: Record<string, unknown>
           try {
             canonicalProps = canonicalizeProps(manifest, styledMotifProps(manifest, p.props))
+            const media = mediaPropProblem(manifest.props_schema, canonicalProps, current().media_pool)
+            if (media) throw new MotifPropError(media)
           } catch (err) {
             if (err instanceof MotifPropError) return { ok: false, error: { code: 'invalid_params', message: `invalid props: ${err.detail}` } }
             throw err

@@ -4,6 +4,7 @@ import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors.js'
+import { resolveMotifMediaProps } from './mediaProps.js'
 import type { UserMotifStore } from './store.js'
 
 export interface CaptureArgs {
@@ -349,7 +350,8 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>, fen
     throw e
   }
   const manifest = manifestFor(a)
-  const props = JSON.parse(a.propsJson) as Record<string, unknown>
+  // A `media` prop becomes a URL on the Motif's origin before setup sees it.
+  const props = await resolveMotifMediaProps(a.motifId, manifest, JSON.parse(a.propsJson) as Record<string, unknown>)
   const duration = manifest ? motifCtxDurationS(manifest, props) : 5
   // meta.fps must be the rate the caller computed tSec on (the composition's
   // fps) — a Motif reading it (or ctx.frame = round(t*fps)) renders wrong when

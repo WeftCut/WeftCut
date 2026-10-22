@@ -2537,6 +2537,9 @@ const enUS = {
     vertical: "Vertical",
     fades: "Fade in & out",
     motif_management: "Manage Motif",
+    // A Motif `media` prop: pick a pool image, or a video and the frame to take.
+    motif_media_none: "No picture",
+    motif_media_frame_at: "Frame at (s)",
     text_layout: "Text box & spacing",
     text_outline: "Outline",
     advanced: "Advanced",

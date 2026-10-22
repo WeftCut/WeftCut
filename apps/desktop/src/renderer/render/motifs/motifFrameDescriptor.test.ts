@@ -154,3 +154,12 @@ describe("motifFrameDescriptor preview overlay", () => {
     expect(d.contentDurationUs).toBe(3_000_000);
   });
 });
+
+describe('motifFrameCacheKey media keys', () => {
+  it('leave a key without pictures as it was, and change with the picture', async () => {
+    const { motifFrameCacheKey } = await import('./motifFrames')
+    const base = { motifId: 'm', version: 1, canonicalProps: { photo: 'img' }, renderW: 10, renderH: 10, fpsNum: 25, fpsDen: 1, durationFrames: 5 }
+    expect(motifFrameCacheKey(base)).not.toContain('h1')
+    expect(motifFrameCacheKey({ ...base, mediaKeys: { photo: 'h1' } })).not.toBe(motifFrameCacheKey({ ...base, mediaKeys: { photo: 'h2' } }))
+  })
+})

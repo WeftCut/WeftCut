@@ -17,6 +17,7 @@ import { positionTrack, setPositionTrack } from '../../../shared/position'
 import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
+import { mediaPropProblem } from '../../../shared/motifs/mediaProp'
 import { graphicRoleProblem } from '../../../shared/graphicRole'
 
 /** Internally-tagged ("kind") param patch. Every field optional bar kind;
@@ -439,6 +440,8 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
       if (manifest !== undefined) {
         try {
           const canonical = canonicalizeProps(manifest, rebinds ? (patch.props ?? {}) : { ...layer.params.props, ...patch.props })
+          const media = mediaPropProblem(manifest.props_schema, canonical, p.media_pool)
+          if (media) throw new MotifPropError(media)
           if (rebinds) patch = { ...patch, props: canonical, motif_version: patch.motif_version ?? manifest.version }
         } catch (e) {
           if (e instanceof MotifPropError) throw new CommandFailure({ error: 'InvalidArgument', field: 'props', detail: `${e.detail} — list_motifs reports this motif's props_schema` })

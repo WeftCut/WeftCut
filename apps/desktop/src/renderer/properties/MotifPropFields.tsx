@@ -10,7 +10,10 @@ import { AppColorField } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
+import { useTranslation } from "react-i18next";
 import type { PropSpec } from "../render/motifs/catalog";
+import { formatMediaRef, parseMediaRef } from "../../shared/motifs/mediaProp";
+import { useProjectStore } from "../state/projectStore";
 import { Field } from "./Field";
 
 /// The two commit models the fallback form serves — parameterized, not
@@ -143,6 +146,16 @@ export function MotifPropField({
         <Field label={label}>{select}</Field>
       ) : (
         <PickerField label={label}>{select}</PickerField>
+      );
+    }
+    case "media": {
+      // A pick or a frame time = one re-capture, like an enum.
+      const pick = commit.mode === "commit" ? commit.onCommit : commit.onChange;
+      const field = <MediaPropField label={label} value={value} onPick={pick} />;
+      return commit.mode === "commit" ? (
+        <Field label={label}>{field}</Field>
+      ) : (
+        <PickerField label={label} bare>{field}</PickerField>
       );
     }
     default: {
@@ -358,5 +371,51 @@ export function NumberPropField({
         onBlur={() => { focused.current = false; }}
       />
     </Field>
+  );
+}
+
+/// A `media` prop: a picture from the pool. An image is used as it is; a video
+/// gives one frame, at the time set below the list (`shared/motifs/mediaProp.ts`).
+function MediaPropField({
+  label,
+  value,
+  onPick,
+}: {
+  label: string;
+  value: unknown;
+  onPick: (next: string) => void;
+}) {
+  const { t } = useTranslation();
+  const media = useProjectStore((s) => s.summary?.media);
+  const ref = parseMediaRef(value);
+  const picked = ref ? media?.find((m) => m.id === ref.media_id) : undefined;
+  const options = [
+    { value: "", label: t("property_panel.motif_media_none") },
+    ...(media ?? [])
+      .filter((m) => m.kind === "Image" || m.kind === "Video")
+      .map((m) => ({ value: m.id, label: m.label })),
+  ];
+  return (
+    <>
+      <AppSelect
+        value={ref?.media_id ?? ""}
+        ariaLabel={label}
+        onValueChange={(id) => {
+          const kind = media?.find((m) => m.id === id)?.kind;
+          onPick(id === "" ? "" : formatMediaRef({ media_id: id, t_us: kind === "Video" ? 0 : null }));
+        }}
+        options={options}
+      />
+      {picked?.kind === "Video" && ref ? (
+        <AppNumberField
+          value={(ref.t_us ?? 0) / 1e6}
+          step={0.1}
+          min={0}
+          {...(picked.duration_us != null ? { max: picked.duration_us / 1e6 } : {})}
+          ariaLabel={t("property_panel.motif_media_frame_at")}
+          onValueChange={(sec) => onPick(formatMediaRef({ media_id: ref.media_id, t_us: sec * 1e6 }))}
+        />
+      ) : null}
+    </>
   );
 }
