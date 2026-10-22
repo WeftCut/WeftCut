@@ -306,4 +306,24 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     const bare = checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-talk')
     expect(bare.map((f) => f.range)).toEqual([[0, 40 * S], [44 * S, 90 * S]])
   })
+  it('asks a scene of words alone for a picture', () => {
+    const MOTIFS: Record<string, unknown> = {
+      headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },
+      sticker: { size: [900, 760], graphic_role: 'illustration', props_schema: { photo: { type: 'media', default: '' } } },
+    }
+    const motifs = (id: string) => (MOTIFS[id] ?? null) as never
+    const { p, inner, cid } = grouped(960, 540, 10)
+    ;(inner.params as { props: Record<string, unknown> }).props = { text: 'HIPPOCAMPUS' }
+    const scene = p.compositions[cid]!
+    const second: Layer = { ...structuredClone(inner), id: 'tag' }
+    scene.tracks[1]!.layers.push(second)
+    const asks = () => checkComposition(p, p.root_id, null, undefined, { motif: motifs }).findings.filter((f) => f.rule === 'scene-all-words')
+    expect(asks().map((f) => [f.severity, f.message])).toEqual([['review', 'scene of 2 layers shows only words: no photo, still or drawing']])
+    // A sticker, even one drawing its own art, is a picture.
+    second.params = { ...second.params, motif_id: 'sticker', props: {} } as LayerParams
+    expect(asks()).toEqual([])
+    // Without Motif manifests, nothing is judged.
+    second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' } } as LayerParams
+    expect(checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'scene-all-words')).toEqual([])
+  })
 })

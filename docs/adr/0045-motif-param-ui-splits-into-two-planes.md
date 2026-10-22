@@ -8,6 +8,11 @@ The exclusion of parameter resource bytes from the render hash is revised by
 [ADR 0079](0079-motifs-bundle-local-resources-and-hash-the-package.md). The schema
 and parameter-page protocol remain unchanged.
 
+"No fifth variant" is revised by
+[ADR 0132](0132-a-motif-may-show-a-still-from-the-media-pool.md): `media` names a
+picture in the project's pool. It is data, not presentation, so the schema is
+still a data plane.
+
 ## Context
 
 A Motif's parameter panel was generated entirely by the host from the manifest's

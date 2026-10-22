@@ -67,6 +67,8 @@ async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.l
 // One element: a picture pasted on as a paper cut-out. `photo` is a `media`
 // prop, a pool image or a video frame that arrives as a URL; without one the
 // Motif draws its own art.svg, so a fork can swap in a drawing of its own.
+// `crop_*` trim each side by a fraction of the picture: the slide behind a
+// speaker, not the whole frame.
 const BOX_W=700, BOX_H=560, BORDER=18;
 let els={}, P={};
 function loadImage(src){ return new Promise((resolve)=>{ const i=new Image(); i.onload=()=>resolve(i); i.onerror=()=>resolve(null); i.src=src; }); }
@@ -76,7 +78,9 @@ motif.define({
     let img=props.photo?await loadImage(props.photo):null;
     if(!img) img=await loadImage('art.svg');
     if(img&&img.decode) await img.decode().catch(()=>{});
-    const nw=img?img.naturalWidth||600:600, nh=img?img.naturalHeight||480:480;
+    const iw=img?img.naturalWidth||600:600, ih=img?img.naturalHeight||480:480;
+    const cl=props.crop_left, ct=props.crop_top, cw=Math.max(0.05,1-cl-props.crop_right), ch=Math.max(0.05,1-ct-props.crop_bottom);
+    const nw=iw*cw, nh=ih*ch;
     // Fit the picture to the box, keeping its shape.
     const k=Math.min(BOX_W/nw, BOX_H/nh), w=Math.round(nw*k), h=Math.round(nh*k);
     const W=w+BORDER*2, H=h+BORDER*2, x0=Math.round((900-W)/2), y0=Math.round((760-H)/2+12);
@@ -84,7 +88,11 @@ motif.define({
     Object.assign(card.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
     const r=rng(seedOf(String(props.photo)+w+'x'+h));
     if(props.frame!=='none') card.innerHTML=paperSvg(W,H,props.paper,r,props.frame==='torn');
-    if(img){ img.id='pic'; Object.assign(img.style,{left:BORDER+'px',top:BORDER+'px',width:w+'px',height:h+'px'}); card.appendChild(img); }
+    if(img){
+      const win=document.createElement('div'); Object.assign(win.style,{position:'absolute',left:BORDER+'px',top:BORDER+'px',width:w+'px',height:h+'px',overflow:'hidden'});
+      img.id='pic'; Object.assign(img.style,{left:(-cl*iw*k)+'px',top:(-ct*ih*k)+'px',width:(iw*k)+'px',height:(ih*k)+'px'});
+      win.appendChild(img); card.appendChild(win);
+    }
     root.appendChild(card);
     let t1=null;
     if(props.frame!=='none'){ t1=tape(150,48); Object.assign(t1.style,{left:(x0+W/2-75)+'px',top:(y0-22)+'px'}); root.appendChild(t1); }

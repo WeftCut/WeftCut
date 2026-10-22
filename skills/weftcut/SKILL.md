@@ -97,7 +97,7 @@ concerns and is named in your report — never retried silently.
 
 **Style.** The project's style is `project://taste`: its tokens are already
 the defaults new text and transcript captions take. Tag what you create with a
-`graphic_role` — title, lower_third, callout, credit, logo, plate — rather than
+`graphic_role` — title, lower_third, callout, credit, logo, plate, illustration — rather than
 styling it by hand; the role is what gives it the style's look and its
 entrance. A role outside those must be declared in the project's TASTE.md.
 After hand edits, `restyle_to_taste` puts layers back to the style.
@@ -230,7 +230,9 @@ One Motif draws one element, or one interaction of elements that move because
 of each other. For overlay work with more than one element, plan the layers
 before writing code. A concept scene is a Group of a plate, one layer per
 independent element, and at most a few interaction Motifs (*Scope* in
-`motif-authoring.md`).
+`motif-authoring.md`). A Motif shows a still from the media pool through a
+`media` prop (`"<media_id>"`, or `"<media_id>@<t_us>"` for a video frame);
+moving footage stays a video layer.
 
 1. Prefer a self-contained folder inside your working directory (for example
    motifs/<name>/) with index.html, manifest.json and companion code/assets,

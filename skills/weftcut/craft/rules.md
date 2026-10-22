@@ -21,6 +21,7 @@ loosens it; caption tokens (`max_chars_per_line`, `max_lines`,
 | `overlay-echoes-speech` | warning | — | An overlay shows what the speech does not: it never repeats the words said while it is up. | Every H2 run put the line being spoken on a quote card, over a caption of the same line: the same words three times. |
 | `bare-jump-cuts` | warning | ≤ 2 cuts | At most 2 uncovered jump cuts in a row (cuts under 10 s apart); a scene, an insert or a punch-in covers the rest. | After removing pauses, 95–100 % of 26–78 jump cuts per H2/H3 run were left bare, even when the plan said to punch in. |
 | `bare-talk` | warning | ≤ 30 s | No stretch over 30 s with nothing on screen but the speaker. | Every H2/H3 run left a 59–75 s stretch of plain talking head. |
+| `scene-all-words` | review | — | A scene shows its idea in a picture (a photo, a still from the footage, a drawing), and words label it. | The first example scene was all words on paper (headlines, tags and reveals): it read as a slide, not an explanation. |
 | `caption-line-length` | warning | ≤ 42 chars | A caption line holds at most 42 characters. | Transcription cues of 68–80 characters were laid down unbroken. |
 | `caption-lines` | warning | ≤ 2 lines | A caption cue has at most 2 lines. | More lines cover the picture and cannot be read in the cue's time. |
 | `caption-cue-min` | warning | ≥ 1.2 s | A caption cue stays on screen at least 1.2 s. | Agents left 0.4 s cues that flash past. |

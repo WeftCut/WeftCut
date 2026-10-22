@@ -31,7 +31,7 @@ describe('the built-in default style', () => {
     expect(v.tokens.text?.none).toMatchObject({ family: null, size_px: 72, weight: 400, color: 'ink', outline: null, intro: null })
     expect(v.tokens.caption).toMatchObject({ size_px: 54, max_chars_per_line: 42, max_lines: 2 })
     expect(v.provenance['text.title.size_px']).toBe('style')
-    expect(v.roles.map((r) => r.name)).toEqual(['title', 'lower_third', 'callout', 'credit', 'logo', 'plate', 'none'])
+    expect(v.roles.map((r) => r.name)).toEqual(['title', 'lower_third', 'callout', 'credit', 'logo', 'plate', 'illustration', 'none'])
   })
 })
 
@@ -128,12 +128,12 @@ describe('user style packages', () => {
 })
 
 describe('the built-in clipping style', () => {
-  it('validates against the built-in catalog with no diagnostics and draws four roles with its Motifs', () => {
+  it('validates against the built-in catalog with no diagnostics and draws five roles with its Motifs', () => {
     const v = tasteView(dirs(), project('---\nextends: clipping\n---\n'), { motif: (id) => BUILTIN_MANIFESTS.get(id) ?? null, fonts: new Set(['impact', 'microsoft yahei', 'georgia', 'simsun', 'consolas']) })
     expect(v.diagnostics).toEqual([])
     expect(v.style).toMatchObject({ name: 'clipping', origin: 'builtin' })
     expect(Object.fromEntries(Object.entries(v.motifs).map(([r, m]) => [r, m.ids]))).toEqual({
-      title: ['clipping-headline'], lower_third: ['clipping-stamp'], callout: ['clipping-quote', 'clipping-pointer', 'clipping-reveal'], plate: ['clipping-paper'] })
+      title: ['clipping-headline'], lower_third: ['clipping-stamp'], callout: ['clipping-quote', 'clipping-pointer', 'clipping-reveal'], plate: ['clipping-paper'], illustration: ['clipping-sticker'] })
     expect(v.fonts?.headline).toMatchObject({ resolved: 'Impact', missing: ['Anton', 'Bebas Neue', 'Arial Black', 'Noto Sans SC Black'] })
     expect(v.tokens.caption).toMatchObject({ max_chars_per_line: 42, max_lines: 2 })
   })

@@ -33,10 +33,11 @@ and a leader line tied to a moving object. An interaction Motif:
 
 Anything that enters, holds and leaves on its own is still its own layer.
 
-- **The user's media stays outside.** A Motif cannot show the user's footage
-  or photos: project media is blocked in the capture host. Anything that shows
-  project media is a WeftCut video or image layer, and Motifs decorate or
-  annotate it from the layers above.
+- **No moving footage inside a Motif.** A Motif may show one still picture
+  from the project's media through a `media` prop: an image, or one frame of
+  a video. Moving footage is a WeftCut video layer, and Motifs decorate or
+  annotate it from the layers above. A video sticker is a Group of the video
+  layer and a frame Motif.
 - **Plan the layers before writing code.** Overlay work with more than one
   element starts with a layer plan: for each layer, its kind (video, image,
   text or Motif), what it is for, and its in and out times on the timeline.
@@ -146,7 +147,7 @@ animation — deleting it breaks seeking back to earlier times.
   and positive (as must every duration field).
 - **`graphic_role`** — optional: what a placed layer of this Motif is for, the
   role a style's tokens attach to. One of the built-ins (title, lower_third,
-  callout, credit, logo, plate, none) or a custom lowercase name: a letter,
+  callout, credit, logo, plate, illustration, none) or a custom lowercase name: a letter,
   then up to 31 letters, digits or underscores (anything else fails
   validation). A placed layer takes it unless the placing call names its own;
   absent means untagged.
@@ -175,8 +176,8 @@ capture, and trimming the layer never invalidates cached frames.
 
 ### `props_schema`
 
-Exactly four variants exist — this vocabulary is frozen. Each prop MUST carry a
-`default` that satisfies its own constraints.
+Exactly five variants exist. Each prop MUST carry a `default` that satisfies
+its own constraints.
 
 | Variant | Constraints |
 |---|---|
@@ -184,6 +185,14 @@ Exactly four variants exist — this vocabulary is frozen. Each prop MUST carry 
 | `color` | hex string: `#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa` |
 | `number` | optional `min` / `max`, both **inclusive**; values must be finite |
 | `enum` | `options`: the exhaustive string list; `default` must be one of them |
+| `media` | `default` must be `""`. A value is `""`, `"<media_id>"` (a pool image) or `"<media_id>@<t_us>"` (one frame of a pool video, at source time `t_us`) |
+
+**A `media` prop arrives as a URL.** Before `setup`, the host replaces its
+value with a URL on the Motif's own origin that serves the picture, or with
+`""` when there is none. Load it with an `<img>` and `await img.decode()` in
+`setup`, and draw a fallback of your own for `""`. A video frame comes at the
+video's full size. Exported Motif packages carry no media: the picture belongs
+to the project, not the Motif.
 
 Validation is strict on keys and lenient on recovery: unknown prop keys reject,
 missing keys fall back to defaults, and values are canonicalized into a stable

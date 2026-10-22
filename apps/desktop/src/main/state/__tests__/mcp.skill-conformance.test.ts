@@ -97,6 +97,8 @@ const KNOWN_NON_TOOLS = new Set([
   'three', 'target', 'model', 'eval',
   // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0130)
   'duration_s', 'exit',
+  // The `media` prop variant and its frame time (ADR 0132).
+  'media', 't_us',
   // SKILL.md — Text entrance/exit patch fields
   'intro', 'outro',
   // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
