@@ -2182,7 +2182,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const snap = current()
           const compositionId = (p.composition_id as string | null) ?? snap.root_id
           if (!snap.compositions[compositionId]) return { ok: false, error: { code: 'invalid_params', message: `no composition ${compositionId}` } }
-          return { ok: true, result: toolRecord(checkComposition(snap, compositionId, null, (p.range as [number, number] | null) ?? undefined, { motifSize: (id) => motifCatalog.get(id)?.size ?? null }) as unknown as Record<string, unknown>) }
+          return { ok: true, result: toolRecord(checkComposition(snap, compositionId, null, (p.range as [number, number] | null) ?? undefined, { motif: (id) => motifCatalog.get(id) ?? null }) as unknown as Record<string, unknown>) }
         }
         case 'create_tacks': case 'update_tack': case 'delete_tacks': {
           mcpDef(name).parseDedicated!(a)

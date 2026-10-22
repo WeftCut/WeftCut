@@ -7,8 +7,8 @@
 // cleared when another project opens.
 
 import type { Project } from '../state/model'
-import type { TasteView } from '../taste/view'
-import { checkComposition, compositionRevision, type CheckResult, type Finding, type MotifSize } from './checkComposition'
+import type { MotifLookup, TasteView } from '../taste/view'
+import { checkComposition, compositionRevision, type CheckResult, type Finding } from './checkComposition'
 
 export type AuditState = 'fresh' | 'stale' | 'never'
 
@@ -25,9 +25,9 @@ export class AuditStore {
   private last = new Map<string, CheckResult>()
   private projectId: string | null = null
 
-  /** `motifSize` gives the audit Motif canvas sizes (built-in, installed and
-   *  drafts alike), so it can check where Motif layers sit. */
-  constructor(private readonly motifSize?: MotifSize) {}
+  /** `motif` gives the audit Motif manifests (built-in, installed and drafts
+   *  alike): where a Motif layer sits and what text it shows. */
+  constructor(private readonly motif?: MotifLookup) {}
 
   /** Forget everything when the project changes underneath. */
   private scope(p: Project) {
@@ -38,7 +38,7 @@ export class AuditStore {
    *  `range` (all of them without one). */
   run(p: Project, compositionId: string, taste: TasteView | null, range?: [number, number]): CheckResult {
     this.scope(p)
-    const full = checkComposition(p, compositionId, taste, undefined, { motifSize: this.motifSize })
+    const full = checkComposition(p, compositionId, taste, undefined, { motif: this.motif })
     this.last.set(compositionId, full)
     if (!range) return full
     const findings = full.findings.filter((f: Finding) => f.range[0] < range[1] && f.range[1] > range[0])

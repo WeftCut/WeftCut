@@ -138,6 +138,27 @@ describe('layer_count and selectors', () => {
     assert.equal(check({ kind: 'motif_layer_count', op: '==', n: 1, where: { motif_builtin: true } }, q).pass, true)
   })
 
+  it('counts jump cuts on the A roll and what covers them', () => {
+    const aroll = (layers) => track(layers, { role: 'ARoll' })
+    const punched = video(20, 30, 25); punched.params.transform.scale_x = stat(1.15); punched.params.transform.scale_y = stat(1.15)
+    const group = layer(8, 12, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 4 * S, transform: transform() })
+    const p = project([aroll([video(0, 5, 0), video(5, 10, 6), video(10, 20, 12), punched, video(30, 40, 40)]), track([group])])
+    const r = check({ kind: 'jump_cuts', max_uncovered_fraction: 0.5 }, p)
+    // Cuts at 5 (bare), 10 (the group), 20 (punch-in), 30 (punching back out is a scale change too).
+    assert.equal(r.pass, true)
+    assert.match(r.detail, /4 jump cut\(s\), 3 covered \(scene 1, punch-in 2\), 25% bare, want <= 50%; bare at 5s/)
+    assert.equal(check({ kind: 'jump_cuts' }, p).pass, null)
+    // A continuous source is no jump cut.
+    assert.match(check({ kind: 'jump_cuts' }, project([aroll([video(0, 5, 0), video(5, 10, 5)])])).detail, /no jump cuts/)
+  })
+
+  it('measures the longest stretch of bare A roll', () => {
+    const p = project([track([video(0, 60)], { role: 'ARoll' }), captionTrack([text(0, 60, 'all of it')]), track([motif(10, 14, 'callout-pin'), motif(40, 44, 'callout-pin')])])
+    const r = check({ kind: 'bare_talk', max_s: 20 }, p)
+    assert.equal(r.pass, false)
+    assert.match(r.detail, /26 s from 14 s/)
+  })
+
   it('supports every comparison op', () => {
     const n = (op, k) => check({ kind: 'layer_count', op, n: k, where: { layer_kind: 'Motif' } }, p).pass
     assert.deepEqual([n('>=', 2), n('<=', 2), n('==', 2), n('!=', 2), n('>', 1), n('<', 3)], [true, true, true, false, true, true])

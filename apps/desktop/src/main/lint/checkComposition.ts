@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto'
 import { captionLimits, craftRule, styleThreshold, type CraftSeverity } from '../../shared/craft'
 import type { Animated, Composition, Layer, MotifParams, Project, Rgba, TextParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
-import type { TasteView } from '../taste/view'
+import type { MotifLookup, TasteView } from '../taste/view'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
 import type { TextTokens } from '../taste/schema'
 import { motifTokenProps } from '../taste/motifProps'
@@ -86,9 +86,6 @@ function look(p: TextParams) {
   return { family: p.font.family, size_px: p.font.size_px, weight: p.font.weight, color: hex(first(p.color)) }
 }
 
-/** A Motif's manifest canvas size, [w, h] in its own px; null when unknown. */
-export type MotifSize = (motifId: string) => readonly [number, number] | null
-
 /** Where a Motif layer's canvas reaches past the frame, at its start and at
  *  each of its transform keyframes: the canvas is size × scale around the
  *  anchor, turned about it, with the anchor at the position. The canvas, not
@@ -122,9 +119,47 @@ function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [numbe
   return worst
 }
 
+const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/u
+
+/** Words to compare: lower case, letters and digits only; each CJK character
+ *  is a word of its own (no spaces to split on). */
+function words(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.normalize('NFKC').toLowerCase().matchAll(/[\p{L}\p{N}]+/gu))
+    for (const part of m[0].split(/(?=[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af])|(?<=[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af])/u))
+      if (part) out.push(part)
+  return out
+}
+
+/** Whether `shown` is mostly the words of `spoken`: at least 4 words (6 for
+ *  CJK) and 80 % of them said in the span. Names and short titles are below
+ *  the floor; a pull quote of the line being said is above it. */
+function echoes(shown: string, spoken: string[]): boolean {
+  const w = words(shown)
+  if (w.length < (CJK.test(shown) ? 6 : 4)) return false
+  const bag = new Map<string, number>()
+  for (const s of spoken) bag.set(s, (bag.get(s) ?? 0) + 1)
+  let hit = 0
+  for (const x of w) { const n = bag.get(x) ?? 0; if (n > 0) { hit++; bag.set(x, n - 1) } }
+  return hit / w.length >= 0.8
+}
+
+/** What an overlay shows as text: a Text layer's content, or each string prop
+ *  of a Motif (its fonts aside), compared one by one. */
+function shownTexts(l: Layer, motif: MotifLookup | undefined): string[] {
+  if (l.params.kind === 'Text') return [l.params.content]
+  if (l.params.kind !== 'Motif') return []
+  const schema = motif?.(l.params.motif_id)?.props_schema
+  if (!schema) return []
+  const props = l.params.props
+  return Object.entries(schema).filter(([k, s]) => s.type === 'string' && !k.startsWith('font_') && typeof props[k] === 'string').map(([k]) => props[k] as string)
+}
+
 export interface CheckOptions {
-  /** Looks up a Motif's canvas size; without it Motif bounds are not checked. */
-  motifSize?: MotifSize
+  /** Looks up a Motif's manifest (built-in, installed or draft): its canvas
+   *  size for the bounds and its string props for the text it shows. Without
+   *  it neither is checked. */
+  motif?: MotifLookup
 }
 
 export function checkComposition(project: Project, compositionId: string, taste: TasteView | null, range?: [number, number], opts: CheckOptions = {}): CheckResult {
@@ -167,7 +202,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
         // agent's to choose (the style's are examples): only the hold and the
         // style's token-backed props are checked.
         hold(l, role, dur)
-        const size = opts.motifSize?.(l.params.motif_id)
+        const size = opts.motif?.(l.params.motif_id)?.size
         const over = size ? motifOverflow(l as Layer & { params: MotifParams }, size, comp, MOTIF_MARGIN_PX * scale) : null
         if (over) {
           const by = over.edges.map(([edge, px]) => `${Math.round(px)} px past the ${edge}`).join(', ')
@@ -217,6 +252,21 @@ export function checkComposition(project: Project, compositionId: string, taste:
           if (drift.length) add('token-drift', l, `${role} differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
         }
       }
+    }
+  }
+
+  // Overlays that repeat what is said: speech is read from the captions, so
+  // nothing is checked before there are any.
+  const cues = comp.tracks.filter((t) => t.role === 'Caption').flatMap((t) => t.layers.filter((l) => l.enabled && l.params.kind === 'Text'))
+  if (cues.length) for (const track of comp.tracks) {
+    if (track.role === 'Caption') continue
+    for (const l of track.layers) {
+      if (!l.enabled) continue
+      const shown = shownTexts(l, opts.motif)
+      if (!shown.length) continue
+      const spoken = words(cues.filter((c) => c.t_start_us < l.t_end_us && c.t_end_us > l.t_start_us).map((c) => (c.params as TextParams).content).join(' '))
+      const echo = shown.find((t) => echoes(t, spoken))
+      if (echo) add('overlay-echoes-speech', l, `"${echo.replace(/\s+/g, ' ').slice(0, 60)}" repeats what is said (and captioned) while it is up`, 'show what the speech does not — a label, a number, a diagram, context — or drop it')
     }
   }
 
