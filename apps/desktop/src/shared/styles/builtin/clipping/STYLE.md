@@ -56,6 +56,10 @@ tokens:
     position: [0.5, 0.92]
     anchor: [0.5, 1]
     box_w: 0.84
+    # Captions also run over the paper inserts: a heavier ink outline than
+    # the transcription default (6 % of the size) keeps white text legible
+    # on kraft and newsprint as well as on footage.
+    outline: { color: ink, width: 5 }
     shadow: null
     max_chars_per_line: 42
     max_lines: 2

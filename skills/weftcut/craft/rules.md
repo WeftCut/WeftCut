@@ -17,6 +17,7 @@ loosens it; caption tokens (`max_chars_per_line`, `max_lines`,
 | `lower-third-hold` | warning | ≥ 4 s | A lower third stays on screen at least 4 s. | Two lines — a name and an affiliation — need about 4 s to be read twice; the baseline met it (4–7 s), the floor keeps it. |
 | `text-pops` | warning | — | Titles and lower thirds enter and exit (intro and outro), never pop. | Every baseline run left intro and outro empty, so text cut on and off. |
 | `title-safe` | warning | ≤ 90 % | Text stays inside the title-safe area, the centred 90 % of the frame. | Text at the frame edge is cropped by some players and crowds the picture. |
+| `motif-off-frame` | warning | — | A Motif layer stays inside the frame, unless it covers the whole frame. | A name card placed with its centre near the edge lost a fifth of its width off screen; the audit checked text only. |
 | `caption-line-length` | warning | ≤ 42 chars | A caption line holds at most 42 characters. | Transcription cues of 68–80 characters were laid down unbroken. |
 | `caption-lines` | warning | ≤ 2 lines | A caption cue has at most 2 lines. | More lines cover the picture and cannot be read in the cue's time. |
 | `caption-cue-min` | warning | ≥ 1.2 s | A caption cue stays on screen at least 1.2 s. | Agents left 0.4 s cues that flash past. |

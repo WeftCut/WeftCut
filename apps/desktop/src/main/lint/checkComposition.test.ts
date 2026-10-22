@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { initEval } from '../../renderer/eval'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -12,6 +13,7 @@ const BUILTIN = path.join(import.meta.dirname, '../../shared/styles/builtin')
 const roots: string[] = []
 afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }) })
 const S = 1_000_000
+beforeAll(initEval)
 
 function setup() {
   const idGen = uuidV7Gen()
@@ -140,6 +142,55 @@ describe('check_composition over Motif layers (H2)', () => {
     const found = rules(checkComposition(p, p.root_id, styled()))
     expect(found).not.toContain('role-inconsistency')
     expect(found).not.toContain('role-motif')
+  })
+
+  describe('motif-off-frame', () => {
+    const SIZES: Record<string, [number, number]> = { stamp: [1100, 300], plate: [1920, 1080] }
+    const motifSize = (id: string) => SIZES[id] ?? null
+    const stat = (value: number) => ({ mode: 'Static' as const, value })
+    const placed = (text: ReturnType<typeof setup>['text'], id: string, over: Record<string, unknown>) => {
+      const m = motif(text, id, 'lower_third') as Extract<LayerParams, { kind: 'Motif' }>
+      return { ...m, transform: { ...m.transform, ...over } } as LayerParams
+    }
+    const at = (x: number, y: number) => ({ position: { mode: 'XY', x: stat(x), y: stat(y) } })
+    const check = (p: Project) => checkComposition(p, p.root_id, styled(), undefined, { motifSize }).findings.filter((f) => f.rule === 'motif-off-frame')
+
+    it('reports a canvas placed with its centre near the edge, from the real anchor', () => {
+      const { p, bRoll, put, text } = setup()
+      put(bRoll, placed(text, 'stamp', at(330, 700)), 1, 6)
+      const [f] = check(p)
+      expect(f).toMatchObject({ severity: 'warning', range: [1 * S, 6 * S] })
+      expect(f!.message).toContain('220 px past the left edge')
+      // The same x with the anchor on the left edge keeps it in.
+      const { p: q, bRoll: b2, put: put2, text: text2 } = setup()
+      put2(b2, placed(text2, 'stamp', { ...at(330, 700), anchor_x: stat(0) }), 1, 6)
+      expect(check(q)).toEqual([])
+    })
+
+    it('turns the canvas about its anchor and scales it', () => {
+      const { p, bRoll, put, text } = setup()
+      put(bRoll, placed(text, 'stamp', { ...at(960, 1000), scale_x: stat(0.5), scale_y: stat(0.5) }), 0, 4)
+      expect(check(p)).toEqual([])
+      const { p: q, bRoll: b2, put: put2, text: text2 } = setup()
+      put2(b2, placed(text2, 'stamp', { ...at(960, 1000), scale_x: stat(0.5), scale_y: stat(0.5), rotation_deg: stat(30) }), 0, 4)
+      expect(check(q)[0]!.message).toContain('past the bottom edge')
+    })
+
+    it('checks every keyframe inside the layer, not just the first value', () => {
+      const { p, bRoll, put, text } = setup()
+      const key = (t_us: number, value: number, i: number) => ({ id: `10000000-0000-4000-8000-00000000000${i}`, t_us, value, segment: { kind: 'Linear' }, continuity: 'Broken',
+        in: { x: 0.7, y: 0.85, mode: 'Free' }, out: { x: 0.3, y: 0.1, mode: 'Free' } })
+      const x = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [key(0, 960, 1), key(3 * S, 1800, 2)] }
+      put(bRoll, placed(text, 'stamp', { position: { mode: 'XY', x, y: stat(700) } }), 0, 4)
+      expect(check(p)[0]!.message).toContain('past the right edge at 3 s')
+    })
+
+    it('leaves a full-frame plate alone, and a Motif it cannot size', () => {
+      const { p, bRoll, put, text } = setup()
+      put(bRoll, placed(text, 'plate', { ...at(960, 540), scale_x: stat(1.1), scale_y: stat(1.1) }), 0, 4)
+      put(bRoll, placed(text, 'unknown', at(0, 0)), 0, 4)
+      expect(check(p)).toEqual([])
+    })
   })
 
   it('still hard-fails an undeclared role on a Motif', () => {

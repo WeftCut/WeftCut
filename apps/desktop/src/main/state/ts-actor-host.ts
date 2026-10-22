@@ -891,7 +891,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
     },
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
-    audits: new AuditStore(),
+    audits: new AuditStore((id) => motifCatalog.get(id)?.size ?? null),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),
