@@ -106,6 +106,9 @@ Run `check_composition` and settle what it finds.
   `restyle_to_taste` unless the departure is meant.
 - An `overlay-echoes-speech` finding means an overlay repeats the line being
   said. Replace its text with what the speech leaves out, or drop it.
+- A `bare-jump-cuts` or `bare-talk` finding means the passage plays as plain
+  talking head with stutters. Cover it with a scene or an insert, punch in on
+  alternate clips, or give its key point an overlay.
 
 ## handoff
 
@@ -116,5 +119,6 @@ The deliverable is the edited project in WeftCut.
 - Report:
   - the cut length;
   - each beat placed, with its time and mode;
+  - every fact an overlay adds from outside the talk, with its source;
   - what became a tack;
   - any style fonts the user may want to install.

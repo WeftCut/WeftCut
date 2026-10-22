@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto'
 import { captionLimits, craftRule, styleThreshold, type CraftSeverity } from '../../shared/craft'
-import type { Animated, Composition, Layer, MotifParams, Project, Rgba, TextParams } from '../state/model'
+import type { Animated, Composition, CompositionRefParams, Layer, MotifParams, Project, Rgba, TextParams, VideoClipParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
 import type { MotifLookup, TasteView } from '../taste/view'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
@@ -47,13 +47,52 @@ const REF_HEIGHT = 1080
 /** How far a Motif's canvas may reach past the frame before it is reported:
  *  room for the empty margin and shadow most canvases keep (1080 px frame). */
 const MOTIF_MARGIN_PX = 24
+/** Bare jump cuts closer than this belong to one run. */
+const JUMP_RUN_GAP_US = 10_000_000
 
 const first = <T>(a: Animated<T>): T => (a.mode === 'Static' ? a.value : a.value[0]!.value)
 const seconds = (us: number) => Math.round(us / 1e4) / 100
 const roleOf = (l: Layer): string | null => ((l.params as { graphic_role?: string | null }).graphic_role ?? null)
 
-export function compositionRevision(comp: Composition, taste: TasteView | null): string {
-  return createHash('sha256').update(canonicalString(comp)).update('\0').update(taste?.revision ?? '').digest('hex')
+/** Hashes the composition, every composition its Groups reach, and the taste
+ *  revision: an edit inside a Group makes the audit stale too. */
+export function compositionRevision(project: Project, compositionId: string, taste: TasteView | null): string {
+  const h = createHash('sha256')
+  const seen = new Set<string>()
+  const visit = (id: string) => {
+    const c = project.compositions[id]
+    if (!c || seen.has(id)) return
+    seen.add(id)
+    h.update(id).update('\0').update(canonicalString(c)).update('\0')
+    for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'CompositionRef') visit(l.params.composition)
+  }
+  visit(compositionId)
+  return h.update(taste?.revision ?? '').digest('hex')
+}
+
+/** Where a composition's content lands in the audited one: a point map into
+ *  its frame (null where it cannot be told, a Group on a motion path) and the
+ *  offset from its time to the audited time. A Group's transform is read at
+ *  its first value and its content plays at rate 1. */
+interface Place { map: ((x: number, y: number) => [number, number]) | null; offsetUs: number; group: Layer | null }
+
+const ROOT_PLACE: Place = { map: (x, y) => [x, y], offsetUs: 0, group: null }
+
+function enterGroup(outer: Place, g: Layer & { params: CompositionRefParams }, child: Composition): Place {
+  const t = g.params.transform
+  const offsetUs = outer.offsetUs + g.t_start_us - g.params.src_in_us
+  if (t.position.mode !== 'XY' || !outer.map) return { map: null, offsetUs, group: g }
+  const sx = first(t.scale_x), sy = first(t.scale_y), ax = first(t.anchor_x) * child.width, ay = first(t.anchor_y) * child.height
+  const r = (first(t.rotation_deg) * Math.PI) / 180, cos = Math.cos(r), sin = Math.sin(r)
+  const px = first(t.position.x), py = first(t.position.y), up = outer.map
+  return { map: (x, y) => { const dx = (x - ax) * sx, dy = (y - ay) * sy; return up(px + dx * cos - dy * sin, py + dx * sin + dy * cos) }, offsetUs, group: g }
+}
+
+/** The box around points mapped into the audited frame. */
+function boxOf(points: Array<[number, number]>, map: NonNullable<Place['map']>) {
+  const m = points.map(([x, y]) => map(x, y))
+  const xs = m.map((p) => p[0]), ys = m.map((p) => p[1])
+  return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) }
 }
 
 /** Estimated box of a text layer in composition px, at its first value. */
@@ -92,9 +131,9 @@ function look(p: TextParams) {
  *  the drawing: a margin the Motif leaves empty counts, hence the tolerance.
  *  Null when the canvas stays in, covers the whole frame (a plate), or is
  *  placed along a motion path. */
-function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [number, number], comp: Composition, tol: number) {
+function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [number, number], place: Place, frame: { width: number; height: number }, tol: number) {
   const t = l.params.transform
-  if (t.position.mode !== 'XY') return null
+  if (t.position.mode !== 'XY' || !place.map) return null
   const tracks = [t.position.x, t.position.y, t.scale_x, t.scale_y, t.rotation_deg, t.anchor_x, t.anchor_y]
   const times = new Set([l.t_start_us])
   for (const a of tracks) if (a.mode === 'Keyframed') for (const k of a.value) { const at = keyTimeUs(k); if (at > l.t_start_us && at < l.t_end_us) times.add(at) }
@@ -105,18 +144,61 @@ function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [numbe
     const ax = v(t.anchor_x, 0.5) * w, ay = v(t.anchor_y, 0.5) * h
     const r = (v(t.rotation_deg, 0) * Math.PI) / 180, cos = Math.cos(r), sin = Math.sin(r)
     const px = v(t.position.x, 0), py = v(t.position.y, 0)
-    const xs: number[] = [], ys: number[] = []
-    for (const [cx, cy] of [[0, 0], [w, 0], [w, h], [0, h]] as const) {
+    const corners = ([[0, 0], [w, 0], [w, h], [0, h]] as const).map(([cx, cy]): [number, number] => {
       const dx = cx - ax, dy = cy - ay
-      xs.push(px + dx * cos - dy * sin); ys.push(py + dx * sin + dy * cos)
-    }
-    const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys)
-    if (left <= 0 && top <= 0 && right >= comp.width && bottom >= comp.height) continue
-    const edges = ([['left', -left], ['right', right - comp.width], ['top', -top], ['bottom', bottom - comp.height]] as Array<[string, number]>)
+      return [px + dx * cos - dy * sin, py + dx * sin + dy * cos]
+    })
+    const { left, right, top, bottom } = boxOf(corners, place.map)
+    if (left <= 0 && top <= 0 && right >= frame.width && bottom >= frame.height) continue
+    const edges = ([['left', -left], ['right', right - frame.width], ['top', -top], ['bottom', bottom - frame.height]] as Array<[string, number]>)
       .filter(([, by]) => by > tol)
     if (edges.length && (!worst || Math.max(...edges.map((e) => e[1])) > Math.max(...worst.edges.map((e) => e[1])))) worst = { at, edges }
   }
   return worst
+}
+
+/** Cuts between consecutive A-roll clips of one media whose source does not
+ *  continue (a pause or a passage removed), and the ones nothing covers: no
+ *  full-frame layer above spanning the cut (a scene Group, B roll, an image,
+ *  a plate Motif) and no punch-in (the next clip's scale 5 % or more off). The
+ *  bench's `jump_cuts` measures the same. */
+function bareJumpCuts(comp: Composition): { cuts: number; bare: Array<{ at: number; clip: Layer }> } {
+  const frame = comp.fps.num > 0 ? (1e6 * comp.fps.den) / comp.fps.num : 1e6 / 30
+  const clips = comp.tracks.filter((t) => t.role === 'ARoll' && t.enabled !== false).flatMap((t) => t.layers)
+    .filter((l): l is Layer & { params: VideoClipParams } => l.enabled && l.params.kind === 'VideoClip').sort((a, b) => a.t_start_us - b.t_start_us)
+  const covers = comp.tracks.filter((t) => t.role !== 'Caption' && t.role !== 'ARoll' && t.enabled !== false).flatMap((t) => t.layers)
+    .filter((l) => l.enabled && (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(l.params.kind) || (l.params.kind === 'Motif' && l.params.graphic_role === 'plate')))
+  const scaleOf = (l: Layer & { params: VideoClipParams }) => (l.params.transform ? first(l.params.transform.scale_x) : 1)
+  let cuts = 0
+  const bare: Array<{ at: number; clip: Layer }> = []
+  for (let i = 1; i < clips.length; i++) {
+    const a = clips[i - 1]!, b = clips[i]!
+    if (Math.abs(b.t_start_us - a.t_end_us) > frame || a.params.media !== b.params.media) continue
+    const gap = b.params.src_in_us - a.params.src_out_us
+    if (!Number.isFinite(gap) || Math.abs(gap) <= frame) continue
+    cuts++
+    const at = b.t_start_us
+    if (covers.some((c) => c.t_start_us <= at - frame && c.t_end_us >= at + frame)) continue
+    if (Math.abs(scaleOf(b) / scaleOf(a) - 1) >= 0.05) continue
+    bare.push({ at, clip: b })
+  }
+  return { cuts, bare }
+}
+
+/** Stretches of the A roll with nothing else on screen (captions aside). */
+function bareStretches(comp: Composition): Array<[number, number]> {
+  const aroll = comp.tracks.filter((t) => t.role === 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled)
+  if (!aroll.length) return []
+  const end = Math.max(...aroll.map((l) => l.t_end_us)), start = Math.min(...aroll.map((l) => l.t_start_us))
+  const dressed = comp.tracks.filter((t) => t.role !== 'Caption' && t.role !== 'ARoll' && t.enabled !== false).flatMap((t) => t.layers)
+    .filter((l) => l.enabled && l.params.kind !== 'Audio').map((l) => [l.t_start_us, l.t_end_us] as [number, number]).sort((a, b) => a[0] - b[0])
+  const out: Array<[number, number]> = []
+  let from = start
+  for (const [a, b] of [...dressed, [end, end] as [number, number]]) {
+    if (a > from) out.push([from, Math.min(a, end)])
+    from = Math.max(from, b)
+  }
+  return out.filter(([a, b]) => b > a)
 }
 
 const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/u
@@ -170,115 +252,157 @@ export function checkComposition(project: Project, compositionId: string, taste:
   const captions = captionLimits(taste?.tokens)
   const scale = comp.height / REF_HEIGHT
   const limit = (id: string): number => styleThreshold(id, floors[id])
-  const add = (rule: string, l: Layer | Layer[], message: string, fix: string) => {
-    const ls = Array.isArray(l) ? l : [l]
-    findings.push({ severity: craftRule(rule).severity, rule, range: [Math.min(...ls.map((x) => x.t_start_us)), Math.max(...ls.map((x) => x.t_end_us))], layers: ls.map((x) => x.id), message, fix })
+  type At = { l: Layer; at: Place }
+  // A finding's range is in the audited composition's time; one about a layer
+  // inside a Group says so.
+  const add = (rule: string, items: At | At[], message: string, fix: string) => {
+    const xs = Array.isArray(items) ? items : [items]
+    const g = xs[0]!.at.group
+    findings.push({ severity: craftRule(rule).severity, rule,
+      range: [Math.min(...xs.map((x) => x.l.t_start_us + x.at.offsetUs)), Math.max(...xs.map((x) => x.l.t_end_us + x.at.offsetUs))],
+      layers: xs.map((x) => x.l.id), message: g ? `${message} (inside the Group at ${seconds(g.t_start_us)} s)` : message, fix })
   }
   const known = new Set<string>(taste ? taste.roles.map((r) => r.name) : BUILTIN_GRAPHIC_ROLES)
-  const byRole = new Map<string, Array<{ layer: Layer; p: TextParams }>>()
+  const byRole = new Map<string, Array<At & { p: TextParams }>>()
+  const overlays: At[] = []
+  const cues: Array<{ span: [number, number]; text: string }> = []
   // Titles and lower thirds are held long enough to read, whatever draws them.
-  const hold = (l: Layer, role: string | null, dur: number) => {
+  const hold = (x: At, role: string | null, dur: number) => {
     if (role !== 'title' && role !== 'lower_third') return
     const id = role === 'title' ? 'title-hold' : 'lower-third-hold'
     const min = limit(id)
-    if (dur < min - 1e-3) add(id, l, `${role.replace('_', ' ')} on screen ${seconds(l.t_end_us - l.t_start_us)} s, under ${min} s`, `extend it to at least ${min} s`)
+    if (dur < min - 1e-3) add(id, x, `${role.replace('_', ' ')} on screen ${seconds(x.l.t_end_us - x.l.t_start_us)} s, under ${min} s`, `extend it to at least ${min} s`)
   }
 
-  for (const track of comp.tracks) {
-    const isCaption = track.role === 'Caption'
-    for (const l of track.layers) {
-      if (!l.enabled) continue
-      const dur = (l.t_end_us - l.t_start_us) / 1e6
-      const role = roleOf(l)
-      if (role !== null && !known.has(role))
-        add('undeclared-role', l, `graphic role ${role} is neither built in nor declared in the project's style or TASTE.md`, `declare ${role} under roles in TASTE.md, or use a built-in role`)
+  const visited = new Set<string>()
+  const walk = (c: Composition, cid: string, at: Place, window: [number, number] | null) => {
+    if (visited.has(cid)) return
+    visited.add(cid)
+    for (const track of c.tracks) {
+      const isCaption = track.role === 'Caption'
+      for (const l of track.layers) {
+        if (!l.enabled) continue
+        // Inside a Group, only what its window shows.
+        if (window && (l.t_end_us <= window[0] || l.t_start_us >= window[1])) continue
+        const x: At = { l, at }
+        const dur = (l.t_end_us - l.t_start_us) / 1e6
+        const role = roleOf(l)
+        if (role !== null && !known.has(role))
+          add('undeclared-role', x, `graphic role ${role} is neither built in nor declared in the project's style or TASTE.md`, `declare ${role} under roles in TASTE.md, or use a built-in role`)
 
-      if (l.params.kind === 'VideoClip' && track.role === 'ARoll') {
-        const min = limit('short-clip')
-        if (dur < min - 1e-3) add('short-clip', l, `A-roll clip is ${dur.toFixed(2)} s, under ${min} s`, 'merge it into a neighbour or extend it; a fragment this short reads as a stutter')
-      }
-      if (l.params.kind === 'Motif' && !isCaption) {
-        // A Motif's motion is its own, and which Motif draws a role is the
-        // agent's to choose (the style's are examples): only the hold and the
-        // style's token-backed props are checked.
-        hold(l, role, dur)
-        const size = opts.motif?.(l.params.motif_id)?.size
-        const over = size ? motifOverflow(l as Layer & { params: MotifParams }, size, comp, MOTIF_MARGIN_PX * scale) : null
-        if (over) {
-          const by = over.edges.map(([edge, px]) => `${Math.round(px)} px past the ${edge}`).join(', ')
-          add('motif-off-frame', l, `Motif canvas reaches ${by} edge${over.edges.length > 1 ? 's' : ''} at ${seconds(over.at)} s (position is where its anchor lands)`, 'move it in or scale it down; keep it only if that part of the canvas is empty or the bleed is meant')
+        if (l.params.kind === 'CompositionRef') {
+          const child = project.compositions[l.params.composition]
+          if (child) walk(child, l.params.composition, enterGroup(at, l as Layer & { params: CompositionRefParams }, child), [l.params.src_in_us, l.params.src_in_us + (l.t_end_us - l.t_start_us)])
+          continue
+        }
+        if (l.params.kind === 'VideoClip' && track.role === 'ARoll') {
+          const min = limit('short-clip')
+          if (dur < min - 1e-3) add('short-clip', x, `A-roll clip is ${dur.toFixed(2)} s, under ${min} s`, 'merge it into a neighbour or extend it; a fragment this short reads as a stutter')
+        }
+        if (!isCaption && (l.params.kind === 'Motif' || l.params.kind === 'Text')) overlays.push(x)
+        if (l.params.kind === 'Motif' && !isCaption) {
+          // A Motif's motion is its own, and which Motif draws a role is the
+          // agent's to choose (the style's are examples): only the hold, its
+          // place in the frame and the style's token-backed props are checked.
+          hold(x, role, dur)
+          const size = opts.motif?.(l.params.motif_id)?.size
+          const over = size ? motifOverflow(l as Layer & { params: MotifParams }, size, at, comp, MOTIF_MARGIN_PX * scale) : null
+          if (over) {
+            const by = over.edges.map(([edge, px]) => `${Math.round(px)} px past the ${edge}`).join(', ')
+            add('motif-off-frame', x, `Motif canvas reaches ${by} edge${over.edges.length > 1 ? 's' : ''} at ${seconds(over.at + at.offsetUs)} s (position is where its anchor lands)`, 'move it in or scale it down; keep it only if that part of the canvas is empty or the bleed is meant')
+          }
+          if (role !== null && role !== 'none') {
+            const drift = motifDrift(l.params, role, taste)
+            if (drift.length) add('token-drift', x, `${role.replace('_', ' ')} Motif differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
+          }
+          continue
+        }
+        if (l.params.kind !== 'Text') continue
+        const p = l.params
+        const local = textBox(p)
+        const box = local && at.map ? boxOf([[local.left, local.top], [local.right, local.top], [local.right, local.bottom], [local.left, local.bottom]], at.map) : null
+        if (box) {
+          if (box.right <= 0 || box.bottom <= 0 || box.left >= comp.width || box.top >= comp.height)
+            add('text-offscreen', x, `text box (estimated) lies wholly outside the ${comp.width}×${comp.height} frame`, 'move it into the frame')
+          else if (!isCaption) {
+            const safe = limit('title-safe')
+            const mx = (comp.width * (1 - safe)) / 2, my = (comp.height * (1 - safe)) / 2
+            if (box.left < mx - 1 || box.top < my - 1 || box.right > comp.width - mx + 1 || box.bottom > comp.height - my + 1)
+              add('title-safe', x, `text box (estimated) leaves the title-safe area (centred ${Math.round(safe * 100)} %)`, 'move it inward or reduce its size')
+          }
+        }
+        if (isCaption) {
+          cues.push({ span: [l.t_start_us + at.offsetUs, l.t_end_us + at.offsetUs], text: p.content })
+          const maxChars = captions.max_chars, maxLines = captions.max_lines
+          const lines = p.content.split('\n')
+          const longest = Math.max(...lines.map((y) => y.length))
+          if (longest > maxChars) add('caption-line-length', x, `caption line of ${longest} characters, over ${maxChars}`, `break or split the cue so each line holds at most ${maxChars}`)
+          if (lines.length > maxLines) add('caption-lines', x, `caption cue of ${lines.length} lines, over ${maxLines}`, 'split the cue in time')
+          const minS = captions.min_cue_s, maxS = captions.max_cue_s
+          if (dur < minS - 1e-3) add('caption-cue-min', x, `caption cue on screen ${dur.toFixed(2)} s, under ${minS} s`, 'merge it with a neighbouring cue')
+          if (dur > maxS + 1e-3) add('caption-cue-max', x, `caption cue on screen ${dur.toFixed(2)} s, over ${maxS} s`, 'split it at a phrase boundary')
+          const list = byRole.get('caption') ?? []; list.push({ ...x, p }); byRole.set('caption', list)
+          continue
+        }
+        if (role === 'title' || role === 'lower_third') {
+          hold(x, role, dur)
+          const missing = [p.intro === null ? 'intro' : null, p.outro === null ? 'outro' : null].filter(Boolean)
+          if (missing.length) add('text-pops', x, `${role.replace('_', ' ')} has no ${missing.join(' or ')}: it pops ${missing.length === 2 ? 'on and off' : missing[0] === 'intro' ? 'on' : 'off'}`, 'set intro/outro, or restyle_to_taste for the style\'s')
         }
         if (role !== null && role !== 'none') {
-          const drift = motifDrift(l.params, role, taste)
-          if (drift.length) add('token-drift', l, `${role.replace('_', ' ')} Motif differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
-        }
-        continue
-      }
-      if (l.params.kind !== 'Text') continue
-      const p = l.params
-      const box = textBox(p)
-      if (box) {
-        if (box.right <= 0 || box.bottom <= 0 || box.left >= comp.width || box.top >= comp.height)
-          add('text-offscreen', l, `text box (estimated) lies wholly outside the ${comp.width}×${comp.height} frame`, 'move it into the frame')
-        else if (!isCaption) {
-          const safe = limit('title-safe')
-          const mx = (comp.width * (1 - safe)) / 2, my = (comp.height * (1 - safe)) / 2
-          if (box.left < mx - 1 || box.top < my - 1 || box.right > comp.width - mx + 1 || box.bottom > comp.height - my + 1)
-            add('title-safe', l, `text box (estimated) leaves the title-safe area (centred ${Math.round(safe * 100)} %)`, 'move it inward or reduce its size')
-        }
-      }
-      if (isCaption) {
-        const maxChars = captions.max_chars, maxLines = captions.max_lines
-        const lines = p.content.split('\n')
-        const longest = Math.max(...lines.map((x) => x.length))
-        if (longest > maxChars) add('caption-line-length', l, `caption line of ${longest} characters, over ${maxChars}`, `break or split the cue so each line holds at most ${maxChars}`)
-        if (lines.length > maxLines) add('caption-lines', l, `caption cue of ${lines.length} lines, over ${maxLines}`, 'split the cue in time')
-        const minS = captions.min_cue_s, maxS = captions.max_cue_s
-        if (dur < minS - 1e-3) add('caption-cue-min', l, `caption cue on screen ${dur.toFixed(2)} s, under ${minS} s`, 'merge it with a neighbouring cue')
-        if (dur > maxS + 1e-3) add('caption-cue-max', l, `caption cue on screen ${dur.toFixed(2)} s, over ${maxS} s`, 'split it at a phrase boundary')
-        const list = byRole.get('caption') ?? []; list.push({ layer: l, p }); byRole.set('caption', list)
-        continue
-      }
-      if (role === 'title' || role === 'lower_third') {
-        hold(l, role, dur)
-        const missing = [p.intro === null ? 'intro' : null, p.outro === null ? 'outro' : null].filter(Boolean)
-        if (missing.length) add('text-pops', l, `${role.replace('_', ' ')} has no ${missing.join(' or ')}: it pops ${missing.length === 2 ? 'on and off' : missing[0] === 'intro' ? 'on' : 'off'}`, 'set intro/outro, or restyle_to_taste for the style\'s')
-      }
-      if (role !== null && role !== 'none') {
-        const list = byRole.get(role) ?? []; list.push({ layer: l, p }); byRole.set(role, list)
-        const tokens = taste?.tokens.text?.[role]
-        if (tokens) {
-          const drift = driftFields(p, tokens, taste!.tokens, scale)
-          if (drift.length) add('token-drift', l, `${role} differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
+          const list = byRole.get(role) ?? []; list.push({ ...x, p }); byRole.set(role, list)
+          const tokens = taste?.tokens.text?.[role]
+          if (tokens) {
+            const drift = driftFields(p, tokens, taste!.tokens, scale)
+            if (drift.length) add('token-drift', x, `${role} differs from its style tokens: ${drift.join(', ')}`, 'restyle_to_taste, or keep it if the departure is deliberate')
+          }
         }
       }
     }
   }
+  walk(comp, compositionId, ROOT_PLACE, null)
 
   // Overlays that repeat what is said: speech is read from the captions, so
   // nothing is checked before there are any.
-  const cues = comp.tracks.filter((t) => t.role === 'Caption').flatMap((t) => t.layers.filter((l) => l.enabled && l.params.kind === 'Text'))
-  if (cues.length) for (const track of comp.tracks) {
-    if (track.role === 'Caption') continue
-    for (const l of track.layers) {
-      if (!l.enabled) continue
-      const shown = shownTexts(l, opts.motif)
-      if (!shown.length) continue
-      const spoken = words(cues.filter((c) => c.t_start_us < l.t_end_us && c.t_end_us > l.t_start_us).map((c) => (c.params as TextParams).content).join(' '))
-      const echo = shown.find((t) => echoes(t, spoken))
-      if (echo) add('overlay-echoes-speech', l, `"${echo.replace(/\s+/g, ' ').slice(0, 60)}" repeats what is said (and captioned) while it is up`, 'show what the speech does not — a label, a number, a diagram, context — or drop it')
-    }
+  if (cues.length) for (const x of overlays) {
+    const shown = shownTexts(x.l, opts.motif)
+    if (!shown.length) continue
+    const a = x.l.t_start_us + x.at.offsetUs, b = x.l.t_end_us + x.at.offsetUs
+    const spoken = words(cues.filter((c) => c.span[0] < b && c.span[1] > a).map((c) => c.text).join(' '))
+    const echo = shown.find((t) => echoes(t, spoken))
+    if (echo) add('overlay-echoes-speech', x, `"${echo.replace(/\s+/g, ' ').slice(0, 60)}" repeats what is said (and captioned) while it is up`, 'show what the speech does not — a label, a number, a diagram, context — or drop it')
+  }
+
+  // Jump cuts nothing covers, reported as runs: a few at sentence ends read
+  // as pace, a run of them as stutter.
+  const jumps = bareJumpCuts(comp)
+  const maxRun = limit('bare-jump-cuts')
+  for (let i = 0; i < jumps.bare.length;) {
+    let j = i
+    while (j + 1 < jumps.bare.length && jumps.bare[j + 1]!.at - jumps.bare[j]!.at <= JUMP_RUN_GAP_US) j++
+    const run = jumps.bare.slice(i, j + 1)
+    if (run.length > maxRun)
+      add('bare-jump-cuts', run.map((r) => ({ l: r.clip, at: ROOT_PLACE })), `${run.length} jump cuts in ${seconds(run.at(-1)!.at - run[0]!.at)} s with nothing covering them (at ${run.slice(0, 5).map((r) => seconds(r.at)).join(', ')}${run.length > 5 ? ', …' : ''} s)`,
+        'cover the passage with a scene or an insert, or punch in on alternate clips (scale about 115 %, the face kept in place)')
+    i = j + 1
+  }
+  const maxBare = limit('bare-talk')
+  for (const [a, b] of bareStretches(comp)) {
+    if ((b - a) / 1e6 <= maxBare + 1e-3) continue
+    const clips = comp.tracks.filter((t) => t.role === 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled && l.t_start_us < b && l.t_end_us > a)
+    findings.push({ severity: craftRule('bare-talk').severity, rule: 'bare-talk', range: [a, b], layers: clips.map((l) => l.id),
+      message: `${seconds(b - a)} s with nothing on screen but the speaker`, fix: 'give its key points overlays that add to them, or cover the passage with a scene' })
   }
 
   for (const [role, list] of byRole) {
-    const variants = new Map<string, Layer[]>()
-    for (const { layer, p } of list) {
+    const variants = new Map<string, At[]>()
+    for (const { l, at, p } of list) {
       const key = JSON.stringify(look(p))
-      variants.set(key, [...(variants.get(key) ?? []), layer])
+      variants.set(key, [...(variants.get(key) ?? []), { l, at }])
     }
     if (variants.size > 1) {
       const desc = [...variants.keys()].map((k) => { const v = JSON.parse(k); return `${v.family} ${v.size_px}px/${v.weight} ${v.color}` })
-      add('role-inconsistency', list.map((x) => x.layer), `${role === 'caption' ? 'captions' : `${role} layers`} use ${variants.size} looks: ${desc.join('; ')}`, 'give them one look (restyle_to_taste sets the style\'s)')
+      add('role-inconsistency', list.map(({ l, at }) => ({ l, at })), `${role === 'caption' ? 'captions' : `${role} layers`} use ${variants.size} looks: ${desc.join('; ')}`, 'give them one look (restyle_to_taste sets the style\'s)')
     }
   }
 
@@ -287,7 +411,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
   inRange.sort((a, b) => order[a.severity] - order[b.severity] || a.range[0] - b.range[0] || a.rule.localeCompare(b.rule))
   const counts = { hard: 0, warning: 0, review: 0 }
   for (const f of inRange) counts[f.severity]++
-  return { composition_id: compositionId, revision: compositionRevision(comp, taste), findings: inRange, counts }
+  return { composition_id: compositionId, revision: compositionRevision(project, compositionId, taste), findings: inRange, counts }
 }
 
 /** Token-backed props a role's Motif departs from. Fonts are left out: what

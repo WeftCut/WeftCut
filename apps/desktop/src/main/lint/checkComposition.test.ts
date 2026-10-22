@@ -3,8 +3,8 @@ import { initEval } from '../../renderer/eval'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { checkComposition } from './checkComposition'
-import { blankProject, type Layer, type LayerParams, type Project, type TextParams, type Track } from '../state/model'
+import { checkComposition, compositionRevision } from './checkComposition'
+import { blankProject, newComposition, type Layer, type LayerParams, type Project, type TextParams, type Track } from '../state/model'
 import { uuidV7Gen } from '../state/ids'
 import { textParamsDefault } from '../state/mutations/add'
 import { tasteView } from '../taste/view'
@@ -233,5 +233,77 @@ describe('check_composition over Motif layers (H2)', () => {
     const { p, bRoll, put, text } = setup()
     put(bRoll, motif(text, 'paper-title', 'mascot'), 0, 4)
     expect(rules(checkComposition(p, p.root_id, styled()))).toEqual(['undeclared-role'])
+  })
+})
+
+describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
+  const stat = (value: number) => ({ mode: 'Static' as const, value })
+  const lookup = (id: string) => (id === 'headline' ? { size: [1400, 400], props_schema: {} } : null) as never
+  const clip = (src0: number, src1: number, over: Record<string, unknown> = {}) =>
+    ({ kind: 'VideoClip', media: 'm1', src_in_us: src0 * S, src_out_us: src1 * S, transform: { ...textParamsDefault('x', { width: 1920, height: 1080 } as never).transform, scale_x: stat(1), scale_y: stat(1) }, ...over }) as unknown as LayerParams
+
+  /** A Group on the B roll at `t0`, holding one headline Motif placed at (x, y)
+   *  in the Group's own 1920×1080 frame from its 0.5 s for 4 s. */
+  function grouped(x: number, y: number, t0: number, groupOver: Record<string, unknown> = {}) {
+    const env = setup()
+    const { p, bRoll, put, text } = env
+    const idGen = uuidV7Gen()
+    const cid = idGen()
+    const child = newComposition(cid, idGen, 'scene', 1, { width: 1920, height: 1080, fps: { num: 25, den: 1 }, sample_rate: 48000, channels: 2, color_space: p.compositions[p.root_id]!.color_space, background: p.compositions[p.root_id]!.background } as never)
+    p.compositions[cid] = child
+    const m = { kind: 'Motif', motif_id: 'headline', motif_version: 1, props: {}, src_in_us: 0, transform: { ...text('x').transform, position: { mode: 'XY', x: stat(x), y: stat(y) } }, opacity: stat(1), graphic_role: 'title' } as LayerParams
+    const inner: Layer = { id: idGen(), label: null, t_start_us: 0.5 * S, t_end_us: 4.5 * S, enabled: true, locked: false, metadata: {}, params: m, effects: [] }
+    child.tracks[0]!.layers.push(inner)
+    const g = put(bRoll, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: { ...text('x').transform, position: { mode: 'XY', x: stat(960), y: stat(540) }, ...groupOver }, opacity: stat(1), blend_mode: 'Normal' } as LayerParams, t0, t0 + 6)
+    return { ...env, inner, g, cid }
+  }
+  const offFrame = (p: Project) => checkComposition(p, p.root_id, null, undefined, { motif: lookup }).findings.filter((f) => f.rule === 'motif-off-frame')
+
+  it('checks a Group\'s contents in the parent\'s frame and time', () => {
+    const { p, inner } = grouped(800, 120, 78.88)
+    const [f] = offFrame(p)
+    expect(f!.layers).toEqual([inner.id])
+    expect(f!.message).toContain('px past the top edge')
+    expect(f!.message).toContain('inside the Group at 78.88 s')
+    expect(f!.range[0]).toBeCloseTo(79.38 * S, -3)
+  })
+
+  it('maps through the Group\'s own transform', () => {
+    // Inside its Group the headline is in frame, but the Group is pushed right.
+    const { p } = grouped(960, 540, 0, { position: { mode: 'XY', x: stat(1500), y: stat(540) } })
+    expect(offFrame(p)[0]!.message).toContain('past the right edge')
+    const { p: q } = grouped(960, 540, 0)
+    expect(offFrame(q)).toEqual([])
+  })
+
+  it('goes stale on an edit inside a Group', () => {
+    const { p, inner } = grouped(960, 540, 0)
+    const before = compositionRevision(p, p.root_id, null)
+    ;(inner.params as { props: Record<string, unknown> }).props = { text: 'changed' }
+    expect(compositionRevision(p, p.root_id, null)).not.toBe(before)
+  })
+
+  it('reports runs of bare jump cuts, not covered or punched-in ones', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    // Five clips with the pauses between them cut out: four jump cuts.
+    put(aRoll, clip(0, 4), 0, 4); put(aRoll, clip(5, 9), 4, 8); put(aRoll, clip(10, 14), 8, 12); put(aRoll, clip(15, 19), 12, 16); put(aRoll, clip(20, 24), 16, 20)
+    const runs = () => checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-jump-cuts')
+    expect(runs()[0]!.message).toMatch(/^4 jump cuts in 12 s/)
+    // Punch in on the third clip: the cuts at 8 and 12 are covered, leaving two.
+    const third = p.compositions[p.root_id]!.tracks[0]!.layers[2]!
+    const tp = third.params as unknown as { transform: Record<string, unknown> }
+    tp.transform = { ...tp.transform, scale_x: stat(1.15), scale_y: stat(1.15) }
+    expect(runs()).toEqual([])
+    // A scene over the first cut as well: still none.
+    put(bRoll, clip(100, 104), 3, 5)
+    expect(runs()).toEqual([])
+  })
+
+  it('reports a long stretch with nothing but the speaker', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, clip(0, 90), 0, 90)
+    put(bRoll, clip(200, 204), 40, 44)
+    const bare = checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-talk')
+    expect(bare.map((f) => f.range)).toEqual([[0, 40 * S], [44 * S, 90 * S]])
   })
 })

@@ -21,7 +21,7 @@ export interface CraftRule {
   why: string
   /** Absent for a rule with no number. */
   threshold?: number
-  unit?: 's' | 'chars' | 'lines' | 'fraction'
+  unit?: 's' | 'chars' | 'lines' | 'fraction' | 'cuts'
   /** `min`: a value below the threshold fails; `max`: above. A floor moves
    *  the threshold only in the tightening direction. */
   direction?: 'min' | 'max'
@@ -52,6 +52,12 @@ export const CRAFT_RULES: readonly CraftRule[] = [
   { id: 'overlay-echoes-speech', severity: 'warning',
     summary: 'An overlay shows what the speech does not: it never repeats the words said while it is up.',
     why: 'Every H2 run put the line being spoken on a quote card, over a caption of the same line: the same words three times.' },
+  { id: 'bare-jump-cuts', severity: 'warning', threshold: 2, unit: 'cuts', direction: 'max',
+    summary: 'At most 2 uncovered jump cuts in a row (cuts under 10 s apart); a scene, an insert or a punch-in covers the rest.',
+    why: 'After removing pauses, 95–100 % of 26–78 jump cuts per H2/H3 run were left bare, even when the plan said to punch in.' },
+  { id: 'bare-talk', severity: 'warning', threshold: 30, unit: 's', direction: 'max',
+    summary: 'No stretch over 30 s with nothing on screen but the speaker.',
+    why: 'Every H2/H3 run left a 59–75 s stretch of plain talking head.' },
   { id: 'caption-line-length', severity: 'warning', threshold: 42, unit: 'chars', direction: 'max',
     summary: 'A caption line holds at most 42 characters.',
     why: 'Transcription cues of 68–80 characters were laid down unbroken.' },
