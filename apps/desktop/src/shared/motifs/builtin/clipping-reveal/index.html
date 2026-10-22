@@ -1,0 +1,135 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:1200px;height:460px;overflow:hidden;background:transparent}
+#root{position:absolute;inset:0}
+.piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
+#text{position:absolute;white-space:nowrap;line-height:1;text-transform:uppercase;letter-spacing:-0.01em}
+.news{position:absolute;inset:14px 18px;columns:4;column-gap:16px;font-size:12px;line-height:1.35;text-align:justify;overflow:hidden;opacity:0.65}
+</style></head><body><div id="root"></div>
+<script>
+// clipping-common v1 — shared by every clipping-* Motif; the copies must match
+// (motifs.clipping-common test). Closed form in t throughout.
+// One spring for everything (vox-editorial: damping 18, mass 0.75, stiffness 110).
+function spring(t){ if(t<=0) return 0; const m=.75,k=110,c=18, w0=Math.sqrt(k/m), z=c/(2*Math.sqrt(k*m));
+  if(z<1){const wd=w0*Math.sqrt(1-z*z); return 1-Math.exp(-z*w0*t)*(Math.cos(wd*t)+z*w0/wd*Math.sin(wd*t));}
+  if(z===1) return 1-Math.exp(-w0*t)*(1+w0*t);
+  const r1=-w0*(z-Math.sqrt(z*z-1)), r2=-w0*(z+Math.sqrt(z*z-1)); return 1-(r2*Math.exp(r1*t)-r1*Math.exp(r2*t))/(r2-r1); }
+const ramp=(t,d)=>Math.max(0,Math.min(1,t/d));
+const ease=(u)=>{u=Math.max(0,Math.min(1,u));return 1-Math.pow(1-u,3);};
+// Optional stepped motion: hold each pose for 1/step_fps s (0 = smooth).
+const stepT=(t,fps)=>fps>0?Math.floor(t*fps+1e-6)/fps:t;
+function rng(seed){let s=seed>>>0||1;return()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0,((s^s>>>14)>>>0)/4294967296));}
+function seedOf(str){let h=2166136261;for(const ch of String(str)){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return h>>>0;}
+// A paper piece's outline: ragged top and bottom (and sides when `all`), uneven
+// teeth with an occasional deeper bite.
+function tornPath(w,h,r,all){
+  const edge=(x0,y0,x1,y1,nx,ny)=>{const len=Math.hypot(x1-x0,y1-y0),pts=[];let d=0;
+    while(d<len){const j=(r()*2-1)*3.5+(r()<0.12?r()*7:0);pts.push([x0+(x1-x0)*d/len+nx*j,y0+(y1-y0)*d/len+ny*j]);d+=8+r()*22;}return pts;};
+  const pts=[...edge(0,0,w,0,0,1), ...(all?edge(w,0,w,h,-1,0):[[w,0]]), ...edge(w,h,0,h,0,-1), ...(all?edge(0,h,0,0,1,0):[[0,h]])];
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+' Z';
+}
+// Grain and the one shared shadow, as SVG filter defs.
+const PAPER_DEFS=`<filter id="grain" x="-5%" y="-20%" width="110%" height="140%">
+  <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" result="n"/>
+  <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.10 0" result="g"/>
+  <feComposite in="g" in2="SourceGraphic" operator="in" result="g2"/>
+  <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="g2"/></feMerge></filter>
+<filter id="shadow" x="-10%" y="-30%" width="120%" height="170%"><feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="rgb(55,45,31)" flood-opacity="0.28"/></filter>`;
+function paperSvg(w,h,fill,r,all){
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;overflow:visible"><defs>${PAPER_DEFS}</defs>
+    <g filter="url(#shadow)"><path d="${tornPath(w,h,r,all)}" fill="${fill}" filter="url(#grain)"/></g></svg>`;
+}
+// A strip of masking tape, as a positioned element.
+function tape(w,h){const e=document.createElement('div');
+  Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
+    clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+// Exit: the layer's last EXIT_S seconds (`duration_s` is the layer's length).
+// Pieces leave in reverse order of arrival: `order` 0 (the last placed) goes
+// first, each later one 0.08 s after, all gone at the end. Ease-in, so a piece
+// leaves accelerating. A slide moves `travel` px and fades in its second half.
+const EXIT_S=0.5;
+function exitPose(t,dur,kind,order,travel){
+  const pose={dx:0,dy:0,s:1,r:0,o:1};
+  if(!kind||kind==='none'||!(dur>0)) return pose;
+  const start=dur-EXIT_S+order*0.08, u=Math.max(0,Math.min(1,(t-start)/Math.max(0.15,dur-start)));
+  if(u<=0) return pose;
+  const e=u*u*u, late=Math.max(0,(u-0.35)/0.65), d=travel||320;
+  if(kind==='lift') return {dx:18*e,dy:-150*e,s:1+0.1*e,r:5*e,o:1-late};
+  if(kind==='fade') return {...pose,o:1-u};
+  const dir={slide_left:[-1,0],slide_right:[1,0],slide_up:[0,-1],slide_down:[0,1]}[kind];
+  return dir?{dx:dir[0]*d*e,dy:dir[1]*d*e,s:1,r:0,o:1-late}:pose;
+}
+const EXITS=['none','lift','fade','slide_left','slide_right','slide_up','slide_down'];
+const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
+async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
+// end clipping-common
+
+// One interaction (motif-authoring.md, Scope): a word hidden under a paper
+// cover, revealed when the cover is torn off at `cue_tear_s`. The cover and
+// the word are one Motif because the tear is what shows the word.
+const WORDS='the of memory and a to in is that brain for it as was with on cells by recall each time we an are new old stored rebuilt signal neurons network'.split(' ');
+const TUG_S=0.14, TEAR_S=0.45;
+let els={}, P={};
+// The cover's tear: a ragged line from top to bottom near its left end. The
+// stub keeps the line as its right edge, the torn-off piece as its left.
+function tearLine(x,h,r){const pts=[];let y=0;while(y<h){pts.push([x+(r()*2-1)*7+(r()<0.15?r()*9:0),y]);y+=6+r()*14;}pts.push([x+(r()*2-1)*7,h]);return pts;}
+const P2=(p)=>p[0].toFixed(1)+' '+p[1].toFixed(1);
+function coverPiece(w,h,d,fill,news,font,ink){
+  const e=document.createElement('div'); e.className='piece';
+  Object.assign(e.style,{left:'0px',top:'0px',width:w+'px',height:h+'px'});
+  e.innerHTML=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;overflow:visible"><defs>${PAPER_DEFS}</defs>
+    <g filter="url(#shadow)"><path d="${d}" fill="${fill}" filter="url(#grain)"/></g></svg>`;
+  if(news){const n=document.createElement('div'); n.className='news'; n.textContent=news; Object.assign(n.style,{fontFamily:font,color:ink,clipPath:`path('${d}')`,inset:'0',padding:'14px 18px'}); e.appendChild(n);}
+  return e;
+}
+motif.define({
+  async setup(props){
+    const root=document.getElementById('root'); root.textContent='';
+    const r=rng(seedOf(props.text)+11);
+    const band={paper:[props.paper,props.ink],ink:[props.ink,props.paper],red:[props.accent,props.paper]}[props.band]||[props.accent,props.paper];
+    const cjk=CJK.test(props.text), family=cjk?props.font_cjk:props.font_headline, weight=cjk?900:400;
+    await loadFace(weight,110,family); await loadFace(400,12,props.font_body);
+    // The word, on a torn strip, fitted to 900 px.
+    const text=document.createElement('div'); text.id='text'; text.textContent=props.text;
+    Object.assign(text.style,{fontFamily:family,fontWeight:String(weight),color:band[1],fontSize:'110px'}); root.appendChild(text);
+    const w0=text.getBoundingClientRect().width, size=w0>900?Math.floor(110*900/w0):110; text.style.fontSize=size+'px';
+    // The left pad leaves room for the stub the tear leaves behind.
+    const tw=text.getBoundingClientRect().width, padL=74, padX=44, padY=Math.round(size*0.3);
+    const W=Math.round(tw+padL+padX), H=Math.round(size*(cjk?1.05:1)+padY*2), x0=Math.round((1200-W)/2), y0=Math.round((460-H)/2+40);
+    const strip=document.createElement('div'); strip.className='piece';
+    Object.assign(strip.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
+    strip.innerHTML=paperSvg(W,H,band[0],r,false);
+    Object.assign(text.style,{left:padL+'px',top:(padY+(cjk?-size*0.02:size*0.02))+'px'}); strip.appendChild(text); root.appendChild(strip);
+    // The cover overhangs the strip; tape holds its stub.
+    const CW=W+44, CH=H+34, cx=x0-22, cy=y0-17, split=padL+2;
+    const line=tearLine(split,CH,r);
+    const stubD='M0 0 L'+P2(line[0])+' L'+line.map(P2).join(' L')+' L0 '+CH+' Z';
+    const mainD='M'+P2(line[0])+' L'+CW+' 0 L'+CW+' '+CH+' L'+[...line].reverse().map(P2).join(' L')+' Z';
+    const fill={newsprint:'#E4DED1',kraft:'#B99A70',paper:props.paper}[props.cover]||'#E4DED1';
+    let news=''; if(props.cover==='newsprint') for(let i=0;i<Math.ceil(CW*CH/900);i++) news+=WORDS[Math.floor(r()*WORDS.length)]+' ';
+    const cover=document.createElement('div'); cover.className='piece';
+    Object.assign(cover.style,{left:cx+'px',top:cy+'px',width:CW+'px',height:CH+'px'});
+    const stub=coverPiece(CW,CH,stubD,fill,news,props.font_body,props.ink), torn=coverPiece(CW,CH,mainD,fill,news,props.font_body,props.ink);
+    torn.style.transformOrigin=`${split}px ${CH/2}px`;
+    cover.appendChild(stub); cover.appendChild(torn); root.appendChild(cover);
+    const t1=tape(130,46); Object.assign(t1.style,{left:(cx-30)+'px',top:(cy+CH/2-23)+'px'}); root.appendChild(t1);
+    els={strip,cover,torn,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit,cue:props.cue_tear_s};
+  },
+  frame(t,ctx){
+    t=stepT(t,P.step); const {strip,cover,torn,tape}=els, tilt=P.tilt, D=ctx.duration, T=P.cue;
+    const x2=exitPose(t,D,P.exit,2), x1=exitPose(t,D,P.exit,1), x0=exitPose(t,D,P.exit,0);
+    // The covered strip lands as one piece, the tape just after.
+    const a=spring(t), land=`rotate(${tilt+(1-a)*3}deg) scale(${1+(1-a)*0.12})`;
+    const pop=t>=T?1+(1-spring(t-T))*0.07:1;
+    // The word stays hidden until the tug: the cover fades in over it.
+    strip.style.opacity=(t>=T-TUG_S?1:0)*x2.o; strip.style.transform=`translate(${x2.dx}px,${x2.dy}px) ${land} rotate(${x2.r}deg) scale(${pop*x2.s})`;
+    cover.style.opacity=ramp(t,16/30)*x1.o; cover.style.transform=`translate(${x1.dx}px,${x1.dy}px) ${land} rotate(${x1.r}deg) scale(${x1.s})`;
+    const c=spring(t-0.2); tape.style.opacity=ramp(t-0.2,6/30)*x0.o; tape.style.transform=`translate(${x0.dx}px,${x0.dy}px) rotate(${tilt-80+x0.r}deg) scale(${(1+(1-c)*0.25)*x0.s})`;
+    // The tear: a tug, then the piece rips up and away from the stub.
+    const g=Math.max(0,Math.min(1,(t-(T-TUG_S))/TUG_S)), u=Math.max(0,Math.min(1,(t-T)/TEAR_S)), e=u*u;
+    torn.style.opacity=1-Math.max(0,(u-0.45)/0.55);
+    torn.style.transform=`translate(${Math.sin(g*Math.PI)*7+380*e}px,${-230*e-Math.sin(g*Math.PI)*3}px) rotate(${-26*e+g*(1-u)*1.5}deg)`;
+  },
+});
+</script></body></html>

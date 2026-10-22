@@ -72,7 +72,7 @@
 
 export const BUILTIN_MOTIF_IDS = Object.freeze([
   'countdown', 'lower-third', 'text-fx',
-  'clipping-headline', 'clipping-stamp', 'clipping-quote', 'clipping-pointer', 'clipping-paper', 'clipping-scrap',
+  'clipping-headline', 'clipping-stamp', 'clipping-quote', 'clipping-pointer', 'clipping-paper', 'clipping-scrap', 'clipping-reveal',
 ])
 
 export const CHECK_KINDS = Object.freeze([
