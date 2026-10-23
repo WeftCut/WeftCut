@@ -64,6 +64,15 @@ export const CRAFT_RULES: readonly CraftRule[] = [
   { id: 'scene-count', severity: 'warning', threshold: 0, unit: 'per min', direction: 'min',
     summary: 'As many animated scenes per minute of cut as the style\'s pace asks (none by default).',
     why: 'Agents built one scene in three minutes whatever the talk; a dense pace needs a number to meet.' },
+  { id: 'word-heavy', severity: 'warning', threshold: 0.33, unit: 'fraction', direction: 'min',
+    summary: 'At least a third of the graphic elements (titles, name cards and plates aside) are pictures: people, objects, places, documents, footage. Words label them.',
+    why: 'H3 runs met an 8 s pace with headline after headline (3 pictures among about 45 elements): the cut read as words, not as a picture-led explainer.' },
+  { id: 'captions-covered', severity: 'warning',
+    summary: 'Captions stay visible: nothing opaque and full-frame (a scene, a plate, an insert) sits on a track above them while cues are up.',
+    why: 'An H3 run put its scenes on tracks above the captions and hid them for 49 s.' },
+  { id: 'scene-share', severity: 'warning', threshold: 0.5, unit: 'fraction', direction: 'max',
+    summary: 'Full-frame scenes and plates cover at most half of the cut; the speaker stays the spine of a talk.',
+    why: 'An H3 run turned the talk into a slideshow: nine scenes covering her for 110 of 183 s.' },
   { id: 'scene-all-words', severity: 'review',
     summary: 'A scene shows its idea in a picture (a photo, a still from the footage, a drawing), and words label it.',
     why: 'The first example scene was all words on paper (headlines, tags and reveals): it read as a slide, not an explanation.' },
@@ -114,12 +123,13 @@ export function styleThreshold(id: string, floor?: number, token?: number): numb
 
 /** A style's pace (`tokens.pace`): how dense an edit is. Each key tightens
  *  one craft rule, as a floor does, and never loosens it. */
-export interface PaceTokens { beat_every_s?: number; bare_talk_max_s?: number; scenes_per_min?: number }
+export interface PaceTokens { beat_every_s?: number; bare_talk_max_s?: number; scenes_per_min?: number; pictures_min_share?: number }
 
 export const PACE_RULES: Readonly<Record<keyof PaceTokens, string>> = {
   beat_every_s: 'sparse-beats',
   bare_talk_max_s: 'bare-talk',
   scenes_per_min: 'scene-count',
+  pictures_min_share: 'word-heavy',
 }
 
 /** The number a style holds a rule to, with its pace folded in. */
@@ -164,7 +174,8 @@ export function renderCraftRules(): string {
     'loosens it; caption tokens (`max_chars_per_line`, `max_lines`,',
     '`min_cue_s`, `max_cue_s`) tighten the caption rules the same way, and',
     'pace tokens (`tokens.pace`: `beat_every_s`, `bare_talk_max_s`,',
-    '`scenes_per_min`) tighten `sparse-beats`, `bare-talk` and `scene-count`.',
+    '`scenes_per_min`, `pictures_min_share`) tighten `sparse-beats`,',
+    '`bare-talk`, `scene-count` and `word-heavy`.',
     '',
     '| Rule | Severity | Threshold | Asks for | Why |',
     '|---|---|---|---|---|',

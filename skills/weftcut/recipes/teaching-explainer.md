@@ -1,6 +1,6 @@
 ---
 name: teaching-explainer
-description: Cut a lecture or talking-head explainer into a tight, captioned piece that switches between the speaker with the style's overlays and full-frame animated scenes for its concepts.
+description: Cut a lecture or talking-head explainer into a tight, captioned, picture-led piece that switches between the speaker with the style's overlays and full-frame animated scenes for its concepts.
 stages: [intake, plan, build, audit, look, handoff]
 until: "audit.clean || rounds >= 3"
 ---
@@ -18,6 +18,10 @@ until: "audit.clean || rounds >= 3"
 - Read the tracks: the A-roll clip, what is already on the timeline, and open
   tacks.
 - Transcribe the A-roll (`transcribe_clip`). The beats come from what is said.
+- **Take stock of the pictures.** Look at each image and video in the pool
+  (`read_project { view: "media_thumbnail" }`) and note what it shows. List
+  the people, objects, places and documents the talk names, and which of
+  them nothing in the pool shows.
 
 ## plan
 
@@ -38,18 +42,42 @@ Read `craft/editing.md` first. Then:
    - where it sits.
 3. **For each scene, also give its treatment:**
    - its one idea, and its hero moment;
-   - the picture that shows the idea, and where it comes from (below);
+   - the pictures that show the idea, and where each comes from (below);
    - the elements it shows, each with the word it enters on;
    - which elements interact and share a Motif, and why.
 
-   **A scene shows its idea in a picture, and words label it.** A scene of
-   words alone reads as a slide. Take the picture from, in order:
-   1. the user's media in the pool;
-   2. a still from the footage: a slide or an object behind the speaker
-      (`read_project { view: "media_frame" }` finds it), cropped to it;
-   3. an image you generate, if your model can output images: save it to a
-      file and `import_media` it;
-   4. otherwise a drawing: fork the style's sticker and replace its SVG.
+**Lead with pictures.** For each point, ask first what picture shows it:
+- the person she names (a portrait);
+- the thing she talks about (an object);
+- the place (a photo, a map);
+- the proof (a document, a headline, a chart).
+
+Words label a picture or carry what no picture can, such as a name, a
+number, a date or a term. A headline card on its own is the last resort.
+At least a third of the graphic elements are pictures (`word-heavy`), and a
+taste's `pictures_min_share` may ask for more.
+
+- **Over the speaker:** a picture sticker beside her when she names a person
+  or a thing, with a short label on it.
+- **In a scene:** a collage, not a slide.
+  - Give the hero picture about half the frame, with one or two smaller
+    pictures beside it.
+  - Put labels on the pictures, and pointers between them.
+  - Fill the frame: no corner left as bare paper.
+- **Avoid repeating a slide.** A still of the slide she stands beside
+  repeats what the viewer has just seen. Use one to zoom in on a detail
+  (crop it), not as the scene's only picture.
+
+Take each picture from, in order:
+1. the user's media in the pool;
+2. a still from the footage, cropped to what matters: a slide or an object
+   behind the speaker (`read_project { view: "media_frame" }` finds it);
+3. an image you generate, if your model can output images: save it to a
+   file and `import_media` it;
+4. otherwise a drawing: fork the style's sticker and replace its SVG.
+
+A picture the pool lacks is worth saying so in the plan, so the user can
+supply it.
 
 **Meet the pace.** `project://taste` → `tokens.pace` says how dense the
 edit is:
@@ -75,7 +103,9 @@ A plan usually has:
   Never the sentence she is saying: the captions already show it. Each is
   3–5 s.
 - **One or more animated scenes** where the talk explains a concept. A
-  three-minute talk usually has one or two, from 6 s to 20 s each.
+  three-minute talk usually has one or two, from 6 s to 20 s each. Scenes
+  and plates cover at most half the cut (`scene-share`): the speaker stays
+  the spine of a talk.
 - **Captions** on everything that is said.
 
 Plan the exits as well as the entrances:
@@ -110,8 +140,9 @@ Inside a work session, with the history lock held:
    `motif-authoring.md`:
    1. Look at a key still of each element with `preview_motif`, with its
       real text, before placing anything.
-   2. Place the plate on a track above the A-roll; its enter and exit props
-      slide it.
+   2. Place the plate on a track above the A-roll and below the captions
+      (`move_track`: a new track lands on top, over the captions); its enter
+      and exit props slide it.
    3. Place one layer per element on the tracks above it: an example, a
       fork, or a Motif you write in the style's vocabulary. A picture goes in
       the style's sticker through its `media` prop: `"<media_id>"` for an
@@ -138,6 +169,13 @@ Run `check_composition` and settle what it finds.
 - A `sparse-beats` or `scene-count` finding means the edit is thinner than
   its pace: add overlays where the talk makes a point, or turn a concept
   passage into a scene.
+- A `word-heavy` finding means the cut reads as words. Turn headline cards
+  into pictures with labels: a portrait for a name, an object for a thing.
+- A `captions-covered` finding means a scene or plate hides the captions.
+  Move its track below the caption track.
+- A `scene-share` finding means the scenes hide the speaker for most of the
+  cut. Keep scenes for the ideas that need them, and put the rest over the
+  speaker.
 - A `bare-jump-cuts` or `bare-talk` finding means the passage plays as plain
   talking head with stutters. Cover it with a scene or an insert, punch in on
   alternate clips, or give its key point an overlay.

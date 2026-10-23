@@ -52,6 +52,17 @@ const JUMP_RUN_GAP_US = 10_000_000
 
 const first = <T>(a: Animated<T>): T => (a.mode === 'Static' ? a.value : a.value[0]!.value)
 const seconds = (us: number) => Math.round(us / 1e4) / 100
+
+/** Sorted, merged [start, end) intervals. */
+function union(spans: Array<[number, number]>): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  for (const [a, b] of spans.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0])) {
+    const last = out[out.length - 1]
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b)
+    else out.push([a, b])
+  }
+  return out
+}
 const roleOf = (l: Layer): string | null => ((l.params as { graphic_role?: string | null }).graphic_role ?? null)
 
 /** Hashes the composition, every composition its Groups reach, and the taste
@@ -258,14 +269,35 @@ function arollSpan(comp: Composition): [number, number] | null {
   return aroll.length ? [Math.min(...aroll.map((l) => l.t_start_us)), Math.max(...aroll.map((l) => l.t_end_us))] : null
 }
 
-/** The layer count of a scene Group made only of words, else 0. A Group of
- *  one layer is not a scene, nor is a title card: a title on its plate. */
+/** A layer's role: its own tag, else its Motif's manifest role. */
+function roleWith(l: Layer, motif: MotifLookup | undefined): string | null {
+  return roleOf(l) ?? (l.params.kind === 'Motif' ? motif?.(l.params.motif_id)?.graphic_role ?? null : null)
+}
+
+/** A Group that is a scene: two or more visual layers, and not a title card
+ *  (a title on its plate). */
+function isScene(c: Composition | undefined, motif: MotifLookup | undefined): boolean {
+  const visual = visualLayers(c)
+  if (visual.length < 2) return false
+  const roles = visual.map((l) => roleWith(l, motif))
+  return !(roles.includes('plate') && roles.every((r) => r === 'plate' || r === 'title'))
+}
+
+/** The layer count of a scene Group made only of words, else 0. */
 function allWords(c: Composition, motif: MotifLookup): number {
   const visual = visualLayers(c)
-  if (visual.length < 2 || visual.some((l) => isPicture(l, motif))) return 0
-  const roles = visual.map((l) => roleOf(l) ?? (l.params.kind === 'Motif' ? motif(l.params.motif_id)?.graphic_role : null) ?? null)
-  if (roles.includes('plate') && roles.every((r) => r === 'plate' || r === 'title')) return 0
+  if (!isScene(c, motif) || visual.some((l) => isPicture(l, motif))) return 0
   return visual.some((l) => shownTexts(l, motif).length > 0) ? visual.length : 0
+}
+
+/** Whether a layer hides what lies under it across the frame: a plate, a
+ *  colour, footage, or a Group holding one. */
+function opaque(l: Layer, project: Project, motif: MotifLookup | undefined, depth = 0): boolean {
+  const k = l.params.kind
+  if (k === 'VideoClip' || k === 'Color') return true
+  if (k === 'Motif') return roleWith(l, motif) === 'plate'
+  if (k === 'CompositionRef' && depth < 4) return visualLayers(project.compositions[l.params.composition]).some((x) => opaque(x, project, motif, depth + 1))
+  return false
 }
 
 export interface CheckOptions {
@@ -298,6 +330,8 @@ export function checkComposition(project: Project, compositionId: string, taste:
   // When something new arrives on screen, in the audited composition's time.
   const arrivals: number[] = []
   const cues: Array<{ span: [number, number]; text: string }> = []
+  // Graphic elements, as pictures or words (titles, name cards and plates aside).
+  const pictures: At[] = [], wordy: At[] = []
   // Titles and lower thirds are held long enough to read, whatever draws them.
   const hold = (x: At, role: string | null, dur: number) => {
     if (role !== 'title' && role !== 'lower_third') return
@@ -326,8 +360,8 @@ export function checkComposition(project: Project, compositionId: string, taste:
 
         if (l.params.kind === 'CompositionRef') {
           const child = project.compositions[l.params.composition]
-          const wordy = child && opts.motif ? allWords(child, opts.motif) : 0
-          if (wordy) add('scene-all-words', x, `scene of ${wordy} layers shows only words: no photo, still or drawing`, 'show its idea in a picture (clipping-sticker with a pool image or a still from the footage, or a drawing) and let words label it')
+          const onlyWords = child && opts.motif ? allWords(child, opts.motif) : 0
+          if (onlyWords) add('scene-all-words', x, `scene of ${onlyWords} layers shows only words: no photo, still or drawing`, 'show its idea in a picture (clipping-sticker with a pool image or a still from the footage, or a drawing) and let words label it')
           if (child) walk(child, l.params.composition, enterGroup(at, l as Layer & { params: CompositionRefParams }, child), [l.params.src_in_us, l.params.src_in_us + (l.t_end_us - l.t_start_us)])
           continue
         }
@@ -336,6 +370,14 @@ export function checkComposition(project: Project, compositionId: string, taste:
           if (dur < min - 1e-3) add('short-clip', x, `A-roll clip is ${dur.toFixed(2)} s, under ${min} s`, 'merge it into a neighbour or extend it; a fragment this short reads as a stutter')
         }
         if (!isCaption && (l.params.kind === 'Motif' || l.params.kind === 'Text')) overlays.push(x)
+        if (!isCaption && opts.motif && !(c === comp && track.role === 'ARoll')) {
+          const r = roleWith(l, opts.motif)
+          const structural = r === 'plate' || (!at.group && (r === 'title' || r === 'lower_third'))
+          if (!structural) {
+            if (l.params.kind === 'VideoClip' || l.params.kind === 'ImageOverlay' || (l.params.kind === 'Motif' && isPicture(l, opts.motif))) pictures.push(x)
+            else if (l.params.kind === 'Text' || (l.params.kind === 'Motif' && shownTexts(l, opts.motif).length)) wordy.push(x)
+          }
+        }
         if (l.params.kind === 'Motif' && !isCaption) {
           // A Motif's motion is its own, and which Motif draws a role is the
           // agent's to choose (the style's are examples): only the hold, its
@@ -449,12 +491,43 @@ export function checkComposition(project: Project, compositionId: string, taste:
     const minutes = (span[1] - span[0]) / 60e6
     const need = Math.floor(rate * minutes + 1e-9)
     const scenes = comp.tracks.filter((t) => t.role !== 'Caption').flatMap((t) => t.layers)
-      .filter((l) => l.enabled && l.params.kind === 'CompositionRef' && visualLayers(project.compositions[l.params.composition]).length >= 2)
+      .filter((l) => l.enabled && l.params.kind === 'CompositionRef' && isScene(project.compositions[l.params.composition], opts.motif))
     if (scenes.length < need)
       findings.push({ severity: craftRule('scene-count').severity, rule: 'scene-count', range: span, layers: scenes.map((l) => l.id),
         message: `${scenes.length} scene${scenes.length === 1 ? '' : 's'} in ${minutes.toFixed(1)} min of cut, under the ${need} the pace asks (${rate} per min)`,
         fix: 'turn a concept passage into a full-frame scene Group: a plate, a picture and its labels' })
+
+    // How much of the cut full-frame scenes and plates hide the speaker for.
+    const full = comp.tracks.filter((t) => t.role !== 'Caption' && t.role !== 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled && (
+      l.params.kind === 'CompositionRef' ? isScene(project.compositions[l.params.composition], opts.motif) && opaque(l, project, opts.motif) : l.params.kind === 'Motif' && roleWith(l, opts.motif) === 'plate'))
+    const covered = union(full.map((l) => [Math.max(l.t_start_us, span[0]), Math.min(l.t_end_us, span[1])] as [number, number]))
+    const share = covered.reduce((n, [a, b]) => n + (b - a), 0) / (span[1] - span[0])
+    const maxShare = limit('scene-share')
+    if (share > maxShare + 1e-6)
+      findings.push({ severity: craftRule('scene-share').severity, rule: 'scene-share', range: span, layers: full.map((l) => l.id),
+        message: `scenes and plates cover ${Math.round(share * 100)} % of the cut, over ${Math.round(maxShare * 100)} %: the speaker is gone for ${seconds(share * (span[1] - span[0]))} s`,
+        fix: 'keep the scenes for the ideas that need them; show the rest as pictures and labels over the speaker' })
+
+    // Pictures against words, over the whole cut.
+    const n = pictures.length + wordy.length
+    const minShare = limit('word-heavy')
+    if (opts.motif && n >= 4 && pictures.length / n < minShare - 1e-6)
+      findings.push({ severity: craftRule('word-heavy').severity, rule: 'word-heavy', range: span, layers: wordy.map((x) => x.l.id),
+        message: `${pictures.length} of ${n} graphic elements are pictures (${Math.round((pictures.length / n) * 100)} %), under ${Math.round(minShare * 100)} %`,
+        fix: 'show the people, objects, places and documents the speech names as pictures (the user\'s media, a still from the footage, or a drawing), and keep words for labels' })
   }
+
+  // Captions hidden by something opaque on a track above them.
+  comp.tracks.forEach((ct, ci) => {
+    if (ct.role !== 'Caption') return
+    const cueSpans = union(ct.layers.filter((l) => l.enabled).map((l) => [l.t_start_us, l.t_end_us] as [number, number]))
+    for (const t of comp.tracks.slice(ci + 1)) for (const l of t.layers) {
+      if (!l.enabled || t.enabled === false || t.role === 'Caption' || !opaque(l, project, opts.motif)) continue
+      const hidden = cueSpans.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, l.t_end_us) - Math.max(a, l.t_start_us)), 0)
+      if (hidden > 0) add('captions-covered', { l, at: ROOT_PLACE }, `${l.params.kind === 'CompositionRef' ? 'scene' : l.params.kind === 'Motif' ? 'plate' : 'layer'} on a track above the captions hides ${seconds(hidden)} s of them`,
+        'move it to a track below the caption track (or the captions above it)')
+    }
+  })
 
   for (const [role, list] of byRole) {
     const variants = new Map<string, At[]>()

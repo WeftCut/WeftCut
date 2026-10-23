@@ -275,11 +275,12 @@ export function validateTokens(raw: unknown, source: TasteSource, knownRoles: Re
       }
       out.floors = floors
     } else if (k === 'pace') {
-      if (!isObj(v)) { bad(o, path, 'expected a mapping: beat_every_s, bare_talk_max_s, scenes_per_min'); continue }
+      if (!isObj(v)) { bad(o, path, 'expected a mapping: beat_every_s, bare_talk_max_s, scenes_per_min, pictures_min_share'); continue }
       const pace: PaceTokens = {}
       for (const [key, n] of Object.entries(v)) {
-        if (!(key in PACE_RULES)) { bad(o, `${path}.${key}`, 'unknown pace key (beat_every_s, bare_talk_max_s, scenes_per_min)'); continue }
+        if (!(key in PACE_RULES)) { bad(o, `${path}.${key}`, 'unknown pace key (beat_every_s, bare_talk_max_s, scenes_per_min, pictures_min_share)'); continue }
         if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) { bad(o, `${path}.${key}`, 'expected a positive number'); continue }
+        if (key === 'pictures_min_share' && n > 1) { bad(o, `${path}.${key}`, 'expected a share between 0 and 1'); continue }
         pace[key as keyof PaceTokens] = n
       }
       out.pace = pace
