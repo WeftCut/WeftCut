@@ -625,6 +625,18 @@ export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsAc
   }
 }
 
+/** A still's thumbnail, 640 px wide, as base64 JPEG; null where Electron's
+ *  decoder cannot read it (or outside Electron). */
+async function stillThumbnail(file: string): Promise<string | null> {
+  try {
+    const { nativeImage } = await import('electron')
+    const img = nativeImage?.createFromPath(file)
+    if (!img || img.isEmpty()) return null
+    const { width } = img.getSize()
+    return (width > 640 ? img.resize({ width: 640, quality: 'good' }) : img).toJPEG(85).toString('base64')
+  } catch { return null }
+}
+
 /** ReadResource routing (tsHost present): project:// state views served in TS from
  *  the actor (sole state owner); the Rust-compute resources (project://compiled,
  *  media://*, composition://meter) forwarded to the backend with an injected
@@ -658,9 +670,13 @@ export async function handleReadResource(
     const served = serveProjectResource(uri, tsHost.actor)
     if (served) return served
     // A still has no thumbnail job (thumbnails are a video derivative), so its
-    // thumbnail is its one frame, extracted on demand like any frame read.
+    // thumbnail is the picture itself, scaled down here; the ffmpeg frame read
+    // is the fallback, since its fast seek reads no frame from some JPEGs.
     const still = /^media:\/\/([^/]+)\/thumbnail$/.exec(uri)
-    if (still && tsHost.actor.snapshot().media_pool[still[1]!]?.kind === 'Image') {
+    const stillItem = still ? tsHost.actor.snapshot().media_pool[still[1]!] : undefined
+    if (still && stillItem?.kind === 'Image') {
+      const jpeg = await stillThumbnail(stillItem.path_abs)
+      if (jpeg) return { contents: [{ uri, mimeType: 'image/jpeg', blob: jpeg }] } as unknown as ServerResult
       const res = await handleReadResource(backend, getTsHost, `media://${still[1]!}/frame/0`, getVlm) as unknown as { contents?: Array<Record<string, unknown>> }
       return { ...res, contents: (res.contents ?? []).map((c) => ({ ...c, uri })) } as unknown as ServerResult
     }
