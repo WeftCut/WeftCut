@@ -122,15 +122,22 @@ whole frame.
 - **Illustrations** (`clipping-sticker`) are a picture pasted on as a paper
   cut-out with tape. The picture comes through its `photo` media prop: a
   pool image, or a still from the footage cropped with `crop_*` to what
-  matters. Without a photo it draws its own `art.svg`, an ink drawing in flat
-  colour. To draw a picture of your own, fork it and replace that file,
-  keeping the heavy ink line and flat fills.
+  matters. `frame: cutout` follows the picture's own outline with a hand-cut
+  paper edge, for a person or an object on a transparent ground (a cut-out
+  PNG, a drawing); `paper` and `torn` mount it as a rectangle. `treatment`
+  prints a photo `mono` or as newsprint `halftone` dots in `ink`, so pictures
+  from different sources sit together. Without a photo it draws its own
+  `art.svg`, an ink drawing in flat colour. To draw a picture of your own,
+  write an SVG with the same heavy ink line and flat fills on a transparent
+  ground and `import_media` it: it becomes a PNG in the pool, ready for
+  `photo`.
 - **Pictures lead; words label them.** This is a collage look. The people,
   objects, places and documents the talk names are pasted in as pictures,
   and the strips, stamps and tags name them: a name stamped under a
   portrait, a date on a document. When she names someone, their portrait
   can be slapped on beside her, with a stamp. Most of what the edit adds is
-  pictures, not headline strips.
+  pictures, not headline strips. A picture the user's media lacks can come
+  from an open image library (`search_images`), credited.
 - **Scenes** explain a concept in full frame while she talks. A scene is a
   collage on a plate: a hero picture over about half the frame, one or two
   smaller pictures, and labels and pointers on them. It is a Group, and

@@ -1481,6 +1481,8 @@ const enUS = {
     "begin_agent_session": "Start work session",
     "open_project": "Open project",
     "create_project": "New project",
+    "search_images": "Search open images",
+    "import_image": "Fetch an open image",
     "end_agent_session": "End work session",
     "set_history_lock": "Set the undo lock",
     "create_tacks": "Add tacks",
@@ -2221,6 +2223,8 @@ const enUS = {
   settings: {
     auto_install_updates_on_quit: 'Automatically install available updates when closing the app',
     auto_install_updates_on_quit_hint: 'When enabled, updates download in the background and install on exit. When disabled, updates only download when you choose Download and install.',
+    agent_image_search: 'Let agents search open image libraries',
+    agent_image_search_hint: 'Agents may search Wikimedia Commons for public-domain and Creative Commons pictures your media lacks, and add them to the project with their credits. The search words are sent to Wikimedia.',
     layout_theme: 'Layout theme',
     layout_theme_hint: 'Apply preset text sizes and dialog dimensions. Relaxed layouts provide more horizontal room and slightly larger text.',
     layout_theme_recommended: 'Recommended',

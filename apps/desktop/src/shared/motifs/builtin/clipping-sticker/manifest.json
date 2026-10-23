@@ -63,15 +63,29 @@
       "options": [
         "paper",
         "torn",
+        "cutout",
         "none"
       ],
       "default": "paper"
+    },
+    "treatment": {
+      "type": "enum",
+      "options": [
+        "color",
+        "mono",
+        "halftone"
+      ],
+      "default": "color"
     },
     "tilt_deg": {
       "type": "number",
       "default": -3,
       "min": -15,
       "max": 15
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
     },
     "paper": {
       "type": "color",

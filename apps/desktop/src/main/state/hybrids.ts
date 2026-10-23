@@ -128,6 +128,9 @@ export type HybridDeps = {
   /** node:fs stat, folded to what `import_media` refuses on: what the path IS,
    *  and whether this process may read it. `null` when nothing is there. */
   statPath: (p: string) => PathFacts | null
+  /** Draws an `.svg` to a PNG and returns its path (svgRaster.ts); the PNG is
+   *  what `import_media` imports. Absent: an SVG is refused. */
+  rasterizeSvg?: (p: string) => Promise<string>
   /** Current composition geometry — for caption layout / speech placement. */
   snapshotComposition: () => { width: number; height: number; duration_us: number }
 }
@@ -791,7 +794,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       if (deps.canImport?.() === false) throw new Error('Project is changing; retry importing after it opens')
       const trace = deps.beginImport?.()
       try {
-        const path = args.path as string
+        let path = args.path as string
         const assertCurrent = captureImportSession(deps)
         // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
         // would pass it, land a pool row with null metadata and a pending hash,
@@ -802,6 +805,12 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
         if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
         if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
+        // A drawing comes in as an SVG and goes into the pool as a PNG of it.
+        if (/\.svg$/i.test(path)) {
+          if (!deps.rasterizeSvg) throw new McpArgError(`path ${path} is an SVG, which this host cannot draw — import a PNG of it`, 'path')
+          try { path = await deps.rasterizeSvg(path) }
+          catch (e) { throw new McpArgError(`import_media: drawing ${path} failed: ${errText(e)}. Nothing was imported`, 'path') }
+        }
         // Insert the probed item FIRST so the clip appears in the timeline
         // immediately. A probe that fails has written nothing; it says so.
         let item: MediaItem

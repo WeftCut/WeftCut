@@ -72,12 +72,23 @@ Take each picture from, in order:
 1. the user's media in the pool;
 2. a still from the footage, cropped to what matters: a slide or an object
    behind the speaker (`read_project { view: "media_frame" }` finds it);
-3. an image you generate, if your model can output images: save it to a
+3. an open-licence picture: `search_images` with the name or the thing in
+   English, look at the thumbnails, and `import_image` the one that shows the
+   point. Keep its credit for the report;
+4. an image you generate, if your model can output images: save it to a
    file and `import_media` it;
-4. otherwise a drawing: fork the style's sticker and replace its SVG.
+5. otherwise a drawing: write an SVG in the style's look (its ink line and
+   flat fills; a person as a silhouette or a simple figure, an object as a
+   clear outline) and `import_media` it. It becomes a PNG with a transparent
+   ground, ready for the sticker.
 
-A picture the pool lacks is worth saying so in the plan, so the user can
-supply it.
+A person or an object with a transparent ground pastes on best as a
+`frame: cutout` sticker. Pictures from mixed sources (an old photograph, a
+slide, a drawing) hold together printed in one `treatment`, such as
+`halftone`.
+
+Say in the plan which pictures come from where, so the user can supply
+their own instead. If image search is off or finds nothing, draw.
 
 **Meet the pace.** `project://taste` → `tokens.pace` says how dense the
 edit is:
@@ -210,5 +221,8 @@ The deliverable is the edited project in WeftCut.
   - each beat placed, with its time and mode;
   - every fact an overlay adds from outside the talk, with its source;
   - every picture you generated or drew, so the user can check it;
+  - the credit line of every picture `import_image` fetched
+    (`read_project { view: "credits" }`), and that CC BY-SA ones ask for the
+    video to carry the same licence if published;
   - what became a tack;
   - any style fonts the user may want to install.
