@@ -100,6 +100,8 @@ motif.define({
     Object.assign(piece.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
     piece.insertAdjacentHTML('afterbegin',paperSvg(W,H,props.paper,rng(seedOf(props.quote)),true));
     const t1=tape(160,46); t1.style.left=(x0+W/2-80)+'px'; t1.style.top=(y0-22)+'px'; root.appendChild(t1);
+    // Tape is optional (`tape`); off, the piece sits on the frame by its shadow alone.
+    if(props.tape==='none') t1.style.display='none';
     els={piece,tape:t1,marked}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
   },
   frame(t,ctx){

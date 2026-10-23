@@ -1,14 +1,14 @@
 ---
 name: clipping
 version: 1
-description: Editorial cut-and-paste — torn paper, tape, newsprint and a highlighter laid over the footage, entering with one calm spring.
+description: Editorial cut-and-paste — torn paper, newsprint, ink drawings and a highlighter laid over the footage, entering with one calm spring; processes animate in ink and red.
 roles: []
 motifs:
   title: clipping-headline
   lower_third: clipping-stamp
   callout: [clipping-quote, clipping-pointer, clipping-reveal]
   plate: clipping-paper
-  illustration: clipping-sticker
+  illustration: [clipping-sticker, clipping-network]
 tokens:
   palette:
     ink: "#16130F"
@@ -71,8 +71,9 @@ tokens:
 # Clipping
 
 An editorial cut-and-paste look for explainers: the footage stays the user's
-own, and what the edit adds is paper. It looks like torn strips, tape, newsprint,
-a rubber stamp and a highlighter, as if pasted onto the frame. The motion is
+own, and what the edit adds is paper. It looks like torn strips, newsprint, a
+rubber stamp and a highlighter, as if pasted onto the frame, and ink drawings
+that move on paper where the talk explains how something works. The motion is
 calm, not jittery. Everything enters with one shared spring (damping 18, mass
 0.75, stiffness 110), one element after another, never two on the same frame.
 The paper feel is static: a slight tilt, one shared soft shadow, torn edges and
@@ -98,8 +99,7 @@ page. `clipping-paper` slides in with `enter` and out with `exit`, across the
 whole frame.
 
 - **Titles** (`clipping-headline`) are a torn paper strip carrying a condensed
-  headline, with an optional red kicker tag (`CHAPTER 01`) and a piece of
-  tape. `band: ink` or `red` turns the strip dark for a chapter card. Put them
+  headline, with an optional red kicker tag (`CHAPTER 01`). `band: ink` or `red` turns the strip dark for a chapter card. Put them
   in the top third, or over a `clipping-paper` plate for a full title card.
 - **Lower thirds** (`clipping-stamp`) are the name on a paper strip and the role
   in a red rubber stamp below it. Place one bottom-left inside the safe area,
@@ -120,7 +120,7 @@ whole frame.
   Put one between on-camera stretches as an insert, and lay titles, quotes and
   images on it.
 - **Illustrations** (`clipping-sticker`) are a picture pasted on as a paper
-  cut-out with tape. The picture comes through its `photo` media prop: a
+  cut-out. The picture comes through its `photo` media prop: a
   pool image, or a still from the footage cropped with `crop_*` to what
   matters. `frame: cutout` follows the picture's own outline with a hand-cut
   paper edge, for a person or an object on a transparent ground (a cut-out
@@ -138,8 +138,8 @@ whole frame.
   can be slapped on beside her, with a stamp. Most of what the edit adds is
   pictures, not headline strips. A picture the user's media lacks can come
   from an open image library (`search_images`), credited.
-- **Scenes** explain a concept in full frame while she talks. A scene is a
-  collage on a plate: a hero picture over about half the frame, one or two
+- **Scenes** explain a concept in full frame while she talks. A process is an
+  animation (above). Anything else is a collage on a plate: a hero picture over about half the frame, one or two
   smaller pictures, and labels and pointers on them. It is a Group, and
   every piece in it that moves on its own is its own layer. For example,
   "the patient who lost his hippocampus":
@@ -152,9 +152,28 @@ whole frame.
   - a `clipping-pointer` arrow from the brain to the portrait;
   - two small `clipping-headline` tags: NEW: LOST and OLD: KEPT.
 
-  The pieces leave a beat apart, then the plate slides out. Put the scene's
+  The pieces leave a beat apart, the last with the plate. Put the scene's
   track below the captions so they stay readable over it. Build scenes from
   what the talk explains, not from this list.
+- **Animations** (`clipping-network`) show a process happening, drawn in ink
+  on the paper ground with the red accent for what matters. The example
+  network starts close on one neuron as it grows its branches. It links to a
+  neighbour and a signal crosses (`cue_link_s`), then spreads into a network
+  (`cue_spread_s`). Signals run through it (`cue_signal_s`), and a lens
+  shows one synapse at work (`cue_detail_s`, `cue_release_s`). Then one set
+  lights up together as a memory, and the rest dims (`cue_pattern_s`). Set
+  each cue from the time of its word. `kind: dot` draws plain nodes, for a
+  network of people, places or machines.
+
+  Fork it for another network, or write an animation of another process in
+  the same vocabulary: a camera that moves from one element to the whole and
+  in on what matters, lines drawn on, beads of red travelling along paths,
+  the rest dimmed for focus, a lens for a detail. It needs no words: the
+  captions carry the speech. On its `ground` it is a scene by itself, below
+  the captions.
+- **Tape** is optional. The examples take `tape: none`, and their pieces sit
+  on the frame by their shadow. `tape: strip` adds a strip of masking tape,
+  for a scrapbook look.
 - **Decoration** (`clipping-scrap`: a newsprint strip, a torn piece, tape) is
   untagged. Use it sparingly, to tuck behind an image or a quote.
 - **Captions** stay plain white type at the bottom, at most two lines of 42

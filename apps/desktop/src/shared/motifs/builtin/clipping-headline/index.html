@@ -85,6 +85,8 @@ motif.define({
     if(props.kicker){ kicker=document.createElement('div'); kicker.id='kicker'; kicker.className='piece'; kicker.textContent=props.kicker;
       Object.assign(kicker.style,{fontFamily:props.font_folio,background:props.band==='red'?props.ink:props.accent,color:props.paper,left:(x0+28)+'px',top:(y0-26)+'px'}); root.appendChild(kicker); }
     const t1=tape(170,50); t1.style.left=(x0+W-110)+'px'; t1.style.top=(y0-20)+'px'; root.appendChild(t1);
+    // Tape is optional (`tape`); off, the piece sits on the frame by its shadow alone.
+    if(props.tape==='none') t1.style.display='none';
     els={strip,kicker,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
   },
   frame(t,ctx){
