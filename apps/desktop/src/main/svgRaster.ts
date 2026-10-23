@@ -49,31 +49,35 @@ export async function rasterizeSvg(svgPath: string, outDir: string): Promise<str
   const own = svgIntrinsicSize(text)
   if (!/<svg\b/i.test(text)) throw new Error(`${path.basename(svgPath)} has no <svg> root`)
   const { width, height } = rasterSize(own ?? { width: 1024, height: 1024 })
-  const key = createHash('sha256').update(bytes).update(`@${width}x${height}`).digest('hex').slice(0, 32)
+  const key = createHash('sha256').update(bytes).update(`@${width}x${height}:canvas`).digest('hex').slice(0, 32)
   const out = path.join(outDir, key, `${path.basename(svgPath, path.extname(svgPath))}.png`)
   if (fs.existsSync(out)) return out
 
   const { BrowserWindow, session } = await import('electron')
   const ses = session.fromPartition('svg-raster')
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith('data:') }))
+  // Drawn onto a canvas in the page and read back, so neither the window's
+  // size (a window is clamped to the screen) nor the display's scale matters.
   const win = new BrowserWindow({
-    show: false, width, height, useContentSize: true, frame: false, transparent: true, backgroundColor: '#00000000',
+    show: false, width: 64, height: 64,
     webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, session: ses },
   })
   try {
-    win.webContents.setZoomFactor(1)
-    const page = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`
-      + `<style>html,body{margin:0;background:transparent;overflow:hidden}img{display:block;width:${width}px;height:${height}px}</style></head>`
-      + `<body><img src="data:image/svg+xml;base64,${bytes.toString('base64')}"></body></html>`
+    const page = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:"></head><body></body></html>`
     await win.loadURL(`data:text/html;base64,${Buffer.from(page).toString('base64')}`)
-    const drawn = await win.webContents.executeJavaScript('document.images[0].decode().then(() => document.images[0].naturalWidth > 0, () => false)') as boolean
-    if (!drawn) throw new Error(`${path.basename(svgPath)} is not an SVG this app can draw`)
-    let image = await win.webContents.capturePage({ x: 0, y: 0, width, height })
-    const got = image.getSize()
-    if (got.width !== width || got.height !== height) image = image.resize({ width, height, quality: 'best' })
+    const src = `data:image/svg+xml;base64,${bytes.toString('base64')}`
+    const png = await win.webContents.executeJavaScript(`(async () => {
+      const img = new Image(); img.src = ${JSON.stringify(src)}
+      try { await img.decode() } catch { return null }
+      if (!img.naturalWidth && !img.width) return null
+      const c = document.createElement('canvas'); c.width = ${width}; c.height = ${height}
+      c.getContext('2d').drawImage(img, 0, 0, ${width}, ${height})
+      return c.toDataURL('image/png')
+    })()`) as string | null
+    if (!png || !png.startsWith('data:image/png;base64,')) throw new Error(`${path.basename(svgPath)} is not an SVG this app can draw`)
     fs.mkdirSync(path.dirname(out), { recursive: true })
     const tmp = `${out}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, image.toPNG())
+    fs.writeFileSync(tmp, Buffer.from(png.slice('data:image/png;base64,'.length), 'base64'))
     fs.renameSync(tmp, out)
     return out
   } finally {
