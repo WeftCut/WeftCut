@@ -123,6 +123,9 @@ const NO_VLM: VlmProvider = () => ({
 export type PeaksPathProvider = (subjectLayerId: string) => string | null
 const NO_PEAKS_PATH: PeaksPathProvider = () => null
 
+/** The arguments `preview_motif` takes (`motif_id` is an older name for `id`). */
+const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(['id', 'motif_id', 't_sec', 'props', 'width', 'height', 'expected_revision'])
+
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
  *  Rust resolvers read, dispatch, and unwrap the envelope.
@@ -557,6 +560,12 @@ async function dispatchTool(
   if (name === 'preview_motif') {
     const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
     const motifId = a.id ?? a.motif_id ?? ''
+    // One frame per call, at a time the caller names: an H4 run sent
+    // `times_s: [...]`, got the t = 0 frame (nothing drawn yet) and concluded
+    // the Motif was broken.
+    const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
+    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at t_sec`, data: { field: unknown[0] } })
+    if (typeof a.t_sec !== 'number' || !Number.isFinite(a.t_sec)) return toolErrorResult({ code: 'invalid_params', message: 'preview_motif needs t_sec: the time into the Motif, in seconds, of the one frame it renders', data: { field: 't_sec' } })
     // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
     // few catalog fields, so it serves both the advertised default size and the
     // props defaults below. A bare-core call (no host) has no catalog to ask:

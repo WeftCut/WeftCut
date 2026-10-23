@@ -164,7 +164,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   it('the preview capture failing is a result too', async () => {
     // A catalogued id, so the refusal comes from the CAPTURE and not from the
     // unknown-id check that now precedes it.
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => [{ id: 'x', props_schema: {}, size: [10, 10] }] }), 'preview_motif', { id: 'x' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => [{ id: 'x', props_schema: {}, size: [10, 10] }] }), 'preview_motif', { id: 'x', t_sec: 0 }))
     expect(out.content[0].text).toContain('no renderer')
   })
 
