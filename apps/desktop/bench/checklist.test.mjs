@@ -181,6 +181,30 @@ describe('layer_count and selectors', () => {
     assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, p).detail, /^1 of 1 scene\(s\) hold a picture$/)
   })
 
+  it('measures pictures against words, the pool pictures used, hidden captions and scene share', () => {
+    const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
+    const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
+      tracks: [track([role(motif(0, 30, 'clipping-paper'), 'plate'), role(motif(1, 30, 'clipping-sticker', { photo: 'img1' }), 'illustration'), role(motif(2, 30, 'clipping-headline', { text: 'HUB' }), 'title')])] }
+    const group = layer(40, 70, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 30 * S, transform: transform() })
+    const captions = captionTrack([text(0, 50, 'all'), text(60, 80, 'more')])
+    const p = project([track([video(0, 100)], { role: 'ARoll' }), track([role(motif(0, 4, 'clipping-headline'), 'title'), role(motif(10, 14, 'clipping-pointer', { label: 'X' }), 'callout'), role(motif(20, 24, 'clipping-sticker', { photo: 'img2' }), 'callout')]), captions, track([group])])
+    p.compositions.c1 = scene
+    p.media_pool.img1 = { id: 'img1', kind: 'Image', label: 'semon.jpg' }
+    p.media_pool.img2 = { id: 'img2', kind: 'Image', label: 'brain.jpg' }
+    p.media_pool.img3 = { id: 'img3', kind: 'Image', label: 'map.jpg' }
+    // Pictures: the two stickers; words: the pointer and the scene's heading (the root title aside).
+    assert.match(check({ kind: 'picture_share', min_fraction: 0.5 }, p).detail, /^2 of 4 graphic elements are pictures \(50 %\), want >= 50 %$/)
+    assert.equal(check({ kind: 'pool_pictures_used', min: 3 }, p).pass, false)
+    assert.match(check({ kind: 'pool_pictures_used' }, p).detail, /^2 of 3 pool image\(s\) used: brain.jpg, semon.jpg$/)
+    // The scene sits above the captions from 40 to 70 s: 10 s + 10 s of cues hidden.
+    const hidden = check({ kind: 'captions_visible' }, p)
+    assert.equal(hidden.pass, false)
+    assert.match(hidden.detail, /^20 s of 70 s of captions hidden/)
+    p.compositions.root.tracks = [p.compositions.root.tracks[0], p.compositions.root.tracks[1], p.compositions.root.tracks[3], captions]
+    assert.equal(check({ kind: 'captions_visible' }, p).pass, true)
+    assert.match(check({ kind: 'scene_share', max_fraction: 0.25 }, p).detail, /^scenes and plates cover 30 % of the cut \(30 s\), want <= 25 %$/)
+  })
+
   it('finds role-tagged overlays inside Groups, at their time on the root', () => {
     const card = { id: 'card', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
       tracks: [track([{ ...motif(0, 10, 'clipping-paper'), params: { ...motif(0, 10, 'clipping-paper').params, graphic_role: 'plate' } }, { ...motif(1, 10, 'clipping-headline'), params: { ...motif(1, 10, 'clipping-headline').params, graphic_role: 'title' } }])] }

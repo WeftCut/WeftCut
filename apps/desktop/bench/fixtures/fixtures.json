@@ -94,6 +94,141 @@
         "audio_codec": "aac"
       },
       "notes": "One continuous take, no cuts and no burned-in titles: Ann Matsuuchi seated, framed wide-ish in a glass-walled conference space, talking (slightly off-camera, interview style) about students editing Wikipedia. English, clear speech, no music. Used whole (no trim). Speech ends at ~151.28 s; on_grid_duration_us is 3628 frames at 24000/1001, which keeps the last word. Pauses (silencedetect -34 dB, >= 0.4 s), 23 of 0.40-0.87 s, ending at: 4.3, 8.8, 13.9, 22.8, 26.7, 40.7, 43.2, 51.2, 58.5, 63.8, 70.0, 74.1, 75.3, 82.0, 86.7, 93.4, 100.9, 106.9, 115.8, 123.0, 126.9, 134.5, 144.7 s; the longest are 13.1-13.9 (0.82 s), 25.9-26.7 (0.80 s) and 133.6-134.5 (0.87 s). Filler words were not verified (no local transcription when this was pinned). The bench file is an H.264/AAC MP4 transcoded from the source (see transcode)."
+    },
+    {
+      "id": "picture-semon",
+      "kind": "picture",
+      "title": "Portrait of Richard Semon",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Richard_Semon.jpg",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/8/8e/Richard_Semon.jpg",
+      "author": "Unknown photographer; frontispiece to R. Semon, Bewusstseinsvorgang und Gehirnprozess (1920)",
+      "license": "Public domain",
+      "attribution": "\"Portrait of Richard Semon\", Unknown photographer; frontispiece to R. Semon, Bewusstseinsvorgang und Gehirnprozess (1920); public domain, via Wikimedia Commons",
+      "ext": "jpg",
+      "size_bytes": 249026,
+      "sha256": "dc69ae225266c21381d03ccc3c1f5e028f895f57b59089e8bd2f23bb950f3871",
+      "media": {
+        "type": "image",
+        "width": 981,
+        "height": 1604
+      },
+      "notes": "A person: Richard Semon, the zoologist who coined 'engram' (1904). Head-and-shoulders photograph, grey background."
+    },
+    {
+      "id": "picture-cajal-neurons",
+      "kind": "picture",
+      "title": "Drawings of cortical neurons",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Cajal_cortex_drawings.png",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/5/5b/Cajal_cortex_drawings.png",
+      "author": "Santiago Ramón y Cajal (artwork, 1899); file by User:Looie496",
+      "license": "Public domain",
+      "attribution": "\"Drawings of cortical neurons\", Santiago Ramón y Cajal (artwork, 1899); file by User:Looie496; public domain, via Wikimedia Commons",
+      "ext": "png",
+      "size_bytes": 184867,
+      "sha256": "60624ba66c979c083d57c604ef187b9d0b086ff66c69b3765fa750146c4bb355",
+      "media": {
+        "type": "image",
+        "width": 672,
+        "height": 777
+      },
+      "notes": "An object/diagram: three of Cajal's ink drawings of neurons in the human cortex, black on white."
+    },
+    {
+      "id": "picture-brain",
+      "kind": "picture",
+      "title": "Human brain, lateral view",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Human_brain_lateral_view.JPG",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/7/7e/Human_brain_lateral_view.JPG",
+      "author": "John A Beal, PhD, Dept. of Cellular Biology & Anatomy, Louisiana State University Health Sciences Center Shreveport",
+      "license": "CC BY 2.5",
+      "license_url": "https://creativecommons.org/licenses/by/2.5/",
+      "attribution": "\"Human brain, lateral view\" by John A Beal, PhD, Dept. of Cellular Biology & Anatomy, Louisiana State University Health Sciences Center Shreveport, CC BY 2.5, via Wikimedia Commons",
+      "ext": "jpg",
+      "size_bytes": 43763,
+      "sha256": "7b390a44a96f0e492dc6613e2eeaf66b539d371b151a8332dad67778e9aa90aa",
+      "media": {
+        "type": "image",
+        "width": 701,
+        "height": 487
+      },
+      "notes": "An object: photograph of a preserved human brain from the side, on a dark background."
+    },
+    {
+      "id": "picture-hippocampus-seahorse",
+      "kind": "picture",
+      "title": "Hippocampus and seahorse",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Hippocampus_and_seahorse_cropped.JPG",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/5/5b/Hippocampus_and_seahorse_cropped.JPG",
+      "author": "Professor Laszlo Seress (Hippocampus_and_seahorse.JPG); derivative by Anthonyhcole",
+      "license": "CC BY-SA 3.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "attribution": "\"Hippocampus and seahorse\" by Professor Laszlo Seress (Hippocampus_and_seahorse.JPG); derivative by Anthonyhcole, CC BY-SA 3.0, via Wikimedia Commons",
+      "ext": "jpg",
+      "size_bytes": 73726,
+      "sha256": "d97d417639c9b0817e4722698cae3da2950d9e33208714b1c6f1e7061945438b",
+      "media": {
+        "type": "image",
+        "width": 798,
+        "height": 511
+      },
+      "notes": "An object: a dissected human hippocampus beside a seahorse skeleton, the shape it is named for."
+    },
+    {
+      "id": "picture-gray-hippocampus",
+      "kind": "picture",
+      "title": "Gray's Anatomy plate 739, hippocampus emphasised",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Gray739-emphasizing-hippocampus.png",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/2/2e/Gray739-emphasizing-hippocampus.png",
+      "author": "Henry Vandyke Carter (Gray's Anatomy, 1918 edition)",
+      "license": "Public domain",
+      "attribution": "\"Gray's Anatomy plate 739, hippocampus emphasised\", Henry Vandyke Carter (Gray's Anatomy, 1918 edition); public domain, via Wikimedia Commons",
+      "ext": "png",
+      "size_bytes": 269207,
+      "sha256": "d6b24e6bf4f0befae0c07677f4be6fdef04d00e537f49d869bc3e3a96df79b8b",
+      "media": {
+        "type": "image",
+        "width": 500,
+        "height": 379
+      },
+      "notes": "A diagram: brain section with the hippocampus picked out in red. Small (500 px)."
+    },
+    {
+      "id": "picture-eiffel-1900",
+      "kind": "picture",
+      "title": "Eiffel Tower, looking toward the Trocadero, Exposition Universelle 1900",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Eiffel_Tower,_full-view_looking_toward_the_Trocadero,_Exposition_Universal,_1900,_Paris,_France.jpg",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/6/67/Eiffel_Tower%2C_full-view_looking_toward_the_Trocadero%2C_Exposition_Universal%2C_1900%2C_Paris%2C_France.jpg",
+      "author": "Unknown photographer (Library of Congress Prints and Photographs, ppmsc.05221)",
+      "license": "Public domain",
+      "attribution": "\"Eiffel Tower, looking toward the Trocadero, Exposition Universelle 1900\", Unknown photographer (Library of Congress Prints and Photographs, ppmsc.05221); public domain, via Wikimedia Commons",
+      "ext": "jpg",
+      "size_bytes": 3162503,
+      "sha256": "559261a046dd81437ac4054c6931d53ea844912cb8636b93a12a949924343039",
+      "media": {
+        "type": "image",
+        "width": 2334,
+        "height": 3301
+      },
+      "notes": "A place: colour print of the Eiffel Tower around 1900, portrait format."
+    },
+    {
+      "id": "picture-paris-map",
+      "kind": "picture",
+      "title": "Garnier pocket map of Paris, 1900",
+      "source_url": "https://commons.wikimedia.org/wiki/File:1900_Garnier_Pocket_Map_or_Plan_of_Paris,_France_(_Eiffel_Tower_)_-_Geographicus_-_Paris-garnier-1900.jpg",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/0/05/1900_Garnier_Pocket_Map_or_Plan_of_Paris%2C_France_%28_Eiffel_Tower_%29_-_Geographicus_-_Paris-garnier-1900.jpg",
+      "author": "Garnier (publisher); provided by Geographicus Rare Antique Maps",
+      "license": "Public domain",
+      "attribution": "\"Garnier pocket map of Paris, 1900\", Garnier (publisher); provided by Geographicus Rare Antique Maps; public domain, via Wikimedia Commons",
+      "ext": "jpg",
+      "size_bytes": 3842711,
+      "sha256": "c641767619c02738ff40951c0717b3955a717bf6ee031e8e71113c0b796f5bd7",
+      "media": {
+        "type": "image",
+        "width": 4000,
+        "height": 2969
+      },
+      "notes": "A place: a coloured street map of Paris from 1900, landscape."
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Bench fixture attribution
 
-The agent bench uses the footage below. None of it is in this repository:
+The agent bench uses the footage and pictures below. None of it is in this repository:
 `node bench/fixtures/fetch.mjs --all` downloads each file from Wikimedia
 Commons into the git-ignored `bench/.cache/fixtures/`, checks it against the
 sha256 pinned in `fixtures.json`, trims it where the fixture says so, and
@@ -41,3 +41,61 @@ these files, credit it as below, say it was modified, and keep the license.
   students have good experiences editing Wikipedia" by Lane Rasberry
   (Bluerasberry), videography by Rabbit Hole Productions, LLC, CC BY 4.0, via
   Wikimedia Commons; transcoded.
+
+## Pictures (the user-media pack)
+
+Stills the `explainer-clipping-pictures` task imports as the user's own
+pictures. Each is imported as downloaded (no changes), after its sha256
+matches. A bench run may crop or scale one inside a Motif; that output stays
+local. Licences were checked on each Commons file page on 2026-10-23. The
+pack deliberately lacks a portrait of Henry Molaison, the patient the talk
+names: no freely licensed one exists.
+
+### picture-semon
+
+- **Work:** "Portrait of Richard Semon" ([Commons file page](https://commons.wikimedia.org/wiki/File:Richard_Semon.jpg))
+- **Author:** Unknown photographer; frontispiece to R. Semon, Bewusstseinsvorgang und Gehirnprozess (1920)
+- **License:** Public domain
+- **Credit line:** "Portrait of Richard Semon", Unknown photographer; frontispiece to R. Semon, Bewusstseinsvorgang und Gehirnprozess (1920); public domain, via Wikimedia Commons
+
+### picture-cajal-neurons
+
+- **Work:** "Drawings of cortical neurons" ([Commons file page](https://commons.wikimedia.org/wiki/File:Cajal_cortex_drawings.png))
+- **Author:** Santiago Ramón y Cajal (artwork, 1899); file by User:Looie496
+- **License:** Public domain
+- **Credit line:** "Drawings of cortical neurons", Santiago Ramón y Cajal (artwork, 1899); file by User:Looie496; public domain, via Wikimedia Commons
+
+### picture-brain
+
+- **Work:** "Human brain, lateral view" ([Commons file page](https://commons.wikimedia.org/wiki/File:Human_brain_lateral_view.JPG))
+- **Author:** John A Beal, PhD, Dept. of Cellular Biology & Anatomy, Louisiana State University Health Sciences Center Shreveport
+- **License:** [CC BY 2.5](https://creativecommons.org/licenses/by/2.5/)
+- **Credit line:** "Human brain, lateral view" by John A Beal, PhD, Dept. of Cellular Biology & Anatomy, Louisiana State University Health Sciences Center Shreveport, CC BY 2.5, via Wikimedia Commons
+
+### picture-hippocampus-seahorse
+
+- **Work:** "Hippocampus and seahorse" ([Commons file page](https://commons.wikimedia.org/wiki/File:Hippocampus_and_seahorse_cropped.JPG))
+- **Author:** Professor Laszlo Seress (Hippocampus_and_seahorse.JPG); derivative by Anthonyhcole
+- **License:** [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/)
+- **Credit line:** "Hippocampus and seahorse" by Professor Laszlo Seress (Hippocampus_and_seahorse.JPG); derivative by Anthonyhcole, CC BY-SA 3.0, via Wikimedia Commons
+
+### picture-gray-hippocampus
+
+- **Work:** "Gray's Anatomy plate 739, hippocampus emphasised" ([Commons file page](https://commons.wikimedia.org/wiki/File:Gray739-emphasizing-hippocampus.png))
+- **Author:** Henry Vandyke Carter (Gray's Anatomy, 1918 edition)
+- **License:** Public domain
+- **Credit line:** "Gray's Anatomy plate 739, hippocampus emphasised", Henry Vandyke Carter (Gray's Anatomy, 1918 edition); public domain, via Wikimedia Commons
+
+### picture-eiffel-1900
+
+- **Work:** "Eiffel Tower, looking toward the Trocadero, Exposition Universelle 1900" ([Commons file page](https://commons.wikimedia.org/wiki/File:Eiffel_Tower,_full-view_looking_toward_the_Trocadero,_Exposition_Universal,_1900,_Paris,_France.jpg))
+- **Author:** Unknown photographer (Library of Congress Prints and Photographs, ppmsc.05221)
+- **License:** Public domain
+- **Credit line:** "Eiffel Tower, looking toward the Trocadero, Exposition Universelle 1900", Unknown photographer (Library of Congress Prints and Photographs, ppmsc.05221); public domain, via Wikimedia Commons
+
+### picture-paris-map
+
+- **Work:** "Garnier pocket map of Paris, 1900" ([Commons file page](https://commons.wikimedia.org/wiki/File:1900_Garnier_Pocket_Map_or_Plan_of_Paris,_France_(_Eiffel_Tower_)_-_Geographicus_-_Paris-garnier-1900.jpg))
+- **Author:** Garnier (publisher); provided by Geographicus Rare Antique Maps
+- **License:** Public domain
+- **Credit line:** "Garnier pocket map of Paris, 1900", Garnier (publisher); provided by Geographicus Rare Antique Maps; public domain, via Wikimedia Commons

@@ -12,8 +12,10 @@ import type { JobEvent } from '../mediaReady'
 /** fixtures.mjs `fixture.json`, as far as the runner reads it. */
 export interface FixtureMeta {
   id: string
-  output: { sha256: string; bytes: number; duration_s: number }
-  transcode: Record<string, unknown> & { ffmpeg_version: string }
+  /** `duration_s` for footage; `width` and `height` for a still image. */
+  output: { sha256: string; bytes: number; duration_s?: number; width?: number; height?: number }
+  /** Absent for a still image, which is imported as downloaded. */
+  transcode?: Record<string, unknown> & { ffmpeg_version: string }
   [k: string]: unknown
 }
 

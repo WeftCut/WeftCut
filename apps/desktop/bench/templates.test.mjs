@@ -30,9 +30,9 @@ test('templateKey: changes with setup, project, fixture output bytes, app build 
   assert.throws(() => templateKey({ ...base, fixtureHashes: {} }), /no output hash/)
 })
 
-test('projectNameFor: from the fixtures, else the task', () => {
+test('projectNameFor: from the first fixture, else the task', () => {
   assert.equal(projectNameFor(task), 'explainer-memory')
-  assert.equal(projectNameFor({ id: 't', fixtures: ['b', 'a'] }), 'a--b')
+  assert.equal(projectNameFor({ id: 't', fixtures: ['b', 'a'] }), 'b')
   assert.equal(projectNameFor({ id: 'smoke-title-card', fixtures: [] }), 'smoke-title-card')
 })
 
