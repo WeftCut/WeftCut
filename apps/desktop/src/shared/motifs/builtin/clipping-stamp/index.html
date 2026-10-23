@@ -84,6 +84,8 @@ motif.define({
     if(props.line2){ stamp=document.createElement('div'); stamp.id='stamp'; stamp.className='piece'; stamp.textContent=props.line2;
       Object.assign(stamp.style,{fontFamily:props.font_folio,color:props.accent,background:'rgba(242,236,223,0.92)',left:(x0+26)+'px',top:(y0+H+14)+'px'}); root.appendChild(stamp); }
     const t1=tape(120,44); t1.style.left=(x0-58)+'px'; t1.style.top=(y0-22)+'px'; root.appendChild(t1);
+    // Tape is optional (`tape`); off, the piece sits on the frame by its shadow alone.
+    if(props.tape==='none') t1.style.display='none';
     els={strip,stamp,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
   },
   frame(t,ctx){

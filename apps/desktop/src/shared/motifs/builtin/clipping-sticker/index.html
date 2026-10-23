@@ -141,7 +141,7 @@ motif.define({
     }
     root.appendChild(card);
     let t1=null;
-    if(props.frame!=='none'){ t1=tape(150,48); Object.assign(t1.style,{left:(x0+W/2-75)+'px',top:(y0-22)+'px'}); root.appendChild(t1); }
+    if(props.frame!=='none'&&props.tape!=='none'){ t1=tape(150,48); Object.assign(t1.style,{left:(x0+W/2-75)+'px',top:(y0-22)+'px'}); root.appendChild(t1); }
     els={card,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
   },
   frame(t,ctx){

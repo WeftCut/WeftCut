@@ -1,0 +1,126 @@
+{
+  "id": "clipping-network",
+  "name": "Clipping Network",
+  "version": 1,
+  "size": [
+    1920,
+    1080
+  ],
+  "default_duration_s": 18.0,
+  "max_duration_prop": "duration_s",
+  "settle_rafs": 1,
+  "graphic_role": "illustration",
+  "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 18.0,
+      "min": 2,
+      "max": 600
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "fade"
+    },
+    "kind": {
+      "type": "enum",
+      "options": [
+        "neuron",
+        "dot"
+      ],
+      "default": "neuron"
+    },
+    "ground": {
+      "type": "enum",
+      "options": [
+        "paper",
+        "newsprint",
+        "kraft",
+        "none"
+      ],
+      "default": "paper"
+    },
+    "count": {
+      "type": "number",
+      "default": 70,
+      "min": 8,
+      "max": 120
+    },
+    "cue_link_s": {
+      "type": "number",
+      "default": 2.8,
+      "min": 0,
+      "max": 600
+    },
+    "cue_spread_s": {
+      "type": "number",
+      "default": 6.6,
+      "min": 0,
+      "max": 600
+    },
+    "cue_signal_s": {
+      "type": "number",
+      "default": 8.8,
+      "min": 0,
+      "max": 600
+    },
+    "detail": {
+      "type": "enum",
+      "options": [
+        "synapse",
+        "none"
+      ],
+      "default": "synapse"
+    },
+    "cue_detail_s": {
+      "type": "number",
+      "default": 9.6,
+      "min": 0,
+      "max": 600
+    },
+    "cue_release_s": {
+      "type": "number",
+      "default": 11.0,
+      "min": 0,
+      "max": 600
+    },
+    "cue_pattern_s": {
+      "type": "number",
+      "default": 14.5,
+      "min": 0,
+      "max": 600
+    },
+    "seed": {
+      "type": "number",
+      "default": 7,
+      "min": 0,
+      "max": 100000
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "accent": {
+      "type": "color",
+      "default": "#D2261C"
+    },
+    "step_fps": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 30
+    }
+  }
+}

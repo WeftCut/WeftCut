@@ -114,6 +114,8 @@ motif.define({
     torn.style.transformOrigin=`${split}px ${CH/2}px`;
     cover.appendChild(stub); cover.appendChild(torn); root.appendChild(cover);
     const t1=tape(130,46); Object.assign(t1.style,{left:(cx-30)+'px',top:(cy+CH/2-23)+'px'}); root.appendChild(t1);
+    // Tape is optional (`tape`); off, the piece sits on the frame by its shadow alone.
+    if(props.tape==='none') t1.style.display='none';
     els={strip,cover,torn,tape:t1}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit,cue:props.cue_tear_s};
   },
   frame(t,ctx){
