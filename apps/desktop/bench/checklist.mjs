@@ -62,7 +62,7 @@
 //   jump_cuts            { max_uncovered_fraction? }  cuts between consecutive A-roll
 //                        clips of one media whose source does not continue, and the
 //                        share no full-frame layer above (scene Group, B roll, image,
-//                        plate Motif) or punch-in (scale change >= 5 %) covers; pass
+//                        plate Motif, drawn scene) or punch-in (scale change >= 5 %) covers; pass
 //                        null (measured only) without a threshold
 //   bare_talk            { max_s? }            longest stretch with nothing on screen but
 //                        the A roll (captions aside); pass null without a threshold
@@ -82,6 +82,11 @@
 //                        holding one) on a track above the caption track
 //   scene_share          { max_fraction? }    the share of the A roll's span covered by
 //                        scene Groups and plate Motifs; pass null without a threshold
+//   scenes               { min, min_duration_s? }  scenes on the root: Groups of 2+ visual
+//                        layers (not a title card) and drawn scenes (below), each at
+//                        least min_duration_s long
+//   animated_scenes      { min }              scenes that animate: a drawn scene, or a
+//                        Group holding a drawn illustration
 //   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
 //                        visual layers inside; a title card of a plate and a
 //                        title is not a scene) that hold a picture: footage, an
@@ -94,17 +99,24 @@
 //                        its own placement)
 //   all_of / any_of      { checks: [check, ...] }
 //   human                { }                   pass null; a person judges it
+//
+// A drawn illustration is a Motif tagged illustration with no picture: no
+// `photo` or `media` prop, and no prop naming a pool item (an animation of a
+// process, a diagram). A drawn scene is one on the root that is not drawn over
+// the footage (`ground: none`) or scaled down: a frame-sized animation, a scene
+// by itself (ADR 0134). Without its manifest the checklist cannot read its
+// size; the audit can.
 
 export const BUILTIN_MOTIF_IDS = Object.freeze([
   'countdown', 'lower-third', 'text-fx',
-  'clipping-headline', 'clipping-stamp', 'clipping-quote', 'clipping-pointer', 'clipping-paper', 'clipping-scrap', 'clipping-reveal', 'clipping-sticker',
+  'clipping-headline', 'clipping-stamp', 'clipping-quote', 'clipping-pointer', 'clipping-paper', 'clipping-scrap', 'clipping-reveal', 'clipping-sticker', 'clipping-network',
 ])
 
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
   'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'beat_gaps', 'scene_pictures',
-  'picture_share', 'pool_pictures_used', 'captions_visible', 'scene_share', 'layer_region', 'all_of', 'any_of', 'human',
+  'picture_share', 'pool_pictures_used', 'captions_visible', 'scene_share', 'scenes', 'animated_scenes', 'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -234,17 +246,38 @@ function intersectLength(a, b) {
   return n
 }
 
+function drawnIllustration(layer, project) {
+  const p = layer.params ?? {}
+  if (p.kind !== 'Motif' || p.graphic_role !== 'illustration') return false
+  const pool = project?.media_pool ?? {}
+  const props = p.props ?? {}
+  return !('photo' in props) && !('media' in props) && !Object.values(props).some((v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined)
+}
+function drawnScene(layer, project) {
+  const scaleOf = (v) => (v?.mode === 'Static' ? v.value : v?.value?.[0]?.value ?? 1)
+  const t = layer.params?.transform
+  return drawnIllustration(layer, project) && layer.params.props?.ground !== 'none' && (!t || (Math.abs(scaleOf(t.scale_x)) >= 0.95 && Math.abs(scaleOf(t.scale_y)) >= 0.95))
+}
+const titleCardOf = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
+const groupVisual = (layer, project) => (project?.compositions?.[layer.params.composition]?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio')
+/** Scenes on the root: Groups of 2+ visual layers that are not a title card,
+ *  and drawn scenes. */
+function scenesOf(root, project) {
+  return select(root, {}).filter(({ track, layer }) => layer.enabled !== false && !isCaptionTrack(track) && track.role !== 'ARoll' && (
+    layer.params?.kind === 'CompositionRef' ? (() => { const v = groupVisual(layer, project); return v.length >= 2 && !titleCardOf(v) })() : drawnScene(layer, project)))
+}
+
 /** Cuts between consecutive A-roll clips of one media whose source does not
  *  continue (a pause or a passage removed), and which of them something
  *  covers: a full-frame layer above spanning the cut (a scene Group, B roll,
  *  an image, a plate Motif), or a punch-in (the next clip's scale differs by
  *  5 % or more). */
-function jumpCuts(root) {
+function jumpCuts(root, project) {
   const frame = frameUs(root)
   const clips = select(root, { layer_kind: 'VideoClip', track_role: 'ARoll' }).map(({ layer }) => layer).sort((a, b) => a.t_start_us - b.t_start_us)
   const scaleOf = (l) => { const v = l.params.transform?.scale_x; return v?.mode === 'Static' ? v.value : v?.value?.[0]?.value ?? 1 }
   const cover = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' &&
-    (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(layer.params?.kind) || (layer.params?.kind === 'Motif' && layer.params.graphic_role === 'plate')))
+    (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(layer.params?.kind) || (layer.params?.kind === 'Motif' && (layer.params.graphic_role === 'plate' || drawnScene(layer, project)))))
   const cuts = [], covered = new Map()
   for (let i = 1; i < clips.length; i++) {
     const a = clips[i - 1], b = clips[i]
@@ -253,7 +286,7 @@ function jumpCuts(root) {
     const t = b.t_start_us
     cuts.push(t)
     const over = cover.find(({ layer }) => layer.t_start_us <= t - frame && layer.t_end_us >= t + frame)
-    if (over) covered.set(t, over.layer.params.kind === 'CompositionRef' ? 'scene' : over.layer.params.kind === 'Motif' ? 'plate' : 'insert')
+    if (over) covered.set(t, over.layer.params.kind === 'CompositionRef' ? 'scene' : over.layer.params.kind === 'Motif' ? (over.layer.params.graphic_role === 'plate' ? 'plate' : 'animation') : 'insert')
     else if (Math.abs(scaleOf(b) / scaleOf(a) - 1) >= 0.05) covered.set(t, 'punch-in')
   }
   return { cuts, covered }
@@ -396,8 +429,8 @@ const KINDS = {
     return { pass: off.length === 0, detail: off.length ? `${off.length} of ${videos.length} clip(s) without matching sound: ${off.slice(0, 5).join(', ')}` : `${videos.length} clip(s) in sync` }
   },
 
-  jump_cuts(check, root) {
-    const { cuts, covered } = jumpCuts(root)
+  jump_cuts(check, root, project) {
+    const { cuts, covered } = jumpCuts(root, project)
     if (!cuts.length) return { pass: true, detail: 'no jump cuts' }
     const bare = cuts.filter((c) => !covered.has(c))
     const f = bare.length / cuts.length
@@ -497,7 +530,7 @@ const KINDS = {
     const opaque = (l, depth = 0) => {
       const k = l.params?.kind
       if (k === 'VideoClip' || k === 'Color') return true
-      if (k === 'Motif') return l.params.graphic_role === 'plate'
+      if (k === 'Motif') return l.params.graphic_role === 'plate' || (depth === 0 && drawnScene(l, project))
       if (k === 'CompositionRef' && depth < 4) return (project.compositions?.[l.params.composition]?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).some((x) => x.enabled !== false && opaque(x, depth + 1))
       return false
     }
@@ -520,10 +553,24 @@ const KINDS = {
     const titleCard = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
     const full = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' && (
       layer.params?.kind === 'CompositionRef' ? (() => { const ls = (project.compositions?.[layer.params.composition]?.tracks ?? []).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio'); return ls.length >= 2 && !titleCard(ls) })()
-        : layer.params?.kind === 'Motif' && layer.params.graphic_role === 'plate'))
+        : layer.params?.kind === 'Motif' && (layer.params.graphic_role === 'plate' || drawnScene(layer, project))))
     const covered = total(union(full.map(({ layer }) => [Math.max(layer.t_start_us, a0), Math.min(layer.t_end_us, a1)])))
     const f = covered / (a1 - a0)
     return { pass: check.max_fraction === undefined ? null : f <= check.max_fraction, detail: `scenes and plates cover ${Math.round(f * 100)} % of the cut (${s(covered)} s)` + (check.max_fraction === undefined ? '' : `, want <= ${Math.round(check.max_fraction * 100)} %`) }
+  },
+
+  scenes(check, root, project) {
+    const all = scenesOf(root, project), long = all.filter(({ layer }) => layer.t_end_us - layer.t_start_us >= (check.min_duration_s ?? 0) * US)
+    const what = ({ layer }) => `${layer.params.kind === 'CompositionRef' ? 'Group' : `drawn ${layer.params.motif_id}`} ${s(layer.t_start_us)}-${s(layer.t_end_us)}s`
+    return { pass: long.length >= check.min, detail: `${long.length} scene(s)${long.length ? `: ${long.map(what).join('; ')}` : ''}, want >= ${check.min}` }
+  },
+
+  animated_scenes(check, root, project) {
+    const animated = scenesOf(root, project).filter(({ layer }) => layer.params.kind !== 'CompositionRef' || groupVisual(layer, project).some((l) => drawnIllustration(l, project)))
+    const ids = (layer) => layer.params.kind === 'CompositionRef' ? groupVisual(layer, project).filter((l) => drawnIllustration(l, project)).map((l) => l.params.motif_id) : [layer.params.motif_id]
+    const own = (id) => (BUILTIN_MOTIF_IDS.includes(id) ? 'example' : 'own')
+    return { pass: animated.length >= check.min, detail: `${animated.length} animated scene(s)` +
+      (animated.length ? `: ${animated.map(({ layer }) => `${ids(layer).map((id) => `${id} (${own(id)})`).join(' + ')} ${s(layer.t_start_us)}-${s(layer.t_end_us)}s`).join('; ')}` : '') + `, want >= ${check.min}` }
   },
 
   layer_region(check, root) {

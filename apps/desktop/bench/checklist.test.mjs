@@ -205,6 +205,29 @@ describe('layer_count and selectors', () => {
     assert.match(check({ kind: 'scene_share', max_fraction: 0.25 }, p).detail, /^scenes and plates cover 30 % of the cut \(30 s\), want <= 25 %$/)
   })
 
+  it('counts a drawn animation as a scene, and asks for one', () => {
+    const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
+    const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
+      tracks: [track([role(motif(0, 10, 'clipping-paper'), 'plate'), role(motif(1, 10, 'clipping-sticker', { photo: 'm1@1000000' }), 'illustration')])] }
+    const group = layer(40, 50, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 10 * S, transform: transform() })
+    // Four clips with the pauses cut out: jump cuts at 10, 20 and 30 s.
+    const aroll = track([video(0, 10, 0), video(10, 20, 12), video(20, 30, 24), video(30, 60, 36)], { role: 'ARoll' })
+    const network = role(motif(5, 25, 'clipping-network', { ground: 'paper', cue_link_s: 2 }), 'illustration')
+    const p = project([aroll, track([network, group]), captionTrack([text(0, 60, 'all')])])
+    p.compositions.c1 = scene
+    assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^2 scene\(s\): drawn clipping-network 5-25s; Group 40-50s, want >= 2$/)
+    assert.match(check({ kind: 'animated_scenes', min: 1 }, p).detail, /^1 animated scene\(s\): clipping-network \(example\) 5-25s, want >= 1$/)
+    // It covers the cuts at 10 and 20 s.
+    assert.match(check({ kind: 'jump_cuts' }, p).detail, /^3 jump cut\(s\), 2 covered \(animation 2\)/)
+    // Drawn over the footage, it is an overlay: no scene, no cover.
+    network.params.props.ground = 'none'
+    assert.equal(check({ kind: 'animated_scenes', min: 1 }, p).pass, false)
+    assert.match(check({ kind: 'jump_cuts' }, p).detail, /^3 jump cut\(s\), 0 covered/)
+    // A Group holding a drawing of the agent's own animates too.
+    scene.tracks[0].layers.push(role(motif(2, 10, 'hippocampus-flow', { cue_move_s: 3 }), 'illustration'))
+    assert.match(check({ kind: 'animated_scenes', min: 1 }, p).detail, /^1 animated scene\(s\): hippocampus-flow \(own\) 40-50s, want >= 1$/)
+  })
+
   it('finds role-tagged overlays inside Groups, at their time on the root', () => {
     const card = { id: 'card', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
       tracks: [track([{ ...motif(0, 10, 'clipping-paper'), params: { ...motif(0, 10, 'clipping-paper').params, graphic_role: 'plate' } }, { ...motif(1, 10, 'clipping-headline'), params: { ...motif(1, 10, 'clipping-headline').params, graphic_role: 'title' } }])] }

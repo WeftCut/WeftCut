@@ -33,6 +33,18 @@ Read `craft/editing.md` first. Then:
      idea, a process, a comparison. Also use it where a run of jump cuts
      needs covering, or to break a long talking stretch. Her voice runs on
      under the scene.
+
+   For each passage, decide what the viewer **sees**. The visual follows the
+   kind of idea:
+   - **A process or mechanism** (something grows, links, flows, sends,
+     transforms or builds up): a drawn animation that does it, step by step
+     on her words.
+   - **A named person, thing, place or document:** a picture of it.
+   - **A term, name, number or date:** a few words, on the picture or over
+     the speaker.
+
+   Words describe a picture or carry what no picture can. They never stand in
+   for a picture or an animation.
 2. **Write a beat list and wait for the go-ahead.** For each beat give:
    - its mode, and what it adds that the speech does not;
    - the layer kind and the Motif (an example, a fork, or a new one);
@@ -45,8 +57,22 @@ Read `craft/editing.md` first. Then:
    - the pictures that show the idea, and where each comes from (below);
    - the elements it shows, each with the word it enters on;
    - which elements interact and share a Motif, and why.
+4. **For each animation, give its storyboard:** three to six steps. Each
+   step names what moves and the word it starts on, for example:
+   1. "neurons" (10.4 s): one neuron grows its branches;
+   2. "send" (14.1 s): it links to a neighbour, and a signal crosses;
+   3. "communicators" (18.4 s): the network spreads out from it;
+   4. "patterns" (27.4 s): one set lights up together, a memory.
 
-**Lead with pictures.** For each point, ask first what picture shows it:
+   Name the Motif it forks (such as `clipping-network`) or say that it is
+   new. The user approves the storyboard with the beat list.
+
+**Paper is the ground, not the content.** Stickers, strips and labels sit on
+it without tape: the style's Motifs take `tape: none` by default. Use
+`tape: strip` only where a pasted-on scrapbook look serves the point.
+
+**Lead with pictures.** For each named thing, ask first what picture shows
+it:
 - the person she names (a portrait);
 - the thing she talks about (an object);
 - the place (a photo, a map);
@@ -114,17 +140,19 @@ A plan usually has:
   Never the sentence she is saying: the captions already show it. Each is
   3–5 s.
 - **One or more animated scenes** where the talk explains a concept. A
-  three-minute talk usually has one or two, from 6 s to 20 s each. Scenes
-  and plates cover at most half the cut (`scene-share`): the speaker stays
-  the spine of a talk.
+  three-minute talk usually has two or three, from 6 s to 20 s each.
+  - **Animations:** at least a third of the scenes are drawn animations of a
+    process (`still-scenes`). The rest are collages of pictures.
+  - **Share:** scenes and plates cover at most half the cut
+    (`scene-share`). The speaker stays the spine of a talk.
 - **Captions** on everything that is said.
 
 Plan the exits as well as the entrances:
 - **Stagger.** No two elements start within half a second of each other,
   unless they enter on the same word.
 - **Scenes and cards.** They leave by taking their pieces off: end each
-  piece's layer a beat (about 0.15 s) before the next, then slide the page
-  out. They do not hard-cut.
+  piece's layer a beat (about 0.15 s) before the next, the last one with the
+  page. No plate shows empty. They do not hard-cut.
 - **Clear the face.** Overlays leave the speaker's face clear.
 
 ## build
@@ -147,7 +175,14 @@ Inside a work session, with the history lock held:
      where its anchor lands, the centre unless the anchor is moved.
    - To change an example, fork it into a draft, edit, and place the draft.
      Keep the shared props so the style still reaches it.
-4. **Build each scene as a group,** in the order of *Scope* in
+4. **Build each animation** as one frame-sized Motif, as *A process is an
+   animation* in `motif-authoring.md` describes:
+   - fork the style's example (`clipping-network`) or write a new Motif;
+   - set its `cue_<step>_s` props from the word times of its storyboard;
+   - `preview_motif` it at each cue before placing it;
+   - place it on a track above the A-roll and below the captions. It is a
+     scene by itself: no plate, and no Group.
+5. **Build each picture scene as a group,** in the order of *Scope* in
    `motif-authoring.md`:
    1. Look at a key still of each element with `preview_motif`, with its
       real text, before placing anything.
@@ -184,6 +219,8 @@ Run `check_composition` and settle what it finds.
   into pictures with labels: a portrait for a name, an object for a thing.
 - A `captions-covered` finding means a scene or plate hides the captions.
   Move its track below the caption track.
+- A `still-scenes` finding means every scene arranges stills and words.
+  Find the passage that explains a process, and animate it.
 - A `scene-share` finding means the scenes hide the speaker for most of the
   cut. Keep scenes for the ideas that need them, and put the rest over the
   speaker.
@@ -206,7 +243,9 @@ background. Look at the frames export will render.
   - legible against what is under it;
   - its exit reads.
 - **Check each scene against its plan:** its one idea is clear, and its
-  elements arrive on their words.
+  elements arrive on their words. For an animation, sample each step of its
+  storyboard (`render_frames { times_us }`). Check that what moves shows what
+  she says while she says it.
 - **Fix in build, then look again** at what changed. Build, audit and look
   together are one round.
 
