@@ -314,8 +314,8 @@ open image libraries" (on by default; the search words go to Wikimedia).
 - `import_image { candidate_id }` → `{ media_id, label, width, height,
   license, credit, page_url }`. Asks Commons for the candidate again (its
   licence is never taken from the call), downloads it over https (a JPEG, PNG,
-  WebP or GIF, at most 40 MB; a file wider than 2048 px, an SVG or a TIFF comes
-  as Commons' 2048 px rendering), imports it like `import_media`, and records
+  WebP or GIF, at most 40 MB; a file wider than 1920 px, an SVG or a TIFF comes
+  as Commons' 1920 px rendering), imports it like `import_media`, and records
   its credit in `credits.json` beside the project, keyed by the pool item's
   content hash. `read_project { view: "credits" }` lists every pool item with a
   credit, and whether a layer or a Motif prop uses it; the handoff report

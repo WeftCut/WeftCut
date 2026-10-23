@@ -25,8 +25,9 @@ export interface ImageCandidate {
   /** The library's page for the image, where its licence is stated. */
   page_url: string
   thumb_url: string
-  /** What `import_image` downloads: the original, or for a large Commons
-   *  file its 2048 px rendering. */
+  /** What `import_image` downloads: the original, or for a file wider than
+   *  1920 px, an SVG or a TIFF, Commons' 1920 px rendering (known only after
+   *  `lookupImage`; a search answer carries the original). */
   image_url: string
   width: number
   height: number
@@ -46,7 +47,9 @@ type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: A
 
 const USER_AGENT = 'WeftCut/0.5 (open-licence picture search for video editing; https://github.com/WeftCut/WeftCut)'
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php'
-const IMPORT_WIDTH = 2048
+// Commons renders thumbnails at standard widths only (others answer HTTP 400),
+// so both come from the API's own `thumburl`, never a URL built here.
+const IMPORT_WIDTH = 1920
 const THUMB_WIDTH = 320
 const MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024
 const IMAGE_MIME = new Map([['image/jpeg', 'jpg'], ['image/png', 'png'], ['image/webp', 'webp'], ['image/gif', 'gif']])
@@ -71,12 +74,13 @@ function creditLine(c: { title: string; author: string; license: string; source:
     : `"${c.title}" by ${c.author || 'unknown'}, ${c.license}, ${where}`
 }
 
-/** Candidates from a Commons `imageinfo` answer (search or lookup). */
-export function parseCommons(json: unknown): ImageCandidate[] {
+/** Candidates from a Commons `imageinfo` answer. `rendered`: the answer was
+ *  asked for at the import width, so its `thumburl` is what to download. */
+export function parseCommons(json: unknown, rendered = false): ImageCandidate[] {
   const pages = Object.values(((json as { query?: { pages?: Record<string, unknown> } })?.query?.pages) ?? {}) as Array<{ pageid: number; title: string; index?: number; imageinfo?: Array<Record<string, unknown>> }>
   const out: Array<ImageCandidate & { index: number }> = []
   for (const p of pages) {
-    const ii = p.imageinfo?.[0] as { url?: string; descriptionurl?: string; thumburl?: string; responsiveUrls?: unknown; width?: number; height?: number; mime?: string; extmetadata?: Record<string, { value?: unknown }> } | undefined
+    const ii = p.imageinfo?.[0] as { url?: string; descriptionurl?: string; thumburl?: string; thumbwidth?: number; thumbheight?: number; width?: number; height?: number; mime?: string; extmetadata?: Record<string, { value?: unknown }> } | undefined
     if (!ii?.url || !IMAGE_MIME.has(String(ii.mime)) && ii.mime !== 'image/svg+xml' && ii.mime !== 'image/tiff') continue
     const meta = ii.extmetadata ?? {}
     const license = acceptableCommonsLicence(strip(meta.LicenseShortName?.value))
@@ -84,16 +88,16 @@ export function parseCommons(json: unknown): ImageCandidate[] {
     const title = strip(meta.ObjectName?.value) || p.title.replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '')
     const author = strip(meta.Artist?.value).slice(0, 200)
     const width = Number(ii.width) || 0, height = Number(ii.height) || 0
-    // A raster original at most 2048 wide is fetched as is; anything larger,
-    // or an SVG or TIFF, as Commons' 2048 px rendering.
-    const scaled = width > IMPORT_WIDTH || !IMAGE_MIME.has(String(ii.mime))
+    // A raster original at most 1920 wide is fetched as is; anything larger,
+    // or an SVG or TIFF, as Commons' rendering.
+    const scaled = rendered && Boolean(ii.thumburl) && (width > IMPORT_WIDTH || !IMAGE_MIME.has(String(ii.mime)))
     const thumb = String(ii.thumburl ?? ii.url)
     const c: ImageCandidate = {
       candidate_id: `commons:${p.pageid}`, source: 'commons', title,
       page_url: String(ii.descriptionurl ?? `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title)}`),
       thumb_url: thumb,
-      image_url: scaled ? commonsScaled(String(ii.url), IMPORT_WIDTH) : String(ii.url),
-      width: scaled ? IMPORT_WIDTH : width, height: scaled && width ? Math.round(height * IMPORT_WIDTH / width) : height,
+      image_url: scaled ? thumb : String(ii.url).split('?')[0]!,
+      width: scaled ? Number(ii.thumbwidth) || width : width, height: scaled ? Number(ii.thumbheight) || height : height,
       license, license_url: strip(meta.LicenseUrl?.value) || null, author,
       credit: '',
     }
@@ -101,16 +105,6 @@ export function parseCommons(json: unknown): ImageCandidate[] {
     out.push({ ...c, index: p.index ?? 0 })
   }
   return out.sort((a, b) => a.index - b.index).map(({ index: _, ...c }) => c)
-}
-
-/** Commons' rendering of an upload at `width` px:
- *  `…/commons/a/ab/Name.jpg` → `…/commons/thumb/a/ab/Name.jpg/2048px-Name.jpg`
- *  (`.png` appended for an SVG or TIFF, which render to PNG). */
-export function commonsScaled(url: string, width: number): string {
-  const m = /^(https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/)([0-9a-f]\/[0-9a-f]{2}\/)([^/?#]+)$/.exec(url.split('?')[0]!)
-  if (!m) return url
-  const name = m[3]!, ext = /\.(svg|tiff?)$/i.test(name) ? '.png' : ''
-  return `${m[1]}thumb/${m[2]}${name}/${width}px-${name}${ext}`
 }
 
 async function getJson(fetchFn: Fetch, url: string): Promise<unknown> {
@@ -139,7 +133,7 @@ export async function lookupImage(id: string, opts: { fetch?: Fetch } = {}): Pro
   const fetchFn = opts.fetch ?? (globalThis.fetch as unknown as Fetch)
   const m = /^commons:(\d{1,12})$/.exec(id)
   if (!m) throw new Error(`candidate_id ${id} is not one search_images returned (commons:<page id>)`)
-  const found = parseCommons(await getJson(fetchFn, commonsQuery({ pageids: m[1]! })))
+  const found = parseCommons(await getJson(fetchFn, commonsQuery({ pageids: m[1]!, iiurlwidth: String(IMPORT_WIDTH) })), true)
   if (!found[0]) throw new Error(`${id} is gone from its library, or its licence no longer allows reuse with changes`)
   return found[0]
 }

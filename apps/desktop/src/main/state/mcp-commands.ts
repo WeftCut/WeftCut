@@ -2362,7 +2362,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { query, limit }
     } },
   { name: 'import_image', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Fetch a `search_images` candidate into the project as an Image in the media pool, and record its credit beside the project (`read_project { view: \"credits\" }`). The licence is read again from Commons, not taken from the call. Large files come at 2048 px. Returns `{ media_id, label, width, height, license, credit, page_url }`; put the credit in your report.",
+    description: "Fetch a `search_images` candidate into the project as an Image in the media pool, and record its credit beside the project (`read_project { view: \"credits\" }`). The licence is read again from Commons, not taken from the call. Large files come at 1920 px. Returns `{ media_id, label, width, height, license, credit, page_url }`; put the credit in your report.",
     inputSchema: { type: 'object', properties: {
       candidate_id: { type: 'string', description: 'A `candidate_id` from search_images, e.g. "commons:2493666".' },
     }, required: ['candidate_id'] },

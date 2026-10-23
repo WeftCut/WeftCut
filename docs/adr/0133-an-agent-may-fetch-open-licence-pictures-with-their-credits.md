@@ -56,7 +56,8 @@ and the bench's agent has no web tools.
 - **Downloads are untrusted.**
   - https only, from the URL Commons gave.
   - A JPEG, PNG, WebP or GIF by its content type.
-  - At most 40 MB, and large files come as Commons' 2048 px rendering.
+  - At most 40 MB. A large file comes as Commons' 1920 px rendering, since
+    Commons serves standard widths only.
   - Imported through the same probe as any user file.
 - **A drawing is an SVG the agent writes and imports.** `import_media` draws
   an `.svg` once to a PNG with its transparency kept. The SVG is drawn as an
