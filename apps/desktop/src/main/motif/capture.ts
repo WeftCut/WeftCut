@@ -18,6 +18,9 @@ export interface CaptureArgs {
   /// older callers safe.
   fpsNum?: number
   fpsDen?: number
+  /// PNG captures only: the page still renders at width × height, and the
+  /// image comes back scaled by this factor (MCP previews). Absent means 1.
+  scale?: number
 }
 
 const CAPTURE_TIMEOUT_MS = 5000
@@ -495,7 +498,10 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     captureCounters.pngCaptures++
     return doCapture(a, async h => {
-    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
+    const scaled = a.scale !== undefined && a.scale !== 1
+    const shot = await h.send('Page.captureScreenshot', scaled
+      ? { format: 'png', clip: { x: 0, y: 0, width: a.width, height: a.height, scale: a.scale } }
+      : { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string
     })

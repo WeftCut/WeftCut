@@ -1,4 +1,4 @@
-import type { Composition, Layer, Project, Track } from '../model'
+import type { Composition, Layer, Project, TextParams, Track } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { scopeComposition, locateLayer, cloneLayer } from './helpers'
@@ -7,6 +7,7 @@ import { createTextCorrector, type CorrectedText } from '../../../shared/textCor
 import { CAPTION_TIMING_KEY, readCaptionTiming, type CaptionTiming, type CaptionWord, type TranscriptPayload } from '../../../shared/captionTiming'
 import { applyAddCaptionTrack, type Cue } from './captions'
 import type { TextCorrectionExpectation } from '../../../shared/textCorrectionRequest'
+import { settleShortCues, planCues, type CaptionLimits, type PlannedCue } from './captionSegments'
 
 export function sourceSignature(layer: Layer): string {
   return JSON.stringify([layer.t_start_us, layer.t_end_us, layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio'
@@ -14,27 +15,37 @@ export function sourceSignature(layer: Layer): string {
 }
 
 /** Transcript ingestion writes timing metadata in the SAME undo transaction as
- * the captions. The old subtitle import path remains valid without metadata. */
-export function applyTranscripts(p: Project, ids: IdGen, transcripts: TranscriptPayload[], compositionId: string, sourceIds: string[] = []): string {
+ * the captions. The old subtitle import path remains valid without metadata.
+ * With `limits` (the style's), each segment is built into cues that meet them
+ * (`planCues`); without, segments land as transcribed. */
+export function applyTranscripts(p: Project, ids: IdGen, transcripts: TranscriptPayload[], compositionId: string, sourceIds: string[] = [], style?: (t: TextParams) => TextParams, limits?: CaptionLimits): string {
   const c = scopeComposition(p, compositionId)
   if (!Array.isArray(transcripts) || transcripts.length > 1000) throw invalid('transcripts')
   const cues: Cue[] = []
+  const grid = gridForLayerKind('Text', c.fps)
   for (const [n, t] of transcripts.entries()) {
     if (!t || !Array.isArray(t.segments) || !['exact', 'interpolated_from_cue', 'none'].includes(t.word_timing)) throw invalid('transcripts')
     const source = (t.source?.id ?? sourceIds[n]) ? locateLayer(p, (t.source?.id ?? sourceIds[n])!)?.layer : undefined
     if (t.source && (t.source.project_id !== p.project_id || t.source.composition_id !== c.id || !source || sourceSignature(source) !== t.source.signature)) throw new CommandFailure({ error: 'InvalidArgument', field: 'transcripts', detail: 'The transcribed clip has changed; transcribe it again before applying captions' })
+    let planned: PlannedCue[] = []
     for (const s of t.segments) {
       if (!s || typeof s.text !== 'string' || !Number.isSafeInteger(s.t_start_us) || !Number.isSafeInteger(s.t_end_us) || s.t_start_us < 0 || s.t_end_us <= s.t_start_us || !Array.isArray(s.words)) throw invalid('transcripts')
-      const grid = gridForLayerKind('Text', c.fps)
+      planned.push(...(limits ? planCues(s, limits) : [{ ...s, raw: s.text, estimated: false }]))
+    }
+    if (limits) planned = settleShortCues(planned.sort((a, b) => a.t_start_us - b.t_start_us), limits)
+    for (const s of planned) {
       const start = snapOnGrid(s.t_start_us, grid), end = snapOnGrid(s.t_end_us, grid)
       if (end <= start) continue
-      const timing: CaptionTiming = { version: 1, text: s.text, duration_us: end - start, provenance: t.word_timing,
-        words: s.words.map(w => ({ text: w.text, start_us: Math.max(0, w.t_start_us - start), end_us: Math.max(0, w.t_end_us - start) })),
+      // Words spread over a split cue's characters are an estimate; a
+      // transcript that came without words keeps none.
+      const provenance = t.word_timing === 'none' ? 'none' : s.estimated ? 'interpolated_from_cue' : t.word_timing
+      const timing: CaptionTiming = { version: 1, text: s.text, duration_us: end - start, provenance,
+        words: provenance === 'none' && s.estimated ? [] : s.words.map(w => ({ text: w.text, start_us: Math.max(0, w.t_start_us - start), end_us: Math.max(0, w.t_end_us - start) })),
         ...(source ? { source: { id: source.id, signature: sourceSignature(source) } } : {}) }
       cues.push({ text: s.text, start_us: start, end_us: end, metadata: readCaptionTiming(timing) ? { [CAPTION_TIMING_KEY]: timing } : undefined })
     }
   }
-  return applyAddCaptionTrack(p, ids, cues, c.width, c.height, null, c.id)
+  return applyAddCaptionTrack(p, ids, cues, c.width, c.height, null, c.id, style)
 }
 
 function invalid(field: string): CommandFailure { return new CommandFailure({ error: 'InvalidArgument', field, detail: `Invalid ${field}` }) }

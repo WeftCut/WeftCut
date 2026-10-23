@@ -5,11 +5,41 @@ the authoritative authoring spec: the in-app source panel, external editors, and
 MCP agents all write against it. It is self-contained on purpose — a copy ships
 with the app to agent clients, where no other WeftCut document is reachable.
 
-A Motif is a parameterized, time-varying overlay (a lower-third, a countdown, a
-title card) authored as **a real web page**: one HTML document plus a JSON
-manifest. Placed on the timeline, it is captured frame by frame by a harness
-that owns the clock. Any HTML/CSS/SVG/canvas/WebGL and any animation idiom
-(CSS, WAAPI, GSAP-style tweens, rAF loops) work, subject to the one law below.
+A Motif is one parameterized, time-varying overlay element (a lower-third, a
+countdown, a title card), placed as a layer among the user's footage, images
+and text on the WeftCut timeline. It is authored as a real web page — one HTML
+document plus a JSON manifest — and that page is the canvas for this one
+element, not for the whole frame. Placed on the timeline, it is captured frame
+by frame by a harness that owns the clock. Any HTML/CSS/SVG/canvas/WebGL and
+any animation idiom (CSS, WAAPI, GSAP-style tweens, rAF loops) work, subject to
+the scope rule and the one law below.
+
+## Scope: one element
+
+A Motif draws one element with one purpose — a title, a lower third, a
+callout, a credit, a logo, a full-frame background plate — with one entrance
+and one exit. If describing what it shows needs "and", it is several Motifs on
+several layers.
+
+- **The user's media stays outside.** A Motif cannot show the user's footage
+  or photos: project media is blocked in the capture host. Anything that shows
+  project media is a WeftCut video or image layer, and Motifs decorate or
+  annotate it from the layers above.
+- **Plan the layers before writing code.** Overlay work with more than one
+  element starts with a layer plan: for each layer, its kind (video, image,
+  text or Motif), what it is for, and its in and out times on the timeline.
+- **Stagger on the timeline.** Elements that enter one after another are
+  separate layers offset on the timeline, not delays inside one page. A Motif
+  times only its own animation: an element that animates in and then holds
+  declares that entrance as `content_duration_s`, and its layer's placement
+  decides when it appears and for how long.
+- **`size` is the element's own bounds.** Size the manifest to what the
+  element covers — a lower third is a strip, a callout a box — and let the host
+  place it. A frame-sized Motif is for full-frame purposes only: a title card,
+  a background plate.
+
+One element may still be large or intricate — a chart, a title card, a map
+with its route. The rule counts purposes, not pixels.
 
 ## The one law
 
@@ -73,6 +103,7 @@ animation — deleting it breaks seeking back to earlier times.
   "default_duration_s": 5.0,
   "content_duration_s": 0.8,
   "settle_rafs": 1,
+  "graphic_role": "lower_third",
   "props_schema": {
     "title":  { "type": "string", "default": "Jane Doe", "max_length": 40 },
     "accent": { "type": "color",  "default": "#ff4d4d" }
@@ -88,6 +119,12 @@ animation — deleting it breaks seeking back to earlier times.
   placement transform, and layer opacity are all applied by the host.
 - **`default_duration_s`** — the initial placed-layer length. MUST be finite
   and positive (as must every duration field).
+- **`graphic_role`** — optional: what a placed layer of this Motif is for, the
+  role a style's tokens attach to. One of the built-ins (title, lower_third,
+  callout, credit, logo, plate, none) or a custom lowercase name: a letter,
+  then up to 31 letters, digits or underscores (anything else fails
+  validation). A placed layer takes it unless the placing call names its own;
+  absent means untagged.
 - **`settle_rafs`** — real browser frames the harness waits after a seek before
   capturing; clamped to `{0, 1, 2}`, default `2`. CSS/DOM-only Motifs MAY set
   `1`; canvas/WebGL Motifs SHOULD keep `2`.
@@ -131,6 +168,43 @@ hints. The host generates the editing form from it: one row per prop in the
 manifest's authored key order, keys title-cased (`bg_color` → "Bg Color"),
 widget switched on the variant. Design prop keys to read well through that
 transform.
+
+## Style Motifs
+
+A project's style (`project://taste`) reaches a Motif through its prop keys,
+not its id. That holds for a built-in, a fork or a Motif written from scratch.
+The style also names example Motifs for some roles (the taste's motifs).
+They show its vocabulary in use: place one as it is, fork it, or write a new
+one with the same keys.
+
+- **Shared keys.** A prop whose key is in the taste's `tokens.motif` (for the
+  clipping style: ink, paper, accent, highlight and step_fps) is
+  filled from it when the layer is placed or restyled, if the value fits the
+  prop's type. A colour token may name a palette entry. The manifest default
+  should be the style's own value, so a preview without a project looks
+  right.
+- **Font slots.** A `string` prop named `font_<slot>` gets the families of
+  `tokens.fonts.<slot>` installed on the machine, in order, as a CSS stack
+  (`'Anton', 'Impact'`). Give it a `max_length` of about 200. Use it as a
+  `font-family` value with a generic family appended, and `document.fonts.load`
+  it per weight and size in `setup`. Installed families need no
+  `@font-face`. Frames follow the machine's fonts, which is the price of not
+  bundling them.
+- **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
+  `duration_s` as its `max_duration_prop`. `ctx.duration` is then the
+  layer's length, and the layer is capped to it. Play the exit in the last
+  ~0.5 s, chosen by an `enum` prop `exit` (none, lift, fade,
+  slide_left … slide_down). Take the pieces off in reverse order of entry,
+  a few frames apart. A slide fades as it goes unless the Motif is
+  frame-sized, since nothing can travel past its own canvas.
+
+  The placing call sets `duration_s` to the layer's length. A held Motif
+  without an exit keeps `content_duration_s` instead.
+- **Spring, tilt, shadow.** Motion and paper detail that are not tokens
+  live in the Motif's code. A fork keeps them by keeping that code.
+
+Dropping a shared key is a departure from the style: `check_composition`
+reports drift only on the keys a layer has.
 
 ## Runtime environment
 
@@ -210,7 +284,8 @@ await document.fonts.load('700 56px "Inter"');
 ```
 
 Embedded `data:` fonts are the deterministic choice; `system-ui` stacks render
-differently across machines.
+differently across machines. A Style Motif's `font_<slot>` props name installed
+families on purpose (*Style Motifs* above).
 
 ## Parameter UI
 

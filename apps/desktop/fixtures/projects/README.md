@@ -15,9 +15,11 @@ The v2 fixture retains v1's ids, timestamps and authored values; its audio was
 already unmuted, so only the version and descriptive metadata differ. Muted
 inputs and nested compositions are exercised by `migrate.clipMute.test.ts`.
 
-`v3.json` freezes the affine time-map generation. `v4.json` is the current
+`v3.json` freezes the affine time-map generation. `v4.json` freezes the
 anchor-position generation: media Position is (320,180), the Group Position is
-(960,540), and Text is unchanged. The old synthetic media has no video metadata;
+(960,540), and Text is unchanged. `v5.json` is the current graphic-role
+generation: v4 plus `graphic_role: null` at the end of the Text layer's params
+(the step appends it there on Text, Motif and ImageOverlay layers alike). The old synthetic media has no video metadata;
 chain tests explicitly supply its 640×360 source extent as migration context.
 Production reads original metadata and refuses unknown source dimensions.
 Existing v1–v3 files remain byte-for-byte unchanged. Animated migration cases,

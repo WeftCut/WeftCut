@@ -340,6 +340,15 @@ describe('diffProjects — direct timing facts', () => {
     ok(a.dispatch('remove_effect', { layer: v, effect: fx.id }))
     expect(detailsOf(before, a.snapshot(), v)).toEqual([{ type: 'effect', op: 'removed', effect: 'blur' }])
   })
+  it('a graphic role set or cleared is a params change keyed graphic_role', () => {
+    const { a, tB } = setup()
+    const t = ok(a.dispatch('add_layer', { track: tB, kind: 'text', t_start_us: 0, t_end_us: S })) as Uuid
+    for (const graphic_role of ['title', null]) {
+      const before = a.snapshot()
+      ok(a.dispatch('update_layer_params', { layer: t, patch: { kind: 'Text', graphic_role } }))
+      expect(detailsOf(before, a.snapshot(), t)).toEqual([{ type: 'params', keys: ['graphic_role'] }])
+    }
+  })
 
 
 })

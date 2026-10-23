@@ -61,7 +61,7 @@ describe('the read set', () => {
   const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/
   // Reads whose names the pattern does not match — each one a review
   // decision, listed here so a stray annotation is still caught.
-  const READS_BEYOND_THE_REGEX = ['export_captions']
+  const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition']
   it('is exactly the set the retired name regex named, plus the reads added since', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
@@ -83,6 +83,7 @@ describe('the read set', () => {
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour
       dry_run: { operations: [{ kind: 'add_color_layer', track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 2_000_000, t_end_us: 3_000_000 }] },
       export_captions: { format: 'srt' },
+      check_composition: {},
     }
     const reads = MCP_TOOL_DEFS.filter((d) => d.annotations.readOnlyHint === true).map((d) => d.name)
     expect(reads.sort()).toEqual(Object.keys(argsFor).sort()) // a new TS read tool needs its probe here

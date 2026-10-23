@@ -97,6 +97,7 @@ export const HISTORY_SUMMARY = {
 
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
   captionMerge: { key: 'history.caption.merge', text: 'Merged captions' },
+  styleRestyle: { key: 'history.style.restyle', text: 'Restyled to the project style' },
 
   /** Revert all from the Changes tab: the Review baseline restored. */
   reviewRevert: { key: 'history.review.revert', text: 'Reverted unreviewed changes' },

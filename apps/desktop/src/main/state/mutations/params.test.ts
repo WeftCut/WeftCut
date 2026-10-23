@@ -56,11 +56,21 @@ describe('applyUpdateLayerParams (field merge)', () => {
   it('Motif patch merges props field-wise (does not replace the map)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
-      src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } }
+      src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null }
     root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
+  })
+  it('Text patch sets and clears intro/outro, refusing a preset that runs the wrong way', () => {
+    const g = seededGen(); const p = blankProject(g, 'p')
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 2_000_000)
+    applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'SlideUp', outro: 'FadeOut' }, new MotifCatalog())
+    expect([(layerOf(p, id).params as TextParams).intro, (layerOf(p, id).params as TextParams).outro]).toEqual(['SlideUp', 'FadeOut'])
+    applyUpdateLayerParams(p, id, { kind: 'Text', outro: null }, new MotifCatalog())
+    expect((layerOf(p, id).params as TextParams).outro).toBeNull()
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'FadeOut' }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', outro: 'Typewriter' }, new MotifCatalog()), 'InvalidArgument')
   })
   it('kind mismatch → LayerParamsKindMismatch', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
@@ -407,8 +417,8 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
       kind === 'Text' ? textParamsDefault('hi', root(p))
       : kind === 'Color' ? colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9)
       : kind === 'Audio' ? audioParams('00000000-0000-0000-0000-0000000000a1', 0, 1_000_000)
-      : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } } as LayerParams
-      : kind === 'ImageOverlay' ? { kind: 'ImageOverlay', media: '00000000-0000-0000-0000-0000000000a2', transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 } as LayerParams
+      : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null } as LayerParams
+      : kind === 'ImageOverlay' ? { kind: 'ImageOverlay', media: '00000000-0000-0000-0000-0000000000a2', transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0, graphic_role: null } as LayerParams
       : videoClipParams('00000000-0000-0000-0000-0000000000a3', 0, 1_000_000)
     const id = applyAddLayer(p, g, root(p).tracks[0].id, params, 0, 1_000_000)
     return layerOf(p, id)
@@ -437,6 +447,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
       src_in_us: 0,
       transform: textParamsDefaultTransform(),
       opacity: { mode: 'Static', value: 1 },
+      graphic_role: null,
     }
     root(p).tracks[0].layers.push({
       id: 'mo1',
@@ -507,6 +518,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
       src_in_us: 0,
       transform: textParamsDefaultTransform(),
       opacity: { mode: 'Static', value: 1 },
+      graphic_role: null,
     }
     root(p).tracks[0].layers.push({ id: 'mo2', label: null, t_start_us: 0, t_end_us: 10_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     const catalog = new MotifCatalog()
@@ -519,7 +531,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
   it('existing Motif tests pass unchanged (catalog=new MotifCatalog(), motif_id "m" not in catalog → no clamp)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
-      src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } }
+      src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null }
     root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
     const m = layerOf(p, 'mo').params as MotifParams

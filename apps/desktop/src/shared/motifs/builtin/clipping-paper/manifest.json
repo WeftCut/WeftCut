@@ -1,0 +1,67 @@
+{
+  "id": "clipping-paper",
+  "name": "Clipping Paper",
+  "version": 1,
+  "size": [
+    1920,
+    1080
+  ],
+  "default_duration_s": 5.0,
+  "max_duration_prop": "duration_s",
+  "settle_rafs": 1,
+  "graphic_role": "plate",
+  "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 5.0,
+      "min": 0.5,
+      "max": 600
+    },
+    "enter": {
+      "type": "enum",
+      "options": [
+        "cut",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "cut"
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "none"
+    },
+    "ground": {
+      "type": "enum",
+      "options": [
+        "kraft",
+        "newsprint",
+        "paper"
+      ],
+      "default": "kraft"
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "font_body": {
+      "type": "string",
+      "default": "'Noto Serif', 'Source Serif 4', 'Georgia', 'Times New Roman', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif",
+      "max_length": 200
+    }
+  }
+}

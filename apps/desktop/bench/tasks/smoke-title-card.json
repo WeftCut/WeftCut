@@ -1,0 +1,14 @@
+{
+  "id": "smoke-title-card",
+  "fixtures": [],
+  "project": { "width": 1280, "height": 720, "fps": { "num": 30, "den": 1 } },
+  "setup": [
+    { "tool": "add_track", "args": { "label": "Background" }, "as": "bg" },
+    { "tool": "add_color_layer", "args": { "track_id": "{ref:bg.track_id}", "width": 1280, "height": 720, "color": { "r": 20, "g": 24, "b": 38, "a": 255 }, "t_start_us": 0, "t_end_us": 4000000 } }
+  ],
+  "prompt": "There's a dark background clip in my WeftCut project. Put the title \"Hello Bench\" over it for the first two seconds.",
+  "checklist": [
+    { "id": "title-present", "description": "A text layer reading \"Hello Bench\" exists", "check": { "kind": "text_layer_contains", "text": "Hello Bench" } },
+    { "id": "title-span", "description": "The title spans 0–2 s", "check": { "kind": "layer_span", "text": "Hello Bench", "t_start_us": 0, "t_end_us": 2000000, "tolerance_us": 100000 } }
+  ]
+}

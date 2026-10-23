@@ -28,6 +28,10 @@ describe("motifContentHash", () => {
   it("changes when a core manifest field changes", () => {
     expect(motifContentHash(m, "<a/>")).not.toBe(motifContentHash({ ...m, version: 2 }, "<a/>"));
   });
+  it("changes with a declared graphic_role and not with an absent one", () => {
+    expect(motifContentHash({ ...m, graphic_role: "logo" }, "<a/>")).not.toBe(motifContentHash(m, "<a/>"));
+    expect(motifContentHash({ ...m, graphic_role: null }, "<a/>")).toBe(motifContentHash(m, "<a/>"));
+  });
   it("ignores decoration fields (status/content_hash/target_id/settle_rafs)", () => {
     const decorated = { ...m, status: "draft", content_hash: "deadbeef", target_id: "y", settle_rafs: 3 } as Manifest;
     expect(motifContentHash(decorated, "<a/>")).toBe(motifContentHash(m, "<a/>"));

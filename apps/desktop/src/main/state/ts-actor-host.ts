@@ -33,10 +33,17 @@ import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
+import { tasteView } from '../taste/view'
+import { AuditStore } from '../lint/audits'
 import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
+  /** Where style packages live. Absent (tests) → no taste view. */
+  styleDirs?: import("../taste/view").StyleDirs
+  /** Installed font families, lowercased; null until the system scan lands.
+   *  A style's font slots resolve against it (spec H2-D4). */
+  installedFonts?: () => ReadonlySet<string> | null
   /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
   computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
@@ -148,6 +155,11 @@ export interface TsActorHost {
    *  surface gates project work on (`server.ts`). */
   openedProject: () => OpenedProject | null
   projectStatus: () => ProjectStatus
+  /** The open project's merged style tokens (`project://taste`); the default
+   *  style alone on the start screen. Read fresh: TASTE.md is the user's file. */
+  taste?: () => import("../taste/view").TasteView
+  /** The last `check_composition` result per composition, for freshness. */
+  audits: import("../lint/audits").AuditStore
   /** MCP's `open_project` / `create_project`: the start screen's Open and New,
    *  plus the event that brings the editor along. A `WorkspaceFailure` throws
    *  through untouched, leaving the open record as it was. */
@@ -230,6 +242,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
     autoDeleteEmptyTracks: () => deps.appSettings?.get().auto_delete_empty_tracks ?? true,
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
+    // Read at each creation, so an edit to TASTE.md reaches the next layer
+    // without a reload. `opened` is assigned below; this runs only later.
+    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }).tokens : null),
+    installedFonts: () => deps.installedFonts?.() ?? null,
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -874,6 +890,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         throw error
       }
     },
+    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
+    audits: new AuditStore((id) => motifCatalog.get(id)?.size ?? null),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),

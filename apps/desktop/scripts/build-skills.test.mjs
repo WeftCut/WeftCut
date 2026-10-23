@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { assertSkillLayout, assertSkillVersions, stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS } from './build-skills-lib.mjs'
+import { assertSkillLayout, assertSkillVersions, stampSkillVersion, REQUIRED_DOCS, REQUIRED_ASSETS, REQUIRED_LAYERS } from './build-skills-lib.mjs'
 
 const SKILL = `---
 name: weftcut
@@ -43,14 +43,14 @@ test('an author-written metadata block fails loudly rather than being clobbered'
 })
 
 /// A staged bundle, minus whatever the caller leaves out.
-function bundle(t, { skills = ['weftcut'], docs = REQUIRED_DOCS, assets = REQUIRED_ASSETS, version = '0.1.7', skillFile = true } = {}) {
+function bundle(t, { skills = ['weftcut'], docs = REQUIRED_DOCS, assets = REQUIRED_ASSETS, layers = REQUIRED_LAYERS, version = '0.1.7', skillFile = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-skill-bundle-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   for (const skill of skills) {
     fs.mkdirSync(path.join(root, skill), { recursive: true })
     if (skillFile) fs.writeFileSync(path.join(root, skill, 'SKILL.md'), stampSkillVersion(SKILL, version))
   }
-  for (const doc of skills.length ? [...docs, ...assets] : []) {
+  for (const doc of skills.length ? [...layers, ...docs, ...assets] : []) {
     const target = path.join(root, skills[0], doc)
     fs.mkdirSync(path.dirname(target), { recursive: true })
     fs.writeFileSync(target, 'the contract')
@@ -88,6 +88,18 @@ test('a disclosed doc that did not get copied fails before it can dangle on a us
 test('the offline 3D template must ship with the skill', t => {
   const root = bundle(t, { assets: [] })
   assert.throws(() => assertSkillLayout(root), /templates\/three-model\.zip is not inside/)
+})
+
+test('both skill layer folders must ship, each with the README stating its contract', t => {
+  const neither = bundle(t, { layers: [] })
+  assert.throws(() => assertSkillLayout(neither), /craft\/README\.md is not inside/)
+  const noRecipes = bundle(t, { layers: ['craft/README.md'] })
+  assert.throws(() => assertSkillLayout(noRecipes), /recipes\/README\.md is not inside/)
+})
+
+test('the layers come with the skills/ tree, so staging checks them before the docs are copied', t => {
+  const root = bundle(t, { docs: [], assets: [], layers: [] })
+  assert.throws(() => assertSkillLayout(root, { requiredDocs: [], requiredAssets: [] }), /craft\/README\.md is not inside/)
 })
 
 test('an unstamped or mismatched skill fails: a copy that cannot name its app version is the drift hazard', t => {

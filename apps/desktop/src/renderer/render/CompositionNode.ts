@@ -1664,7 +1664,7 @@ export class CompositionNode {
     text.sprite.update(
       withTextBoxOverride(
         layer.id,
-        withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs)),
+        withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs, layer.t_end_us - layer.t_start_us)),
       ),
     );
     text.sprite.text.zIndex = z;

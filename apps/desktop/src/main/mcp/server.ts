@@ -45,6 +45,7 @@ import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 import { TACK_TOOLS, isTacksUri, readTacksResource, readTacksView, runTackTool } from './tackTools.js'
+import { heldForAudit } from '../lint/audits.js'
 import { ComputeCancelledError, type ComputeCaller } from '../compute/jobs.js'
 import { clipJobSpec } from '../compute/clipJob.js'
 import { mcpComputeCaller } from './computeCaller.js'
@@ -368,6 +369,14 @@ async function dispatchTool(
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)
       : await jobs.cancel(args.job_id as string);
     const record = (name === 'get_export_options' ? result : exportWire(result, true)) ?? {job:null};
+    // An export is where unchecked work would leave the app: audit the root
+    // unless its last audit is still fresh, and report — never block, in
+    // attended mode (spec H1-D6, Q10).
+    if (name === 'start_export' && tsHost?.audits) {
+      const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
+      if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') tsHost.audits.run(snap, snap.root_id, taste)
+      ;(record as Record<string, unknown>).audit = tsHost.audits.summary(snap, snap.root_id, taste)
+    }
     return {content:[{type:'text',text:JSON.stringify(record)}],structuredContent:record} as ServerResult;
   }
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
@@ -384,12 +393,31 @@ async function dispatchTool(
         // takeover says whose work it closed.
         const p = mcpDef('end_agent_session').parseDedicated!(args)
         const active = tsHost.agent.snapshot().session
+        // A handoff is of checked work (spec H1-D6). Agents that never ran the
+        // audit ignored a reported `never` (bench 2026-10-21), so the app runs
+        // it here when the last one is not fresh. Hard or warning findings the
+        // agent has not seen keep its session open and come back to it; the
+        // next call, at a fresh audit, ends the session whatever it found.
+        // A takeover is never held: the owner is gone.
+        if (active !== null && tsHost.audits && p.force !== true && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
+          const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
+          if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') {
+            const check = tsHost.audits.run(snap, snap.root_id, taste)
+            if (check.counts.hard + check.counts.warning > 0) return toolRecord(heldForAudit(check)) as ServerResult
+          }
+        }
         tsHost.agent.end(p.force === true ? 'forced' : 'agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
         // The client's open tacks that no longer point where they were made
         // to — the agent's last chance to fix or resolve them. Omitted when none.
         const review = active === null ? [] : tsHost.agent.tacks.toReview(active.client)
         if (review.length) result.tacks_to_review = review
+        // Whether the work was checked after its last change — the app's
+        // account, not the agent's (spec H1-D6). Omitted with no session.
+        if (active !== null && tsHost.audits) {
+          const snap = tsHost.actor.snapshot()
+          result.audit = tsHost.audits.summary(snap, snap.root_id, tsHost.taste?.() ?? null)
+        }
       } else {
         // The lock is taken here rather than through mcpCall because the OWNER
         // is the connection, which only this seam knows.
@@ -406,6 +434,18 @@ async function dispatchTool(
   // Tacks are runtime review state beside the agent activity, not project
   // state (ADR 0115): the host's store answers, and nothing reaches the actor.
   if (tsHost?.agent && TACK_TOOLS.has(name)) return runTackTool(tsHost.agent.tacks, name, args)
+  if (tsHost?.audits && name === 'check_composition') {
+    try {
+      const p = mcpDef('check_composition').parseDedicated!(args)
+      const snap = tsHost.actor.snapshot()
+      const compositionId = (p.composition_id as string | null) ?? snap.root_id
+      if (!snap.compositions[compositionId]) return toolErrorResult({ code: 'invalid_params', message: `no composition ${compositionId} — project://compositions lists them` })
+      return toolRecord(tsHost.audits.run(snap, compositionId, tsHost.taste?.() ?? null, (p.range as [number, number] | null) ?? undefined) as unknown as Record<string, unknown>) as ServerResult
+    } catch (e) {
+      if (e instanceof McpArgError) return toolErrorResult(e.toJson())
+      throw e
+    }
+  }
   if (tsHost?.agent && name === 'read_project' && args.view === 'tacks') {
     const p = mcpDef('read_project').parseDedicated!(args)
     return readTacksView(tsHost.agent.tacks, p.composition_id as string | null)
@@ -416,6 +456,9 @@ async function dispatchTool(
     if (PROJECT_TOOLS.has(name) && tsHost.projects) return runProjectTool(tsHost, name, args)
     // The session view lives in the host's activity service, not the actor, so
     // it is answered here — the same record `project://session` serves.
+    if (name === 'read_project' && args.view === 'taste' && tsHost.taste) {
+      return toolRecord(tsHost.taste() as unknown as Record<string, unknown>) as unknown as ServerResult
+    }
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
       return toolRecord(sessionView(tsHost)) as unknown as ServerResult
     }
@@ -528,12 +571,20 @@ async function dispatchTool(
     // open → the fields stay unset and the capture falls back to 30.
     const snap = tsHost?.actor.snapshot()
     const rootFps = snap?.compositions?.[snap.root_id]?.fps
+    // The page always renders at the Motif's own canvas, as a placed layer
+    // does; width/height only bound the returned image, which keeps the
+    // aspect ratio (a smaller viewport would crop the page to its top-left
+    // corner, and agents read that as a broken Motif). Upscaling stops at 2×.
+    const [canvasW, canvasH] = entry?.size ?? [a.width ?? 480, a.height ?? 480]
+    const fits = [a.width != null ? a.width / canvasW : null, a.height != null ? a.height / canvasH : null].filter((f): f is number => f !== null)
+    const scale = fits.length ? Math.min(2, ...fits) : 1
     const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
-      width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: source?.revision ?? '',
+      width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: source?.revision ?? '',
       ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
     })
-    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision})}] } as unknown as ServerResult
+    const image = [Math.round(canvasW * scale), Math.round(canvasH * scale)]
+    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision,canvas:[canvasW,canvasH],image})}] } as unknown as ServerResult
   }
   // Decided HERE, from the catalog this process advertises, rather than left to
   // the backend's `not_found` envelope: the name is known or it is not, and a
@@ -574,6 +625,9 @@ export async function handleReadResource(
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost), null, 2) }] } as unknown as ServerResult
+    }
+    if (uri === 'project://taste' && tsHost.taste) {
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tsHost.taste(), null, 2) }] } as unknown as ServerResult
     }
     if (uri === 'effects://catalog') {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(effectsCatalogView(), null, 2) }] } as unknown as ServerResult

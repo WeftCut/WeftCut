@@ -31,10 +31,10 @@ export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_mo
 export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'ping', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'preview_motif', 'open_project', 'create_project'])
 
 /** `read_project` views the host answers without the actor's project. */
-const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects'])
+const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects', 'taste'])
 
 /** Resources the host answers without the actor's project. */
-export const APP_SCOPE_RESOURCES: ReadonlySet<string> = new Set(['project://session', 'effects://catalog', 'motifs://current'])
+export const APP_SCOPE_RESOURCES: ReadonlySet<string> = new Set(['project://session', 'project://taste', 'effects://catalog', 'motifs://current'])
 
 /** Whether a tool call is served with no project open. */
 export function servesWithoutProject(name: string, args: Record<string, unknown>): boolean {

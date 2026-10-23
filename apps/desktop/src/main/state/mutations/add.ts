@@ -41,6 +41,7 @@ export function textParamsDefault(content: string, comp: { width: number; height
     opacity: { mode: 'Static', value: 1 },
     shadow: null, outline: null, intro: null, outro: null,
     box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    graphic_role: null,
   }
 }
 export function defaultTransform(x = 0, y = 0) {

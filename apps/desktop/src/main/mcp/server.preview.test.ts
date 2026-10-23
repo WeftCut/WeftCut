@@ -42,9 +42,22 @@ describe('preview_motif renders what add_motif_layer would place', () => {
     expect(out.isError).toBeFalsy()
     expect(out.content[0]).toMatchObject({ type: 'image', data: 'iVBOR' })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({
-      motifId: 'lower-third', tSec: 1, width: 1920, height: 1080,
+      motifId: 'lower-third', tSec: 1, width: 1920, height: 1080, scale: 1,
       propsJson: JSON.stringify({ subtitle: 'Role', title: 'Name Surname' }),
     }))
+  })
+
+  it('a requested size scales the whole canvas to fit; it never crops', async () => {
+    capture.mockClear()
+    const out = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 1, width: 640, height: 640 }) as Res
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 1 / 3 }))
+    expect(JSON.parse(out.content[1].text!)).toMatchObject({ canvas: [1920, 1080], image: [640, 360] })
+    capture.mockClear()
+    await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 1, width: 960 })
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 0.5 }))
+    capture.mockClear()
+    await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', t_sec: 1, width: 7680, height: 4320 })
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 2 }))
   })
 
   it('a partial props object is filled from the defaults', async () => {

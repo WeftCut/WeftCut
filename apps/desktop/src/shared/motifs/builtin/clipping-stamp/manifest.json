@@ -1,0 +1,83 @@
+{
+  "id": "clipping-stamp",
+  "name": "Clipping Stamp",
+  "version": 1,
+  "size": [
+    1100,
+    300
+  ],
+  "default_duration_s": 5.0,
+  "max_duration_prop": "duration_s",
+  "settle_rafs": 1,
+  "graphic_role": "lower_third",
+  "props_schema": {
+    "duration_s": {
+      "type": "number",
+      "default": 5.0,
+      "min": 0.5,
+      "max": 600
+    },
+    "exit": {
+      "type": "enum",
+      "options": [
+        "none",
+        "lift",
+        "fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down"
+      ],
+      "default": "slide_left"
+    },
+    "name": {
+      "type": "string",
+      "default": "Dr. Ann Matsuuchi",
+      "max_length": 40
+    },
+    "line2": {
+      "type": "string",
+      "default": "Librarian · LaGuardia CC",
+      "max_length": 48
+    },
+    "tilt_deg": {
+      "type": "number",
+      "default": -1,
+      "min": -12,
+      "max": 12
+    },
+    "ink": {
+      "type": "color",
+      "default": "#16130F"
+    },
+    "paper": {
+      "type": "color",
+      "default": "#F2ECDF"
+    },
+    "accent": {
+      "type": "color",
+      "default": "#D2261C"
+    },
+    "font_headline": {
+      "type": "string",
+      "default": "'Anton', 'Bebas Neue', 'Impact', 'Arial Black', 'Noto Sans SC Black', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_cjk": {
+      "type": "string",
+      "default": "'Noto Sans SC Black', 'Source Han Sans SC Heavy', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      "max_length": 200
+    },
+    "font_folio": {
+      "type": "string",
+      "default": "'IBM Plex Mono', 'Menlo', 'Consolas', monospace",
+      "max_length": 200
+    },
+    "step_fps": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 30
+    }
+  }
+}

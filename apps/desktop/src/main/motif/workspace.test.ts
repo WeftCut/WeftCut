@@ -44,6 +44,33 @@ it('updates several files together, refuses stale revisions, and publishes a ret
     workspace.update(draft.draft_id, next.revision, [{ path: 'scene.js', text: 'blue' }]);
     expect(store.readFile(published.motif_id, 'scene.js')?.toString()).toContain('red');
 });
+it('applies exact-match edits in order and writes them through to a linked directory', () => {
+    const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []), directory = folder();
+    writeFileSync(path.join(directory, 'scene.js'), 'const a = 1;\nconst b = 2;\n');
+    const draft = workspace.open({ kind: 'directory', path: directory });
+    const next = workspace.update(draft.draft_id, draft.revision, [
+        { path: 'scene.js', edits: [{ old: 'a = 1', new: 'a = 10' }, { old: 'a = 10;\nconst b', new: 'a = 10;\nlet b' }] },
+        { path: 'index.html', edits: [{ old: 'one', new: '' }] },
+    ]);
+    expect(next.revision).not.toBe(draft.revision);
+    expect(readFileSync(path.join(directory, 'scene.js'), 'utf8')).toBe('const a = 10;\nlet b = 2;\n');
+    expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toBe('<html><body></body></html>');
+    expect(store.readFile(draft.draft_id, 'scene.js')?.toString()).toContain('let b');
+});
+it('refuses an edit that does not match exactly once, and changes nothing in the batch', () => {
+    const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []), directory = folder();
+    writeFileSync(path.join(directory, 'scene.js'), 'x x');
+    const draft = workspace.open({ kind: 'directory', path: directory });
+    const tryEdit = (edit: Record<string, unknown>) => workspace.update(draft.draft_id, draft.revision, [{ path: 'index.html', text: '<html>changed</html>' }, edit as never]);
+    expect(() => tryEdit({ path: 'scene.js', edits: [{ old: 'y', new: 'z' }] })).toThrow(/scene\.js edit 1: old text not found/);
+    expect(() => tryEdit({ path: 'scene.js', edits: [{ old: 'x', new: 'z' }] })).toThrow(/scene\.js edit 1: old text matches 2 times/);
+    expect(() => tryEdit({ path: 'missing.js', edits: [{ old: 'x', new: 'z' }] })).toThrow(/missing\.js/);
+    expect(() => tryEdit({ path: 'scene.js', edits: [{ old: '', new: 'z' }] })).toThrow(/old text/);
+    expect(() => tryEdit({ path: 'scene.js', edits: [] })).toThrow(/exactly one/);
+    expect(() => tryEdit({ path: 'scene.js', text: 'a', edits: [{ old: 'x x', new: 'z' }] })).toThrow(/exactly one/);
+    expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toContain('one');
+    expect(workspace.read(draft.draft_id).revision).toBe(draft.revision);
+});
 it('uploads, edits, reads and exports binary companions through public tools without filesystem access', () => {
     const store = new UserMotifStore(temp());
     const call = (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;

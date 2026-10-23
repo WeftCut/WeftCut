@@ -1,6 +1,6 @@
 ---
 name: weftcut
-description: Drive the WeftCut video editor over its MCP tools. Use BEFORE calling any weftcut MCP tool — when the user wants to edit video in WeftCut (cut, trim, arrange a timeline, add captions or voiceover) or author/update a Motif (animated overlay).
+description: Drive the WeftCut video editor over its MCP tools. Use BEFORE calling any weftcut MCP tool, and whenever the weftcut MCP server is connected and the user wants a video or clip edited — cut, trim, tighten, remove pauses, add captions, titles, lower thirds or callouts, cut a social version — even if they do not name WeftCut; also to author or update a Motif (animated overlay).
 ---
 
 # Driving WeftCut
@@ -16,21 +16,24 @@ what no single tool can: how a session should go.
 The server sends these as its `initialize` instructions, so a client without
 this skill reads the same etiquette; the long form follows.
 
-WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history.
+WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history. A video the user asks you to edit is the project open in WeftCut, named or not.
 1. Read `project://tracks` (or `read_project` with view "tracks") before your first edit. Ids come from reads, never from memory.
-2. Every mutator answers with the committed record: the ids it minted, the span as it landed, `adjusted` for any grid snap. Verify from that answer before reporting.
-3. A refusal is an isError result whose text names the cause and the fix. Act on it; never retry a rejected call verbatim.
-4. Times are microseconds on the composition's frame grid: an off-grid time is snapped and echoed, a time outside its layer is refused.
-5. Call `create_checkpoint` before your first edit. For a batch (a rough cut, a pause pass, a caption track): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.
-6. The user or another agent may edit concurrently; when a commit fails for that reason, re-read and reapply.
+2. Every mutator answers with the committed record (minted ids, the span as it landed, `adjusted` for a grid snap); verify from it before reporting.
+3. A refusal (isError) names the cause and the fix: act on it, never retry the call verbatim.
+4. Times are microseconds on the frame grid: off-grid times are snapped and echoed, times outside their layer refused.
+5. Call `create_checkpoint` before your first edit. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.
+6. Others may edit concurrently; when a commit fails for that, re-read and reapply.
 7. Export: `start_export`; poll `get_export_status` for the completed output_path.
-8. Project tools refuse while no project is open: `open_project` or `create_project` the one the user asked for, else ask which.
-The weftcut skill (Settings > Agent) carries the longer etiquette, the common flows and the Motif authoring contract.
+8. Edit the project open in the app; never create one unless asked. With none open, project tools refuse: `open_project` or `create_project` the one the user named, else ask.
+The weftcut skill (Settings > Agent) carries the long form, common flows and the Motif contract.
 
 ## Session etiquette
 
 1. Read `project://tracks` before your first mutation — never write against a
    guessed state; `project://current` is the whole project when you need it.
+   The project open in the app is the one the user means: edit it in place.
+   Creating a new project and re-importing their media leaves them with a
+   copy they did not ask for.
    If your client cannot read MCP resources, `read_project` returns the same
    views as a tool result.
 2. Call `create_checkpoint` before your first edit, so the user has a one-step
@@ -77,6 +80,46 @@ to preview or `start_export` to use one; per-job settings override it. Omitting
 the ID keeps saved project settings, falling back to the global default.
 Library edits do not rewrite project settings or jobs already admitted.
 
+## Batch jobs
+
+Before a batch job, look in `recipes/` beside this file for a recipe whose
+description matches the job, and follow it. Read the files in `craft/` that
+touch the job: production rules as numbers, and anti-patterns, that hold under
+every style. Depart from one only when the user explicitly asks, and say so in
+your report.
+
+Without a recipe, a batch job runs the same loop: read the state (tracks, open
+tacks, `project://taste`) → plan in plain words and get the user's go-ahead →
+build inside the work session → check the result against the plan and with
+`check_composition` → hand off. Build and check repeat at most three rounds.
+Whatever is still wrong after the third becomes tacks on the ranges it
+concerns and is named in your report — never retried silently.
+
+**Style.** The project's style is `project://taste`: its tokens are already
+the defaults new text and transcript captions take. Tag what you create with a
+`graphic_role` — title, lower_third, callout, credit, logo, plate — rather than
+styling it by hand; the role is what gives it the style's look and its
+entrance. A role outside those must be declared in the project's TASTE.md.
+After hand edits, `restyle_to_taste` puts layers back to the style.
+
+**Style Motifs.** A style that is mostly drawn (paper, stamps, highlighter)
+lists example Motifs per role in the taste's motifs. They are examples, not a
+template: place one, fork it, or write a new Motif when the video needs
+something they do not show. The style reaches any Motif through its shared
+props (colours such as ink and accent, and font_ props). Leave them unset
+when placing, and keep them in a fork. A Motif that has a duration_s prop
+plays its exit before its layer ends: set duration_s to the layer's length,
+and its exit prop. A set of elements leaves by ending their layers one after
+another. *Style Motifs* in `motif-authoring.md` says how to write one.
+
+**Checks.** `check_composition` reports what breaks the craft rules
+(`craft/rules.md`) or departs from the style. Fix every `hard` finding. Fix a
+`warning`, or leave a tack on it that says why it stays. A `review` finding is
+a departure from the style: keep it only if it was meant, and say so.
+`end_agent_session` runs the check itself when your last one no longer
+matches the timeline. If that finds `hard` or `warning` findings, it keeps
+the session open and returns them: settle them as above, then call it again.
+
 ## Working rhythm
 
 Read → analyze → mutate → **verify**: every mutator answers with the committed
@@ -107,7 +150,8 @@ descriptions:
   a positive delta from a time is the ripple insert; then place into the gap.
 - Captions: `transcribe_clip` → inspect the returned `segments` → `apply_transcripts`,
   passing the envelope's `segments` and `word_timing` through (also
-  `/auto-caption`). A subtitle FILE the user already has: `import_media` it,
+  `/auto-caption`). The cues come out within the style's caption limits, so
+  do not break lines or split cues by hand. A subtitle FILE the user already has: `import_media` it,
   then `apply_subtitles { media_id, t_start_us? }` — the whole document, its
   time 0 at `t_start_us`. Correcting names and jargon: put the script or
   notes in `set_project_settings { correction_script }`, then
@@ -139,8 +183,10 @@ descriptions:
   clips, use the returned rational time_map and source_phase for the mapping;
   do not apply that rate-1 formula. Check source bounds and audition: amplitude onsets do
   not identify beats or main melodies. Missing waveform: wait for generation.
-- A title, a lower third, a credit: `add_text_layer`, then style it with
-  `update_layer_params`. Subtitles from a document are `apply_subtitles`.
+- A title, a lower third, a credit: `add_text_layer` with its `graphic_role`;
+  it is born in the project's style, entrance and exit included. Adjust it
+  with `update_layer_params` (`intro`/`outro` set the motion). Subtitles from
+  a document are `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.
@@ -177,16 +223,23 @@ edit settled it, otherwise delete it and tack the new content again.
 
 Read `motif-authoring.md` and `motif-workspaces.md` next to this file before
 creating or changing a Motif. Visible state must be a function of absolute time.
+One Motif draws one element: for overlay work with more than one element, plan
+the layers before writing code (*Scope: one element* in `motif-authoring.md`).
 
-1. Prefer a self-contained working folder with index.html, manifest.json and
-   companion code/assets. Call `open_motif_draft` with a directory source once;
+1. Prefer a self-contained folder inside your working directory (for example
+   motifs/<name>/) with index.html, manifest.json and companion code/assets,
+   never beside it. Call `open_motif_draft` with a directory source once;
    keep editing the folder with your normal file tools. The app watches changes.
    Opening the same directory reuses its draft. Use an existing Motif or ZIP
-   source to copy a package; copying does not select an update target.
-2. When you cannot access the app filesystem, start an empty draft or import an
+   source to copy a package; copying does not select an update target. Unsure
+   whether the app can read your folder? Try it: one `open_motif_draft` with the
+   folder's absolute path answers the question. Fall back to step 2 only when the
+   app refuses the path.
+2. When the app cannot read your folder, start an empty draft or import an
    uploaded ZIP. Use `read_motif` for inventory or file content, then
-   `update_motif_files` for a batch of text replacements, uploaded file references
-   or deletions. Always pass the revision you read. Upload binary bytes with
+   `update_motif_files` for a batch of file writes, uploaded file references
+   or deletions. To change part of a file, send `edits` (exact `old` → `new`
+   pairs) instead of the whole file. Always pass the revision you read. Upload binary bytes with
    `begin_file_upload` and `write_file_chunk`; `read_file_transfer` downloads
    content or reports upload progress. `delete_file_transfer` releases temporary
    files after use. Uploads are not model-specific.

@@ -5,10 +5,12 @@
 // op_id ordering) lives in the matching actor.ts arm. Routing is pinned by
 // __tests__/prod.routing.test.ts and __tests__/commands.test.ts.
 
+import { roleTokens, styleText } from '../taste/apply'
+import type { Tokens } from '../taste/schema'
 import type { LayerParams, Project, Rgba } from './model'
 import { textParamsDefault } from './mutations/add'
 import { videoClipParams, audioParams, imageOverlayParams, mediaExtent } from './mutations/media'
-import { McpArgError, parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
+import { McpArgError, parseGraphicRoleOpt, parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
 import { staticPosition } from '../../shared/position'
 
 /** 6-color palette cycled by layer index. */
@@ -44,16 +46,25 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
  *  the text is centred on the point. Both or neither: half a point is refused
  *  at the boundary rather than paired with a guessed axis, the way ADR 0049
  *  refuses a `(null, set)` box. Unclamped on purpose — a title that starts
- *  partly out of frame is a legitimate thing to author. */
-export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }, defaultFont?: string): LayerParams {
-  const params = textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
-  if (defaultFont?.trim()) params.font.family = defaultFont.trim()
+ *  partly out of frame is a legitimate thing to author.
+ *
+ *  `graphic_role` tags the layer; absent leaves the factory's null. */
+/** A new Text layer: the default params, then the project's style tokens for
+ *  its graphic role (`none` when untagged — Q9, spec H1-D4), then what the
+ *  caller said explicitly. `tokens` absent or null: the default params alone. */
+export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }, defaultFont?: string, tokens?: Tokens | null): LayerParams {
+  const font = defaultFont?.trim() || undefined
+  let params = textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
+  if (font) params.font.family = font
   const x = parseNumOpt(a.x, 'x')
   const y = parseNumOpt(a.y, 'y')
   if ((x === undefined) !== (y === undefined)) {
     throw new McpArgError('x and y must be given together', x === undefined ? 'x' : 'y')
   }
+  const role = parseGraphicRoleOpt(a.graphic_role)
+  if (tokens) params = styleText(params, roleTokens(tokens, role ?? null), tokens, comp, font)
   if (x !== undefined && y !== undefined) params.transform.position = staticPosition(x, y)
+  if (role !== undefined) params.graphic_role = role
   return params
 }
 

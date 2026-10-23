@@ -41,6 +41,25 @@ describe("resolveView", () => {
     expect(resolveVideoClipView(raw, 500_000).x).toBeCloseTo(0.5, 9);
     expect(resolveVideoClipView(raw, 500_000).opacity).toBeCloseTo(0.5, 9);
   });
+  it("text intro and outro presets play from the layer's own start and end", () => {
+    const raw: TextView = {
+      content: "Hello", font_family: "Arial", font_size_px: 80,
+      weight: 400, italic: false, align: "Left",
+      anchor_x: stat(0), anchor_y: stat(0), color: { mode: "Static", value: white },
+      x: stat(100), y: stat(500), scale_x: stat(1), scale_y: stat(1), scale_linked: true,
+      rotation_deg: stat(0), opacity: stat(0.8), outline: null, shadow: null,
+      box_w: null, box_h: null, valign: "Middle", line_height: 0, letter_spacing: 0,
+      intro: "SlideUp", outro: "FadeOut",
+    };
+    const head = resolveTextView(raw, 0, 4_000_000);
+    expect(head).toMatchObject({ opacity: 0, y: 540 });
+    expect(resolveTextView(raw, 2_000_000, 4_000_000)).toMatchObject({ opacity: 0.8, y: 500 });
+    expect(resolveTextView(raw, 4_000_000, 4_000_000).opacity).toBe(0);
+    // Without the layer length (a caller that predates the presets) nothing plays.
+    expect(resolveTextView(raw, 0).opacity).toBe(0.8);
+    expect(resolveTextView({ ...raw, intro: "Typewriter", outro: null }, 80_000, 4_000_000).content).toBe("He");
+  });
+
   it("text color Static track resolves to its value (resolveAnimatedColor short-circuit)", () => {
     const raw: TextView = {
       content: "hi", font_family: "Arial", font_size_px: 16,

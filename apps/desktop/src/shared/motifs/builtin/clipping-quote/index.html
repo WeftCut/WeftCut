@@ -1,0 +1,115 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:1200px;height:560px;overflow:hidden;background:transparent}
+#root{position:absolute;inset:0}
+.piece{position:absolute;transform-origin:50% 50%;will-change:transform,opacity}
+#quote{position:absolute;line-height:1.32;font-size:44px}
+#quote .hl{-webkit-box-decoration-break:clone;box-decoration-break:clone;background-repeat:no-repeat;background-position:0 62%;padding:0 4px;margin:0 -4px;border-radius:3px 9px 4px 8px}
+#source{position:absolute;font-size:24px;letter-spacing:0.06em;text-transform:uppercase}
+</style></head><body><div id="root"></div>
+<script>
+// clipping-common v1 — shared by every clipping-* Motif; the copies must match
+// (motifs.clipping-common test). Closed form in t throughout.
+// One spring for everything (vox-editorial: damping 18, mass 0.75, stiffness 110).
+function spring(t){ if(t<=0) return 0; const m=.75,k=110,c=18, w0=Math.sqrt(k/m), z=c/(2*Math.sqrt(k*m));
+  if(z<1){const wd=w0*Math.sqrt(1-z*z); return 1-Math.exp(-z*w0*t)*(Math.cos(wd*t)+z*w0/wd*Math.sin(wd*t));}
+  if(z===1) return 1-Math.exp(-w0*t)*(1+w0*t);
+  const r1=-w0*(z-Math.sqrt(z*z-1)), r2=-w0*(z+Math.sqrt(z*z-1)); return 1-(r2*Math.exp(r1*t)-r1*Math.exp(r2*t))/(r2-r1); }
+const ramp=(t,d)=>Math.max(0,Math.min(1,t/d));
+const ease=(u)=>{u=Math.max(0,Math.min(1,u));return 1-Math.pow(1-u,3);};
+// Optional stepped motion: hold each pose for 1/step_fps s (0 = smooth).
+const stepT=(t,fps)=>fps>0?Math.floor(t*fps+1e-6)/fps:t;
+function rng(seed){let s=seed>>>0||1;return()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0,((s^s>>>14)>>>0)/4294967296));}
+function seedOf(str){let h=2166136261;for(const ch of String(str)){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return h>>>0;}
+// A paper piece's outline: ragged top and bottom (and sides when `all`), uneven
+// teeth with an occasional deeper bite.
+function tornPath(w,h,r,all){
+  const edge=(x0,y0,x1,y1,nx,ny)=>{const len=Math.hypot(x1-x0,y1-y0),pts=[];let d=0;
+    while(d<len){const j=(r()*2-1)*3.5+(r()<0.12?r()*7:0);pts.push([x0+(x1-x0)*d/len+nx*j,y0+(y1-y0)*d/len+ny*j]);d+=8+r()*22;}return pts;};
+  const pts=[...edge(0,0,w,0,0,1), ...(all?edge(w,0,w,h,-1,0):[[w,0]]), ...edge(w,h,0,h,0,-1), ...(all?edge(0,h,0,0,1,0):[[0,h]])];
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+' Z';
+}
+// Grain and the one shared shadow, as SVG filter defs.
+const PAPER_DEFS=`<filter id="grain" x="-5%" y="-20%" width="110%" height="140%">
+  <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" result="n"/>
+  <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.10 0" result="g"/>
+  <feComposite in="g" in2="SourceGraphic" operator="in" result="g2"/>
+  <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="g2"/></feMerge></filter>
+<filter id="shadow" x="-10%" y="-30%" width="120%" height="170%"><feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="rgb(55,45,31)" flood-opacity="0.28"/></filter>`;
+function paperSvg(w,h,fill,r,all){
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;overflow:visible"><defs>${PAPER_DEFS}</defs>
+    <g filter="url(#shadow)"><path d="${tornPath(w,h,r,all)}" fill="${fill}" filter="url(#grain)"/></g></svg>`;
+}
+// A strip of masking tape, as a positioned element.
+function tape(w,h){const e=document.createElement('div');
+  Object.assign(e.style,{position:'absolute',width:w+'px',height:h+'px',background:'rgba(214,201,160,0.82)',boxShadow:'0 2px 4px rgba(55,45,31,0.30)',transformOrigin:'50% 50%',
+    clipPath:'polygon(0 6%,4% 0,9% 8%,14% 1%,100% 0,96% 50%,100% 100%,8% 100%,3% 92%,0 100%,5% 50%)'});return e;}
+// Exit: the layer's last EXIT_S seconds (`duration_s` is the layer's length).
+// Pieces leave in reverse order of arrival: `order` 0 (the last placed) goes
+// first, each later one 0.08 s after, all gone at the end. Ease-in, so a piece
+// leaves accelerating. A slide moves `travel` px and fades in its second half.
+const EXIT_S=0.5;
+function exitPose(t,dur,kind,order,travel){
+  const pose={dx:0,dy:0,s:1,r:0,o:1};
+  if(!kind||kind==='none'||!(dur>0)) return pose;
+  const start=dur-EXIT_S+order*0.08, u=Math.max(0,Math.min(1,(t-start)/Math.max(0.15,dur-start)));
+  if(u<=0) return pose;
+  const e=u*u*u, late=Math.max(0,(u-0.35)/0.65), d=travel||320;
+  if(kind==='lift') return {dx:18*e,dy:-150*e,s:1+0.1*e,r:5*e,o:1-late};
+  if(kind==='fade') return {...pose,o:1-u};
+  const dir={slide_left:[-1,0],slide_right:[1,0],slide_up:[0,-1],slide_down:[0,1]}[kind];
+  return dir?{dx:dir[0]*d*e,dy:dir[1]*d*e,s:1,r:0,o:1-late}:pose;
+}
+const EXITS=['none','lift','fade','slide_left','slide_right','slide_up','slide_down'];
+const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
+async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
+// end clipping-common
+
+let els={}, P={};
+motif.define({
+  async setup(props){
+    const root=document.getElementById('root'); root.textContent='';
+    await loadFace(400,44,props.font_body); await loadFace(400,24,props.font_folio);
+    const W=1040, padX=64, padTop=58;
+    const q=document.createElement('div'); q.id='quote';
+    Object.assign(q.style,{fontFamily:props.font_body,color:props.ink,left:padX+'px',top:padTop+'px',width:(W-padX*2)+'px'});
+    const cjk=CJK.test(props.quote);
+    // Words (CJK: characters) highlight_from..highlight_to, counted from 0, as
+    // one run the highlighter sweeps; each wrapped line sweeps with it.
+    const parts=cjk?[...props.quote]:props.quote.split(/(\s+)/);
+    const lo=Math.round(props.highlight_from), hi=Math.round(props.highlight_to);
+    let n=0, before='', mark='', after='';
+    for(const part of parts){
+      const word=!/^\s+$/.test(part);
+      if(lo>=0&&n>=lo&&n<=hi&&(word||(mark&&n<=hi))) mark+=part; else if(mark) after+=part; else before+=part;
+      if(word) n++;
+    }
+    if(!mark.trim()){before=props.quote;mark='';after='';}
+    q.append(document.createTextNode(before));
+    const marked=[];
+    if(mark){const h=document.createElement('span'); h.className='hl'; h.textContent=mark.replace(/\s+$/,''); h.style.backgroundImage=`linear-gradient(${props.highlight},${props.highlight})`; q.append(h); marked.push(h);
+      const tail=mark.match(/\s+$/); if(tail) q.append(document.createTextNode(tail[0]));}
+    q.append(document.createTextNode(after));
+    const piece=document.createElement('div'); piece.className='piece'; root.appendChild(piece); piece.appendChild(q);
+    const qh=q.getBoundingClientRect().height;
+    let src=null;
+    if(props.source){src=document.createElement('div'); src.id='source'; src.textContent='— '+props.source;
+      Object.assign(src.style,{fontFamily:props.font_folio,color:props.accent,left:padX+'px',top:(padTop+qh+22)+'px'}); piece.appendChild(src);}
+    const H=Math.round(padTop+qh+(src?72:40)+30), x0=(1200-W)/2, y0=Math.max(20,(560-H)/2);
+    Object.assign(piece.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
+    piece.insertAdjacentHTML('afterbegin',paperSvg(W,H,props.paper,rng(seedOf(props.quote)),true));
+    const t1=tape(160,46); t1.style.left=(x0+W/2-80)+'px'; t1.style.top=(y0-22)+'px'; root.appendChild(t1);
+    els={piece,tape:t1,marked}; P={tilt:props.tilt_deg,step:props.step_fps,exit:props.exit};
+  },
+  frame(t,ctx){
+    t=stepT(t,P.step); const {piece,tape,marked}=els, tilt=P.tilt, D=ctx.duration;
+    const x1=exitPose(t,D,P.exit,1), x0=exitPose(t,D,P.exit,0);
+    const a=spring(t); piece.style.opacity=ramp(t,16/30)*x1.o; piece.style.transform=`translate(${x1.dx}px,${x1.dy}px) rotate(${tilt+(1-a)*-3+x1.r}deg) scale(${(1+(1-a)*0.1)*x1.s})`;
+    const c=spring(t-0.3); tape.style.opacity=ramp(t-0.3,6/30)*x0.o; tape.style.transform=`translate(${x0.dx}px,${x0.dy}px) rotate(${tilt-4+x0.r}deg) scale(${(1+(1-c)*0.25)*x0.s})`;
+    // The highlighter sweeps the marked run left to right, 0.6 s → 1.15 s.
+    const u=ease((t-0.6)/0.55);
+    for(const h of marked) h.style.backgroundSize=`${(u*100).toFixed(2)}% 78%`;
+  },
+});
+</script></body></html>

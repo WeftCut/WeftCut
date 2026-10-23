@@ -1484,6 +1484,7 @@ const enUS = {
     "end_agent_session": "End work session",
     "set_history_lock": "Set the undo lock",
     "create_tacks": "Add tacks",
+    "check_composition": "Check the edit",
     "update_tack": "Update tack",
     "delete_tacks": "Remove tacks",
     "analyze_clip": "Analyze clip",
@@ -1523,6 +1524,7 @@ const enUS = {
     "apply_transcripts": "Add captions from transcript",
     "correct_caption_text": "Correct caption text",
     "restyle_captions": "Restyle captions",
+    "restyle_to_taste": "Restyle to the project style",
     "list_export_presets": "List export presets",
     "create_export_preset": "Create export preset",
     "update_export_preset": "Update export preset",
@@ -3070,6 +3072,7 @@ const enUS = {
     },
     composition: { delete: "Deleted Group" },
     caption: { restyle: "Restyled captions", correct: "Corrected caption text", merge: "Merged captions" },
+    style: { restyle: "Restyled to the project style" },
     media: {
       remove_cascade:
         "Removed media {{media}} and {{count}} referencing clip(s)",

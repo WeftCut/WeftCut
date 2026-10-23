@@ -276,6 +276,26 @@ export const STEPS: readonly MigrationStep[] = [{
       }
     }
   },
+}, {
+  from: 4,
+  apply(wire) {
+    // v5 tags visual layers with a graphic role. Every existing Text, Motif and
+    // ImageOverlay layer, in every composition, is untagged: a Motif's manifest
+    // role applies at placement only and is NOT back-filled here.
+    const compositions = wire.compositions as Record<string, { tracks?: unknown }> | undefined
+    if (!compositions || typeof compositions !== 'object') return
+    for (const composition of Object.values(compositions)) {
+      if (!Array.isArray(composition?.tracks)) continue
+      for (const track of composition.tracks) {
+        if (!Array.isArray(track?.layers)) continue
+        for (const layer of track.layers) {
+          const params = layer?.params
+          if (!params || !['Text', 'Motif', 'ImageOverlay'].includes(params.kind)) continue
+          params.graphic_role = null
+        }
+      }
+    }
+  },
 }]
 
 export interface UpgradeOutcome {

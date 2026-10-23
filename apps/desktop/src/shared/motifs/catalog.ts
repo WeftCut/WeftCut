@@ -10,6 +10,14 @@
 import countdownJson from "./builtin/countdown/manifest.json";
 import lowerThirdJson from "./builtin/lower-third/manifest.json";
 import textFxJson from "./builtin/text-fx/manifest.json";
+// The `clipping` style's Motifs (spec H2-D4).
+import clippingHeadlineJson from "./builtin/clipping-headline/manifest.json";
+import clippingStampJson from "./builtin/clipping-stamp/manifest.json";
+import clippingQuoteJson from "./builtin/clipping-quote/manifest.json";
+import clippingPointerJson from "./builtin/clipping-pointer/manifest.json";
+import clippingPaperJson from "./builtin/clipping-paper/manifest.json";
+import clippingScrapJson from "./builtin/clipping-scrap/manifest.json";
+import { graphicRoleProblem } from "../graphicRole";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +39,9 @@ export interface Manifest {
   max_duration_prop?: string | null;
   content_duration_s?: number | null;
   props_schema: Record<string, PropSpec>;
+  /// What a placed layer is for (`shared/graphicRole.ts`): the layer's
+  /// `graphic_role` unless the placing call names one. Absent = untagged.
+  graphic_role?: string | null;
   // Extra optional fields present in the renderer's MotifManifest — preserved
   // so its `MotifManifest = Manifest` re-export doesn't drop fields.
   settle_rafs?: number;
@@ -284,7 +295,7 @@ export function resolveMotifContentDurationUs(
 }
 
 /** Reserved built-in ids; a user/uploaded Motif may never take one. */
-export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx"];
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-quote", "clipping-pointer", "clipping-paper", "clipping-scrap"];
 const DRAFTS_DIR = "drafts";
 
 /** Slugify a name → safe single path-segment id. */
@@ -328,15 +339,17 @@ export function assignUniqueId(name: string, taken: string[]): string {
 const _countdown = countdownJson as unknown as Manifest;
 const _lowerThird = lowerThirdJson as unknown as Manifest;
 const _textFx = textFxJson as unknown as Manifest;
+const _clipping = [clippingHeadlineJson, clippingStampJson, clippingQuoteJson, clippingPointerJson, clippingPaperJson, clippingScrapJson] as unknown as Manifest[];
 
 /**
- * The 3 built-in motif manifests, keyed by id. ReadonlyMap so callers can't
+ * The built-in motif manifests, keyed by id. ReadonlyMap so callers can't
  * mutate the catalog accidentally.
  */
 export const BUILTIN_MANIFESTS: ReadonlyMap<string, Manifest> = new Map([
   [_countdown.id, _countdown],
   [_lowerThird.id, _lowerThird],
   [_textFx.id, _textFx],
+  ..._clipping.map((m) => [m.id, m] as [string, Manifest]),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -403,6 +416,9 @@ export function coreManifestForHash(m: Manifest): Record<string, unknown> {
     content_duration_s: m.content_duration_s ?? null,
     fonts: m.fonts ?? [],
     props_schema: m.props_schema,
+    // Only when declared: an untagged manifest's island and content hash stay
+    // exactly what they were before the field existed.
+    ...(m.graphic_role != null ? { graphic_role: m.graphic_role } : {}),
   };
 }
 
@@ -453,6 +469,10 @@ export function validateManifest(m: Manifest): void {
     if (val != null && !(Number.isFinite(val) && val > 0)) {
       throw new MotifPropError(`${field} must be finite and > 0 when present`);
     }
+  }
+  if (m.graphic_role !== undefined) {
+    const problem = graphicRoleProblem(m.graphic_role);
+    if (problem) throw new MotifPropError(problem);
   }
   const keys = Object.keys(m.props_schema);
   if (keys.length > MAX_PROPS) {

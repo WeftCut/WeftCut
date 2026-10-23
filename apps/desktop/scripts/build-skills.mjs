@@ -27,8 +27,9 @@ const OUT = path.join(HERE, '..', 'out', 'skills')
 fs.rmSync(OUT, { recursive: true, force: true })
 fs.cpSync(path.join(REPO, 'skills'), OUT, { recursive: true })
 // Docs land inside the required skill, so the layout has to hold before they
-// can be placed. Asserting here rather than letting `copyFileSync` raise ENOENT
-// is what turns "skills/ was emptied or renamed" into a message that says so.
+// can be placed; its layer folders come with the tree and are checked here too.
+// Asserting here rather than letting `copyFileSync` raise ENOENT is what turns
+// "skills/ was emptied or renamed" into a message that says so.
 const staged = assertSkillLayout(OUT, { requiredDocs: [], requiredAssets: [] })
 for (const doc of REQUIRED_DOCS) {
   fs.copyFileSync(path.join(REPO, 'docs', doc), path.join(OUT, REQUIRED_SKILL, doc))

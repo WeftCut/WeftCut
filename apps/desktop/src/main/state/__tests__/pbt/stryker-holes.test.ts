@@ -591,7 +591,7 @@ describe('validate: ImageOverlay missing media', () => {
     const params: LayerParams = {
       kind: 'ImageOverlay', media: 'missing-media-id',
       transform: { position: { mode: 'XY' as const, x: s(0), y: s(0) },  scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true },
-      opacity: s(1), blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0,
+      opacity: s(1), blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0, graphic_role: null,
     }
     const layer: Layer = { id: 'img1', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }
     root(p).tracks[0].layers = [layer]

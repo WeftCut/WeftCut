@@ -22,10 +22,10 @@ export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): Aud
     fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' }
 }
 /** Image overlay (no src range; validator checks
- *  only the media ref). */
-export function imageOverlayParams(media: Uuid, size?: { width: number; height: number }): LayerParams {
+ *  only the media ref). Untagged unless the caller names a graphic role. */
+export function imageOverlayParams(media: Uuid, size?: { width: number; height: number }, graphicRole: string | null = null): LayerParams {
   return { kind: 'ImageOverlay', media, transform: defaultTransform((size?.width ?? 0) / 2, (size?.height ?? 0) / 2),
-    opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 }
+    opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0, graphic_role: graphicRole }
 }
 
 /** Fixed-defaults media-pool item. imported_at is reconciled against the
