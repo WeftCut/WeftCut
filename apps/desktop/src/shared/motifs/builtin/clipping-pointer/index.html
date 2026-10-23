@@ -86,11 +86,14 @@ motif.define({
     const p=wrap.querySelector('#p'), h=wrap.querySelector('#h'), L=p.getTotalLength(), LH=h?h.getTotalLength():0;
     p.style.strokeDasharray=L; if(h) h.style.strokeDasharray=LH;
     let label=null;
-    if(props.label&&props.kind==='arrow'){
+    // The label sits where the stroke leaves room: at the arrow's tail, under
+    // an underline, or below a circle's left side.
+    const at={arrow:['20px','300px'],underline:['60px','326px'],circle:['20px','344px']}[props.kind]||['20px','300px'];
+    if(props.label){
       const cjk=CJK.test(props.label), family=cjk?props.font_cjk:props.font_headline;
       await loadFace(cjk?900:400,48,family);
       label=document.createElement('div'); label.id='label'; label.className='piece'; label.textContent=props.label;
-      Object.assign(label.style,{fontFamily:family,fontWeight:cjk?'900':'400',color:props.paper,background:props.ink,left:'20px',top:'300px'});
+      Object.assign(label.style,{fontFamily:family,fontWeight:cjk?'900':'400',color:props.paper,background:props.ink,left:at[0],top:at[1]});
       root.appendChild(label);
     }
     els={wrap,p,h,L,LH,label}; P={step:props.step_fps,exit:props.exit,angle:props.angle_deg};
