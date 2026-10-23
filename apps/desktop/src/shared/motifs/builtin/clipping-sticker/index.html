@@ -68,10 +68,50 @@ async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.l
 // prop, a pool image or a video frame that arrives as a URL; without one the
 // Motif draws its own art.svg, so a fork can swap in a drawing of its own.
 // `crop_*` trim each side by a fraction of the picture: the slide behind a
-// speaker, not the whole frame.
-const BOX_W=700, BOX_H=560, BORDER=18;
+// speaker, not the whole frame. `frame: cutout` follows the picture's own
+// shape (a PNG or a drawing with a transparent ground) with a hand-cut paper
+// edge; `treatment` prints a photo in mono or as newsprint halftone dots.
+const BOX_W=700, BOX_H=560, BORDER=18, RES=2;
 let els={}, P={};
 function loadImage(src){ return new Promise((resolve)=>{ const i=new Image(); i.onload=()=>resolve(i); i.onerror=()=>resolve(null); i.src=src; }); }
+// The cropped picture at w×h (RES× pixels), in its treatment.
+function picture(img,iw,ih,crop,w,h,treatment,ink,paper){
+  const c=document.createElement('canvas'); c.width=w*RES; c.height=h*RES; const g=c.getContext('2d');
+  g.drawImage(img,crop.l*iw,crop.t*ih,crop.w*iw,crop.h*ih,0,0,c.width,c.height);
+  if(treatment!=='mono'&&treatment!=='halftone') return c;
+  const d=g.getImageData(0,0,c.width,c.height), a=d.data;
+  const lum=(i)=>(0.299*a[i]+0.587*a[i+1]+0.114*a[i+2])/255;
+  if(treatment==='mono'){
+    for(let i=0;i<a.length;i+=4){ const y=Math.max(0,Math.min(255,((lum(i)-0.5)*1.25+0.5)*255)); a[i]=a[i+1]=a[i+2]=y; }
+    g.putImageData(d,0,0); return c;
+  }
+  // Halftone: paper where the picture is, ink dots sized by its darkness on a
+  // grid turned 45°, about 120 dots across the long side.
+  const sil=document.createElement('canvas'); sil.width=c.width; sil.height=c.height; const sg=sil.getContext('2d');
+  sg.drawImage(c,0,0); sg.globalCompositeOperation='source-in'; sg.fillStyle=paper; sg.fillRect(0,0,c.width,c.height);
+  g.clearRect(0,0,c.width,c.height); g.drawImage(sil,0,0); g.fillStyle=ink;
+  const cell=Math.max(4*RES,Math.round(Math.max(c.width,c.height)/120)), diag=Math.hypot(c.width,c.height), cs=Math.SQRT1_2;
+  for(let u=-diag;u<diag;u+=cell) for(let v=-diag;v<diag;v+=cell){
+    const x=Math.round((u-v)*cs+c.width/2), y=Math.round((u+v)*cs+c.height/2);
+    if(x<0||y<0||x>=c.width||y>=c.height) continue;
+    const i=(y*c.width+x)*4; if(a[i+3]<128) continue;
+    const r=cell*0.62*Math.sqrt(1-lum(i)); if(r<0.4) continue;
+    g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
+  }
+  return c;
+}
+// The picture on a hand-cut paper edge that follows its shape: its silhouette
+// in paper, stamped around it at an uneven radius, then the picture on top.
+function cutout(pic,w,h,paper,r){
+  const B=BORDER, c=document.createElement('canvas'); c.width=(w+B*2)*RES; c.height=(h+B*2)*RES; const g=c.getContext('2d');
+  const sil=document.createElement('canvas'); sil.width=pic.width; sil.height=pic.height; const sg=sil.getContext('2d');
+  sg.drawImage(pic,0,0); sg.globalCompositeOperation='source-in'; sg.fillStyle=paper; sg.fillRect(0,0,sil.width,sil.height);
+  const N=36;
+  for(let k=0;k<N;k++){ const th=k/N*Math.PI*2, rad=B*(0.62+0.3*r())*RES;
+    g.drawImage(sil,B*RES+Math.cos(th)*rad,B*RES+Math.sin(th)*rad); }
+  g.drawImage(sil,B*RES,B*RES); g.drawImage(pic,B*RES,B*RES);
+  return c;
+}
 motif.define({
   async setup(props){
     const root=document.getElementById('root'); root.textContent='';
@@ -87,11 +127,17 @@ motif.define({
     const card=document.createElement('div'); card.className='piece';
     Object.assign(card.style,{left:x0+'px',top:y0+'px',width:W+'px',height:H+'px'});
     const r=rng(seedOf(String(props.photo)+w+'x'+h));
-    if(props.frame!=='none') card.innerHTML=paperSvg(W,H,props.paper,r,props.frame==='torn');
-    if(img){
-      const win=document.createElement('div'); Object.assign(win.style,{position:'absolute',left:BORDER+'px',top:BORDER+'px',width:w+'px',height:h+'px',overflow:'hidden'});
-      img.id='pic'; Object.assign(img.style,{left:(-cl*iw*k)+'px',top:(-ct*ih*k)+'px',width:(iw*k)+'px',height:(ih*k)+'px'});
-      win.appendChild(img); card.appendChild(win);
+    const pic=img?picture(img,iw,ih,{l:cl,t:ct,w:cw,h:ch},w,h,props.treatment,props.ink,props.paper):null;
+    if(props.frame==='cutout'){
+      if(pic){ const c=cutout(pic,w,h,props.paper,r);
+        Object.assign(c.style,{position:'absolute',left:'0px',top:'0px',width:W+'px',height:H+'px',filter:'drop-shadow(0 9px 8px rgba(55,45,31,0.28))'});
+        card.appendChild(c); }
+    } else {
+      if(props.frame!=='none') card.innerHTML=paperSvg(W,H,props.paper,r,props.frame==='torn');
+      if(pic){
+        pic.id='pic'; Object.assign(pic.style,{left:BORDER+'px',top:BORDER+'px',width:w+'px',height:h+'px'});
+        card.appendChild(pic);
+      }
     }
     root.appendChild(card);
     let t1=null;

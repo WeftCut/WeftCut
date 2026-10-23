@@ -45,6 +45,7 @@ import {
   useAutoDeleteEmptyTracks,
   useDefaultTextFont,
   useAutoInstallUpdatesOnQuit,
+  useAgentImageSearch,
 } from "./appSettingsStore";
 import { FontSelect } from "../components/FontSelect";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
@@ -162,6 +163,7 @@ export function SettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const defaultTextFont = useDefaultTextFont();
   const autoInstallUpdatesOnQuit = useAutoInstallUpdatesOnQuit();
+  const agentImageSearch = useAgentImageSearch();
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
   // Project-scoped sections (composition pin, per-project toggles) talk to
   // workspace IPC, so the whole category unmounts — not just hides — when
@@ -292,6 +294,15 @@ export function SettingsPanel({
                 <span>
                   <span className="settings-toggle-label">{t("settings.auto_install_updates_on_quit")}</span>
                   <span className="settings-toggle-hint">{t("settings.auto_install_updates_on_quit_hint")}</span>
+                </span>
+              </label>
+              <label className="settings-toggle-row">
+                <AppSwitch checked={agentImageSearch} onCheckedChange={next => {
+                  void setAppSettings({ agent_image_search: next }).catch(err => setError(String(err)));
+                }} />
+                <span>
+                  <span className="settings-toggle-label">{t("settings.agent_image_search")}</span>
+                  <span className="settings-toggle-hint">{t("settings.agent_image_search_hint")}</span>
                 </span>
               </label>
               <LayoutThemeControl onError={setError} />

@@ -128,6 +128,16 @@ describe('read_project picture views answer an image block from the media reader
     expect(spy.mock.calls[0][0]).toBe(`media://${MID}/thumbnail`)
     expect(out.content[0]).toEqual({ type: 'image', data: '/9j/AAAA', mimeType: 'image/jpeg' })
   })
+  it('a still\'s thumbnail is its frame 0: stills have no thumbnail job', async () => {
+    const ts = tsHostStub()
+    const IMG = '00000000-0000-0000-0000-0000000000bb'
+    ts.actor.dispatch('add_media_item', { media: { ...mediaItemTemplate(IMG, 'Image', 0), kind: 'Image' } })
+    ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)
+    const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[{"uri":"u","mimeType":"image/jpeg","blob":"SU1H"}]}}')
+    const out = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_thumbnail', id: IMG }) as { content: Array<Record<string, unknown>> }
+    expect(spy.mock.calls[0][0]).toBe(`media://${IMG}/frame/0`)
+    expect(out.content[0]).toEqual({ type: 'image', data: 'SU1H', mimeType: 'image/jpeg' })
+  })
   it('media_frame needs t_us and reads media://{id}/frame/{t_us}', async () => {
     const ts = host()
     const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[{"uri":"u","mimeType":"image/jpeg","blob":"QUJD"}]}}')

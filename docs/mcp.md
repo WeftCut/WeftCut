@@ -298,6 +298,29 @@ both answer with or without a project open. A failure of the open or create
 itself is an `isError` result whose text names the folder and the fix, with
 `error` set to the workspace variant (see the error model).
 
+**Open-licence pictures** (ADR 0133). When the user's media lacks a picture
+the talk calls for — a person, an object, a place, a document — the agent can
+fetch one from Wikimedia Commons. Both tools run on the MCP host, which is the
+only part of WeftCut that reaches Commons, and both are refused with
+`ImageSearchOff` when the user has turned off Settings → "Let agents search
+open image libraries" (on by default; the search words go to Wikimedia).
+- `search_images { query, limit? }` → per candidate a text line
+  (`<n>. <candidate_id> · title · width×height · licence`) and its thumbnail
+  as an IMAGE block, then `{ candidates: [{ candidate_id, source, title,
+  page_url, width, height, license, license_url, author, credit }] }`. Only
+  files whose licence allows changes and commercial use come back: CC0, public
+  domain, CC BY, CC BY-SA (NC, ND and GFDL-only files are dropped). `limit`
+  1..12, default 6. Read-only.
+- `import_image { candidate_id }` → `{ media_id, label, width, height,
+  license, credit, page_url }`. Asks Commons for the candidate again (its
+  licence is never taken from the call), downloads it over https (a JPEG, PNG,
+  WebP or GIF, at most 40 MB; a file wider than 2048 px, an SVG or a TIFF comes
+  as Commons' 2048 px rendering), imports it like `import_media`, and records
+  its credit in `credits.json` beside the project, keyed by the pool item's
+  content hash. `read_project { view: "credits" }` lists every pool item with a
+  credit, and whether a layer or a Motif prop uses it; the handoff report
+  carries those credit lines.
+
 ### Read (resources, not tools)
 
 | URI | Returns |
@@ -427,7 +450,7 @@ content in, and the answer's `adjusted` says so with `reason: "content"` — the
 geometry is the props' consequence, not a time the caller sent.
 
 Media + tracks:
-- `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }` — every file is pooled; a subtitle document (`.srt`/`.vtt`/`.ass`) becomes a `Subtitle` item, laid on the timeline with `apply_subtitles`. The path is stat'd first: a directory, a missing path or an unreadable file is refused by name before anything is written, and a read that fails after the pool row landed rolls that row back; if a layer already references the row it stays with a pending hash, and the refusal says which happened
+- `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }` — every file is pooled; a subtitle document (`.srt`/`.vtt`/`.ass`) becomes a `Subtitle` item, laid on the timeline with `apply_subtitles`. An `.svg` (a drawing) is drawn once to a PNG, 2048 px on its long edge with its transparency kept, and that PNG is pooled as an `Image` (named after the SVG); the SVG is drawn as an image, so its scripts and outside references do nothing. The path is stat'd first: a directory, a missing path or an unreadable file is refused by name before anything is written, and a read that fails after the pool row landed rolls that row back; if a layer already references the row it stays with a pending hash, and the refusal says which happened
 - `delete_media { media_id, force? }` — with `force`, the referencing layers go through the same cascade `delete_layers` runs (links dissolve below two, an emptied transient lane is pruned, a locked lane refuses), so a forced removal of an auto-paired video+audio pair is one clean commit
 - `add_track { label? }` → `{ track_id, composition_id, label, role, index, enabled, locked, layers }` (tracks are kind-agnostic — any layer kind can be placed on any track)
 - `delete_track { track_id, force? }` — only A roll / B roll are protected; audio and caption tracks are removable. With `force`, the layers go too; a Group layer among them leaves its composition orphaned (`ref_count 0` in `project://compositions`) for `delete_composition`

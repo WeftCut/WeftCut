@@ -92,6 +92,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         .some(p => p.id === parsed.default_export_preset_id) ? String(parsed.default_export_preset_id) : DEFAULT_EXPORT_PRESET_ID,
       auto_install_updates_on_quit: typeof parsed.auto_install_updates_on_quit === 'boolean'
         ? parsed.auto_install_updates_on_quit : true,
+      agent_image_search: typeof parsed.agent_image_search === 'boolean' ? parsed.agent_image_search : true,
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
@@ -281,6 +282,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.auto_install_updates_on_quit !== undefined) {
         if (typeof patch.auto_install_updates_on_quit !== 'boolean') throw new Error('Invalid update preference')
         current.auto_install_updates_on_quit = patch.auto_install_updates_on_quit
+      }
+      if (patch.agent_image_search !== undefined) {
+        if (typeof patch.agent_image_search !== 'boolean') throw new Error('Invalid image search preference')
+        current.agent_image_search = patch.agent_image_search
       }
       if (patch.export_preset_change !== undefined) {
         current.export_presets = changeExportPresets(current.export_presets ?? [], patch.export_preset_change)

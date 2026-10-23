@@ -1,0 +1,257 @@
+{
+ "query": {
+  "pages": {
+   "2493666": {
+    "pageid": 2493666,
+    "ns": 6,
+    "title": "File:Seahorse Skeleton Macro.jpg",
+    "index": 3,
+    "imagerepository": "local",
+    "imageinfo": [
+     {
+      "size": 878067,
+      "width": 1704,
+      "height": 2272,
+      "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "thumbwidth": 320,
+      "thumbheight": 427,
+      "responsiveUrls": {
+       "2": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+      },
+      "thumbattribs": {
+       "src": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+       "decoding": "async",
+       "loading": "lazy",
+       "width": 320,
+       "height": 427,
+       "srcset": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail 2x"
+      },
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/9f/Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Seahorse_Skeleton_Macro.jpg",
+      "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=2493666",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Seahorse Skeleton Macro",
+        "source": "mediawiki-metadata"
+       },
+       "Artist": {
+        "value": "\u201cJon Zander (<a href=\"//commons.wikimedia.org/wiki/User:Digon3\" title=\"User:Digon3\">Digon3</a>)\"",
+        "source": "commons-desc-page"
+       },
+       "LicenseShortName": {
+        "value": "CC BY-SA 3.0",
+        "source": "commons-desc-page",
+        "hidden": ""
+       },
+       "LicenseUrl": {
+        "value": "http://creativecommons.org/licenses/by-sa/3.0/",
+        "source": "commons-desc-page"
+       }
+      },
+      "mime": "image/jpeg"
+     }
+    ]
+   },
+   "2526874": {
+    "pageid": 2526874,
+    "ns": 6,
+    "title": "File:Seahorse Skeleton Macro 6.JPG",
+    "index": 4,
+    "imagerepository": "local",
+    "imageinfo": [
+     {
+      "size": 758074,
+      "width": 1704,
+      "height": 2272,
+      "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Seahorse_Skeleton_Macro_6.JPG/330px-Seahorse_Skeleton_Macro_6.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "thumbwidth": 320,
+      "thumbheight": 427,
+      "responsiveUrls": {
+       "2": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Seahorse_Skeleton_Macro_6.JPG/960px-Seahorse_Skeleton_Macro_6.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+      },
+      "thumbattribs": {
+       "src": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Seahorse_Skeleton_Macro_6.JPG/330px-Seahorse_Skeleton_Macro_6.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+       "decoding": "async",
+       "loading": "lazy",
+       "width": 320,
+       "height": 427,
+       "srcset": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Seahorse_Skeleton_Macro_6.JPG/960px-Seahorse_Skeleton_Macro_6.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail 2x"
+      },
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/17/Seahorse_Skeleton_Macro_6.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Seahorse_Skeleton_Macro_6.JPG",
+      "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=2526874",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Seahorse Skeleton Macro 6",
+        "source": "mediawiki-metadata"
+       },
+       "Artist": {
+        "value": "\u201cJon Zander (<a href=\"//commons.wikimedia.org/wiki/User:Digon3\" title=\"User:Digon3\">Digon3</a>)\"",
+        "source": "commons-desc-page"
+       },
+       "LicenseShortName": {
+        "value": "CC BY-SA 3.0",
+        "source": "commons-desc-page",
+        "hidden": ""
+       },
+       "LicenseUrl": {
+        "value": "http://creativecommons.org/licenses/by-sa/3.0/",
+        "source": "commons-desc-page"
+       }
+      },
+      "mime": "image/jpeg"
+     }
+    ]
+   },
+   "2526875": {
+    "pageid": 2526875,
+    "ns": 6,
+    "title": "File:Seahorse Skeleton Macro 8.JPG",
+    "index": 2,
+    "imagerepository": "local",
+    "imageinfo": [
+     {
+      "size": 835681,
+      "width": 1704,
+      "height": 2272,
+      "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Seahorse_Skeleton_Macro_8.JPG/330px-Seahorse_Skeleton_Macro_8.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "thumbwidth": 320,
+      "thumbheight": 427,
+      "responsiveUrls": {
+       "2": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Seahorse_Skeleton_Macro_8.JPG/960px-Seahorse_Skeleton_Macro_8.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+      },
+      "thumbattribs": {
+       "src": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Seahorse_Skeleton_Macro_8.JPG/330px-Seahorse_Skeleton_Macro_8.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+       "decoding": "async",
+       "loading": "lazy",
+       "width": 320,
+       "height": 427,
+       "srcset": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Seahorse_Skeleton_Macro_8.JPG/960px-Seahorse_Skeleton_Macro_8.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail 2x"
+      },
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b7/Seahorse_Skeleton_Macro_8.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Seahorse_Skeleton_Macro_8.JPG",
+      "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=2526875",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Seahorse Skeleton Macro 8",
+        "source": "mediawiki-metadata"
+       },
+       "Artist": {
+        "value": "\u201cJon Zander (<a href=\"//commons.wikimedia.org/wiki/User:Digon3\" title=\"User:Digon3\">Digon3</a>)\"",
+        "source": "commons-desc-page"
+       },
+       "LicenseShortName": {
+        "value": "CC BY-SA 3.0",
+        "source": "commons-desc-page",
+        "hidden": ""
+       },
+       "LicenseUrl": {
+        "value": "http://creativecommons.org/licenses/by-sa/3.0/",
+        "source": "commons-desc-page"
+       }
+      },
+      "mime": "image/jpeg"
+     }
+    ]
+   },
+   "999": {
+    "pageid": 999,
+    "ns": 6,
+    "title": "File:NC.jpg",
+    "index": 9,
+    "imagerepository": "local",
+    "imageinfo": [
+     {
+      "size": 878067,
+      "width": 1704,
+      "height": 2272,
+      "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "thumbwidth": 320,
+      "thumbheight": 427,
+      "responsiveUrls": {
+       "2": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+      },
+      "thumbattribs": {
+       "src": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+       "decoding": "async",
+       "loading": "lazy",
+       "width": 320,
+       "height": 427,
+       "srcset": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail 2x"
+      },
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/9f/Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Seahorse_Skeleton_Macro.jpg",
+      "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=2493666",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Seahorse Skeleton Macro",
+        "source": "mediawiki-metadata"
+       },
+       "Artist": {
+        "value": "\u201cJon Zander (<a href=\"//commons.wikimedia.org/wiki/User:Digon3\" title=\"User:Digon3\">Digon3</a>)\"",
+        "source": "commons-desc-page"
+       },
+       "LicenseShortName": {
+        "value": "CC BY-NC-SA 2.0",
+        "source": "commons-desc-page",
+        "hidden": ""
+       },
+       "LicenseUrl": {
+        "value": "http://creativecommons.org/licenses/by-sa/3.0/",
+        "source": "commons-desc-page"
+       }
+      },
+      "mime": "image/jpeg"
+     }
+    ]
+   },
+   "998": {
+    "pageid": 998,
+    "ns": 6,
+    "title": "File:Seahorse outline.svg",
+    "index": 8,
+    "imagerepository": "local",
+    "imageinfo": [
+     {
+      "size": 878067,
+      "width": 512,
+      "height": 512,
+      "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "thumbwidth": 320,
+      "thumbheight": 427,
+      "responsiveUrls": {
+       "2": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+      },
+      "thumbattribs": {
+       "src": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/330px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+       "decoding": "async",
+       "loading": "lazy",
+       "width": 320,
+       "height": 427,
+       "srcset": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Seahorse_Skeleton_Macro.jpg/960px-Seahorse_Skeleton_Macro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail 2x"
+      },
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/1a/Seahorse_outline.svg",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Seahorse_Skeleton_Macro.jpg",
+      "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=2493666",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Seahorse Skeleton Macro",
+        "source": "mediawiki-metadata"
+       },
+       "Artist": {
+        "value": "\u201cJon Zander (<a href=\"//commons.wikimedia.org/wiki/User:Digon3\" title=\"User:Digon3\">Digon3</a>)\"",
+        "source": "commons-desc-page"
+       },
+       "LicenseShortName": {
+        "value": "Public domain",
+        "source": "commons-desc-page",
+        "hidden": ""
+       }
+      },
+      "mime": "image/svg+xml"
+     }
+    ]
+   }
+  }
+ }
+}
