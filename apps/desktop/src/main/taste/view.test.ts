@@ -144,7 +144,7 @@ describe('the built-in clipping style', () => {
     expect(v.diagnostics).toEqual([])
     expect(v.style).toMatchObject({ name: 'clipping', origin: 'builtin' })
     expect(Object.fromEntries(Object.entries(v.motifs).map(([r, m]) => [r, m.ids]))).toEqual({
-      title: ['clipping-headline'], lower_third: ['clipping-stamp'], callout: ['clipping-quote', 'clipping-pointer', 'clipping-reveal'], plate: ['clipping-paper'], illustration: ['clipping-sticker'] })
+      title: ['clipping-headline'], lower_third: ['clipping-stamp'], callout: ['clipping-quote', 'clipping-pointer', 'clipping-reveal'], plate: ['clipping-paper'], illustration: ['clipping-sticker', 'clipping-network'] })
     expect(v.fonts?.headline).toMatchObject({ resolved: 'Impact', missing: ['Anton', 'Bebas Neue', 'Arial Black', 'Noto Sans SC Black'] })
     expect(v.tokens.caption).toMatchObject({ max_chars_per_line: 42, max_lines: 2 })
   })

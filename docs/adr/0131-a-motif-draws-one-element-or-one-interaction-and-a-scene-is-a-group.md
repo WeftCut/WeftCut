@@ -46,7 +46,9 @@ elements interact.
   - at most a few interaction Motifs.
 
   The editor moves and trims the scene as one clip and opens it to retime or
-  retext an element. The speaker's audio runs on under it.
+  retext an element. The speaker's audio runs on under it. (Revised by ADR
+  0134: an animation of a process is one frame-sized interaction Motif, a
+  scene by itself without a Group.)
 - **Scenes are authored in order:**
   1. the treatment: the scene's one idea, its hero moment, and its cues
      from word times;

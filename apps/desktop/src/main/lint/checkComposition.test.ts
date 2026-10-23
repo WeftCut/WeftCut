@@ -356,6 +356,7 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },
     sticker: { size: [900, 760], graphic_role: 'illustration', props_schema: { photo: { type: 'media', default: '' } } },
     paper: { size: [1920, 1080], graphic_role: 'plate', props_schema: {} },
+    network: { size: [1920, 1080], graphic_role: 'illustration', props_schema: { ground: { type: 'enum', default: 'paper', options: ['paper', 'none'] } } },
   }
   const manifests = (id: string) => (MANIFESTS[id] ?? null) as never
   const motifAt = (motif_id: string, props: Record<string, unknown> = {}, graphic_role: string | null = null) =>
@@ -401,5 +402,26 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     expect(audit(p, 'scene-share')).toEqual([])
     put(bRoll, motifAt('paper', {}, 'plate'), 70, 75)
     expect(audit(p, 'scene-share').map((f) => f.message)).toEqual(['scenes and plates cover 55 % of the cut, over 50 %: the speaker is gone for 55 s'])
+  })
+
+  it('takes a full-frame drawn animation for a scene: it covers jump cuts', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, clip(0, 4), 0, 4); put(aRoll, clip(5, 9), 4, 8); put(aRoll, clip(10, 14), 8, 12); put(aRoll, clip(15, 19), 12, 16); put(aRoll, clip(20, 24), 16, 20)
+    const drawn = put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 2, 18)
+    expect(audit(p, 'bare-jump-cuts')).toEqual([])
+    // On no ground it is drawn over the speaker: an overlay, not a scene.
+    ;(drawn.params as { props: Record<string, unknown> }).props = { ground: 'none' }
+    expect(audit(p, 'bare-jump-cuts')).toHaveLength(1)
+  })
+
+  it('asks a cut whose scenes are all stills and words for an animated one', () => {
+    const { p, aRoll, bRoll, put, g, cid, inner } = grouped(960, 540, 10)
+    put(aRoll, clip(0, 100), 0, 100)
+    p.compositions[cid]!.tracks[0]!.layers.push({ ...structuredClone(inner), id: 'pic', params: motifAt('sticker', { photo: '' }) })
+    put(bRoll, structuredClone(g.params), 40, 46)
+    expect(audit(p, 'still-scenes').map((f) => f.message)).toEqual(['0 of 2 scenes animate what is said; the rest are stills and words on paper'])
+    // One drawn animation in three scenes is a third.
+    put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 60, 75)
+    expect(audit(p, 'still-scenes')).toEqual([])
   })
 })
