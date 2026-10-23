@@ -424,4 +424,15 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 60, 75)
     expect(audit(p, 'still-scenes')).toEqual([])
   })
+
+  it('counts the steps of an animation as new arrivals', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, clip(0, 70), 0, 70)
+    // One 60 s animation from 5 s: nothing new arrives after 5 s.
+    const anim = put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 5, 65)
+    expect(audit(p, 'sparse-beats').map((f) => f.range.map((v) => v / S))).toEqual([[5, 70]])
+    // Its steps at 20 and 40 s of its own time (one past its end is ignored) break the wait.
+    ;(anim.params as { props: Record<string, unknown> }).props = { ground: 'paper', cue_spread_s: 20, cue_signal_s: 40, cue_late_s: 90 }
+    expect(audit(p, 'sparse-beats')).toEqual([])
+  })
 })

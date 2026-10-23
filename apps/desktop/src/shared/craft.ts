@@ -59,7 +59,7 @@ export const CRAFT_RULES: readonly CraftRule[] = [
     summary: 'No stretch over 30 s with nothing on screen but the speaker.',
     why: 'Every H2/H3 run left a 59–75 s stretch of plain talking head.' },
   { id: 'sparse-beats', severity: 'warning', threshold: 30, unit: 's', direction: 'max',
-    summary: 'Something new arrives on screen (an overlay, a scene, a scene element, an insert) at least every 30 s, or as often as the style\'s pace asks.',
+    summary: 'Something new arrives on screen (an overlay, a scene, a scene element, a step of an animation, an insert) at least every 30 s, or as often as the style\'s pace asks.',
     why: 'The post-23 runs placed about two graphic elements a minute, with up to 69 s between new arrivals.' },
   { id: 'scene-count', severity: 'warning', threshold: 0, unit: 'per min', direction: 'min',
     summary: 'As many animated scenes per minute of cut as the style\'s pace asks (none by default).',
