@@ -308,6 +308,17 @@ function drawnIllustration(l: Layer, motif: MotifLookup | undefined): boolean {
   return !!m && !Object.values(m.props_schema ?? {}).some((s) => s.type === 'media')
 }
 
+/** The steps of a Motif's animation on its layer's timeline: its
+ *  `cue_<step>_s` props, in the Motif's own time, that fall while it shows.
+ *  Each step brings something new on screen. */
+function motifSteps(l: Layer): number[] {
+  if (l.params.kind !== 'Motif') return []
+  const p = l.params
+  return Object.entries(p.props).filter(([k, v]) => /^cue_\w+_s$/.test(k) && typeof v === 'number' && Number.isFinite(v))
+    .map(([, v]) => l.t_start_us + Math.round((v as number) * 1e6) - p.src_in_us)
+    .filter((t) => t > l.t_start_us && t < l.t_end_us)
+}
+
 /** A drawn scene: a Motif that fills the frame with a drawing of its own (an
  *  illustration with no picture prop, not on `ground: none`), such as an
  *  animation of a process. It hides the speaker as a scene Group does. */
@@ -371,7 +382,10 @@ export function checkComposition(project: Project, compositionId: string, taste:
         if (window && (l.t_end_us <= window[0] || l.t_start_us >= window[1])) continue
         const x: At = { l, at }
         if (!isCaption && l.params.kind !== 'Audio' && !(c === comp && track.role === 'ARoll'))
+        {
           arrivals.push((window && l.t_start_us < window[0] ? window[0] : l.t_start_us) + at.offsetUs)
+          for (const t of motifSteps(l)) if (!window || (t > window[0] && t < window[1])) arrivals.push(t + at.offsetUs)
+        }
         const dur = (l.t_end_us - l.t_start_us) / 1e6
         const role = roleOf(l)
         if (role !== null && !known.has(role))

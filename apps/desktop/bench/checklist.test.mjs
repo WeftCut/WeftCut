@@ -163,6 +163,13 @@ describe('layer_count and selectors', () => {
     assert.match(r.detail, /^longest wait for something new on screen: 22 s from 38 s, 3 arrival\(s\), want <= 15 s$/)
   })
 
+  it('counts the steps of an animation as arrivals', () => {
+    // A 30 s animation from 10 s, its steps at 8 and 18 s of its own time (and one past its end).
+    const anim = motif(10, 40, 'clipping-network', { cue_spread_s: 8, cue_signal_s: 18, cue_late_s: 45, count: 70 })
+    const p = project([track([video(0, 50)], { role: 'ARoll' }), track([anim])])
+    assert.match(check({ kind: 'beat_gaps' }, p).detail, /^longest wait for something new on screen: 22 s from 28 s, 3 arrival\(s\)$/)
+  })
+
   it('asks each scene Group for a picture', () => {
     const scene = (cid, layers) => ({ id: cid, label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track(layers)], markers: [], transitions: [], links: [] })
     const group = (t0, cid) => layer(t0, t0 + 6, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: transform() })

@@ -68,8 +68,9 @@
 //                        the A roll (captions aside); pass null without a threshold
 //   beat_gaps            { max_s? }            longest time between new arrivals on
 //                        screen (layer starts off the A roll and captions, a
-//                        scene's elements included) over the A roll's span; pass
-//                        null without a threshold
+//                        scene's elements and an animation's cue_<step>_s steps
+//                        included) over the A roll's span; pass null without a
+//                        threshold
 //   picture_share        { min_fraction? }    the share of graphic elements (overlays and
 //                        scene elements; captions, plates, untagged decoration, and
 //                        titles and lower thirds on the root aside) that are pictures:
@@ -219,6 +220,15 @@ function describe(list, max = 4) {
     return `${what} ${s(layer.t_start_us)}-${s(layer.t_end_us)}s${text ? ` "${text.slice(0, 40)}"` : ''}`
   })
   return shown.join('; ') + (list.length > max ? `; +${list.length - max} more` : '')
+}
+
+/** The steps of a Motif's animation on its layer's timeline: its
+ *  `cue_<step>_s` props, in the Motif's own time, that fall while it shows. */
+function motifSteps(layer) {
+  if (layer.params?.kind !== 'Motif') return []
+  return Object.entries(layer.params.props ?? {}).filter(([k, v]) => /^cue_\w+_s$/.test(k) && typeof v === 'number' && Number.isFinite(v))
+    .map(([, v]) => layer.t_start_us + Math.round(v * 1e6) - (layer.params.src_in_us ?? 0))
+    .filter((t) => t > layer.t_start_us && t < layer.t_end_us)
 }
 
 /** Sorted, merged [start, end) intervals. */
@@ -460,13 +470,14 @@ const KINDS = {
     const arrivals = []
     for (const { track, layer } of select(root, {})) {
       if (isCaptionTrack(track) || track.role === 'ARoll' || layer.params?.kind === 'Audio') continue
-      arrivals.push(layer.t_start_us)
+      arrivals.push(layer.t_start_us, ...motifSteps(layer))
       if (layer.params?.kind !== 'CompositionRef') continue
       // A scene's elements arrive too, mapped through the Group's window.
       const child = project.compositions?.[layer.params.composition]
       const w0 = layer.params.src_in_us ?? 0, w1 = w0 + (layer.t_end_us - layer.t_start_us)
       for (const t of child?.tracks ?? []) for (const l of t.layers)
-        if (!isCaptionTrack(t) && l.enabled !== false && l.params?.kind !== 'Audio' && l.t_start_us > w0 && l.t_start_us < w1) arrivals.push(layer.t_start_us + l.t_start_us - w0)
+        if (!isCaptionTrack(t) && l.enabled !== false && l.params?.kind !== 'Audio')
+          for (const at of [l.t_start_us, ...motifSteps(l)]) if (at > w0 && at < w1) arrivals.push(layer.t_start_us + at - w0)
     }
     const points = [a0, ...arrivals.filter((t) => t > a0 && t < a1).sort((x, y) => x - y), a1]
     let longest = 0, at = a0
