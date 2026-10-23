@@ -49,14 +49,14 @@ Anything that enters, holds and leaves on its own is still its own layer.
 - **`size` is the element's own bounds.** Size the manifest to what the
   element covers — a lower third is a strip, a callout a box — and let the host
   place it. A frame-sized Motif is for full-frame purposes only: a title card,
-  a background plate.
+  a background plate, an animation of a process.
 
 One element may still be large or intricate — a chart, a title card, a map
 with its route. The rule counts purposes, not pixels.
 
-**A scene is a Group.** A full-frame animated scene that explains a concept is
-a Group (`create_group`) of a plate, one layer per independent element, and at
-most a few interaction Motifs. The editor moves and trims it as one clip and
+**A scene of pictures is a Group.** A full-frame scene that shows a concept
+through pictures and their labels is a Group (`create_group`) of a plate, one
+layer per independent element, and at most a few interaction Motifs. The editor moves and trims it as one clip and
 opens it to change an element. Author it in this order:
 
 1. **Treatment:** the scene's one idea, its hero moment, and its cues, taken
@@ -66,6 +66,41 @@ opens it to change an element. Author it in this order:
 3. **Layers:** each element placed in the Group at its cue.
 4. **Motion:** entrances, interactions and exits.
 5. **Look:** the rendered frames of the Group (`render_frames`).
+
+**A process is an animation.** When the speech explains how something works
+(it grows, links, flows, sends, transforms, builds up), show it happening. The
+scene is one frame-sized Motif that draws it: every piece moves because of
+the others, so it is one interaction, and it is a scene by itself, with no
+Group (ADR 0134). The style's `clipping-network` is an example: one neuron
+grows, signals pass, the network spreads, one set lights up as a memory.
+Fork it for another network (people, cities, machines), or write a new
+Motif for another process. The parts of a concept animation:
+
+- **Steps on words.** Storyboard it first: three to six steps, each with
+  what moves and the word it starts on. Each step is a `cue_<step>_s` prop
+  set from the word's time in the layer's own time.
+- **A canvas, closed in t.** Build the structure in `setup` from a `seed`
+  prop: where the elements are, what links to what, and when each signal
+  leaves. Then draw each frame from t alone, so any frame renders on its own.
+- **Moves that explain:**
+  - a camera: close on one element, then out to the whole, then in on what
+    matters;
+  - growth: lines drawn on by their length, elements appearing in a wave
+    from where it starts;
+  - flow: a bead with a short tail along a path, and a flash where it
+    arrives;
+  - focus: the rest dims, and what the point is about lights in the
+    accent;
+  - a lens: a circle inset joined to its spot by a cone, for a detail at
+    another scale.
+- **No words it does not need.** The captions carry the speech. Label only
+  a term the drawing cannot show.
+- **The style's vocabulary:** its ground, its ink line, its one accent.
+  Paper frames and tape are not needed. A `ground` prop draws the paper, so
+  the animation is a scene below the captions; `ground: none` draws it over
+  the footage instead.
+- **Check it:** `preview_motif` at each cue and between cues before placing
+  it, then `render_frames` once it is placed.
 
 ## The one law
 

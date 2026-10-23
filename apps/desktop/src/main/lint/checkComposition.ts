@@ -171,14 +171,14 @@ function motifOverflow(l: Layer & { params: MotifParams }, size: readonly [numbe
 /** Cuts between consecutive A-roll clips of one media whose source does not
  *  continue (a pause or a passage removed), and the ones nothing covers: no
  *  full-frame layer above spanning the cut (a scene Group, B roll, an image,
- *  a plate Motif) and no punch-in (the next clip's scale 5 % or more off). The
+ *  a plate Motif, a drawn scene) and no punch-in (the next clip's scale 5 % or more off). The
  *  bench's `jump_cuts` measures the same. */
-function bareJumpCuts(comp: Composition): { cuts: number; bare: Array<{ at: number; clip: Layer }> } {
+function bareJumpCuts(comp: Composition, motif?: MotifLookup): { cuts: number; bare: Array<{ at: number; clip: Layer }> } {
   const frame = comp.fps.num > 0 ? (1e6 * comp.fps.den) / comp.fps.num : 1e6 / 30
   const clips = comp.tracks.filter((t) => t.role === 'ARoll' && t.enabled !== false).flatMap((t) => t.layers)
     .filter((l): l is Layer & { params: VideoClipParams } => l.enabled && l.params.kind === 'VideoClip').sort((a, b) => a.t_start_us - b.t_start_us)
   const covers = comp.tracks.filter((t) => t.role !== 'Caption' && t.role !== 'ARoll' && t.enabled !== false).flatMap((t) => t.layers)
-    .filter((l) => l.enabled && (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(l.params.kind) || (l.params.kind === 'Motif' && l.params.graphic_role === 'plate')))
+    .filter((l) => l.enabled && (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(l.params.kind) || (l.params.kind === 'Motif' && (l.params.graphic_role === 'plate' || drawnScene(l, comp, motif)))))
   const scaleOf = (l: Layer & { params: VideoClipParams }) => (l.params.transform ? first(l.params.transform.scale_x) : 1)
   let cuts = 0
   const bare: Array<{ at: number; clip: Layer }> = []
@@ -292,12 +292,31 @@ function allWords(c: Composition, motif: MotifLookup): number {
 
 /** Whether a layer hides what lies under it across the frame: a plate, a
  *  colour, footage, or a Group holding one. */
-function opaque(l: Layer, project: Project, motif: MotifLookup | undefined, depth = 0): boolean {
+function opaque(l: Layer, project: Project, motif: MotifLookup | undefined, depth = 0, comp?: Composition): boolean {
   const k = l.params.kind
   if (k === 'VideoClip' || k === 'Color') return true
-  if (k === 'Motif') return roleWith(l, motif) === 'plate'
-  if (k === 'CompositionRef' && depth < 4) return visualLayers(project.compositions[l.params.composition]).some((x) => opaque(x, project, motif, depth + 1))
+  if (k === 'Motif') return roleWith(l, motif) === 'plate' || (comp !== undefined && drawnScene(l, comp, motif))
+  if (k === 'CompositionRef' && depth < 4) { const inner = project.compositions[l.params.composition]; return visualLayers(inner).some((x) => opaque(x, project, motif, depth + 1, inner)) }
   return false
+}
+
+/** A drawn illustration: an illustration Motif with no picture prop, a drawing
+ *  of its own (an animation of a process, a diagram building). */
+function drawnIllustration(l: Layer, motif: MotifLookup | undefined): boolean {
+  if (l.params.kind !== 'Motif' || !motif || roleWith(l, motif) !== 'illustration') return false
+  const m = motif(l.params.motif_id)
+  return !!m && !Object.values(m.props_schema ?? {}).some((s) => s.type === 'media')
+}
+
+/** A drawn scene: a Motif that fills the frame with a drawing of its own (an
+ *  illustration with no picture prop, not on `ground: none`), such as an
+ *  animation of a process. It hides the speaker as a scene Group does. */
+function drawnScene(l: Layer, comp: Composition, motif: MotifLookup | undefined): boolean {
+  if (l.params.kind !== 'Motif' || !drawnIllustration(l, motif) || l.params.props.ground === 'none') return false
+  const m = motif!(l.params.motif_id)
+  if (!m?.size) return false
+  const tr = l.params.transform, sx = tr ? Math.abs(first(tr.scale_x)) : 1, sy = tr ? Math.abs(first(tr.scale_y)) : 1
+  return m.size[0] * sx >= 0.95 * comp.width && m.size[1] * sy >= 0.95 * comp.height
 }
 
 export interface CheckOptions {
@@ -453,7 +472,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
 
   // Jump cuts nothing covers, reported as runs: a few at sentence ends read
   // as pace, a run of them as stutter.
-  const jumps = bareJumpCuts(comp)
+  const jumps = bareJumpCuts(comp, opts.motif)
   const maxRun = limit('bare-jump-cuts')
   for (let i = 0; i < jumps.bare.length;) {
     let j = i
@@ -491,15 +510,25 @@ export function checkComposition(project: Project, compositionId: string, taste:
     const minutes = (span[1] - span[0]) / 60e6
     const need = Math.floor(rate * minutes + 1e-9)
     const scenes = comp.tracks.filter((t) => t.role !== 'Caption').flatMap((t) => t.layers)
-      .filter((l) => l.enabled && l.params.kind === 'CompositionRef' && isScene(project.compositions[l.params.composition], opts.motif))
+      .filter((l) => l.enabled && (l.params.kind === 'CompositionRef' ? isScene(project.compositions[l.params.composition], opts.motif) : drawnScene(l, comp, opts.motif)))
     if (scenes.length < need)
       findings.push({ severity: craftRule('scene-count').severity, rule: 'scene-count', range: span, layers: scenes.map((l) => l.id),
         message: `${scenes.length} scene${scenes.length === 1 ? '' : 's'} in ${minutes.toFixed(1)} min of cut, under the ${need} the pace asks (${rate} per min)`,
-        fix: 'turn a concept passage into a full-frame scene Group: a plate, a picture and its labels' })
+        fix: 'turn a concept passage into a full-frame scene: a drawn animation of it, or a Group of a plate, a picture and its labels' })
+
+    // Scenes that only arrange stills and words, against ones that animate.
+    if (opts.motif && scenes.length >= 2) {
+      const animated = scenes.filter((l) => l.params.kind === 'Motif' || visualLayers(project.compositions[(l.params as { composition: string }).composition]).some((x) => drawnIllustration(x, opts.motif)))
+      const minShare = limit('still-scenes')
+      if (animated.length / scenes.length < minShare - 1e-6)
+        findings.push({ severity: craftRule('still-scenes').severity, rule: 'still-scenes', range: span, layers: scenes.filter((l) => !animated.includes(l)).map((l) => l.id),
+          message: `${animated.length} of ${scenes.length} scenes animate what is said; the rest are stills and words on paper`,
+          fix: 'show a process the speech explains as a drawn animation, its steps cued to the words: fork clipping-network or write a Motif in the style (motif-authoring.md, Concept animations)' })
+    }
 
     // How much of the cut full-frame scenes and plates hide the speaker for.
     const full = comp.tracks.filter((t) => t.role !== 'Caption' && t.role !== 'ARoll').flatMap((t) => t.layers).filter((l) => l.enabled && (
-      l.params.kind === 'CompositionRef' ? isScene(project.compositions[l.params.composition], opts.motif) && opaque(l, project, opts.motif) : l.params.kind === 'Motif' && roleWith(l, opts.motif) === 'plate'))
+      l.params.kind === 'CompositionRef' ? isScene(project.compositions[l.params.composition], opts.motif) && opaque(l, project, opts.motif) : l.params.kind === 'Motif' && (roleWith(l, opts.motif) === 'plate' || drawnScene(l, comp, opts.motif))))
     const covered = union(full.map((l) => [Math.max(l.t_start_us, span[0]), Math.min(l.t_end_us, span[1])] as [number, number]))
     const share = covered.reduce((n, [a, b]) => n + (b - a), 0) / (span[1] - span[0])
     const maxShare = limit('scene-share')
@@ -522,7 +551,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
     if (ct.role !== 'Caption') return
     const cueSpans = union(ct.layers.filter((l) => l.enabled).map((l) => [l.t_start_us, l.t_end_us] as [number, number]))
     for (const t of comp.tracks.slice(ci + 1)) for (const l of t.layers) {
-      if (!l.enabled || t.enabled === false || t.role === 'Caption' || !opaque(l, project, opts.motif)) continue
+      if (!l.enabled || t.enabled === false || t.role === 'Caption' || !opaque(l, project, opts.motif, 0, comp)) continue
       const hidden = cueSpans.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, l.t_end_us) - Math.max(a, l.t_start_us)), 0)
       if (hidden > 0) add('captions-covered', { l, at: ROOT_PLACE }, `${l.params.kind === 'CompositionRef' ? 'scene' : l.params.kind === 'Motif' ? 'plate' : 'layer'} on a track above the captions hides ${seconds(hidden)} s of them`,
         'move it to a track below the caption track (or the captions above it)')
