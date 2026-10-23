@@ -361,7 +361,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
         if (l.params.kind === 'CompositionRef') {
           const child = project.compositions[l.params.composition]
           const onlyWords = child && opts.motif ? allWords(child, opts.motif) : 0
-          if (onlyWords) add('scene-all-words', x, `scene of ${onlyWords} layers shows only words: no photo, still or drawing`, 'show its idea in a picture (clipping-sticker with a pool image or a still from the footage, or a drawing) and let words label it')
+          if (onlyWords) add('scene-all-words', x, `scene of ${onlyWords} layers shows only words: no photo, still or drawing`, 'show its idea in a picture (clipping-sticker with a pool image, a still from the footage, one from search_images, or a drawing) and let words label it')
           if (child) walk(child, l.params.composition, enterGroup(at, l as Layer & { params: CompositionRefParams }, child), [l.params.src_in_us, l.params.src_in_us + (l.t_end_us - l.t_start_us)])
           continue
         }
@@ -514,7 +514,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
     if (opts.motif && n >= 4 && pictures.length / n < minShare - 1e-6)
       findings.push({ severity: craftRule('word-heavy').severity, rule: 'word-heavy', range: span, layers: wordy.map((x) => x.l.id),
         message: `${pictures.length} of ${n} graphic elements are pictures (${Math.round((pictures.length / n) * 100)} %), under ${Math.round(minShare * 100)} %`,
-        fix: 'show the people, objects, places and documents the speech names as pictures (the user\'s media, a still from the footage, or a drawing), and keep words for labels' })
+        fix: 'show the people, objects, places and documents the speech names as pictures (the user\'s media, a still from the footage, one from search_images, or a drawing), and keep words for labels' })
   }
 
   // Captions hidden by something opaque on a track above them.

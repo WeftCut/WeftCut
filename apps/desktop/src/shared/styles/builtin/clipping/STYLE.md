@@ -108,9 +108,9 @@ whole frame.
   - `clipping-quote` is a newsprint clipping. The highlighter sweeps the words
     `highlight_from` to `highlight_to`, counted from 0, and CJK counts
     characters. Use it for the line the viewer should remember.
-  - `clipping-pointer` is a red marker arrow with a label, a circle, or an
-    underline drawn onto the footage. Turn it with `angle_deg` to point at
-    the thing.
+  - `clipping-pointer` is a red marker arrow, circle or underline drawn onto
+    the footage, with its label at the arrow's tail, under the underline or
+    below the circle. Turn it with `angle_deg` to point at the thing.
   - `clipping-reveal` is a word on a torn strip, hidden under a newsprint,
     kraft or paper cover that is torn off at `cue_tear_s`. Set the cue to
     the word's time, so the tear lands as she says it. It is an
