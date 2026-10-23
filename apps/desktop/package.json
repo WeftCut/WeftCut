@@ -1,7 +1,7 @@
 {
   "name": "@weftcut/desktop",
   "productName": "WeftCut",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "WeftCut video editor desktop app",
   "homepage": "https://github.com/WeftCut/WeftCut",
   "author": {
@@ -101,7 +101,7 @@
     "three": "0.186.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "yaml": "^2.9.1"
   }
 }
