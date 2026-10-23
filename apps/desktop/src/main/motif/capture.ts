@@ -1,4 +1,4 @@
-import { BrowserWindow, type OffscreenSharedTexture } from 'electron'
+import { BrowserWindow, nativeImage, type OffscreenSharedTexture } from 'electron'
 import { OffscreenFrames } from './offscreenFrames.js'
 import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
@@ -503,12 +503,13 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     captureCounters.pngCaptures++
     return doCapture(a, async h => {
-    const scaled = a.scale !== undefined && a.scale !== 1
-    const shot = await h.send('Page.captureScreenshot', scaled
-      ? { format: 'png', clip: { x: 0, y: 0, width: a.width, height: a.height, scale: a.scale } }
-      : { format: 'png' })
+    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
-    return shot.data as string
+    if (a.scale === undefined || a.scale === 1) return shot.data as string
+    // Scaled here, not by the screenshot's clip.scale: on a Windows host that
+    // scaled a 1920×1080 page's width alone and returned its left half.
+    const full = nativeImage.createFromBuffer(Buffer.from(shot.data as string, 'base64'))
+    return full.resize({ width: Math.max(1, Math.round(a.width * a.scale)), height: Math.max(1, Math.round(a.height * a.scale)), quality: 'best' }).toPNG().toString('base64')
     })
   }, high, isCurrent)
 }
