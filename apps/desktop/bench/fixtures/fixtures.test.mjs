@@ -2,14 +2,21 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { loadManifest, transcodeArgs } from './fixtures.mjs'
+import { isImage, loadManifest, transcodeArgs } from './fixtures.mjs'
 
 test('manifest: transcode recipe and per-fixture pins are well-formed', () => {
   const m = loadManifest()
   assert.equal(m.transcode.container, 'mp4')
-  for (const f of m.fixtures) {
+  for (const f of m.fixtures.filter((x) => !isImage(x))) {
     assert.equal(f.media.video_codec, 'h264')
     assert.equal(f.media.audio_codec, 'aac')
+  }
+  // Pictures are imported as downloaded: each pins its file and its licence.
+  const pictures = m.fixtures.filter(isImage)
+  assert.ok(pictures.length >= 5)
+  for (const f of pictures) {
+    assert.match(f.sha256, /^[0-9a-f]{64}$/)
+    assert.ok(f.license === 'Public domain' || f.license_url, `${f.id}: a licence other than public domain links its terms`)
   }
   assert.ok(m.fixtures.find((f) => f.id === 'explainer-memory').trim.sha256)
 })

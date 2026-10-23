@@ -72,10 +72,10 @@ interactive session on the same account.
 
 The runner calls `create_project` in a temp folder and then makes each `setup`
 call over its own MCP client, in order. The project is named after the task's
-fixtures (`explainer-memory`), or after the task when it has none, so tasks
-with the same setup build the same project and the agent does not read its
-task's id off it. `{fixture:<id>}` becomes the fixture's MP4 on the app's host
-(below). `{ref:<as>.<path>}` becomes part of an earlier call's result: its
+first fixture, its footage (`explainer-memory`), or after the task when it has
+none, so tasks with the same setup build the same project and the agent does
+not read its task's id off it. `{fixture:<id>}` becomes the fixture's MP4 on
+the app's host (below), or a picture fixture's image. `{ref:<as>.<path>}` becomes part of an earlier call's result: its
 `structuredContent`, or its text parsed as JSON when the tool answers in text
 (`read_project` does). A path is dotted fields plus `[key=value]`, which picks
 the first array element whose `key` equals `value`. That is how footage goes
@@ -91,6 +91,12 @@ run records what the app made of it in `run.json` `taste`: the style it
 resolved to, any diagnostics, and the font slots (`project://taste`).
 
 ### Fixtures
+
+A fixture with `media.type: "image"` is a still picture: fetch downloads it,
+checks its pinned sha256 and probes its size, and the bench imports it as
+downloaded, under the fixture's id as its file name. The
+`explainer-clipping-pictures` task imports seven of them as the user's own
+pictures (credits in `fixtures/ATTRIBUTION.md`).
 
 `fixtures/fixtures.json` lists public / CC footage (credits in
 `fixtures/ATTRIBUTION.md`); `node bench/fixtures/fetch.mjs --all` fetches it,

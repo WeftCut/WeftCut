@@ -3,7 +3,8 @@
 // Bench footage: public / CC files listed in fixtures.json, downloaded on first
 // use into a git-ignored cache, verified by sha256, trimmed when the fixture
 // names a window, then transcoded to an H.264/AAC MP4 — the file the bench
-// imports. Nothing here is committed media.
+// imports. A still image (`media.type: "image"`) is imported as downloaded,
+// once its sha256 matches. Nothing here is committed media.
 //
 // Why the transcode: Commons serves VP9/AV1 WebM, which the app routes through
 // a full proxy. Users bring H.264, and a proxied source makes every preview,
@@ -66,6 +67,11 @@ export function loadManifest() {
     if (!/^[a-z0-9]+$/.test(f.ext ?? '')) throw new Error(`${where}: ext must be a bare extension`)
     for (const k of ['source_url', 'author', 'license', 'attribution'])
       if (typeof f[k] !== 'string' || !f[k].trim()) throw new Error(`${where}: ${k} is required`)
+    if (isImage(f)) {
+      if (!Number.isInteger(f.media.width) || !Number.isInteger(f.media.height) || f.trim)
+        throw new Error(`${where}: an image needs media { width, height } and no trim`)
+      continue
+    }
     const fps = f.media?.fps
     if (!Number.isInteger(fps?.num) || !Number.isInteger(fps?.den) || !(Number(f.media?.duration_s) > 0))
       throw new Error(`${where}: media needs duration_s and fps { num, den } (the transcode keeps the source's rate)`)
@@ -80,6 +86,9 @@ export function loadManifest() {
   }
   return m
 }
+
+/** A still image: imported as downloaded, no trim or transcode. */
+export const isImage = (f) => f.media?.type === 'image'
 
 export function fixtureIds() {
   return loadManifest().fixtures.map((f) => f.id)
@@ -256,6 +265,7 @@ export function fixtureMeta(id) {
  *  changed). Throws on any hash mismatch. */
 export async function resolveFixtureWithMeta(id, { log = (m) => console.error(m) } = {}) {
   const f = fixtureEntry(id)
+  if (isImage(f)) return resolveImage(f, log)
   const { transcode } = loadManifest()
   const p = paths(f)
   fs.mkdirSync(p.dir, { recursive: true })
@@ -306,6 +316,30 @@ export async function resolveFixtureWithMeta(id, { log = (m) => console.error(m)
   }
   fs.writeFileSync(p.meta, JSON.stringify(meta, null, 2) + '\n')
   return { path: p.out, meta }
+}
+
+/** An image fixture: the verified download, copied under the fixture's name
+ *  (`<id>.<ext>`, as a user's file would be named) and probed once for its
+ *  size. */
+async function resolveImage(f, log) {
+  const p = paths(f)
+  const prior = fixtureMeta(f.id)
+  const verified = await ensureSource(f, log)
+  const src = path.join(p.dir, `${f.id}.${f.ext}`)
+  fs.copyFileSync(verified, src)
+  if (prior?.key === f.sha256 && prior.output?.file === path.basename(src)) return { path: src, meta: prior }
+  const pr = await probe(src)
+  const v = pr.streams.find((x) => x.codec_type === 'video')
+  if (v?.width !== f.media.width || v?.height !== f.media.height)
+    throw new Error(`image fixture ${f.id} is ${v?.width}x${v?.height}, fixtures.json says ${f.media.width}x${f.media.height}`)
+  const meta = {
+    id: f.id, key: f.sha256,
+    source: { url: f.file_url, sha256: f.sha256 },
+    output: { file: path.basename(src), sha256: f.sha256, bytes: fs.statSync(src).size, width: v.width, height: v.height, streams: pr.streams },
+    created_at: new Date().toISOString(),
+  }
+  fs.writeFileSync(p.meta, JSON.stringify(meta, null, 2) + '\n')
+  return { path: src, meta }
 }
 
 /** Absolute path of fixture `id`'s MP4 (resolveFixtureWithMeta's path). */

@@ -37,7 +37,8 @@ for (const id of ids) {
     const { path, meta } = await resolveFixtureWithMeta(id)
     metas[id] = meta
     const kinds = meta.output.streams.map((s) => `${s.codec_type}:${s.codec_name}`).join(' ')
-    console.log(`ok  ${id}  ${meta.output.duration_s.toFixed(3)} s  ${kinds}  ${(meta.output.bytes / 1e6).toFixed(1)} MB  ${path}`)
+    const extent = meta.output.duration_s !== undefined ? `${meta.output.duration_s.toFixed(3)} s` : `${meta.output.width}x${meta.output.height}`
+    console.log(`ok  ${id}  ${extent}  ${kinds}  ${(meta.output.bytes / 1e6).toFixed(1)} MB  ${path}`)
   } catch (e) {
     failed++
     console.error(`FAIL ${id}: ${e.message}`)

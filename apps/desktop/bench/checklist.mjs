@@ -70,6 +70,18 @@
 //                        screen (layer starts off the A roll and captions, a
 //                        scene's elements included) over the A roll's span; pass
 //                        null without a threshold
+//   picture_share        { min_fraction? }    the share of graphic elements (overlays and
+//                        scene elements; captions, plates, untagged decoration, and
+//                        titles and lower thirds on the root aside) that are pictures:
+//                        footage, an image, or a Motif tagged illustration or whose
+//                        prop names a pool item; pass null without a threshold
+//   pool_pictures_used   { min? }             distinct pool Images placed (an image
+//                        layer or a Motif prop naming it); pass null without min
+//   captions_visible     { }                  caption time not hidden by an opaque layer
+//                        (footage off the A roll, a colour, a plate Motif, or a Group
+//                        holding one) on a track above the caption track
+//   scene_share          { max_fraction? }    the share of the A roll's span covered by
+//                        scene Groups and plate Motifs; pass null without a threshold
 //   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
 //                        visual layers inside; a title card of a plate and a
 //                        title is not a scene) that hold a picture: footage, an
@@ -91,7 +103,8 @@ export const BUILTIN_MOTIF_IDS = Object.freeze([
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
-  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'beat_gaps', 'scene_pictures', 'layer_region', 'all_of', 'any_of', 'human',
+  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'beat_gaps', 'scene_pictures',
+  'picture_share', 'pool_pictures_used', 'captions_visible', 'scene_share', 'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -176,7 +189,7 @@ function deepEntries(root, project, depth = 0) {
     for (const e of deepEntries(child, project, depth + 1)) {
       const a = Math.max(e.layer.t_start_us, w0), b = Math.min(e.layer.t_end_us, w1)
       if (b <= a) continue
-      out.push({ track: e.track, layer: { ...e.layer, t_start_us: layer.t_start_us + a - w0, t_end_us: layer.t_start_us + b - w0 } })
+      out.push({ track: e.track, inGroup: true, layer: { ...e.layer, t_start_us: layer.t_start_us + a - w0, t_end_us: layer.t_start_us + b - w0 } })
     }
   }
   return out
@@ -446,6 +459,71 @@ const KINDS = {
     const f = (scenes.length - bare.length) / scenes.length
     const pass = check.min_fraction === undefined ? null : f >= check.min_fraction
     return { pass, detail: `${scenes.length - bare.length} of ${scenes.length} scene(s) hold a picture` + (bare.length ? `; words only at ${bare.map((x) => `${s(x.at)}s`).join(', ')}` : '') }
+  },
+
+  picture_share(check, root, project) {
+    const pool = project.media_pool ?? {}
+    const names = (v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined
+    let pictures = 0, words = 0
+    for (const { track, layer, inGroup } of deepEntries(root, project)) {
+      const p = layer.params ?? {}
+      if (layer.enabled === false || isCaptionTrack(track) || track.role === 'ARoll' || p.kind === 'Audio' || p.kind === 'CompositionRef') continue
+      const role = p.graphic_role ?? null
+      if (role === 'plate' || (!inGroup && (role === 'title' || role === 'lower_third'))) continue
+      if (p.kind === 'VideoClip' || p.kind === 'ImageOverlay' || (p.kind === 'Motif' && (role === 'illustration' || Object.values(p.props ?? {}).some(names)))) pictures++
+      else if (p.kind === 'Text' || (p.kind === 'Motif' && role !== null)) words++
+    }
+    const n = pictures + words
+    if (!n) return { pass: null, detail: 'no graphic elements' }
+    const f = pictures / n
+    return { pass: check.min_fraction === undefined ? null : f >= check.min_fraction, detail: `${pictures} of ${n} graphic elements are pictures (${Math.round(f * 100)} %)` + (check.min_fraction === undefined ? '' : `, want >= ${Math.round(check.min_fraction * 100)} %`) }
+  },
+
+  pool_pictures_used(check, root, project) {
+    const pool = project.media_pool ?? {}
+    const images = new Set(Object.entries(pool).filter(([, m]) => m.kind === 'Image').map(([id]) => id))
+    const used = new Set()
+    for (const { layer } of deepEntries(root, project)) {
+      if (layer.enabled === false) continue
+      const p = layer.params ?? {}
+      if (p.kind === 'ImageOverlay' && images.has(p.media)) used.add(p.media)
+      if (p.kind === 'Motif') for (const v of Object.values(p.props ?? {})) if (typeof v === 'string' && images.has(v.split('@')[0])) used.add(v.split('@')[0])
+    }
+    const label = (id) => pool[id]?.label ?? String(pool[id]?.path_abs ?? id).split(/[\\/]/).pop()
+    return { pass: check.min === undefined ? null : used.size >= check.min, detail: `${used.size} of ${images.size} pool image(s) used` + (used.size ? `: ${[...used].map(label).join(', ')}` : '') + (check.min === undefined ? '' : `, want >= ${check.min}`) }
+  },
+
+  captions_visible(check, root, project) {
+    const opaque = (l, depth = 0) => {
+      const k = l.params?.kind
+      if (k === 'VideoClip' || k === 'Color') return true
+      if (k === 'Motif') return l.params.graphic_role === 'plate'
+      if (k === 'CompositionRef' && depth < 4) return (project.compositions?.[l.params.composition]?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).some((x) => x.enabled !== false && opaque(x, depth + 1))
+      return false
+    }
+    let cue = 0, hidden = 0
+    root.tracks.forEach((ct, ci) => {
+      if (!isCaptionTrack(ct)) return
+      const cues = union(spansOf(ct.layers.filter((l) => l.enabled !== false).map((layer) => ({ layer }))))
+      cue += total(cues)
+      const covers = union(root.tracks.slice(ci + 1).filter((t) => !isCaptionTrack(t) && t.enabled !== false).flatMap((t) => t.layers).filter((l) => l.enabled !== false && opaque(l)).map((l) => [l.t_start_us, l.t_end_us]))
+      hidden += intersectLength(cues, covers)
+    })
+    if (!cue) return { pass: null, detail: 'no captions' }
+    return { pass: hidden === 0, detail: hidden ? `${s(hidden)} s of ${s(cue)} s of captions hidden under a layer on a track above them` : `all ${s(cue)} s of captions visible` }
+  },
+
+  scene_share(check, root, project) {
+    const aroll = select(root, { layer_kind: 'VideoClip', track_role: 'ARoll' }).map((e) => e.layer)
+    if (!aroll.length) return { pass: null, detail: 'no A roll' }
+    const a0 = Math.min(...aroll.map((l) => l.t_start_us)), a1 = Math.max(...aroll.map((l) => l.t_end_us))
+    const titleCard = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
+    const full = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' && (
+      layer.params?.kind === 'CompositionRef' ? (() => { const ls = (project.compositions?.[layer.params.composition]?.tracks ?? []).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio'); return ls.length >= 2 && !titleCard(ls) })()
+        : layer.params?.kind === 'Motif' && layer.params.graphic_role === 'plate'))
+    const covered = total(union(full.map(({ layer }) => [Math.max(layer.t_start_us, a0), Math.min(layer.t_end_us, a1)])))
+    const f = covered / (a1 - a0)
+    return { pass: check.max_fraction === undefined ? null : f <= check.max_fraction, detail: `scenes and plates cover ${Math.round(f * 100)} % of the cut (${s(covered)} s)` + (check.max_fraction === undefined ? '' : `, want <= ${Math.round(check.max_fraction * 100)} %`) }
   },
 
   layer_region(check, root) {

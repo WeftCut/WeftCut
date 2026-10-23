@@ -34,11 +34,12 @@ export function canonicalJson(value) {
   return JSON.stringify(value)
 }
 
-/** The project a task's setup creates is named after its fixtures (or, for a
- *  synthetic task, the task itself), so identical setups make identical
- *  projects. */
+/** The project a task's setup creates is named after its first fixture, the
+ *  footage (or, for a synthetic task, the task itself), so identical setups
+ *  make identical projects. The pictures a task adds stay out of the name: it
+ *  would grow past Windows path limits and tell the agent what they show. */
 export function projectNameFor(task) {
-  return task.fixtures.length ? [...task.fixtures].sort().join('--') : task.id
+  return task.fixtures.length ? task.fixtures[0] : task.id
 }
 
 /**
