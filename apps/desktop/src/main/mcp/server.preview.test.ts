@@ -83,4 +83,15 @@ describe('preview_motif renders what add_motif_layer would place', () => {
     expect(out.content[0].text).toContain('list_motifs')
     expect(capture).not.toHaveBeenCalled()
   })
+
+  it('a call without t_sec, or with an argument it does not take, is refused before any capture', async () => {
+    capture.mockClear()
+    const plural = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', times_s: [0.5, 2] }) as Res
+    expect(plural.isError).toBe(true)
+    expect(plural.content[0].text).toContain('times_s')
+    const bare = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third' }) as Res
+    expect(bare.isError).toBe(true)
+    expect(bare.content[0].text).toContain('t_sec')
+    expect(capture).not.toHaveBeenCalled()
+  })
 })
