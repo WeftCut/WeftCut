@@ -120,27 +120,33 @@ whole frame.
   Put one between on-camera stretches as an insert, and lay titles, quotes and
   images on it.
 - **Illustrations** (`clipping-sticker`) are a picture pasted on as a paper
-  cut-out with tape: a pool image or a still from the footage through its
-  `photo` media prop, cropped with `crop_*` to what matters (the slide behind
-  the speaker, not the whole frame). Without a photo it draws its own
-  `art.svg`, an ink drawing in flat colour. To draw a picture of your own,
-  fork it and replace that file, keeping the heavy ink line and flat fills.
-- **Scenes** explain a concept in full frame while she talks. A scene shows
-  its idea in pictures, and words label them. It is a Group, and every piece
-  in it that moves on its own is its own layer. For example, "events become
-  facts":
-  - a `clipping-paper` kraft plate;
-  - a `clipping-headline` kicker strip at the top;
-  - a `clipping-sticker` of her hippocampus slide on the left, slapped on at
-    "hippocampus", with a `clipping-reveal` of HIPPOCAMPUS torn open beside
-    it;
-  - a small `clipping-headline` tag, EVENTS, IN ORDER;
-  - a `clipping-pointer` arrow drawn on "consolidate";
-  - a `clipping-sticker` of her network slide on the right, with a reveal of
-    CORTEX torn on "cortex";
-  - a tag, ONLY THE GIST.
+  cut-out with tape. The picture comes through its `photo` media prop: a
+  pool image, or a still from the footage cropped with `crop_*` to what
+  matters. Without a photo it draws its own `art.svg`, an ink drawing in flat
+  colour. To draw a picture of your own, fork it and replace that file,
+  keeping the heavy ink line and flat fills.
+- **Pictures lead; words label them.** This is a collage look. The people,
+  objects, places and documents the talk names are pasted in as pictures,
+  and the strips, stamps and tags name them: a name stamped under a
+  portrait, a date on a document. When she names someone, their portrait
+  can be slapped on beside her, with a stamp. Most of what the edit adds is
+  pictures, not headline strips.
+- **Scenes** explain a concept in full frame while she talks. A scene is a
+  collage on a plate: a hero picture over about half the frame, one or two
+  smaller pictures, and labels and pointers on them. It is a Group, and
+  every piece in it that moves on its own is its own layer. For example,
+  "the patient who lost his hippocampus":
+  - a `clipping-paper` newsprint plate;
+  - a `clipping-sticker` portrait of the patient, large on the left, with a
+    `clipping-stamp` of his name and dates across its foot;
+  - a `clipping-sticker` of her hippocampus slide, cropped to the brain, on
+    the right, with a `clipping-reveal` of BOTH REMOVED torn open on
+    "removed";
+  - a `clipping-pointer` arrow from the brain to the portrait;
+  - two small `clipping-headline` tags: NEW: LOST and OLD: KEPT.
 
-  The pieces leave a beat apart, then the plate slides out. Build scenes from
+  The pieces leave a beat apart, then the plate slides out. Put the scene's
+  track below the captions so they stay readable over it. Build scenes from
   what the talk explains, not from this list.
 - **Decoration** (`clipping-scrap`: a newsprint strip, a torn piece, tape) is
   untagged. Use it sparingly, to tuck behind an image or a quote.

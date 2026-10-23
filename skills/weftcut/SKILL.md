@@ -232,7 +232,9 @@ before writing code. A concept scene is a Group of a plate, one layer per
 independent element, and at most a few interaction Motifs (*Scope* in
 `motif-authoring.md`). A Motif shows a still from the media pool through a
 `media` prop (`"<media_id>"`, or `"<media_id>@<t_us>"` for a video frame);
-moving footage stays a video layer.
+moving footage stays a video layer. Explainers lead with pictures (the people,
+objects, places and documents the talk names), and words label them; the audit's
+`word-heavy` counts them.
 
 1. Prefer a self-contained folder inside your working directory (for example
    motifs/<name>/) with index.html, manifest.json and companion code/assets,

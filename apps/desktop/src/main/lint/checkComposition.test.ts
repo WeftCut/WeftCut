@@ -351,4 +351,55 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' } } as LayerParams
     expect(checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'scene-all-words')).toEqual([])
   })
+
+  const MANIFESTS: Record<string, unknown> = {
+    headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },
+    sticker: { size: [900, 760], graphic_role: 'illustration', props_schema: { photo: { type: 'media', default: '' } } },
+    paper: { size: [1920, 1080], graphic_role: 'plate', props_schema: {} },
+  }
+  const manifests = (id: string) => (MANIFESTS[id] ?? null) as never
+  const motifAt = (motif_id: string, props: Record<string, unknown> = {}, graphic_role: string | null = null) =>
+    ({ kind: 'Motif', motif_id, motif_version: 1, props, src_in_us: 0, transform: textParamsDefault('x', { width: 1920, height: 1080 } as never).transform, opacity: stat(1), graphic_role }) as unknown as LayerParams
+  const audit = (p: Project, rule: string) => checkComposition(p, p.root_id, null, undefined, { motif: manifests }).findings.filter((f) => f.rule === rule)
+
+  it('asks a word-heavy cut for pictures, titles and name cards aside', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, clip(0, 120), 0, 120)
+    put(bRoll, motifAt('headline', { text: 'HOW MEMORY WORKS' }, 'title'), 0, 4)
+    for (const [i, t] of ['NEURONS', 'TWO HUBS', 'CORTEX', 'GIST'].entries()) put(bRoll, motifAt('headline', { text: t }, 'callout'), 10 + i * 20, 14 + i * 20)
+    const sticker = put(bRoll, motifAt('sticker', { photo: '' }), 95, 100)
+    expect(audit(p, 'word-heavy').map((f) => f.message)).toEqual(['1 of 5 graphic elements are pictures (20 %), under 33 %'])
+    put(bRoll, { ...sticker.params }, 105, 110)
+    expect(audit(p, 'word-heavy')).toEqual([])
+    // A pace raises the share.
+    const raised = checkComposition(p, p.root_id, taste('---\ntokens:\n  pace: { pictures_min_share: 0.5 }\n---\n'), undefined, { motif: manifests }).findings.filter((f) => f.rule === 'word-heavy')
+    expect(raised.map((f) => f.message)).toEqual(['2 of 6 graphic elements are pictures (33 %), under 50 %'])
+  })
+
+  it('reports a scene or plate on a track above the captions', () => {
+    const { p, comp, aRoll, caption, put, text } = setup()
+    put(aRoll, clip(0, 60), 0, 60)
+    put(caption, text('one'), 10, 14); put(caption, text('two'), 14, 18)
+    const above: Track = { ...structuredClone(caption), id: 'above', role: null, layers: [] }
+    comp.tracks.push(above)
+    const plate = put(above, motifAt('paper', {}, 'plate'), 12, 30)
+    // A sticker over the captions is not opaque.
+    put(above, motifAt('sticker', { photo: '' }), 0, 9)
+    expect(audit(p, 'captions-covered').map((f) => [f.layers, f.message])).toEqual([[[plate.id], 'plate on a track above the captions hides 6 s of them']])
+    // Below the captions it hides nothing.
+    comp.tracks.splice(comp.tracks.indexOf(above), 1)
+    comp.tracks.splice(1, 0, above)
+    expect(audit(p, 'captions-covered')).toEqual([])
+  })
+
+  it('reports scenes and plates covering more than half the cut', () => {
+    const { p, aRoll, bRoll, put } = setup()
+    put(aRoll, clip(0, 100), 0, 100)
+    put(bRoll, motifAt('paper', {}, 'plate'), 10, 40)
+    put(bRoll, motifAt('paper', {}, 'plate'), 30, 60)
+    // Overlapping plates count once: 10–60 s is half the cut, which is allowed.
+    expect(audit(p, 'scene-share')).toEqual([])
+    put(bRoll, motifAt('paper', {}, 'plate'), 70, 75)
+    expect(audit(p, 'scene-share').map((f) => f.message)).toEqual(['scenes and plates cover 55 % of the cut, over 50 %: the speaker is gone for 55 s'])
+  })
 })
