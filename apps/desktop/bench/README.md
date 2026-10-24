@@ -26,7 +26,7 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--task` | required | Task ids or globs (`*`, `?`), comma-separated or repeated. |
 | `--model` | required | Model ids, comma-separated; passed to the client verbatim. |
 | `--skill` | `<repo>/skills/weftcut` | Skill directory (holds `SKILL.md`). Its content hash is recorded per run. |
-| `--driver` | `claude` | `claude`; `codex` is a stub that proves the interface. |
+| `--driver` | `claude` | `claude`, or `dsh` for DeepSeek models through DeepSeek Harness; `codex` is a stub that proves the interface. |
 | `--repeat` | `1` | Runs per (task, model). |
 | `--out` | `bench/results/` | Results root; each invocation gets a timestamped folder. |
 | `--timeout-min` | `20` | Wall clock per agent session. |
@@ -345,6 +345,32 @@ Nothing in the interface is Claude-specific; `drivers/codex.ts` compiles against
 it. Until it is real, `codex` is a null agent: it changes nothing and reports a
 failed session, so `--driver codex --model stub` runs the whole pipeline
 (launch, setup or template, media wait, baseline, an empty diff) for free.
+
+## dsh (DeepSeek)
+
+`--driver dsh --model deepseek-flash` (or `deepseek-v4-pro`; `provider/model`
+names another dsh route) runs `dsh --profile headless --json` from an npm
+global install (`npm i -g @deepseek-ai/dsh`).
+- **Key.** `DEEPSEEK_API_KEY` from the environment, else from `~/.dsh/.env`.
+  It is passed to the child only.
+- **Isolation.** Each run boots in a fresh temp `DSH_HOME` and agents home.
+  The skill goes in `<workdir>/.dsh/skills/weftcut`. A patch overlay
+  (`runPatch`):
+  - names the app as the only MCP server, `mcp__weftcut__*`, with a 15 min
+    tool-call timeout;
+  - turns off shell, web, subagent, job and workflow tools;
+  - stops dsh's session-log upload to DeepSeek. OTel is disabled by the
+    environment.
+- **Turns.** dsh headless answers one message per process. The stand-in
+  user's go-ahead is a second process on the same Session (`--session-id`).
+- **Evidence.** The transcript is dsh's JSON event stream, from every
+  process in order; the Session log is copied to `dsh-sessions/`.
+- **Turns and cost.** Turns count `step_end` events. Cost is their token
+  usage at DeepSeek's list price, peak or off-peak by the run's start time
+  (Chinese public holidays aside).
+- **Images.** `deepseek-v4-pro` takes text only: images from
+  `render_frames` or `search_images` reach it as a note, not a picture, so
+  the look stage is blind. `deepseek-flash` sees them.
 
 ## Claude isolation
 

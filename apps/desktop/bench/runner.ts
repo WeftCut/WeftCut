@@ -116,12 +116,13 @@ async function setUpProject(call: McpCall, task: BenchTask, parentFolder: string
 }
 
 /** Copy what the agent wrote into its working directory (a Motif package, say)
- *  minus the skill the driver installed there. */
+ *  minus the skill the driver installed there (`.claude/skills`, `.dsh/skills`). */
 function copyWorkdir(workdir: string, dest: string): string | null {
-  const entries = fs.readdirSync(workdir).filter((e) => e !== '.claude')
-  const extra = fs.existsSync(path.join(workdir, '.claude'))
-    ? fs.readdirSync(path.join(workdir, '.claude')).filter((e) => e !== 'skills').map((e) => path.join('.claude', e))
-    : []
+  const clientDirs = ['.claude', '.dsh']
+  const entries = fs.readdirSync(workdir).filter((e) => !clientDirs.includes(e))
+  const extra = clientDirs.flatMap((d) => fs.existsSync(path.join(workdir, d))
+    ? fs.readdirSync(path.join(workdir, d)).filter((e) => e !== 'skills').map((e) => path.join(d, e))
+    : [])
   if (!entries.length && !extra.length) return null
   for (const e of [...entries, ...extra]) fs.cpSync(path.join(workdir, e), path.join(dest, e), { recursive: true })
   return path.basename(dest)
