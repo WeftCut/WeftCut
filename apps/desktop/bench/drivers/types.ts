@@ -142,6 +142,9 @@ export interface RunResult {
   final_message: string | null
   /** What the stand-in user said after the prompt (empty: nothing). */
   user_replies: string[]
+  /** Under a task's plan gate: the turn whose stop got the go-ahead (null:
+   *  never), and each call refused before it. */
+  plan_gate?: { approved_turn: number | null; refused: Array<{ tool: string; turn: number }> }
   exit: DriverExit | null
   error: string | null
   started_at: string

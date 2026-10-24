@@ -334,6 +334,20 @@ same session. `go_ahead: false` in a task disables it. What was said is
 `user_replies` in `run.json`; a second stop is the result. The Claude driver
 keeps the session open with `--input-format stream-json`.
 
+A task with `plan_gate: true` holds the edit until the plan is approved, as
+the teaching recipe's two gates ask:
+- Until the go-ahead, the proxy refuses the agent's calls to tools the app
+  does not mark read-only (session, history-lock and checkpoint tools
+  excepted). The agent gets the refusal as the tool's error; the app never
+  sees the call.
+- A first stop without storyboards (no `Eye:` and `Shows:` lines in the
+  message or in a markdown file in the workdir) gets a go-on to them, and
+  the next stop the go-ahead. A first stop that shows them gets the
+  go-ahead at once.
+- `plan_gate` in `run.json` records the turn approved and each refused call.
+
+The gate lives in the proxy, so it needs a remote host.
+
 ## Drivers
 
 `drivers/types.ts` is the whole contract. A driver gets the task, the skill

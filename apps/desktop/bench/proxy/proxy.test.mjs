@@ -35,7 +35,10 @@ async function fakeApp(events) {
     let t = sid ? transports.get(sid) : undefined
     if (!t && isInitializeRequest(body)) {
       const server = new Server({ name: 'fake-weftcut', version: '9.9' }, { capabilities: { tools: {}, resources: {} }, instructions: 'be nice' })
-      server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'open_motif_draft', inputSchema: { type: 'object' } }] }))
+      server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+        { name: 'open_motif_draft', inputSchema: { type: 'object' } },
+        { name: 'read_project', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+      ] }))
       server.setRequestHandler(CallToolRequestSchema, async (r, extra) => {
         events.push({ at: 'app', tool: r.params.name, args: r.params.arguments, client: server.getClientVersion() })
         if (r.params.name === 'refuse') throw new McpError(ErrorCode.InvalidParams, 'no such draft', { field: 'id' })
@@ -94,7 +97,7 @@ test('proxy: sync before call, rewrites both ways, passthrough of the rest', asy
     }))
     assert.equal(agent.getServerVersion()?.name, 'fake-weftcut', 'server identity mirrored')
     assert.equal(agent.getInstructions(), 'be nice', 'instructions mirrored')
-    assert.deepEqual((await agent.listTools()).tools.map((t) => t.name), ['open_motif_draft'])
+    assert.deepEqual((await agent.listTools()).tools.map((t) => t.name), ['open_motif_draft', 'read_project'])
 
     const r = await agent.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'directory', path: `${LOCAL}/callout` }, other: '/home/x/y.png' } })
     const seen = events.filter((e) => e.at === 'app')[0]
@@ -127,6 +130,42 @@ test('proxy: sync before call, rewrites both ways, passthrough of the rest', asy
     assert.ok(kinds.includes('sync') && kinds.includes('rewrite') && kinds.includes('outside'))
     assert.ok(logs.some((l) => l.kind === 'rewrite' && l.dir === 'to-remote' && l.to === `${REMOTE}\\callout`))
     assert.ok(logs.some((l) => l.kind === 'outside' && l.value === '/home/x/y.png'))
+  } finally {
+    await agent.close().catch(() => {})
+    await proxy.close()
+    await app.close()
+  }
+})
+
+test('proxy: a gate refuses a call before it reaches the app', async () => {
+  const events = []
+  const app = await fakeApp(events)
+  const logs = []
+  const asked = []
+  let open = false
+  const proxy = await startMcpProxy({
+    upstream: { url: app.url, bearer_token: APP_TOKEN },
+    localRoot: LOCAL, remoteRoot: REMOTE,
+    sync: async () => ({ mkdirs: [], puts: [], rmFiles: [], rmDirs: [] }),
+    log: (e) => logs.push(e),
+    gate: (tool, readOnly) => { asked.push([tool, readOnly]); return open || readOnly ? null : `${tool} waits for the go-ahead` },
+  })
+  const agent = new Client({ name: 'claude-code', version: '2.0.0' }, { capabilities: {} })
+  try {
+    await agent.connect(new StreamableHTTPClientTransport(new URL(proxy.endpoint.url), {
+      requestInit: { headers: { Authorization: `Bearer ${proxy.endpoint.bearer_token}` } },
+    }))
+    await agent.listTools()
+    const held = await agent.callTool({ name: 'open_motif_draft', arguments: {} })
+    assert.equal(held.isError, true)
+    assert.equal(held.content[0].text, 'open_motif_draft waits for the go-ahead')
+    await agent.callTool({ name: 'read_project', arguments: {} })
+    open = true
+    await agent.callTool({ name: 'open_motif_draft', arguments: {} })
+    assert.deepEqual(asked, [['open_motif_draft', false], ['read_project', true], ['open_motif_draft', false]], 'read-only as the tool list marks it')
+    assert.deepEqual(events.filter((e) => e.at === 'app').map((e) => e.tool), ['read_project', 'open_motif_draft'], 'the held call never reached the app')
+    assert.equal(proxy.stats.gated, 1)
+    assert.ok(logs.some((l) => l.kind === 'gated' && l.tool === 'open_motif_draft'))
   } finally {
     await agent.close().catch(() => {})
     await proxy.close()

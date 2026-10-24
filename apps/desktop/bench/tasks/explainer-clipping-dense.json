@@ -9,6 +9,7 @@
   ],
   "taste": "---\nextends: clipping\ntokens:\n  pace: { beat_every_s: 8, bare_talk_max_s: 12, scenes_per_min: 1 }\n---\n\nOur channel's explainers: editorial paper cut-outs over the speaker, busy and animated.\n",
   "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out the key points as she makes them, explain her main concepts visually instead of leaving it all to her talking, and caption the whole thing. The project is already set up in our channel's style.",
+  "plan_gate": true,
   "checklist": [
     { "id": "title-at-start", "description": "A title-role overlay opens the video and holds at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title", "starts_before_s": 3, "min_duration_s": 3 } } },
     { "id": "name-card", "description": "A lower third names her while she is first on camera (before 25 s) and holds at least 4 s", "check": { "kind": "text_layer_matching", "text_regex": "Genzel", "where": { "graphic_role": "lower_third", "starts_before_s": 25, "min_duration_s": 4 } } },
