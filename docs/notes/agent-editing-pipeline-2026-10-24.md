@@ -209,10 +209,10 @@ Haiku 5.5, DeepSeek Flash) on the three H5 tasks.
 
 | | p0 (current) | v2 (five steps) |
 |---|---|---|
-| States a message and the argument | none | 11 of 12 (not Haiku on the dense task) |
+| States a message and the argument | none | 10 of 12 (Haiku on the default task only) |
 | Outline with a visual budget | no | Opus, Sonnet, Flash; Haiku on one task |
 | What the viewer sees at every moment | no: a list of additions | yes, gaps marked "speaker alone, on purpose" |
-| City walk gets its own animation | Opus 3/3, Sonnet 1/3, Flash 1/3, Haiku 0/3; the rest reused the network in dot mode | every Opus, Sonnet and Flash plan, and Haiku on two tasks |
+| City walk gets its own animation | Opus 3/3, Sonnet 1/3, Flash 1/3, Haiku 0/3; the rest reused the network in dot mode | every Opus, Sonnet and Flash plan; Haiku on the default task only (headline strips over her elsewhere) |
 | Layout, eye and exits per frame | rare | Opus, Sonnet and Flash, in the fixed form; Haiku loosely |
 | Callbacks across the video | no | Opus (KEPT/LOST, the lit set) and Flash ("the same network returns") |
 | Stopped for approval before writing | Flash 0/3, Haiku 1/3 | Flash 0/3 and Haiku 1/3 still tried `remove_pauses` first |
@@ -220,8 +220,9 @@ Haiku 5.5, DeepSeek Flash) on the three H5 tasks.
 - **Opus on the default task** applied the new callout rule to its own
   plan. Once the cut leaves ~2 s clips, a mark on her slide would jump at
   every cut, so it moved those overlays to stickers beside her.
-- **Haiku** wrote the AV script, but on the dense task it put quote strips
-  of the line being said over her (see-say) and gave no brief. The gap
+- **Haiku** wrote the AV script, but on the dense and pictures tasks it gave
+  no brief, and on the dense task it put quote strips of the line being
+  said over her (see-say). The gap
   between models is now visible in the plan.
 - **Still open:**
   - labels over animations (Flash stamps EVENT and MAP onto its walk
