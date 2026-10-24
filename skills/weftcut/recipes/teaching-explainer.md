@@ -139,6 +139,13 @@ A plan usually has:
 
   Never the sentence she is saying: the captions already show it. Each is
   3–5 s.
+
+  A label or pointer marks a spot in the picture under it, so it leaves
+  when that picture changes (`callout-outlives-picture`). On the footage,
+  keep it inside one clip: a jump cut moves the framing, and the mark then
+  points at the wrong thing. On a sticker or in a scene, it leaves with
+  what it marks. If the clip is too short to read the mark, mark that point
+  another way, such as a sticker or a scene.
 - **One or more animated scenes** where the talk explains a concept. A
   three-minute talk usually has two or three, from 6 s to 20 s each.
   - **Animations:** at least a third of the scenes are drawn animations of a
