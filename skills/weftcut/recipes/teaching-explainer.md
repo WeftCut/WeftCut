@@ -25,47 +25,109 @@ until: "audit.clean || rounds >= 3"
 
 ## plan
 
-Read `craft/editing.md` first. Then:
+Read `craft/editing.md` first. Plan the video as an editor does, in five
+steps, from its message down to its frames. Write each step into
+`plan.md` in your working directory as you go, and show the user what
+each gate asks them to approve.
 
-1. **Split the transcript into passages** and give each a mode:
-   - **Footage and explanation** while the speaker carries the picture.
-   - **Animated scene** for a concept the footage cannot show: an abstract
-     idea, a process, a comparison. Also use it where a run of jump cuts
-     needs covering, or to break a long talking stretch. Her voice runs on
-     under the scene.
+### 1. Brief
 
-   For each passage, decide what the viewer **sees**. The visual follows the
-   kind of idea:
-   - **A process or mechanism** (something grows, links, flows, sends,
-     transforms or builds up): a drawn animation that does it, step by step
-     on her words.
-   - **A named person, thing, place or document:** a picture of it.
-   - **A term, name, number or date:** a few words, on the picture or over
-     the speaker.
+In a few lines:
+- **Who it is for**, and what they already know.
+- **The message:** the one thing a viewer should understand after it.
+- **The argument:** the talk's 3–5 claims, in order.
+- **What is left out:** a tangent, a repeat, a long aside.
 
-   Words describe a picture or carry what no picture can. They never stand in
-   for a picture or an animation.
-2. **Write a beat list and wait for the go-ahead.** For each beat give:
-   - its mode, and what it adds that the speech does not;
-   - the layer kind and the Motif (an example, a fork, or a new one);
-   - the role and the props that carry its text;
-   - in and out times, taken from the words it belongs to (the word
-     timestamps from `transcribe_clip`);
-   - where it sits.
-3. **For each scene, also give its treatment:**
-   - its one idea, and its hero moment;
-   - the pictures that show the idea, and where each comes from (below);
-   - the elements it shows, each with the word it enters on;
-   - which elements interact and share a Motif, and why.
-4. **For each animation, give its storyboard:** three to six steps. Each
-   step names what moves and the word it starts on, for example:
-   1. "neurons" (10.4 s): one neuron grows its branches;
-   2. "send" (14.1 s): it links to a neighbour, and a signal crosses;
-   3. "communicators" (18.4 s): the network spreads out from it;
-   4. "patterns" (27.4 s): one set lights up together, a memory.
+### 2. Outline
 
-   Name the Motif it forks (such as `clipping-network`) or say that it is
-   new. The user approves the storyboard with the beat list.
+Split the transcript into sections, as a paper edit does. Give each:
+- its claim, in one line, and its time span;
+- its job: the hook, an idea, an example, the payoff.
+
+Then spend the **visual budget**:
+- **Animations:** the two or three ideas that are processes the footage
+  cannot show (something grows, links, flows, transforms or builds up).
+  They are the video's hero moments.
+- **Pictures:** each named person, thing, place or document.
+- **The speaker alone:** where she is the right picture, such as a story
+  told to camera or a joke.
+
+**Gate 1.** Present the brief and the outline, and wait for the go-ahead.
+This is cheap to change; the steps below are not. If the user has asked for
+one approval only, go on and present everything at gate 2.
+
+### 3. AV script
+
+Write a table with a row for every stretch of the cut, from the first
+second to the last, with no gaps:
+
+| Time | She says | The viewer sees | It adds |
+|---|---|---|---|
+
+- **She says:** her words, verbatim, with their times from
+  `transcribe_clip`. Mark the pauses that come out.
+- **The viewer sees:** the speaker's framing (wide, close, a punch-in), the
+  overlay or the scene.
+- **It adds:** what the picture shows that the words do not. A row where
+  the picture only shares a topic with the words gets a better picture, or
+  the speaker alone.
+
+Rules:
+- **No see-say.** No overlay repeats the line being said; the captions
+  already do.
+- **On the word.** A picture arrives with the word it belongs to, and
+  leaves when its point is made, or when the picture under it changes.
+- **Coherence.** Nothing is there only to decorate.
+
+### 4. Storyboards
+
+Board every scene, every animation and every group of overlays as key
+frames: one frame for each moment something new arrives (each step of an
+animation, each piece of a scene). Write each frame in this form:
+
+```
+Frame 3.2 · "send" 14.1 s → "communicators" 18.4 s
+Over: full frame, her voice runs on
+- neuron A · middle-left · 30 % of the frame's height · from step 1
+- neuron B · middle-right · 25 % · enters on "send"
+- signal · runs A → B · red · enters on "send"
+Eye: the signal crossing from A to B
+Leaves: nothing; the frame builds into 3.3
+Shows: one cell passing a signal to another, which her words name but
+cannot show
+```
+
+- **Place** each element in a cell of the frame's 3×3 grid (top-left …
+  bottom-right), or as spanning cells. Give its size as a share of the
+  frame's height. Over the speaker, say where she is and keep her face's
+  cell clear.
+- **Eye:** the one place to look in this frame.
+- **Enters and leaves:** each on a word, or on the change in the picture
+  under it (a cut, a slide change, the sticker it marks leaving).
+- **Shows:** what the frame shows that the words do not.
+- **Source** of each picture (see *Lead with pictures*), and which Motif
+  draws an animation: an example, a fork, or a new one.
+
+**The video's visual system.** Say how the boards relate:
+- A different process gets a different picture: a walk becoming a map is
+  not a network.
+- An idea that comes back gets the picture it had before, as a callback.
+- The animation draws the idea, so no label repeats what it draws, and no
+  figure appears that the talk does not give.
+
+### 5. Review, then gate 2
+
+Check each frame in this order, and rewrite what fails:
+1. **It shows the idea**, not just the topic.
+2. **It is timed** to her words.
+3. **One place to look**, clear of her face.
+4. **The layout holds the frame.**
+5. **It fits the visual system.**
+
+Then count the plan against the pace (*Meet the pace*), and present the AV
+script and the storyboards for the go-ahead.
+
+### Reference for the plan
 
 **Paper is the ground, not the content.** Stickers, strips and labels sit on
 it without tape: the style's Motifs take `tape: none` by default. Use
@@ -122,7 +184,7 @@ edit is:
 - `bare_talk_max_s`: at most this long with only the speaker on screen;
 - `scenes_per_min`: this many scenes per minute of cut.
 
-Count your beat list against it before asking for the go-ahead; the audit
+Count your AV script against it before asking for the go-ahead; the audit
 checks the same numbers. A pace the user asks for in words counts the same:
 follow it, and suggest they write it into TASTE.md so it holds next time.
 Without a pace, the counts below are the default.
@@ -164,10 +226,18 @@ Plan the exits as well as the entrances:
 
 ## build
 
-Inside a work session, with the history lock held:
+Inside a work session, with the history lock held. Build from the
+storyboards: each element where its frame puts it, at its size, entering
+and leaving on its words.
 
 1. **Tighten.** Remove pauses (`detect_pauses`, `remove_pauses`). Leave no
-   A-roll clip shorter than 1 s. Note where runs of jump cuts fall: a scene
+   A-roll clip shorter than 1 s.
+   - **Check the pauses against her words first.** A pause should fall
+     between words. If one holds a whole word from `transcribe_clip`, mid
+     sentence, she speaks softer than the threshold there, and removing it
+     cuts what she says. Lower `threshold_amp` (try 0.006) and detect again,
+     until no pause holds a word. A cut that removes more than a fifth of
+     the talk is a sign of it. Note where runs of jump cuts fall: a scene
    or a punch-in covers them (`craft/editing.md`).
 2. **Caption.** Pass the `transcribe_clip` envelope to `apply_transcripts` as
    it comes. The cues are built to the style's limits, so do not break or
@@ -249,8 +319,9 @@ background. Look at the frames export will render.
   - clear of the speaker's face, and of what she points at on a slide;
   - legible against what is under it;
   - its exit reads.
-- **Check each scene against its plan:** its one idea is clear, and its
-  elements arrive on their words. For an animation, sample each step of its
+- **Check each scene against its storyboard:** the frame matches its board
+  (layout, the one place to look), its idea is clear, and its elements
+  arrive and leave on their words. For an animation, sample each step of its
   storyboard (`render_frames { times_us }`). Check that what moves shows what
   she says while she says it.
 - **Fix in build, then look again** at what changed. Build, audit and look
