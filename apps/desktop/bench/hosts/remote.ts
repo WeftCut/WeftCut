@@ -186,6 +186,7 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
       upstream, localRoot: opts.workdir, remoteRoot: remoteWork,
       sync: () => mirror.sync(),
       log: (e) => { proxyLog.write(JSON.stringify(e) + '\n') },
+      ...(opts.gate ? { gate: opts.gate } : {}),
     })
 
     const templates: TemplateStore = {

@@ -27,6 +27,9 @@ export interface HostStartOptions {
    *  is remote). */
   workdir: string
   app_memory_mib?: number
+  /** Refuses an agent's tool call before it reaches the app (the proxy's
+   *  `gate`). Only a remote host has a proxy to hold it. */
+  gate?: (tool: string, readOnly: boolean) => string | null
 }
 
 export interface TemplateMeta {

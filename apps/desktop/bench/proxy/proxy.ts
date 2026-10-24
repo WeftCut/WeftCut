@@ -38,11 +38,15 @@ export interface ProxyOptions {
   remoteRoot: string
   /** Mirror the workdir; resolves once the remote side matches. */
   sync: () => Promise<{ mkdirs: string[]; puts: string[]; rmFiles: string[]; rmDirs: string[] }>
-  /** One JSON-able record per event (sync, rewrite, outside, error). */
+  /** One JSON-able record per event (sync, rewrite, outside, gated, error). */
   log: (entry: Record<string, unknown>) => void
+  /** Asked before each tools/call is forwarded, with whether the app's tool
+   *  list marks the tool read-only. A string refuses the call: the agent gets
+   *  it as the tool's error, and the app never sees the call. */
+  gate?: (tool: string, readOnly: boolean) => string | null
 }
 
-export interface ProxyStats { tool_calls: number; syncs_pushed: number; to_remote: number; to_local: number; outside: number }
+export interface ProxyStats { tool_calls: number; syncs_pushed: number; to_remote: number; to_local: number; outside: number; gated: number }
 
 export interface McpProxy {
   endpoint: { url: string; bearer_token: string }
@@ -79,7 +83,9 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
   const token = randomBytes(32).toString('hex')
   const map = createPathMap({ localRoot: opts.localRoot, remoteRoot: opts.remoteRoot })
   const sessions = new Map<string, Session>()
-  const stats: ProxyStats = { tool_calls: 0, syncs_pushed: 0, to_remote: 0, to_local: 0, outside: 0 }
+  const stats: ProxyStats = { tool_calls: 0, syncs_pushed: 0, to_remote: 0, to_local: 0, outside: 0, gated: 0 }
+  // Read-only tools, as the app's tool list last said.
+  const readOnly = new Set<string>()
   const log = (kind: string, fields: Record<string, unknown>) => opts.log({ t: new Date().toISOString(), kind, ...fields })
 
   async function openSession(init: { clientInfo: { name: string; version: string }; capabilities?: Record<string, unknown> }): Promise<Session> {
@@ -125,6 +131,12 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
       if (req.method === 'tools/call') {
         stats.tool_calls++
         const tool = String(req.params?.name ?? '')
+        const refusal = opts.gate?.(tool, readOnly.has(tool)) ?? null
+        if (refusal !== null) {
+          stats.gated++
+          log('gated', { tool })
+          return { isError: true, content: [{ type: 'text', text: refusal }] }
+        }
         const started = Date.now()
         const plan = await opts.sync()
         const pushed = plan.mkdirs.length + plan.puts.length + plan.rmFiles.length + plan.rmDirs.length
@@ -144,6 +156,14 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
         const back = map.toLocal(await forward(req, extra as Extra))
         for (const r of back.rewrites) { stats.to_local++; log('rewrite', { resource: req.params?.uri, ...r }) }
         return back.value as Record<string, unknown>
+      }
+      if (req.method === 'tools/list') {
+        const listed = await forward(req, extra as Extra)
+        for (const t of (listed.tools ?? []) as Array<{ name: string; annotations?: { readOnlyHint?: boolean } }>) {
+          if (t.annotations?.readOnlyHint) readOnly.add(t.name)
+          else readOnly.delete(t.name)
+        }
+        return listed
       }
       return forward(req, extra as Extra)
     }

@@ -33,6 +33,11 @@ export interface BenchTask {
    *  Absent: the runner's default; false: never answer (a task where asking
    *  first is the right outcome). */
   go_ahead?: string | false
+  /** The plan comes before the edit: until the stand-in user approves the
+   *  plan, the agent's calls to tools that change the project are refused,
+   *  and the stand-in answers a first stop without storyboards with a
+   *  go-on to them (the recipe's gate 1). Needs a remote host. */
+  plan_gate?: boolean
   /** The project's TASTE.md, written into the project folder after setup and
    *  before the agent starts: the style it works in. Absent: none, so
    *  `weftcut-default`. */
@@ -55,6 +60,7 @@ function parseTask(file: string, json: unknown): BenchTask {
   if (!Array.isArray(t.setup) || t.setup.some((c) => typeof c?.tool !== 'string')) fail('setup must be an array of { tool, args }')
   if (typeof t.prompt !== 'string' || !t.prompt.trim()) fail('prompt is required')
   if (t.taste !== undefined && (typeof t.taste !== 'string' || !t.taste.trim())) fail('taste must be the TASTE.md text')
+  if (t.plan_gate !== undefined && typeof t.plan_gate !== 'boolean') fail('plan_gate must be true or false')
   if (!Array.isArray(t.checklist)) fail('checklist must be an array')
   return t as BenchTask
 }

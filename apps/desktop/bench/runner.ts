@@ -20,7 +20,7 @@ import { parseProject } from '../src/main/state/serialize'
 import { driverNamed } from './drivers'
 import { startLocalHost } from './hosts/local'
 import { runSlug, startRemoteHost } from './hosts/remote'
-import type { HostSession, TemplateMeta } from './hosts/types'
+import type { HostSession, HostStartOptions, TemplateMeta } from './hosts/types'
 import { waitForMedia } from './mediaReady'
 import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
@@ -91,6 +91,23 @@ function diffMotifs(before: Array<Record<string, unknown>>, after: Array<Record<
 
 /** What the stand-in user says to a plan that waits for approval. */
 const DEFAULT_GO_AHEAD = 'Yes, go ahead with your plan. Use your own judgement for any other choice (a local transcription engine is fine), and finish without asking me again.'
+/** What it says, under a plan gate, to a first stop that shows no storyboards. */
+const GATE_1_GO_ON = 'The brief and the outline look right. Go on to the AV script and the storyboards, and show them to me before you build.'
+
+/** Tools an agent may call before its plan is approved although they are not
+ *  read-only: they open and close its work session and change nothing a
+ *  viewer sees. */
+const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'set_history_lock', 'create_checkpoint'])
+
+/** A storyboard frame in the recipe's fixed form has `Eye:` and `Shows:`
+ *  lines; the agent writes them into its message or a markdown file in its
+ *  working directory. */
+function hasStoryboards(message: string | undefined, workdir: string): boolean {
+  const boarded = (s: string) => /^[\s*>-]*Eye\b\**:/m.test(s) && /^[\s*>-]*Shows\b\**:/m.test(s)
+  if (boarded(message ?? '')) return true
+  const files = fs.existsSync(workdir) ? fs.readdirSync(workdir).filter((f) => f.endsWith('.md')) : []
+  return files.some((f) => boarded(fs.readFileSync(path.join(workdir, f), 'utf8')))
+}
 
 function writeJson(dir: string, name: string, value: unknown): string {
   fs.writeFileSync(path.join(dir, name), JSON.stringify(value, null, 2) + '\n')
@@ -259,9 +276,13 @@ async function motifEditsProbe(endpoint: { url: string; bearer_token: string }, 
   return out
 }
 
-function startHost(plan: PlannedRun, workdir: string): Promise<HostSession> {
+function startHost(plan: PlannedRun, workdir: string, gate: HostStartOptions['gate']): Promise<HostSession> {
   const base = { run_slug: runSlug(plan.run_id), out_dir: plan.out_dir, workdir, ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}) }
-  return plan.host.kind === 'local' ? startLocalHost(base) : startRemoteHost({ ...base, ...plan.host })
+  if (plan.host.kind === 'local') {
+    if (plan.task.plan_gate) throw new Error(`${plan.task.id}: plan_gate needs a remote host, whose proxy holds the gate`)
+    return startLocalHost(base)
+  }
+  return startRemoteHost({ ...base, ...plan.host, ...(gate ? { gate } : {}) })
 }
 
 export async function runOne(plan: PlannedRun): Promise<RunResult> {
@@ -280,8 +301,19 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
   fs.mkdirSync(workdir)
   let session: HostSession | undefined
   let client: Client | undefined
+  // Under a plan gate, what the agent tried to change before its plan was
+  // approved, and the turn the approval came at.
+  const gate = { approved_turn: null as number | null, refused: [] as Array<{ tool: string; turn: number }> }
+  let turnNow = 1
+  const holdWrites = plan.task.plan_gate
+    ? (tool: string, readOnly: boolean): string | null => {
+        if (gate.approved_turn !== null || readOnly || BEFORE_APPROVAL.has(tool)) return null
+        gate.refused.push({ tool, turn: turnNow })
+        return `${tool} was not run: the user has not approved the plan yet, so nothing in the project can change. Present the plan and wait for the go-ahead; read-only tools still work.`
+      }
+    : undefined
   try {
-    session = await startHost(plan, workdir)
+    session = await startHost(plan, workdir, holdWrites)
     const s = session
     result.host = s.record
     result.app_revision = s.app.revision
@@ -401,12 +433,17 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
 
     // The stand-in user: an agent that ends its first turn having changed
     // nothing has almost always planned and asked for a go-ahead, which an
-    // attended user gives. Answered once; a second stop is the result.
+    // attended user gives. Answered once; a second stop is the result. Under
+    // a plan gate it answers twice: a first stop without storyboards gets a
+    // go-on to them, and the go-ahead comes at the stop that shows them.
     await initEval()
-    const nextUserTurn = async (turn: number): Promise<string | null> => {
-      if (turn > 1 || plan.task.go_ahead === false) return null
+    const nextUserTurn = async (turn: number, finalMessage: string | undefined): Promise<string | null> => {
+      if (plan.task.go_ahead === false || turn > (plan.task.plan_gate ? 2 : 1)) return null
       const now = await read('project://current')
       if (diffProjects(parseProject(baselineWire), parseProject(now)).length > 0) return null
+      turnNow = turn + 1
+      if (plan.task.plan_gate && turn === 1 && !hasStoryboards(finalMessage, workdir)) return GATE_1_GO_ON
+      gate.approved_turn = turn
       return plan.task.go_ahead ?? DEFAULT_GO_AHEAD
     }
     const out = await driver.run({
@@ -418,6 +455,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     result.cost = { usd: out.cost_usd ?? null, turns: out.turns ?? null }
     result.final_message = out.final_message ?? null
     result.user_replies = out.user_replies ?? []
+    if (plan.task.plan_gate) result.plan_gate = gate
     result.exit = out.exit
     // A failed or timed-out session still changed the project; the evidence
     // below is taken regardless, and the exit says how the session ended.
