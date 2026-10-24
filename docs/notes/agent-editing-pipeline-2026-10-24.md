@@ -124,8 +124,16 @@ approves twice: once on the cheap outline, once on the storyboards.
      other animations in the video. A different process gets a different
      picture. The same idea, coming back, gets the same picture
      (a callback).
-   - A rough sketch of each key frame: an SVG board, cheap to draw and to
-     look at.
+   - Each key frame written in a fixed form:
+     - the elements, each placed in a cell of a 3×3 grid and sized as a
+       share of the frame's height;
+     - the one place to look;
+     - what enters and leaves, and on which word;
+     - what the frame shows that the words do not.
+
+     A drawn sketch (an SVG board) was considered and dropped: it measures
+     how well a model draws SVG, not how well it designs. Since the fields
+     are fixed, the harness could render a wireframe from them itself.
 5. **Self-review, then gate 2.** Before presenting, check each board, in
    Murch's order adapted to explainers:
    1. Does it show the idea, not just the topic?
