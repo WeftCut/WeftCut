@@ -137,7 +137,23 @@ starting again from one neuron, and a third time for the city walk. It left a
   (`motifStream.ts`), so these frames are likely read without error but
   empty; not yet diagnosed. The review copies are the first re-exports.
 
-## Your ratings (H4 vs H5)
+## Review (2026-10-24)
+
+The user watched all ten:
+- **Only Opus's cuts are good overall.** The others have problems in their
+  overlays and animations.
+- **Flash's cut points are odd:** some of what she says is cut off.
+- **In every cut, circles and overlays stay too long:** a circle drawn on
+  the picture stays after the picture changes, and marks the wrong spot.
+  The audit now reports it (`callout-outlives-picture`, `4653eca4`). On
+  the H5 projects it finds 1–11 per cut, 46 in all; most are a mark on
+  her slide past the next jump cut, where the framing moves.
+- **The concern for the next round:** with no example to follow, can an
+  agent design a Motif or a storyboard well? The built-in example narrows
+  the gap between models on this talk; on other material the gap would
+  show at once.
+
+## Ratings table (H4 vs H5)
 
 Rate each 1–5. Compare against the H4 export of the same model and task
 (`.scratch/agent-harness/checkpoint8/h4-*.mp4`); Flash has no H4 run.
