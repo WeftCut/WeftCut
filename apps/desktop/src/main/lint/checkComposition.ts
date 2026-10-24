@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto'
 import { captionLimits, craftRule, paceThreshold, type CraftSeverity } from '../../shared/craft'
-import type { Animated, Composition, CompositionRefParams, Layer, MotifParams, Project, Rgba, TextParams, VideoClipParams } from '../state/model'
+import type { Animated, Composition, CompositionRefParams, Layer, MotifParams, Project, Rgba, TextParams, Track, VideoClipParams } from '../state/model'
 import { canonicalString } from '../state/canonical'
 import type { MotifLookup, TasteView } from '../taste/view'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
@@ -370,6 +370,9 @@ export function checkComposition(project: Project, compositionId: string, taste:
     if (dur < min - 1e-3) add(id, x, `${role.replace('_', ' ')} on screen ${seconds(x.l.t_end_us - x.l.t_start_us)} s, under ${min} s`, `extend it to at least ${min} s`)
   }
 
+  // Callouts, with the tracks under them and the Group window they show in.
+  const marks: Array<At & { below: Track[]; window: [number, number] | null }> = []
+
   const visited = new Set<string>()
   const walk = (c: Composition, cid: string, at: Place, window: [number, number] | null) => {
     if (visited.has(cid)) return
@@ -402,7 +405,10 @@ export function checkComposition(project: Project, compositionId: string, taste:
           const min = limit('short-clip')
           if (dur < min - 1e-3) add('short-clip', x, `A-roll clip is ${dur.toFixed(2)} s, under ${min} s`, 'merge it into a neighbour or extend it; a fragment this short reads as a stutter')
         }
-        if (!isCaption && (l.params.kind === 'Motif' || l.params.kind === 'Text')) overlays.push(x)
+        if (!isCaption && (l.params.kind === 'Motif' || l.params.kind === 'Text')) {
+          overlays.push(x)
+          if (roleWith(l, opts.motif) === 'callout') marks.push({ ...x, below: c.tracks.slice(0, c.tracks.indexOf(track)), window })
+        }
         if (!isCaption && opts.motif && !(c === comp && track.role === 'ARoll')) {
           const r = roleWith(l, opts.motif)
           const structural = r === 'plate' || (!at.group && (r === 'title' || r === 'lower_third'))
@@ -482,6 +488,31 @@ export function checkComposition(project: Project, compositionId: string, taste:
     const spoken = words(cues.filter((c) => c.span[0] < b && c.span[1] > a).map((c) => c.text).join(' '))
     const echo = shown.find((t) => echoes(t, spoken))
     if (echo) add('overlay-echoes-speech', x, `"${echo.replace(/\s+/g, ' ').slice(0, 60)}" repeats what is said (and captioned) while it is up`, 'show what the speech does not — a label, a number, a diagram, context — or drop it')
+  }
+
+  // A callout marks a spot in the picture under it. When that picture changes
+  // (a cut in the footage moves the framing; the sticker it points at leaves)
+  // the mark points at the wrong thing. Looked at from the top down to the
+  // first layer that hides the rest.
+  const frameUs = comp.fps.num > 0 ? (1e6 * comp.fps.den) / comp.fps.num : 1e6 / 30
+  const ground = (l: Layer) => ['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(l.params.kind)
+    || (l.params.kind === 'Motif' && ['plate', 'illustration'].includes(roleWith(l, opts.motif) ?? ''))
+  for (const m of marks) {
+    const start = m.l.t_start_us, end = Math.min(m.l.t_end_us, m.window?.[1] ?? Infinity)
+    let change: { at: number; l: Layer; aroll: boolean } | null = null
+    for (const t of [...m.below].reverse()) {
+      if (t.enabled === false) continue
+      const under = t.layers.find((l) => l.enabled && ground(l) && l.t_start_us <= start + frameUs && l.t_end_us > start + frameUs)
+      if (!under) continue
+      if (under.t_end_us < end - frameUs && (!change || under.t_end_us < change.at)) change = { at: under.t_end_us, l: under, aroll: t.role === 'ARoll' && under.params.kind === 'VideoClip' }
+      if (opaque(under, project, opts.motif, 0, comp)) break
+    }
+    if (!change) continue
+    const k = change.l.params.kind
+    const what = change.aroll ? 'a cut in the footage under it'
+      : `the end of the ${k === 'Motif' ? (change.l.params as MotifParams).motif_id : k === 'CompositionRef' ? 'scene' : k === 'ImageOverlay' ? 'image' : k === 'Color' ? 'colour' : 'clip'} under it`
+    add('callout-outlives-picture', m, `callout stays ${seconds(end - change.at)} s past ${what} at ${seconds(change.at + m.at.offsetUs)} s`,
+      `end it by ${seconds(change.at + m.at.offsetUs)} s; to keep marking after it, place a new callout on the new picture`)
   }
 
   // Jump cuts nothing covers, reported as runs: a few at sentence ends read

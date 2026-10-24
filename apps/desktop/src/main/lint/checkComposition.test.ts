@@ -435,4 +435,27 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     ;(anim.params as { props: Record<string, unknown> }).props = { ground: 'paper', cue_spread_s: 20, cue_signal_s: 40, cue_late_s: 90 }
     expect(audit(p, 'sparse-beats')).toEqual([])
   })
+
+  it('ends a callout with the picture it marks', () => {
+    const { p, comp, aRoll, bRoll, caption, put } = setup()
+    const marks: Track = { ...structuredClone(caption), id: 'marks', role: null, layers: [] }
+    comp.tracks.push(marks)
+    put(aRoll, clip(0, 10), 0, 10); put(aRoll, clip(12, 27), 10, 25); put(aRoll, clip(30, 33), 25, 28)
+    const outlives = () => audit(p, 'callout-outlives-picture').map((f) => f.message)
+    // A circle on the footage, past the jump cut at 10 s: the framing changes under it.
+    const circle = put(marks, motifAt('pointer', { kind: 'circle' }, 'callout'), 7, 11)
+    expect(outlives()).toEqual(['callout stays 1 s past a cut in the footage under it at 10 s'])
+    circle.t_end_us = 10 * S
+    expect(outlives()).toEqual([])
+    // On a sticker, it goes with the sticker.
+    put(bRoll, motifAt('sticker', { photo: '' }), 14, 20)
+    const arrow = put(marks, motifAt('pointer', { kind: 'arrow' }, 'callout'), 15, 21)
+    expect(outlives()).toEqual(['callout stays 1 s past the end of the sticker under it at 20 s'])
+    arrow.t_end_us = 20 * S
+    expect(outlives()).toEqual([])
+    // A plate hides the footage's cuts: only the plate's end counts.
+    put(bRoll, motifAt('paper', {}, 'plate'), 22, 28)
+    put(marks, motifAt('pointer', { kind: 'underline' }, 'callout'), 23, 27.5)
+    expect(outlives()).toEqual([])
+  })
 })
