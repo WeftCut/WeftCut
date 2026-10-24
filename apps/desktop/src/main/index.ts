@@ -19,6 +19,7 @@ import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
+import { PNG_CANVAS_RUNTIME_SOURCE } from './motif/pngCanvasRuntime.js'
 import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authoring.js'
 import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
@@ -1493,7 +1494,7 @@ app.whenReady().then(async () => {
     // at boot; main injects it into the offscreen capture host via CDP.
     if (channel === 'motif_register_runtime') {
       setRuntimeSource((args as { source: string }).source)
-      coverRuntimeVersion = createHash('sha256').update((args as { source: string }).source).digest('hex')
+      coverRuntimeVersion = createHash('sha256').update(PNG_CANVAS_RUNTIME_SOURCE).update((args as { source: string }).source).digest('hex')
       return null
     }
     // Motif frame capture: offscreen CDP path — never falls through to Rust.

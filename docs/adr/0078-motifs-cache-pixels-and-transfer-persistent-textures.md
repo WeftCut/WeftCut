@@ -68,6 +68,26 @@ The full readback costs one PNG capture per navigation; subsequent frames retain
 the GPU path. The `surface-v2` cache-key namespace invalidates old baked frames
 without changing the frame file format or the authored Motif.
 
+The PNG fallback host requests CPU-backed 2D canvas contexts before authored
+scripts run (`willReadFrequently: true`). On Windows/Electron 44, bitmap OSR can
+omit an accelerated canvas after navigation even though its DOM pixels, bounds,
+and opacity are correct. Repeated screenshots, double rAF, and invalidation do
+not recover that canvas; ordinary DOM content still captures correctly. Under
+load a shared-texture failure switches the session to this backend, so an export
+can finish successfully with transparent frames unless the fallback also has a
+correct canvas backing policy. Shared-texture capture retains accelerated 2D;
+WebGL context options are unchanged. The `surface-v3` frame namespace and cover
+runtime hash discard previously cached blank captures. Fallback transitions log
+their reason. This is not a blanket rejection of transparent pixels: authored
+fade-outs and empty frames remain valid.
+
+Switching from cached RGBA to captured BGRA can retire a GPU pool while
+Chromium still holds its final reference and the export's memory credit.
+Transport retries transient resource-admission failures within the same bounded
+250 ms wait used for GPU byte capacity. A persistent admission failure keeps
+its original resource error; it must not turn into a fallback that bypasses the
+export plan. No memory limits are raised and no live pool is released early.
+
 Baking also consumes the OSR lease directly on Windows. A persistent native
 worker reuses a D3D11 staging texture, reads premultiplied RGBA/BGRA, converts
 to straight RGBA and encodes the existing LZ4 frame format. Main atomically

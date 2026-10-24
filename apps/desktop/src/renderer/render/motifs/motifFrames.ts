@@ -103,8 +103,8 @@ export interface MotifFrameCacheKeyInput {
 /// testing.
 export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
   return [
-    // Reject persisted pre-setup OSR surfaces from the unfenced capture path.
-    "surface-v2",
+    // Reject transparent frames baked by the accelerated-canvas PNG fallback.
+    "surface-v3",
     input.motifId,
     String(input.version),
     input.contentHash ?? "",

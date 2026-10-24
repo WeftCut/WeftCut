@@ -1,5 +1,6 @@
 import { BrowserWindow, nativeImage, type OffscreenSharedTexture } from 'electron'
 import { OffscreenFrames } from './offscreenFrames.js'
+import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors.js'
@@ -255,7 +256,9 @@ async function buildHost(): Promise<Host> {
       withTimeout(dbg.sendCommand(method, params), timeoutMs, label)
     await send('Page.enable')
     await send('Runtime.enable')
-    await send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource })
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: textureCaptureEnabled ? runtimeSource : PNG_CANVAS_RUNTIME_SOURCE + runtimeSource,
+    })
     return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames }
   } catch (e) {
     try { win.destroy() } catch { /* already gone */ }

@@ -2,6 +2,7 @@ import { MIB, performanceSettings, sharedResourceAllocationEnabled } from "../..
 import { sharedTexture, type SharedTextureImported, type WebContents, type OffscreenSharedTexture } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors'
+import { isResourceCapacityError } from '../../shared/resource-policy'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
 import type { MotifTextureFrame } from '../../shared/motifs/frameTransport.js'
@@ -165,6 +166,7 @@ export class MotifGpuTransport {
         let bufferLease: GpuBufferLease | null = null
         for (;;) {
           assertOpen()
+          let capacityError: unknown
           for (const [key, old] of this.sessions) {
             const global = this.buffers.snapshot()
             if (this.allocatedBytes + bytes <= this.textureBudgetBytes() && this.allocatedSessions < performanceSettings().motif_gpu_sessions
@@ -173,13 +175,23 @@ export class MotifGpuTransport {
             this.retireSession(key, old)
           }
           if (this.allocatedBytes + bytes <= this.textureBudgetBytes() && this.allocatedSessions < performanceSettings().motif_gpu_sessions) {
-            bufferLease = this.buffers.reserve('motif', bytes, finalizationId)
+            try { bufferLease = this.buffers.reserve('motif', bytes, finalizationId) }
+            catch (error) {
+              if (!isResourceCapacityError(error)) throw error
+              // A retired RGBA pool can still hold the export's credit when
+              // a cache miss needs a BGRA pool. Wait for the final-reference
+              // callback just as we do for the shared GPU byte budget.
+              capacityError = error
+            }
             if (bufferLease) break
           }
           // Retired imports can outlive their document. Keep their pools alive,
           // but let the caller read on CPU instead of wedging every GPU lane.
           // Once stalled, new allocations fail promptly until references free.
           if (this.budgetStalled || performance.now() >= deadline) {
+            // Preserve hard admission failures: never turn them into a PNG
+            // retry that bypasses the export's resource plan.
+            if (capacityError) throw capacityError
             this.budgetStalled = true
             throw new Error('Motif GPU budget exhausted while awaiting texture release')
           }

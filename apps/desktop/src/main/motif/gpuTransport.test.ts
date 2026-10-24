@@ -22,6 +22,46 @@ function fixture(concurrency = 1) {
 }
 
 describe('Motif GPU leases', () => {
+  it('bounds resource admission waits and preserves a persistent capacity failure', async () => {
+    vi.useFakeTimers();
+    const { owner, transport, buffers, create } = fixture();
+    const denied = new Error('resource-capacity-exceeded');
+    vi.spyOn(buffers, 'reserve').mockImplementation(() => { throw denied; });
+    const rejected = expect(transport.read(owner, 'blocked', 1920, 1080, 42)).rejects.toBe(denied);
+    await vi.advanceTimersByTimeAsync(300);
+    await rejected;
+    expect(create).not.toHaveBeenCalled();
+    expect(buffers.snapshot().used_bytes).toBe(0);
+  });
+  it('waits for retired export pool credits when switching from cached RGBA to captured BGRA', async () => {
+    const { owner, transport, buffers, create } = fixture();
+    let finalReference!: () => void;
+    const retired = vi.fn();
+    vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(({ allReferencesReleased }) => {
+      finalReference = allReferencesReleased!;
+      return { release: retired } as unknown as ReturnType<typeof sharedTexture.importSharedTexture>;
+    });
+    const reserve = buffers.reserve.bind(buffers);
+    vi.spyOn(buffers, 'reserve').mockImplementation((kind, bytes, parent) => {
+      if (parent === 42 && buffers.snapshot().used_bytes > 0) throw new Error('resource-capacity-exceeded');
+      return reserve(kind, bytes, parent);
+    });
+    const cached = await transport.read(owner, 'cached', 1920, 1080, 42);
+    transport.release(owner, cached.token);
+    const copying = transport.copy(owner, { textureInfo: {
+      codedSize: { width: 1920, height: 1080 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
+    } } as Parameters<typeof transport.copy>[1], 42);
+    // Observe rejection immediately too, so the regression doesn't leave an unhandled promise.
+    const result = copying.then(frame => ({ frame }), error => ({ error }));
+    await vi.waitFor(() => expect(retired).toHaveBeenCalledOnce());
+    finalReference();
+    const outcome = await result;
+    expect(outcome).not.toHaveProperty('error');
+    if ('frame' in outcome) transport.release(owner, outcome.frame.token);
+    expect(create).toHaveBeenCalledTimes(2);
+    transport.closeExport(owner, 42);
+    expect(buffers.snapshot().used_bytes).toBe(0);
+  });
   it('reuses an idle export lane without requiring another pool while Chromium retains references', async () => {
     const {owner,transport,buffers,create}=fixture(3);
     let finalReference!:()=>void;
