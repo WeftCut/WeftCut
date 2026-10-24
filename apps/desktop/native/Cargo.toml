@@ -20,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 napi-build = "2"
+cc = "1.0"
 
 [dependencies]
 # Shared "WYSIWYG math" leaf (snap algorithm, keyframe eval, envelope, role
