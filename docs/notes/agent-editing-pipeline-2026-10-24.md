@@ -197,3 +197,34 @@ The build then runs as editors cut:
 - [murch] W. Murch, *In the Blink of an Eye* (2nd ed., 2001), summarised in
   No Film School, "6 'rules' for good cutting according to Walter Murch",
   https://nofilmschool.com/2016/11/6-rules-good-cutting-according-oscar-winning-editor-walter-murch
+
+## First results on the plan bench (2026-10-24)
+
+Twelve plans per skill version: four models (Opus 5.5, Sonnet 5.5,
+Haiku 5.5, DeepSeek Flash) on the three H5 tasks.
+- **p0** is the current recipe. It cost $4.94.
+- **v2** is the five steps above, with text storyboards. It cost about
+  $7.3: Opus $1.5–1.7 a plan, Sonnet $0.7, Flash and Haiku under $0.1.
+  The stand-in approved gate 1, and the run ended at gate 2.
+
+| | p0 (current) | v2 (five steps) |
+|---|---|---|
+| States a message and the argument | none | 11 of 12 (not Haiku on the dense task) |
+| Outline with a visual budget | no | Opus, Sonnet, Flash; Haiku on one task |
+| What the viewer sees at every moment | no: a list of additions | yes, gaps marked "speaker alone, on purpose" |
+| City walk gets its own animation | Opus 3/3, Sonnet 1/3, Flash 1/3, Haiku 0/3; the rest reused the network in dot mode | every Opus, Sonnet and Flash plan, and Haiku on two tasks |
+| Layout, eye and exits per frame | rare | Opus, Sonnet and Flash, in the fixed form; Haiku loosely |
+| Callbacks across the video | no | Opus (KEPT/LOST, the lit set) and Flash ("the same network returns") |
+| Stopped for approval before writing | Flash 0/3, Haiku 1/3 | Flash 0/3 and Haiku 1/3 still tried `remove_pauses` first |
+
+- **Opus on the default task** applied the new callout rule to its own
+  plan. Once the cut leaves ~2 s clips, a mark on her slide would jump at
+  every cut, so it moved those overlays to stickers beside her.
+- **Haiku** wrote the AV script, but on the dense task it put quote strips
+  of the line being said over her (see-say) and gave no brief. The gap
+  between models is now visible in the plan.
+- **Still open:**
+  - labels over animations (Flash stamps EVENT and MAP onto its walk
+    animation);
+  - Flash's word-heavy callouts over the speaker;
+  - the plan gate, which Flash and Haiku skip until a write is refused.
