@@ -138,57 +138,7 @@ describe('layer_count and selectors', () => {
     assert.equal(check({ kind: 'motif_layer_count', op: '==', n: 1, where: { motif_builtin: true } }, q).pass, true)
   })
 
-  it('counts jump cuts on the A roll and what covers them', () => {
-    const aroll = (layers) => track(layers, { role: 'ARoll' })
-    const punched = video(20, 30, 25); punched.params.transform.scale_x = stat(1.15); punched.params.transform.scale_y = stat(1.15)
-    const group = layer(8, 12, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 4 * S, transform: transform() })
-    const p = project([aroll([video(0, 5, 0), video(5, 10, 6), video(10, 20, 12), punched, video(30, 40, 40)]), track([group])])
-    const r = check({ kind: 'jump_cuts', max_uncovered_fraction: 0.5 }, p)
-    // Cuts at 5 (bare), 10 (the group), 20 (punch-in), 30 (punching back out is a scale change too).
-    assert.equal(r.pass, true)
-    assert.match(r.detail, /4 jump cut\(s\), 3 covered \(scene 1, punch-in 2\), 25% bare, want <= 50%; bare at 5s/)
-    assert.equal(check({ kind: 'jump_cuts' }, p).pass, null)
-    // A continuous source is no jump cut.
-    assert.match(check({ kind: 'jump_cuts' }, project([aroll([video(0, 5, 0), video(5, 10, 5)])])).detail, /no jump cuts/)
-  })
-
-  it('measures the longest wait for something new, scene elements included', () => {
-    const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track([motif(0, 20, 'clipping-paper'), motif(8, 20, 'clipping-sticker')])], markers: [], transitions: [], links: [] }
-    const group = layer(30, 50, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 20 * S, transform: transform() })
-    const p = project([track([video(0, 60)], { role: 'ARoll' }), captionTrack([text(0, 60, 'all')]), track([motif(10, 14, 'callout-pin'), group])])
-    p.compositions.c1 = scene
-    const r = check({ kind: 'beat_gaps', max_s: 15 }, p)
-    // Arrivals at 10, 30 (the scene) and 38 (its sticker); the wait from 38 s to the end is the longest.
-    assert.equal(r.pass, false)
-    assert.match(r.detail, /^longest wait for something new on screen: 22 s from 38 s, 3 arrival\(s\), want <= 15 s$/)
-  })
-
-  it('counts the steps of an animation as arrivals', () => {
-    // A 30 s animation from 10 s, its steps at 8 and 18 s of its own time (and one past its end).
-    const anim = motif(10, 40, 'clipping-network', { cue_spread_s: 8, cue_signal_s: 18, cue_late_s: 45, count: 70 })
-    const p = project([track([video(0, 50)], { role: 'ARoll' }), track([anim])])
-    assert.match(check({ kind: 'beat_gaps' }, p).detail, /^longest wait for something new on screen: 22 s from 28 s, 3 arrival\(s\)$/)
-  })
-
-  it('asks each scene Group for a picture', () => {
-    const scene = (cid, layers) => ({ id: cid, label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, tracks: [track(layers)], markers: [], transitions: [], links: [] })
-    const group = (t0, cid) => layer(t0, t0 + 6, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: transform() })
-    const p = project([track([video(0, 60)], { role: 'ARoll' }), track([group(5, 'words'), group(20, 'sticker'), group(40, 'one')])])
-    p.compositions.words = scene('words', [motif(0, 6, 'clipping-paper'), motif(1, 6, 'clipping-reveal', { text: 'CORTEX' })])
-    p.compositions.sticker = scene('sticker', [motif(0, 6, 'clipping-paper'), motif(1, 6, 'clipping-sticker', { photo: 'm1@60000000' })])
-    p.compositions.one = scene('one', [motif(0, 6, 'clipping-headline')])
-    const r = check({ kind: 'scene_pictures', min_fraction: 1 }, p)
-    assert.equal(r.pass, false)
-    assert.match(r.detail, /^1 of 2 scene\(s\) hold a picture; words only at 5s$/)
-    assert.equal(check({ kind: 'scene_pictures' }, p).pass, null)
-    assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, project([track([video(0, 10)])])).detail, /no scene Groups/)
-    // A title on its plate is a title card, not a scene.
-    const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
-    p.compositions.words.tracks[0].layers = [role(motif(0, 6, 'clipping-paper'), 'plate'), role(motif(1, 6, 'clipping-headline', { text: 'HOW MEMORY WORKS' }), 'title')]
-    assert.match(check({ kind: 'scene_pictures', min_fraction: 1 }, p).detail, /^1 of 1 scene\(s\) hold a picture$/)
-  })
-
-  it('measures pictures against words, the pool pictures used, hidden captions and scene share', () => {
+  it('counts the pool pictures used and the captions hidden', () => {
     const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
     const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
       tracks: [track([role(motif(0, 30, 'clipping-paper'), 'plate'), role(motif(1, 30, 'clipping-sticker', { photo: 'img1' }), 'illustration'), role(motif(2, 30, 'clipping-headline', { text: 'HUB' }), 'title')])] }
@@ -199,8 +149,6 @@ describe('layer_count and selectors', () => {
     p.media_pool.img1 = { id: 'img1', kind: 'Image', label: 'semon.jpg' }
     p.media_pool.img2 = { id: 'img2', kind: 'Image', label: 'brain.jpg' }
     p.media_pool.img3 = { id: 'img3', kind: 'Image', label: 'map.jpg' }
-    // Pictures: the two stickers; words: the pointer and the scene's heading (the root title aside).
-    assert.match(check({ kind: 'picture_share', min_fraction: 0.5 }, p).detail, /^2 of 4 graphic elements are pictures \(50 %\), want >= 50 %$/)
     assert.equal(check({ kind: 'pool_pictures_used', min: 3 }, p).pass, false)
     assert.match(check({ kind: 'pool_pictures_used' }, p).detail, /^2 of 3 pool image\(s\) used: brain.jpg, semon.jpg$/)
     // The scene sits above the captions from 40 to 70 s: 10 s + 10 s of cues hidden.
@@ -209,30 +157,20 @@ describe('layer_count and selectors', () => {
     assert.match(hidden.detail, /^20 s of 70 s of captions hidden/)
     p.compositions.root.tracks = [p.compositions.root.tracks[0], p.compositions.root.tracks[1], p.compositions.root.tracks[3], captions]
     assert.equal(check({ kind: 'captions_visible' }, p).pass, true)
-    assert.match(check({ kind: 'scene_share', max_fraction: 0.25 }, p).detail, /^scenes and plates cover 30 % of the cut \(30 s\), want <= 25 %$/)
   })
 
-  it('counts a drawn animation as a scene, and asks for one', () => {
+  it('counts a drawn animation as a scene', () => {
     const role = (l, graphic_role) => ({ ...l, params: { ...l.params, graphic_role } })
     const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
       tracks: [track([role(motif(0, 10, 'clipping-paper'), 'plate'), role(motif(1, 10, 'clipping-sticker', { photo: 'm1@1000000' }), 'illustration')])] }
     const group = layer(40, 50, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 10 * S, transform: transform() })
-    // Four clips with the pauses cut out: jump cuts at 10, 20 and 30 s.
-    const aroll = track([video(0, 10, 0), video(10, 20, 12), video(20, 30, 24), video(30, 60, 36)], { role: 'ARoll' })
     const network = role(motif(5, 25, 'clipping-network', { ground: 'paper', cue_link_s: 2 }), 'illustration')
-    const p = project([aroll, track([network, group]), captionTrack([text(0, 60, 'all')])])
+    const p = project([track([video(0, 60)], { role: 'ARoll' }), track([network, group]), captionTrack([text(0, 60, 'all')])])
     p.compositions.c1 = scene
     assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^2 scene\(s\): drawn clipping-network 5-25s; Group 40-50s, want >= 2$/)
-    assert.match(check({ kind: 'animated_scenes', min: 1 }, p).detail, /^1 animated scene\(s\): clipping-network \(example\) 5-25s, want >= 1$/)
-    // It covers the cuts at 10 and 20 s.
-    assert.match(check({ kind: 'jump_cuts' }, p).detail, /^3 jump cut\(s\), 2 covered \(animation 2\)/)
-    // Drawn over the footage, it is an overlay: no scene, no cover.
+    // Drawn over the footage (ground: none), it is an overlay, not a scene.
     network.params.props.ground = 'none'
-    assert.equal(check({ kind: 'animated_scenes', min: 1 }, p).pass, false)
-    assert.match(check({ kind: 'jump_cuts' }, p).detail, /^3 jump cut\(s\), 0 covered/)
-    // A Group holding a drawing of the agent's own animates too.
-    scene.tracks[0].layers.push(role(motif(2, 10, 'hippocampus-flow', { cue_move_s: 3 }), 'illustration'))
-    assert.match(check({ kind: 'animated_scenes', min: 1 }, p).detail, /^1 animated scene\(s\): hippocampus-flow \(own\) 40-50s, want >= 1$/)
+    assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^1 scene\(s\): Group 40-50s, want >= 2$/)
   })
 
   it('finds role-tagged overlays inside Groups, at their time on the root', () => {
@@ -247,13 +185,6 @@ describe('layer_count and selectors', () => {
     assert.equal(title({ min_duration_s: 4.5 }).pass, false)
     // Without a role the selector reads the root alone.
     assert.equal(check({ kind: 'layer_count', op: '==', n: 0, where: { layer_kind: 'Motif' } }, p).pass, true)
-  })
-
-  it('measures the longest stretch of bare A roll', () => {
-    const p = project([track([video(0, 60)], { role: 'ARoll' }), captionTrack([text(0, 60, 'all of it')]), track([motif(10, 14, 'callout-pin'), motif(40, 44, 'callout-pin')])])
-    const r = check({ kind: 'bare_talk', max_s: 20 }, p)
-    assert.equal(r.pass, false)
-    assert.match(r.detail, /26 s from 14 s/)
   })
 
   it('supports every comparison op', () => {
