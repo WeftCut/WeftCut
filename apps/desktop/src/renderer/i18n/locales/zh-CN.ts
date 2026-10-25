@@ -1298,8 +1298,6 @@ const zhCN: Resources = {
     "begin_agent_session": "开始工作会话",
     "open_project": "打开项目",
     "create_project": "新建项目",
-    "search_images": "搜索开放图库",
-    "import_image": "导入开放图片",
     "end_agent_session": "结束工作会话",
     "set_history_lock": "设置撤销锁",
     "create_tacks": "添加批注",
@@ -1989,8 +1987,6 @@ const zhCN: Resources = {
   settings: {
     auto_install_updates_on_quit: '关闭应用时自动安装可用更新',
     auto_install_updates_on_quit_hint: '开启后后台下载更新，关闭应用时安装；关闭后仅检查新版本，点击“下载并安装”才会下载。',
-    agent_image_search: '允许智能体搜索开放图库',
-    agent_image_search_hint: '智能体可在 Wikimedia Commons 搜索公有领域和知识共享许可的图片，补足你素材中缺少的画面，并连同署名信息加入项目。搜索词会发送给 Wikimedia。',
     layout_theme: '布局主题',
     layout_theme_hint: '统一应用预设字号和对话框尺寸。宽松主题提供更多横向空间，文字略大。',
     layout_theme_recommended: '推荐',

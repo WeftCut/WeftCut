@@ -37,9 +37,6 @@ export interface AppSettings {
   export_auto_overwrite?: boolean;
   /** Download application updates automatically and install on normal exit. Defaults on. */
   auto_install_updates_on_quit?: boolean;
-  /** Let agents search Wikimedia Commons for open-licence pictures and fetch
-   *  them into the project (`search_images`, `import_image`). Defaults on. */
-  agent_image_search?: boolean;
   /** One app-wide typography and dialog sizing preset; absent in old files. */
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
@@ -155,7 +152,6 @@ export interface AppSettingsPatch {
   default_export_preset_id?: string;
   export_auto_overwrite?: boolean;
   auto_install_updates_on_quit?: boolean;
-  agent_image_search?: boolean;
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */
@@ -198,7 +194,6 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   default_export_preset_id: 'builtin:match',
   export_auto_overwrite: false,
   auto_install_updates_on_quit: true,
-  agent_image_search: true,
   layout_theme: DEFAULT_LAYOUT_THEME,
   resource_policy: { ...DEFAULT_RESOURCE_POLICY },
   resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY),

@@ -1455,7 +1455,7 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'media_thumbnail', 'media_frame', 'credits'] as const
+export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'media_thumbnail', 'media_frame'] as const
 /** The views that take `composition_id` — the per-composition resources. */
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
 export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
@@ -2313,7 +2313,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
-    description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media`, `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `t_us`), `credits` (fetched pictures' credits). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
+    description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media`, `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `t_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media_thumbnail` / `media_frame`.' },
@@ -2346,31 +2346,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       fps: { type: 'object', description: '24, 25, 30, 50, 60, or 24000/30000/60000 over 1001.', properties: { num: { type: 'integer', description: 'Numerator.' }, den: { type: 'integer', description: 'Denominator.' } }, required: ['num', 'den'] },
     }, required: ['name'] },
     parseDedicated: (a) => parseCreateProject(a) },
-  // ── open-licence pictures — executed by the MCP host (`mcp/imageTools.ts`):
-  //    they reach Wikimedia Commons, which the actor never does (ADR 0133).
-  { name: 'search_images', exec: 'dedicated', annotations: ANN_READ,
-    description: "Search Wikimedia Commons for pictures the user's media lacks: a person, an object, a place, a document the talk names. Only licences that allow changes and commercial use come back (CC0, public domain, CC BY, CC BY-SA). Answers each candidate as a thumbnail with its `candidate_id`, title, size, licence and credit line; `import_image` fetches one. Refused when the user has turned image search off in Settings.",
-    inputSchema: { type: 'object', properties: {
-      query: { type: 'string', description: 'What to find, in English: a name, a thing, a place (e.g. a full name, an object and what it is made of, a place and a year).' },
-      limit: { type: 'integer', minimum: 1, maximum: 12, description: 'Candidates to return, 1..12; default 6.' },
-    }, required: ['query'] },
-    parseDedicated: (a) => {
-      const query = parseStr(a.query, 'query').trim()
-      if (!query || query.length > 200) throw new McpArgError('query must be 1..200 characters', 'query')
-      const limit = a.limit === undefined ? 6 : Number(a.limit)
-      if (!Number.isInteger(limit) || limit < 1 || limit > 12) throw new McpArgError('limit must be an integer 1..12', 'limit')
-      return { query, limit }
-    } },
-  { name: 'import_image', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Fetch a `search_images` candidate into the project as an Image in the media pool, and record its credit beside the project (`read_project { view: \"credits\" }`). The licence is read again from Commons, not taken from the call. Large files come at 1920 px. Returns `{ media_id, label, width, height, license, credit, page_url }`; put the credit in your report.",
-    inputSchema: { type: 'object', properties: {
-      candidate_id: { type: 'string', description: 'A `candidate_id` from search_images, e.g. "commons:2493666".' },
-    }, required: ['candidate_id'] },
-    parseDedicated: (a) => {
-      const id = parseStr(a.candidate_id, 'candidate_id').trim()
-      if (!/^commons:\d{1,12}$/.test(id)) throw new McpArgError(`candidate_id ${id} is not one search_images returned (commons:<page id>)`, 'candidate_id')
-      return { candidate_id: id }
-    } },
 ]
 
 /** An absolute path, Windows (`C:\…`, `\\server\…`) or POSIX (`/…`). A relative

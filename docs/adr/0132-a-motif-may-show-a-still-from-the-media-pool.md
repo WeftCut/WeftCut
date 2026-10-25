@@ -61,9 +61,8 @@ retime and audio would be duplicated from the video layer.
   own `art.svg` when there is none. A fork replaces the SVG with a drawing of
   its own.
 - **Where pictures come from is the agent's to say.** WeftCut calls no image
-  service (revised by ADR 0133: it searches Wikimedia Commons for the agent,
-  and the order below gains that search after the footage). In order of
-  preference:
+  service (ADR 0133 added a Commons search; ADR 0137 took it out again). In
+  order of preference:
   1. the user's media;
   2. a still from the footage;
   3. an image the agent's own model generates, imported like any file;

@@ -75,10 +75,11 @@ timetable says.
 **Pictures.** Take each picture from, in order:
 1. the user's media in the pool;
 2. a still from the footage (`read_project { view: "media_frame" }`);
-3. `search_images`, then `import_image` the one that shows the point, which
-   keeps its credit;
-4. an image you generate, saved to a file and passed to `import_media`;
-5. an SVG you draw in the style's look, passed to `import_media`.
+3. an image you generate, saved to a file and passed to `import_media`;
+4. an SVG you draw in the style's look, passed to `import_media`.
+
+When none of these shows it, say so in the report: the user can add a
+picture for the next round.
 
 A picture goes into a sticker through its `media` prop: `"<media_id>"`, or
 `"<media_id>@<t_us>"` for a frame of a video.
@@ -119,10 +120,7 @@ The deliverable is the edited project in WeftCut.
   - the cut length;
   - each element placed, with its time;
   - every fact an overlay adds from outside the talk, with its source;
-  - every picture you generated or drew;
-  - the credit line of every fetched picture
-    (`read_project { view: "credits" }`). CC BY-SA pictures ask for the
-    video to carry the same licence if published;
+  - every picture you generated or drew, and every point no picture covers;
   - what became a tack.
 
 The user reviews the cut next. Their notes are the next round.

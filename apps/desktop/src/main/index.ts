@@ -33,7 +33,6 @@ import { installPerformanceCalibration } from './performanceCalibration.js'
 import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
-import { setImageToolEnv } from './mcp/imageTools.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
@@ -757,7 +756,6 @@ app.whenReady().then(async () => {
   setMotifStore(motifStore)
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
-  setImageToolEnv({ downloadDir: path.join(dataRoot.cacheDir, 'image-search'), enabled: () => appSettings.get().agent_image_search !== false })
 
   // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
   // the actor (the sole owner of project state — it serves every MCP state view and

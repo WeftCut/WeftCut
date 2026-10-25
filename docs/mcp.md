@@ -298,29 +298,6 @@ both answer with or without a project open. A failure of the open or create
 itself is an `isError` result whose text names the folder and the fix, with
 `error` set to the workspace variant (see the error model).
 
-**Open-licence pictures** (ADR 0133). When the user's media lacks a picture
-the talk calls for — a person, an object, a place, a document — the agent can
-fetch one from Wikimedia Commons. Both tools run on the MCP host, which is the
-only part of WeftCut that reaches Commons, and both are refused with
-`ImageSearchOff` when the user has turned off Settings → "Let agents search
-open image libraries" (on by default; the search words go to Wikimedia).
-- `search_images { query, limit? }` → per candidate a text line
-  (`<n>. <candidate_id> · title · width×height · licence`) and its thumbnail
-  as an IMAGE block, then `{ candidates: [{ candidate_id, source, title,
-  page_url, width, height, license, license_url, author, credit }] }`. Only
-  files whose licence allows changes and commercial use come back: CC0, public
-  domain, CC BY, CC BY-SA (NC, ND and GFDL-only files are dropped). `limit`
-  1..12, default 6. Read-only.
-- `import_image { candidate_id }` → `{ media_id, label, width, height,
-  license, credit, page_url }`. Asks Commons for the candidate again (its
-  licence is never taken from the call), downloads it over https (a JPEG, PNG,
-  WebP or GIF, at most 40 MB; a file wider than 1920 px, an SVG or a TIFF comes
-  as Commons' 1920 px rendering), imports it like `import_media`, and records
-  its credit in `credits.json` beside the project, keyed by the pool item's
-  content hash. `read_project { view: "credits" }` lists every pool item with a
-  credit, and whether a layer or a Motif prop uses it; the handoff report
-  carries those credit lines.
-
 ### Read (resources, not tools)
 
 | URI | Returns |

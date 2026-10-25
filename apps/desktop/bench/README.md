@@ -379,7 +379,7 @@ global install (`npm i -g @deepseek-ai/dsh`).
   usage at DeepSeek's list price, peak or off-peak by the run's start time
   (Chinese public holidays aside).
 - **Images.** `deepseek-v4-pro` takes text only: images from
-  `render_frames` or `search_images` reach it as a note, not a picture, so
+  `render_frames` reach it as a note, not a picture, so
   the look stage is blind. `deepseek-flash` sees them.
 
 ## Claude isolation

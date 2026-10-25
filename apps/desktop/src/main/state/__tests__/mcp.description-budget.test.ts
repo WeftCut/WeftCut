@@ -76,10 +76,7 @@ const PROPERTY_DESCRIPTION_CAP = 260
 // role's Motif without copying colours and fonts by hand.
 // +1 KB: `render_frames` (H3-D3) — the agent sees the composed frame export
 // renders; H2 placed titles over faces and cards off frame without it.
-// +2 KB: `search_images` / `import_image` (H4) — open-licence pictures of the
-// people, objects and places the talk names, licence-checked and credited; the
-// H3 cuts read as words because the agent had no such picture to show.
-const CATALOG_BYTE_BUDGET = 159_000
+const CATALOG_BYTE_BUDGET = 157_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
