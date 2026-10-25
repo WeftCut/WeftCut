@@ -32,7 +32,7 @@
     },
     "text": {
       "type": "string",
-      "default": "HIPPOCAMPUS",
+      "default": "WORD",
       "max_length": 24
     },
     "cue_tear_s": {
