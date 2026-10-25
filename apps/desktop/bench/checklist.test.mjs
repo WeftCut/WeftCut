@@ -164,10 +164,10 @@ describe('layer_count and selectors', () => {
     const scene = { id: 'c1', label: null, ordinal: 1, width: 1920, height: 1080, fps: { num: 25, den: 1 }, duration_us: 0, duration_pinned: false, markers: [], transitions: [], links: [],
       tracks: [track([role(motif(0, 10, 'clipping-paper'), 'plate'), role(motif(1, 10, 'clipping-sticker', { photo: 'm1@1000000' }), 'illustration')])] }
     const group = layer(40, 50, { kind: 'CompositionRef', composition: 'c1', src_in_us: 0, src_out_us: 10 * S, transform: transform() })
-    const network = role(motif(5, 25, 'clipping-network', { ground: 'paper', cue_link_s: 2 }), 'illustration')
+    const network = role(motif(5, 25, 'own-animation', { ground: 'paper', cue_link_s: 2 }), 'illustration')
     const p = project([track([video(0, 60)], { role: 'ARoll' }), track([network, group]), captionTrack([text(0, 60, 'all')])])
     p.compositions.c1 = scene
-    assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^2 scene\(s\): drawn clipping-network 5-25s; Group 40-50s, want >= 2$/)
+    assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^2 scene\(s\): drawn own-animation 5-25s; Group 40-50s, want >= 2$/)
     // Drawn over the footage (ground: none), it is an overlay, not a scene.
     network.params.props.ground = 'none'
     assert.match(check({ kind: 'scenes', min: 2, min_duration_s: 4 }, p).detail, /^1 scene\(s\): Group 40-50s, want >= 2$/)

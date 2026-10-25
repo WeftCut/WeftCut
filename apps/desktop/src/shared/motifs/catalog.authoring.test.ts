@@ -102,7 +102,7 @@ describe("assignUniqueId", () => {
 
 describe("BUILTIN_IDS", () => {
   it("is the three built-ins", () => {
-    expect([...BUILTIN_IDS].sort()).toEqual(["clipping-headline", "clipping-network", "clipping-paper", "clipping-pointer", "clipping-quote", "clipping-reveal", "clipping-scrap", "clipping-stamp", "clipping-sticker", "countdown", "lower-third", "text-fx"]);
+    expect([...BUILTIN_IDS].sort()).toEqual(["clipping-headline", "clipping-paper", "clipping-pointer", "clipping-quote", "clipping-reveal", "clipping-scrap", "clipping-stamp", "clipping-sticker", "countdown", "lower-third", "text-fx"]);
   });
 });
 
