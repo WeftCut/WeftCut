@@ -22,6 +22,8 @@ import { startLocalHost } from './hosts/local'
 import { runSlug, startRemoteHost } from './hosts/remote'
 import type { HostSession, HostStartOptions, TemplateMeta } from './hosts/types'
 import { waitForMedia } from './mediaReady'
+import { CHECK_PLAN_DEF, REVIEWER_SKILL, reviewPrompt, reviewReply, runCheckPlan, transcriptLines } from './plan/planTools'
+import type { Pace, Word } from './plan/checkPlan'
 import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
 import { compareBaselines, projectNameFor, templateKey } from './templates.mjs'
@@ -55,6 +57,20 @@ export interface PlannedRun {
   /** Extra measurements after the evidence is taken: `transcribe` times one
    *  transcribe_clip on the A-roll clip (no model spend). */
   probes: string[]
+  /** What the bench adds to the plan stage (README "Plan stage"). */
+  plan_stage: PlanStage
+}
+
+export interface PlanStage {
+  /** Offer `check_plan`, and treat a checked timetable as the plan shown at
+   *  gate 2. */
+  check: boolean
+  /** After the timetable, a reviewer in a fresh session reads it, and its
+   *  notes go back to the agent before the go-ahead: `same` (the run's own
+   *  driver and model) or `<driver>:<model>`. */
+  review?: string
+  /** Motif ids the agent never sees. */
+  hide_motifs: string[]
 }
 
 type McpCall = (name: string, args: Record<string, unknown>) => Promise<unknown>
@@ -93,6 +109,8 @@ function diffMotifs(before: Array<Record<string, unknown>>, after: Array<Record<
 const DEFAULT_GO_AHEAD = 'Yes, go ahead with your plan. Use your own judgement for any other choice (a local transcription engine is fine), and finish without asking me again.'
 /** What it says, under a plan gate, to a first stop that shows no storyboards. */
 const GATE_1_GO_ON = 'The brief and the outline look right. Go on to the AV script and the storyboards, and show them to me before you build.'
+/** The same, when the plan is a timetable checked with check_plan. */
+const GATE_1_TIMETABLE = 'The brief and the outline look right. Go on to the timetable, and show it to me before you build.'
 
 /** Tools an agent may call before its plan is approved although they are not
  *  read-only: they open and close its work session and change nothing a
@@ -276,13 +294,23 @@ async function motifEditsProbe(endpoint: { url: string; bearer_token: string }, 
   return out
 }
 
-function startHost(plan: PlannedRun, workdir: string, gate: HostStartOptions['gate']): Promise<HostSession> {
+function startHost(plan: PlannedRun, workdir: string, gate: HostStartOptions['gate'], proxyExtras: HostStartOptions['proxyExtras']): Promise<HostSession> {
   const base = { run_slug: runSlug(plan.run_id), out_dir: plan.out_dir, workdir, ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}) }
   if (plan.host.kind === 'local') {
     if (plan.task.plan_gate) throw new Error(`${plan.task.id}: plan_gate needs a remote host, whose proxy holds the gate`)
+    if (proxyExtras) throw new Error('the plan stage options need a remote host, whose proxy supplies them')
     return startLocalHost(base)
   }
-  return startRemoteHost({ ...base, ...plan.host, ...(gate ? { gate } : {}) })
+  return startRemoteHost({ ...base, ...plan.host, ...(gate ? { gate } : {}), ...(proxyExtras ? { proxyExtras } : {}) })
+}
+
+/** The words of the first transcription the agent got, and its segments. */
+function transcriptOf(result: Record<string, unknown>): { words: Word[]; segments: Array<{ t_start_us: number; t_end_us: number; text: string }> } | null {
+  const text = (result.content as Array<{ type: string; text?: string }> | undefined)?.find((b) => b.type === 'text')?.text
+  const data = (result.structuredContent ?? (text ? JSON.parse(text) : null)) as { segments?: Array<{ t_start_us: number; t_end_us: number; text: string; words?: Word[] }> } | null
+  const segments = data?.segments ?? []
+  const words = segments.flatMap((sg) => sg.words ?? [])
+  return words.length ? { words, segments } : null
 }
 
 export async function runOne(plan: PlannedRun): Promise<RunResult> {
@@ -312,8 +340,33 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         return `${tool} was not run: the user has not approved the plan yet, so nothing in the project can change. Present the plan and wait for the go-ahead; read-only tools still work.`
       }
     : undefined
+  // The plan stage the bench supplies: check_plan answered from the agent's
+  // own transcription, and the reviewer's notes.
+  const stage = plan.plan_stage
+  let heard: ReturnType<typeof transcriptOf> = null
+  let pace: Pace | null = null
+  const planChecks: Array<{ turn: number; hard: number; warning: number; findings: unknown[]; plan: unknown }> = []
+  const reviews: Array<{ reviewer: string; turn: number; cost_usd: number | null; notes: string }> = []
+  const proxyExtras: HostStartOptions['proxyExtras'] = stage.check || stage.hide_motifs.length ? {
+    ...(stage.hide_motifs.length ? { hideMotifs: stage.hide_motifs } : {}),
+    ...(stage.check ? {
+      extraTools: [{
+        def: CHECK_PLAN_DEF as never,
+        call: (args: Record<string, unknown>) => {
+          if (!heard) return { isError: true, content: [{ type: 'text', text: 'check_plan needs her words: run transcribe_clip on the A-roll clip first.' }] }
+          const r = runCheckPlan(args, heard.words, pace)
+          const hard = r.findings.filter((f) => f.severity === 'hard').length
+          planChecks.push({ turn: turnNow, hard, warning: r.findings.length - hard, findings: r.findings, plan: args })
+          return { content: [{ type: 'text', text: r.text }] }
+        },
+      }],
+      observe: (tool: string, _args: Record<string, unknown>, res: Record<string, unknown>) => {
+        if (tool === 'transcribe_clip' && !heard && !res.isError) heard = transcriptOf(res)
+      },
+    } : {}),
+  } : undefined
   try {
-    session = await startHost(plan, workdir, holdWrites)
+    session = await startHost(plan, workdir, holdWrites, proxyExtras)
     const s = session
     result.host = s.record
     result.app_revision = s.app.revision
@@ -425,6 +478,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
       await s.writeText(s.joinPath(projectDir, 'TASTE.md'), plan.task.taste)
       const view = await read('project://taste') as { style?: { name?: string }; diagnostics?: unknown[]; fonts?: unknown }
       result.taste = { style: view.style?.name ?? null, diagnostics: view.diagnostics ?? [], fonts: view.fonts ?? null }
+      pace = (view as { tokens?: { pace?: Pace } }).tokens?.pace ?? null
     }
     // Where the app runs and what GPU it holds, with the media work done.
     const status = await s.status().catch((e: Error) => ({ error: e.message }))
@@ -437,12 +491,39 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     // a plan gate it answers twice: a first stop without storyboards gets a
     // go-on to them, and the go-ahead comes at the stop that shows them.
     await initEval()
+    // With the bench's plan stage, a stop with no checked timetable yet gets
+    // a go-on to it (once), and the first stop that shows one gets the
+    // reviewer's notes (when asked for) before the go-ahead.
+    let goneOn = false
+    const review = async (turn: number, planMessage: string): Promise<string | null> => {
+      const [rd, rm] = stage.review === 'same' ? [plan.driver, plan.model] : [stage.review!.slice(0, stage.review!.indexOf(':')), stage.review!.slice(stage.review!.indexOf(':') + 1)]
+      const dir = path.join(plan.out_dir, 'review')
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(plan.out_dir, 'plan-before-review.md'), planMessage)
+      const rwork = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-review-'))
+      const rr = await driverNamed(rd).run({
+        task: { ...plan.task, prompt: reviewPrompt(heard ? transcriptLines(heard.segments) : '(no transcription yet)', planMessage, planChecks.at(-1)?.plan), go_ahead: false },
+        skill_path: REVIEWER_SKILL, mcp: session!.agentEndpoint, model: rm, workdir: rwork, artifacts_dir: dir,
+        limits: { timeout_ms: 15 * 60_000 },
+      })
+      const notes = rr.final_message ?? ''
+      reviews.push({ reviewer: `${rd}:${rm}`, turn, cost_usd: rr.cost_usd ?? null, notes })
+      fs.writeFileSync(path.join(plan.out_dir, 'review-notes.md'), notes)
+      return notes.trim() ? notes : null
+    }
+    const maxTurns = !plan.task.plan_gate ? 1 : stage.check && stage.review ? 3 : 2
     const nextUserTurn = async (turn: number, finalMessage: string | undefined): Promise<string | null> => {
-      if (plan.task.go_ahead === false || turn > (plan.task.plan_gate ? 2 : 1)) return null
+      if (plan.task.go_ahead === false || turn > maxTurns) return null
       const now = await read('project://current')
       if (diffProjects(parseProject(baselineWire), parseProject(now)).length > 0) return null
       turnNow = turn + 1
-      if (plan.task.plan_gate && turn === 1 && !hasStoryboards(finalMessage, workdir)) return GATE_1_GO_ON
+      if (plan.task.plan_gate && stage.check) {
+        if (!planChecks.length && !goneOn) { goneOn = true; return GATE_1_TIMETABLE }
+        if (stage.review && planChecks.length && !reviews.length) {
+          const notes = await review(turn, finalMessage ?? '')
+          if (notes) return reviewReply(notes)
+        }
+      } else if (plan.task.plan_gate && turn === 1 && !hasStoryboards(finalMessage, workdir)) return GATE_1_GO_ON
       gate.approved_turn = turn
       return plan.task.go_ahead ?? DEFAULT_GO_AHEAD
     }
@@ -456,6 +537,14 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     result.final_message = out.final_message ?? null
     result.user_replies = out.user_replies ?? []
     if (plan.task.plan_gate) result.plan_gate = gate
+    if (stage.check || stage.review || stage.hide_motifs.length) {
+      if (planChecks.length) writeJson(plan.out_dir, 'plan-checks.json', planChecks)
+      result.plan_stage = {
+        ...stage,
+        checks: planChecks.map(({ turn, hard, warning }) => ({ turn, hard, warning })),
+        reviews: reviews.map(({ reviewer, turn, cost_usd }) => ({ reviewer, turn, cost_usd })),
+      }
+    }
     result.exit = out.exit
     // A failed or timed-out session still changed the project; the evidence
     // below is taken regardless, and the exit says how the session ended.

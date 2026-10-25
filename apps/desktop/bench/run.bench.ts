@@ -7,7 +7,7 @@
 
 import { test } from '@playwright/test'
 import path from 'node:path'
-import { runOne, summaryLine, type HostPlan, type PlannedRun } from './runner'
+import { runOne, summaryLine, type HostPlan, type PlanStage, type PlannedRun } from './runner'
 import { loadTasks } from './tasks'
 
 interface Plan {
@@ -25,6 +25,8 @@ interface Plan {
   host: HostPlan
   rebuild_templates: boolean
   probes: string[]
+  plan_stage: PlanStage
+  label?: string
 }
 
 const raw = process.env.WEFTCUT_BENCH_PLAN
@@ -38,11 +40,11 @@ const slug = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, '_')
 const runs: PlannedRun[] = loadTasks(plan.tasks).flatMap((task) =>
   plan.models.flatMap((model) =>
     Array.from({ length: plan.repeat }, (_, i) => {
-      const name = `${task.id}__${slug(plan.driver)}-${slug(model)}__r${i + 1}`
+      const name = `${task.id}__${slug(plan.driver)}-${slug(model)}${plan.label ? `__${plan.label}` : ''}__r${i + 1}`
       return {
         run_id: `${plan.session}/${name}`, task, model, driver: plan.driver, skill_path: plan.skill,
         out_dir: path.join(plan.out, name), timeout_ms: plan.timeout_ms, media_timeout_ms: plan.media_timeout_ms,
-        host: plan.host, rebuild_templates: plan.rebuild_templates, probes: plan.probes,
+        host: plan.host, rebuild_templates: plan.rebuild_templates, probes: plan.probes, plan_stage: plan.plan_stage ?? { check: false, hide_motifs: [] },
         ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}),
         ...(plan.budget_usd !== undefined ? { budget_usd: plan.budget_usd } : {}),
       }
