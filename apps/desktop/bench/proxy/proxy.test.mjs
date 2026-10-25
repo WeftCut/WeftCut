@@ -42,7 +42,7 @@ async function fakeApp(events) {
       server.setRequestHandler(CallToolRequestSchema, async (r, extra) => {
         events.push({ at: 'app', tool: r.params.name, args: r.params.arguments, client: server.getClientVersion() })
         if (r.params.name === 'refuse') throw new McpError(ErrorCode.InvalidParams, 'no such draft', { field: 'id' })
-        if (r.params.name === 'list_motifs') return { content: [{ type: 'text', text: JSON.stringify([{ id: 'clipping-sticker' }, { id: 'clipping-network' }]) }] }
+        if (r.params.name === 'list_motifs') return { content: [{ type: 'text', text: JSON.stringify([{ id: 'clipping-sticker' }, { id: 'hidden-example' }]) }] }
         if (r.params.name === 'slow') {
           const token = r.params._meta?.progressToken
           for (let i = 1; i <= 2; i++) await extra.sendNotification({ method: 'notifications/progress', params: { progressToken: token, progress: i, total: 2 } })
@@ -185,7 +185,7 @@ test('proxy: the bench answers its own tools, hides Motifs, and sees results', a
     log: () => {},
     gate: (tool, readOnly) => (readOnly || tool === 'list_motifs' ? null : `${tool} waits`),
     extraTools: [{ def: { name: 'check_plan', description: 'checks', inputSchema: { type: 'object' } }, call: (args) => ({ content: [{ type: 'text', text: `rows: ${args.rows.length}` }] }) }],
-    hideMotifs: ['clipping-network'],
+    hideMotifs: ['hidden-example'],
     observe: (tool, args, result) => seen.push([tool, result.content[0].text]),
   })
   const agent = new Client({ name: 'claude-code', version: '2.0.0' }, { capabilities: {} })
@@ -200,9 +200,9 @@ test('proxy: the bench answers its own tools, hides Motifs, and sees results', a
     assert.equal(checked.content[0].text, 'rows: 2', 'answered here, not held by the gate')
     const motifs = await agent.callTool({ name: 'list_motifs', arguments: {} })
     assert.deepEqual(JSON.parse(motifs.content[0].text), [{ id: 'clipping-sticker' }])
-    const fork = await agent.callTool({ name: 'read_project', arguments: { source: { kind: 'motif', id: 'clipping-network' } } })
+    const fork = await agent.callTool({ name: 'read_project', arguments: { source: { kind: 'motif', id: 'hidden-example' } } })
     assert.equal(fork.isError, true)
-    assert.equal(fork.content[0].text, 'No Motif clipping-network.')
+    assert.equal(fork.content[0].text, 'No Motif hidden-example.')
     assert.deepEqual(events.filter((e) => e.at === 'app').map((e) => e.tool), ['list_motifs'], 'neither the own tool nor the hidden Motif reached the app')
     assert.deepEqual(seen, [['list_motifs', JSON.stringify([{ id: 'clipping-sticker' }])]], 'the observer sees what the agent gets')
   } finally {
