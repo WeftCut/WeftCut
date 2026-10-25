@@ -137,18 +137,12 @@ export interface RunResult {
    *  folder its working directory was copied to. */
   motifs: { added: unknown[]; changed: unknown[] } | null
   workdir_copy: string | null
-  /** Extra measurements requested with --probe (e.g. `transcribe`). */
-  probes: Record<string, unknown> | null
   final_message: string | null
   /** What the stand-in user said after the prompt (empty: nothing). */
   user_replies: string[]
   /** Under a task's plan gate: the turn whose stop got the go-ahead (null:
    *  never), and each call refused before it. */
   plan_gate?: { approved_turn: number | null; refused: Array<{ tool: string; turn: number }> }
-  /** The bench's plan stage: its options, each check_plan call's turn and
-   *  counts (plan-checks.json holds the plans and findings), and each review
-   *  (review-notes.md holds the notes). */
-  plan_stage?: { check: boolean; review?: string; hide_motifs: string[]; checks: Array<{ turn: number; hard: number; warning: number }>; reviews: Array<{ reviewer: string; turn: number; cost_usd: number | null }> }
   exit: DriverExit | null
   error: string | null
   started_at: string

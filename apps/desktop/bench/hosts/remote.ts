@@ -187,7 +187,6 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
       sync: () => mirror.sync(),
       log: (e) => { proxyLog.write(JSON.stringify(e) + '\n') },
       ...(opts.gate ? { gate: opts.gate } : {}),
-      ...opts.proxyExtras,
     })
 
     const templates: TemplateStore = {
