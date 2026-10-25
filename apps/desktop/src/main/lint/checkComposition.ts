@@ -568,7 +568,7 @@ export function checkComposition(project: Project, compositionId: string, taste:
       if (animated.length / scenes.length < minShare - 1e-6)
         findings.push({ severity: craftRule('still-scenes').severity, rule: 'still-scenes', range: span, layers: scenes.filter((l) => !animated.includes(l)).map((l) => l.id),
           message: `${animated.length} of ${scenes.length} scenes animate what is said; the rest are stills and words on paper`,
-          fix: 'show a process the speech explains as a drawn animation, its steps cued to the words: fork clipping-network or write a Motif in the style (motif-authoring.md, Concept animations)' })
+          fix: 'show a process the speech explains as a drawn animation, its steps cued to the words: write a Motif in the style (motif-authoring.md, Concept animations)' })
     }
 
     // How much of the cut full-frame scenes and plates hide the speaker for.

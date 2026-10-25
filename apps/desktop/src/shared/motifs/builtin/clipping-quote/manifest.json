@@ -32,13 +32,13 @@
     },
     "quote": {
       "type": "string",
-      "default": "Memories are not stored in one place; they are rebuilt each time we recall them.",
+      "default": "The line the viewer should remember, in the speaker's own words.",
       "max_length": 220,
       "multiline": true
     },
     "source": {
       "type": "string",
-      "default": "The Brain Review, 2024",
+      "default": "Source, year",
       "max_length": 60
     },
     "highlight_from": {

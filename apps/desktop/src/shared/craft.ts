@@ -72,7 +72,7 @@ export const CRAFT_RULES: readonly CraftRule[] = [
     why: 'H3 runs met an 8 s pace with headline after headline (3 pictures among about 45 elements): the cut read as words, not as a picture-led explainer.' },
   { id: 'still-scenes', severity: 'warning', threshold: 0.33, unit: 'fraction', direction: 'min',
     summary: 'In a cut with two or more scenes, at least a third of them are drawn animations of what is said (a process moving, a structure building), not pictures and words on paper.',
-    why: 'H4 runs built every scene from stickers, labels and tape; the user asked for the neuron passage to show neurons linking and signalling.' },
+    why: 'H4 runs built every scene from stickers, labels and tape; the user asked for a process the talk explains to be shown happening.' },
   { id: 'captions-covered', severity: 'warning',
     summary: 'Captions stay visible: nothing opaque and full-frame (a scene, a plate, an insert) sits on a track above them while cues are up.',
     why: 'An H3 run put its scenes on tracks above the captions and hid them for 49 s.' },

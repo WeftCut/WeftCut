@@ -41,7 +41,7 @@
     },
     "label": {
       "type": "string",
-      "default": "NEURON",
+      "default": "LABEL",
       "max_length": 30
     },
     "angle_deg": {

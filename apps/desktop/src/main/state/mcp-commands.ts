@@ -2351,7 +2351,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'search_images', exec: 'dedicated', annotations: ANN_READ,
     description: "Search Wikimedia Commons for pictures the user's media lacks: a person, an object, a place, a document the talk names. Only licences that allow changes and commercial use come back (CC0, public domain, CC BY, CC BY-SA). Answers each candidate as a thumbnail with its `candidate_id`, title, size, licence and credit line; `import_image` fetches one. Refused when the user has turned image search off in Settings.",
     inputSchema: { type: 'object', properties: {
-      query: { type: 'string', description: 'What to find, in English: a name, a thing, a place (e.g. "Henry Molaison", "hippocampus dissection", "Paris street map 1900").' },
+      query: { type: 'string', description: 'What to find, in English: a name, a thing, a place (e.g. a full name, an object and what it is made of, a place and a year).' },
       limit: { type: 'integer', minimum: 1, maximum: 12, description: 'Candidates to return, 1..12; default 6.' },
     }, required: ['query'] },
     parseDedicated: (a) => {

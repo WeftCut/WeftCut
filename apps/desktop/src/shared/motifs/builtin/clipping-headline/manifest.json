@@ -32,7 +32,7 @@
     },
     "text": {
       "type": "string",
-      "default": "HOW MEMORY WORKS",
+      "default": "HEADLINE",
       "max_length": 48
     },
     "kicker": {

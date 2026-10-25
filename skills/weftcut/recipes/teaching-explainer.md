@@ -86,15 +86,13 @@ frames: one frame for each moment something new arrives (each step of an
 animation, each piece of a scene). Write each frame in this form:
 
 ```
-Frame 3.2 · "send" 14.1 s → "communicators" 18.4 s
-Over: full frame, her voice runs on
-- neuron A · middle-left · 30 % of the frame's height · from step 1
-- neuron B · middle-right · 25 % · enters on "send"
-- signal · runs A → B · red · enters on "send"
-Eye: the signal crossing from A to B
-Leaves: nothing; the frame builds into 3.3
-Shows: one cell passing a signal to another, which her words name but
-cannot show
+Frame <n>.<k> · "<word>" <time> s → "<word>" <time> s
+Over: full frame, her voice runs on (or: over her, she sits <cell>)
+- <element> · <cell> · <share> % of the frame's height · from step <k>
+- <element> · <cell> · <share> % · enters on "<word>"
+Eye: the one place to look
+Leaves: what goes, on which word (or: nothing; the frame builds into <n>.<k+1>)
+Shows: what the frame shows that her words do not
 ```
 
 - **Place** each element in a cell of the frame's 3×3 grid (top-left …
@@ -109,8 +107,8 @@ cannot show
   draws an animation: an example, a fork, or a new one.
 
 **The video's visual system.** Say how the boards relate:
-- A different process gets a different picture: a walk becoming a map is
-  not a network.
+- A different process gets a different picture, not the same one
+  relabelled.
 - An idea that comes back gets the picture it had before, as a callback.
 - The animation draws the idea, so no label repeats what it draws, and no
   figure appears that the talk does not give.
@@ -254,7 +252,7 @@ and leaving on its words.
      Keep the shared props so the style still reaches it.
 4. **Build each animation** as one frame-sized Motif, as *A process is an
    animation* in `motif-authoring.md` describes:
-   - fork the style's example (`clipping-network`) or write a new Motif;
+   - write a new Motif in the style's vocabulary, or fork one of your own;
    - set its `cue_<step>_s` props from the word times of its storyboard;
    - `preview_motif` it at each cue before placing it;
    - place it on a track above the A-roll and below the captions. It is a
