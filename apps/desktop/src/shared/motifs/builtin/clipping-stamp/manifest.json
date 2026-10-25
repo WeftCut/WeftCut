@@ -32,12 +32,12 @@
     },
     "name": {
       "type": "string",
-      "default": "Dr. Ann Matsuuchi",
+      "default": "Full Name",
       "max_length": 40
     },
     "line2": {
       "type": "string",
-      "default": "Librarian · LaGuardia CC",
+      "default": "Role · Organisation",
       "max_length": 48
     },
     "tilt_deg": {
