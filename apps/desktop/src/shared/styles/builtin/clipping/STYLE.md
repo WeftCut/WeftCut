@@ -6,7 +6,6 @@ roles: []
 motifs:
   title: clipping-headline
   lower_third: clipping-stamp
-  callout: [clipping-quote, clipping-pointer, clipping-reveal]
   plate: clipping-paper
   illustration: clipping-sticker
 tokens:
@@ -104,18 +103,9 @@ whole frame.
 - **Lower thirds** (`clipping-stamp`) are the name on a paper strip and the role
   in a red rubber stamp below it. Place one bottom-left inside the safe area,
   when the person first speaks, for at least 4 seconds.
-- **Callouts** quote or point:
-  - `clipping-quote` is a newsprint clipping. The highlighter sweeps the words
-    `highlight_from` to `highlight_to`, counted from 0, and CJK counts
-    characters. Use it for the line the viewer should remember.
-  - `clipping-pointer` is a red marker arrow, circle or underline drawn onto
-    the footage, with its label at the arrow's tail, under the underline or
-    below the circle. Turn it with `angle_deg` to point at the thing.
-  - `clipping-reveal` is a word on a torn strip, hidden under a newsprint,
-    kraft or paper cover that is torn off at `cue_tear_s`. Set the cue to
-    the word's time, so the tear lands as she says it. It is an
-    interaction: the cover and the word share one Motif because the tear
-    shows the word.
+- **Callouts** have no example: write them in the vocabulary. A callout is
+  paper or ink on the frame: a clipping with a highlighter stroke, a red
+  marker line drawn on, a label on a torn strip. It arrives on its word.
 - **Plates** (`clipping-paper`) are full-frame kraft, newsprint or paper grounds.
   Put one between on-camera stretches as an insert, and lay titles, quotes and
   images on it.
@@ -131,27 +121,13 @@ whole frame.
   write an SVG with the same heavy ink line and flat fills on a transparent
   ground and `import_media` it: it becomes a PNG in the pool, ready for
   `photo`.
-- **Pictures lead; words label them.** This is a collage look. The people,
-  objects, places and documents the talk names are pasted in as pictures,
-  and the strips, stamps and tags name them: a name stamped under a
-  portrait, a date on a document. When she names someone, their portrait
-  can be slapped on beside her, with a stamp. Most of what the edit adds is
-  pictures, not headline strips. A picture the user's media lacks can come
-  from an open image library (`search_images`), credited.
-- **Scenes** explain a concept in full frame while she talks. A process is an
-  animation (above). Anything else is a collage on a plate: a hero picture over about half the frame, one or two
-  smaller pictures, and labels and pointers on them. It is a Group, and
-  every piece in it that moves on its own is its own layer. Its pieces:
-  - a `clipping-paper` plate;
-  - `clipping-sticker` pictures, the hero large and the others smaller;
-  - a `clipping-stamp` or a small `clipping-headline` tag naming a picture,
-    on it or beside it;
-  - a `clipping-pointer` or a `clipping-reveal` for what the viewer should
-    find, on its word.
-
-  The pieces leave a beat apart, the last with the plate. Put the scene's
-  track below the captions so they stay readable over it. Build scenes from
-  what the talk explains, not from this list.
+- **Pictures are pasted on; words label them.** This is a collage look:
+  people, objects, places and documents appear as pictures, and strips,
+  stamps and tags name them.
+- **Scenes** are full-frame paper while she talks: a plate and the pieces on
+  it, as a Group, each piece that moves on its own its own layer. The pieces
+  leave a beat apart, the last with the plate. Put the scene's track below
+  the captions.
 - **Animations** show a process happening, drawn in ink on the paper ground
   with the red accent for what matters. Write one as a Motif in this
   vocabulary: a camera that moves from one element to the whole and in on
@@ -162,11 +138,12 @@ whole frame.
 - **Tape** is optional. The examples take `tape: none`, and their pieces sit
   on the frame by their shadow. `tape: strip` adds a strip of masking tape,
   for a scrapbook look.
-- **Decoration** (`clipping-scrap`: a newsprint strip, a torn piece, tape) is
-  untagged. Use it sparingly, to tuck behind an image or a quote.
+- **Decoration** (a newsprint strip, a torn piece, tape) is untagged, and
+  sparing.
 - **Captions** stay plain white type at the bottom, at most two lines of 42
   characters, each cue on screen for 1.2 to 6 seconds. The paper is for what
-  the edit adds, not for every word spoken.
+  the edit adds, not for every word spoken. Over a light paper scene, check
+  that they still read.
 
 `step_fps` (0 = smooth) holds each pose for 1/step_fps s. Set it to 12 in a
 TASTE for a hand-made, stop-motion feel.
