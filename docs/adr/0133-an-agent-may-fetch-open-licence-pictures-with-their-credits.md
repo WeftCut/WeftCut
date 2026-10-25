@@ -1,8 +1,12 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # An agent may fetch open-licence pictures, with their credits
+
+> **Superseded by ADR 0137.** WeftCut no longer searches an image library
+> for the agent; pictures come from the user's media, the footage, or what
+> the agent draws, and a missing picture is reported.
 
 Date: 2026-10-23
 

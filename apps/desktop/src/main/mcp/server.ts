@@ -40,7 +40,6 @@ import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
-import { IMAGE_TOOLS, creditsView, runImageTool } from './imageTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
 import { MCP_INSTRUCTIONS } from './instructions.js'
@@ -461,12 +460,6 @@ async function dispatchTool(
     // Opening swaps the actor's whole state and moves the editor with it, so
     // the host runs these, not the actor (`projectTools.ts`).
     if (PROJECT_TOOLS.has(name) && tsHost.projects) return runProjectTool(tsHost, name, args)
-    // They reach Wikimedia Commons, which the actor never does (`imageTools.ts`).
-    if (IMAGE_TOOLS.has(name)) {
-      try { return await runImageTool(tsHost, name, args, mcpActor(client) as never) }
-      catch (e) { if (e instanceof McpArgError) return toolErrorResult(e.toJson()); throw e }
-    }
-    if (name === 'read_project' && args.view === 'credits') return toolRecord(creditsView(tsHost)) as unknown as ServerResult
     // The session view lives in the host's activity service, not the actor, so
     // it is answered here — the same record `project://session` serves.
     if (name === 'read_project' && args.view === 'taste' && tsHost.taste) {

@@ -70,8 +70,6 @@ export const useLayoutTheme = () =>
   useAppSettingsStore((s) => readLayoutTheme(s.settings.layout_theme));
 export const useAutoInstallUpdatesOnQuit = () =>
   useAppSettingsStore((s) => s.settings.auto_install_updates_on_quit !== false);
-export const useAgentImageSearch = () =>
-  useAppSettingsStore((s) => s.settings.agent_image_search !== false);
 export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>
