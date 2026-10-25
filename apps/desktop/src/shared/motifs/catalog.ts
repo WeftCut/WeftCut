@@ -13,11 +13,7 @@ import textFxJson from "./builtin/text-fx/manifest.json";
 // The `clipping` style's Motifs (spec H2-D4).
 import clippingHeadlineJson from "./builtin/clipping-headline/manifest.json";
 import clippingStampJson from "./builtin/clipping-stamp/manifest.json";
-import clippingQuoteJson from "./builtin/clipping-quote/manifest.json";
-import clippingPointerJson from "./builtin/clipping-pointer/manifest.json";
 import clippingPaperJson from "./builtin/clipping-paper/manifest.json";
-import clippingScrapJson from "./builtin/clipping-scrap/manifest.json";
-import clippingRevealJson from "./builtin/clipping-reveal/manifest.json";
 import clippingStickerJson from "./builtin/clipping-sticker/manifest.json";
 import { graphicRoleProblem } from "../graphicRole";
 import { isMediaPropValue } from "./mediaProp";
@@ -307,7 +303,7 @@ export function resolveMotifContentDurationUs(
 }
 
 /** Reserved built-in ids; a user/uploaded Motif may never take one. */
-export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-quote", "clipping-pointer", "clipping-paper", "clipping-scrap", "clipping-reveal", "clipping-sticker"];
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-paper", "clipping-sticker"];
 const DRAFTS_DIR = "drafts";
 
 /** Slugify a name → safe single path-segment id. */
@@ -351,7 +347,7 @@ export function assignUniqueId(name: string, taken: string[]): string {
 const _countdown = countdownJson as unknown as Manifest;
 const _lowerThird = lowerThirdJson as unknown as Manifest;
 const _textFx = textFxJson as unknown as Manifest;
-const _clipping = [clippingHeadlineJson, clippingStampJson, clippingQuoteJson, clippingPointerJson, clippingPaperJson, clippingScrapJson, clippingRevealJson, clippingStickerJson] as unknown as Manifest[];
+const _clipping = [clippingHeadlineJson, clippingStampJson, clippingPaperJson, clippingStickerJson] as unknown as Manifest[];
 
 /**
  * The built-in motif manifests, keyed by id. ReadonlyMap so callers can't
