@@ -355,8 +355,8 @@ the app (`plan/`):
 - `--plan-check` lists one more tool, `check_plan`, answered by the proxy
   (`plan/checkPlan.ts`). The agent passes its plan as a timetable and gets
   findings back: gaps, words not at their times, reading time, animation
-  steps, crowded cells, see-say, a relation carried by words alone, the
-  pace. The words are those of the agent's own first `transcribe_clip`.
+  steps, crowded cells, see-say, and a relation carried by words alone. The
+  words are those of the agent's own first `transcribe_clip`.
   Under `plan_gate`, a stop with no checked timetable yet gets one go-on to
   it; the first stop after a check is gate 2.
 - `--plan-review same|<driver>:<model>` (with `--plan-check`): at gate 2 a

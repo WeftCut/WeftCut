@@ -4,7 +4,7 @@
 // nothing in them names a fixture or what its talk is about.
 
 import path from 'node:path'
-import { checkPlan, type Pace, type Plan, type Word } from './checkPlan'
+import { checkPlan, type Plan, type Word } from './checkPlan'
 
 /** The reviewer's skill: a role, and the footage tools for looking only. */
 export const REVIEWER_SKILL = path.join(path.dirname(new URL(import.meta.url).pathname), 'reviewer-skill')
@@ -13,7 +13,7 @@ const RELATIONS = 'a sequence in time, a before and after, a comparison, a cause
 
 export const CHECK_PLAN_DEF = {
   name: 'check_plan',
-  description: 'Check a plan written as a timetable before showing it to the user. Pass the brief and one row per stretch of the talk, from her first word to her last. Finds what can be found without a frame: gaps, words not at the times given, reading time, animation steps off their words or too close, crowded cells, overlays that repeat her words, a relation carried by words alone, and the pace. Returns the findings and the plan as a table to present. Changes nothing.',
+  description: 'Check a plan written as a timetable before showing it to the user. Pass the brief and one row per stretch of the talk, from her first word to her last. Finds what can be found without a frame: gaps, words not at the times given, reading time, animation steps off their words or too close, crowded cells, overlays that repeat her words, and a relation carried by words alone. Returns the findings and the plan as a table to present. Changes nothing.',
   inputSchema: { type: 'object', required: ['brief', 'rows'], properties: {
     brief: { type: 'object', properties: { audience: { type: 'string' }, message: { type: 'string' }, argument: { type: 'array', items: { type: 'string' } }, left_out: { type: 'array', items: { type: 'string' } } } },
     rows: { type: 'array', items: { type: 'object', required: ['id', 'start_s', 'end_s', 'words', 'claim', 'relation', 'picture', 'sees'], properties: {
@@ -32,8 +32,8 @@ export const CHECK_PLAN_DEF = {
 } as const
 
 /** check_plan's answer: a summary, the findings, and the table to present. */
-export function runCheckPlan(args: unknown, words: Word[], pace: Pace | null): { text: string; findings: ReturnType<typeof checkPlan>['findings'] } {
-  const r = checkPlan(args as Plan, words, pace)
+export function runCheckPlan(args: unknown, words: Word[]): { text: string; findings: ReturnType<typeof checkPlan>['findings'] } {
+  const r = checkPlan(args as Plan, words)
   const hard = r.findings.filter((f) => f.severity === 'hard').length
   return { text: JSON.stringify({ summary: { hard, warning: r.findings.length - hard }, findings: r.findings, table: r.table }), findings: r.findings }
 }

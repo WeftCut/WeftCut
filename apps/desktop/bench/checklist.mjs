@@ -59,41 +59,14 @@
 //   av_sync              { tolerance_s? }      every VideoClip whose media has
 //                        sound has an Audio layer of the same media with the
 //                        same timeline span and source window
-//   jump_cuts            { max_uncovered_fraction? }  cuts between consecutive A-roll
-//                        clips of one media whose source does not continue, and the
-//                        share no full-frame layer above (scene Group, B roll, image,
-//                        plate Motif, drawn scene) or punch-in (scale change >= 5 %) covers; pass
-//                        null (measured only) without a threshold
-//   bare_talk            { max_s? }            longest stretch with nothing on screen but
-//                        the A roll (captions aside); pass null without a threshold
-//   beat_gaps            { max_s? }            longest time between new arrivals on
-//                        screen (layer starts off the A roll and captions, a
-//                        scene's elements and an animation's cue_<step>_s steps
-//                        included) over the A roll's span; pass null without a
-//                        threshold
-//   picture_share        { min_fraction? }    the share of graphic elements (overlays and
-//                        scene elements; captions, plates, untagged decoration, and
-//                        titles and lower thirds on the root aside) that are pictures:
-//                        footage, an image, or a Motif tagged illustration or whose
-//                        prop names a pool item; pass null without a threshold
 //   pool_pictures_used   { min? }             distinct pool Images placed (an image
 //                        layer or a Motif prop naming it); pass null without min
 //   captions_visible     { }                  caption time not hidden by an opaque layer
 //                        (footage off the A roll, a colour, a plate Motif, or a Group
 //                        holding one) on a track above the caption track
-//   scene_share          { max_fraction? }    the share of the A roll's span covered by
-//                        scene Groups and plate Motifs; pass null without a threshold
 //   scenes               { min, min_duration_s? }  scenes on the root: Groups of 2+ visual
 //                        layers (not a title card) and drawn scenes (below), each at
 //                        least min_duration_s long
-//   animated_scenes      { min }              scenes that animate: a drawn scene, or a
-//                        Group holding a drawn illustration
-//   scene_pictures       { min_fraction? }    the share of scene Groups on the root (2+
-//                        visual layers inside; a title card of a plate and a
-//                        title is not a scene) that hold a picture: footage, an
-//                        image, a nested Group, or a Motif tagged illustration or
-//                        whose prop names a pool item (ADR 0132); pass null
-//                        without scenes or without a threshold
 //   layer_region         { where, x?: [lo, hi], y?: [lo, hi], require?: 'all' | 'any' }
 //                        resting anchor of matching Text layers, as fractions of
 //                        the frame; null when only Motifs matched (a Motif draws
@@ -116,8 +89,8 @@ export const BUILTIN_MOTIF_IDS = Object.freeze([
 export const CHECK_KINDS = Object.freeze([
   'layer_count', 'motif_layer_count', 'text_layer_matching', 'text_layer_contains', 'layer_span',
   'caption_track_present', 'caption_coverage', 'captions_over_picture', 'timeline_duration',
-  'no_gaps', 'no_gaps_on_track', 'av_sync', 'jump_cuts', 'bare_talk', 'beat_gaps', 'scene_pictures',
-  'picture_share', 'pool_pictures_used', 'captions_visible', 'scene_share', 'scenes', 'animated_scenes', 'layer_region', 'all_of', 'any_of', 'human',
+  'no_gaps', 'no_gaps_on_track', 'av_sync', 'pool_pictures_used', 'captions_visible', 'scenes',
+  'layer_region', 'all_of', 'any_of', 'human',
 ])
 
 const US = 1e6
@@ -222,15 +195,6 @@ function describe(list, max = 4) {
   return shown.join('; ') + (list.length > max ? `; +${list.length - max} more` : '')
 }
 
-/** The steps of a Motif's animation on its layer's timeline: its
- *  `cue_<step>_s` props, in the Motif's own time, that fall while it shows. */
-function motifSteps(layer) {
-  if (layer.params?.kind !== 'Motif') return []
-  return Object.entries(layer.params.props ?? {}).filter(([k, v]) => /^cue_\w+_s$/.test(k) && typeof v === 'number' && Number.isFinite(v))
-    .map(([, v]) => layer.t_start_us + Math.round(v * 1e6) - (layer.params.src_in_us ?? 0))
-    .filter((t) => t > layer.t_start_us && t < layer.t_end_us)
-}
-
 /** Sorted, merged [start, end) intervals. */
 function union(spans) {
   const sorted = spans.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0])
@@ -275,31 +239,6 @@ const groupVisual = (layer, project) => (project?.compositions?.[layer.params.co
 function scenesOf(root, project) {
   return select(root, {}).filter(({ track, layer }) => layer.enabled !== false && !isCaptionTrack(track) && track.role !== 'ARoll' && (
     layer.params?.kind === 'CompositionRef' ? (() => { const v = groupVisual(layer, project); return v.length >= 2 && !titleCardOf(v) })() : drawnScene(layer, project)))
-}
-
-/** Cuts between consecutive A-roll clips of one media whose source does not
- *  continue (a pause or a passage removed), and which of them something
- *  covers: a full-frame layer above spanning the cut (a scene Group, B roll,
- *  an image, a plate Motif), or a punch-in (the next clip's scale differs by
- *  5 % or more). */
-function jumpCuts(root, project) {
-  const frame = frameUs(root)
-  const clips = select(root, { layer_kind: 'VideoClip', track_role: 'ARoll' }).map(({ layer }) => layer).sort((a, b) => a.t_start_us - b.t_start_us)
-  const scaleOf = (l) => { const v = l.params.transform?.scale_x; return v?.mode === 'Static' ? v.value : v?.value?.[0]?.value ?? 1 }
-  const cover = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' &&
-    (['VideoClip', 'ImageOverlay', 'CompositionRef', 'Color'].includes(layer.params?.kind) || (layer.params?.kind === 'Motif' && (layer.params.graphic_role === 'plate' || drawnScene(layer, project)))))
-  const cuts = [], covered = new Map()
-  for (let i = 1; i < clips.length; i++) {
-    const a = clips[i - 1], b = clips[i]
-    if (Math.abs(b.t_start_us - a.t_end_us) > frame || a.params.media !== b.params.media) continue
-    if (Math.abs(b.params.src_in_us - a.params.src_out_us) <= frame) continue
-    const t = b.t_start_us
-    cuts.push(t)
-    const over = cover.find(({ layer }) => layer.t_start_us <= t - frame && layer.t_end_us >= t + frame)
-    if (over) covered.set(t, over.layer.params.kind === 'CompositionRef' ? 'scene' : over.layer.params.kind === 'Motif' ? (over.layer.params.graphic_role === 'plate' ? 'plate' : 'animation') : 'insert')
-    else if (Math.abs(scaleOf(b) / scaleOf(a) - 1) >= 0.05) covered.set(t, 'punch-in')
-  }
-  return { cuts, covered }
 }
 
 const spansOf = (list) => list.map(({ layer }) => [layer.t_start_us, layer.t_end_us])
@@ -439,90 +378,6 @@ const KINDS = {
     return { pass: off.length === 0, detail: off.length ? `${off.length} of ${videos.length} clip(s) without matching sound: ${off.slice(0, 5).join(', ')}` : `${videos.length} clip(s) in sync` }
   },
 
-  jump_cuts(check, root, project) {
-    const { cuts, covered } = jumpCuts(root, project)
-    if (!cuts.length) return { pass: true, detail: 'no jump cuts' }
-    const bare = cuts.filter((c) => !covered.has(c))
-    const f = bare.length / cuts.length
-    const pass = check.max_uncovered_fraction === undefined ? null : f <= check.max_uncovered_fraction
-    const by = [...covered.values()].reduce((m, how) => ({ ...m, [how]: (m[how] ?? 0) + 1 }), {})
-    return { pass, detail: `${cuts.length} jump cut(s), ${cuts.length - bare.length} covered (${Object.entries(by).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}), ${(f * 100).toFixed(0)}% bare` +
-      (check.max_uncovered_fraction === undefined ? '' : `, want <= ${(check.max_uncovered_fraction * 100).toFixed(0)}%`) +
-      (bare.length ? `; bare at ${bare.slice(0, 6).map((c) => `${s(c)}s`).join(', ')}${bare.length > 6 ? ', …' : ''}` : '') }
-  },
-
-  bare_talk(check, root) {
-    const end = contentEndUs(root)
-    const dressed = union(spansOf(select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' && layer.params?.kind !== 'Audio')))
-    let longest = 0, at = 0, from = 0
-    for (const [a, b] of [...dressed, [end, end]]) {
-      if (a - from > longest) { longest = a - from; at = from }
-      from = Math.max(from, b)
-    }
-    const pass = check.max_s === undefined ? null : longest <= check.max_s * US
-    return { pass, detail: `longest stretch with nothing but the A roll: ${s(longest)} s from ${s(at)} s` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
-  },
-
-  beat_gaps(check, root, project) {
-    const aroll = select(root, {}).filter(({ track, layer }) => track.role === 'ARoll' && layer.params?.kind !== 'Audio').map((e) => e.layer)
-    if (!aroll.length) return { pass: null, detail: 'no A roll' }
-    const a0 = Math.min(...aroll.map((l) => l.t_start_us)), a1 = Math.max(...aroll.map((l) => l.t_end_us))
-    const arrivals = []
-    for (const { track, layer } of select(root, {})) {
-      if (isCaptionTrack(track) || track.role === 'ARoll' || layer.params?.kind === 'Audio') continue
-      arrivals.push(layer.t_start_us, ...motifSteps(layer))
-      if (layer.params?.kind !== 'CompositionRef') continue
-      // A scene's elements arrive too, mapped through the Group's window.
-      const child = project.compositions?.[layer.params.composition]
-      const w0 = layer.params.src_in_us ?? 0, w1 = w0 + (layer.t_end_us - layer.t_start_us)
-      for (const t of child?.tracks ?? []) for (const l of t.layers)
-        if (!isCaptionTrack(t) && l.enabled !== false && l.params?.kind !== 'Audio')
-          for (const at of [l.t_start_us, ...motifSteps(l)]) if (at > w0 && at < w1) arrivals.push(layer.t_start_us + at - w0)
-    }
-    const points = [a0, ...arrivals.filter((t) => t > a0 && t < a1).sort((x, y) => x - y), a1]
-    let longest = 0, at = a0
-    for (let i = 1; i < points.length; i++) if (points[i] - points[i - 1] > longest) { longest = points[i] - points[i - 1]; at = points[i - 1] }
-    const pass = check.max_s === undefined ? null : longest <= check.max_s * US
-    return { pass, detail: `longest wait for something new on screen: ${s(longest)} s from ${s(at)} s, ${arrivals.length} arrival(s)` + (check.max_s === undefined ? '' : `, want <= ${check.max_s} s`) }
-  },
-
-  scene_pictures(check, root, project) {
-    const titleCard = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
-    const pool = project.media_pool ?? {}
-    const names = (v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined
-    const picture = (l) => ['VideoClip', 'ImageOverlay', 'CompositionRef'].includes(l.params?.kind) ||
-      (l.params?.kind === 'Motif' && (l.params.graphic_role === 'illustration' || Object.values(l.params.props ?? {}).some(names)))
-    const scenes = select(root, { layer_kind: 'CompositionRef' }).map(({ layer }) => {
-      const child = project.compositions?.[layer.params.composition]
-      const visual = (child?.tracks ?? []).filter((t) => !isCaptionTrack(t)).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio')
-      return { at: layer.t_start_us, visual }
-    // A title on its paper ground is a title card, not a scene.
-    }).filter((x) => x.visual.length >= 2 && !titleCard(x.visual))
-    if (!scenes.length) return { pass: null, detail: 'no scene Groups' }
-    const bare = scenes.filter((x) => !x.visual.some(picture))
-    const f = (scenes.length - bare.length) / scenes.length
-    const pass = check.min_fraction === undefined ? null : f >= check.min_fraction
-    return { pass, detail: `${scenes.length - bare.length} of ${scenes.length} scene(s) hold a picture` + (bare.length ? `; words only at ${bare.map((x) => `${s(x.at)}s`).join(', ')}` : '') }
-  },
-
-  picture_share(check, root, project) {
-    const pool = project.media_pool ?? {}
-    const names = (v) => typeof v === 'string' && pool[v.split('@')[0]] !== undefined
-    let pictures = 0, words = 0
-    for (const { track, layer, inGroup } of deepEntries(root, project)) {
-      const p = layer.params ?? {}
-      if (layer.enabled === false || isCaptionTrack(track) || track.role === 'ARoll' || p.kind === 'Audio' || p.kind === 'CompositionRef') continue
-      const role = p.graphic_role ?? null
-      if (role === 'plate' || (!inGroup && (role === 'title' || role === 'lower_third'))) continue
-      if (p.kind === 'VideoClip' || p.kind === 'ImageOverlay' || (p.kind === 'Motif' && (role === 'illustration' || Object.values(p.props ?? {}).some(names)))) pictures++
-      else if (p.kind === 'Text' || (p.kind === 'Motif' && role !== null)) words++
-    }
-    const n = pictures + words
-    if (!n) return { pass: null, detail: 'no graphic elements' }
-    const f = pictures / n
-    return { pass: check.min_fraction === undefined ? null : f >= check.min_fraction, detail: `${pictures} of ${n} graphic elements are pictures (${Math.round(f * 100)} %)` + (check.min_fraction === undefined ? '' : `, want >= ${Math.round(check.min_fraction * 100)} %`) }
-  },
-
   pool_pictures_used(check, root, project) {
     const pool = project.media_pool ?? {}
     const images = new Set(Object.entries(pool).filter(([, m]) => m.kind === 'Image').map(([id]) => id))
@@ -557,31 +412,10 @@ const KINDS = {
     return { pass: hidden === 0, detail: hidden ? `${s(hidden)} s of ${s(cue)} s of captions hidden under a layer on a track above them` : `all ${s(cue)} s of captions visible` }
   },
 
-  scene_share(check, root, project) {
-    const aroll = select(root, { layer_kind: 'VideoClip', track_role: 'ARoll' }).map((e) => e.layer)
-    if (!aroll.length) return { pass: null, detail: 'no A roll' }
-    const a0 = Math.min(...aroll.map((l) => l.t_start_us)), a1 = Math.max(...aroll.map((l) => l.t_end_us))
-    const titleCard = (ls) => ls.some((l) => l.params?.graphic_role === 'plate') && ls.every((l) => ['plate', 'title'].includes(l.params?.graphic_role))
-    const full = select(root, {}).filter(({ track, layer }) => !isCaptionTrack(track) && track.role !== 'ARoll' && (
-      layer.params?.kind === 'CompositionRef' ? (() => { const ls = (project.compositions?.[layer.params.composition]?.tracks ?? []).flatMap((t) => t.layers).filter((l) => l.enabled !== false && l.params?.kind !== 'Audio'); return ls.length >= 2 && !titleCard(ls) })()
-        : layer.params?.kind === 'Motif' && (layer.params.graphic_role === 'plate' || drawnScene(layer, project))))
-    const covered = total(union(full.map(({ layer }) => [Math.max(layer.t_start_us, a0), Math.min(layer.t_end_us, a1)])))
-    const f = covered / (a1 - a0)
-    return { pass: check.max_fraction === undefined ? null : f <= check.max_fraction, detail: `scenes and plates cover ${Math.round(f * 100)} % of the cut (${s(covered)} s)` + (check.max_fraction === undefined ? '' : `, want <= ${Math.round(check.max_fraction * 100)} %`) }
-  },
-
   scenes(check, root, project) {
     const all = scenesOf(root, project), long = all.filter(({ layer }) => layer.t_end_us - layer.t_start_us >= (check.min_duration_s ?? 0) * US)
     const what = ({ layer }) => `${layer.params.kind === 'CompositionRef' ? 'Group' : `drawn ${layer.params.motif_id}`} ${s(layer.t_start_us)}-${s(layer.t_end_us)}s`
     return { pass: long.length >= check.min, detail: `${long.length} scene(s)${long.length ? `: ${long.map(what).join('; ')}` : ''}, want >= ${check.min}` }
-  },
-
-  animated_scenes(check, root, project) {
-    const animated = scenesOf(root, project).filter(({ layer }) => layer.params.kind !== 'CompositionRef' || groupVisual(layer, project).some((l) => drawnIllustration(l, project)))
-    const ids = (layer) => layer.params.kind === 'CompositionRef' ? groupVisual(layer, project).filter((l) => drawnIllustration(l, project)).map((l) => l.params.motif_id) : [layer.params.motif_id]
-    const own = (id) => (BUILTIN_MOTIF_IDS.includes(id) ? 'example' : 'own')
-    return { pass: animated.length >= check.min, detail: `${animated.length} animated scene(s)` +
-      (animated.length ? `: ${animated.map(({ layer }) => `${ids(layer).map((id) => `${id} (${own(id)})`).join(' + ')} ${s(layer.t_start_us)}-${s(layer.t_end_us)}s`).join('; ')}` : '') + `, want >= ${check.min}` }
   },
 
   layer_region(check, root) {

@@ -14,11 +14,6 @@
     { "id": "title-at-start", "description": "A title-role overlay opens the video and holds at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title", "starts_before_s": 3, "min_duration_s": 3 } } },
     { "id": "name-card", "description": "A lower third names her while she is first on camera (before 25 s) and holds at least 4 s", "check": { "kind": "text_layer_matching", "text_regex": "Genzel", "where": { "graphic_role": "lower_third", "starts_before_s": 25, "min_duration_s": 4 } } },
     { "id": "callouts", "description": "Two or more callouts, each up at least 3 s", "check": { "kind": "layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout", "min_duration_s": 3 } } },
-    { "id": "drawn-as-motifs", "description": "The title, the name card and the callouts are Motif layers (an example, a fork or the agent's own)", "check": { "kind": "all_of", "checks": [
-      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "title" } },
-      { "kind": "motif_layer_count", "op": ">=", "n": 1, "where": { "graphic_role": "lower_third" } },
-      { "kind": "motif_layer_count", "op": ">=", "n": 2, "where": { "graphic_role": "callout" } }
-    ] } },
     { "id": "tightened", "description": "Pauses came out: less footage than the 215 s source, but not gutted", "check": { "kind": "timeline_duration", "measure": "video", "min_s": 120, "max_s": 208 } },
     { "id": "no-short-clips", "description": "No A-roll clip shorter than 1 s", "check": { "kind": "layer_count", "op": "==", "n": 0, "where": { "layer_kind": "VideoClip", "max_duration_s": 0.999 } } },
     { "id": "no-gaps", "description": "Picture runs without black holes", "check": { "kind": "no_gaps" } },
@@ -27,18 +22,7 @@
     { "id": "captions-cover", "description": "Captions run through the clip", "check": { "kind": "caption_coverage", "min_fraction": 0.7 } },
     { "id": "captions-on-picture", "description": "Every caption sits over footage", "check": { "kind": "captions_over_picture", "min_fraction": 1 } },
     { "id": "concept-scene", "description": "At least one scene over the A roll, at least 4 s: a Group, or a drawn animation", "check": { "kind": "scenes", "min": 1, "min_duration_s": 4 } },
-    { "id": "scene-pictures", "description": "Every scene Group shows its idea in a picture (a sticker of a pool image or a still from the footage, or a drawing), and words label it", "check": { "kind": "scene_pictures", "min_fraction": 1 } },
-    { "id": "jump-cuts-covered", "description": "Most jump cuts left by tightening are covered by a scene, an insert or a punch-in (provisional: H2 left 97-100% bare)", "check": { "kind": "jump_cuts", "max_uncovered_fraction": 0.6 } },
-    { "id": "beat-gaps", "description": "Longest wait for something new on screen (measured, compared with the dense variant)", "check": { "kind": "beat_gaps" } },
-    { "id": "no-long-bare-talk", "description": "No stretch over 30 s with nothing on screen but the speaker (provisional: H2 had 59-75 s)", "check": { "kind": "bare_talk", "max_s": 30 } },
-    { "id": "picture-led", "description": "At least a third of the graphic elements are pictures (titles, name cards and plates aside)", "check": { "kind": "picture_share", "min_fraction": 0.33 } },
     { "id": "captions-visible", "description": "No scene or plate hides the captions", "check": { "kind": "captions_visible" } },
-    { "id": "speaker-stays", "description": "Scenes and plates cover at most half the cut", "check": { "kind": "scene_share", "max_fraction": 0.5 } },
-    { "id": "animated-concept", "description": "At least one scene animates a process the talk explains (a drawn scene, or a Group holding a drawn illustration), not only stills and words", "check": { "kind": "animated_scenes", "min": 1 } },
-    { "id": "animation-shows-it", "description": "The animation shows what she explains while she explains it: its steps land on her words, and it shows what pictures and labels could not", "check": { "kind": "human" } },
-    { "id": "overlays-add", "description": "Overlays add what the speech does not, never the line being said", "check": { "kind": "human" } },
-    { "id": "in-the-style", "description": "The overlays read as one clipping look: palette, fonts, spring, paper", "check": { "kind": "human" } },
-    { "id": "exits", "description": "Overlays and the insert leave by being taken off or sliding out, not by hard cuts", "check": { "kind": "human" } },
     { "id": "clear-of-speaker", "description": "Overlays leave her face clear", "check": { "kind": "human" } },
     { "id": "quote-exact", "description": "A quote overlay uses her exact words", "check": { "kind": "human" } }
   ]

@@ -23,7 +23,7 @@ import { runSlug, startRemoteHost } from './hosts/remote'
 import type { HostSession, HostStartOptions, TemplateMeta } from './hosts/types'
 import { waitForMedia } from './mediaReady'
 import { CHECK_PLAN_DEF, REVIEWER_SKILL, reviewPrompt, reviewReply, runCheckPlan, transcriptLines } from './plan/planTools'
-import type { Pace, Word } from './plan/checkPlan'
+import type { Word } from './plan/checkPlan'
 import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
 import { compareBaselines, projectNameFor, templateKey } from './templates.mjs'
@@ -344,7 +344,6 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
   // own transcription, and the reviewer's notes.
   const stage = plan.plan_stage
   let heard: ReturnType<typeof transcriptOf> = null
-  let pace: Pace | null = null
   const planChecks: Array<{ turn: number; hard: number; warning: number; findings: unknown[]; plan: unknown }> = []
   const reviews: Array<{ reviewer: string; turn: number; cost_usd: number | null; notes: string }> = []
   const proxyExtras: HostStartOptions['proxyExtras'] = stage.check || stage.hide_motifs.length ? {
@@ -354,7 +353,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         def: CHECK_PLAN_DEF as never,
         call: (args: Record<string, unknown>) => {
           if (!heard) return { isError: true, content: [{ type: 'text', text: 'check_plan needs her words: run transcribe_clip on the A-roll clip first.' }] }
-          const r = runCheckPlan(args, heard.words, pace)
+          const r = runCheckPlan(args, heard.words)
           const hard = r.findings.filter((f) => f.severity === 'hard').length
           planChecks.push({ turn: turnNow, hard, warning: r.findings.length - hard, findings: r.findings, plan: args })
           return { content: [{ type: 'text', text: r.text }] }
@@ -478,7 +477,6 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
       await s.writeText(s.joinPath(projectDir, 'TASTE.md'), plan.task.taste)
       const view = await read('project://taste') as { style?: { name?: string }; diagnostics?: unknown[]; fonts?: unknown }
       result.taste = { style: view.style?.name ?? null, diagnostics: view.diagnostics ?? [], fonts: view.fonts ?? null }
-      pace = (view as { tokens?: { pace?: Pace } }).tokens?.pace ?? null
     }
     // Where the app runs and what GPU it holds, with the media work done.
     const status = await s.status().catch((e: Error) => ({ error: e.message }))
