@@ -23,7 +23,7 @@ Plan which passages are which before placing anything.
 **An overlay that repeats the words being said.**
 - **Example:** a pull quote of the sentence she is saying, over a caption of
   the same sentence. The viewer reads the same words three times and learns
-  nothing new. The audit reports it as `overlay-echoes-speech`.
+  nothing new.
 - **Instead:**
   - show what the speech leaves out;
   - quote her only over a scene where she is not on screen, or quote someone
