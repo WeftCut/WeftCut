@@ -310,16 +310,18 @@ mod tests {
     }
 
     /// The only cross-language check of the composition wire contract: the
-    /// fixture is TS output (`fixtures/projects/README.md`), so Rust
-    /// deserialising it and re-emitting an equal `compositions` subtree proves
-    /// neither side dropped or renamed a field there. `Value` equality is
+    /// fixture is TS output of the current generation
+    /// (`fixtures/projects/README.md`), so Rust deserialising it and
+    /// re-emitting an equal `compositions` subtree proves neither side dropped
+    /// or renamed a field there. An older generation would not round-trip:
+    /// Rust emits every current field, as TS migration does. `Value` equality is
     /// key-order-blind — `compositions` is an `OrdMap` here and
     /// insertion-ordered in TS. Only that subtree is compared: outside it the
     /// two sides already differ by design (Rust emits `Option` media-metadata
     /// fields TS omits, and its timestamps drop the `.000` TS writes).
     #[test]
-    fn ts_fixture_v3_deserialises_and_round_trips() {
-        let text = include_str!("../../../fixtures/projects/v3.json");
+    fn ts_fixture_deserialises_and_round_trips() {
+        let text = include_str!("../../../fixtures/projects/v5.json");
         let p: Project = serde_json::from_str(text).expect("fixture deserialises");
         assert_eq!(p.compositions.len(), 2, "root + one pre-composed Group");
         assert!(p.compositions.contains_key(&p.root_id));

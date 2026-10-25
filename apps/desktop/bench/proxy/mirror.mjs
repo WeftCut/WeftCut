@@ -64,9 +64,12 @@ export function sftpBatch(plan, localRoot, remoteRoot) {
     return `"${s}"`
   }
   const remote = (rel) => `${remoteRoot.replace(/\/+$/, '')}/${rel}`
+  // sftp reads local paths with forward slashes on every platform; a
+  // Windows agent host must not hand it backslashes.
+  const local = (rel) => path.join(localRoot, ...rel.split('/')).split(path.sep).join('/')
   const lines = []
   for (const d of plan.mkdirs) lines.push(`-mkdir ${q(remote(d))}`)
-  for (const f of plan.puts) lines.push(`put ${q(path.join(localRoot, ...f.split('/')))} ${q(remote(f))}`)
+  for (const f of plan.puts) lines.push(`put ${q(local(f))} ${q(remote(f))}`)
   for (const f of plan.rmFiles) lines.push(`-rm ${q(remote(f))}`)
   for (const d of plan.rmDirs) lines.push(`-rmdir ${q(remote(d))}`)
   return lines.length ? `${lines.join('\n')}\n` : ''
