@@ -14,7 +14,6 @@
 // widths are fractions of the composition.
 
 import { BUILTIN_GRAPHIC_ROLES, GRAPHIC_ROLE_PATTERN } from '../../shared/graphicRole'
-import { PACE_RULES, type PaceTokens } from '../../shared/craft'
 
 export type TasteSource = 'style' | 'taste'
 
@@ -69,9 +68,6 @@ export interface Tokens {
   /** Font slot → families in preference order. A Motif string prop
    *  `font_<slot>` takes the first one installed (spec H2-D4). */
   fonts?: Record<string, string[]>
-  /** How dense an edit is (`shared/craft.ts` PACE_RULES): each key tightens
-   *  one craft rule's threshold. */
-  pace?: PaceTokens
 }
 
 export interface RoleDeclaration { name: string; description?: string }
@@ -274,16 +270,6 @@ export function validateTokens(raw: unknown, source: TasteSource, knownRoles: Re
         floors[rule] = n
       }
       out.floors = floors
-    } else if (k === 'pace') {
-      if (!isObj(v)) { bad(o, path, 'expected a mapping: beat_every_s, bare_talk_max_s, scenes_per_min, pictures_min_share'); continue }
-      const pace: PaceTokens = {}
-      for (const [key, n] of Object.entries(v)) {
-        if (!(key in PACE_RULES)) { bad(o, `${path}.${key}`, 'unknown pace key (beat_every_s, bare_talk_max_s, scenes_per_min, pictures_min_share)'); continue }
-        if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) { bad(o, `${path}.${key}`, 'expected a positive number'); continue }
-        if (key === 'pictures_min_share' && n > 1) { bad(o, `${path}.${key}`, 'expected a share between 0 and 1'); continue }
-        pace[key as keyof PaceTokens] = n
-      }
-      out.pace = pace
     } else if (k === 'motif') {
       if (!isObj(v)) { bad(o, path, 'expected a mapping of Motif prop key → value'); continue }
       const motif: Record<string, string | number> = {}
@@ -305,7 +291,7 @@ export function validateTokens(raw: unknown, source: TasteSource, knownRoles: Re
         fonts[slot] = families as string[]
       }
       out.fonts = fonts
-    } else bad(o, path, 'unknown token group (palette, text, caption, floors, pace, motif, fonts)')
+    } else bad(o, path, 'unknown token group (palette, text, caption, floors, motif, fonts)')
   }
   return out
 }

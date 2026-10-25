@@ -193,42 +193,6 @@ describe('check_composition over Motif layers (H2)', () => {
     })
   })
 
-  describe('overlay-echoes-speech', () => {
-    const quoteSchema = { quote: { type: 'string', default: '' }, source: { type: 'string', default: '' }, exit: { type: 'enum', options: ['lift', 'fade'], default: 'lift' }, font_body: { type: 'string', default: '' } }
-    const lookup = (id: string) => (id === 'quote' ? { size: [1200, 560], props_schema: quoteSchema } : null) as never
-    const withProps = (text: ReturnType<typeof setup>['text'], props: Record<string, unknown>) => ({ ...(motif(text, 'quote', 'callout') as object), props }) as LayerParams
-    const echoes = (p: Project) => checkComposition(p, p.root_id, styled(), undefined, { motif: lookup }).findings.filter((f) => f.rule === 'overlay-echoes-speech')
-
-    it('reports a quote card of the line being said, from the captions in its span', () => {
-      const { p, bRoll, caption, put, text } = setup()
-      put(caption, text('A memory is such\na unique network.'), 32, 34.5)
-      put(bRoll, withProps(text, { quote: 'A memory is such a unique network.', source: 'Lisa Genzel, on how memory works', exit: 'lift', font_body: 'Georgia' }), 32.2, 36.8)
-      const [f] = echoes(p)
-      expect(f).toMatchObject({ severity: 'warning', layers: [p.compositions[p.root_id]!.tracks[1]!.layers[0]!.id] })
-      expect(f!.message).toContain('A memory is such a unique network.')
-    })
-
-    it('leaves alone what adds to the speech, short titles and names, and anything without captions', () => {
-      const { p, bRoll, caption, put, text } = setup()
-      put(caption, text('The first hub is the hippocampus,\non the left side and on the right.'), 64, 68)
-      put(bRoll, withProps(text, { quote: 'Seahorse-shaped, about 4 cm long, one per hemisphere', source: '' }), 64, 68)
-      put(bRoll, text('The hippocampus', { graphic_role: 'title' }), 64, 68)
-      put(bRoll, withProps(text, { quote: 'The first hub is the hippocampus', source: '' }), 90, 94)
-      expect(echoes(p)).toEqual([])
-      const { p: q, bRoll: b2, put: put2, text: text2 } = setup()
-      put2(b2, withProps(text2, { quote: 'A memory is such a unique network.', source: '' }), 0, 4)
-      expect(echoes(q)).toEqual([])
-    })
-
-    it('counts CJK by character', () => {
-      const { p, bRoll, caption, put, text } = setup()
-      put(caption, text('记忆是一个独特的神经网络'), 0, 3)
-      put(bRoll, withProps(text, { quote: '记忆是独特的网络', source: '' }), 0, 3)
-      put(bRoll, withProps(text, { quote: '海马体', source: '' }), 0, 3)
-      expect(echoes(p)).toHaveLength(1)
-    })
-  })
-
   it('still hard-fails an undeclared role on a Motif', () => {
     const { p, bRoll, put, text } = setup()
     put(bRoll, motif(text, 'paper-title', 'mascot'), 0, 4)
@@ -236,7 +200,7 @@ describe('check_composition over Motif layers (H2)', () => {
   })
 })
 
-describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
+describe('check_composition over Groups and full-frame layers (H3)', () => {
   const stat = (value: number) => ({ mode: 'Static' as const, value })
   const lookup = (id: string) => (id === 'headline' ? { size: [1400, 400], props_schema: {} } : null) as never
   const clip = (src0: number, src1: number, over: Record<string, unknown> = {}) =>
@@ -283,75 +247,6 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     expect(compositionRevision(p, p.root_id, null)).not.toBe(before)
   })
 
-  it('reports runs of bare jump cuts, not covered or punched-in ones', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    // Five clips with the pauses between them cut out: four jump cuts.
-    put(aRoll, clip(0, 4), 0, 4); put(aRoll, clip(5, 9), 4, 8); put(aRoll, clip(10, 14), 8, 12); put(aRoll, clip(15, 19), 12, 16); put(aRoll, clip(20, 24), 16, 20)
-    const runs = () => checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-jump-cuts')
-    expect(runs()[0]!.message).toMatch(/^4 jump cuts in 12 s/)
-    // Punch in on the third clip: the cuts at 8 and 12 are covered, leaving two.
-    const third = p.compositions[p.root_id]!.tracks[0]!.layers[2]!
-    const tp = third.params as unknown as { transform: Record<string, unknown> }
-    tp.transform = { ...tp.transform, scale_x: stat(1.15), scale_y: stat(1.15) }
-    expect(runs()).toEqual([])
-    // A scene over the first cut as well: still none.
-    put(bRoll, clip(100, 104), 3, 5)
-    expect(runs()).toEqual([])
-  })
-
-  it('reports a long stretch with nothing but the speaker', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    put(aRoll, clip(0, 90), 0, 90)
-    put(bRoll, clip(200, 204), 40, 44)
-    const bare = checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'bare-talk')
-    expect(bare.map((f) => f.range)).toEqual([[0, 40 * S], [44 * S, 90 * S]])
-  })
-  it('holds the cut to its pace: new arrivals, bare talk and scenes per minute', () => {
-    const { p, aRoll, bRoll, put, text } = setup()
-    put(aRoll, clip(0, 120), 0, 120)
-    // Something arrives at 10 and 20 s, then a 40 s gap, then a held card to the end.
-    for (const t of [10, 20]) put(bRoll, { ...text('note'), graphic_role: 'callout' } as LayerParams, t, t + 4)
-    put(bRoll, { ...text('held'), graphic_role: 'callout' } as LayerParams, 64, 120)
-    const found = (md?: string) => checkComposition(p, p.root_id, md ? taste(md) : null).findings
-      .filter((f) => ['sparse-beats', 'bare-talk', 'scene-count'].includes(f.rule)).map((f) => [f.rule, f.range.map((v) => v / S)])
-    // By default: the 40 s gap is bare talk (reported once), the 56 s held card is sparse.
-    expect(found()).toEqual([['bare-talk', [24, 64]], ['sparse-beats', [64, 120]]])
-    // A dense pace tightens all three.
-    // 0–10 s is bare talk; 10–20 s has an overlay up but nothing new for 10 s.
-    expect(found('---\ntokens:\n  pace: { beat_every_s: 9, bare_talk_max_s: 9, scenes_per_min: 1 }\n---\n')).toEqual([
-      ['bare-talk', [0, 10]], ['scene-count', [0, 120]], ['sparse-beats', [10, 20]], ['bare-talk', [24, 64]], ['sparse-beats', [64, 120]],
-    ])
-    // A pace never loosens the craft table.
-    expect(found('---\ntokens:\n  pace: { beat_every_s: 600, bare_talk_max_s: 600 }\n---\n')).toEqual(found())
-  })
-
-  it('asks a scene of words alone for a picture', () => {
-    const MOTIFS: Record<string, unknown> = {
-      headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },
-      sticker: { size: [900, 760], graphic_role: 'illustration', props_schema: { photo: { type: 'media', default: '' } } },
-    }
-    const motifs = (id: string) => (MOTIFS[id] ?? null) as never
-    const { p, inner, cid } = grouped(960, 540, 10)
-    ;(inner.params as { props: Record<string, unknown> }).props = { text: 'HIPPOCAMPUS' }
-    const scene = p.compositions[cid]!
-    const second: Layer = { ...structuredClone(inner), id: 'tag' }
-    scene.tracks[1]!.layers.push(second)
-    const asks = () => checkComposition(p, p.root_id, null, undefined, { motif: motifs }).findings.filter((f) => f.rule === 'scene-all-words')
-    expect(asks().map((f) => [f.severity, f.message])).toEqual([['review', 'scene of 2 layers shows only words: no photo, still or drawing']])
-    // A sticker, even one drawing its own art, is a picture.
-    second.params = { ...second.params, motif_id: 'sticker', props: {} } as LayerParams
-    expect(asks()).toEqual([])
-    // A title on its plate is a title card, not a scene.
-    second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' }, graphic_role: 'title' } as LayerParams
-    inner.params = { ...inner.params, graphic_role: 'plate' } as LayerParams
-    expect(asks()).toEqual([])
-    inner.params = { ...inner.params, graphic_role: 'callout' } as LayerParams
-    expect(asks()).toHaveLength(1)
-    // Without Motif manifests, nothing is judged.
-    second.params = { ...second.params, motif_id: 'headline', props: { text: 'TAG' } } as LayerParams
-    expect(checkComposition(p, p.root_id, null).findings.filter((f) => f.rule === 'scene-all-words')).toEqual([])
-  })
-
   const MANIFESTS: Record<string, unknown> = {
     headline: { size: [1400, 400], props_schema: { text: { type: 'string', default: '' } } },
     sticker: { size: [900, 760], graphic_role: 'illustration', props_schema: { photo: { type: 'media', default: '' } } },
@@ -362,20 +257,6 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
   const motifAt = (motif_id: string, props: Record<string, unknown> = {}, graphic_role: string | null = null) =>
     ({ kind: 'Motif', motif_id, motif_version: 1, props, src_in_us: 0, transform: textParamsDefault('x', { width: 1920, height: 1080 } as never).transform, opacity: stat(1), graphic_role }) as unknown as LayerParams
   const audit = (p: Project, rule: string) => checkComposition(p, p.root_id, null, undefined, { motif: manifests }).findings.filter((f) => f.rule === rule)
-
-  it('asks a word-heavy cut for pictures, titles and name cards aside', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    put(aRoll, clip(0, 120), 0, 120)
-    put(bRoll, motifAt('headline', { text: 'HOW MEMORY WORKS' }, 'title'), 0, 4)
-    for (const [i, t] of ['NEURONS', 'TWO HUBS', 'CORTEX', 'GIST'].entries()) put(bRoll, motifAt('headline', { text: t }, 'callout'), 10 + i * 20, 14 + i * 20)
-    const sticker = put(bRoll, motifAt('sticker', { photo: '' }), 95, 100)
-    expect(audit(p, 'word-heavy').map((f) => f.message)).toEqual(['1 of 5 graphic elements are pictures (20 %), under 33 %'])
-    put(bRoll, { ...sticker.params }, 105, 110)
-    expect(audit(p, 'word-heavy')).toEqual([])
-    // A pace raises the share.
-    const raised = checkComposition(p, p.root_id, taste('---\ntokens:\n  pace: { pictures_min_share: 0.5 }\n---\n'), undefined, { motif: manifests }).findings.filter((f) => f.rule === 'word-heavy')
-    expect(raised.map((f) => f.message)).toEqual(['2 of 6 graphic elements are pictures (33 %), under 50 %'])
-  })
 
   it('reports a scene or plate on a track above the captions', () => {
     const { p, comp, aRoll, caption, put, text } = setup()
@@ -393,69 +274,16 @@ describe('check_composition over Groups and the A roll\'s rhythm (H3)', () => {
     expect(audit(p, 'captions-covered')).toEqual([])
   })
 
-  it('reports scenes and plates covering more than half the cut', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    put(aRoll, clip(0, 100), 0, 100)
-    put(bRoll, motifAt('paper', {}, 'plate'), 10, 40)
-    put(bRoll, motifAt('paper', {}, 'plate'), 30, 60)
-    // Overlapping plates count once: 10–60 s is half the cut, which is allowed.
-    expect(audit(p, 'scene-share')).toEqual([])
-    put(bRoll, motifAt('paper', {}, 'plate'), 70, 75)
-    expect(audit(p, 'scene-share').map((f) => f.message)).toEqual(['scenes and plates cover 55 % of the cut, over 50 %: the speaker is gone for 55 s'])
-  })
-
-  it('takes a full-frame drawn animation for a scene: it covers jump cuts', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    put(aRoll, clip(0, 4), 0, 4); put(aRoll, clip(5, 9), 4, 8); put(aRoll, clip(10, 14), 8, 12); put(aRoll, clip(15, 19), 12, 16); put(aRoll, clip(20, 24), 16, 20)
-    const drawn = put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 2, 18)
-    expect(audit(p, 'bare-jump-cuts')).toEqual([])
+  it('takes a full-frame drawn animation for a scene: it hides the captions under it', () => {
+    const { p, comp, aRoll, caption, put, text } = setup()
+    put(aRoll, clip(0, 20), 0, 20)
+    put(caption, text('one'), 4, 8)
+    const above: Track = { ...structuredClone(caption), id: 'above', role: null, layers: [] }
+    comp.tracks.push(above)
+    const drawn = put(above, motifAt('network', { ground: 'paper' }, 'illustration'), 2, 18)
+    expect(audit(p, 'captions-covered').map((f) => f.message)).toEqual(['drawn scene on a track above the captions hides 4 s of them'])
     // On no ground it is drawn over the speaker: an overlay, not a scene.
     ;(drawn.params as { props: Record<string, unknown> }).props = { ground: 'none' }
-    expect(audit(p, 'bare-jump-cuts')).toHaveLength(1)
-  })
-
-  it('asks a cut whose scenes are all stills and words for an animated one', () => {
-    const { p, aRoll, bRoll, put, g, cid, inner } = grouped(960, 540, 10)
-    put(aRoll, clip(0, 100), 0, 100)
-    p.compositions[cid]!.tracks[0]!.layers.push({ ...structuredClone(inner), id: 'pic', params: motifAt('sticker', { photo: '' }) })
-    put(bRoll, structuredClone(g.params), 40, 46)
-    expect(audit(p, 'still-scenes').map((f) => f.message)).toEqual(['0 of 2 scenes animate what is said; the rest are stills and words on paper'])
-    // One drawn animation in three scenes is a third.
-    put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 60, 75)
-    expect(audit(p, 'still-scenes')).toEqual([])
-  })
-
-  it('counts the steps of an animation as new arrivals', () => {
-    const { p, aRoll, bRoll, put } = setup()
-    put(aRoll, clip(0, 70), 0, 70)
-    // One 60 s animation from 5 s: nothing new arrives after 5 s.
-    const anim = put(bRoll, motifAt('network', { ground: 'paper' }, 'illustration'), 5, 65)
-    expect(audit(p, 'sparse-beats').map((f) => f.range.map((v) => v / S))).toEqual([[5, 70]])
-    // Its steps at 20 and 40 s of its own time (one past its end is ignored) break the wait.
-    ;(anim.params as { props: Record<string, unknown> }).props = { ground: 'paper', cue_spread_s: 20, cue_signal_s: 40, cue_late_s: 90 }
-    expect(audit(p, 'sparse-beats')).toEqual([])
-  })
-
-  it('ends a callout with the picture it marks', () => {
-    const { p, comp, aRoll, bRoll, caption, put } = setup()
-    const marks: Track = { ...structuredClone(caption), id: 'marks', role: null, layers: [] }
-    comp.tracks.push(marks)
-    put(aRoll, clip(0, 10), 0, 10); put(aRoll, clip(12, 27), 10, 25); put(aRoll, clip(30, 33), 25, 28)
-    const outlives = () => audit(p, 'callout-outlives-picture').map((f) => f.message)
-    // A circle on the footage, past the jump cut at 10 s: the framing changes under it.
-    const circle = put(marks, motifAt('pointer', { kind: 'circle' }, 'callout'), 7, 11)
-    expect(outlives()).toEqual(['callout stays 1 s past a cut in the footage under it at 10 s'])
-    circle.t_end_us = 10 * S
-    expect(outlives()).toEqual([])
-    // On a sticker, it goes with the sticker.
-    put(bRoll, motifAt('sticker', { photo: '' }), 14, 20)
-    const arrow = put(marks, motifAt('pointer', { kind: 'arrow' }, 'callout'), 15, 21)
-    expect(outlives()).toEqual(['callout stays 1 s past the end of the sticker under it at 20 s'])
-    arrow.t_end_us = 20 * S
-    expect(outlives()).toEqual([])
-    // A plate hides the footage's cuts: only the plate's end counts.
-    put(bRoll, motifAt('paper', {}, 'plate'), 22, 28)
-    put(marks, motifAt('pointer', { kind: 'underline' }, 'callout'), 23, 27.5)
-    expect(outlives()).toEqual([])
+    expect(audit(p, 'captions-covered')).toEqual([])
   })
 })
