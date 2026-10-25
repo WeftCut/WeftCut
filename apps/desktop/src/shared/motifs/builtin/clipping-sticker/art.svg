@@ -1,21 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 480" width="600" height="480">
-  <!-- The fallback picture: an ink drawing of a brain, in the clipping
-       style's flat fills and heavy strokes. Replace this file in a fork with
-       your own drawing; keep the viewBox's aspect or change it freely. -->
-  <g fill="none" stroke="#16130F" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
-    <path fill="#F4B7A8" d="M150 300 C 95 300 70 250 95 215 C 70 180 95 130 145 135 C 150 90 205 70 245 92 C 275 60 335 62 360 95 C 400 72 455 95 460 140 C 510 145 530 200 505 235 C 530 270 505 320 460 318 C 450 355 400 370 365 350 C 335 380 280 378 255 350 C 220 372 170 355 165 320 Z"/>
-    <path d="M300 92 C 290 130 315 160 300 200 C 288 235 310 270 300 345"/>
-    <path d="M145 135 C 165 160 200 160 215 185"/>
-    <path d="M95 215 C 130 220 150 245 185 240"/>
-    <path d="M165 320 C 185 295 215 300 235 280"/>
-    <path d="M245 92 C 240 125 260 140 255 170"/>
-    <path d="M460 140 C 430 160 410 150 390 175"/>
-    <path d="M505 235 C 470 230 450 255 420 250"/>
-    <path d="M460 318 C 440 290 410 295 385 275"/>
-    <path d="M360 95 C 365 125 345 140 350 170"/>
-    <path fill="#F4B7A8" d="M330 352 C 335 385 345 410 368 430 L 400 418 C 380 395 372 372 375 342"/>
-  </g>
-  <g fill="#D2261C" stroke="#16130F" stroke-width="6">
-    <circle cx="225" cy="245" r="22"/>
+  <!-- The fallback picture: a placeholder (hills under a sun) in the clipping
+       style's flat fills and heavy strokes, shown until a photo is set.
+       Replace this file in a fork with your own drawing; keep the viewBox's
+       aspect or change it freely. -->
+  <g stroke="#16130F" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="70" y="60" width="460" height="360" rx="6" fill="#F2ECDF"/>
+    <path fill="#E8D9BC" d="M74 360 L 220 205 L 310 300 L 380 240 L 526 380 L 526 416 L 74 416 Z"/>
+    <circle cx="420" cy="145" r="42" fill="#D2261C"/>
   </g>
 </svg>

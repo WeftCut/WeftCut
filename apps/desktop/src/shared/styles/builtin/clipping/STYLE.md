@@ -8,7 +8,7 @@ motifs:
   lower_third: clipping-stamp
   callout: [clipping-quote, clipping-pointer, clipping-reveal]
   plate: clipping-paper
-  illustration: [clipping-sticker, clipping-network]
+  illustration: clipping-sticker
 tokens:
   palette:
     ink: "#16130F"
@@ -141,36 +141,24 @@ whole frame.
 - **Scenes** explain a concept in full frame while she talks. A process is an
   animation (above). Anything else is a collage on a plate: a hero picture over about half the frame, one or two
   smaller pictures, and labels and pointers on them. It is a Group, and
-  every piece in it that moves on its own is its own layer. For example,
-  "the patient who lost his hippocampus":
-  - a `clipping-paper` newsprint plate;
-  - a `clipping-sticker` portrait of the patient, large on the left, with a
-    `clipping-stamp` of his name and dates across its foot;
-  - a `clipping-sticker` of her hippocampus slide, cropped to the brain, on
-    the right, with a `clipping-reveal` of BOTH REMOVED torn open on
-    "removed";
-  - a `clipping-pointer` arrow from the brain to the portrait;
-  - two small `clipping-headline` tags: NEW: LOST and OLD: KEPT.
+  every piece in it that moves on its own is its own layer. Its pieces:
+  - a `clipping-paper` plate;
+  - `clipping-sticker` pictures, the hero large and the others smaller;
+  - a `clipping-stamp` or a small `clipping-headline` tag naming a picture,
+    on it or beside it;
+  - a `clipping-pointer` or a `clipping-reveal` for what the viewer should
+    find, on its word.
 
   The pieces leave a beat apart, the last with the plate. Put the scene's
   track below the captions so they stay readable over it. Build scenes from
   what the talk explains, not from this list.
-- **Animations** (`clipping-network`) show a process happening, drawn in ink
-  on the paper ground with the red accent for what matters. The example
-  network starts close on one neuron as it grows its branches. It links to a
-  neighbour and a signal crosses (`cue_link_s`), then spreads into a network
-  (`cue_spread_s`). Signals run through it (`cue_signal_s`), and a lens
-  shows one synapse at work (`cue_detail_s`, `cue_release_s`). Then one set
-  lights up together as a memory, and the rest dims (`cue_pattern_s`). Set
-  each cue from the time of its word. `kind: dot` draws plain nodes, for a
-  network of people, places or machines.
-
-  Fork it for another network, or write an animation of another process in
-  the same vocabulary: a camera that moves from one element to the whole and
-  in on what matters, lines drawn on, beads of red travelling along paths,
-  the rest dimmed for focus, a lens for a detail. It needs no words: the
-  captions carry the speech. On its `ground` it is a scene by itself, below
-  the captions.
+- **Animations** show a process happening, drawn in ink on the paper ground
+  with the red accent for what matters. Write one as a Motif in this
+  vocabulary: a camera that moves from one element to the whole and in on
+  what matters, lines drawn on, beads of red travelling along paths, the
+  rest dimmed for focus, a lens for a detail. Set each step's cue from the
+  time of its word. It needs no words: the captions carry the speech. Drawn
+  on its own paper ground, it is a scene by itself, below the captions.
 - **Tape** is optional. The examples take `tape: none`, and their pieces sit
   on the frame by their shadow. `tape: strip` adds a strip of masking tape,
   for a scrapbook look.

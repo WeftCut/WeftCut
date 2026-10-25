@@ -71,10 +71,8 @@ opens it to change an element. Author it in this order:
 (it grows, links, flows, sends, transforms, builds up), show it happening. The
 scene is one frame-sized Motif that draws it: every piece moves because of
 the others, so it is one interaction, and it is a scene by itself, with no
-Group (ADR 0134). The style's `clipping-network` is an example: one neuron
-grows, signals pass, the network spreads, one set lights up as a memory.
-Fork it for another network (people, cities, machines), or write a new
-Motif for another process. The parts of a concept animation:
+Group (ADR 0134). Write it as a new Motif for the process the talk
+explains. The parts of a concept animation:
 
 - **Steps on words.** Storyboard it first: three to six steps, each with
   what moves and the word it starts on. Each step is a `cue_<step>_s` prop
