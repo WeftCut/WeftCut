@@ -7,6 +7,7 @@
 // is genuinely missing remotely (no renderer: no job events, no IPC).
 
 import type { McpEndpoint } from '../drivers/types'
+import type { ProxyOptions } from '../proxy/proxy'
 import type { JobEvent } from '../mediaReady'
 
 /** fixtures.mjs `fixture.json`, as far as the runner reads it. */
@@ -30,6 +31,9 @@ export interface HostStartOptions {
   /** Refuses an agent's tool call before it reaches the app (the proxy's
    *  `gate`). Only a remote host has a proxy to hold it. */
   gate?: (tool: string, readOnly: boolean) => string | null
+  /** The bench's own tools, hidden Motifs and result observer (the proxy's
+   *  options of the same names). Remote only, as `gate`. */
+  proxyExtras?: Pick<ProxyOptions, 'extraTools' | 'hideMotifs' | 'observe'>
 }
 
 export interface TemplateMeta {

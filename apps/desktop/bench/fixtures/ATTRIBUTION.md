@@ -27,6 +27,20 @@ these files, credit it as below, say it was modified, and keep the license.
   (speaker: Dr. Lisa Genzel, Radboud University), CC BY-SA 4.0, via Wikimedia
   Commons; trimmed and transcoded.
 
+## explainer-exoplanets
+
+- **Work:** "How can we explore planets beyond our solar system" ([Commons file page](https://commons.wikimedia.org/wiki/File:How_can_we_explore_planets_beyond_our_solar_system.webm))
+- **Author:** Universiteit van Nederland (University of the Netherlands).
+  Speaker: Dr. Yamila Miguel, Leiden University.
+- **License:** [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), as stated on
+  the Commons file page.
+- **Changes:** cut to the window from 96.567 s to 338.967 s of the original
+  (a stream copy), then transcoded from VP9/Opus WebM to H.264/AAC MP4 for the
+  WeftCut agent bench. The derivative is shared under CC BY-SA 4.0.
+- **Credit line:** "How can we explore planets beyond our solar system" by
+  Universiteit van Nederland (speaker: Dr. Yamila Miguel, Leiden University),
+  CC BY-SA 4.0, via Wikimedia Commons; trimmed and transcoded.
+
 ## talking-head-interview
 
 - **Work:** "WikiConference North America - 2025 - Ann Matsuuchi - students have good

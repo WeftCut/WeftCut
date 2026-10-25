@@ -14,6 +14,10 @@
 //      mirror's Windows paths; mirror paths in tools/call and resources/read
 //      results go back to local paths (pathmap.mjs). Each rewrite is logged.
 //
+// A run may add to that what the bench itself supplies, never the app: a gate
+// that holds calls, tools of its own (answered here), Motifs it hides from
+// the agent, and a look at each tool's result.
+//
 // Every other request and notification, in both directions, is forwarded as
 // is through the SDK's fallback handlers: no per-method schema re-validates or
 // reshapes the app's answers. Progress is relayed under the agent's own token.
@@ -44,6 +48,41 @@ export interface ProxyOptions {
    *  list marks the tool read-only. A string refuses the call: the agent gets
    *  it as the tool's error, and the app never sees the call. */
   gate?: (tool: string, readOnly: boolean) => string | null
+  /** Tools the bench answers itself, listed after the app's. Read-only; the
+   *  gate does not hold them. */
+  extraTools?: ReadonlyArray<ExtraTool>
+  /** Motif ids the agent never sees: dropped from Motif lists, and a call
+   *  that names one is refused as if it did not exist. */
+  hideMotifs?: ReadonlyArray<string>
+  /** Sees each forwarded tools/call and its result, as the agent gets it. */
+  observe?: (tool: string, args: Record<string, unknown>, result: Record<string, unknown>) => void
+}
+
+export interface ExtraTool {
+  def: { name: string; description: string; inputSchema: Record<string, unknown> }
+  call: (args: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>
+}
+
+/** `value` without the objects whose `id` is hidden, at any depth. */
+export function withoutHidden(value: unknown, hidden: ReadonlySet<string>): unknown {
+  if (Array.isArray(value)) return value.filter((v) => !(v && typeof v === 'object' && hidden.has(String((v as { id?: unknown }).id)))).map((v) => withoutHidden(v, hidden))
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withoutHidden(v, hidden)]))
+  return value
+}
+
+/** A tool result or resource with hidden Motifs taken out of its JSON text. */
+function hideIn<T extends Record<string, unknown>>(result: T, hidden: ReadonlySet<string>): T {
+  if (!hidden.size) return result
+  const strip = (block: unknown): unknown => {
+    const b = block as { text?: unknown }
+    if (typeof b?.text !== 'string') return block
+    try { return { ...b, text: JSON.stringify(withoutHidden(JSON.parse(b.text), hidden)) } } catch { return block }
+  }
+  const out: Record<string, unknown> = { ...result }
+  if (Array.isArray(result.content)) out.content = result.content.map(strip)
+  if (Array.isArray(result.contents)) out.contents = result.contents.map(strip)
+  if (result.structuredContent !== undefined) out.structuredContent = withoutHidden(result.structuredContent, hidden)
+  return out as T
 }
 
 export interface ProxyStats { tool_calls: number; syncs_pushed: number; to_remote: number; to_local: number; outside: number; gated: number }
@@ -87,6 +126,12 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
   // Read-only tools, as the app's tool list last said.
   const readOnly = new Set<string>()
   const log = (kind: string, fields: Record<string, unknown>) => opts.log({ t: new Date().toISOString(), kind, ...fields })
+  const ownTools = new Map((opts.extraTools ?? []).map((t) => [t.def.name, t]))
+  const hidden = new Set(opts.hideMotifs ?? [])
+  const namesHidden = (args: unknown): string | undefined => {
+    const text = JSON.stringify(args ?? {})
+    return [...hidden].find((id) => text.includes(JSON.stringify(id)))
+  }
 
   async function openSession(init: { clientInfo: { name: string; version: string }; capabilities?: Record<string, unknown> }): Promise<Session> {
     let server: Server | undefined
@@ -131,6 +176,17 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
       if (req.method === 'tools/call') {
         stats.tool_calls++
         const tool = String(req.params?.name ?? '')
+        const own = ownTools.get(tool)
+        if (own) {
+          log('extra', { tool })
+          try { return await own.call((req.params?.arguments ?? {}) as Record<string, unknown>) }
+          catch (e) { return { isError: true, content: [{ type: 'text', text: `${tool} failed: ${(e as Error).message}` }] } }
+        }
+        const hiddenId = namesHidden(req.params?.arguments)
+        if (hiddenId !== undefined) {
+          log('hidden', { tool, id: hiddenId })
+          return { isError: true, content: [{ type: 'text', text: `No Motif ${hiddenId}.` }] }
+        }
         const refusal = opts.gate?.(tool, readOnly.has(tool)) ?? null
         if (refusal !== null) {
           stats.gated++
@@ -150,12 +206,15 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
         const result = await forward({ method: req.method, params: { ...req.params, arguments: mapped.value } }, extra as Extra)
         const back = map.toLocal(result)
         for (const r of back.rewrites) { stats.to_local++; log('rewrite', { tool, ...r }) }
-        return back.value as Record<string, unknown>
+        const value = hideIn(back.value as Record<string, unknown>, hidden)
+        try { opts.observe?.(tool, (req.params?.arguments ?? {}) as Record<string, unknown>, value) }
+        catch (e) { log('error', { where: 'observe', tool, error: (e as Error).message }) }
+        return value
       }
       if (req.method === 'resources/read') {
         const back = map.toLocal(await forward(req, extra as Extra))
         for (const r of back.rewrites) { stats.to_local++; log('rewrite', { resource: req.params?.uri, ...r }) }
-        return back.value as Record<string, unknown>
+        return hideIn(back.value as Record<string, unknown>, hidden)
       }
       if (req.method === 'tools/list') {
         const listed = await forward(req, extra as Extra)
@@ -163,7 +222,9 @@ export async function startMcpProxy(opts: ProxyOptions): Promise<McpProxy> {
           if (t.annotations?.readOnlyHint) readOnly.add(t.name)
           else readOnly.delete(t.name)
         }
-        return listed
+        if (!ownTools.size) return listed
+        const own = [...ownTools.values()].map((t) => ({ ...t.def, annotations: { readOnlyHint: true } }))
+        return { ...listed, tools: [...((listed.tools ?? []) as unknown[]), ...own] }
       }
       return forward(req, extra as Extra)
     }

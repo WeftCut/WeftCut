@@ -62,6 +62,46 @@
       "notes": "English lecture from a virtual studio set: one speaker (Lisa Genzel) on camera, cutting between wide shots, a medium close-up to camera and shots of her beside a large slide screen (brain diagrams with labels, then photo/illustration slides). Not a literal screen recording, but long stretches are slide-led. Source window starts on a scene cut and keyframe at source 43.447 s, right at 'let's start at the very beginning: what is a memory', which skips the channel intro and the burned-in name lower third at source ~30 s, so the excerpt carries no on-screen name. Excerpt times (approximate, from the YouTube auto-captions on Commons, +/- 1 s): 0-3 wide establishing shot, speech from ~2.5; 3-22 medium close-up to camera; 22-64 neurons and networks (slide: brain network); ~64-131 first memory hub, the hippocampus ('the first hub is the hippocampus' ~71.5; patient example ~90-121); ~131-176 second hub, the cortex ('this is the second memory hub, the cortex' ~131); ~176-214.7 example of a city walk becoming a spatial map in the cortex, slide of a street photo and a route map. Speech ends at ~214.7; the last ~0.7 s is the next shot (wide), cut at 214.52. Pauses (silencedetect -34 dB, >= 0.4 s): about 60, mostly 0.5-2.0 s between sentences, e.g. 3.8-4.9, 11.6-12.8, 22.1-23.6, 40.1-41.8, 56.7-58.6, 69.7-71.7, 105.2-106.7, 165.3-167.2. The bench file is an H.264/AAC MP4 transcoded from the stream-copy trim (see transcode); ffmpeg may print one 'Error parsing Opus packet header' warning, which is in the source and decodes fine."
     },
     {
+      "id": "explainer-exoplanets",
+      "kind": "teaching-explainer",
+      "title": "How can we explore planets beyond our solar system? (University of the Netherlands), 4:02 excerpt",
+      "source_url": "https://commons.wikimedia.org/wiki/File:How_can_we_explore_planets_beyond_our_solar_system.webm",
+      "file_url": "https://upload.wikimedia.org/wikipedia/commons/4/41/How_can_we_explore_planets_beyond_our_solar_system.webm",
+      "author": "Universiteit van Nederland (University of the Netherlands); speaker Dr. Yamila Miguel, Leiden University",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attribution": "\"How can we explore planets beyond our solar system\" by Universiteit van Nederland (speaker: Dr. Yamila Miguel, Leiden University), CC BY-SA 4.0, via Wikimedia Commons. Trimmed to 96.567 s + 242.4 s and transcoded to H.264/AAC MP4 for the WeftCut bench; the derivative is shared under CC BY-SA 4.0.",
+      "ext": "webm",
+      "size_bytes": 119259839,
+      "sha1": "05fafaaf3e2a3532988cbedecadb01288c5e18b0",
+      "sha256": "35d6c1c8d4f407995f6a8f8ac7210441e58eb6804875d0c5ee431e0c4854fcea",
+      "trim": {
+        "start_s": 96.567,
+        "duration_s": 242.4,
+        "mode": "stream-copy",
+        "sha256": "a2c72117e0066b60d69f85c69fb103028ca162fb918394da44663faec4667bfd",
+        "stream_sha256": {
+          "v": "ccd35b51c4f5678ddd3dfe0fb5497e8708cb823c97d38db22559bd77b4b5ed21",
+          "a": "b1f529e65aabedd3aed4ae7bedff2486c5fe6d866bba0fb534676421bbf8201a"
+        }
+      },
+      "media": {
+        "duration_s": 242.414,
+        "on_grid_duration_us": 242400000,
+        "width": 1920,
+        "height": 1080,
+        "fps": {
+          "num": 25,
+          "den": 1
+        },
+        "source_video_codec": "vp9",
+        "source_audio_codec": "opus",
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      },
+      "notes": "Second teaching explainer, on a topic far from the first, so a style or skill example written for the first cannot answer it. One speaker in a virtual studio, with the source's own graphics burned in (years, counts, a lamp demo, a light curve). Source window starts on a keyframe in the pause before 'but in the 90s something remarkable happened' and ends in the pause after '...the atmospheres of exoplanets'. Chosen and trimmed after the skill, the style and the review prompt were cleaned (becc227e), so none of them was written with it in view."
+    },
+    {
       "id": "talking-head-interview",
       "kind": "talking-head",
       "title": "WikiConference North America 2025 - Ann Matsuuchi - students have good experiences editing Wikipedia",

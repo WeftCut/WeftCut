@@ -348,6 +348,31 @@ the teaching recipe's two gates ask:
 
 The gate lives in the proxy, so it needs a remote host.
 
+### Plan stage
+
+Three flags add to a run's plan stage what the bench supplies itself, never
+the app (`plan/`):
+- `--plan-check` lists one more tool, `check_plan`, answered by the proxy
+  (`plan/checkPlan.ts`). The agent passes its plan as a timetable and gets
+  findings back: gaps, words not at their times, reading time, animation
+  steps, crowded cells, see-say, a relation carried by words alone, the
+  pace. The words are those of the agent's own first `transcribe_clip`.
+  Under `plan_gate`, a stop with no checked timetable yet gets one go-on to
+  it; the first stop after a check is gate 2.
+- `--plan-review same|<driver>:<model>` (with `--plan-check`): at gate 2 a
+  reviewer, in a fresh session with `plan/reviewer-skill` and the same
+  read-only footage, reads the plan as presented and as data. Its notes go
+  back to the agent, whose next stop gets the go-ahead.
+- `--hide-motif <id>` (repeatable): the proxy drops the Motif from every
+  list and refuses calls that name it, as if it did not exist.
+
+`--label <name>` adds a name to each run's folder, to tell two arms of the
+same task and model apart. In `run.json`, `plan_stage` has the options, each
+check's turn and counts, and each review's reviewer and cost;
+`plan-checks.json`, `plan-before-review.md` and `review-notes.md` hold the
+rest. Nothing in `plan/` names a fixture or its subject: the reviewer's
+questions and the checks are the same for any talk.
+
 ## Drivers
 
 `drivers/types.ts` is the whole contract. A driver gets the task, the skill

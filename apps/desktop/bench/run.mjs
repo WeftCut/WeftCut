@@ -27,7 +27,8 @@ const USAGE = `usage: npm run bench -- --task <id|glob>[,...] --model <id>[,...]
        [--driver claude] [--repeat N] [--out <dir>] [--timeout-min N] [--media-timeout-min N]
        [--app-memory-mib N] [--budget-usd X]
        [--host local|remote] [--remote <ssh alias>] [--remote-repo <checkout on the host>] [--keep-remote]
-       [--rebuild-templates] [--probe transcribe]`
+       [--rebuild-templates] [--probe transcribe]
+       [--plan-check] [--plan-review same|<driver>:<model>] [--hide-motif <id>] [--label <name>]`
 
 function main(argv) {
   let values
@@ -56,6 +57,11 @@ function main(argv) {
         'keep-remote': { type: 'boolean', default: false },
         'rebuild-templates': { type: 'boolean', default: false },
         probe: { type: 'string', multiple: true },
+        // The plan stage, supplied by the bench (README "Plan stage").
+        'plan-check': { type: 'boolean', default: false },
+        'plan-review': { type: 'string' },
+        'hide-motif': { type: 'string', multiple: true },
+        label: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     }))
@@ -94,6 +100,11 @@ function main(argv) {
   if (hostKind === 'local' && values['keep-remote']) problems.push('--keep-remote applies to --host remote only')
   const probes = list(values.probe)
   for (const p of probes) if (!['transcribe', 'motif-dir', 'motif-edits'].includes(p)) problems.push(`unknown --probe ${p} (have: transcribe, motif-dir, motif-edits)`)
+  const review = values['plan-review']
+  if (review !== undefined && review !== 'same' && !/^[a-z]+:\S+$/.test(review)) problems.push('--plan-review must be same or <driver>:<model>')
+  if (review !== undefined && !values['plan-check']) problems.push('--plan-review needs --plan-check (the reviewer reads the checked timetable)')
+  if ((values['plan-check'] || review !== undefined) && hostKind !== 'remote') problems.push('--plan-check and --plan-review need --host remote (the proxy supplies them)')
+  if (values.label !== undefined && !/^[A-Za-z0-9._-]+$/.test(values.label)) problems.push('--label must be letters, digits, dot, dash or underscore')
   if (problems.length) {
     console.error(`[bench] ${problems.join('; ')}\n${USAGE}`)
     return 2
@@ -141,6 +152,8 @@ function main(argv) {
       : { kind: 'local' },
     rebuild_templates: values['rebuild-templates'],
     probes,
+    plan_stage: { check: values['plan-check'], ...(review !== undefined ? { review } : {}), hide_motifs: list(values['hide-motif']) },
+    ...(values.label ? { label: values.label } : {}),
   }
   console.log(`[bench] results → ${plan.out}${hostKind === 'remote' ? ` · app on ${values.remote}` : ''}`)
   const result = spawnSync(
