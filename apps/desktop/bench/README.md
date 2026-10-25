@@ -26,7 +26,7 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--task` | required | Task ids or globs (`*`, `?`), comma-separated or repeated. |
 | `--model` | required | Model ids, comma-separated; passed to the client verbatim. |
 | `--skill` | `<repo>/skills/weftcut` | Skill directory (holds `SKILL.md`). Its content hash is recorded per run. |
-| `--driver` | `claude` | `claude`, or `dsh` for DeepSeek models through DeepSeek Harness; `codex` is a stub that proves the interface. |
+| `--driver` | `claude` | `claude`, or `dsh` for DeepSeek models through DeepSeek Harness. |
 | `--repeat` | `1` | Runs per (task, model). |
 | `--out` | `bench/results/` | Results root; each invocation gets a timestamped folder. |
 | `--timeout-min` | `20` | Wall clock per agent session. |
@@ -39,7 +39,6 @@ npm run bench -- --task 'smoke-*' --model claude-opus-5-5,claude-haiku-5-5 --rep
 | `--remote-node` | `$WEFTCUT_BENCH_REMOTE_NODE` | `node.exe` on the host for fixture fetching, when the default (fnm's v24.20.0, then `PATH`) is wrong. |
 | `--keep-remote` | off | Keep the run's directory on the host (profile, project, mirror) after teardown. |
 | `--rebuild-templates` | off | Set every project up from scratch and replace its template ([Project templates](#project-templates)). |
-| `--probe` | none | After the evidence, model-free, recorded as `probes`: `transcribe` times one `transcribe_clip` on the A-roll clip from the runner's own client; `motif-dir` goes through the endpoint the agent is given (remote: the path proxy), writes a Motif folder in the workdir, opens it as a directory draft, previews it, edits and deletes files locally and previews again (the second frame must differ); `motif-edits` writes the same package into an empty draft with `update_motif_files`, changes one colour with an exact-match `edits` entry and previews again (the frame must differ), then checks that an ambiguous edit is refused without a new revision and that the 320×180 preview of the 640×360 canvas is the whole frame scaled (the PNG is saved as `probe-motif-edits-preview.png`). |
 
 Runs go one at a time. Each prints one summary line: verdict, cost, turns,
 review-diff size and the result folder. Playwright exits non-zero only when a
@@ -320,7 +319,7 @@ also carries `motifs`: catalog entries (`motifs://current`) the run
 added or changed, read from the app; `host` (where the app ran, and for a
 remote host its launch, GPU status and teardown), `models`, `fixtures` (each
 MP4's sha256, transcode parameters and ffmpeg version), `template`,
-`setup_check` (A-roll clips in the baseline, setup time) and `probes`.
+and `setup_check` (A-roll clips in the baseline, setup time).
 `audit` is the app's own `check_composition` of the final root composition — `{ counts, by_rule, file }`, with every finding in `audit.json` — whatever the agent checked or reported; null on an app without the tool. `frames` and `rounds` stay `null` until H3.
 
 ## The stand-in user
@@ -335,43 +334,18 @@ same session. `go_ahead: false` in a task disables it. What was said is
 keeps the session open with `--input-format stream-json`.
 
 A task with `plan_gate: true` holds the edit until the plan is approved, as
-the teaching recipe's two gates ask:
+the teaching recipe asks:
 - Until the go-ahead, the proxy refuses the agent's calls to tools the app
   does not mark read-only (session, history-lock and checkpoint tools
   excepted). The agent gets the refusal as the tool's error; the app never
   sees the call.
-- A first stop without storyboards (no `Eye:` and `Shows:` lines in the
-  message or in a markdown file in the workdir) gets a go-on to them, and
-  the next stop the go-ahead. A first stop that shows them gets the
+- A first stop without a timetable (no markdown table with a `Time` column
+  in the message or in a markdown file in the workdir) gets a go-on to it,
+  and the next stop the go-ahead. A first stop that shows one gets the
   go-ahead at once.
 - `plan_gate` in `run.json` records the turn approved and each refused call.
 
 The gate lives in the proxy, so it needs a remote host.
-
-### Plan stage
-
-Three flags add to a run's plan stage what the bench supplies itself, never
-the app (`plan/`):
-- `--plan-check` lists one more tool, `check_plan`, answered by the proxy
-  (`plan/checkPlan.ts`). The agent passes its plan as a timetable and gets
-  findings back: gaps, words not at their times, reading time, animation
-  steps, crowded cells, see-say, and a relation carried by words alone. The
-  words are those of the agent's own first `transcribe_clip`.
-  Under `plan_gate`, a stop with no checked timetable yet gets one go-on to
-  it; the first stop after a check is gate 2.
-- `--plan-review same|<driver>:<model>` (with `--plan-check`): at gate 2 a
-  reviewer, in a fresh session with `plan/reviewer-skill` and the same
-  read-only footage, reads the plan as presented and as data. Its notes go
-  back to the agent, whose next stop gets the go-ahead.
-- `--hide-motif <id>` (repeatable): the proxy drops the Motif from every
-  list and refuses calls that name it, as if it did not exist.
-
-`--label <name>` adds a name to each run's folder, to tell two arms of the
-same task and model apart. In `run.json`, `plan_stage` has the options, each
-check's turn and counts, and each review's reviewer and cost;
-`plan-checks.json`, `plan-before-review.md` and `review-notes.md` hold the
-rest. Nothing in `plan/` names a fixture or its subject: the reviewer's
-questions and the checks are the same for any talk.
 
 ## Drivers
 
@@ -380,10 +354,7 @@ directory, the MCP endpoint (`url`, `bearer_token`), the model, an empty
 working directory and an artifacts directory. It returns the transcript path,
 plus cost and turns when the client reports them. Snapshots, the diff and the
 checklist are taken by the runner, so a new client never re-implements them.
-Nothing in the interface is Claude-specific; `drivers/codex.ts` compiles against
-it. Until it is real, `codex` is a null agent: it changes nothing and reports a
-failed session, so `--driver codex --model stub` runs the whole pipeline
-(launch, setup or template, media wait, baseline, an empty diff) for free.
+Nothing in the interface is Claude-specific.
 
 ## dsh (DeepSeek)
 

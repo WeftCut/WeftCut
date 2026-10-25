@@ -22,8 +22,6 @@ import { startLocalHost } from './hosts/local'
 import { runSlug, startRemoteHost } from './hosts/remote'
 import type { HostSession, HostStartOptions, TemplateMeta } from './hosts/types'
 import { waitForMedia } from './mediaReady'
-import { CHECK_PLAN_DEF, REVIEWER_SKILL, reviewPrompt, reviewReply, runCheckPlan, transcriptLines } from './plan/planTools'
-import type { Word } from './plan/checkPlan'
 import type { RunResult } from './drivers/types'
 import { resolveArgs, type BenchTask } from './tasks'
 import { compareBaselines, projectNameFor, templateKey } from './templates.mjs'
@@ -54,23 +52,6 @@ export interface PlannedRun {
   /** Set the project up from scratch even when a template exists (and
    *  replace the template). */
   rebuild_templates: boolean
-  /** Extra measurements after the evidence is taken: `transcribe` times one
-   *  transcribe_clip on the A-roll clip (no model spend). */
-  probes: string[]
-  /** What the bench adds to the plan stage (README "Plan stage"). */
-  plan_stage: PlanStage
-}
-
-export interface PlanStage {
-  /** Offer `check_plan`, and treat a checked timetable as the plan shown at
-   *  gate 2. */
-  check: boolean
-  /** After the timetable, a reviewer in a fresh session reads it, and its
-   *  notes go back to the agent before the go-ahead: `same` (the run's own
-   *  driver and model) or `<driver>:<model>`. */
-  review?: string
-  /** Motif ids the agent never sees. */
-  hide_motifs: string[]
 }
 
 type McpCall = (name: string, args: Record<string, unknown>) => Promise<unknown>
@@ -107,24 +88,22 @@ function diffMotifs(before: Array<Record<string, unknown>>, after: Array<Record<
 
 /** What the stand-in user says to a plan that waits for approval. */
 const DEFAULT_GO_AHEAD = 'Yes, go ahead with your plan. Use your own judgement for any other choice (a local transcription engine is fine), and finish without asking me again.'
-/** What it says, under a plan gate, to a first stop that shows no storyboards. */
-const GATE_1_GO_ON = 'The brief and the outline look right. Go on to the AV script and the storyboards, and show them to me before you build.'
-/** The same, when the plan is a timetable checked with check_plan. */
-const GATE_1_TIMETABLE = 'The brief and the outline look right. Go on to the timetable, and show it to me before you build.'
+/** What it says, under a plan gate, to a first stop that shows no timetable. */
+const GATE_1_TIMETABLE = 'The brief looks right. Go on to the timetable, and show it to me before you build.'
 
 /** Tools an agent may call before its plan is approved although they are not
  *  read-only: they open and close its work session and change nothing a
  *  viewer sees. */
 const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'set_history_lock', 'create_checkpoint'])
 
-/** A storyboard frame in the recipe's fixed form has `Eye:` and `Shows:`
- *  lines; the agent writes them into its message or a markdown file in its
+/** The recipe's plan is a timetable: a markdown table whose first column is
+ *  `Time`. The agent writes it into its message or a markdown file in its
  *  working directory. */
-function hasStoryboards(message: string | undefined, workdir: string): boolean {
-  const boarded = (s: string) => /^[\s*>-]*Eye\b\**:/m.test(s) && /^[\s*>-]*Shows\b\**:/m.test(s)
-  if (boarded(message ?? '')) return true
+function hasTimetable(message: string | undefined, workdir: string): boolean {
+  const tabled = (s: string) => /^\s*\|\s*Time\s*\|/m.test(s)
+  if (tabled(message ?? '')) return true
   const files = fs.existsSync(workdir) ? fs.readdirSync(workdir).filter((f) => f.endsWith('.md')) : []
-  return files.some((f) => boarded(fs.readFileSync(path.join(workdir, f), 'utf8')))
+  return files.some((f) => tabled(fs.readFileSync(path.join(workdir, f), 'utf8')))
 }
 
 function writeJson(dir: string, name: string, value: unknown): string {
@@ -174,143 +153,13 @@ function aRollClips(wire: unknown): string[] {
     .flatMap((t) => t.layers ?? []).filter((l) => l.params?.kind === 'VideoClip').map((l) => l.id)
 }
 
-/** A tiny Motif package: a full-frame box of one colour, with a white
- *  square in its bottom-right corner (a cropped preview would miss it). */
-function probeMotifFiles(color: string): Record<string, string> {
-  return {
-    'manifest.json': JSON.stringify({
-      id: 'bench-probe', name: 'Bench Probe', version: 1, size: [640, 360],
-      default_duration_s: 2, content_duration_s: 1, props_schema: {},
-    }, null, 2),
-    'index.html': '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:640px;height:360px;' +
-      'overflow:hidden;background:transparent}#b{position:absolute;left:0;top:0;width:640px;height:360px}' +
-      '#c{position:absolute;left:480px;top:270px;width:160px;height:90px;background:#fff}</style></head>' +
-      `<body><div id="b"></div><div id="c"></div><script>motif.define({ setup: async function () { document.getElementById("b").style.background = "${color}" } })</script></body></html>`,
-  }
-}
-
-// callTool's result type is a union with the task form; only content matters.
-const blocks = (r: unknown) => ((r as { content?: unknown }).content ?? []) as Array<{ type: string; text?: string; data?: string }>
-const texts = (r: unknown) => blocks(r).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n')
-const imageHash = (r: unknown) => {
-  const img = blocks(r).find((b) => b.type === 'image')
-  return img?.data ? crypto.createHash('sha256').update(img.data).digest('hex').slice(0, 16) : null
-}
-
-/** `--probe motif-dir`: the agent's file path, model-free. Through the
- *  endpoint the agent is given (remote: the path proxy), write a Motif folder
- *  in the local workdir, open it as a directory draft, preview it, change it
- *  locally (and delete a file) and preview again. Shows the mirror and the
- *  path rewrites against the real app: the second preview must render the
- *  new file, and no answer may carry the mirror's path. */
-async function motifDirProbe(endpoint: { url: string; bearer_token: string }, workdir: string): Promise<Record<string, unknown>> {
-  const started = Date.now()
-  const out: Record<string, unknown> = {}
-  const pc = new Client({ name: 'weftcut-bench-probe', version: '1' }, { capabilities: {} })
-  try {
-    await pc.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.bearer_token}` } } }))
-    const dir = path.join(workdir, 'bench-probe-motif')
-    fs.mkdirSync(dir, { recursive: true })
-    for (const [f, text] of Object.entries(probeMotifFiles('#e02020'))) fs.writeFileSync(path.join(dir, f), text)
-    fs.writeFileSync(path.join(dir, 'notes.txt'), 'deleted before the second preview\n')
-    const opened = await pc.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'directory', path: dir } } })
-    const openedJson = (opened.structuredContent ?? JSON.parse(texts(opened) || '{}')) as { draft_id?: string; revision?: string }
-    out.open = { is_error: !!opened.isError, draft_id: openedJson.draft_id ?? null, revision: openedJson.revision ?? null, ...(opened.isError ? { text: texts(opened).slice(0, 1000) } : {}) }
-    if (opened.isError || !openedJson.draft_id) throw new Error(`open_motif_draft failed: ${texts(opened).slice(0, 500)}`)
-    const id = openedJson.draft_id
-    const p1 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
-    fs.writeFileSync(path.join(dir, 'index.html'), probeMotifFiles('#2040e0')['index.html']!)
-    fs.rmSync(path.join(dir, 'notes.txt'))
-    const p2 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
-    const info = await pc.callTool({ name: 'read_motif', arguments: { id } })
-    const infoText = JSON.stringify(info)
-    Object.assign(out, {
-      preview_1: { is_error: !!p1.isError, image_sha: imageHash(p1) },
-      preview_2: { is_error: !!p2.isError, image_sha: imageHash(p2) },
-      preview_changed: imageHash(p1) !== null && imageHash(p1) !== imageHash(p2),
-      read_motif_names_local_dir: infoText.includes(dir),
-      read_motif_has_windows_path: /[A-Za-z]:\\\\/.test(infoText),
-      read_motif_files: (info.structuredContent as { files?: Array<{ path: string }> } | undefined)?.files?.map((f) => f.path)
-        ?? (JSON.parse(texts(info) || '{}') as { files?: Array<{ path: string }> }).files?.map((f) => f.path) ?? null,
-    })
-    out.ok = !p1.isError && !p2.isError && out.preview_changed === true
-  } catch (e) {
-    out.ok = false
-    out.error = (e as Error).message.slice(0, 2000)
-  } finally {
-    await pc.close().catch(() => {})
-  }
-  out.ms = Date.now() - started
-  return out
-}
-
-/** `--probe motif-edits`: the file-only path, model-free. Start an empty
- *  draft, write the probe package whole, preview, change one colour with an
- *  exact-match `edits` entry and preview again (the frame must differ); an
- *  ambiguous edit must be refused without a new revision. */
-async function motifEditsProbe(endpoint: { url: string; bearer_token: string }, outDir: string): Promise<Record<string, unknown>> {
-  const started = Date.now()
-  const out: Record<string, unknown> = {}
-  const pc = new Client({ name: 'weftcut-bench-probe', version: '1' }, { capabilities: {} })
-  try {
-    await pc.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.bearer_token}` } } }))
-    const json = (r: unknown) => ((r as { structuredContent?: unknown }).structuredContent ?? JSON.parse(texts(r) || '{}')) as { draft_id?: string; revision?: string }
-    const opened = json(await pc.callTool({ name: 'open_motif_draft', arguments: { source: { kind: 'empty', name: 'Bench Edits Probe' } } }))
-    const id = opened.draft_id
-    if (!id) throw new Error('open_motif_draft returned no draft_id')
-    const files = probeMotifFiles('#e02020')
-    const written = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: opened.revision,
-      files: Object.entries(files).map(([p, text]) => ({ path: p, text })) } })
-    if (written.isError) throw new Error(`whole-file write failed: ${texts(written).slice(0, 500)}`)
-    const p1 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
-    const edited = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(written).revision,
-      files: [{ path: 'index.html', edits: [{ old: '#e02020', new: '#2040e0' }] }] } })
-    const p2 = await pc.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0.5, width: 320, height: 180 } })
-    // The returned PNG's own size (IHDR), and a copy to look at: the white
-    // corner square shows the whole canvas was scaled, not cropped.
-    const png = Buffer.from(blocks(p2).find((b) => b.type === 'image')?.data ?? '', 'base64')
-    if (png.length > 24) fs.writeFileSync(path.join(outDir, 'probe-motif-edits-preview.png'), png)
-    out.preview_png = png.length > 24 ? [png.readUInt32BE(16), png.readUInt32BE(20)] : null
-    out.preview_reported = JSON.parse(blocks(p2).filter((b) => b.type === 'text').map((b) => b.text).join('') || '{}')
-    const ambiguous = await pc.callTool({ name: 'update_motif_files', arguments: { draft_id: id, expected_revision: json(edited).revision,
-      files: [{ path: 'index.html', edits: [{ old: '640px', new: '600px' }] }] } })
-    const after = json(await pc.callTool({ name: 'read_motif', arguments: { id } }))
-    Object.assign(out, {
-      edit: { is_error: !!edited.isError, ...(edited.isError ? { text: texts(edited).slice(0, 500) } : {}) },
-      preview_changed: imageHash(p1) !== null && imageHash(p1) !== imageHash(p2),
-      ambiguous: { is_error: !!ambiguous.isError, text: texts(ambiguous).slice(0, 300) },
-      revision_kept: after.revision === json(edited).revision,
-    })
-    await pc.callTool({ name: 'delete_motif', arguments: { id } })
-    out.ok = !edited.isError && out.preview_changed === true && !!ambiguous.isError && out.revision_kept === true
-      && JSON.stringify(out.preview_png) === '[320,180]'
-  } catch (e) {
-    out.ok = false
-    out.error = (e as Error).message.slice(0, 2000)
-  } finally {
-    await pc.close().catch(() => {})
-  }
-  out.ms = Date.now() - started
-  return out
-}
-
-function startHost(plan: PlannedRun, workdir: string, gate: HostStartOptions['gate'], proxyExtras: HostStartOptions['proxyExtras']): Promise<HostSession> {
+function startHost(plan: PlannedRun, workdir: string, gate: HostStartOptions['gate']): Promise<HostSession> {
   const base = { run_slug: runSlug(plan.run_id), out_dir: plan.out_dir, workdir, ...(plan.app_memory_mib !== undefined ? { app_memory_mib: plan.app_memory_mib } : {}) }
   if (plan.host.kind === 'local') {
     if (plan.task.plan_gate) throw new Error(`${plan.task.id}: plan_gate needs a remote host, whose proxy holds the gate`)
-    if (proxyExtras) throw new Error('the plan stage options need a remote host, whose proxy supplies them')
     return startLocalHost(base)
   }
-  return startRemoteHost({ ...base, ...plan.host, ...(gate ? { gate } : {}), ...(proxyExtras ? { proxyExtras } : {}) })
-}
-
-/** The words of the first transcription the agent got, and its segments. */
-function transcriptOf(result: Record<string, unknown>): { words: Word[]; segments: Array<{ t_start_us: number; t_end_us: number; text: string }> } | null {
-  const text = (result.content as Array<{ type: string; text?: string }> | undefined)?.find((b) => b.type === 'text')?.text
-  const data = (result.structuredContent ?? (text ? JSON.parse(text) : null)) as { segments?: Array<{ t_start_us: number; t_end_us: number; text: string; words?: Word[] }> } | null
-  const segments = data?.segments ?? []
-  const words = segments.flatMap((sg) => sg.words ?? [])
-  return words.length ? { words, segments } : null
+  return startRemoteHost({ ...base, ...plan.host, ...(gate ? { gate } : {}) })
 }
 
 export async function runOne(plan: PlannedRun): Promise<RunResult> {
@@ -321,7 +170,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     skill: null, app_revision: null, host: null, models: null, fixtures: null, template: null, setup_check: null, taste: null,
     transcript: null, baseline_project: null, final_project: null, review_diff: null, review_diff_size: null,
     checklist: null, audit: null, frames: null, cost: { usd: null, turns: null }, rounds: null,
-    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, probes: null, final_message: null, user_replies: [], exit: null, error: null,
+    app_resources: null, media_wait: null, motifs: null, workdir_copy: null, final_message: null, user_replies: [], exit: null, error: null,
     started_at: startedAt.toISOString(), duration_ms: 0,
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-bench-'))
@@ -340,32 +189,8 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         return `${tool} was not run: the user has not approved the plan yet, so nothing in the project can change. Present the plan and wait for the go-ahead; read-only tools still work.`
       }
     : undefined
-  // The plan stage the bench supplies: check_plan answered from the agent's
-  // own transcription, and the reviewer's notes.
-  const stage = plan.plan_stage
-  let heard: ReturnType<typeof transcriptOf> = null
-  const planChecks: Array<{ turn: number; hard: number; warning: number; findings: unknown[]; plan: unknown }> = []
-  const reviews: Array<{ reviewer: string; turn: number; cost_usd: number | null; notes: string }> = []
-  const proxyExtras: HostStartOptions['proxyExtras'] = stage.check || stage.hide_motifs.length ? {
-    ...(stage.hide_motifs.length ? { hideMotifs: stage.hide_motifs } : {}),
-    ...(stage.check ? {
-      extraTools: [{
-        def: CHECK_PLAN_DEF as never,
-        call: (args: Record<string, unknown>) => {
-          if (!heard) return { isError: true, content: [{ type: 'text', text: 'check_plan needs her words: run transcribe_clip on the A-roll clip first.' }] }
-          const r = runCheckPlan(args, heard.words)
-          const hard = r.findings.filter((f) => f.severity === 'hard').length
-          planChecks.push({ turn: turnNow, hard, warning: r.findings.length - hard, findings: r.findings, plan: args })
-          return { content: [{ type: 'text', text: r.text }] }
-        },
-      }],
-      observe: (tool: string, _args: Record<string, unknown>, res: Record<string, unknown>) => {
-        if (tool === 'transcribe_clip' && !heard && !res.isError) heard = transcriptOf(res)
-      },
-    } : {}),
-  } : undefined
   try {
-    session = await startHost(plan, workdir, holdWrites, proxyExtras)
+    session = await startHost(plan, workdir, holdWrites)
     const s = session
     result.host = s.record
     result.app_revision = s.app.revision
@@ -486,42 +311,16 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     // The stand-in user: an agent that ends its first turn having changed
     // nothing has almost always planned and asked for a go-ahead, which an
     // attended user gives. Answered once; a second stop is the result. Under
-    // a plan gate it answers twice: a first stop without storyboards gets a
-    // go-on to them, and the go-ahead comes at the stop that shows them.
+    // a plan gate it answers twice: a first stop without a timetable gets a
+    // go-on to it, and the go-ahead comes at the stop that shows one.
     await initEval()
-    // With the bench's plan stage, a stop with no checked timetable yet gets
-    // a go-on to it (once), and the first stop that shows one gets the
-    // reviewer's notes (when asked for) before the go-ahead.
-    let goneOn = false
-    const review = async (turn: number, planMessage: string): Promise<string | null> => {
-      const [rd, rm] = stage.review === 'same' ? [plan.driver, plan.model] : [stage.review!.slice(0, stage.review!.indexOf(':')), stage.review!.slice(stage.review!.indexOf(':') + 1)]
-      const dir = path.join(plan.out_dir, 'review')
-      fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(path.join(plan.out_dir, 'plan-before-review.md'), planMessage)
-      const rwork = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-review-'))
-      const rr = await driverNamed(rd).run({
-        task: { ...plan.task, prompt: reviewPrompt(heard ? transcriptLines(heard.segments) : '(no transcription yet)', planMessage, planChecks.at(-1)?.plan), go_ahead: false },
-        skill_path: REVIEWER_SKILL, mcp: session!.agentEndpoint, model: rm, workdir: rwork, artifacts_dir: dir,
-        limits: { timeout_ms: 15 * 60_000 },
-      })
-      const notes = rr.final_message ?? ''
-      reviews.push({ reviewer: `${rd}:${rm}`, turn, cost_usd: rr.cost_usd ?? null, notes })
-      fs.writeFileSync(path.join(plan.out_dir, 'review-notes.md'), notes)
-      return notes.trim() ? notes : null
-    }
-    const maxTurns = !plan.task.plan_gate ? 1 : stage.check && stage.review ? 3 : 2
+    const maxTurns = plan.task.plan_gate ? 2 : 1
     const nextUserTurn = async (turn: number, finalMessage: string | undefined): Promise<string | null> => {
       if (plan.task.go_ahead === false || turn > maxTurns) return null
       const now = await read('project://current')
       if (diffProjects(parseProject(baselineWire), parseProject(now)).length > 0) return null
       turnNow = turn + 1
-      if (plan.task.plan_gate && stage.check) {
-        if (!planChecks.length && !goneOn) { goneOn = true; return GATE_1_TIMETABLE }
-        if (stage.review && planChecks.length && !reviews.length) {
-          const notes = await review(turn, finalMessage ?? '')
-          if (notes) return reviewReply(notes)
-        }
-      } else if (plan.task.plan_gate && turn === 1 && !hasStoryboards(finalMessage, workdir)) return GATE_1_GO_ON
+      if (plan.task.plan_gate && turn === 1 && !hasTimetable(finalMessage, workdir)) return GATE_1_TIMETABLE
       gate.approved_turn = turn
       return plan.task.go_ahead ?? DEFAULT_GO_AHEAD
     }
@@ -535,14 +334,6 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     result.final_message = out.final_message ?? null
     result.user_replies = out.user_replies ?? []
     if (plan.task.plan_gate) result.plan_gate = gate
-    if (stage.check || stage.review || stage.hide_motifs.length) {
-      if (planChecks.length) writeJson(plan.out_dir, 'plan-checks.json', planChecks)
-      result.plan_stage = {
-        ...stage,
-        checks: planChecks.map(({ turn, hard, warning }) => ({ turn, hard, warning })),
-        reviews: reviews.map(({ reviewer, turn, cost_usd }) => ({ reviewer, turn, cost_usd })),
-      }
-    }
     result.exit = out.exit
     // A failed or timed-out session still changed the project; the evidence
     // below is taken regardless, and the exit says how the session ended.
@@ -572,28 +363,6 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     } catch (e) {
       if (!/unknown tool|check_composition/i.test(String(e))) throw e
     }
-
-    if (plan.probes.includes('transcribe')) {
-      // Read-only (transcribe_clip changes nothing), and after the evidence,
-      // so neither the baseline nor the agent's run sees its cache.
-      const layer = aRollClips(finalWire)[0] ?? clips[0]
-      const started = Date.now()
-      const probe: Record<string, unknown> = { tool: 'transcribe_clip', layer_id: layer ?? null }
-      try {
-        if (!layer) throw new Error('no A-roll VideoClip to transcribe')
-        const r = await call('transcribe_clip', { layer_id: layer }) as { backend?: string; language?: string; word_timing?: string; segments?: Array<{ text: string }> }
-        Object.assign(probe, { ok: true, backend: r.backend, language: r.language, word_timing: r.word_timing, segments: r.segments?.length ?? 0,
-          first_text: r.segments?.[0]?.text ?? null })
-      } catch (e) {
-        Object.assign(probe, { ok: false, error: (e as Error).message.slice(0, 2000) })
-      }
-      probe.ms = Date.now() - started
-      result.probes = { ...(result.probes ?? {}), transcribe: probe }
-    }
-    if (plan.probes.includes('motif-dir'))
-      result.probes = { ...(result.probes ?? {}), 'motif-dir': await motifDirProbe(s.agentEndpoint, workdir) }
-    if (plan.probes.includes('motif-edits'))
-      result.probes = { ...(result.probes ?? {}), 'motif-edits': await motifEditsProbe(s.agentEndpoint, plan.out_dir) }
   } catch (e) {
     // A host that failed to start still says how far it got.
     const hostRecord = (e as { hostRecord?: Record<string, unknown> }).hostRecord

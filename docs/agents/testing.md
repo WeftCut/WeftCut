@@ -14,7 +14,7 @@ not scattered by neglect.
 | **Rust** | `native/**` — inline `#[cfg(test)]` + `native/tests/` | cargo | see [Rust](#rust) (repo root) |
 | **E2E** | `apps/desktop/e2e/electron/*.spec.ts` | Playwright driving the **real Electron app** | `npm run e2e` (repo root or `apps/desktop`) · add `-- --full` for the `@matrix` tier |
 | **Mutation / PBT** | mutates `src/main/state/**` (config: `apps/desktop/stryker.config.mjs`) | StrykerJS (Vitest runner) | `npm run pbt:stryker` (`apps/desktop`) |
-| **Agent bench** (local, not CI, costs model spend) | `apps/desktop/bench/` (tasks in `bench/tasks/*.json`) | Playwright with its own config, driving the real app (here, or on a Windows host over ssh with `--remote <alias>`) and a headless agent client | `npm run bench -- --task <id\|glob> --model <id>[,<id>]` (`apps/desktop`); `--driver codex --model stub` is a free plumbing run |
+| **Agent bench** (local, not CI, costs model spend) | `apps/desktop/bench/` (tasks in `bench/tasks/*.json`) | Playwright with its own config, driving the real app (here, or on a Windows host over ssh with `--remote <alias>`) and a headless agent client | `npm run bench -- --task <id\|glob> --model <id>[,<id>]` (`apps/desktop`) |
 
 The `apps/desktop` unit script excludes `**/*.browser.test.ts`; there are none
 today — it's a standing guard for a pattern that would need a browser runner.
