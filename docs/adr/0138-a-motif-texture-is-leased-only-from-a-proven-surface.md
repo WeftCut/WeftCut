@@ -45,10 +45,10 @@ the gap sat between them.
 - The frame cache key namespace (`surface-v3`) does not change: frames
   already baked from a proven surface are unaffected, and no earlier
   mechanism produced frames this one would now reject.
-- The PNG path takes no lease and is unchanged. Its own readback is the
-  screenshot; the open macOS non-determinism
-  (`.scratch/agent-harness/png-capture-macos.md`) is a separate question
-  about that readback's timing on the bitmap OSR host.
+- The PNG path takes no lease and is unchanged here. Its own readback is
+  the screenshot; the macOS non-determinism turned out to be the host
+  window's size disagreeing with the page's emulated size, not an
+  unsynchronised readback (ADR 0142).
 
 ## Validation
 

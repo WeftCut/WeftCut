@@ -2,7 +2,9 @@
  * navigation while both the DOM canvas and screenshot report success. Keep 2D
  * backing stores on CPU in this fallback host; the shared-texture host retains
  * accelerated canvases. Install before authored scripts create their contexts.
- * WebGL and bitmaprenderer contexts keep their original options and backend. */
+ * WebGL and bitmaprenderer contexts keep their original options and backend.
+ * (The macOS empty-first-frame case was the host window's size, not the
+ * canvas backend: capture.ts §setContentSize, ADR 0142.) */
 export const PNG_CANVAS_RUNTIME_SOURCE = String.raw`
 (() => {
   for (const Canvas of [globalThis.HTMLCanvasElement, globalThis.OffscreenCanvas]) {

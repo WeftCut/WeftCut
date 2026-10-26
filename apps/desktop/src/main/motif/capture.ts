@@ -392,7 +392,15 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
-      if (h.frames) h.win.setContentSize(a.width, a.height)
+      // BOTH hosts take the capture's size as their window size, not only the
+      // shared-texture one. With the window left at its 800×600 default and the
+      // page emulated at the capture size, the macOS bitmap OSR host's first
+      // committed frame of a new document could be empty — every paint and
+      // readback transparent until the page drew again (7% of
+      // first-after-navigation captures on the macOS runner); sized to match,
+      // 384 of 384 captures were whole (ADR 0142). The emulation override
+      // stays: it is what pins deviceScaleFactor to 1 for the screenshot.
+      h.win.setContentSize(a.width, a.height)
       await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height, deviceScaleFactor: 1, mobile: false })
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       if (h.frames) {

@@ -38,6 +38,11 @@ let hangFrame = false
 /// The capture host's current content size — the fake paints at it, and a
 /// change models a new compositor surface (see setContentSize).
 let contentSize = { width: 32, height: 16 }
+/// The size the page is emulated at (Emulation.setDeviceMetricsOverride). A
+/// PNG readback while the window and the emulation disagree is BLANK: the
+/// macOS bitmap OSR host's empty first frame of a new document (ADR 0142).
+let emulatedSize: { width: number; height: number } | null = null
+const BLANK = 'QkxBTks='
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -69,11 +74,16 @@ vi.mock('electron', () => {
             committedSurface = renderedSurface
             screenshotCalls++
             shotOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
+            const data = emulatedSize && (emulatedSize.width !== contentSize.width || emulatedSize.height !== contentSize.height) ? BLANK : 'UE5H'
             if (slowScreenshots > 0) {
               slowScreenshots--
-              return delay(250).then(() => ({ data: 'UE5H' }))
+              return delay(250).then(() => ({ data }))
             }
-            return Promise.resolve({ data: 'UE5H' })
+            return Promise.resolve({ data })
+          }
+          if (method === 'Emulation.setDeviceMetricsOverride') {
+            const p = params as unknown as { width: number; height: number }
+            emulatedSize = { width: p.width, height: p.height }
           }
           if (method === 'Runtime.evaluate') {
             const expr = params?.expression ?? ''
@@ -357,6 +367,27 @@ describe('capture host shutdown', () => {
     await expect(abandoned).rejects.toThrow('superseded')
     await running
     expect(screenshotCalls - before).toBe(1)
+  })
+
+  it('sizes the PNG host window to the capture, so its readback is never the mismatched-size blank', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    const read = (motifId: string, tSec: number, width = 32, height = 16) =>
+      captureMotifFrameB64({ ...args, motifId, tSec, width, height })
+    try {
+      // New document at the host's current size, then a new size on the same
+      // page, then another document at that size: the window follows each.
+      await expect(read('sized-a', 2)).resolves.toBe('UE5H')
+      await expect(read('sized-a', 3, 48, 24)).resolves.toBe('UE5H')
+      expect(contentSize).toEqual({ width: 48, height: 24 })
+      await expect(read('sized-b', 4, 48, 24)).resolves.toBe('UE5H')
+      // The fake's rule, for the record: a window left behind the emulation
+      // reads back BLANK — what the macOS host did before the window followed.
+      contentSize = { width: 800, height: 600 }
+      await expect(read('sized-b', 5, 48, 24)).resolves.toBe(BLANK)
+    } finally {
+      contentSize = { width: 32, height: 16 }
+      emulatedSize = null
+    }
   })
 
   it('never leases the uninitialized surface after switching motifs', async () => {
