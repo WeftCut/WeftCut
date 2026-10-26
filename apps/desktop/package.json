@@ -90,7 +90,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "@webgpu/types": "^0.1.74",
-    "electron": "44.5.0",
+    "electron": "44.9.1",
     "electron-builder": "26.17.0",
     "electron-vite": "6.0.0-beta.5",
     "esbuild": "^0.28.2",
