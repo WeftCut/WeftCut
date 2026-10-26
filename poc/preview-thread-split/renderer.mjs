@@ -3,6 +3,8 @@
 //   main           decode + createImageBitmap + Pixi all on the main thread (today's shape)
 //   decode-worker  decode + createImageBitmap in a Worker, bitmaps transferred, Pixi on main
 //   all-worker     decode + Pixi in a Worker on an OffscreenCanvas; main thread idle
+//   decode-only    decode + createImageBitmap on main, bitmaps closed unused (no upload, no composite)
+//   upload-only    no decode; a static 4K bitmap per stream re-uploaded through Pixi at 30 fps
 import { StreamDecoder, Window, fetchBuffer, sleep } from './pipeline.mjs'
 import { createPresenter } from './presenter.mjs'
 import { startMonitor } from './monitor.mjs'
@@ -32,6 +34,28 @@ async function main() {
     monitor = startMonitor(win, playhead)
     decoders = buffers.map((b, i) => new StreamDecoder(i, b, { window: win, hw, onFrame: (i, bmp, ts) => presenter.submit(i, bmp, ts) }))
     for (const d of decoders) d.start().catch(e => d.stats.errors.push('start: ' + e))
+  } else if (arm === 'decode-only') {
+    // Hardware decode + createImageBitmap on main, bitmaps closed at once: no texture upload, no composite.
+    win = new Window(warmup, sample)
+    const buffers = []
+    for (let i = 0; i < streams; i++) buffers.push(await fetchBuffer(fixture))
+    win = new Window(warmup, sample)
+    monitor = startMonitor(win, playhead)
+    decoders = buffers.map((b, i) => new StreamDecoder(i, b, { window: win, hw, onFrame: (_i, bmp) => bmp.close() }))
+    for (const d of decoders) d.start().catch(e => d.stats.errors.push('start: ' + e))
+  } else if (arm === 'upload-only') {
+    // No decoding: one static 4K ImageBitmap per stream re-submitted at 30 fps, so Pixi re-uploads
+    // a 4K texture per stream per frame. Isolates the upload + composite cost.
+    win = new Window(warmup, sample)
+    presenter = await createPresenter({ canvas, width: W, height: H, streams, inWorker: false, preference, window: win, ownsBitmaps: false })
+    const src = new OffscreenCanvas(3840, 2160); const g = src.getContext('2d'); g.fillStyle = '#48a'; g.fillRect(0, 0, 3840, 2160); g.fillStyle = '#fc3'; g.fillRect(400, 300, 3000, 1500)
+    const statics = []
+    for (let i = 0; i < streams; i++) statics.push(await createImageBitmap(src))
+    win = new Window(warmup, sample); presenter.setWindow(win)
+    monitor = startMonitor(win, playhead)
+    let n = 0
+    const feeder = setInterval(() => { const ts = Math.round(n * 1e6 / 30); n++; for (let i = 0; i < streams; i++) presenter.submit(i, statics[i], ts) }, 1000 / 30)
+    report.feeder = feeder
   } else if (arm === 'decode-worker' || arm === 'all-worker') {
     win = new Window(warmup, sample)
     worker = new Worker('./worker.mjs', { type: 'module' })
@@ -61,6 +85,7 @@ async function main() {
     await sleep(250)
   }
   monitor.stop()
+  if (report.feeder) { clearInterval(report.feeder); delete report.feeder }
   for (const d of decoders) d.stop()
   presenter?.stop()
   report.monitor = monitor.summary()

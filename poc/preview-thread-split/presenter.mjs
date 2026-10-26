@@ -17,7 +17,7 @@ const WebWorkerAdapter = {
 }
 import { percentiles } from './pipeline.mjs'
 
-export async function createPresenter({ canvas, width, height, streams, inWorker, preference, window: initialWindow }) {
+export async function createPresenter({ canvas, width, height, streams, inWorker, preference, window: initialWindow, lookaheadSec = 0.15, ownsBitmaps = true }) {
   let win = initialWindow
   // The dist bundle registers the browser-only pipes (lib's webworkerAll leaves them out).
   if (inWorker) { DOMAdapter.set(WebWorkerAdapter); extensions.remove(DOMPipe, HTMLTextPipe, HTMLTextSystem, EventSystem, AccessibilitySystem) }
@@ -32,31 +32,44 @@ export async function createPresenter({ canvas, width, height, streams, inWorker
     s.width = cellW; s.height = cellH; s.tint = 0x404040
     app.stage.addChild(s); sprites.push(s)
   }
-  const pending = new Array(streams).fill(null), shown = new Array(streams).fill(null)
-  const stats = { superseded: 0, rendered: 0, renderMs: [], renderIntervalMs: [], presentLagMs: [] }
+  // Presentation is clock-driven like a player, not latest-wins: each stream
+  // queues decoded frames and the tick shows the newest frame that is due,
+  // dropping only frames whose time has already passed. Media time runs
+  // `lookaheadSec` behind the pacing clock (the decoder is fed that far ahead).
+  const queues = Array.from({ length: streams }, () => []), shown = new Array(streams).fill(null)
+  const stats = { dropped: 0, presented: 0, rendered: 0, renderMs: [], renderIntervalMs: [], presentSkewMs: [], queueMax: 0 }
   let lastRender = 0, stopped = false
+  const mediaNowUs = () => (win.sec() - lookaheadSec) * 1e6
 
   function submit(i, bmp, ts) {
-    if (pending[i]) { pending[i].bmp.close(); if (win.sampling()) stats.superseded++ }
-    pending[i] = { bmp, ts, at: performance.now() }
+    const q = queues[i]
+    q.push({ bmp, ts })
+    if (q.length > stats.queueMax) stats.queueMax = q.length
+    if (q.length > 12) { const old = q.shift(); if (ownsBitmaps) old.bmp.close(); if (win.sampling()) stats.dropped++ }
   }
 
   function tick() {
     if (stopped) return
     const toClose = []
     let dirty = false
+    const nowUs = mediaNowUs()
     for (let i = 0; i < streams; i++) {
-      const p = pending[i]; if (!p) continue
-      pending[i] = null
+      const q = queues[i]
+      let pick = -1
+      for (let k = 0; k < q.length; k++) { if (q[k].ts <= nowUs) pick = k; else break }
+      if (pick < 0) continue
+      for (let k = 0; k < pick; k++) { if (ownsBitmaps) toClose.push(q[k].bmp); if (win.sampling()) stats.dropped++ }
+      const p = q[pick]
+      q.splice(0, pick + 1)
       if (!sources[i]) {
         sources[i] = new ImageSource({ resource: p.bmp })
         sprites[i].texture = new Texture({ source: sources[i] })
         sprites[i].tint = 0xffffff
         sprites[i].width = cellW; sprites[i].height = cellH
       } else { sources[i].resource = p.bmp; sources[i].update() }
-      if (shown[i]) toClose.push(shown[i].bmp)
+      if (shown[i] && ownsBitmaps) toClose.push(shown[i].bmp)
       shown[i] = p
-      if (win.sampling()) stats.presentLagMs.push(performance.now() - p.at)
+      if (win.sampling()) { stats.presented++; stats.presentSkewMs.push((nowUs - p.ts) / 1000) }
       dirty = true
     }
     if (dirty) {
@@ -76,6 +89,6 @@ export async function createPresenter({ canvas, width, height, streams, inWorker
     stop() { stopped = true },
     setWindow(w) { win = w },
     renderer: app.renderer.name,
-    summary() { return { renderer: app.renderer.name, superseded: stats.superseded, rendered: stats.rendered, renderMs: percentiles(stats.renderMs), renderIntervalMs: percentiles(stats.renderIntervalMs), presentLagMs: percentiles(stats.presentLagMs) } },
+    summary() { return { renderer: app.renderer.name, dropped: stats.dropped, presented: stats.presented, rendered: stats.rendered, queueMax: stats.queueMax, renderMs: percentiles(stats.renderMs), renderIntervalMs: percentiles(stats.renderIntervalMs), presentSkewMs: percentiles(stats.presentSkewMs) } },
   }
 }
