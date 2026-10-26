@@ -1,0 +1,7 @@
+{
+  "name": "preview-thread-split-poc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Measure-first spike: where does per-frame 4K decode work hurt the renderer main thread, and which thread split (decode in a Worker / everything in a Worker) helps or hurts. See FINDINGS.md.",
+  "main": "main.js"
+}

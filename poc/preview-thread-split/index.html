@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>preview-thread-split</title>
+<style>
+  body { margin: 0; background: #202020; color: #ddd; font: 12px system-ui; overflow: hidden }
+  #canvas { display: block; width: 1280px; height: 720px; margin: 8px }
+  #timeline { position: relative; height: 40px; margin: 0 8px; background: #333 }
+  #playhead { position: absolute; top: 0; width: 2px; height: 40px; background: #f33; will-change: transform }
+  #status { margin: 8px; white-space: pre }
+</style></head>
+<body>
+  <canvas id="canvas" width="1280" height="720"></canvas>
+  <div id="timeline"><div id="playhead"></div></div>
+  <div id="status">starting…</div>
+  <script type="module" src="./renderer.mjs"></script>
+</body></html>
