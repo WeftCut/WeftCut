@@ -10,6 +10,8 @@ import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 import { assertLgplBanner, lgplLibDir } from './fetch-ffmpeg-lgpl.mjs'
+import { linuxSysroot } from './napi-linux-sysroot.mjs'
+import { assertGlibcFloor } from './glibc-floor.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const root = join(HERE, '..') // apps/desktop
@@ -49,10 +51,16 @@ if (process.platform === 'linux') {
   env.RUSTFLAGS = env.RUSTFLAGS ? `${env.RUSTFLAGS} ${rpath}` : rpath
 }
 
+// Linux x64: the same glibc sysroot as @weftcut/core (napi-linux-sysroot.mjs).
+// bindgen still runs the host libclang; napi points it at the sysroot's headers.
+const sysroot = linuxSysroot(env)
 execSync(
-  'napi build --platform --release --manifest-path native/decode/Cargo.toml --output-dir native/decode',
-  { stdio: 'inherit', env, cwd: root },
+  `napi build --platform --release ${sysroot.args} --manifest-path native/decode/Cargo.toml --output-dir native/decode`,
+  { stdio: 'inherit', env: { ...env, ...sysroot.env }, cwd: root },
 )
+if (sysroot.args) {
+  assertGlibcFloor([join(outDir, 'index.linux-x64-gnu.node')], { label: 'napi:build:decode —' })
+}
 
 // Co-locate the runtime shared libraries next to the freshly built .node so
 // $ORIGIN (Linux) / @loader_path (macOS) resolution works in dev exactly as it

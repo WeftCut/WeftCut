@@ -24,9 +24,13 @@ fn rename_noreplace(source: &Path, target: &Path) -> io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let s = CString::new(source.as_os_str().as_bytes())?;
     let t = CString::new(target.as_os_str().as_bytes())?;
+    // The raw syscall, not glibc's renameat2 wrapper: that wrapper only exists
+    // from glibc 2.28, and the Linux addon is linked against an older sysroot
+    // so it loads on older distros.
     #[cfg(target_os = "linux")]
     let result = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             s.as_ptr(),
             libc::AT_FDCWD,

@@ -77,6 +77,12 @@ Only 64-bit builds ship (arm64 and x64) — that holds on every OS.
 3. **Node 24+** via your distro or nvm.
 4. `npm install && npm run bootstrap && npm run dev`.
 
+On x64 the two addons are linked against napi-rs's glibc 2.17 cross
+toolchain, not your system's glibc, so a local build loads on the same
+distros as a release (ADR 0143). The first build downloads that toolchain
+into `~/.napi-rs/cross-toolchain/`; each build then checks its addon with
+`objdump` (from `build-essential`'s binutils) against the glibc floor.
+
 ## ffmpeg
 
 WeftCut will auto-download ffmpeg via `ffmpeg-sidecar` on first run,
