@@ -28,8 +28,8 @@ export class Window {
 
 /** One 4K stream: demux → VideoDecoder → createImageBitmap → onFrame(index, bitmap, tsUs). */
 export class StreamDecoder {
-  constructor(index, buffer, { window, hw, onFrame, lookaheadSec = 0.15, maxQueue = 6 }) {
-    Object.assign(this, { index, buffer, window, hw, onFrame, lookaheadSec, maxQueue })
+  constructor(index, buffer, { window, hw, onFrame, lookaheadSec = 0.15, maxQueue = 6, raw = false }) {
+    Object.assign(this, { index, buffer, window, hw, onFrame, lookaheadSec, maxQueue, raw })
     this.running = false
     this.stats = { decoded: 0, sampledOutputs: 0, cibMs: [], lateMs: [], late50: 0, decodeQueueMax: 0, errors: [] }
     this.lastTs = -1
@@ -72,6 +72,12 @@ export class StreamDecoder {
     this.stats.decoded++
     const ts = frame.timestamp
     const sampling = this.window.sampling()
+    if (this.raw) {
+      // decode-raw: no ImageBitmap, the VideoFrame is released immediately.
+      frame.close()
+      if (sampling) { this.stats.sampledOutputs++; this.stats.lateMs.push((this.window.sec() - this.lookaheadSec) * 1000 - ts / 1000) }
+      return
+    }
     const t0 = performance.now()
     let bmp
     try { bmp = await createImageBitmap(frame) } catch (e) { this.stats.errors.push('createImageBitmap: ' + e); frame.close(); return }

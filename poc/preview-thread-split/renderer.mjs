@@ -3,6 +3,7 @@
 //   main           decode + createImageBitmap + Pixi all on the main thread (today's shape)
 //   decode-worker  decode + createImageBitmap in a Worker, bitmaps transferred, Pixi on main
 //   all-worker     decode + Pixi in a Worker on an OffscreenCanvas; main thread idle
+//   decode-raw     decode on main, VideoFrames closed unused (no ImageBitmap, no upload, no composite)
 //   decode-only    decode + createImageBitmap on main, bitmaps closed unused (no upload, no composite)
 //   upload-only    no decode; a static 4K bitmap per stream re-uploaded through Pixi at 30 fps
 import { StreamDecoder, Window, fetchBuffer, sleep } from './pipeline.mjs'
@@ -33,6 +34,15 @@ async function main() {
     win = new Window(warmup, sample); presenter.setWindow(win)
     monitor = startMonitor(win, playhead)
     decoders = buffers.map((b, i) => new StreamDecoder(i, b, { window: win, hw, onFrame: (i, bmp, ts) => presenter.submit(i, bmp, ts) }))
+    for (const d of decoders) d.start().catch(e => d.stats.errors.push('start: ' + e))
+  } else if (arm === 'decode-raw') {
+    // Hardware decode on main, VideoFrames closed at once: no ImageBitmap, no upload, no composite.
+    win = new Window(warmup, sample)
+    const buffers = []
+    for (let i = 0; i < streams; i++) buffers.push(await fetchBuffer(fixture))
+    win = new Window(warmup, sample)
+    monitor = startMonitor(win, playhead)
+    decoders = buffers.map((b, i) => new StreamDecoder(i, b, { window: win, hw, raw: true, onFrame: () => {} }))
     for (const d of decoders) d.start().catch(e => d.stats.errors.push('start: ' + e))
   } else if (arm === 'decode-only') {
     // Hardware decode + createImageBitmap on main, bitmaps closed at once: no texture upload, no composite.
