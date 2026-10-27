@@ -40,6 +40,10 @@ pub struct DescSegment {
 pub struct SceneDescription {
     pub backend: String,
     pub model: String,
+    /// A few sentences over the whole window: clip descriptions only, once the
+    /// window's run has finished and its summary request succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub segments: Vec<DescSegment>,
 }
 
@@ -75,7 +79,8 @@ pub struct DescriptionCache {
 }
 
 /// One described window. `segments` are source-absolute and lie inside the
-/// chunks listed in `done`.
+/// chunks listed in `done`. They are stored as the model answered them; readers
+/// see them through [`Run::tidied`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     /// The `[in, out]` source window the call asked for.
@@ -85,6 +90,11 @@ pub struct Run {
     /// Merged, sorted source spans whose chunks finished.
     #[serde(default)]
     pub done: Vec<[i64; 2]>,
+    /// A few sentences over the whole window, written once every chunk
+    /// finished (clip runs only). Cleared whenever a chunk is (re)described, so
+    /// it never speaks for segments it did not see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 /// What a description file may hold: the current runs, or the single merged
@@ -116,12 +126,21 @@ impl From<StoredCache> for DescriptionCache {
     }
 }
 
-/// The `{ covered_ranges, segments }` answer every reader gets — the
-/// `media://{id}/description` payload's unchanged wire shape.
+/// The `{ covered_ranges, segments, summaries }` answer every reader gets — the
+/// `media://{id}/description` payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct DescriptionView {
     pub covered_ranges: Vec<[i64; 2]>,
     pub segments: Vec<DescSegment>,
+    /// Every run's summary, newest first, with the window it speaks for.
+    pub summaries: Vec<RunSummary>,
+}
+
+/// One run's summary and the window it covers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RunSummary {
+    pub window: [i64; 2],
+    pub text: String,
 }
 
 impl Run {
@@ -130,6 +149,7 @@ impl Run {
             window,
             segments: Vec::new(),
             done: Vec::new(),
+            summary: None,
         }
     }
 
@@ -138,9 +158,7 @@ impl Run {
         self.done.iter().any(|[x, y]| *x <= a && *y >= b)
     }
 
-    /// Whether every chunk of the window finished. Tests only: the tool asks
-    /// [`DescriptionCache::covers`], which also counts other runs.
-    #[cfg(test)]
+    /// Whether every chunk of the window finished.
     pub fn is_complete(&self) -> bool {
         self.has_done(self.window)
     }
@@ -155,7 +173,147 @@ impl Run {
         self.segments.sort_by_key(|s| s.t_start_us);
         self.done.push(chunk);
         self.done = merge_ranges(std::mem::take(&mut self.done));
+        self.summary = None;
     }
+
+    /// This run's segments as readers see them — a pure function of the run, so
+    /// files written before it existed read tidied too. Inside each finished
+    /// range (never across its edge: past it nothing was described):
+    ///
+    /// - the one-frame gaps a model leaves between segments are closed — a
+    ///   segment's times are frame times, so it "ends" a frame before the next
+    ///   one "starts", and a reader asking about the instant between gets
+    ///   nothing. A gap of at most [`TIDY_GAP_US`] is given to the segment
+    ///   before it; the first and last segments reach the range's edges the
+    ///   same way, and a zero-length segment is stretched toward the next one
+    ///   by at most as much;
+    /// - consecutive segments that now touch and say the same thing are merged
+    ///   ([`same_content`]): a small model asked for a timeline often answers one
+    ///   line per frame, and ten identical one-second lines are one segment. The
+    ///   merge keeps the first text and the union of tags.
+    ///
+    /// Per run and never across runs: a shot's run is that shot's answer, and
+    /// two shots that read alike must stay two rows.
+    pub fn tidied(&self) -> Vec<DescSegment> {
+        let mut segments = self.segments.clone();
+        segments.sort_by_key(|s| s.t_start_us);
+        let mut out = Vec::with_capacity(segments.len());
+        let mut rest = segments.into_iter().peekable();
+        for &[a, b] in &self.done {
+            // Segments before this range lie outside every finished range (an
+            // upgraded legacy file may hold such prose): passed through as is.
+            while rest.peek().is_some_and(|s| s.t_start_us < a) {
+                out.push(rest.next().expect("peeked"));
+            }
+            let mut inside = Vec::new();
+            while rest.peek().is_some_and(|s| s.t_start_us <= b) {
+                inside.push(rest.next().expect("peeked"));
+            }
+            out.extend(tidy_range(inside, [a, b]));
+        }
+        out.extend(rest);
+        out
+    }
+}
+
+/// The widest gap [`Run::tidied`] closes: two frames at the default 1 fps. A
+/// longer silence between segments is the model's own (a black frame it chose
+/// not to describe) and stays.
+pub const TIDY_GAP_US: i64 = 2_000_000;
+
+/// [`Run::tidied`] over one finished range `[a, b]`; `segments` start inside it.
+fn tidy_range(mut segments: Vec<DescSegment>, [a, b]: [i64; 2]) -> Vec<DescSegment> {
+    let n = segments.len();
+    for i in 0..n {
+        let next = if i + 1 < n {
+            segments[i + 1].t_start_us
+        } else {
+            b
+        };
+        let s = &mut segments[i];
+        s.t_end_us = s.t_end_us.max(s.t_start_us);
+        if s.t_end_us == s.t_start_us {
+            s.t_end_us = next.min(s.t_start_us + TIDY_GAP_US).max(s.t_start_us);
+        }
+        if s.t_end_us < next && next - s.t_end_us <= TIDY_GAP_US {
+            s.t_end_us = next;
+        }
+    }
+    if let Some(first) = segments.first_mut() {
+        if first.t_start_us > a && first.t_start_us - a <= TIDY_GAP_US {
+            first.t_start_us = a;
+        }
+    }
+    let mut out: Vec<DescSegment> = Vec::with_capacity(n);
+    for s in segments {
+        match out.last_mut() {
+            Some(prev) if prev.t_end_us >= s.t_start_us && same_content(prev, &s) => {
+                prev.t_end_us = prev.t_end_us.max(s.t_end_us);
+                for tag in s.tags {
+                    if !prev.tags.contains(&tag) {
+                        prev.tags.push(tag);
+                    }
+                }
+            }
+            _ => out.push(s),
+        }
+    }
+    out
+}
+
+/// Whether two neighbouring segments describe the same thing: their texts are
+/// near-identical (character-bigram Dice ≥ 0.8 over the text with spaces and
+/// punctuation dropped), or close (Dice ≥ 0.55) with mostly the same tags (tag
+/// Jaccard ≥ 0.75). Character bigrams, not words, so CJK prose — unsegmented —
+/// compares as well as English.
+///
+/// Set against a real 10-minute documentary run (Qwen3-VL 4B, 1 fps): the
+/// repeats that merge score 1.0, rewordings of one shot ("女人继续给山羊挤奶，
+/// 山羊低头" / "女人在给山羊挤奶，山羊侧身") 0.61 with identical tags, while two
+/// different people in the same setting ("穿着毛衣…弯腰" / "穿着长外套…双手
+/// 交叉") stay apart at 0.45 with tag Jaccard 0.2.
+pub fn same_content(x: &DescSegment, y: &DescSegment) -> bool {
+    let dice = bigram_dice(&x.text, &y.text);
+    if dice >= 0.8 {
+        return true;
+    }
+    if dice < 0.55 {
+        return false;
+    }
+    let xs: std::collections::HashSet<&str> = x.tags.iter().map(String::as_str).collect();
+    let ys: std::collections::HashSet<&str> = y.tags.iter().map(String::as_str).collect();
+    let union = xs.union(&ys).count();
+    union > 0 && xs.intersection(&ys).count() as f64 / union as f64 >= 0.75
+}
+
+/// Sørensen–Dice over character bigrams (multiset), text lowercased with
+/// whitespace and punctuation removed. A one-character text is its own bigram.
+fn bigram_dice(a: &str, b: &str) -> f64 {
+    fn grams(t: &str) -> Vec<(char, char)> {
+        let chars: Vec<char> = t
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        match chars.len() {
+            0 => Vec::new(),
+            1 => vec![(chars[0], chars[0])],
+            _ => chars.windows(2).map(|w| (w[0], w[1])).collect(),
+        }
+    }
+    let (x, mut y) = (grams(a), grams(b));
+    if x.is_empty() && y.is_empty() {
+        return 1.0;
+    }
+    let total = x.len() + y.len();
+    let mut shared = 0usize;
+    for g in &x {
+        if let Some(i) = y.iter().position(|h| h == g) {
+            y.swap_remove(i);
+            shared += 1;
+        }
+    }
+    2.0 * shared as f64 / total as f64
 }
 
 impl DescriptionCache {
@@ -170,6 +328,7 @@ impl DescriptionCache {
                 window: *r,
                 segments: Vec::new(),
                 done: vec![*r],
+                summary: None,
             })
             .collect();
         for s in segments {
@@ -190,6 +349,7 @@ impl DescriptionCache {
                     window: [s.t_start_us, s.t_end_us],
                     done: vec![[s.t_start_us, s.t_end_us]],
                     segments: vec![s],
+                    summary: None,
                 }),
             }
         }
@@ -214,15 +374,16 @@ impl DescriptionCache {
             .any(|[a, b]| *a <= in_us && *b >= out_us)
     }
 
-    /// The segments readers see: the newest run that finished an instant speaks
-    /// for it, and an older run's segment keeps only the instants no newer run
-    /// finished — clipped to them, split around a newer run inside it, dropped
-    /// when nothing is left. Sorted by start.
+    /// The segments readers see: each run [tidied](Run::tidied), then the
+    /// newest run that finished an instant speaks for it, and an older run's
+    /// segment keeps only the instants no newer run finished — clipped to them,
+    /// split around a newer run inside it, dropped when nothing is left. Sorted
+    /// by start.
     pub fn view(&self) -> Vec<DescSegment> {
         let mut claimed: Vec<[i64; 2]> = Vec::new();
         let mut out = Vec::new();
         for run in self.runs.iter().rev() {
-            out.extend(clip_outside(run.segments.clone(), &claimed));
+            out.extend(clip_outside(run.tidied(), &claimed));
             claimed.extend(run.done.iter().copied());
             claimed = merge_ranges(claimed);
         }
@@ -230,12 +391,34 @@ impl DescriptionCache {
         out
     }
 
-    /// The `{ covered_ranges, segments }` answer for the whole source.
+    /// The `{ covered_ranges, segments, summaries }` answer for the whole
+    /// source.
     pub fn view_payload(&self) -> DescriptionView {
         DescriptionView {
             covered_ranges: self.covered_ranges(),
             segments: self.view(),
+            summaries: self
+                .runs
+                .iter()
+                .rev()
+                .filter_map(|r| {
+                    r.summary.as_ref().map(|text| RunSummary {
+                        window: r.window,
+                        text: text.clone(),
+                    })
+                })
+                .collect(),
         }
+    }
+
+    /// The summary of the run over exactly `window`, if it has one. Tests only:
+    /// the tool reads the run itself, which it also needs to know is whole.
+    #[cfg(test)]
+    pub fn summary_for(&self, window: [i64; 2]) -> Option<&str> {
+        self.runs
+            .iter()
+            .find(|r| r.window == window)
+            .and_then(|r| r.summary.as_deref())
     }
 
     /// [`Self::view`]'s segments intersecting `[in_us, out_us]` — what
@@ -427,6 +610,7 @@ mod tests {
             window,
             segments,
             done: vec![window],
+            summary: None,
         }
     }
 
@@ -534,6 +718,196 @@ mod tests {
         assert_eq!(c.view_payload().covered_ranges, vec![[0, 10_000_000]]);
     }
 
+    fn tagged(a: i64, b: i64, text: &str, tags: &[&str]) -> DescSegment {
+        DescSegment {
+            t_start_us: a,
+            t_end_us: b,
+            text: text.into(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    fn spans(segments: &[DescSegment]) -> Vec<(i64, i64, &str)> {
+        segments
+            .iter()
+            .map(|s| (s.t_start_us, s.t_end_us, s.text.as_str()))
+            .collect()
+    }
+
+    const S: i64 = 1_000_000;
+
+    /// Lifted from a real 1 fps run over a documentary: a 16 s chunk answered
+    /// one line per frame — ten identical ones, then five more.
+    #[test]
+    fn a_line_per_frame_tidies_into_one_segment_per_shot() {
+        let mut segments: Vec<_> = (0..10)
+            .map(|i| {
+                tagged(
+                    192 * S + S / 2 + i * S,
+                    193 * S + S / 2 + i * S,
+                    "一双黑色皮鞋和一个大行李箱",
+                    &["皮鞋", "行李箱"],
+                )
+            })
+            .collect();
+        segments.extend((0..5).map(|i| {
+            tagged(
+                202 * S + S / 2 + i * S,
+                203 * S + S / 2 + i * S,
+                "一堆白色方块",
+                &["白色方块"],
+            )
+        }));
+        let run = Run {
+            window: [192 * S, 208 * S],
+            segments,
+            done: vec![[192 * S, 208 * S]],
+            summary: None,
+        };
+        assert_eq!(
+            spans(&run.tidied()),
+            [
+                // Pulled back to the chunk's start, through to the next shot.
+                (192 * S, 202 * S + S / 2, "一双黑色皮鞋和一个大行李箱"),
+                // Out to the chunk's end.
+                (202 * S + S / 2, 208 * S, "一堆白色方块"),
+            ]
+        );
+        // Stored as answered: the tidy is a reading, not a rewrite.
+        assert_eq!(run.segments.len(), 15);
+    }
+
+    #[test]
+    fn rewordings_merge_and_different_subjects_do_not() {
+        let tags = ["女人", "山羊", "挤奶"];
+        let a = tagged(0, S, "女人继续给山羊挤奶，山羊低头。", &tags);
+        let b = tagged(S, 2 * S, "女人在给山羊挤奶，山羊侧身。", &tags);
+        let c = tagged(
+            2 * S,
+            3 * S,
+            "女人用挤奶器给山羊挤奶。",
+            &["女人", "山羊", "挤奶器", "挤奶"],
+        );
+        assert!(same_content(&a, &b));
+        // A new detail (the milking machine) is a new segment.
+        assert!(!same_content(&b, &c));
+        let sweater = tagged(
+            0,
+            S,
+            "一个穿着毛衣和帽子的人在户外弯腰，似乎在整理或系紧鞋子。",
+            &["户外", "弯腰", "系鞋"],
+        );
+        let coat = tagged(
+            S,
+            2 * S,
+            "一个穿着长外套和帽子的人在户外，双手交叉在胸前，似乎在调整外套。",
+            &["户外", "调整外套", "帽子"],
+        );
+        assert!(!same_content(&sweater, &coat));
+        // English compares the same way.
+        assert!(same_content(
+            &seg(0, S, "A red title card."),
+            &seg(S, 2 * S, "a red title card")
+        ));
+        let run = Run {
+            window: [0, 3 * S],
+            segments: vec![a, b, c],
+            done: vec![[0, 3 * S]],
+            summary: None,
+        };
+        let tidied = run.tidied();
+        assert_eq!(tidied.len(), 2);
+        assert_eq!(tidied[0].t_end_us, 2 * S);
+        assert_eq!(tidied[1].tags, ["女人", "山羊", "挤奶器", "挤奶"]);
+    }
+
+    #[test]
+    fn tidying_never_crosses_an_unfinished_chunk_or_a_long_silence() {
+        let run = Run {
+            window: [0, 20 * S],
+            segments: vec![
+                seg(S / 2, 3 * S, "first"),
+                seg(3 * S + S / 2, 3 * S + S / 2, "instant"),
+                seg(10 * S + S / 2, 11 * S, "resumed"),
+                seg(15 * S, 16 * S, "after a silence"),
+            ],
+            // [4, 10) never finished.
+            done: vec![[0, 4 * S], [10 * S, 20 * S]],
+            summary: None,
+        };
+        assert_eq!(
+            spans(&run.tidied()),
+            [
+                (0, 3 * S + S / 2, "first"),
+                // Zero-length: stretched to its range's end, not past it.
+                (3 * S + S / 2, 4 * S, "instant"),
+                // 4 s gaps are the model's own silences and stay, before the
+                // next segment and before the range's end alike.
+                (10 * S, 11 * S, "resumed"),
+                (15 * S, 16 * S, "after a silence"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_view_tidies_each_run_and_never_merges_two() {
+        // Two shots described alike stay two rows.
+        let c = DescriptionCache {
+            runs: vec![
+                done(
+                    [0, 4 * S],
+                    vec![seg(S / 2, 3 * S + S / 2, "a red title card")],
+                ),
+                done(
+                    [4 * S, 8 * S],
+                    vec![seg(4 * S + S / 2, 7 * S + S / 2, "a red title card")],
+                ),
+            ],
+        };
+        assert_eq!(
+            spans(&c.view()),
+            [
+                (0, 4 * S, "a red title card"),
+                (4 * S, 8 * S, "a red title card"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_summary_is_cleared_by_new_chunks_and_listed_newest_first() {
+        let mut c = DescriptionCache::default();
+        let run = c.run_for([0, 8 * S]);
+        run.record_chunk([0, 8 * S], vec![seg(0, 8 * S, "whole")]);
+        run.summary = Some("older".into());
+        let run = c.run_for([0, 4 * S]);
+        run.record_chunk([0, 4 * S], vec![seg(0, 4 * S, "part")]);
+        run.summary = Some("newer".into());
+        let payload = c.view_payload();
+        assert_eq!(
+            payload.summaries,
+            [
+                RunSummary {
+                    window: [0, 4 * S],
+                    text: "newer".into()
+                },
+                RunSummary {
+                    window: [0, 8 * S],
+                    text: "older".into()
+                },
+            ]
+        );
+        assert_eq!(c.summary_for([0, 8 * S]), Some("older"));
+        // Re-describing a chunk makes the summary stale: gone.
+        c.run_for([0, 8 * S])
+            .record_chunk([0, 4 * S], vec![seg(0, 4 * S, "redo")]);
+        assert_eq!(c.summary_for([0, 8 * S]), None);
+        // Older files without the field read; an absent summary is not written.
+        let json = serde_json::to_value(&c).unwrap();
+        assert!(json["runs"][1].get("summary").is_none());
+        let back: DescriptionCache = serde_json::from_value(json).unwrap();
+        assert_eq!(back.summary_for([0, 4 * S]), Some("newer"));
+    }
+
     #[test]
     fn discard_forgets_only_the_exact_window() {
         let mut c = DescriptionCache {
@@ -584,8 +958,8 @@ mod tests {
 
     proptest::proptest! {
         /// For every instant a run finished, the view answers with exactly the
-        /// segments of the NEWEST run that finished it — never an older run's,
-        /// never nothing when that run had something to say.
+        /// (tidied) segments of the NEWEST run that finished it — never an older
+        /// run's, never nothing when that run had something to say.
         #[test]
         fn the_newest_finishing_run_answers_every_instant(
             raw in proptest::collection::vec(
@@ -624,7 +998,7 @@ mod tests {
                     continue;
                 };
                 let tag = format!("r{i}");
-                let expected = owner.segments.iter().filter(|s| inside(s.t_start_us, s.t_end_us)).count();
+                let expected = owner.tidied().iter().filter(|s| inside(s.t_start_us, s.t_end_us)).count();
                 let got: Vec<_> = view.iter().filter(|s| inside(s.t_start_us, s.t_end_us)).collect();
                 proptest::prop_assert_eq!(got.len(), expected, "t={} owner={}", t, tag);
                 proptest::prop_assert!(got.iter().all(|s| s.text == tag), "t={} owner={}", t, tag);

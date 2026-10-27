@@ -198,6 +198,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                 }],
                 focus: Focus::General,
                 language: Language::default(),
+                task: crate::vlm::Task::Timeline,
             };
             if backend == VlmBackend::ByoEndpoint {
                 let ep = a.endpoint.ok_or("Missing model endpoint")?;

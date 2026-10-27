@@ -624,15 +624,26 @@ cached per source, purpose and [Description view](#descriptions), and read back
 by media id. Each describe call is a **run** over its window, sampled at the
 view's rate everywhere and described in chunks a model request can hold; a run
 keeps the chunks it finished, and where runs overlap the newest speaks for its
-span. Clip content and individual-shot descriptions have independent
+span. A run is read tidied: one-frame gaps closed and repeated lines merged,
+within the run only. Clip content and individual-shot descriptions have independent
 caches: clip content feeds its own panel section and the search palette; shot
 rows read only shot descriptions, joined by time intersection. Prose has no right answer to check it against,
 so it is never reviewed or edited, only read where it is useful and searched.
 UI word: Describe clip content / 描述片段内容; a row with none
 reads Not described / 未描述.
-_Avoid_: caption or subtitle (spoken words, a Text layer), summary, scene
+_Avoid_: caption or subtitle (spoken words, a Text layer), summary (that is the
+[Clip summary](#descriptions), a few sentences over a whole run), scene
 description in UI copy (the Rust struct is `SceneDescription`, but "scene" is
 the word this glossary keeps away from shots), transcript
+
+**Clip summary**:
+Two to four sentences over a whole clip-content run, written once its chunks
+are done when the window is longer than one request; shots and short clips
+have none. The model sees frames from across the window and the run's own
+timeline. It leads the Shots Panel's clip-content section, with the segments
+behind Details. Cleared when the run is re-described. See ADR 0149.
+UI word: the section's lead paragraph; Details (N segments) / 详情（N 段）.
+_Avoid_: description (the segments), synopsis
 
 **Description view**:
 The five inputs that key a source's cached description — engine, model, sampling

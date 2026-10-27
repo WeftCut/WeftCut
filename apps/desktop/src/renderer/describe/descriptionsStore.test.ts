@@ -26,6 +26,7 @@ import {
   mergeDescription,
   resyncDescriptionsForView,
   setDescribing,
+  summaryForWindow,
   syncDescriptions,
   useDescriptionsStore,
 } from "./descriptionsStore";
@@ -64,6 +65,29 @@ describe("descriptionsStore", () => {
     expect(held("m-1")).toBeNull();
     await hydrateDescription("m-1");
     expect(mocks.getMediaDescription).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a clip read's summaries beside its segments, and drops them with an empty read", async () => {
+    const summaries = [{ window: [0, 6_000_000] as [number, number], text: "A hallway, then a door." }];
+    mocks.getMediaDescription.mockResolvedValue({ ...CACHE, summaries });
+    await hydrateDescription("m-1");
+    expect(useDescriptionsStore.getState().summaries.get("m-1")).toEqual(summaries);
+    // A later read without them (the window was refreshed) takes them away.
+    mocks.getMediaDescription.mockResolvedValue(CACHE);
+    await reloadDescription("m-1");
+    expect(useDescriptionsStore.getState().summaries.has("m-1")).toBe(false);
+  });
+
+  it("leads with the exact window's summary, else a covering one, never a narrower one", () => {
+    const summaries = [
+      { window: [2_000_000, 4_000_000] as [number, number], text: "narrower" },
+      { window: [0, 10_000_000] as [number, number], text: "wider" },
+      { window: [0, 6_000_000] as [number, number], text: "exact" },
+    ];
+    expect(summaryForWindow(summaries, 0, 6_000_000)).toBe("exact");
+    expect(summaryForWindow(summaries, 1_000_000, 5_000_000)).toBe("wider");
+    expect(summaryForWindow(summaries.slice(0, 1), 0, 6_000_000)).toBeNull();
+    expect(summaryForWindow([], 0, 6_000_000)).toBeNull();
   });
 
   it("does not re-read a source it already has segments for", async () => {

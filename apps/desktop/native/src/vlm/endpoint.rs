@@ -5,7 +5,7 @@
 //! its own: pointing this at `api.openai.com` is the hosted case.
 //!
 //! Same frame-sampling input as the local sidecar, adapted to the wire by
-//! [`build_request_body`]; the reply is read by `extract_content` and tagged
+//! [`build_task_request_body`]; the reply is read by `extract_content` and tagged
 //! [`RawDescription::JsonArray`], so the shared parser yields the same
 //! `SceneDescription` shape as the local path.
 //!
@@ -26,11 +26,11 @@ use crate::inference::http::{bearer_auth, parse_retry_after, send_with_retry, sh
 
 use super::backend::VlmBackend;
 use super::describer::{
-    describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, TimedFrame,
+    describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, Task, TimedFrame,
 };
 use super::error::VlmError;
 use super::parser::RawDescription;
-use super::sidecar::build_prompt;
+use super::sidecar::{prompt_for, SUMMARY_TAIL};
 
 /// Describer over an OpenAI-compatible chat-completions endpoint.
 pub struct OpenAiCompatDescriber {
@@ -76,7 +76,8 @@ impl SceneDescriber for OpenAiCompatDescriber {
                 b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
             });
         }
-        let body = build_request_body(&self.model, &encoded, req.focus, &req.language);
+        let body =
+            build_task_request_body(&self.model, &encoded, req.focus, &req.language, &req.task);
         let timeout = self
             .timeout
             .unwrap_or_else(|| describe_hang_guard(req.frames.len()));
@@ -174,16 +175,30 @@ fn max_tokens_for(n_frames: usize) -> u32 {
     (256 + 64 * n_frames as u32).clamp(768, 4096)
 }
 
-/// Build the chat-completions request body: one user message whose `content` is
-/// the interleaved [text, image, text, image, …, instruction] parts. The text
-/// parts carry the injected `Frame at <t>s:` markers + the JSON instruction
-/// (reusing [`build_prompt`]'s exact wording so cloud/BYO stay faithful to the
-/// local path). Pure so it is unit-testable without a network.
+/// [`build_task_request_body`] for the timeline task — what the tests pin the
+/// wire shape with.
+#[cfg(test)]
 pub fn build_request_body(
     model: &str,
     frames: &[EncodedFrame],
     focus: Focus,
     language: &Language,
+) -> Value {
+    build_task_request_body(model, frames, focus, language, &Task::Timeline)
+}
+
+/// Build the chat-completions request body: one user message whose `content` is
+/// the interleaved [text, image, text, image, …, instruction] parts. The text
+/// parts carry the injected `Frame at <t>s:` markers + the task's instruction
+/// tail (reusing [`prompt_for`]'s exact wording so cloud/BYO stay faithful to
+/// the local path; for a summary, the outline and its rules). Pure so it is
+/// unit-testable without a network.
+pub fn build_task_request_body(
+    model: &str,
+    frames: &[EncodedFrame],
+    focus: Focus,
+    language: &Language,
+    task: &Task,
 ) -> Value {
     // Reuse the local prompt to derive the leading instruction wording; the
     // per-frame markers are emitted as structured parts instead of `<__media__>`.
@@ -194,7 +209,7 @@ pub fn build_request_body(
             path: Default::default(),
         })
         .collect();
-    let instruction = trailing_instruction(&build_prompt(&timed, focus, language));
+    let instruction = trailing_instruction(&prompt_for(&timed, focus, language, task));
 
     let mut content: Vec<Value> = vec![json!({
         "type": "text",
@@ -217,11 +232,14 @@ pub fn build_request_body(
     })
 }
 
-/// The JSON-array instruction tail of the local prompt (everything from the
-/// "Return ONLY a JSON array" line onward) — reused verbatim so every backend
-/// asks for the same output shape.
+/// The instruction tail of the local prompt — everything from the "Return ONLY
+/// a JSON array" line onward, or for a summary from the outline onward — reused
+/// verbatim so every backend asks for the same output shape.
 fn trailing_instruction(prompt: &str) -> String {
-    match prompt.find("Return ONLY a JSON array") {
+    match prompt
+        .find(SUMMARY_TAIL)
+        .or_else(|| prompt.find("Return ONLY a JSON array"))
+    {
         Some(i) => prompt[i..].to_string(),
         None => prompt.to_string(),
     }
@@ -276,6 +294,28 @@ mod tests {
             .unwrap()
             .contains("Return ONLY a JSON array"));
         assert_eq!(body["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn a_summary_request_sends_the_outline_after_the_frames() {
+        let frames = vec![frame(0, "image/jpeg", "AAAA")];
+        let task = Task::Summary {
+            outline: "[0.0–4.0s] sheep on a hill".into(),
+        };
+        let body =
+            build_task_request_body("m", &frames, Focus::General, &Language::default(), &task);
+        let last = body["messages"][0]["content"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(last.starts_with(SUMMARY_TAIL), "{last}");
+        assert!(last.contains("sheep on a hill"));
+        assert!(last.contains("Return ONLY a JSON object"));
+        assert!(!last.contains("JSON array"));
     }
 
     #[test]
@@ -343,6 +383,7 @@ mod tests {
             frames: vec![TimedFrame { t_us: 0, path }],
             focus: Focus::General,
             language: Language::default(),
+            task: Task::Timeline,
         })
         .await
     }

@@ -29,7 +29,7 @@ use crate::inference::sidecar::{run_child, ChildRun};
 use crate::inference_files::InferenceFiles;
 
 use super::describer::{
-    describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, TimedFrame,
+    describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, Task, TimedFrame,
 };
 use super::error::VlmError;
 use super::parser::RawDescription;
@@ -111,7 +111,7 @@ impl LlamaMtmdSidecar {
         req: DescribeRequest,
         observer: ModelObserver<'_>,
     ) -> Result<(RawDescription, bool), VlmError> {
-        let prompt = build_prompt(&req.frames, req.focus, &req.language);
+        let prompt = prompt_for(&req.frames, req.focus, &req.language, &req.task);
         let files = InferenceFiles::new()?;
         let mut frames = Vec::with_capacity(req.frames.len());
         for (i, frame) in req.frames.iter().enumerate() {
@@ -243,6 +243,57 @@ pub fn build_prompt(frames: &[TimedFrame], focus: Focus, language: &Language) ->
     }.to_string());
     lines.push(format!(
         "- Write every \"text\" value and every tag in {}. Use no other language for them, whatever language appears in the frames. The JSON keys stay in English.",
+        language.prompt_name(),
+    ));
+    lines.join("\n")
+}
+
+/// The prompt `task` asks of `frames`: [`build_prompt`]'s timeline or
+/// [`build_summary_prompt`]'s summary.
+pub fn prompt_for(frames: &[TimedFrame], focus: Focus, language: &Language, task: &Task) -> String {
+    match task {
+        Task::Timeline => build_prompt(frames, focus, language),
+        Task::Summary { outline } => build_summary_prompt(frames, outline, language),
+    }
+}
+
+/// Where a summary prompt's instruction tail starts — the outline and the
+/// output rules, which the endpoint sends after its image parts.
+pub const SUMMARY_TAIL: &str = "A detailed pass already described";
+
+/// The summary prompt: frames sampled evenly across the whole window, the run's
+/// own timeline as an outline, and a request for two to four sentences as one
+/// JSON string. JSON rather than bare prose so a chatty preamble or an echoed
+/// prompt cannot pass for the answer (`parser::parse_summary`); the template is
+/// deliberately not valid JSON, so an echo of it never parses as one either.
+/// English instructions, the answer's language named once — as in
+/// [`build_prompt`].
+pub fn build_summary_prompt(frames: &[TimedFrame], outline: &str, language: &Language) -> String {
+    let mut lines = vec![
+        "You are analyzing frames sampled evenly across a single video clip.".to_string(),
+        "Each frame below is labeled with its exact timestamp in seconds.".to_string(),
+        String::new(),
+    ];
+    for f in frames {
+        lines.push(format!("Frame at {:.2}s:", f.t_us as f64 / 1_000_000.0));
+        lines.push(MEDIA_MARKER.to_string());
+        lines.push(String::new());
+    }
+    lines.push(format!(
+        "{SUMMARY_TAIL} the clip as this timeline (seconds from the clip's start):"
+    ));
+    lines.push(outline.to_string());
+    lines.push(String::new());
+    lines.push("Return ONLY a JSON object, no other prose:".to_string());
+    lines.push(r#"{"summary": <two to four sentences, as one JSON string>}"#.to_string());
+    lines.push("Rules:".to_string());
+    lines.push(
+        "- Summarize the whole clip: what it is about, how it unfolds, where it takes place. Do not list every shot."
+            .to_string(),
+    );
+    lines.push("- Keep to what the frames and the timeline show; add nothing else.".to_string());
+    lines.push(format!(
+        "- Write the summary in {}. Use no other language, whatever language appears in the frames or the timeline. The JSON key stays in English.",
         language.prompt_name(),
     ));
     lines.join("\n")
@@ -478,6 +529,42 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_prompt_carries_frames_outline_and_language() {
+        let frames = vec![frame(0, "a.jpg"), frame(30_000_000, "b.jpg")];
+        let task = Task::Summary {
+            outline: "[0.0–12.0s] a title card".into(),
+        };
+        let p = prompt_for(
+            &frames,
+            Focus::General,
+            &Language::parse(Some("zh-CN")),
+            &task,
+        );
+        assert_eq!(p.matches(MEDIA_MARKER).count(), 2);
+        assert!(p.contains("Frame at 30.00s:"));
+        assert!(p.contains("[0.0–12.0s] a title card"));
+        assert!(p.contains("Return ONLY a JSON object"));
+        assert!(p.contains("in Simplified Chinese"));
+        // Its own template never parses as an answer.
+        let template = p.lines().find(|l| l.starts_with(r#"{"summary""#)).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(template).is_err());
+        // Everything an endpoint sends after the images starts at the outline.
+        let tail = &p[p.find(SUMMARY_TAIL).unwrap()..];
+        assert!(tail.contains("a title card") && tail.contains("Simplified Chinese"));
+        assert!(!tail.contains(MEDIA_MARKER));
+        // The timeline task is the prompt it always was.
+        assert_eq!(
+            prompt_for(
+                &frames,
+                Focus::General,
+                &Language::default(),
+                &Task::Timeline
+            ),
+            build_prompt(&frames, Focus::General, &Language::default())
+        );
+    }
+
+    #[test]
     fn language_rule_is_inside_the_shared_trailing_instruction() {
         // The BYO/cloud path reuses everything from "Return ONLY a JSON array"
         // onward (`endpoint::trailing_instruction`), so the language line has to
@@ -541,6 +628,7 @@ mod tests {
                 // non-English answer, which is the only way this path's language
                 // rule is ever actually observed.
                 language: Language::parse(std::env::var("WEFTCUT_VLM_LANGUAGE").ok().as_deref()),
+                task: Task::Timeline,
             })
             .await
             .expect("describe");

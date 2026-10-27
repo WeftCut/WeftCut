@@ -193,13 +193,29 @@ pub fn describe_hang_guard(n_frames: usize) -> Duration {
     Duration::from_secs(FLOOR_SECS + (n_frames as u64).saturating_mul(PER_FRAME_SECS))
 }
 
-/// A fully-specified describe request: the sampled frames, the prompt focus and
-/// the language the answer must come back in.
+/// A fully-specified describe request: the sampled frames, the prompt focus,
+/// the language the answer must come back in, and what is asked of them.
 #[derive(Debug, Clone)]
 pub struct DescribeRequest {
     pub frames: Vec<TimedFrame>,
     pub focus: Focus,
     pub language: Language,
+    pub task: Task,
+}
+
+/// What a request asks of its frames. Both engines take both: the summary rides
+/// the same frames-in seam because the local `llama-mtmd-cli` has no one-shot
+/// text-only mode (without an image it opens an interactive chat), and frames
+/// let the model check the outline against the footage.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Task {
+    /// The timestamped segment array (`parser::parse_raw`).
+    #[default]
+    Timeline,
+    /// A few sentences over the whole window, given frames sampled evenly
+    /// across it and the run's own timeline as `outline` (one line per segment,
+    /// window-relative seconds). Read by `parser::parse_summary`.
+    Summary { outline: String },
 }
 
 #[async_trait]

@@ -21,7 +21,7 @@
 
 import { create } from "zustand";
 
-import { getMediaDescription, type DescSegment } from "../ipc";
+import { getMediaDescription, type DescSegment, type DescriptionCache, type RunSummary } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
 import type { DescriptionPurpose } from "../../shared/description";
 
@@ -51,6 +51,9 @@ interface DescriptionsState {
   segments: ReadonlyMap<string, readonly DescSegment[] | null>;
   /// Individual-shot results only; never fall back to clip content.
   shotSegments: ReadonlyMap<string, readonly DescSegment[] | null>;
+  /// Clip content's run summaries by media id, newest first, published with
+  /// `segments` from the same read. Shots have none.
+  summaries: ReadonlyMap<string, readonly RunSummary[]>;
   /// The window a description run is going against, or null. Read by the rows:
   /// a cell with nothing to show says whether one is on its way.
   ///
@@ -74,6 +77,7 @@ interface DescriptionsState {
 const INITIAL: DescriptionsState = {
   segments: new Map(),
   shotSegments: new Map(),
+  summaries: new Map(),
   describing: null,
   errors: { clip: "", shot: "" },
   batch: null,
@@ -125,16 +129,24 @@ let runGeneration = 0;
 /// resync from issuing the read that can.
 const inFlight = new Map<string, number>();
 
-/// Publish an answer only if the view it was asked under is still the one the
-/// map holds.
-function putIfCurrent(
+/// Publish a read's answer only if the view it was asked under is still the one
+/// the map holds: its segments, and — clip content only — its summaries, so the
+/// two never come from different reads.
+function putReadIfCurrent(
   generation: number,
   mediaId: string,
-  value: readonly DescSegment[] | null,
+  cache: DescriptionCache | null,
   purpose: DescriptionPurpose = "clip",
 ): void {
   if (generation !== viewGeneration) return;
-  put(mediaId, value, purpose);
+  put(mediaId, cache === null ? null : cache.segments, purpose);
+  if (purpose === "clip") {
+    const next = new Map(useDescriptionsStore.getState().summaries);
+    const summaries = cache?.summaries ?? [];
+    if (summaries.length === 0) next.delete(mediaId);
+    else next.set(mediaId, summaries);
+    useDescriptionsStore.setState({ summaries: next });
+  }
 }
 
 /// The file each answered source pointed at when it was last looked at.
@@ -168,8 +180,7 @@ export async function hydrateDescription(mediaId: string, purpose: DescriptionPu
   try {
     await (purpose === "shot" ? shotReads : reads).run(
       () => readDescription(mediaId, purpose),
-      (cache) =>
-        putIfCurrent(generation, mediaId, cache === null ? null : cache.segments, purpose),
+      (cache) => putReadIfCurrent(generation, mediaId, cache, purpose),
     );
   } catch (err) {
     // A read that cannot even be asked leaves the column saying "not
@@ -177,7 +188,7 @@ export async function hydrateDescription(mediaId: string, purpose: DescriptionPu
     // Recorded and not surfaced: a description is an extra on a row that is
     // legible without it, and the status log is where a describe failure belongs.
     console.warn("[descriptionsStore] description read failed", err);
-    putIfCurrent(generation, mediaId, null, purpose);
+    putReadIfCurrent(generation, mediaId, null, purpose);
   } finally {
     if (inFlight.get(readKey) === generation) inFlight.delete(readKey);
   }
@@ -213,13 +224,15 @@ export async function syncDescriptions(
     // the index marks itself dirty on every one of them.
     const next = new Map(useDescriptionsStore.getState().segments);
     const nextShots = new Map(useDescriptionsStore.getState().shotSegments);
+    const nextSummaries = new Map(useDescriptionsStore.getState().summaries);
     for (const [id] of stale) {
       next.delete(id);
       nextShots.delete(id);
+      nextSummaries.delete(id);
       readAtPath.delete(id);
       if (!sources.has(id)) requestedShots.delete(id);
     }
-    useDescriptionsStore.setState({ segments: next, shotSegments: nextShots });
+    useDescriptionsStore.setState({ segments: next, shotSegments: nextShots, summaries: nextSummaries });
   }
   for (const [id, path] of sources) readAtPath.set(id, path);
   const generation = viewGeneration;
@@ -230,13 +243,13 @@ export async function syncDescriptions(
       inFlight.set(mediaId, generation);
       try {
         const cache = await getMediaDescription(mediaId);
-        putIfCurrent(generation, mediaId, cache === null ? null : cache.segments);
+        putReadIfCurrent(generation, mediaId, cache);
       } catch (err) {
         // Same answer a failed subject read gives — nothing is known to be on
         // disk, so nothing is indexed. Recorded and not surfaced: a palette
         // missing a row it could not have known about is not a refusal.
         console.warn("[descriptionsStore] description sweep read failed", err);
-        putIfCurrent(generation, mediaId, null);
+        putReadIfCurrent(generation, mediaId, null);
       } finally {
         if (inFlight.get(mediaId) === generation) inFlight.delete(mediaId);
       }
@@ -272,7 +285,7 @@ export async function resyncDescriptionsForView(
 ): Promise<void> {
   viewGeneration += 1;
   readAtPath.clear();
-  useDescriptionsStore.setState({ segments: new Map(), shotSegments: new Map() });
+  useDescriptionsStore.setState({ segments: new Map(), shotSegments: new Map(), summaries: new Map() });
   await syncDescriptions(sources);
 }
 
@@ -293,7 +306,7 @@ export async function reloadDescription(mediaId: string, purpose: DescriptionPur
     await (purpose === "shot" ? shotReads : reads).run(
       () => readDescription(mediaId, purpose),
       (cache) => {
-        if (cache !== null) putIfCurrent(generation, mediaId, cache.segments, purpose);
+        if (cache !== null) putReadIfCurrent(generation, mediaId, cache, purpose);
       },
     );
   } catch (err) {
@@ -401,6 +414,28 @@ export const useDescription = (
   useDescriptionsStore((s) =>
     mediaId === null ? null : (purpose === "shot" ? s.shotSegments : s.segments).get(mediaId) ?? null,
   );
+
+const NO_SUMMARIES: readonly RunSummary[] = [];
+
+/// One source's clip-content summaries, newest first; a stable empty list when
+/// there are none.
+export const useClipSummaries = (mediaId: string | null): readonly RunSummary[] =>
+  useDescriptionsStore((s) => (mediaId === null ? NO_SUMMARIES : s.summaries.get(mediaId) ?? NO_SUMMARIES));
+
+/// The summary a clip's content section leads with: the run over exactly the
+/// clip's `[srcInUs, srcOutUs]` window, else the newest one whose window covers
+/// it (a wider clip of the same source), else none — a narrower run's summary
+/// does not speak for the whole clip.
+export function summaryForWindow(
+  summaries: readonly RunSummary[],
+  srcInUs: number,
+  srcOutUs: number,
+): string | null {
+  const exact = summaries.find((s) => s.window[0] === srcInUs && s.window[1] === srcOutUs);
+  if (exact) return exact.text;
+  const covering = summaries.find((s) => s.window[0] <= srcInUs && s.window[1] >= srcOutUs);
+  return covering ? covering.text : null;
+}
 
 export const useDescribing = (): DescribingSpan | null =>
   useDescriptionsStore((s) => s.describing);

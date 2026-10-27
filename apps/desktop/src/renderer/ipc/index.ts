@@ -3038,7 +3038,17 @@ export interface DescSegment {
 export interface SceneDescription {
   backend: string;
   model: string;
+  /// A few sentences over the whole window: clip descriptions of a window longer
+  /// than one request, once the summary request succeeded.
+  summary?: string;
   segments: DescSegment[];
+}
+
+/// One run's summary and the source window it speaks for. Mirrors Rust
+/// `RunSummary`.
+export interface RunSummary {
+  window: [number, number];
+  text: string;
 }
 
 /// The range-lazy cache value behind `media://{id}/description`: which source
@@ -3051,6 +3061,8 @@ export interface SceneDescription {
 export interface DescriptionCache {
   covered_ranges: [number, number][];
   segments: DescSegment[];
+  /// Every run's summary, newest first. Absent from an older backend's answer.
+  summaries?: RunSummary[];
 }
 
 /// Describe one VideoClip layer's window with a video-understanding model. The

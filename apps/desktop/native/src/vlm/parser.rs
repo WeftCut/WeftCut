@@ -58,6 +58,59 @@ pub fn parse_raw(raw: RawDescription) -> Result<Vec<DescSegment>, VlmError> {
     }
 }
 
+/// Most characters a summary keeps: a few sentences, with room for a verbose
+/// model; past it the answer is cut at a character boundary.
+const SUMMARY_MAX_CHARS: usize = 1200;
+
+/// Read a summary answer ([`Task::Summary`](super::describer::Task)): the
+/// `summary` string of the LAST JSON object in the output that has one (a
+/// prompt echo comes first, the answer last), tolerating code fences and a
+/// preamble; failing that, bare prose — but never a JSON body without the field,
+/// which is a model that answered the wrong question.
+pub fn parse_summary(raw: RawDescription) -> Result<String, VlmError> {
+    let body = match raw {
+        RawDescription::JsonArray(b) | RawDescription::MiniCpmVText(b) => b,
+    };
+    let mut found = None;
+    for (i, _) in body.match_indices('{') {
+        let mut stream = serde_json::Deserializer::from_str(&body[i..]).into_iter::<Value>();
+        if let Some(Ok(Value::Object(o))) = stream.next() {
+            if let Some(text) = o.get("summary").and_then(Value::as_str) {
+                if !text.trim().is_empty() {
+                    found = Some(text.trim().to_string());
+                }
+            }
+        }
+    }
+    let text = match found {
+        Some(text) => text,
+        None => {
+            let bare = strip_fences(&body);
+            if bare.is_empty() || bare.starts_with('{') || bare.starts_with('[') {
+                return Err(VlmError::Parse(format!(
+                    "no summary in model output ({} bytes)",
+                    body.len()
+                )));
+            }
+            bare.trim_matches('"').trim().to_string()
+        }
+    };
+    Ok(match text.char_indices().nth(SUMMARY_MAX_CHARS) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    })
+}
+
+/// `text` without a surrounding Markdown code fence (and its language tag).
+fn strip_fences(text: &str) -> String {
+    let t = text.trim();
+    let Some(inner) = t.strip_prefix("```") else {
+        return t.to_string();
+    };
+    let inner = inner.split_once('\n').map_or("", |(_, rest)| rest);
+    inner.trim_end().trim_end_matches("```").trim().to_string()
+}
+
 /// Shared parse: extract the (possibly truncated) JSON array, coerce each
 /// element to a window-relative [`DescSegment`], dropping empty ones. When
 /// `split_underscore_tags` is set (MiniCPM-V), break underscore/whitespace-joined
@@ -230,6 +283,40 @@ mod tests {
             segs[0].tags,
             vec!["lower", "body", "feet", "step", "marked", "lines", "full", "body", "shot"],
         );
+    }
+
+    #[test]
+    fn a_summary_is_read_from_the_last_json_object_that_has_one() {
+        let body = "Here you go:\n```json\n{\"summary\": \"一部关于动物用途的纪录片。\"}\n```";
+        assert_eq!(
+            parse_summary(RawDescription::JsonArray(body.into())).unwrap(),
+            "一部关于动物用途的纪录片。"
+        );
+        // An echoed prompt comes first; the answer is the last object.
+        let echoed = r#"Return ONLY a JSON object: {"summary": <two to four sentences>} {"summary": "first"} then {"summary": "the answer"}"#;
+        assert_eq!(
+            parse_summary(RawDescription::JsonArray(echoed.into())).unwrap(),
+            "the answer"
+        );
+    }
+
+    #[test]
+    fn a_summary_tolerates_bare_prose_but_not_the_wrong_json() {
+        assert_eq!(
+            parse_summary(RawDescription::MiniCpmVText(
+                "  \"A short film about farm animals.\"  ".into()
+            ))
+            .unwrap(),
+            "A short film about farm animals."
+        );
+        // A timeline answer to a summary question is a failure, not a summary.
+        let timeline = r#"[{"t_start":0,"t_end":1,"text":"x","tags":[]}]"#;
+        assert!(parse_summary(RawDescription::JsonArray(timeline.into())).is_err());
+        assert!(parse_summary(RawDescription::JsonArray("   ".into())).is_err());
+        // A runaway answer is cut.
+        let long = format!("{{\"summary\": \"{}\"}}", "长".repeat(5000));
+        let cut = parse_summary(RawDescription::JsonArray(long)).unwrap();
+        assert_eq!(cut.chars().count(), SUMMARY_MAX_CHARS + 1);
     }
 
     /// The SAME MiniCPM-shaped body through the general (Qwen) parser keeps the

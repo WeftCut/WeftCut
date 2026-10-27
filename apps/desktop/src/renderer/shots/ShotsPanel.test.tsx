@@ -716,6 +716,55 @@ describe("ShotsPanel — the description column", () => {
     expect(screen.getByTestId("shots-describe-all").textContent).toContain("Describe 2 shots");
   });
 
+  it("leads clip content with its summary and keeps the segments behind a closed disclosure", async () => {
+    shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 3_000_000, text: "a hallway", tags: [] },
+        { t_start_us: 3_000_000, t_end_us: 6_000_000, text: "a door opens", tags: [] },
+      ],
+      summaries: [{ window: [0, 6_000_000], text: "Someone walks a hallway to a door." }],
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    expect((await screen.findByTestId("shots-clip-summary")).textContent).toBe(
+      "Someone walks a hallway to a door.",
+    );
+    const details = screen.getByTestId("shots-clip-details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe("Details (2 segments)");
+    expect(screen.queryByTestId("shots-clip-more")).toBeNull();
+  });
+
+  it("caps a long clip-content list without a summary and expands it on request", async () => {
+    const segments = Array.from({ length: 12 }, (_, i) => ({
+      t_start_us: i * 500_000,
+      t_end_us: (i + 1) * 500_000,
+      text: `moment ${i}`,
+      tags: [],
+    }));
+    shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
+      covered_ranges: [[0, 6_000_000]],
+      segments,
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    await screen.findByTestId("shots-clip-content");
+    // The rows land after the first paint; the section is the one above them.
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+    const lines = () =>
+      screen.getByTestId("shots-clip-content").querySelectorAll(".shots-description-span").length;
+    expect(lines()).toBe(8);
+    expect(screen.queryByTestId("shots-clip-summary")).toBeNull();
+    const more = screen.getByTestId("shots-clip-more");
+    expect(more.textContent).toBe("Show all 12");
+    fireEvent.click(more);
+    expect(lines()).toBe(12);
+    expect(screen.getByTestId("shots-clip-more").textContent).toBe("Show fewer");
+  });
+
   it("says a shot is not described rather than leaving the cell blank", async () => {
     openComposition(ROOT_ID, null);
     setLayerSelection("l1", ["l1"]);

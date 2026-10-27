@@ -1944,13 +1944,27 @@ async fn describe_clip_job(
         cache.discard(window);
     }
 
+    let (frames_per_request, concurrency) =
+        vlm::config::request_shape(cfg.get(used_backend.as_str()));
+    let describer: std::sync::Arc<dyn vlm::describer::SceneDescriber> =
+        std::sync::Arc::from(describer);
+    // A clip's window gets a summary once its run is whole — when it is longer
+    // than one request's frames, i.e. when its timeline is long enough to need
+    // one. A shot, and a short clip, are read in full: one more engine run
+    // (a model load, locally) would only restate them.
+    let frames_in_window = (window[1] - window[0]) as f64 / 1_000_000.0 * fps;
+    let summarize = matches!(args.purpose, vlm::DescriptionPurpose::Clip)
+        && frames_in_window.round() as usize > frames_per_request;
+    // `(done, total)` steps the summary reports as: after the chunks when they
+    // run, alone when the chunks are already cached.
+    let mut summary_step = (0, 1);
     if args.refresh || !cache.covers(window[0], window[1]) {
-        let (frames_per_request, concurrency) =
-            vlm::config::request_shape(cfg.get(used_backend.as_str()));
         // Every chunk at the requested fps; a window too long for one call is
         // refused here, before any frame is sampled.
         let chunks = vlm::frame_extract::plan_chunks(window[0], window[1], fps, frames_per_request)
             .map_err(|e| McpToolError::invalid_params(e, None))?;
+        let total = chunks.len() as u32;
+        summary_step = (total, total + 1);
         let run = describe_chunks(
             job,
             &dest,
@@ -1958,22 +1972,199 @@ async fn describe_clip_job(
             ChunkedDescribe {
                 window,
                 chunks,
-                describer: std::sync::Arc::from(describer),
+                describer: describer.clone(),
                 concurrency,
                 source: resolved.source_path.clone(),
                 focus,
                 language: language.clone(),
+                extra_steps: u32::from(summarize),
             },
         );
         run.await?;
     }
+    let summary = if summarize {
+        summarize_run(
+            job,
+            &dest,
+            &mut cache,
+            SummaryWork {
+                window,
+                describer,
+                frames: frames_per_request.min(SUMMARY_FRAMES),
+                fps,
+                source: resolved.source_path.clone(),
+                focus,
+                language,
+                step: summary_step,
+            },
+        )
+        .await?
+    } else {
+        None
+    };
 
     let result = vlm::SceneDescription {
         backend: used_backend.as_str().to_string(),
         model,
+        summary,
         segments: cache.segments_in(window[0], window[1]),
     };
     ToolResult::json(&result)
+}
+
+/// Most frames a summary request carries. Fewer than a chunk's: the outline
+/// rides in the same context, and the local engine's is capped at 8192 tokens.
+#[cfg(feature = "speech")]
+const SUMMARY_FRAMES: usize = 8;
+
+/// Most characters of outline a summary prompt carries. A longer timeline keeps
+/// every k-th line, so the whole window is still represented.
+#[cfg(feature = "speech")]
+const SUMMARY_OUTLINE_CHARS: usize = 3000;
+
+/// What a window's summary request needs, and the progress step it reports as.
+#[cfg(feature = "speech")]
+struct SummaryWork {
+    window: [i64; 2],
+    describer: std::sync::Arc<dyn crate::vlm::describer::SceneDescriber>,
+    frames: usize,
+    fps: f64,
+    source: std::path::PathBuf,
+    focus: crate::vlm::Focus,
+    language: crate::vlm::Language,
+    step: (u32, u32),
+}
+
+/// The summary of the run over exactly `work.window`: the stored one, or — when
+/// that run is whole and has none (just finished, an older file, or a summary
+/// that failed last time) — one more request over frames sampled evenly across
+/// the window plus the run's own tidied timeline, persisted on the run.
+///
+/// A summary that cannot be had is not the call's failure: the segments stand
+/// on their own, so it is logged and the answer goes without one. A cancel
+/// still cancels (the future is dropped). No run over exactly this window (a
+/// sub-window answered from a wider one) has no summary of its own.
+#[cfg(feature = "speech")]
+async fn summarize_run(
+    job: &JobReporter,
+    dest: &std::path::Path,
+    cache: &mut crate::vlm::DescriptionCache,
+    work: SummaryWork,
+) -> Result<Option<String>, McpToolError> {
+    use crate::compute_jobs::ModelPhase;
+    use crate::vlm;
+
+    let Some(run) = cache.runs.iter().find(|r| r.window == work.window) else {
+        return Ok(None);
+    };
+    if let Some(summary) = &run.summary {
+        return Ok(Some(summary.clone()));
+    }
+    let tidied = run.tidied();
+    if !run.is_complete() || tidied.is_empty() {
+        return Ok(None);
+    }
+    let outline = summary_outline(&tidied, work.window[0]);
+    let (done, total) = work.step;
+    let attempt = async {
+        let tmp = chunk_dir()?;
+        // Evenly across the whole window, at most `frames` of them.
+        let anchors = vlm::frame_extract::plan_anchors_capped(
+            work.window[0],
+            work.window[1],
+            work.fps,
+            work.frames,
+        );
+        let frames = vlm::frame_extract::sample_frames(
+            &work.source,
+            work.window[0],
+            tmp.path(),
+            &anchors,
+            job.admission(ComputePhase::Extracting {
+                done: 0,
+                total: anchors.len() as u32,
+            }),
+            |sampled| {
+                job.phase(ComputePhase::Extracting {
+                    done: sampled as u32,
+                    total: anchors.len() as u32,
+                })
+            },
+        )
+        .await
+        .map_err(map_vlm_error)?;
+        let raw = work
+            .describer
+            .describe_observed(
+                vlm::DescribeRequest {
+                    frames,
+                    focus: work.focus,
+                    language: work.language.clone(),
+                    task: vlm::Task::Summary { outline },
+                },
+                &|phase| {
+                    job.model(match phase {
+                        ModelPhase::Inferring { .. } => ModelPhase::Inferring {
+                            done: Some(done),
+                            total: Some(total),
+                        },
+                        other => other,
+                    })
+                },
+            )
+            .await
+            .map_err(map_vlm_error)?;
+        vlm::parse_summary(raw).map_err(map_vlm_error)
+    };
+    match attempt.await {
+        Ok(summary) => {
+            if let Some(run) = cache.runs.iter_mut().find(|r| r.window == work.window) {
+                run.summary = Some(summary.clone());
+            }
+            persist_description(dest, cache).await?;
+            Ok(Some(summary))
+        }
+        Err(e) => {
+            tracing::warn!(
+                "describe_clip: summary of [{}, {}] failed, answering without one: {}",
+                work.window[0],
+                work.window[1],
+                e.message
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// The run's timeline as the summary prompt quotes it: one `[a–b s] text` line
+/// per segment, in seconds from the window's start (the frames' clock). Over
+/// [`SUMMARY_OUTLINE_CHARS`], every k-th line is kept so the outline still spans
+/// the whole window.
+#[cfg(feature = "speech")]
+fn summary_outline(segments: &[crate::vlm::description::DescSegment], start_us: i64) -> String {
+    let secs = |us: i64| (us - start_us) as f64 / 1_000_000.0;
+    let lines: Vec<String> = segments
+        .iter()
+        .map(|s| {
+            format!(
+                "[{:.1}–{:.1}s] {}",
+                secs(s.t_start_us),
+                secs(s.t_end_us),
+                s.text.replace('\n', " ")
+            )
+        })
+        .collect();
+    let total: usize = lines.iter().map(|l| l.chars().count() + 1).sum();
+    let stride = total.div_ceil(SUMMARY_OUTLINE_CHARS).max(1);
+    let mut out = String::new();
+    for line in lines.iter().step_by(stride) {
+        if out.chars().count() + line.chars().count() + 1 > SUMMARY_OUTLINE_CHARS {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
 }
 
 /// One `describe_clip` run's work: its window, the chunk plan, and what every
@@ -1987,6 +2178,8 @@ struct ChunkedDescribe {
     source: std::path::PathBuf,
     focus: crate::vlm::Focus,
     language: crate::vlm::Language,
+    /// Steps after the chunks that the `Inferring` count includes (the summary).
+    extra_steps: u32,
 }
 
 /// Describe the run over `work.window` chunk by chunk, persisting after each:
@@ -2017,6 +2210,7 @@ async fn describe_chunks(
             .collect()
     };
     let mut finished = total_chunks - pending.len() as u32;
+    let steps = total_chunks + work.extra_steps;
 
     if work.concurrency <= 1 || pending.len() <= 1 {
         let total_frames: u32 = pending.iter().map(|c| c.anchors.len() as u32).sum();
@@ -2049,13 +2243,14 @@ async fn describe_chunks(
                         frames,
                         focus: work.focus,
                         language: work.language.clone(),
+                        task: vlm::Task::Timeline,
                     },
                     // The engine's own phases, with the chunk count it cannot see.
                     &|phase| {
                         job.model(match phase {
                             ModelPhase::Inferring { .. } => ModelPhase::Inferring {
                                 done: Some(finished),
-                                total: Some(total_chunks),
+                                total: Some(steps),
                             },
                             other => other,
                         })
@@ -2073,7 +2268,7 @@ async fn describe_chunks(
 
     job.phase(ComputePhase::Inferring {
         done: Some(finished),
-        total: Some(total_chunks),
+        total: Some(steps),
     });
     let mut queue = pending.into_iter();
     let mut in_flight = tokio::task::JoinSet::new();
@@ -2103,6 +2298,7 @@ async fn describe_chunks(
                             frames,
                             focus,
                             language,
+                            task: vlm::Task::Timeline,
                         })
                         .await
                 }
@@ -2121,7 +2317,7 @@ async fn describe_chunks(
         finished += 1;
         job.phase(ComputePhase::Inferring {
             done: Some(finished),
-            total: Some(total_chunks),
+            total: Some(steps),
         });
     }
     Ok(())
@@ -2275,6 +2471,53 @@ pub(super) async fn synthesize_speech(
 // Clip-compute jobs: phases and cancellation through the real tool path, with
 // shell scripts standing in for the engines.
 // ============================================================
+
+#[cfg(all(test, feature = "speech"))]
+mod summary_outline_tests {
+    use super::{summary_outline, SUMMARY_OUTLINE_CHARS};
+    use crate::vlm::description::DescSegment;
+
+    fn seg(a: i64, b: i64, text: &str) -> DescSegment {
+        DescSegment {
+            t_start_us: a,
+            t_end_us: b,
+            text: text.into(),
+            tags: vec![],
+        }
+    }
+
+    #[test]
+    fn the_outline_is_on_the_frames_clock() {
+        let outline = summary_outline(
+            &[
+                seg(10_000_000, 12_500_000, "a title\ncard"),
+                seg(12_500_000, 20_000_000, "sheep"),
+            ],
+            10_000_000,
+        );
+        assert_eq!(outline, "[0.0–2.5s] a title card\n[2.5–10.0s] sheep");
+    }
+
+    #[test]
+    fn a_long_outline_thins_out_but_still_spans_the_window() {
+        let segments: Vec<_> = (0..600)
+            .map(|i| {
+                seg(
+                    i * 1_000_000,
+                    (i + 1) * 1_000_000,
+                    "一群羊在山坡上吃草，背景是山丘和开阔的田野",
+                )
+            })
+            .collect();
+        let outline = summary_outline(&segments, 0);
+        assert!(outline.chars().count() <= SUMMARY_OUTLINE_CHARS);
+        assert!(outline.starts_with("[0.0–1.0s]"));
+        // Kept lines are spread to the end, not cut off after the first minutes.
+        let last = outline.lines().last().unwrap();
+        let start: f64 = last[1..last.find('–').unwrap()].parse().unwrap();
+        assert!(start > 500.0, "{last}");
+    }
+}
 
 #[cfg(all(test, target_os = "linux", feature = "speech", feature = "mcp"))]
 mod compute_job_tests {
@@ -2748,19 +2991,36 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
             .collect()
     }
 
+    /// A chat-completions answer to a summary request.
+    fn summary_answer(text: &str) -> crate::inference::http::test_server::Reply {
+        let content = json!({ "summary": text });
+        let body = json!({ "choices": [{ "message": { "content": content.to_string() } }] });
+        Some((200, "Content-Type: application/json\r\n", body.to_string()))
+    }
+
+    fn summary(reply: &Value) -> Option<String> {
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        body["summary"].as_str().map(str::to_string)
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn describe_chunks_a_long_window_resumes_after_a_failure_and_reuses_the_run() {
+        let refused = || Some((400, "", "the model refused".to_string()));
         let Some(t) = endpoint(
             vec![
                 answer("c1"),
                 answer("c2"),
-                Some((400, "", "the model refused".into())),
+                refused(),
                 answer("c3"),
                 answer("c4"),
+                summary_answer("the clip in brief"),
                 answer("r1"),
                 answer("r2"),
                 answer("r3"),
                 answer("r4"),
+                refused(),
+                summary_answer("second try"),
             ],
             64_000_000,
             1,
@@ -2778,53 +3038,75 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
         // Four 16 s chunks at 1 fps: sixteen frames a request, never sparser.
         assert_eq!(images_per_request(&t.server), [16, 16, 16]);
 
-        // The same request resumes: only chunks three and four run.
+        // The same request resumes: only chunks three and four run, then the
+        // window's summary over eight frames spread across it.
         let reply = call(b, "describe_clip", &with_job(&t.args, "resume")).await;
         assert_eq!(reply["ok"], true, "{reply}");
-        assert_eq!(t.server.hits(), 5);
+        assert_eq!(t.server.hits(), 6);
+        assert_eq!(images_per_request(&t.server)[5], 8);
+        assert!(t.server.requests()[5].contains("[0.0–16.5s] c1"));
+        assert_eq!(summary(&reply).as_deref(), Some("the clip in brief"));
+        // Tidied: each answer's one-frame gaps closed, the run's edges reached.
         let got = segments(&reply);
         assert_eq!(
             got,
             [
-                (500_000, 15_500_000, "c1".into()),
-                (16_500_000, 31_500_000, "c2".into()),
-                (32_500_000, 47_500_000, "c3".into()),
-                (48_500_000, 63_500_000, "c4".into()),
+                (0, 16_500_000, "c1".into()),
+                (16_500_000, 32_500_000, "c2".into()),
+                (32_500_000, 48_500_000, "c3".into()),
+                (48_500_000, 64_000_000, "c4".into()),
             ]
         );
         let phases = phases(&t.sink, "resume");
-        assert!(
-            phases.contains(&json!({ "kind": "inferring", "done": 2, "total": 4 })),
-            "{phases:?}"
-        );
-        assert!(
-            phases.contains(&json!({ "kind": "inferring", "done": 3, "total": 4 })),
-            "{phases:?}"
-        );
+        for done in [2, 3, 4] {
+            assert!(
+                phases.contains(&json!({ "kind": "inferring", "done": done, "total": 5 })),
+                "{phases:?}"
+            );
+        }
 
-        // A sub-window of the finished run is answered from it, no request.
+        // A sub-window of the finished run is answered from it, no request,
+        // and no summary: the summary speaks for the run's own window.
         let mut sub = t.args.clone();
         sub["t_start_us"] = json!(20_000_000);
         sub["t_end_us"] = json!(30_000_000);
         let reply = call(b, "describe_clip", &sub).await;
         assert_eq!(reply["ok"], true, "{reply}");
-        assert_eq!(t.server.hits(), 5);
-        assert_eq!(segments(&reply), [(16_500_000, 31_500_000, "c2".into())]);
+        assert_eq!(t.server.hits(), 6);
+        assert_eq!(segments(&reply), [(16_500_000, 32_500_000, "c2".into())]);
+        assert_eq!(summary(&reply), None);
 
-        // `refresh` describes the window again, from the first chunk.
+        // `refresh` describes the window again, from the first chunk. Its
+        // summary fails: the call still answers, without one.
         let mut fresh = t.args.clone();
         fresh["refresh"] = json!(true);
         let reply = call(b, "describe_clip", &fresh).await;
         assert_eq!(reply["ok"], true, "{reply}");
-        assert_eq!(t.server.hits(), 9);
+        assert_eq!(t.server.hits(), 11);
         let texts: Vec<_> = segments(&reply).into_iter().map(|s| s.2).collect();
         assert_eq!(texts, ["r1", "r2", "r3", "r4"]);
+        assert_eq!(summary(&reply), None);
+
+        // The next call over the window asks for the missing summary alone…
+        let reply = call(b, "describe_clip", &t.args).await;
+        assert_eq!(t.server.hits(), 12);
+        assert_eq!(summary(&reply).as_deref(), Some("second try"));
+        // …and the one after is a plain cache hit.
+        let reply = call(b, "describe_clip", &t.args).await;
+        assert_eq!(t.server.hits(), 12);
+        assert_eq!(summary(&reply).as_deref(), Some("second try"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn describe_runs_endpoint_chunks_concurrently() {
         let Some(t) = endpoint(
-            vec![answer("a"), answer("b"), answer("c"), answer("d")],
+            vec![
+                answer("a"),
+                answer("b"),
+                answer("c"),
+                answer("d"),
+                summary_answer("four scenes"),
+            ],
             64_000_000,
             2,
         )
@@ -2834,11 +3116,13 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
         };
         let reply = call(&t.backend, "describe_clip", &t.args).await;
         assert_eq!(reply["ok"], true, "{reply}");
-        assert_eq!(t.server.hits(), 4);
+        // Four chunks, then the summary once all are in.
+        assert_eq!(t.server.hits(), 5);
+        assert_eq!(summary(&reply).as_deref(), Some("four scenes"));
         let got = segments(&reply);
         // Each chunk's answer lands on its own chunk, whichever finished first.
         let starts: Vec<_> = got.iter().map(|s| s.0).collect();
-        assert_eq!(starts, [500_000, 16_500_000, 32_500_000, 48_500_000]);
+        assert_eq!(starts, [0, 16_500_000, 32_500_000, 48_500_000]);
         let mut texts: Vec<_> = got.into_iter().map(|s| s.2).collect();
         texts.sort();
         assert_eq!(texts, ["a", "b", "c", "d"]);

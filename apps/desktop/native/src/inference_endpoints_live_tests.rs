@@ -237,6 +237,7 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
         frames: frames.clone(),
         focus: Focus::General,
         language: Language::default(),
+        task: crate::vlm::Task::Timeline,
     };
     let url = "http://127.0.0.1:18081/v1/chat/completions".to_string();
 
@@ -386,13 +387,16 @@ async fn describe_four_scenes(backend_tag: &str, backend_config: serde_json::Val
         .unwrap();
         assert_eq!(reply["ok"], true, "{reply}");
         let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-        serde_json::from_str::<serde_json::Value>(text).unwrap()["segments"].clone()
+        serde_json::from_str::<serde_json::Value>(text).unwrap()
     };
 
     let started = Instant::now();
-    let segments = call().await;
+    let body = call().await;
     println!("{backend_tag}: described 64 s in {:?}", started.elapsed());
-    let segments = segments.as_array().unwrap();
+    // Four chunks: longer than one request, so the run ends in a summary.
+    let summary = body["summary"].as_str().expect("summary").to_string();
+    println!("  summary: {summary}");
+    let segments = body["segments"].as_array().unwrap();
     for s in segments {
         println!(
             "  [{} .. {}] {} {}",
@@ -403,8 +407,11 @@ async fn describe_four_scenes(backend_tag: &str, backend_config: serde_json::Val
         let (a, b) = (i as i64 * 16_000_000, (i as i64 + 1) * 16_000_000);
         let inside: Vec<_> = segments
             .iter()
+            // By midpoint: the view closes a segment's one-frame gap to the
+            // next, so its end may reach just past its scene.
             .filter(|s| {
-                s["t_start_us"].as_i64().unwrap() >= a && s["t_end_us"].as_i64().unwrap() <= b
+                let mid = (s["t_start_us"].as_i64().unwrap() + s["t_end_us"].as_i64().unwrap()) / 2;
+                (a..b).contains(&mid)
             })
             .collect();
         assert!(!inside.is_empty(), "no segment inside scene {i} [{a}, {b}]");
@@ -421,7 +428,8 @@ async fn describe_four_scenes(backend_tag: &str, backend_config: serde_json::Val
 
     let started = Instant::now();
     let again = call().await;
-    assert_eq!(&again.as_array().unwrap()[..], segments, "cache hit");
+    assert_eq!(again["segments"].as_array().unwrap(), segments, "cache hit");
+    assert_eq!(again["summary"].as_str(), Some(summary.as_str()));
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "a cache hit sends nothing"

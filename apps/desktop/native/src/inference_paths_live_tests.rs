@@ -157,6 +157,7 @@ async fn live_unicode_vlm_paths() {
             frames,
             focus: Focus::General,
             language: Language::default(),
+            task: crate::vlm::Task::Timeline,
         })
         .await
         .expect("Unicode weights/runtime and comma-containing image paths must work");

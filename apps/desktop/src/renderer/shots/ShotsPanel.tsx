@@ -44,6 +44,8 @@ import {
   hydrateDescription,
   isDescribingSpan,
   setDescribeError,
+  summaryForWindow,
+  useClipSummaries,
   useDescribeBatch,
   useDescribeError,
   useDescribing,
@@ -366,18 +368,61 @@ function ShotsDescribeJobs({
 /// the row, its status line — waiting for what, or how far — stands where
 /// "Describing" would, above any prose already there (ADR 0121). It cancels
 /// the job for everyone; a sweep stops with it.
+/// Lines of clip content shown before "Show all" when there is no summary to
+/// lead with — an older or short run's list, kept from flooding the panel.
+const CLIP_CONTENT_PREVIEW = 8;
+
+/// What the whole clip shows, above the score strip and the rows. A long
+/// window's description runs to hundreds of segments, so the section leads with
+/// the run's summary and keeps the segments behind a closed disclosure; without
+/// a summary it shows the first few and a toggle for the rest.
 function ClipContentDescription({ mediaId, srcInUs, srcOutUs }: {
   mediaId: string; srcInUs: number; srcOutUs: number;
 }) {
   const { t } = useTranslation();
   const segments = useDescription(mediaId);
+  const summaries = useClipSummaries(mediaId);
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => { void hydrateDescription(mediaId); }, [mediaId]);
   const overlapping = segmentsForSpan(segments, srcInUs, srcOutUs);
-  if (overlapping.length === 0) return null;
+  const summary = summaryForWindow(summaries, srcInUs, srcOutUs);
+  if (overlapping.length === 0 && summary === null) return null;
+  if (summary !== null) {
+    return (
+      <section className="shots-clip-content" data-testid="shots-clip-content">
+        <h3>{t("shots_panel.clip_content")}</h3>
+        <p className="shots-clip-summary" data-testid="shots-clip-summary">{summary}</p>
+        {overlapping.length > 0 && (
+          <details className="shots-clip-details" data-testid="shots-clip-details">
+            <summary>{t("shots_panel.clip_details", { count: overlapping.length })}</summary>
+            <ShotDescriptionCell overlapping={overlapping} waiting={false} job={null} />
+          </details>
+        )}
+      </section>
+    );
+  }
+  const capped = overlapping.length > CLIP_CONTENT_PREVIEW;
   return (
     <section className="shots-clip-content" data-testid="shots-clip-content">
       <h3>{t("shots_panel.clip_content")}</h3>
-      <ShotDescriptionCell overlapping={overlapping} waiting={false} job={null} />
+      <ShotDescriptionCell
+        overlapping={capped && !showAll ? overlapping.slice(0, CLIP_CONTENT_PREVIEW) : overlapping}
+        waiting={false}
+        job={null}
+      />
+      {capped && (
+        <Button
+          className="shots-clip-more"
+          variant="ghost"
+          size="xs"
+          data-testid="shots-clip-more"
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll
+            ? t("shots_panel.clip_show_less")
+            : t("shots_panel.clip_show_all", { count: overlapping.length })}
+        </Button>
+      )}
     </section>
   );
 }

@@ -904,6 +904,11 @@ const enUS = {
     // would read as a load that never finished.
     not_described: "Not described",
     clip_content: "Clip content",
+    // The clip-content section under a summary: the segments it was written
+    // from, closed by default. Without a summary, the first few and a toggle.
+    clip_details: "Details ({{count}} segments)",
+    clip_show_all: "Show all {{count}}",
+    clip_show_less: "Show fewer",
     // The one legitimate transient, and only where the cell has nothing else to
     // show: a run whose window overlaps this row is on its way.
     describing: "Describing…",

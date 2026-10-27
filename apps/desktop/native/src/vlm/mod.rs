@@ -43,12 +43,12 @@ pub mod sidecar;
 // reached via their module path at the (few) sites that need them.
 pub use backend::VlmBackend;
 pub use config::BackendConfig;
-pub use describer::{DescribeRequest, Focus, Language, DEFAULT_FPS};
+pub use describer::{DescribeRequest, Focus, Language, Task, DEFAULT_FPS};
 pub use description::{
     cache_key, fps_milli, shift_segments, DescriptionCache, DescriptionPurpose, SceneDescription,
 };
 pub use error::VlmError;
-pub use parser::parse_raw;
+pub use parser::{parse_raw, parse_summary};
 pub use resolve::{
     model_label, resolve_scene_describer, resolve_scene_describer_exact, NO_DESCRIBER_CONFIGURED,
 };

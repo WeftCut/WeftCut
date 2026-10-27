@@ -819,6 +819,11 @@ const zhCN: Resources = {
     // 而空白格会被读成一次永远没结束的加载。
     not_described: "未描述",
     clip_content: "片段内容",
+    // 摘要下面的片段内容：写出摘要所依据的各段，默认收起。没有摘要时，
+    // 只显示前几段，加一个展开的开关。
+    clip_details: "详情（{{count}} 段）",
+    clip_show_all: "显示全部 {{count}} 段",
+    clip_show_less: "收起",
     // 唯一合理的过渡态，而且只在这一格没有别的可显示时出现：窗口与这一行
     // 相交的一次运行正在路上。
     describing: "正在描述…",
