@@ -1,0 +1,18 @@
+[package]
+name = "motif-footprint-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Offline compression/decode comparison over real `.wfrm` frames.
+# Usage: cargo run --release -- <dir of per-content frame dirs> [results.tsv]
+# See ../FOOTPRINT-FINDINGS.md.
+
+[dependencies]
+lz4_flex = "0.11"
+zstd = "0.13"
+png = "0.17"
+blake3 = "1"
+
+[profile.release]
+opt-level = 3
