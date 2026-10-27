@@ -1786,7 +1786,11 @@ mod tests {
         let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
         let rows = rows.as_array().unwrap();
         // Every known backend is listed.
-        assert_eq!(rows.len(), 3, "all three backends listed");
+        assert_eq!(
+            rows.len(),
+            crate::speech::SpeechBackend::all().len(),
+            "every backend listed"
+        );
         let openai = rows.iter().find(|r| r["backend"] == "openai").unwrap();
         assert_eq!(openai["locality"], "cloud");
         assert_eq!(openai["availability"], "available");
@@ -1804,6 +1808,10 @@ mod tests {
         assert_eq!(whisper["availability"], "needs_binary");
         assert_eq!(whisper["selected"], false);
         assert_eq!(whisper["capabilities"]["exactWordTiming"], true);
+        // The endpoint is URL-gated, so unconfigured it names that gap.
+        let endpoint = rows.iter().find(|r| r["backend"] == "byo_endpoint").unwrap();
+        assert_eq!(endpoint["availability"], "needs_endpoint");
+        assert_eq!(endpoint["selected"], false);
     }
 
     /// A `log_emit` dispatch after a workspace is installed (via `commit_workspace`,
