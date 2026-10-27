@@ -18,7 +18,7 @@ import { cacheBudget } from '../cacheBudget';
 //   backing is freed promptly rather than waiting on GC — except one a
 //   sprite still has bound (`retain`), which closes on its last `release`.
 //
-//   L2 (opt-in, lighter) — an LZ4 frame sequence persisted to disk
+//   L2 (opt-in, lighter) — a zstd frame sequence persisted to disk
 //   under `<workspace>/Cache/raster/<hash>/<i>.wfrm`. Driven by a global
 //   "Pre-bake" setting and a per-layer "Pre-bake now" action; read on the
 //   default preview path via `resolveMotifFrame` (disk-first, gated by
@@ -331,7 +331,7 @@ export class MotifFrameCache {
   }
 
   // ----------------------------------------------------------------
-  // L2 — opt-in LZ4 frame sequence on disk
+  // L2 — opt-in zstd frame sequence on disk
   //
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.wfrm`, where `<hash>` is
   // a stable 128-bit hash of `cacheKey` (32 lowercase hex chars — see
@@ -354,7 +354,7 @@ export class MotifFrameCache {
   // unit test.
   // ----------------------------------------------------------------
 
-  /// One IPC for the whole read. LZ4 is decompressed on a native worker;
+  /// One IPC for the whole read. Frames are decompressed on a native worker;
   /// missing or invalid cache entries return null so callers render again.
   async readBitmap(cacheKey: string, frameIndex: number, finalizationToken?: string): Promise<ImageBitmap | null> {
     if (typeof window === "undefined") return null;
@@ -381,7 +381,7 @@ export class MotifFrameCache {
     return invoke<boolean>("motif_has_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex });
   }
 
-  /// Encode a PNG capture into the LZ4 cache, creating the `<hash>` dir as needed. No-op when
+  /// Encode a PNG capture into the frame cache, creating the `<hash>` dir as needed. No-op when
   /// no project is open (nowhere to anchor `<workspace>/Cache/`).
   async writeFrame(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
     if (typeof window === "undefined") return;

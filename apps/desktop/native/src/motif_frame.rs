@@ -1,5 +1,6 @@
 //! Disposable, versioned straight-alpha RGBA8 cache. Each frame is independent:
 //! seeks never decode preceding frames. PNG remains the portable fallback.
+//! Codec 0 is raw, 1 is LZ4 (read only), 2 is zstd level 1 (ADR 0145).
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -19,16 +20,16 @@ fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
 
 pub(crate) fn encode(w: u32, h: u32, rgba: &[u8], compressed: bool) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
-    let payload = if compressed {
-        lz4_flex::block::compress(rgba)
+    let (codec, payload) = if compressed {
+        (2u32, zstd::bulk::compress(rgba, 1)?)
     } else {
-        rgba.to_vec()
+        (0, rgba.to_vec())
     };
     let mut out = Vec::with_capacity(HEADER + payload.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
-    out.extend_from_slice(&(u32::from(compressed)).to_le_bytes());
+    out.extend_from_slice(&codec.to_le_bytes());
     out.extend_from_slice(blake3::hash(rgba).as_bytes());
     out.extend_from_slice(&payload);
     Ok(out)
@@ -45,6 +46,7 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let rgba = match number(16) {
         0 => bytes[HEADER..].to_vec(),
         1 => lz4_flex::block::decompress(&bytes[HEADER..], size)?,
+        2 => zstd::bulk::decompress(&bytes[HEADER..], size)?,
         _ => anyhow::bail!("unsupported motif frame codec"),
     };
     anyhow::ensure!(rgba.len() == size, "invalid motif frame length");
@@ -64,6 +66,7 @@ pub struct MotifPixels {
 }
 
 pub(crate) fn read_pixels(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    // Bounds both LZ4 and zstd's worst case (zstd's is MAX_BYTES / 256 + framing).
     let limit = MAX_BYTES + MAX_BYTES / 255 + HEADER + 32;
     let file = std::fs::File::open(path)?;
     anyhow::ensure!(
@@ -122,10 +125,29 @@ mod tests {
     #[test]
     fn both_codecs_preserve_every_alpha_and_rgb_byte() {
         let pixels: Vec<u8> = (0..4096).map(|i| ((i * 73) % 256) as u8).collect();
-        for compressed in [false, true] {
+        for (compressed, codec) in [(false, 0), (true, 2)] {
             let bytes = encode(32, 32, &pixels, compressed).unwrap();
+            assert_eq!(bytes[16..20], u32::to_le_bytes(codec));
             assert_eq!(decode(&bytes).unwrap(), (32, 32, pixels.clone()));
         }
+    }
+
+    #[test]
+    fn reads_frames_written_by_the_former_lz4_codec() {
+        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 31) % 256) as u8).collect();
+        let mut bytes = encode(32, 32, &pixels, false).unwrap();
+        bytes.truncate(HEADER);
+        bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&lz4_flex::block::compress(&pixels));
+        assert_eq!(decode(&bytes).unwrap(), (32, 32, pixels));
+    }
+
+    #[test]
+    fn rejects_a_payload_that_inflates_past_its_dimensions() {
+        let mut bytes = encode(2, 2, &[23; 16], true).unwrap();
+        bytes.truncate(HEADER);
+        bytes.extend_from_slice(&zstd::bulk::compress(&[23; 20], 1).unwrap());
+        assert!(decode(&bytes).is_err());
     }
 
     #[test]

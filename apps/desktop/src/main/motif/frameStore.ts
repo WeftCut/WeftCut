@@ -27,7 +27,7 @@ export interface FrameWriter {
   encoded(bytes: Uint8Array): Promise<void>
 }
 
-/** Disposable LZ4 frame cache. Native work runs on blocking workers.
+/** Disposable zstd frame cache (ADR 0145). Native work runs on blocking workers.
  * Callers supply a hash/frame, never a filesystem path. Cache misses render live. */
 export class MotifFrameStore {
   private writeTail: Promise<void> = Promise.resolve()

@@ -7,7 +7,7 @@ status: accepted
 This revises ADR 0017's **PNG-only capture output**, while preserving its single
 HTML renderer and deterministic clock takeover. PNG decoding and whole-pixel
 IPC both consume a substantial part of a frame budget. Motifs now persist a
-versioned LZ4/straight-RGBA frame file. Old PNG caches are ignored and frames
+versioned LZ4/straight-RGBA frame file (zstd since ADR 0145). Old PNG caches are ignored and frames
 are regenerated; there is no migration or duplicate PNG persistence. Frames remain
 independent files: atomic replacement, interrupted bakes and existing
 content-directory GC stay simple; packing an entire clip would introduce

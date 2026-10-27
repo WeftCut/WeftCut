@@ -100,6 +100,9 @@ tar = "0.4"
 bzip2 = "0.6"
 flate2 = "1"
 lz4_flex = "0.14"
+# Motif frame cache codec 2 (ADR 0145): level 1 is 31-69% smaller than LZ4 on
+# real caches at comparable encode cost. LZ4 stays for reading older frames.
+zstd = { version = "0.13", default-features = false }
 # `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —

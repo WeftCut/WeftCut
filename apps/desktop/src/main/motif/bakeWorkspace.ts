@@ -51,8 +51,9 @@ export class MotifBakeWorkspace {
       persist: async (content, frame, wanted) => {
         const session = this.requireSession();
         const isCurrent = () => this.current === session && wanted() && this.deps.session()?.generation === session.generation;
-        // Raw LZ4 worst case bounds the next write; existing compressed sizes
-        // determine retained usage. No speculative pixel allocation occurs here.
+        // The codec worst case (LZ4's, which covers zstd's) bounds the next
+        // write; existing compressed sizes determine retained usage. No
+        // speculative pixel allocation occurs here.
         const raw = content.capture.width * content.capture.height * 4;
         const next = raw + Math.ceil(raw / 255) + 84;
         if (this.bytes() + next > this.deps.diskBytes()) {
