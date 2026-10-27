@@ -139,8 +139,8 @@ The recorded Ubuntu 24.04 system libva lacked `vaMapBuffer2`; FFmpeg's
 implib trampoline could abort on the first copy-back frame even though opening
 the decoder succeeded. `7fbdc75e` bundles libva 2.22, pins the loaded library
 with RTLD_NODELETE and guards symbol availability before advertising vaapi.
-The bundled build requires glibc ≥2.38 (ADR 0143 keeps it outside the
-package's 2.28 floor); an unavailable lane falls back to
+The bundled build is conda-forge's, linked against glibc 2.17, so it loads
+everywhere the package does (ADR 0143); an unavailable lane falls back to
 software. Local VAAPI conformance passed at SSIM 0.983 without an nvdec
 regression. A system-libva ≥2.21 cross-distro pass remains #35.
 Use the actual Intel render node for `vainfo`; node numbering changed across

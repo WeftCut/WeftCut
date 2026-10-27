@@ -85,34 +85,28 @@ const OS_KEY = { win32: 'win', linux: 'linux', darwin: 'mac' }[process.platform]
 // an untouched old system driver. Verified on real hardware (Intel iHD, system
 // libva 2.20): a real NV12 frame, no abort.
 //
-// Pinned to Ubuntu oracular's 2.22 build. Its glibc floor is 2.38, so VAAPI is
-// available on glibc >= 2.38 hosts (Ubuntu 24.04+, Fedora 40+); on older glibc
-// the .so can't load, `vaapi_copyback_supported()` (decoder.rs) sees no
-// vaMapBuffer2 and declines VAAPI → software fallback, no crash. libva is
-// MIT (Expat)-licensed; its Debian copyright ships as LIBVA-LICENSE.txt.
+// Pinned to conda-forge's 2.22 build, which conda-forge links against a glibc
+// 2.17 sysroot — under the package's 2.28 floor (ADR 0143), so VAAPI is
+// available everywhere the app starts. (The Ubuntu oracular build this
+// replaced needed glibc 2.38, which cost every older distro its VAAPI lane.)
+// Its compiled-in driver search path is conda's build prefix, which does not
+// exist on a user's machine and is skipped, then /usr/lib/x86_64-linux-gnu/dri
+// (Debian/Ubuntu) and /usr/lib64/dri (Fedora/RHEL). If the library cannot load
+// anyway, `vaapi_copyback_supported()` (decoder.rs) sees no vaMapBuffer2 and
+// declines VAAPI → software fallback, no crash. libva is MIT
+// (Expat)-licensed; the package's COPYING ships as LIBVA-LICENSE.txt.
 const LIBVA = {
-  version: '2.22.0-3ubuntu3',
-  // archive.ubuntu.com still serves this (oracular pool); once oracular fully
-  // rolls off it moves to old-releases. Try both — sha256 is the integrity gate.
+  version: '2.22.0 (conda-forge h4f16b4b_2)',
+  // The same file behind two anaconda.org hostnames; sha256 is the integrity gate.
   mirrors: [
-    'http://archive.ubuntu.com/ubuntu/pool/main/libv/libva',
-    'http://old-releases.ubuntu.com/ubuntu/pool/main/libv/libva',
+    'https://conda.anaconda.org/conda-forge/linux-64',
+    'https://conda-static.anaconda.org/conda-forge/linux-64',
   ],
-  debs: [
-    {
-      file: 'libva2_2.22.0-3ubuntu3_amd64.deb',
-      sha256: '629b6ac0d12f7f9ec32be401c52b19231eb1bfed83ad8a814b2b93af1533726d',
-      so: 'libva.so.2.2200.0',
-      soname: 'libva.so.2',
-      docdir: 'libva2',
-    },
-    {
-      file: 'libva-drm2_2.22.0-3ubuntu3_amd64.deb',
-      sha256: 'bdf1f908b5c2b755b4ee2b4fc226eae10b1c71a54d53d09310834ce4a3c0703b',
-      so: 'libva-drm.so.2.2200.0',
-      soname: 'libva-drm.so.2',
-      docdir: 'libva-drm2',
-    },
+  file: 'libva-2.22.0-h4f16b4b_2.conda',
+  sha256: 'e0df324fb02fa05a05824b8db886b06659432b5cff39495c59e14a37aa23d40f',
+  libs: [
+    { so: 'libva.so.2.2200.0', soname: 'libva.so.2' },
+    { so: 'libva-drm.so.2.2200.0', soname: 'libva-drm.so.2' },
   ],
 }
 
@@ -165,7 +159,7 @@ function hasCmd(cmd) {
 /** True once the bundled libva .so are present in `dest/lib` (both sonames). */
 function libvaPresent(dest) {
   const libDir = join(dest, 'lib')
-  return LIBVA.debs.every((d) => existsSync(join(libDir, d.soname)))
+  return LIBVA.libs.every((l) => existsSync(join(libDir, l.soname)))
 }
 
 /** Download `file` from the first working mirror into `dest`; returns the URL
@@ -186,51 +180,55 @@ function downloadFromMirrors(mirrors, file, dest) {
 }
 
 /** Bundle the pinned libva (see LIBVA) into `dest/lib` so the BtbN implib's
- *  lazy dlopen resolves it beside the addon. Downloads + sha256-verifies each
- *  .deb, unpacks the .so with dpkg-deb, drops it + a relative SONAME symlink
- *  into lib/, and writes the MIT copyright as LIBVA-LICENSE.txt. Returns the
- *  manifest record (provenance for the packaging audit). Linux only. */
+ *  lazy dlopen resolves it beside the addon. Downloads + sha256-verifies the
+ *  .conda (a zip holding a zstd tarball of the files), unpacks it with unzip +
+ *  tar, drops each .so + a relative SONAME symlink into lib/, and writes the
+ *  package's MIT COPYING as LIBVA-LICENSE.txt. Returns the manifest record
+ *  (provenance for the packaging audit). Linux only. */
 function installLibva(dest) {
-  if (!hasCmd('dpkg-deb')) {
-    throw new Error(
-      'ffmpeg-lgpl(libva): dpkg-deb is required to unpack the bundled libva ' +
-        '.deb — the Linux decode runtime is built on a Debian/Ubuntu host.',
-    )
+  for (const cmd of ['unzip', 'zstd']) {
+    if (!hasCmd(cmd)) throw new Error(`ffmpeg-lgpl(libva): ${cmd} is required to unpack the bundled libva .conda.`)
   }
   const libDir = join(dest, 'lib')
-  const libs = []
-  let copyright = null
-  for (const d of LIBVA.debs) {
-    const debPath = join(tmpdir(), d.file)
-    const url = downloadFromMirrors(LIBVA.mirrors, d.file, debPath)
-    const got = createHash('sha256').update(readFileSync(debPath)).digest('hex')
-    if (got !== d.sha256) {
-      throw new Error(`ffmpeg-lgpl(libva): sha256 mismatch for ${d.file}\n  expected ${d.sha256}\n  got      ${got}`)
-    }
-    const exdir = join(tmpdir(), `libva-x-${d.file}`)
+  const condaPath = join(tmpdir(), LIBVA.file)
+  const exdir = join(tmpdir(), `libva-x-${process.pid}`)
+  const url = downloadFromMirrors(LIBVA.mirrors, LIBVA.file, condaPath)
+  const got = createHash('sha256').update(readFileSync(condaPath)).digest('hex')
+  if (got !== LIBVA.sha256) {
+    throw new Error(`ffmpeg-lgpl(libva): sha256 mismatch for ${LIBVA.file}\n  expected ${LIBVA.sha256}\n  got      ${got}`)
+  }
+  try {
     rmSync(exdir, { recursive: true, force: true })
-    execSync(`dpkg-deb -x "${debPath}" "${exdir}"`, { stdio: 'inherit' })
-    const src = join(exdir, 'usr', 'lib', 'x86_64-linux-gnu', d.so)
-    if (!existsSync(src)) throw new Error(`ffmpeg-lgpl(libva): ${d.so} not found inside ${d.file}`)
-    copyFileSync(src, join(libDir, d.so))
-    // Relative SONAME symlink (libva.so.2 -> libva.so.2.2200.0), matching the
-    // libav*.so chain napi-build-decode co-locates verbatim beside the .node.
-    rmSync(join(libDir, d.soname), { force: true })
-    symlinkSync(d.so, join(libDir, d.soname))
-    if (!copyright) {
-      const doc = join(exdir, 'usr', 'share', 'doc', d.docdir, 'copyright')
-      if (existsSync(doc)) copyright = readFileSync(doc, 'utf8')
+    mkdirSync(exdir, { recursive: true })
+    // The .conda holds info-*.tar.zst (metadata) and pkg-*.tar.zst (the files,
+    // with the license under info/licenses/); only the latter is needed.
+    execSync(`unzip -q "${condaPath}" "pkg-*.tar.zst" -d "${exdir}"`, { stdio: 'inherit' })
+    const pkg = readdirSync(exdir).find((n) => n.startsWith('pkg-'))
+    execSync(`tar --zstd -xf "${join(exdir, pkg)}" -C "${exdir}" lib info/licenses`, { stdio: 'inherit' })
+    for (const l of LIBVA.libs) {
+      const src = join(exdir, 'lib', l.so)
+      if (!existsSync(src) || lstatSync(src).isSymbolicLink()) {
+        throw new Error(`ffmpeg-lgpl(libva): ${l.so} not found inside ${LIBVA.file}`)
+      }
+      copyFileSync(src, join(libDir, l.so))
+      // Relative SONAME symlink (libva.so.2 -> libva.so.2.2200.0), matching the
+      // libav*.so chain napi-build-decode co-locates verbatim beside the .node.
+      rmSync(join(libDir, l.soname), { force: true })
+      symlinkSync(l.so, join(libDir, l.soname))
     }
-    libs.push({ file: d.file, url, sha256: d.sha256, so: d.so, soname: d.soname })
-    rmSync(debPath, { force: true })
+    const copying = join(exdir, 'info', 'licenses', 'COPYING')
+    if (!existsSync(copying)) throw new Error(`ffmpeg-lgpl(libva): no license (info/licenses/COPYING) inside ${LIBVA.file}`)
+    writeFileSync(join(dest, 'LIBVA-LICENSE.txt'), readFileSync(copying, 'utf8'))
+  } finally {
+    rmSync(condaPath, { force: true })
     rmSync(exdir, { recursive: true, force: true })
   }
-  if (copyright) writeFileSync(join(dest, 'LIBVA-LICENSE.txt'), copyright)
   console.log(`ffmpeg-lgpl: bundled libva ${LIBVA.version} (VAAPI copy-back) into ${libDir}`)
   return {
     version: LIBVA.version,
     reason: 'vaMapBuffer2 for VAAPI copy-back (issue #5 Block C); see decoder.rs vaapi_copyback_supported()',
-    libs,
+    package: { file: LIBVA.file, url, sha256: LIBVA.sha256 },
+    libs: LIBVA.libs,
   }
 }
 
@@ -373,9 +371,11 @@ function main() {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
     assertLgplBanner(m.configuration) // re-assert even on the cached copy
     stripExes(cfg, dest) // re-strip: a cached tree may still hold the transient exes (idempotent)
-    // Heal a tree fetched before libva bundling (issue #5 Block C VAAPI): the
-    // ffmpeg build is unchanged, so only the missing libva needs installing.
-    if (OS_KEY === 'linux' && !libvaPresent(dest)) {
+    // Heal a tree fetched before libva bundling (issue #5 Block C VAAPI), or
+    // one holding a libva other than the pinned build (the glibc 2.38 Ubuntu
+    // one it replaced): the ffmpeg build is unchanged, so only libva is
+    // (re)installed — same file names, so the old copies are overwritten.
+    if (OS_KEY === 'linux' && (!libvaPresent(dest) || m.libva?.version !== LIBVA.version)) {
       m.libva = installLibva(dest)
       writeFileSync(manifestPath, JSON.stringify(m, null, 2))
     }

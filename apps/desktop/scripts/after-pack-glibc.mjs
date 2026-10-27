@@ -13,10 +13,11 @@ const LABEL = 'afterPack(glibc):'
 const ADDONS = ['core', 'native-decode']
 
 /**
- * The load-critical libraries under the unpacked addon directories: each
- * addon's .node and the real files (not the SONAME symlinks) of the shared
- * objects co-located with it. libva* is left out on purpose — ffmpeg dlopens it
- * lazily for the optional VAAPI lane, so an older glibc only costs that lane.
+ * The native libraries under the unpacked addon directories: each addon's
+ * .node and the real files (not the SONAME symlinks) of the shared objects
+ * co-located with it — the libav* set, and the libva that ffmpeg dlopens for
+ * the VAAPI lane (held to the floor too, so no distro the app starts on loses
+ * that lane to its glibc).
  */
 export function linuxLibraries(resourcesDir) {
   const files = []
@@ -25,7 +26,7 @@ export function linuxLibraries(resourcesDir) {
     if (!existsSync(dir)) throw new Error(`${LABEL} ${dir} is missing — the addon was not unpacked.`)
     for (const name of readdirSync(dir).sort()) {
       const isLib = name.endsWith('.node') || /\.so(\.\d+)*$/.test(name)
-      if (!isLib || name.startsWith('libva')) continue
+      if (!isLib) continue
       const path = join(dir, name)
       if (!lstatSync(path).isSymbolicLink()) files.push(path)
     }

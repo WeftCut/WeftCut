@@ -27,7 +27,7 @@ function packed(t, files = {}) {
 
 const names = (files, modules) => files.map((f) => path.relative(modules, f).split(path.sep).join('/'))
 
-test('both addons and the real libav* files are checked; libva and SONAME links are not', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, (t) => {
+test('both addons and every co-located real library are checked; SONAME links are not', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, (t) => {
   const { resources, modules } = packed(t, {
     'core/index.linux-x64-gnu.node': true,
     'core/index.js': true,
@@ -43,6 +43,8 @@ test('both addons and the real libav* files are checked; libva and SONAME links 
     'core/index.linux-x64-gnu.node',
     'native-decode/index.linux-x64-gnu.node',
     'native-decode/libavutil.so.60.26.103',
+    'native-decode/libva-drm.so.2.2200.0',
+    'native-decode/libva.so.2.2200.0',
   ])
 })
 

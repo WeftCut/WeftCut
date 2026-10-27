@@ -29,9 +29,9 @@ The 2.39 ones were Rust std's `pidfd_*`. Patching symbols one at a time (PR
   when target and host triples match and would otherwise fall back to the
   host gcc.
 - **The package promises glibc 2.28**, the highest need among the files that
-  must load for the app to start. The bundled libva (2.38) is outside it:
-  ffmpeg loads it lazily for the optional VAAPI lane, and an older glibc
-  costs only that lane.
+  must load for the app to start. The bundled libva is held to it too: it is
+  conda-forge's build against a glibc 2.17 sysroot, replacing the Ubuntu
+  oracular one (2.38) that left every older distro without VAAPI.
 - **A gate holds the floor** (`scripts/glibc-floor.mjs`), run on each freshly
   built addon and again in `afterPack` on the packaged files. It rejects any
   GLIBC version need above the floor and any strong unversioned import; the
@@ -49,5 +49,7 @@ The 2.39 ones were Rust std's `pidfd_*`. Patching symbols one at a time (PR
   an `ubuntu:22.04` container (GCC 11, glibc 2.35); the gate stays as it is.
 - Newer glibc APIs are unavailable to Rust code by symbol name; each needs a
   raw syscall or a weak lookup instead.
-- On glibc below 2.38 the app decodes in software where it would have used
-  VAAPI. Building libva from source against the same sysroot would lift that.
+- libva comes from conda-forge rather than a distro, so its compiled-in
+  driver path leads with conda's build prefix; that directory does not exist
+  on a user's machine, and the search continues to the Debian/Ubuntu and
+  Fedora/RHEL driver directories.

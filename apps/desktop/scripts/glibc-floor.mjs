@@ -4,9 +4,8 @@
 // 2.28 is the highest requirement among the files that must load for the app
 // to start: Electron itself needs 2.25 and the BtbN libav* set needs 2.28. Our
 // own two addons are linked against napi-rs's glibc 2.17 sysroot
-// (napi-linux-sysroot.mjs), so they sit well under it. The bundled libva is NOT
-// held to it: ffmpeg dlopens it lazily for the optional VAAPI lane, and an older
-// glibc only costs that lane (software decode remains).
+// (napi-linux-sysroot.mjs), and the bundled libva is conda-forge's 2.17 build
+// (fetch-ffmpeg-lgpl.mjs), so they sit well under it.
 //
 // Two rules, both read from `objdump -T`:
 //   1. No undefined symbol may need a GLIBC_x.y version above the floor.
