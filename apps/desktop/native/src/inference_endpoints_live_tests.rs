@@ -285,13 +285,45 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "llama-server, a vision model + projector and a four-scene test video required"]
 async fn live_endpoint_describe_clip_chunks_a_long_window() {
+    generous_limits();
+    let _server = llama_server(18082).await;
+    describe_four_scenes(
+        "byo_endpoint",
+        serde_json::json!({
+            "kind": "endpoint", "url": "http://127.0.0.1:18082/v1/chat/completions",
+            "model": "qwen3-vl", "frames_per_request": 16, "concurrency": 2,
+        }),
+    )
+    .await;
+}
+
+/// The same four scenes through the local sidecar: one 16-frame chunk at a
+/// time, the model loaded per chunk.
+#[cfg(feature = "mcp")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "llama-mtmd-cli, a vision model + projector and a four-scene test video required"]
+async fn live_local_describe_clip_chunks_a_long_window() {
+    generous_limits();
+    describe_four_scenes(
+        "qwen3_vl",
+        serde_json::json!({
+            "kind": "local",
+            "binary": installed("WEFTCUT_VLM_CLI"),
+            "model": installed("WEFTCUT_VLM_MODEL"),
+            "mmproj": installed("WEFTCUT_VLM_MMPROJ"),
+        }),
+    )
+    .await;
+}
+
+/// Describe `WEFTCUT_SCENES_MP4` whole through `backend`, then assert each 16 s
+/// scene got its own prose and that the same call again is a cache hit.
+#[cfg(feature = "mcp")]
+async fn describe_four_scenes(backend_tag: &str, backend_config: serde_json::Value) {
     use crate::state::{
         new_id, DecodeRoute, Layer, LayerParams, MediaItem, MediaKind, MediaMetadata,
         VideoClipParams,
     };
-    generous_limits();
-    let _server = llama_server(18082).await;
-
     let source_us = 64_000_000;
     let media = MediaItem {
         id: new_id(),
@@ -340,12 +372,9 @@ async fn live_endpoint_describe_clip_chunks_a_long_window() {
         crate::events::VecEventSink::new(),
     ));
     let args = serde_json::json!({
-        "layer_id": layer.id.to_string(), "backend": "byo_endpoint", "fps": 1.0,
+        "layer_id": layer.id.to_string(), "backend": backend_tag, "fps": 1.0,
         "layer": layer, "media": media,
-        "vlm_config": { "byo_endpoint": {
-            "kind": "endpoint", "url": "http://127.0.0.1:18082/v1/chat/completions",
-            "model": "qwen3-vl", "frames_per_request": 16, "concurrency": 2,
-        } },
+        "vlm_config": { backend_tag: backend_config },
     });
     let call = || async {
         let reply: serde_json::Value = serde_json::from_str(
@@ -362,7 +391,7 @@ async fn live_endpoint_describe_clip_chunks_a_long_window() {
 
     let started = Instant::now();
     let segments = call().await;
-    println!("described 64 s in {:?}", started.elapsed());
+    println!("{backend_tag}: described 64 s in {:?}", started.elapsed());
     let segments = segments.as_array().unwrap();
     for s in segments {
         println!(
