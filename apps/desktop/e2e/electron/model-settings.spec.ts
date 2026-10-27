@@ -172,7 +172,8 @@ test("online model activation verifies the candidate and preserves the current m
     await expect(page.getByRole("textbox", { name: "Custom model name", exact: true })).toHaveCount(0);
 
     // Editing stays inside the active model card and saves the same profile.
-    const selected = ((await invoke("models_list")) as ModelsView).active.vlm!;
+    const before = (await invoke("models_list")) as ModelsView;
+    const selected = before.active.vlm!;
     const card = page.locator('.settings-model-summary:visible');
     await card.getByRole("button", { name: "Edit", exact: true }).click();
     await expect(page.locator('.settings-model-dialog')).toHaveCount(0);
@@ -182,7 +183,8 @@ test("online model activation verifies the candidate and preserves the current m
     const saved = await invoke("models_list") as ModelsView;
     expect(saved.active.vlm).toBe(selected);
     expect(saved.models.find(m => m.id === selected)?.endpoint?.model).toBe("edited-current");
-    expect(saved.models).toHaveLength(8);
+    // Saved in place: no entry added.
+    expect(saved.models).toHaveLength(before.models.length);
     await card.getByRole("button", { name: "Remove custom entry" }).click();
     await expect(page.getByText("This model is currently selected. After removal, the selection will be None.")).toBeVisible();
     await page.getByRole("button", { name: "Confirm removal" }).click();
