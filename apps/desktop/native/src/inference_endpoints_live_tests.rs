@@ -9,7 +9,10 @@
 //!   (under ten minutes) and `WEFTCUT_SPEECH_LONG_WAV` (over ten minutes); both
 //!   WAVs end on a sentence containing "pineapple".
 //! - `WEFTCUT_LLAMA_SERVER`, `WEFTCUT_VLM_MODEL`, `WEFTCUT_VLM_MMPROJ`,
-//!   `WEFTCUT_SCENES_MP4` (a video whose first 16 s show the word "APPLE").
+//!   `WEFTCUT_SCENES_MP4`.
+//!
+//! `WEFTCUT_SCENES_MP4` shows four 16 s scenes reading APPLE, BICYCLE, CASTLE
+//! and DOLPHIN.
 //!
 //! Run with `cargo test --lib --features test-noop -- --ignored live_endpoint`.
 use std::path::PathBuf;
@@ -75,6 +78,29 @@ async fn serve(
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+/// llama-server with the vision model on `port`, ready to answer.
+async fn llama_server(port: u16) -> tokio::process::Child {
+    let args = [
+        "-m".to_string(),
+        installed("WEFTCUT_VLM_MODEL").display().to_string(),
+        "--mmproj".into(),
+        installed("WEFTCUT_VLM_MMPROJ").display().to_string(),
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--port".into(),
+        port.to_string(),
+        "-c".into(),
+        "16384".into(),
+    ];
+    serve(
+        installed("WEFTCUT_LLAMA_SERVER"),
+        &args,
+        &format!("http://127.0.0.1:{port}/health"),
+        Duration::from_secs(600),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -190,25 +216,7 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
         VlmBackend, VlmError,
     };
     generous_limits();
-    let args = [
-        "-m".to_string(),
-        installed("WEFTCUT_VLM_MODEL").display().to_string(),
-        "--mmproj".into(),
-        installed("WEFTCUT_VLM_MMPROJ").display().to_string(),
-        "--host".into(),
-        "127.0.0.1".into(),
-        "--port".into(),
-        "18081".into(),
-        "-c".into(),
-        "16384".into(),
-    ];
-    let _server = serve(
-        installed("WEFTCUT_LLAMA_SERVER"),
-        &args,
-        "http://127.0.0.1:18081/health",
-        Duration::from_secs(600),
-    )
-    .await;
+    let _server = llama_server(18081).await;
 
     let dir = tempfile::tempdir().unwrap();
     let anchors = plan_anchors(0, 16_000_000, 1.0);
@@ -267,5 +275,126 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
     assert!(
         all.contains("apple") || all.contains("red"),
         "the first scene reads APPLE on red: {all}"
+    );
+}
+
+/// `describe_clip` end to end over a 64 s video of four 16 s scenes: at 1 fps
+/// and 16 frames a request it takes four requests, two in flight, and each
+/// chunk's prose lands on its own scene. A second call is a cache hit.
+#[cfg(feature = "mcp")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "llama-server, a vision model + projector and a four-scene test video required"]
+async fn live_endpoint_describe_clip_chunks_a_long_window() {
+    use crate::state::{
+        new_id, DecodeRoute, Layer, LayerParams, MediaItem, MediaKind, MediaMetadata,
+        VideoClipParams,
+    };
+    generous_limits();
+    let _server = llama_server(18082).await;
+
+    let source_us = 64_000_000;
+    let media = MediaItem {
+        id: new_id(),
+        label: None,
+        path_abs: installed("WEFTCUT_SCENES_MP4"),
+        path_rel: None,
+        kind: MediaKind::Video,
+        metadata: MediaMetadata {
+            duration_us: Some(source_us),
+            ..Default::default()
+        },
+        decode_route: DecodeRoute::Bypass,
+        waveform_path: None,
+        conform_path: None,
+        thumbnails_dir: None,
+        file_hash_blake3: new_id().to_string(),
+        file_size: 0,
+        file_mtime: 0,
+        imported_at: chrono::Utc::now(),
+    };
+    let layer = Layer {
+        id: new_id(),
+        label: None,
+        t_start_us: 0,
+        t_end_us: source_us,
+        enabled: true,
+        locked: false,
+        metadata: Default::default(),
+        params: LayerParams::VideoClip(VideoClipParams {
+            timing: Default::default(),
+            media: media.id,
+            src_in_us: 0,
+            src_out_us: source_us,
+            transform: Default::default(),
+            opacity: Default::default(),
+            crop: None,
+            flip_h: false,
+            flip_v: false,
+            blend_mode: Default::default(),
+            fade_in_us: 0,
+            fade_out_us: 0,
+        }),
+        effects: Vec::new(),
+    };
+    let backend = crate::napi_backend::Backend::new_for_test_with_sink(std::sync::Arc::new(
+        crate::events::VecEventSink::new(),
+    ));
+    let args = serde_json::json!({
+        "layer_id": layer.id.to_string(), "backend": "byo_endpoint", "fps": 1.0,
+        "layer": layer, "media": media,
+        "vlm_config": { "byo_endpoint": {
+            "kind": "endpoint", "url": "http://127.0.0.1:18082/v1/chat/completions",
+            "model": "qwen3-vl", "frames_per_request": 16, "concurrency": 2,
+        } },
+    });
+    let call = || async {
+        let reply: serde_json::Value = serde_json::from_str(
+            &backend
+                .mcp_call_tool("describe_clip".into(), args.to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str::<serde_json::Value>(text).unwrap()["segments"].clone()
+    };
+
+    let started = Instant::now();
+    let segments = call().await;
+    println!("described 64 s in {:?}", started.elapsed());
+    let segments = segments.as_array().unwrap();
+    for s in segments {
+        println!(
+            "  [{} .. {}] {} {}",
+            s["t_start_us"], s["t_end_us"], s["text"], s["tags"]
+        );
+    }
+    for (i, word) in ["apple", "bicycle", "castle", "dolphin"].iter().enumerate() {
+        let (a, b) = (i as i64 * 16_000_000, (i as i64 + 1) * 16_000_000);
+        let inside: Vec<_> = segments
+            .iter()
+            .filter(|s| {
+                s["t_start_us"].as_i64().unwrap() >= a && s["t_end_us"].as_i64().unwrap() <= b
+            })
+            .collect();
+        assert!(!inside.is_empty(), "no segment inside scene {i} [{a}, {b}]");
+        let prose = inside
+            .iter()
+            .map(|s| format!("{} {}", s["text"], s["tags"]))
+            .collect::<String>()
+            .to_lowercase();
+        assert!(
+            prose.contains(word),
+            "scene {i} should read {word}: {prose}"
+        );
+    }
+
+    let started = Instant::now();
+    let again = call().await;
+    assert_eq!(&again.as_array().unwrap()[..], segments, "cache hit");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "a cache hit sends nothing"
     );
 }
