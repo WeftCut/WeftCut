@@ -1400,6 +1400,32 @@ async fn write_voiceover_atomic(dest: &std::path::Path, bytes: &[u8]) -> Result<
     Ok(())
 }
 
+/// The engine a clip-compute call asked for, as `(explicit, preferred)`:
+/// the caller's `backend` arg is a STRICT override, so an unknown tag is a clean
+/// `invalid_params` naming the legal ones (from the catalog, never a hand-kept
+/// list); the host-injected Settings preference is only a SOFT hint, so an
+/// unknown or absent one (`"auto"`, a config from another build) is `None`.
+/// Matched against the stable wire tag, not the serde form.
+#[cfg(feature = "speech")]
+fn engine_choice<B: crate::inference::EngineTag>(
+    explicit: Option<&str>,
+    preferred: Option<&str>,
+) -> Result<(Option<B>, Option<B>), McpToolError> {
+    let explicit = match explicit {
+        None => None,
+        Some(tag) => Some(B::from_tag(tag).ok_or_else(|| {
+            McpToolError::invalid_params(
+                format!(
+                    "unknown backend {tag:?}; expected one of {}",
+                    expected_tags(B::catalog().iter().map(|b| b.wire_tag()))
+                ),
+                None,
+            )
+        })?),
+    };
+    Ok((explicit, preferred.and_then(B::from_tag)))
+}
+
 /// `"a", "b", or "c"` — an unknown-tag refusal's list of the legal tags,
 /// derived from the catalog so a new backend can never be missing from it.
 #[cfg(feature = "speech")]
@@ -1502,34 +1528,10 @@ async fn transcribe_clip_job(
         args.t_end_us,
     )?;
 
-    // Explicit `backend` → STRICT; unknown tag → clean invalid_params. Matched
-    // against the stable `as_str` wire tag (not the serde form).
-    let explicit = match args.backend.as_deref() {
-        None => None,
-        Some(tag) => Some(
-            speech::SpeechBackend::all()
-                .iter()
-                .copied()
-                .find(|b| b.as_str() == tag)
-                .ok_or_else(|| {
-                    McpToolError::invalid_params(
-                        format!(
-                            "unknown backend {tag:?}; expected one of {}",
-                            expected_tags(speech::SpeechBackend::all().iter().map(|b| b.as_str()))
-                        ),
-                        None,
-                    )
-                })?,
-        ),
-    };
-    // Host-injected user preference → SOFT hint for the resolver's
-    // preference-then-availability walk. Unknown/absent tags fall to None.
-    let preferred = args.preferred_backend.as_deref().and_then(|tag| {
-        speech::SpeechBackend::all()
-            .iter()
-            .copied()
-            .find(|b| b.as_str() == tag)
-    });
+    let (explicit, preferred) = engine_choice::<speech::SpeechBackend>(
+        args.backend.as_deref(),
+        args.preferred_backend.as_deref(),
+    )?;
 
     let (used_backend, transcriber) = {
         let cfg = b.speech_config.lock().expect("speech_config poisoned");
@@ -1863,31 +1865,10 @@ async fn describe_clip_job(
         args.t_end_us,
     )?;
 
-    // Explicit `backend` → STRICT; unknown tag → clean invalid_params. Matched
-    // against the stable `as_str` wire tag (not the serde form).
-    let explicit = match args.backend.as_deref() {
-        None => None,
-        Some(tag) => Some(
-            vlm::VlmBackend::all()
-                .iter()
-                .copied()
-                .find(|b| b.as_str() == tag)
-                .ok_or_else(|| {
-                    McpToolError::invalid_params(
-                        format!(
-                            "unknown backend {tag:?}; expected \"qwen3_vl\", \"minicpm_v\", or \"byo_endpoint\""
-                        ),
-                        None,
-                    )
-                })?,
-        ),
-    };
-    let preferred = args.preferred_backend.as_deref().and_then(|tag| {
-        vlm::VlmBackend::all()
-            .iter()
-            .copied()
-            .find(|b| b.as_str() == tag)
-    });
+    let (explicit, preferred) = engine_choice::<vlm::VlmBackend>(
+        args.backend.as_deref(),
+        args.preferred_backend.as_deref(),
+    )?;
 
     let cfg = &args.vlm_config;
     let (used_backend, describer) = match explicit.or(preferred) {

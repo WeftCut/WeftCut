@@ -6,6 +6,7 @@
 //! dispatch arm here.
 
 use crate::commands::ApiKeyStatus;
+use crate::inference::EngineTag;
 use crate::napi_backend::Backend;
 use crate::speech;
 use crate::speech::backend::{Locality, SpeechBackend};
@@ -75,11 +76,7 @@ fn availability_tag(a: Availability) -> &'static str {
 /// Resolve a wire tag (`"openai"`, …) to its [`SpeechBackend`]. Matches against
 /// the stable `as_str` tag, not the serde form.
 fn parse_backend(s: &str) -> Result<SpeechBackend, String> {
-    SpeechBackend::all()
-        .iter()
-        .copied()
-        .find(|b| b.as_str() == s)
-        .ok_or_else(|| format!("unknown provider: {s}"))
+    SpeechBackend::from_tag(s).ok_or_else(|| format!("unknown provider: {s}"))
 }
 
 /// Presence-only status for the Settings → Transcription panel. Reports whether an

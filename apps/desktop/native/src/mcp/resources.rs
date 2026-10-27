@@ -356,12 +356,9 @@ async fn read_description_resource(
     // injected to prevent, one field further along. An unknown tag (`"auto"`,
     // or a config from a build with another engine catalog) finds no backend
     // here and simply means "no preference", the way an omitted one does.
-    let preferred = view.preferred.and_then(|tag| {
-        vlm::VlmBackend::all()
-            .iter()
-            .copied()
-            .find(|b| b.as_str() == tag)
-    });
+    let preferred = view
+        .preferred
+        .and_then(<vlm::VlmBackend as crate::inference::EngineTag>::from_tag);
     let backend = vlm::resolve::select_backend(preferred, vlm_config).ok_or_else(|| {
         McpToolError::resource_not_found(
             format!(

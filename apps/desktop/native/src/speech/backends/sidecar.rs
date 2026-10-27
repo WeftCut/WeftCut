@@ -4,12 +4,12 @@
 //! same shape: feed the `extract_audio_window` 16 kHz mono
 //! WAV to a spawned CLI child, wait for it to finish, and read one transcript
 //! body back — either off stdout or out of a sidecar file the engine wrote.
-//! This module owns everything that MUST be identical across those engines and
-//! is easy to get wrong per-backend:
-//!
-//! - **conhost suppression** (`no_console_window`);
-//! - **`kill_on_drop(true)`** (the same landmine as ffmpeg in `jobs/hwaccel.rs`);
-//! - the **timeout kill** and the **exit-code → [`SpeechError`]** mapping.
+//! The child itself — admission, conhost suppression, `kill_on_drop`, the
+//! timeout kill and the exit classification — is the one every local inference
+//! engine shares ([`inference::sidecar`](crate::inference::sidecar), mapped to
+//! [`SpeechError`] here). This module owns what both SPEECH engines share on
+//! top of it: the thread-flag clamp, where the transcript body lands, the
+//! device-fallback check and the hang guard scaled to the clip.
 //!
 //! A backend supplies only the binary, the built argument vector, where the
 //! body lands ([`OutputSink`]), and which [`RawTranscript`] variant to tag it
@@ -22,14 +22,10 @@
 use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::process::Command;
-
 use crate::compute_jobs::{ModelObserver, ModelPhase};
-use crate::inference_files::program_path;
-use crate::process::{output_watching_stderr, NoConsoleWindow};
+use crate::inference::sidecar::{run_child, ChildRun};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
 use crate::speech::SpeechBackend;
@@ -94,73 +90,22 @@ impl SidecarRun {
     /// [`RawTranscript`]. Errors: [`SpeechError::Spawn`] if the child cannot
     /// start, [`SpeechError::Timeout`] if it overruns, [`SpeechError::EngineExit`]
     /// on a non-zero exit. `observer` hears what [`Self::stderr_phase`] reads
-    /// while the child runs.
-    pub async fn run(mut self, observer: ModelObserver<'_>) -> Result<RawTranscript, SpeechError> {
-        let _resources = crate::resources::interactive(crate::resources::model_memory_mib(
-            &self.args, &self.cwd,
-        ))
-        .await
-        .map_err(|e| SpeechError::Io(std::io::Error::other(e)))?;
-        // Argument preparation can precede an admission wait and settings edit.
-        // Clamp again against the admitted allocation immediately before spawn.
-        let threads = crate::resources::task_threads();
-        for index in 0..self.args.len() {
-            if self.args[index] == "-t" && index + 1 < self.args.len() {
-                let requested = self.args[index + 1]
-                    .to_string_lossy()
-                    .parse::<u32>()
-                    .unwrap_or(threads);
-                self.args[index + 1] = requested.clamp(1, threads).to_string().into();
-            } else if let Some(requested) = self.args[index]
-                .to_string_lossy()
-                .strip_prefix("--num-threads=")
-            {
-                let requested = requested.parse::<u32>().unwrap_or(threads);
-                self.args[index] = format!("--num-threads={}", requested.clamp(1, threads)).into();
-            }
-        }
-        let mut cmd = Command::new(program_path(&self.program)?);
-        cmd.no_console_window() // Windows: no conhost flash under Electron.
-            .kill_on_drop(true) // dropped future (timeout/cancel) reaps the child.
-            .current_dir(&self.cwd)
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(match self.output {
-                OutputSink::Stdout => Stdio::piped(),
-                OutputSink::File(_) => Stdio::null(),
-            })
-            .stderr(Stdio::piped());
-
-        let child = cmd.spawn().map_err(|e| SpeechError::Spawn {
-            program: self.program.display().to_string(),
-            cause: e.to_string(),
-        })?;
-
-        // `output_watching_stderr` consumes the `Child` (it is moved into this
-        // future). If `timeout` elapses, or the job is cancelled, tokio drops
-        // the future → drops the owned `Child` → `kill_on_drop` kills the
-        // process. That is why the `Err(_elapsed)` arm needs no explicit `.kill()`.
-        let stderr_phase = self.stderr_phase;
-        let watched = output_watching_stderr(child, |line| {
-            if let Some(phase) = stderr_phase(line) {
-                observer(phase);
-            }
-        });
-        let output = match tokio::time::timeout(self.timeout, watched).await {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => return Err(SpeechError::Io(e)),
-            Err(_elapsed) => {
-                return Err(SpeechError::Timeout {
-                    secs: self.timeout.as_secs(),
-                })
-            }
-        };
-
-        exit_result(
-            output.status.success(),
-            output.status.code(),
-            &output.stderr,
-        )?;
+    /// while the child runs. The child itself is
+    /// [`inference::sidecar::run_child`](crate::inference::sidecar::run_child)'s.
+    pub async fn run(self, observer: ModelObserver<'_>) -> Result<RawTranscript, SpeechError> {
+        let output = run_child(
+            ChildRun {
+                program: &self.program,
+                cwd: &self.cwd,
+                args: self.args,
+                timeout: self.timeout,
+                capture_stdout: matches!(self.output, OutputSink::Stdout),
+                threads: |args, threads| clamp_threads(args, threads),
+                stderr_phase: self.stderr_phase,
+            },
+            observer,
+        )
+        .await?;
         // A zero exit is not proof the pinned device ran — check before the
         // transcript is accepted, so a fallback cannot pass as a device success.
         if let Some(pin) = &self.device_pin {
@@ -181,49 +126,35 @@ impl SidecarRun {
     }
 }
 
-/// Liveness probe for a local sidecar: spawn `<program> <args>` (typically
-/// `--help`) and treat "the process started and finished within `timeout`" as
-/// alive. The exit code is **ignored on purpose** — `--help` / `--version`
-/// conventions differ across engines and builds, so this only distinguishes a
-/// runnable binary from a bad path / wrong arch ([`SpeechError::Spawn`]) or a
-/// wedged binary ([`SpeechError::Timeout`]). Used by `probe_backend`'s
-/// Settings "Test" button; reusable by any local engine.
+/// Clamp the speech engines' thread flags (whisper.cpp `-t N`, sherpa-onnx
+/// `--num-threads=N`) to the admitted allocation. Argument preparation can
+/// precede an admission wait and a settings edit, so the shared runner applies
+/// this against the admitted allocation immediately before spawn.
+fn clamp_threads(args: &mut [OsString], threads: u32) {
+    for index in 0..args.len() {
+        if args[index] == "-t" && index + 1 < args.len() {
+            let requested = args[index + 1]
+                .to_string_lossy()
+                .parse::<u32>()
+                .unwrap_or(threads);
+            args[index + 1] = requested.clamp(1, threads).to_string().into();
+        } else if let Some(requested) = args[index].to_string_lossy().strip_prefix("--num-threads=")
+        {
+            let requested = requested.parse::<u32>().unwrap_or(threads);
+            args[index] = format!("--num-threads={}", requested.clamp(1, threads)).into();
+        }
+    }
+}
+
+/// Liveness probe for a local speech engine: the shared
+/// [`inference::sidecar::probe_liveness`](crate::inference::sidecar::probe_liveness)
+/// with speech's errors. Used by `probe_backend`'s Settings "Test" button.
 pub async fn probe_liveness(
     program: &Path,
     args: &[OsString],
     timeout: Duration,
 ) -> Result<(), SpeechError> {
-    let mut cmd = Command::new(program);
-    cmd.no_console_window()
-        .kill_on_drop(true)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let child = cmd.spawn().map_err(|e| SpeechError::Spawn {
-        program: program.display().to_string(),
-        cause: e.to_string(),
-    })?;
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => Err(SpeechError::Io(e)),
-        Err(_elapsed) => Err(SpeechError::Timeout {
-            secs: timeout.as_secs(),
-        }),
-    }
-}
-
-/// Classify a finished child's status into success or [`SpeechError::EngineExit`].
-/// Pure so the mapping is unit-testable without spawning a real engine.
-fn exit_result(success: bool, code: Option<i32>, stderr: &[u8]) -> Result<(), SpeechError> {
-    if success {
-        Ok(())
-    } else {
-        Err(SpeechError::EngineExit {
-            code,
-            stderr: String::from_utf8_lossy(stderr).trim().to_string(),
-        })
-    }
+    Ok(crate::inference::sidecar::probe_liveness(program, args, timeout).await?)
 }
 
 /// The engine's own fallback line, if any marker appears in `stderr` — returned
@@ -303,31 +234,41 @@ fn scaled_timeout_from_bytes(wav_bytes: u64) -> Duration {
 mod tests {
     use super::*;
 
+    /// The shared child's failures keep speech's own variants (and therefore
+    /// its wording): an exit is `EngineExit` with the code and trimmed stderr,
+    /// a signal kill has no code, a hang is `Timeout`, a bad path is `Spawn`.
     #[test]
-    fn zero_exit_is_success() {
-        assert!(exit_result(true, Some(0), b"").is_ok());
-    }
-
-    #[test]
-    fn nonzero_exit_maps_to_engine_exit_with_code_and_stderr() {
-        let err = exit_result(false, Some(3), b"  model load failed\n").expect_err("nonzero");
-        match err {
+    fn child_failures_map_to_speech_errors() {
+        use crate::inference::sidecar::SidecarFailure as F;
+        match SpeechError::from(F::Exit {
+            code: Some(3),
+            stderr: "model load failed".into(),
+        }) {
             SpeechError::EngineExit { code, stderr } => {
                 assert_eq!(code, Some(3));
-                assert_eq!(stderr, "model load failed"); // trimmed
+                assert_eq!(stderr, "model load failed");
             }
             other => panic!("expected EngineExit, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn signal_kill_maps_to_engine_exit_with_no_code() {
-        // A child killed by a signal reports `status.code() == None`.
-        let err = exit_result(false, None, b"killed").expect_err("no code");
-        match err {
-            SpeechError::EngineExit { code: None, .. } => {}
-            other => panic!("expected EngineExit{{code:None}}, got {other:?}"),
-        }
+        let signal = SpeechError::from(F::Exit {
+            code: None,
+            stderr: "killed".into(),
+        });
+        assert_eq!(
+            signal.to_string(),
+            "speech engine exited with a signal: killed"
+        );
+        assert!(matches!(
+            SpeechError::from(F::Timeout { secs: 60 }),
+            SpeechError::Timeout { secs: 60 }
+        ));
+        assert!(matches!(
+            SpeechError::from(F::Spawn {
+                program: "whisper-cli".into(),
+                cause: "not found".into()
+            }),
+            SpeechError::Spawn { .. }
+        ));
     }
 
     /// The two runtimes report an abandoned device pin at exit 0, so the stderr

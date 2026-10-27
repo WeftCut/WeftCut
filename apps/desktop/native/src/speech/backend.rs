@@ -163,6 +163,15 @@ pub struct Capabilities {
     pub exact_word_timing: bool,
 }
 
+impl crate::inference::EngineTag for SpeechBackend {
+    fn catalog() -> &'static [Self] {
+        Self::all()
+    }
+    fn wire_tag(self) -> &'static str {
+        self.as_str()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,15 +20,13 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::process::Command;
 
 use crate::compute_jobs::{ignore_model_phase, ModelObserver, ModelPhase};
-use crate::inference_files::{program_path, InferenceFiles};
-use crate::process::{output_watching_stderr, NoConsoleWindow};
+use crate::inference::sidecar::{run_child, ChildRun};
+use crate::inference_files::InferenceFiles;
 
 use super::describer::{
     describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, TimedFrame,
@@ -299,10 +297,12 @@ pub fn build_args(
 }
 
 /// Spawn the one-shot child, wait (bounded by `timeout`), capture stdout as the
-/// raw body. Mirrors `speech::backends::sidecar::SidecarRun::run`: conhost guard,
-/// `kill_on_drop` (a timed-out or cancelled future drops the child → reaped),
-/// exit-code → [`VlmError`] mapping. `observer` hears the load, then
-/// [`stderr_phase`]'s reading of the child's log; a CPU retry loads again.
+/// raw body. The child — admission, conhost guard, `kill_on_drop` (a timed-out
+/// or cancelled future drops the child → reaped), exit classification — is the
+/// one every local engine shares
+/// ([`inference::sidecar`](crate::inference::sidecar)), mapped to [`VlmError`].
+/// `observer` hears the load, then [`stderr_phase`]'s reading of the child's
+/// log; a CPU retry loads again.
 async fn run(
     program: &Path,
     args: &[OsString],
@@ -311,50 +311,31 @@ async fn run(
     observer: ModelObserver<'_>,
 ) -> Result<String, VlmError> {
     observer(ModelPhase::LoadingModel);
-    let _resources = crate::resources::interactive(crate::resources::model_memory_mib(args, cwd))
-        .await
-        .map_err(|e| VlmError::Io(std::io::Error::other(e)))?;
-    let child = Command::new(program_path(program)?)
-        .no_console_window()
-        .kill_on_drop(true)
-        .current_dir(cwd)
-        .args(args)
-        .args([
-            "--threads",
-            &crate::resources::task_threads().to_string(),
-            "--threads-batch",
-            &crate::resources::task_threads().to_string(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| VlmError::Spawn {
-            program: program.display().to_string(),
-            cause: e.to_string(),
-        })?;
-
-    let watched = output_watching_stderr(child, |line| {
-        if let Some(phase) = stderr_phase(line) {
-            observer(phase);
-        }
-    });
-    let output = match tokio::time::timeout(timeout, watched).await {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => return Err(VlmError::Io(e)),
-        Err(_elapsed) => {
-            return Err(VlmError::Timeout {
-                secs: timeout.as_secs(),
-            })
-        }
-    };
-    if !output.status.success() {
-        return Err(VlmError::EngineExit {
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        });
-    }
+    let output = run_child(
+        ChildRun {
+            program,
+            cwd,
+            args: args.to_vec(),
+            timeout,
+            capture_stdout: true,
+            threads: append_threads,
+            stderr_phase,
+        },
+        observer,
+    )
+    .await?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// llama-mtmd-cli takes the admitted allocation as two appended flags: the
+/// arguments [`build_args`] produces never carry a thread count of their own.
+fn append_threads(args: &mut Vec<OsString>, threads: u32) {
+    let threads = threads.to_string();
+    args.extend(
+        ["--threads", &threads, "--threads-batch", &threads]
+            .into_iter()
+            .map(OsString::from),
+    );
 }
 
 /// llama-mtmd-cli's stderr, read for the job phase. The multimodal helper logs

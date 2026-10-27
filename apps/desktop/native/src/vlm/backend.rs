@@ -100,6 +100,15 @@ impl VlmBackend {
     }
 }
 
+impl crate::inference::EngineTag for VlmBackend {
+    fn catalog() -> &'static [Self] {
+        Self::all()
+    }
+    fn wire_tag(self) -> &'static str {
+        self.as_str()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

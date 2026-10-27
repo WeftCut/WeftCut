@@ -133,14 +133,12 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
     };
     match a.family.as_str() {
         "speech" => {
+            use crate::inference::EngineTag;
             use crate::speech::{
                 self, config::BackendConfig, transcriber::TranscribeRequest, SpeechBackend,
             };
-            let backend = SpeechBackend::all()
-                .iter()
-                .copied()
-                .find(|b| b.as_str() == a.backend)
-                .ok_or("Unknown speech model backend")?;
+            let backend =
+                SpeechBackend::from_tag(&a.backend).ok_or("Unknown speech model backend")?;
             let entry = if backend == SpeechBackend::OpenAi {
                 BackendConfig::ApiKey(a.api_key.unwrap_or_default())
             } else if backend == SpeechBackend::ByoEndpoint {
@@ -180,6 +178,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
             Ok(VerifyResult { device })
         }
         "vlm" => {
+            use crate::inference::EngineTag;
             use crate::vlm::{
                 self,
                 config::BackendConfig,
@@ -187,11 +186,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                 sidecar::{LlamaMtmdSidecar, OutputStyle},
                 VlmBackend,
             };
-            let backend = VlmBackend::all()
-                .iter()
-                .copied()
-                .find(|b| b.as_str() == a.backend)
-                .ok_or("Unknown video model backend")?;
+            let backend = VlmBackend::from_tag(&a.backend).ok_or("Unknown video model backend")?;
             let image_path = tmp.path().join("test.png");
             image::RgbImage::from_pixel(64, 64, image::Rgb([40, 100, 180]))
                 .save(&image_path)

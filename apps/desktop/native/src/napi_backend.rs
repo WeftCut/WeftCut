@@ -1809,7 +1809,10 @@ mod tests {
         assert_eq!(whisper["selected"], false);
         assert_eq!(whisper["capabilities"]["exactWordTiming"], true);
         // The endpoint is URL-gated, so unconfigured it names that gap.
-        let endpoint = rows.iter().find(|r| r["backend"] == "byo_endpoint").unwrap();
+        let endpoint = rows
+            .iter()
+            .find(|r| r["backend"] == "byo_endpoint")
+            .unwrap();
         assert_eq!(endpoint["availability"], "needs_endpoint");
         assert_eq!(endpoint["selected"], false);
     }

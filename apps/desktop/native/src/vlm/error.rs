@@ -59,3 +59,16 @@ pub enum VlmError {
     #[error("video-understanding engine timed out after {secs}s")]
     Timeout { secs: u64 },
 }
+
+/// The shared local-engine child's failures, in this subsystem's words.
+impl From<crate::inference::sidecar::SidecarFailure> for VlmError {
+    fn from(f: crate::inference::sidecar::SidecarFailure) -> Self {
+        use crate::inference::sidecar::SidecarFailure as F;
+        match f {
+            F::Io(e) => Self::Io(e),
+            F::Spawn { program, cause } => Self::Spawn { program, cause },
+            F::Timeout { secs } => Self::Timeout { secs },
+            F::Exit { code, stderr } => Self::EngineExit { code, stderr },
+        }
+    }
+}
