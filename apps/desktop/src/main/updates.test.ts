@@ -127,7 +127,7 @@ describe('application updates', () => {
       return {}
     })
     updates.start()
-    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.advanceTimersByTimeAsync(5_000)
     await updates.check()
     expect(updates.status()).toEqual({ phase: 'available', version: '0.2.0' })
     expect(engine.downloadUpdate).not.toHaveBeenCalled()
@@ -257,7 +257,7 @@ describe('application updates', () => {
     engine.checkForUpdates.mockResolvedValue(null)
     updates.start()
     updates.start()
-    await vi.advanceTimersByTimeAsync(29_999)
+    await vi.advanceTimersByTimeAsync(4_999)
     expect(engine.checkForUpdates).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(engine.checkForUpdates).toHaveBeenCalledTimes(1)

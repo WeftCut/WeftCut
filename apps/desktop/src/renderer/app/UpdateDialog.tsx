@@ -7,7 +7,7 @@ import { useUpdateStatus } from './updateStatus'
 import { UpdateActions } from './UpdateActions'
 import { useAutoInstallUpdatesOnQuit } from '../settings/appSettingsStore'
 
-/// Help → Check for Updates. Opening it IS the check (the same IPC the 30 s
+/// Help → Check for Updates. Opening it IS the check (the same IPC the 5 s
 /// startup timer fires), and it then mirrors the main-process status machine
 /// once a second. Laid out like the other message-and-actions dialogs
 /// (checkpoint-delete, export-experimental): settings-card body, blurb copy,

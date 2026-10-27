@@ -53,7 +53,7 @@ draft, and refuses lower versions. Publish a higher patch version to deliver a
 fix; do not replace installers under an already published version.
 
 Packaged Windows/Linux applications use electron-updater against the public
-GitHub Release feed. They check 30 seconds after startup and every six hours,
+GitHub Release feed. They check 5 seconds after startup and every six hours,
 and show a non-modal notice when an update is available. General
 settings' second item, "Automatically install available updates when closing
 the app", defaults on (including older settings files). With it enabled,

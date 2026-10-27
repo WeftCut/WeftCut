@@ -149,7 +149,7 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
     },
     start() {
       if (!updater || startup || interval) return
-      startup = setTimeout(() => { void check() }, 30_000)
+      startup = setTimeout(() => { void check() }, 5_000)
       interval = setInterval(() => { void check() }, 6 * 60 * 60 * 1000)
       startup.unref()
       interval.unref()
