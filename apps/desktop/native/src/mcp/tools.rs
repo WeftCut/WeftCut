@@ -1646,10 +1646,14 @@ pub(super) struct DescribeClipArgs {
     /// `t_end_us`. Must lie within the layer.
     #[serde(default)]
     pub t_end_us: Option<i64>,
-    /// Frames sampled per second (higher = finer, costlier; capped to the
-    /// model's context). Default: the app's setting, else 1.0. Cache key.
+    /// Frames sampled per second, everywhere in the window (higher = finer,
+    /// more requests). Default: the app's setting, else 1.0. Cache key.
     #[serde(default)]
     pub fps: Option<f64>,
+    /// Describe the window again even when it is cached, replacing its earlier
+    /// run instead of resuming it (default false).
+    #[serde(default)]
+    pub refresh: bool,
     /// `"general"` or `"shot-type"` (biases `tags` toward shot type / camera).
     /// Default: the app's setting, else `"general"`. Cache key.
     #[serde(default)]
@@ -1916,66 +1920,235 @@ async fn describe_clip_job(
     );
     let dest = b.cache.description(&key);
 
-    // Range-lazy: load the prior cache; if the window is already covered, reuse
-    // it with NO engine spawn.
+    // Load the prior runs; a window already covered is answered with NO engine
+    // spawn unless the caller asked for a fresh run.
     let mut cache: vlm::DescriptionCache = match tokio::fs::read(&dest).await {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => vlm::DescriptionCache::default(),
     };
+    let window = [resolved.source_in_us, resolved.source_out_us];
+    if args.refresh {
+        cache.discard(window);
+    }
 
-    if !cache.covers(resolved.source_in_us, resolved.source_out_us) {
-        // Uncovered → sample the window's frames and describe it once.
-        let anchors =
-            vlm::frame_extract::plan_anchors(resolved.source_in_us, resolved.source_out_us, fps);
-        let tmp = tempfile::Builder::new()
-            .prefix("weftcut-vlm")
-            .tempdir()
-            .map_err(|e| McpToolError::internal_error(format!("temp dir: {e}"), None))?;
-        let total = anchors.len() as u32;
-        let frames = vlm::frame_extract::sample_frames(
-            &resolved.source_path,
-            resolved.source_in_us,
-            tmp.path(),
-            &anchors,
-            job.admission(ComputePhase::Extracting { done: 0, total }),
-            |done| {
-                job.phase(ComputePhase::Extracting {
-                    done: done as u32,
-                    total,
-                })
+    if args.refresh || !cache.covers(window[0], window[1]) {
+        let (frames_per_request, concurrency) =
+            vlm::config::request_shape(cfg.get(used_backend.as_str()));
+        // Every chunk at the requested fps; a window too long for one call is
+        // refused here, before any frame is sampled.
+        let chunks = vlm::frame_extract::plan_chunks(window[0], window[1], fps, frames_per_request)
+            .map_err(|e| McpToolError::invalid_params(e, None))?;
+        let run = describe_chunks(
+            job,
+            &dest,
+            &mut cache,
+            ChunkedDescribe {
+                window,
+                chunks,
+                describer: std::sync::Arc::from(describer),
+                concurrency,
+                source: resolved.source_path.clone(),
+                focus,
+                language: language.clone(),
             },
-        )
-        .await
-        .map_err(map_vlm_error)?;
-
-        // One request per description, whichever engine serves it.
-        let raw = describer
-            .describe_observed(
-                vlm::DescribeRequest {
-                    frames,
-                    focus,
-                    language: language.clone(),
-                },
-                &|phase| job.model(phase),
-            )
-            .await
-            .map_err(map_vlm_error)?;
-        let mut fresh = vlm::parse_raw(raw).map_err(map_vlm_error)?;
-        // Parser output is window-relative; place it on source-absolute time.
-        vlm::shift_segments(&mut fresh, resolved.source_in_us);
-
-        cache.merge_window(resolved.source_in_us, resolved.source_out_us, fresh);
-        write_description_atomic(&dest, &cache).await.map_err(|e| {
-            McpToolError::internal_error(format!("persist description: {e:#}"), None)
-        })?;
+        );
+        run.await?;
     }
 
     let result = vlm::SceneDescription {
         backend: used_backend.as_str().to_string(),
         model,
-        segments: cache.segments_in(resolved.source_in_us, resolved.source_out_us),
+        segments: cache.segments_in(window[0], window[1]),
     };
     ToolResult::json(&result)
+}
+
+/// One `describe_clip` run's work: its window, the chunk plan, and what every
+/// chunk request needs.
+#[cfg(feature = "speech")]
+struct ChunkedDescribe {
+    window: [i64; 2],
+    chunks: Vec<crate::vlm::frame_extract::Chunk>,
+    describer: std::sync::Arc<dyn crate::vlm::describer::SceneDescriber>,
+    concurrency: usize,
+    source: std::path::PathBuf,
+    focus: crate::vlm::Focus,
+    language: crate::vlm::Language,
+}
+
+/// Describe the run over `work.window` chunk by chunk, persisting after each:
+/// the run is resumed when an earlier call over the same window left it
+/// unfinished (its finished chunks are skipped), and a cancel or a failing
+/// chunk keeps the chunks that finished.
+///
+/// A local engine runs one chunk at a time and reports frame sampling and the
+/// engine's own phases; an endpoint may have up to `concurrency` chunk requests
+/// in flight (a `JoinSet`, aborted with the job when it is dropped). Either way
+/// `Inferring` counts finished chunks out of the plan's.
+#[cfg(feature = "speech")]
+async fn describe_chunks(
+    job: &JobReporter,
+    dest: &std::path::Path,
+    cache: &mut crate::vlm::DescriptionCache,
+    work: ChunkedDescribe,
+) -> Result<(), McpToolError> {
+    use crate::compute_jobs::ModelPhase;
+    use crate::vlm;
+
+    let total_chunks = work.chunks.len() as u32;
+    let pending: Vec<vlm::frame_extract::Chunk> = {
+        let run = cache.run_for(work.window);
+        work.chunks
+            .into_iter()
+            .filter(|c| !run.has_done(c.window))
+            .collect()
+    };
+    let mut finished = total_chunks - pending.len() as u32;
+
+    if work.concurrency <= 1 || pending.len() <= 1 {
+        let total_frames: u32 = pending.iter().map(|c| c.anchors.len() as u32).sum();
+        let mut sampled = 0u32;
+        for chunk in pending {
+            let tmp = chunk_dir()?;
+            let frames = vlm::frame_extract::sample_frames(
+                &work.source,
+                chunk.window[0],
+                tmp.path(),
+                &chunk.anchors,
+                job.admission(ComputePhase::Extracting {
+                    done: sampled,
+                    total: total_frames,
+                }),
+                |done| {
+                    job.phase(ComputePhase::Extracting {
+                        done: sampled + done as u32,
+                        total: total_frames,
+                    })
+                },
+            )
+            .await
+            .map_err(map_vlm_error)?;
+            sampled += chunk.anchors.len() as u32;
+            let raw = work
+                .describer
+                .describe_observed(
+                    vlm::DescribeRequest {
+                        frames,
+                        focus: work.focus,
+                        language: work.language.clone(),
+                    },
+                    // The engine's own phases, with the chunk count it cannot see.
+                    &|phase| {
+                        job.model(match phase {
+                            ModelPhase::Inferring { .. } => ModelPhase::Inferring {
+                                done: Some(finished),
+                                total: Some(total_chunks),
+                            },
+                            other => other,
+                        })
+                    },
+                )
+                .await
+                .map_err(map_vlm_error)?;
+            let fresh = chunk_segments(raw, chunk.window)?;
+            cache.run_for(work.window).record_chunk(chunk.window, fresh);
+            persist_description(dest, cache).await?;
+            finished += 1;
+        }
+        return Ok(());
+    }
+
+    job.phase(ComputePhase::Inferring {
+        done: Some(finished),
+        total: Some(total_chunks),
+    });
+    let mut queue = pending.into_iter();
+    let mut in_flight = tokio::task::JoinSet::new();
+    loop {
+        while in_flight.len() < work.concurrency {
+            let Some(chunk) = queue.next() else { break };
+            let describer = work.describer.clone();
+            let source = work.source.clone();
+            let (focus, language) = (work.focus, work.language.clone());
+            in_flight.spawn(async move {
+                let result = async {
+                    let tmp = tempfile::Builder::new()
+                        .prefix("weftcut-vlm")
+                        .tempdir()
+                        .map_err(vlm::VlmError::Io)?;
+                    let frames = vlm::frame_extract::sample_frames(
+                        &source,
+                        chunk.window[0],
+                        tmp.path(),
+                        &chunk.anchors,
+                        |_| {},
+                        |_| {},
+                    )
+                    .await?;
+                    describer
+                        .describe(vlm::DescribeRequest {
+                            frames,
+                            focus,
+                            language,
+                        })
+                        .await
+                }
+                .await;
+                (chunk, result)
+            });
+        }
+        let Some(joined) = in_flight.join_next().await else {
+            break;
+        };
+        let (chunk, result) = joined
+            .map_err(|e| McpToolError::internal_error(format!("describe chunk: {e}"), None))?;
+        let fresh = chunk_segments(result.map_err(map_vlm_error)?, chunk.window)?;
+        cache.run_for(work.window).record_chunk(chunk.window, fresh);
+        persist_description(dest, cache).await?;
+        finished += 1;
+        job.phase(ComputePhase::Inferring {
+            done: Some(finished),
+            total: Some(total_chunks),
+        });
+    }
+    Ok(())
+}
+
+/// Persist the runs after a chunk, so a cancel or a later failure keeps it.
+#[cfg(feature = "speech")]
+async fn persist_description(
+    dest: &std::path::Path,
+    cache: &crate::vlm::DescriptionCache,
+) -> Result<(), McpToolError> {
+    write_description_atomic(dest, cache)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("persist description: {e:#}"), None))
+}
+
+/// A per-chunk frame directory, RAII-cleaned once its request is answered.
+#[cfg(feature = "speech")]
+fn chunk_dir() -> Result<tempfile::TempDir, McpToolError> {
+    tempfile::Builder::new()
+        .prefix("weftcut-vlm")
+        .tempdir()
+        .map_err(|e| McpToolError::internal_error(format!("temp dir: {e}"), None))
+}
+
+/// Parse one chunk's answer and place it on source time: the parser's times are
+/// chunk-relative, so they shift by the chunk's start and are held inside the
+/// chunk (a model may run a segment past its last frame).
+#[cfg(feature = "speech")]
+fn chunk_segments(
+    raw: crate::vlm::parser::RawDescription,
+    [start, end]: [i64; 2],
+) -> Result<Vec<crate::vlm::description::DescSegment>, McpToolError> {
+    let mut fresh = crate::vlm::parse_raw(raw).map_err(map_vlm_error)?;
+    crate::vlm::shift_segments(&mut fresh, start);
+    for s in &mut fresh {
+        s.t_start_us = s.t_start_us.clamp(start, end);
+        s.t_end_us = s.t_end_us.clamp(s.t_start_us, end);
+    }
+    Ok(fresh)
 }
 
 /// TTS compute half of the `synthesize_speech` hybrid. Does NOT write to the
@@ -2458,9 +2631,226 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
                 json!({ "kind": "extracting", "done": 1, "total": 2 }),
                 json!({ "kind": "extracting", "done": 2, "total": 2 }),
                 json!({ "kind": "loading_model" }),
-                json!({ "kind": "inferring" }),
+                // One chunk: the engine's own report, counted.
+                json!({ "kind": "inferring", "done": 0, "total": 1 }),
             ]
         );
         assert_eq!(b.compute_jobs.live_count(), 0);
+    }
+
+    /// A 64 s VideoClip over a 64 s source, described through a scripted
+    /// OpenAI-compatible endpoint that answers `replies` in order.
+    struct Endpoint {
+        backend: Backend,
+        sink: Arc<VecEventSink>,
+        server: crate::inference::http::test_server::TestServer,
+        args: Value,
+        _dir: tempfile::TempDir,
+    }
+
+    /// A chat-completions answer whose one segment spans the chunk's 0.5–15.5 s.
+    fn answer(text: &str) -> crate::inference::http::test_server::Reply {
+        let content = json!([{ "t_start": 0.5, "t_end": 15.5, "text": text, "tags": [] }]);
+        let body = json!({ "choices": [{ "message": { "content": content.to_string() } }] });
+        Some((200, "Content-Type: application/json\r\n", body.to_string()))
+    }
+
+    async fn endpoint(
+        replies: Vec<crate::inference::http::test_server::Reply>,
+        source_us: i64,
+        concurrency: u32,
+    ) -> Option<Endpoint> {
+        if !crate::ffmpeg::ffmpeg_is_installed() {
+            eprintln!("ffmpeg not installed — skipping");
+            return None;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src.mp4");
+        ffmpeg(
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=64x64:rate=2:duration=64",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "mpeg4",
+            ],
+            &source,
+        )
+        .await;
+        let server = crate::inference::http::test_server::serve(replies).await;
+        let mut media = media(source, MediaKind::Video);
+        media.metadata.duration_us = Some(source_us);
+        let layer = layer(
+            LayerParams::VideoClip(crate::state::VideoClipParams {
+                timing: Default::default(),
+                media: media.id,
+                src_in_us: 0,
+                src_out_us: source_us,
+                transform: Default::default(),
+                opacity: Default::default(),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+            source_us,
+        );
+        let sink = Arc::new(VecEventSink::new());
+        let backend = Backend::new_for_test_with_sink(sink.clone());
+        let args = json!({
+            "layer_id": layer.id.to_string(), "backend": "byo_endpoint", "fps": 1.0,
+            "layer": layer, "media": media,
+            "vlm_config": { "byo_endpoint": {
+                "kind": "endpoint", "url": server.url, "model": "m",
+                "frames_per_request": 16, "concurrency": concurrency,
+            } },
+        });
+        Some(Endpoint {
+            backend,
+            sink,
+            server,
+            args,
+            _dir: dir,
+        })
+    }
+
+    fn segments(reply: &Value) -> Vec<(i64, i64, String)> {
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        body["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["t_start_us"].as_i64().unwrap(),
+                    s["t_end_us"].as_i64().unwrap(),
+                    s["text"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn images_per_request(server: &crate::inference::http::test_server::TestServer) -> Vec<usize> {
+        server
+            .requests()
+            .iter()
+            .map(|r| r.matches("\"image_url\"").count() / 2)
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn describe_chunks_a_long_window_resumes_after_a_failure_and_reuses_the_run() {
+        let Some(t) = endpoint(
+            vec![
+                answer("c1"),
+                answer("c2"),
+                Some((400, "", "the model refused".into())),
+                answer("c3"),
+                answer("c4"),
+                answer("r1"),
+                answer("r2"),
+                answer("r3"),
+                answer("r4"),
+            ],
+            64_000_000,
+            1,
+        )
+        .await
+        else {
+            return;
+        };
+        let b = &t.backend;
+
+        // The third chunk fails: the call fails, the first two are kept.
+        let reply = call(b, "describe_clip", &t.args).await;
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(t.server.hits(), 3);
+        // Four 16 s chunks at 1 fps: sixteen frames a request, never sparser.
+        assert_eq!(images_per_request(&t.server), [16, 16, 16]);
+
+        // The same request resumes: only chunks three and four run.
+        let reply = call(b, "describe_clip", &with_job(&t.args, "resume")).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(t.server.hits(), 5);
+        let got = segments(&reply);
+        assert_eq!(
+            got,
+            [
+                (500_000, 15_500_000, "c1".into()),
+                (16_500_000, 31_500_000, "c2".into()),
+                (32_500_000, 47_500_000, "c3".into()),
+                (48_500_000, 63_500_000, "c4".into()),
+            ]
+        );
+        let phases = phases(&t.sink, "resume");
+        assert!(
+            phases.contains(&json!({ "kind": "inferring", "done": 2, "total": 4 })),
+            "{phases:?}"
+        );
+        assert!(
+            phases.contains(&json!({ "kind": "inferring", "done": 3, "total": 4 })),
+            "{phases:?}"
+        );
+
+        // A sub-window of the finished run is answered from it, no request.
+        let mut sub = t.args.clone();
+        sub["t_start_us"] = json!(20_000_000);
+        sub["t_end_us"] = json!(30_000_000);
+        let reply = call(b, "describe_clip", &sub).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(t.server.hits(), 5);
+        assert_eq!(segments(&reply), [(16_500_000, 31_500_000, "c2".into())]);
+
+        // `refresh` describes the window again, from the first chunk.
+        let mut fresh = t.args.clone();
+        fresh["refresh"] = json!(true);
+        let reply = call(b, "describe_clip", &fresh).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(t.server.hits(), 9);
+        let texts: Vec<_> = segments(&reply).into_iter().map(|s| s.2).collect();
+        assert_eq!(texts, ["r1", "r2", "r3", "r4"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn describe_runs_endpoint_chunks_concurrently() {
+        let Some(t) = endpoint(
+            vec![answer("a"), answer("b"), answer("c"), answer("d")],
+            64_000_000,
+            2,
+        )
+        .await
+        else {
+            return;
+        };
+        let reply = call(&t.backend, "describe_clip", &t.args).await;
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(t.server.hits(), 4);
+        let got = segments(&reply);
+        // Each chunk's answer lands on its own chunk, whichever finished first.
+        let starts: Vec<_> = got.iter().map(|s| s.0).collect();
+        assert_eq!(starts, [500_000, 16_500_000, 32_500_000, 48_500_000]);
+        let mut texts: Vec<_> = got.into_iter().map(|s| s.2).collect();
+        texts.sort();
+        assert_eq!(texts, ["a", "b", "c", "d"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn describe_refuses_a_window_over_the_frame_cap_before_any_work() {
+        // 4000 s at 1 fps: 4000 frames, over the 3600 a call may sample.
+        let Some(t) = endpoint(vec![answer("never")], 4_000_000_000, 1).await else {
+            return;
+        };
+        let reply = call(&t.backend, "describe_clip", &t.args).await;
+        assert_eq!(reply["ok"], false, "{reply}");
+        let message = reply.to_string();
+        assert!(message.contains("4000 frames"), "{message}");
+        assert!(message.contains("at most 3600 s"), "{message}");
+        assert_eq!(t.server.hits(), 0);
     }
 }

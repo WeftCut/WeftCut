@@ -208,6 +208,8 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                         model: Some(ep.model),
                         api_key: a.api_key,
                         timeout_s: ep.timeout_s,
+                        frames_per_request: None,
+                        concurrency: None,
                     },
                 )]);
                 let d =

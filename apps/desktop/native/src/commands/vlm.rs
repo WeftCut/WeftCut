@@ -120,6 +120,8 @@ mod tests {
             api_key: None,
             model: None,
             timeout_s: None,
+            frames_per_request: None,
+            concurrency: None,
         }
     }
 

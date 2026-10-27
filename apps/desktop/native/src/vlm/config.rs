@@ -44,7 +44,11 @@ pub enum BackendConfig {
     /// (defaults downstream). `timeout_s` is the model's own per-request
     /// ceiling; absent → the frame-scaled hang guard every engine gets
     /// (`describer::describe_hang_guard`). It is run tuning, not identity, so it
-    /// stays out of the description cache key.
+    /// stays out of the description cache key. So are `frames_per_request`
+    /// (how many sampled frames one request carries; absent → 16) and
+    /// `concurrency` (how many chunk requests may be in flight; absent → 1):
+    /// they batch the frames a window is described from, they do not change
+    /// which frames those are (see [`request_shape`]).
     Endpoint {
         url: String,
         #[serde(default)]
@@ -53,6 +57,10 @@ pub enum BackendConfig {
         model: Option<String>,
         #[serde(default)]
         timeout_s: Option<u64>,
+        #[serde(default)]
+        frames_per_request: Option<u32>,
+        #[serde(default)]
+        concurrency: Option<u32>,
     },
 }
 
@@ -106,6 +114,39 @@ pub fn availability(backend: VlmBackend, cfg: Option<&BackendConfig>) -> Availab
     }
 }
 
+/// Legal `frames_per_request` for an endpoint: one frame up to 64, a ceiling a
+/// hosted model's context still holds at the frame size we sample.
+pub const ENDPOINT_FRAMES_PER_REQUEST: std::ops::RangeInclusive<u32> = 1..=64;
+/// Legal `concurrency` for an endpoint.
+pub const ENDPOINT_CONCURRENCY: std::ops::RangeInclusive<u32> = 1..=8;
+
+/// How a backend takes a chunked window: frames per request and requests in
+/// flight. A local sidecar holds [`MAX_FRAMES`](super::frame_extract::MAX_FRAMES)
+/// in its context and runs one child at a time; an endpoint takes what its
+/// model's config says, clamped to the legal ranges (the host validates them,
+/// so a clamp here only guards a hand-built map).
+pub fn request_shape(cfg: Option<&BackendConfig>) -> (usize, usize) {
+    match cfg {
+        Some(BackendConfig::Endpoint {
+            frames_per_request,
+            concurrency,
+            ..
+        }) => (
+            frames_per_request
+                .unwrap_or(super::frame_extract::MAX_FRAMES as u32)
+                .clamp(
+                    *ENDPOINT_FRAMES_PER_REQUEST.start(),
+                    *ENDPOINT_FRAMES_PER_REQUEST.end(),
+                ) as usize,
+            concurrency
+                .unwrap_or(1)
+                .clamp(*ENDPOINT_CONCURRENCY.start(), *ENDPOINT_CONCURRENCY.end())
+                as usize,
+        ),
+        _ => (super::frame_extract::MAX_FRAMES, 1),
+    }
+}
+
 /// Convenience: look a backend's config entry up by its stable tag.
 pub fn entry(cfg: &HashMap<String, BackendConfig>, backend: VlmBackend) -> Option<&BackendConfig> {
     cfg.get(backend.as_str())
@@ -125,6 +166,8 @@ mod tests {
                     api_key: None,
                     model: None,
                     timeout_s: None,
+                    frames_per_request: None,
+                    concurrency: None,
                 }),
             ),
             Availability::Available,
@@ -137,6 +180,8 @@ mod tests {
                     api_key: None,
                     model: None,
                     timeout_s: None,
+                    frames_per_request: None,
+                    concurrency: None,
                 }),
             ),
             Availability::NeedsEndpoint,
@@ -156,6 +201,8 @@ mod tests {
                     api_key: Some("sk-x".into()),
                     model: Some("some-vlm".into()),
                     timeout_s: None,
+                    frames_per_request: None,
+                    concurrency: None,
                 }),
             ),
             Availability::Available,
@@ -227,6 +274,8 @@ mod tests {
             timed,
             BackendConfig::Endpoint {
                 timeout_s: Some(900),
+                frames_per_request: None,
+                concurrency: None,
                 ..
             }
         ));
@@ -247,6 +296,8 @@ mod tests {
                 api_key: Some("sk-x".into()),
                 model: Some("some-vlm".into()),
                 timeout_s: None,
+                frames_per_request: None,
+                concurrency: None,
             },
         );
     }

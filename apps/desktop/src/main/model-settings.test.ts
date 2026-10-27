@@ -87,6 +87,25 @@ describe("model settings migration", () => {
     expect(restored.profiles.find(p => p.id === "custom-bogus")?.endpoint).not.toHaveProperty("timeout_s");
     expect(restored.profiles.find(p => p.id === "custom-fraction")?.endpoint).not.toHaveProperty("timeout_s");
   });
+  it("round-trips a vision endpoint's batching and drops values out of range", () => {
+    const files = new Map<string, string>();
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    const store = factory(); const state = store.get();
+    const ep = (id: string, frames_per_request: number, concurrency: number) => ({ id, name: id, family: "vlm" as const, backend: "byo_endpoint" as const,
+      locality: "online" as const, custom: true, artifacts: [], endpoint: { url: "http://local/v1/chat/completions", model: "a", frames_per_request, concurrency } });
+    state.profiles.push(ep("custom-big", 48, 3), ep("custom-bogus", 100, 0));
+    store.set(state);
+    const restored = factory().get();
+    expect(restored.profiles.find(p => p.id === "custom-big")?.endpoint).toMatchObject({ frames_per_request: 48, concurrency: 3 });
+    const bogus = restored.profiles.find(p => p.id === "custom-bogus")?.endpoint;
+    expect(bogus).not.toHaveProperty("frames_per_request");
+    expect(bogus).not.toHaveProperty("concurrency");
+    // Batching is run tuning: not what verification vouches for.
+    const endpoint = { url: "http://h/v1/chat/completions", model: "m" };
+    expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint: { ...endpoint, frames_per_request: 8, concurrency: 2 } })))
+      .toBe(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint })));
+  });
   // Fingerprints stored before the timeout existed must keep matching, and a
   // timeout-only edit must not read as a different verified model.
   it("leaves the request timeout out of what verification vouches for", () => {

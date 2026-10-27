@@ -192,6 +192,9 @@ describe("model settings", () => {
     expect(url.placeholder).toContain("/v1/audio/transcriptions");
     expect(screen.getByText(/whisper-server/)).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Request timeout (s)" })).toBeTruthy();
+    // Frame batching is a vision setting; a transcription server has no frames.
+    expect(screen.queryByRole("textbox", { name: "Frames per request" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Concurrent requests" })).toBeNull();
     const add = screen.getByRole("button", { name: "Add without selecting" }) as HTMLButtonElement;
     await user.type(screen.getByRole("textbox", { name: "Custom model name" }), "Intranet whisper");
     expect(add.disabled).toBe(true);
@@ -292,5 +295,17 @@ describe("endpoint request timeout", () => {
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(onUse).toHaveBeenCalledTimes(1));
     expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ endpoint: { url: "http://intranet/v1/chat/completions", model: "vision" } }));
+  });
+  it("saves frames per request and concurrency with a vision endpoint", async () => {
+    const onUse = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(<ModelEditor model={endpointModel()} name="Intranet" mode="edit" operation={undefined} submittingRequest={false}
+      onUse={onUse} onError={vi.fn()} onCancel={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "Frames per request" }), "32");
+    await user.type(screen.getByRole("textbox", { name: "Concurrent requests" }), "2");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(onUse).toHaveBeenCalledTimes(1));
+    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { url: "http://intranet/v1/chat/completions", model: "vision", frames_per_request: 32, concurrency: 2 } }));
   });
 });

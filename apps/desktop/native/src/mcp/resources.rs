@@ -321,7 +321,8 @@ async fn read_media_resource(
 /// app's own settings name (the preferred engine's backend + the injected
 /// sampling, focus and language). Resolves the backend from the injected VLM
 /// config, computes the same cache key `describe_clip` uses, and returns the
-/// stored `DescriptionCache` (`{ covered_ranges, segments }`, source-absolute).
+/// stored runs as the `{ covered_ranges, segments }` view (source-absolute;
+/// where runs overlap the newest answers, `DescriptionCache::view`).
 /// Reports a clear not-found when no backend is configured or nothing has been
 /// described yet — unlike the always-computable analysis resources.
 ///
@@ -404,8 +405,12 @@ async fn read_description_resource(
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|e| McpToolError::internal_error(format!("read {}: {e}", path.display()), None))?;
-    let body: Value = serde_json::from_slice(&bytes)
+    // The stored runs → the `{ covered_ranges, segments }` view every reader
+    // has always received; overlapping runs are resolved here, newest first.
+    let cache: vlm::DescriptionCache = serde_json::from_slice(&bytes)
         .map_err(|e| McpToolError::internal_error(format!("parse description cache: {e}"), None))?;
+    let body = serde_json::to_value(cache.view_payload())
+        .map_err(|e| McpToolError::internal_error(format!("description view: {e}"), None))?;
     text_resource(uri, &body)
 }
 
@@ -621,6 +626,8 @@ mod stateless_tests {
             api_key: None,
             model: Some("test-model".into()),
             timeout_s: None,
+            frames_per_request: None,
+            concurrency: None,
         };
         let model = vlm::resolve::cache_model_identity(vlm::VlmBackend::ByoEndpoint, Some(&cfg));
         let state = serde_json::json!({

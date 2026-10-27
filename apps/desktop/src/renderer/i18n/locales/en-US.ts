@@ -243,6 +243,9 @@ const enUS = {
     speech_endpoint_hint: "Any OpenAI-compatible transcription server. For whisper.cpp, start whisper-server with --inference-path /v1/audio/transcriptions, or enter its /inference URL.",
     endpoint_timeout: "Request timeout (s)",
     endpoint_timeout_hint: "Leave empty for automatic: the wait grows with the size of each request. Raise it for a slow self-hosted server.",
+    endpoint_frames_per_request: "Frames per request",
+    endpoint_concurrency: "Concurrent requests",
+    endpoint_batching_hint: "Leave empty for 16 frames, one request at a time. A long clip is sent as several requests at the sampling rate you chose; a model with a larger context can take more frames each, and a server that batches can take several at once.",
   },
   motion_path: {
     conversion_calculating:'Calculating preview… You can keep editing or cancel.',

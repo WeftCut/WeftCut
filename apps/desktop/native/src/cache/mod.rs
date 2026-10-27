@@ -420,7 +420,7 @@ impl CacheLayout {
     /// deterministic layer and the expensive opt-in layer never block each
     /// other. The `key` is `vlm::description::cache_key` (source content hash +
     /// {purpose, backend, model, fps, focus, language, prompt_template_version}); the value is a
-    /// range-lazy incremental `DescriptionCache` JSON — see `vlm/description.rs`.
+    /// `DescriptionCache` JSON (the described runs) — see `vlm/description.rs`.
     pub fn descriptions_dir(&self) -> PathBuf {
         self.current_root().join("descriptions")
     }

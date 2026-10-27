@@ -117,6 +117,7 @@ fn construct_describer(
                 api_key,
                 model,
                 timeout_s,
+                ..
             }),
         ) => Some(Box::new(OpenAiCompatDescriber::new(
             url.clone(),
@@ -243,6 +244,8 @@ mod tests {
             api_key: None,
             model: Some("qwen2-vl".into()),
             timeout_s: None,
+            frames_per_request: None,
+            concurrency: None,
         }
     }
 

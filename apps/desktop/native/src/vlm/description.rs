@@ -1,5 +1,5 @@
 //! The normalized scene-description shape every backend converges on, plus the
-//! range-lazy incremental cache value.
+//! cache of described runs.
 //!
 //! Twin of [`speech::transcript`](crate::speech): a per-backend
 //! [`parser`](super::parser) turns each raw output style into [`DescSegment`]s
@@ -52,62 +52,277 @@ pub fn shift_segments(segments: &mut [DescSegment], offset_us: i64) {
     }
 }
 
-/// The range-lazy incremental cache value: which source ranges have been
-/// described, and every segment described so far (source-absolute). A
-/// `describe_clip` for a window whose `[in, out]` is already inside
-/// `covered_ranges` reuses the stored segments with no engine spawn; an
-/// uncovered window is computed, merged in, and re-stored.
+/// The description cache value: the RUNS that described this view of a source,
+/// oldest first.
+///
+/// A run is one `describe_clip` over one window. It is described in chunks
+/// (`vlm::chunk`), and `done` records the chunks that finished, so a run that
+/// was cancelled or timed out keeps what it had and the same request resumes it.
+/// Nothing a run answered for is ever deleted by another run: where runs
+/// overlap, [`Self::view`] lets the newest one speak and CLIPS the older ones'
+/// segments around it. That is what keeps coverage honest — every instant
+/// `covered_ranges` claims is answered by the run that described it last, never
+/// left as a hole a merge cut out of a segment that straddled it.
+///
+/// Reads accept the shape earlier builds stored (`{ covered_ranges, segments }`,
+/// one merged list) and upgrade it to one finished run per covered range, so
+/// prose described before this change is kept.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "StoredCache")]
 pub struct DescriptionCache {
-    /// Merged, sorted, non-overlapping `[start_us, end_us]` source spans that
-    /// have been described.
+    /// Oldest first; the last run is the newest.
+    pub runs: Vec<Run>,
+}
+
+/// One described window. `segments` are source-absolute and lie inside the
+/// chunks listed in `done`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Run {
+    /// The `[in, out]` source window the call asked for.
+    pub window: [i64; 2],
     #[serde(default)]
+    pub segments: Vec<DescSegment>,
+    /// Merged, sorted source spans whose chunks finished.
+    #[serde(default)]
+    pub done: Vec<[i64; 2]>,
+}
+
+/// What a description file may hold: the current runs, or the single merged
+/// list earlier builds wrote. Untagged, runs first; a file with neither field
+/// reads as the empty legacy shape, i.e. an empty cache.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredCache {
+    Runs {
+        runs: Vec<Run>,
+    },
+    Legacy {
+        #[serde(default)]
+        covered_ranges: Vec<[i64; 2]>,
+        #[serde(default)]
+        segments: Vec<DescSegment>,
+    },
+}
+
+impl From<StoredCache> for DescriptionCache {
+    fn from(stored: StoredCache) -> Self {
+        match stored {
+            StoredCache::Runs { runs } => Self { runs },
+            StoredCache::Legacy {
+                covered_ranges,
+                segments,
+            } => Self::upgrade(covered_ranges, segments),
+        }
+    }
+}
+
+/// The `{ covered_ranges, segments }` answer every reader gets — the
+/// `media://{id}/description` payload's unchanged wire shape.
+#[derive(Debug, Clone, Serialize)]
+pub struct DescriptionView {
     pub covered_ranges: Vec<[i64; 2]>,
-    /// All described segments, source-absolute, sorted by `t_start_us`.
-    #[serde(default)]
     pub segments: Vec<DescSegment>,
 }
 
+impl Run {
+    pub fn new(window: [i64; 2]) -> Self {
+        Self {
+            window,
+            segments: Vec::new(),
+            done: Vec::new(),
+        }
+    }
+
+    /// Whether the finished chunks cover `[a, b]` entirely.
+    pub fn has_done(&self, [a, b]: [i64; 2]) -> bool {
+        self.done.iter().any(|[x, y]| *x <= a && *y >= b)
+    }
+
+    /// Whether every chunk of the window finished. Tests only: the tool asks
+    /// [`DescriptionCache::covers`], which also counts other runs.
+    #[cfg(test)]
+    pub fn is_complete(&self) -> bool {
+        self.has_done(self.window)
+    }
+
+    /// Record a finished chunk: this run's segments inside it are replaced by
+    /// `fresh` (one that straddles its edge keeps the part outside), and the
+    /// chunk joins `done`.
+    pub fn record_chunk(&mut self, chunk: [i64; 2], fresh: Vec<DescSegment>) {
+        let old = std::mem::take(&mut self.segments);
+        self.segments = clip_outside(old, &[chunk]);
+        self.segments.extend(fresh);
+        self.segments.sort_by_key(|s| s.t_start_us);
+        self.done.push(chunk);
+        self.done = merge_ranges(std::mem::take(&mut self.done));
+    }
+}
+
 impl DescriptionCache {
+    /// Earlier builds' merged list → one finished run per covered range. A
+    /// segment goes to the range holding its midpoint, else the nearest one: the
+    /// upgrade never drops prose.
+    fn upgrade(covered: Vec<[i64; 2]>, segments: Vec<DescSegment>) -> Self {
+        let covered = merge_ranges(covered);
+        let mut runs: Vec<Run> = covered
+            .iter()
+            .map(|r| Run {
+                window: *r,
+                segments: Vec::new(),
+                done: vec![*r],
+            })
+            .collect();
+        for s in segments {
+            let mid = s.t_start_us + (s.t_end_us - s.t_start_us) / 2;
+            let distance = |[a, b]: [i64; 2]| {
+                if mid < a {
+                    a - mid
+                } else if mid > b {
+                    mid - b
+                } else {
+                    0
+                }
+            };
+            match runs.iter_mut().min_by_key(|r| distance(r.window)) {
+                Some(run) => run.segments.push(s),
+                // Prose with no range at all: keep it in a run of its own span.
+                None => runs.push(Run {
+                    window: [s.t_start_us, s.t_end_us],
+                    done: vec![[s.t_start_us, s.t_end_us]],
+                    segments: vec![s],
+                }),
+            }
+        }
+        for run in &mut runs {
+            run.segments.sort_by_key(|s| s.t_start_us);
+        }
+        Self { runs }
+    }
+
+    /// Every finished source span, merged across runs.
+    pub fn covered_ranges(&self) -> Vec<[i64; 2]> {
+        merge_ranges(self.runs.iter().flat_map(|r| r.done.clone()).collect())
+    }
+
     /// True when `[in_us, out_us]` lies entirely inside the covered union — the
-    /// "no re-spawn" fast path (acceptance #2).
+    /// "no re-spawn" fast path. Honest for a sub-window too: chunks sample at the
+    /// requested fps whatever the window's length, so a finished run's density is
+    /// the density the key names.
     pub fn covers(&self, in_us: i64, out_us: i64) -> bool {
-        // Walk the merged ranges; the window is covered iff some single range
-        // contains it (ranges are already merged so adjacency is folded).
-        self.covered_ranges
+        self.covered_ranges()
             .iter()
             .any(|[a, b]| *a <= in_us && *b >= out_us)
     }
 
-    /// Segments whose span intersects `[in_us, out_us]`, sorted by start — the
-    /// view `describe_clip` / `media://{id}/description` returns for a window.
-    pub fn segments_in(&self, in_us: i64, out_us: i64) -> Vec<DescSegment> {
-        let mut out: Vec<DescSegment> = self
-            .segments
-            .iter()
-            .filter(|s| s.t_start_us < out_us && s.t_end_us > in_us)
-            .cloned()
-            .collect();
+    /// The segments readers see: the newest run that finished an instant speaks
+    /// for it, and an older run's segment keeps only the instants no newer run
+    /// finished — clipped to them, split around a newer run inside it, dropped
+    /// when nothing is left. Sorted by start.
+    pub fn view(&self) -> Vec<DescSegment> {
+        let mut claimed: Vec<[i64; 2]> = Vec::new();
+        let mut out = Vec::new();
+        for run in self.runs.iter().rev() {
+            out.extend(clip_outside(run.segments.clone(), &claimed));
+            claimed.extend(run.done.iter().copied());
+            claimed = merge_ranges(claimed);
+        }
         out.sort_by_key(|s| s.t_start_us);
         out
     }
 
-    /// Merge a freshly-described window into the cache: drop any prior segments
-    /// intersecting `[in_us, out_us]` (they are replaced by `fresh`), add the
-    /// fresh segments, and fold `[in_us, out_us]` into `covered_ranges`.
-    pub fn merge_window(&mut self, in_us: i64, out_us: i64, fresh: Vec<DescSegment>) {
-        self.segments
-            .retain(|s| !(s.t_start_us < out_us && s.t_end_us > in_us));
-        self.segments.extend(fresh);
-        self.segments.sort_by_key(|s| s.t_start_us);
-        self.covered_ranges.push([in_us, out_us]);
-        self.covered_ranges = merge_ranges(std::mem::take(&mut self.covered_ranges));
+    /// The `{ covered_ranges, segments }` answer for the whole source.
+    pub fn view_payload(&self) -> DescriptionView {
+        DescriptionView {
+            covered_ranges: self.covered_ranges(),
+            segments: self.view(),
+        }
     }
+
+    /// [`Self::view`]'s segments intersecting `[in_us, out_us]` — what
+    /// `describe_clip` answers for a window.
+    pub fn segments_in(&self, in_us: i64, out_us: i64) -> Vec<DescSegment> {
+        self.view()
+            .into_iter()
+            .filter(|s| intersects(s, in_us, out_us))
+            .collect()
+    }
+
+    /// Forget the run over exactly `window` (`describe_clip { refresh: true }`).
+    /// Other runs, including ones overlapping it, are untouched.
+    pub fn discard(&mut self, window: [i64; 2]) {
+        self.runs.retain(|r| r.window != window);
+    }
+
+    /// The run over exactly `window`, made the newest (the chunks about to be
+    /// described are the latest word on their span); created when absent, so an
+    /// unfinished run is resumed rather than restarted.
+    pub fn run_for(&mut self, window: [i64; 2]) -> &mut Run {
+        let run = match self.runs.iter().position(|r| r.window == window) {
+            Some(i) => self.runs.remove(i),
+            None => Run::new(window),
+        };
+        self.runs.push(run);
+        self.runs.last_mut().expect("just pushed")
+    }
+}
+
+/// A segment's span meets `[in_us, out_us]`; a zero-length segment meets the
+/// window it sits in.
+fn intersects(s: &DescSegment, in_us: i64, out_us: i64) -> bool {
+    if s.t_start_us == s.t_end_us {
+        return s.t_start_us >= in_us && s.t_start_us <= out_us;
+    }
+    s.t_start_us < out_us && s.t_end_us > in_us
+}
+
+/// The parts of each segment outside `claimed` (merged, sorted), text and tags
+/// unchanged. A zero-length segment survives when its instant is unclaimed.
+fn clip_outside(segments: Vec<DescSegment>, claimed: &[[i64; 2]]) -> Vec<DescSegment> {
+    if claimed.is_empty() {
+        return segments;
+    }
+    let mut out = Vec::with_capacity(segments.len());
+    for s in segments {
+        if s.t_start_us >= s.t_end_us {
+            let t = s.t_start_us;
+            if !claimed.iter().any(|[a, b]| *a <= t && t < *b) {
+                out.push(s);
+            }
+            continue;
+        }
+        let mut from = s.t_start_us;
+        for [a, b] in claimed {
+            if *b <= from {
+                continue;
+            }
+            if *a >= s.t_end_us {
+                break;
+            }
+            if *a > from {
+                out.push(DescSegment {
+                    t_start_us: from,
+                    t_end_us: *a,
+                    ..s.clone()
+                });
+            }
+            from = from.max(*b);
+            if from >= s.t_end_us {
+                break;
+            }
+        }
+        if from < s.t_end_us {
+            out.push(DescSegment {
+                t_start_us: from,
+                ..s
+            });
+        }
+    }
+    out
 }
 
 /// Merge a list of `[start, end]` spans into sorted, non-overlapping ranges
 /// (touching/overlapping spans fold together).
-fn merge_ranges(mut ranges: Vec<[i64; 2]>) -> Vec<[i64; 2]> {
+pub fn merge_ranges(mut ranges: Vec<[i64; 2]>) -> Vec<[i64; 2]> {
     ranges.sort_by_key(|r| r[0]);
     let mut out: Vec<[i64; 2]> = Vec::with_capacity(ranges.len());
     for [a, b] in ranges {
@@ -207,54 +422,214 @@ mod tests {
         assert!(s.iter().all(|x| x.t_start_us >= 0 && x.t_end_us >= 0));
     }
 
+    fn done(window: [i64; 2], segments: Vec<DescSegment>) -> Run {
+        Run {
+            window,
+            segments,
+            done: vec![window],
+        }
+    }
+
     #[test]
-    fn covers_only_when_a_single_range_contains_the_window() {
+    fn covers_only_when_a_single_merged_range_contains_the_window() {
         let c = DescriptionCache {
-            covered_ranges: vec![[0, 4_000_000], [8_000_000, 10_000_000]],
-            segments: vec![],
+            runs: vec![
+                done([0, 4_000_000], vec![]),
+                done([8_000_000, 10_000_000], vec![]),
+            ],
         };
         assert!(c.covers(1_000_000, 3_000_000));
         assert!(c.covers(0, 4_000_000));
         // Spans the gap between two ranges → not covered.
         assert!(!c.covers(3_000_000, 9_000_000));
         assert!(!c.covers(4_000_000, 6_000_000));
-    }
-
-    #[test]
-    fn merge_window_folds_ranges_and_replaces_overlapping_segments() {
-        let mut c = DescriptionCache::default();
-        c.merge_window(0, 2_000_000, vec![seg(0, 2_000_000, "first")]);
-        assert_eq!(c.covered_ranges, vec![[0, 2_000_000]]);
-        assert_eq!(c.segments.len(), 1);
-
-        // Adjacent window folds into one contiguous covered range.
-        c.merge_window(
-            2_000_000,
-            4_000_000,
-            vec![seg(2_000_000, 4_000_000, "second")],
-        );
-        assert_eq!(c.covered_ranges, vec![[0, 4_000_000]]);
-        assert_eq!(c.segments.len(), 2);
-
-        // Re-describing an overlapping window replaces the old segment there.
-        c.merge_window(0, 2_000_000, vec![seg(0, 2_000_000, "first-v2")]);
-        assert_eq!(c.covered_ranges, vec![[0, 4_000_000]]);
-        assert_eq!(c.segments.len(), 2);
-        assert_eq!(c.segments[0].text, "first-v2");
-    }
-
-    #[test]
-    fn segments_in_returns_only_intersecting_sorted() {
+        // Adjacent runs fold into one covered span.
         let c = DescriptionCache {
-            covered_ranges: vec![[0, 10_000_000]],
-            segments: vec![seg(5_000_000, 7_000_000, "mid"), seg(0, 2_000_000, "early")],
+            runs: vec![
+                done([0, 4_000_000], vec![]),
+                done([4_000_000, 6_000_000], vec![]),
+            ],
         };
-        let got = c.segments_in(1_000_000, 3_000_000);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].text, "early");
-        let both = c.segments_in(0, 10_000_000);
-        assert_eq!(both.len(), 2);
-        assert_eq!(both[0].text, "early"); // sorted by start
+        assert!(c.covers(3_000_000, 5_000_000));
+    }
+
+    #[test]
+    fn an_unfinished_run_covers_only_its_finished_chunks() {
+        let mut c = DescriptionCache::default();
+        let run = c.run_for([0, 8_000_000]);
+        run.record_chunk([0, 4_000_000], vec![seg(0, 4_000_000, "first")]);
+        assert!(!run.is_complete());
+        assert!(c.covers(0, 4_000_000));
+        assert!(!c.covers(0, 8_000_000));
+        // Resuming finds the same run, not a fresh one.
+        let run = c.run_for([0, 8_000_000]);
+        assert!(run.has_done([0, 4_000_000]));
+        run.record_chunk(
+            [4_000_000, 8_000_000],
+            vec![seg(4_000_000, 8_000_000, "second")],
+        );
+        assert!(run.is_complete());
+        assert_eq!(c.runs.len(), 1);
+        assert_eq!(c.segments_in(0, 8_000_000).len(), 2);
+    }
+
+    #[test]
+    fn recording_a_chunk_again_replaces_only_its_own_span() {
+        let mut run = Run::new([0, 8_000_000]);
+        run.record_chunk([0, 8_000_000], vec![seg(0, 8_000_000, "whole")]);
+        run.record_chunk(
+            [2_000_000, 4_000_000],
+            vec![seg(2_000_000, 4_000_000, "redo")],
+        );
+        let spans: Vec<_> = run
+            .segments
+            .iter()
+            .map(|s| (s.t_start_us, s.t_end_us, s.text.as_str()))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (0, 2_000_000, "whole"),
+                (2_000_000, 4_000_000, "redo"),
+                (4_000_000, 8_000_000, "whole"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_newest_run_speaks_and_older_segments_are_clipped_around_it() {
+        let c = DescriptionCache {
+            runs: vec![
+                done(
+                    [0, 10_000_000],
+                    vec![
+                        seg(0, 3_000_000, "before"),
+                        seg(3_000_000, 9_000_000, "straddler"),
+                        seg(9_000_000, 10_000_000, "after"),
+                        seg(5_000_000, 6_000_000, "swallowed"),
+                    ],
+                ),
+                done(
+                    [4_000_000, 7_000_000],
+                    vec![seg(4_000_000, 7_000_000, "newer")],
+                ),
+            ],
+        };
+        let spans: Vec<_> = c
+            .view()
+            .into_iter()
+            .map(|s| (s.t_start_us, s.t_end_us, s.text))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (0, 3_000_000, "before".to_string()),
+                // Split around the newer run, both halves kept: no hole.
+                (3_000_000, 4_000_000, "straddler".to_string()),
+                (4_000_000, 7_000_000, "newer".to_string()),
+                (7_000_000, 9_000_000, "straddler".to_string()),
+                (9_000_000, 10_000_000, "after".to_string()),
+            ]
+        );
+        assert_eq!(c.view_payload().covered_ranges, vec![[0, 10_000_000]]);
+    }
+
+    #[test]
+    fn discard_forgets_only_the_exact_window() {
+        let mut c = DescriptionCache {
+            runs: vec![
+                done([0, 10_000_000], vec![seg(0, 10_000_000, "whole")]),
+                done([0, 2_000_000], vec![seg(0, 2_000_000, "part")]),
+            ],
+        };
+        c.discard([0, 2_000_000]);
+        assert_eq!(c.runs.len(), 1);
+        assert_eq!(c.segments_in(0, 2_000_000)[0].text, "whole");
+    }
+
+    #[test]
+    fn the_merged_shape_earlier_builds_wrote_upgrades_without_losing_prose() {
+        let legacy = serde_json::json!({
+            "covered_ranges": [[0, 4_000_000], [8_000_000, 10_000_000]],
+            "segments": [
+                { "t_start_us": 0, "t_end_us": 4_000_000, "text": "a", "tags": [] },
+                { "t_start_us": 8_000_000, "t_end_us": 10_000_000, "text": "b", "tags": ["x"] },
+                // Outside every range (a hand-edited file): kept, nearest run.
+                { "t_start_us": 5_000_000, "t_end_us": 5_500_000, "text": "stray", "tags": [] },
+            ],
+        });
+        let c: DescriptionCache = serde_json::from_value(legacy).unwrap();
+        assert_eq!(c.runs.len(), 2);
+        assert!(c.runs.iter().all(Run::is_complete));
+        assert_eq!(
+            c.covered_ranges(),
+            vec![[0, 4_000_000], [8_000_000, 10_000_000]]
+        );
+        let texts: Vec<_> = c
+            .runs
+            .iter()
+            .flat_map(|r| &r.segments)
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(texts.len(), 3);
+        assert!(texts.contains(&"stray"));
+        // Round-trips in the runs shape.
+        let again: DescriptionCache =
+            serde_json::from_slice(&serde_json::to_vec(&c).unwrap()).unwrap();
+        assert_eq!(again.runs, c.runs);
+        // An empty or unrelated object is an empty cache.
+        let empty: DescriptionCache = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(empty.runs.is_empty());
+    }
+
+    proptest::proptest! {
+        /// For every instant a run finished, the view answers with exactly the
+        /// segments of the NEWEST run that finished it — never an older run's,
+        /// never nothing when that run had something to say.
+        #[test]
+        fn the_newest_finishing_run_answers_every_instant(
+            raw in proptest::collection::vec(
+                (0i64..20, 1i64..10, proptest::collection::vec((0i64..20, 1i64..6), 0..4)),
+                1..6,
+            ),
+        ) {
+            let runs: Vec<Run> = raw
+                .iter()
+                .enumerate()
+                .map(|(i, (a, len, segs))| {
+                    let window = [*a, a + len];
+                    let segments = segs
+                        .iter()
+                        .map(|(s, l)| {
+                            let start = (*s).clamp(window[0], window[1]);
+                            let end = (start + l).min(window[1]);
+                            seg(start, end, &format!("r{i}"))
+                        })
+                        .collect();
+                    done(window, segments)
+                })
+                .collect();
+            let c = DescriptionCache { runs: runs.clone() };
+            let view = c.view();
+            for t2 in 0..60i64 {
+                // Half-steps: an instant strictly inside a unit span.
+                let t = t2 as f64 / 2.0 + 0.25;
+                let inside = |a: i64, b: i64| (a as f64) <= t && t < (b as f64);
+                let Some((i, owner)) = runs
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, r)| r.done.iter().any(|d| inside(d[0], d[1])))
+                else {
+                    continue;
+                };
+                let tag = format!("r{i}");
+                let expected = owner.segments.iter().filter(|s| inside(s.t_start_us, s.t_end_us)).count();
+                let got: Vec<_> = view.iter().filter(|s| inside(s.t_start_us, s.t_end_us)).collect();
+                proptest::prop_assert_eq!(got.len(), expected, "t={} owner={}", t, tag);
+                proptest::prop_assert!(got.iter().all(|s| s.text == tag), "t={} owner={}", t, tag);
+            }
+        }
     }
 
     /// The `describe_clip` tool and the `media://{id}/description` reader both
@@ -288,11 +663,13 @@ mod tests {
         let clip_path = root.path().join(key(DescriptionPurpose::Clip));
         let shot_path = root.path().join(key(DescriptionPurpose::Shot));
         let mut clip = DescriptionCache::default();
-        clip.merge_window(0, 10_000_000, vec![seg(0, 10_000_000, "whole clip")]);
+        clip.run_for([0, 10_000_000])
+            .record_chunk([0, 10_000_000], vec![seg(0, 10_000_000, "whole clip")]);
         std::fs::write(&clip_path, serde_json::to_vec(&clip).unwrap()).unwrap();
         assert!(!shot_path.exists());
         let mut shot = DescriptionCache::default();
-        shot.merge_window(0, 1_000_000, vec![seg(0, 1_000_000, "close-up")]);
+        shot.run_for([0, 1_000_000])
+            .record_chunk([0, 1_000_000], vec![seg(0, 1_000_000, "close-up")]);
         std::fs::write(&shot_path, serde_json::to_vec(&shot).unwrap()).unwrap();
         let restored: DescriptionCache =
             serde_json::from_slice(&std::fs::read(clip_path).unwrap()).unwrap();

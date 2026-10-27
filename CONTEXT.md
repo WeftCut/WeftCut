@@ -621,7 +621,10 @@ _Avoid_: download as a synonym for activation, silent model fallback
 What a video-understanding model said about a stretch of one SOURCE: a list of
 described segments, each a source-absolute span with prose and short tags,
 cached per source, purpose and [Description view](#descriptions), and read back
-by media id. Clip content and individual-shot descriptions have independent
+by media id. Each describe call is a **run** over its window, sampled at the
+view's rate everywhere and described in chunks a model request can hold; a run
+keeps the chunks it finished, and where runs overlap the newest speaks for its
+span. Clip content and individual-shot descriptions have independent
 caches: clip content feeds its own panel section and the search palette; shot
 rows read only shot descriptions, joined by time intersection. Prose has no right answer to check it against,
 so it is never reviewed or edited, only read where it is useful and searched.

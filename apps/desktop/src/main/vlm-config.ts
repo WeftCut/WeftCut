@@ -226,7 +226,7 @@ export function createVlmConfigStore(deps: {
 /// enum deserializes (`#[serde(tag = "kind", rename_all = "snake_case")]`).
 export type BackendConfigJson =
   | { kind: "local"; binary: string; model: string; mmproj: string; device?: string }
-  | { kind: "endpoint"; url: string; api_key?: string; model?: string; timeout_s?: number };
+  | { kind: "endpoint"; url: string; api_key?: string; model?: string; timeout_s?: number; frames_per_request?: number; concurrency?: number };
 
 /// Merge the non-secret store config + the secret endpoint key into the
 /// `Record<backendTag, BackendConfig>` snapshot the stateless describe_clip
@@ -307,6 +307,9 @@ export function modelProfileToVlmSnapshot(
       ...(profile.endpoint.model ? { model: profile.endpoint.model } : {}),
       // Absent → native's frame-scaled ceiling; only a set one rides along.
       ...(profile.endpoint.timeout_s !== undefined ? { timeout_s: profile.endpoint.timeout_s } : {}),
+      // Likewise native's defaults (16 frames a request, one at a time).
+      ...(profile.endpoint.frames_per_request !== undefined ? { frames_per_request: profile.endpoint.frames_per_request } : {}),
+      ...(profile.endpoint.concurrency !== undefined ? { concurrency: profile.endpoint.concurrency } : {}),
     };
   }
   return out;

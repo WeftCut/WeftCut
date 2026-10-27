@@ -246,19 +246,17 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
         Ok(_) => panic!("a 16-frame request cannot finish within 1 s"),
     }
 
-    let patient = OpenAiCompatDescriber::new(
-        url,
-        None,
-        "qwen3-vl".into(),
-        VlmBackend::ByoEndpoint,
-        None,
-    );
+    let patient =
+        OpenAiCompatDescriber::new(url, None, "qwen3-vl".into(), VlmBackend::ByoEndpoint, None);
     let started = Instant::now();
     let raw = patient.describe(request()).await.expect("describe");
     let segments = parse_raw(raw).expect("parse");
     println!("{} segments in {:?}", segments.len(), started.elapsed());
     for s in &segments {
-        println!("  [{} .. {}] {} {:?}", s.t_start_us, s.t_end_us, s.text, s.tags);
+        println!(
+            "  [{} .. {}] {} {:?}",
+            s.t_start_us, s.t_end_us, s.text, s.tags
+        );
     }
     assert!(!segments.is_empty());
     let all = segments

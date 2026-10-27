@@ -17,6 +17,15 @@ export interface ModelEndpoint {
    *  Run tuning, not identity: changing it neither forks a custom model nor
    *  invalidates verification. Bounds: ENDPOINT_TIMEOUT_MIN_S..MAX_S. */
   timeout_s?: number;
+  /** Vision only: how many sampled frames one request carries. A window is
+   *  described in requests of this many frames at the sampling rate the user
+   *  chose, so a model with a larger context takes fewer, larger requests.
+   *  Absent → 16. Run tuning like the timeout: not identity, not in the
+   *  description cache key. Bounds: ENDPOINT_FRAMES_PER_REQUEST_MIN..MAX. */
+  frames_per_request?: number;
+  /** Vision only: how many of those requests may be in flight at once, for a
+   *  server that batches. Absent → 1. Bounds: ENDPOINT_CONCURRENCY_MIN..MAX. */
+  concurrency?: number;
 }
 /** Legal request-timeout range, read by the store's parsing, the manager's
  *  validation and the editor field alike. */
@@ -25,6 +34,21 @@ export const ENDPOINT_TIMEOUT_MAX_S = 3600;
 /** Whether `v` is a request timeout the store keeps. */
 export function isEndpointTimeout(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= ENDPOINT_TIMEOUT_MIN_S && v <= ENDPOINT_TIMEOUT_MAX_S;
+}
+/** Legal frames-per-request and concurrency for a vision endpoint — the same
+ *  ranges native clamps to (`vlm::config::ENDPOINT_FRAMES_PER_REQUEST`,
+ *  `ENDPOINT_CONCURRENCY`). */
+export const ENDPOINT_FRAMES_PER_REQUEST_MIN = 1;
+export const ENDPOINT_FRAMES_PER_REQUEST_MAX = 64;
+export const ENDPOINT_CONCURRENCY_MIN = 1;
+export const ENDPOINT_CONCURRENCY_MAX = 8;
+const wholeIn = (v: unknown, min: number, max: number): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+export function isEndpointFramesPerRequest(v: unknown): v is number {
+  return wholeIn(v, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX);
+}
+export function isEndpointConcurrency(v: unknown): v is number {
+  return wholeIn(v, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_CONCURRENCY_MAX);
 }
 export interface ModelDefinition {
   id: string;

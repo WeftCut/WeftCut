@@ -10,7 +10,8 @@ export type ComputeQueueReason = 'memory' | 'finalization' | 'budget' | null
 
 /** Where a job is. `extracting` counts sampled frames for a description and
  *  goes 0/1 → 1/1 for a transcription's audio slice; `inferring` carries counts
- *  only where the engine reports them, never estimated. `applying` is the human
+ *  only where they are real, never estimated: finished chunks for a
+ *  description, pieces or the engine's percent for a transcription. `applying` is the human
  *  transcription's write-back, which runs after the job has ended — the
  *  registry never sets it; it is here so a surface that shows the whole run has
  *  one vocabulary. */

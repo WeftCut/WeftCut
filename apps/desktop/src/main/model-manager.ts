@@ -1,4 +1,4 @@
-import { ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isEndpointTimeout, MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
+import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isEndpointConcurrency, isEndpointFramesPerRequest, isEndpointTimeout, MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
 import { cleanModelLocal, sameModelFiles, withKnownPaths, type ModelSettingsStore } from "./model-settings";
 
 export interface ModelManagerDeps {
@@ -102,10 +102,26 @@ export class ModelManager {
         if (timeout !== undefined && !isEndpointTimeout(timeout)) {
           throw new Error(`Request timeout must be a whole number of seconds from ${ENDPOINT_TIMEOUT_MIN_S} to ${ENDPOINT_TIMEOUT_MAX_S}`);
         }
-        // An absent timeout clears it: the editor sends the whole endpoint, and
-        // an empty field means "automatic". It is not part of `endpointChanged`
-        // below — a slower ceiling is the same model on the same server.
-        candidate.endpoint = { url: url.href, model: request.endpoint.model.trim(), ...(timeout !== undefined ? { timeout_s: timeout } : {}) };
+        // Vision only: how a window's frames are batched into requests. A
+        // transcription server has no frames, so a speech profile never keeps
+        // them, whatever a caller sends.
+        const vision = original.family === "vlm";
+        const frames = vision ? request.endpoint.frames_per_request : undefined;
+        if (frames !== undefined && !isEndpointFramesPerRequest(frames)) {
+          throw new Error(`Frames per request must be a whole number from ${ENDPOINT_FRAMES_PER_REQUEST_MIN} to ${ENDPOINT_FRAMES_PER_REQUEST_MAX}`);
+        }
+        const concurrency = vision ? request.endpoint.concurrency : undefined;
+        if (concurrency !== undefined && !isEndpointConcurrency(concurrency)) {
+          throw new Error(`Concurrent requests must be a whole number from ${ENDPOINT_CONCURRENCY_MIN} to ${ENDPOINT_CONCURRENCY_MAX}`);
+        }
+        // An absent field clears it: the editor sends the whole endpoint, and
+        // an empty field means "automatic". None of the three is part of
+        // `endpointChanged` below — run tuning for the same model on the same
+        // server.
+        candidate.endpoint = { url: url.href, model: request.endpoint.model.trim(),
+          ...(timeout !== undefined ? { timeout_s: timeout } : {}),
+          ...(frames !== undefined ? { frames_per_request: frames } : {}),
+          ...(concurrency !== undefined ? { concurrency } : {}) };
       }
     }
     const filesChanged = !!candidate.local && !!this.resolved(original).local && !sameModelFiles(candidate.local, this.resolved(original).local!);

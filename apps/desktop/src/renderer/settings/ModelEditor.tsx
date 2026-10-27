@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, type ModelBackend, type ModelEndpoint, type ModelLocalConfig, type ModelOperation, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
+import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, type ModelBackend, type ModelEndpoint, type ModelLocalConfig, type ModelOperation, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
 import { modelsInstallComponents } from "../ipc";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { Button } from "@/components/ui/button";
@@ -98,6 +98,19 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
             onValueChange={timeout => setEndpoint(prev => ({ ...prev, timeout_s: Math.round(timeout) }))}
             onClear={() => setEndpoint(prev => { const next = { ...prev }; delete next.timeout_s; return next; })} /></div>
         <p className="settings-toggle-hint">{t("models.endpoint_timeout_hint")}</p>
+        {/* Vision only, and run tuning like the timeout: how a window's frames
+            are batched into requests, never which frames are sampled. */}
+        {!speechEndpoint && <>
+          <div className="settings-key-input-row"><span className="settings-slider-label">{t("models.endpoint_frames_per_request")}</span>
+            <AppNumberField value={endpoint.frames_per_request ?? null} min={ENDPOINT_FRAMES_PER_REQUEST_MIN} max={ENDPOINT_FRAMES_PER_REQUEST_MAX} step={1} ariaLabel={t("models.endpoint_frames_per_request")} disabled={busy}
+              onValueChange={frames => setEndpoint(prev => ({ ...prev, frames_per_request: Math.round(frames) }))}
+              onClear={() => setEndpoint(prev => { const next = { ...prev }; delete next.frames_per_request; return next; })} /></div>
+          <div className="settings-key-input-row"><span className="settings-slider-label">{t("models.endpoint_concurrency")}</span>
+            <AppNumberField value={endpoint.concurrency ?? null} min={ENDPOINT_CONCURRENCY_MIN} max={ENDPOINT_CONCURRENCY_MAX} step={1} ariaLabel={t("models.endpoint_concurrency")} disabled={busy}
+              onValueChange={concurrency => setEndpoint(prev => ({ ...prev, concurrency: Math.round(concurrency) }))}
+              onClear={() => setEndpoint(prev => { const next = { ...prev }; delete next.concurrency; return next; })} /></div>
+          <p className="settings-toggle-hint">{t("models.endpoint_batching_hint")}</p>
+        </>}
       </> : <p className="settings-toggle-hint">{t("models.openai_speech_hint")}</p>}
       <div className="settings-key-input-row"><span className="settings-slider-label">API Key</span>
         <AppInput type="password" value={apiKey} autoComplete="off" spellCheck={false} ariaLabel="API Key" disabled={busy}

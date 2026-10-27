@@ -323,4 +323,14 @@ describe("modelProfileToVlmSnapshot", () => {
     expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint: { ...endpoint, timeout_s: 900 } }).byo_endpoint)
       .toEqual({ kind: "endpoint", url: "http://h/v1/chat/completions", model: "m", timeout_s: 900 });
   });
+
+  // Same rule for the batching fields: absent → native's 16 frames, one at a time.
+  it("carries frames per request and concurrency only when set", () => {
+    const endpoint = { url: "http://h/v1/chat/completions", model: "m" };
+    const bare = modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint }).byo_endpoint;
+    expect(bare).not.toHaveProperty("frames_per_request");
+    expect(bare).not.toHaveProperty("concurrency");
+    expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint: { ...endpoint, frames_per_request: 32, concurrency: 2 } }).byo_endpoint)
+      .toEqual({ kind: "endpoint", url: "http://h/v1/chat/completions", model: "m", frames_per_request: 32, concurrency: 2 });
+  });
 });

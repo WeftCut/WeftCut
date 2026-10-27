@@ -237,6 +237,9 @@ const zhCN: Resources = {
     speech_endpoint_hint: "任意兼容 OpenAI 的转录服务器。使用 whisper.cpp 时，以 --inference-path /v1/audio/transcriptions 启动 whisper-server，或直接填写其 /inference 地址。",
     endpoint_timeout: "请求超时（秒）",
     endpoint_timeout_hint: "留空为自动：等待时间随每次请求的大小增长。自建服务器较慢时可调高。",
+    endpoint_frames_per_request: "每次请求帧数",
+    endpoint_concurrency: "并发请求数",
+    endpoint_batching_hint: "留空为每次 16 帧、一次一个请求。较长的片段会按你选择的采样率分成多次请求发送；上下文更大的模型每次可以接收更多帧，支持批处理的服务器可以同时处理多个请求。",
   },
   motion_path: {
     conversion_calculating:'正在计算预览…仍可调整参数或取消。',

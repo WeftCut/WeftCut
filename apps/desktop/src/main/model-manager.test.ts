@@ -205,6 +205,29 @@ describe("model library lifecycle", () => {
     expect(keys.get(active.keyTag!)).toBe("stt-key");
     expect(keys.get("vlm_endpoint")).toBeUndefined();
   });
+  // How a vision endpoint batches a window's frames: saved in place like the
+  // timeout, validated, and never kept on a transcription server.
+  it("saves frames per request and concurrency for a vision endpoint only", async () => {
+    const { manager, state, deps } = setup({ fingerprint: p => JSON.stringify(verifiedIdentity(p)) });
+    const endpoint = { url: "http://localhost/v1/chat/completions", model: "vision" };
+    manager.use({ id: "vlm-online", name: "Batching server", endpoint, saveOnly: true }); await settle();
+    manager.use({ id: "custom-test", endpoint: { ...endpoint, frames_per_request: 32, concurrency: 4 }, saveOnly: true }); await settle();
+    expect(state().profiles.filter(p => p.custom)).toHaveLength(1);
+    expect(state().profiles.find(p => p.id === "custom-test")?.endpoint).toMatchObject({ frames_per_request: 32, concurrency: 4 });
+    expect(deps.verify).toHaveBeenCalledTimes(1);
+    for (const bad of [{ frames_per_request: 0 }, { frames_per_request: 65 }, { frames_per_request: 2.5 }]) {
+      expect(() => manager.use({ id: "custom-test", endpoint: { ...endpoint, ...bad } })).toThrow(/Frames per request/);
+    }
+    for (const bad of [{ concurrency: 0 }, { concurrency: 9 }]) {
+      expect(() => manager.use({ id: "custom-test", endpoint: { ...endpoint, ...bad } })).toThrow(/Concurrent requests/);
+    }
+    manager.use({ id: "speech-online", name: "Whisper", saveOnly: true,
+      endpoint: { url: "http://10.0.0.5:8080/v1/audio/transcriptions", model: "", frames_per_request: 32, concurrency: 4 } });
+    await settle();
+    const speech = state().profiles.find(p => p.family === "speech" && p.custom)!;
+    expect(speech.endpoint).not.toHaveProperty("frames_per_request");
+    expect(speech.endpoint).not.toHaveProperty("concurrency");
+  });
   it("refuses a request timeout outside 10–3600 whole seconds", () => {
     const { manager } = setup();
     const endpoint = { url: "http://localhost/v1/chat/completions", model: "vision" };
