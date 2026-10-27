@@ -749,7 +749,9 @@
    because the Panel is no size container; the dock panel it sits in is about
    the window's height. */
 .shots-clip-detail-list {
-  max-height: 40vh;
+  /* The Shots panel is often a short dock pane, so a viewport share alone could
+     outgrow it; a dozen lines is enough to read and scroll. */
+  max-height: min(40vh, 18em);
   overflow-y: auto;
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);

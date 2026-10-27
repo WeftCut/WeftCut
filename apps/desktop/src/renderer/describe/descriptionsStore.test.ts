@@ -85,9 +85,18 @@ describe("descriptionsStore", () => {
       { window: [0, 6_000_000] as [number, number], text: "exact" },
     ];
     expect(summaryForWindow(summaries, 0, 6_000_000)).toBe("exact");
-    expect(summaryForWindow(summaries, 1_000_000, 5_000_000)).toBe("wider");
+    expect(summaryForWindow(summaries, 1_000_000, 8_000_000)).toBe("wider");
     expect(summaryForWindow(summaries.slice(0, 1), 0, 6_000_000)).toBeNull();
     expect(summaryForWindow([], 0, 6_000_000)).toBeNull();
+  });
+
+  it("matches the run over a clip whose source end is not on a frame", () => {
+    // The tool resolves its window from the frame-snapped timeline span: a
+    // 150.0165 s source on a 30 fps timeline is described over [0, 150 s].
+    const summaries = [{ window: [0, 150_000_000] as [number, number], text: "whole clip" }];
+    expect(summaryForWindow(summaries, 0, 150_016_533)).toBe("whole clip");
+    // A run a second short of the clip still does not speak for it.
+    expect(summaryForWindow(summaries, 0, 151_000_000)).toBeNull();
   });
 
   it("does not re-read a source it already has segments for", async () => {

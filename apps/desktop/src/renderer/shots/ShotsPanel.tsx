@@ -374,7 +374,8 @@ function ClipContentDescription({ layer, mediaId, srcInUs, srcOutUs, fpsNum, fps
     summary ??
     overlapping
       .slice(0, CLIP_LEAD_SEGMENTS)
-      .map((s) => s.text.trim())
+      // A segment's own line breaks (a quoted title card) stay out of the lead.
+      .map((s) => s.text.replace(/\s+/g, " ").trim())
       // One line each: segments carry no shared punctuation to join on.
       .join("\n");
   return (
