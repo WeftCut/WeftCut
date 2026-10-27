@@ -291,7 +291,7 @@
     },
     {
       "name": "describe_clip",
-      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or an OpenAI-compatible endpoint). Samples frames at `fps` (default 1.0) and runs the model once over the window. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords (subjects, setting, camera, shot type). Cached per source range. Optional `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") picks the prompt that fills `tags`; `language` is a BCP-47 tag for the output (default: the app's UI language) and part of the cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine — it errors naming the missing binary / model / endpoint rather than substituting, so a local choice never uploads frames; omitted, the user's preferred engine then availability (local first). Retimed clips map their selected window onto source time. A missing engine is refused, naming the gap.",
+      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or an OpenAI-compatible endpoint). Samples the whole window at `fps` (default 1.0) in requests of at most 16 frames (endpoints: their own setting), at most 3600 frames per call. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords. Cached per source range; an interrupted call resumes; `refresh` re-describes. Optional `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") picks the prompt that fills `tags`; `language` (BCP-47, default: the app's UI language) is part of the cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine and errors naming what is missing rather than substituting, so a local choice never uploads frames; omitted, the user's preferred engine then availability (local first). Retimed clips map their window onto source time.",
       "inputSchema": {
         "properties": {
           "backend": {
@@ -303,7 +303,7 @@
             "type": "string"
           },
           "fps": {
-            "description": "Frames sampled per second (higher = finer, costlier; capped to the\nmodel's context). Default: the app's setting, else 1.0. Cache key.",
+            "description": "Frames sampled per second, everywhere in the window (higher = finer,\nmore requests). Default: the app's setting, else 1.0. Cache key.",
             "type": "number"
           },
           "language": {
@@ -322,6 +322,11 @@
               "shot"
             ],
             "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "description": "Describe the window again even when it is cached, replacing its earlier\nrun instead of resuming it (default false).",
+            "type": "boolean"
           },
           "t_end_us": {
             "description": "Optional window end in timeline microseconds. Defaults to the layer's\n`t_end_us`. Must lie within the layer.",
