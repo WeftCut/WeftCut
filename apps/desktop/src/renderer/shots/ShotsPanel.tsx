@@ -340,17 +340,14 @@ function ShotsDescribeJobs({
   );
 }
 
-/// How many leading segments stand in for a summary the run does not have — a
-/// short or older run's own words, as a few sentences of prose.
-const CLIP_LEAD_SEGMENTS = 3;
-
-/// What the whole clip shows, above the score strip and the rows: one lead
-/// paragraph and one closed "Details (N segments)" disclosure, whatever the run
-/// holds. The lead is the run's summary, or — for a run without one — its first
-/// few segments as prose. A long window's description runs to hundreds of
-/// segments, so the open list scrolls inside its own box and the strip and rows
-/// never move further than that box; each line leads with its timecode, which
-/// seeks like a row's (ADR 0149).
+/// What the whole clip shows, above the score strip and the rows: the run's
+/// summary as the lead, with its segments behind a closed "Details (N
+/// segments)". A run without a summary (a short clip, an older cache, a summary
+/// the model failed) has no lead — nothing stands in for one — and its details
+/// start open. A long window's description runs to hundreds of segments, so the
+/// open list scrolls inside its own box and the strip and rows never move
+/// further than that box; each line leads with its timecode, which seeks like a
+/// row's (ADR 0149).
 ///
 /// Rendered once, above both of the Panel's states, so opening the details
 /// before an analysis and having the rows land does not close them again.
@@ -370,26 +367,20 @@ function ClipContentDescription({ layer, mediaId, srcInUs, srcOutUs, fpsNum, fps
   const overlapping = segmentsForSpan(segments, srcInUs, srcOutUs);
   const summary = summaryForWindow(summaries, srcInUs, srcOutUs);
   if (overlapping.length === 0 && summary === null) return null;
-  const lead =
-    summary ??
-    overlapping
-      .slice(0, CLIP_LEAD_SEGMENTS)
-      // A segment's own line breaks (a quoted title card) stay out of the lead.
-      .map((s) => s.text.replace(/\s+/g, " ").trim())
-      // One line each: segments carry no shared punctuation to join on.
-      .join("\n");
   return (
     <section className="shots-clip-content" data-testid="shots-clip-content">
       <h3>{t("shots_panel.clip_content")}</h3>
-      <p
-        className="shots-clip-lead"
-        data-testid="shots-clip-lead"
-        data-summary={summary !== null}
-      >
-        {lead}
-      </p>
+      {summary !== null && (
+        <p className="shots-clip-lead" data-testid="shots-clip-lead">
+          {summary}
+        </p>
+      )}
       {overlapping.length > 0 && (
-        <details className="shots-clip-details" data-testid="shots-clip-details">
+        <details
+          className="shots-clip-details"
+          data-testid="shots-clip-details"
+          open={summary === null}
+        >
           <summary>{t("shots_panel.clip_details", { count: overlapping.length })}</summary>
           <div className="shots-clip-detail-list">
             {overlapping.map((segment) => {

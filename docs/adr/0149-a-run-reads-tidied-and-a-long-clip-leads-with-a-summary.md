@@ -51,20 +51,28 @@ given a handful.
   frames let the model check the outline against the footage. So the summary
   is a second `Task` on the same describer seam both engines implement, not a
   separate text model.
-- **A failed summary is not a failed call.** The segments stand on their own;
-  the failure is logged and the answer goes without a summary.
-- **The panel leads with it, in one pattern.** The clip-content section is a
-  lead paragraph and one closed "Details (N segments)" disclosure, whatever the
-  run holds: the lead is the summary for the clip's window (exact, else the
-  newest covering one), or, for a run without one, its first three segments as
-  prose. Two patterns (a disclosure under a summary, a "Show all" toggle without
-  one) made the same section behave differently for a reason the reader cannot
-  see. The open list scrolls inside a box of at most 40% of the viewport, so the
-  score strip and the rows move down by no more than that; each line leads with
-  its timecode, which seeks through the rows' own source→timeline projection,
-  and its tags are a hover rather than chips the rows already show. The section
-  is the panel's first child in both of its states, so opening the details
-  before an analysis survives the rows landing.
+- **A failed summary is not a failed call, and nothing stands in for one.** The
+  segments stand on their own; the failure is logged and the answer goes
+  without a summary. Only the `summary` field of a JSON object counts as one:
+  bare prose may be a preamble, a cut-off object or the outline read back, and
+  a wrong summary shown as the clip's is worse than none.
+- **The panel leads with it, in one pattern.** The clip-content section is the
+  summary as its lead paragraph and one "Details (N segments)" disclosure,
+  closed under a summary. A run without one (a short clip, an older cache, a
+  failed summary) has no lead and its details start open: an earlier lead made
+  of the first segments read as a summary it was not. A run's summary speaks
+  for the clip when its window covers the clip's source range to within a
+  quarter second at each edge, the tightest such run first — `describe_clip`
+  resolves its window from the frame-snapped timeline span, so a 150.0165 s
+  source on a 30 fps timeline is described over [0, 150 s]. Two patterns (a
+  disclosure under a summary, a "Show all" toggle without one) made the same
+  section behave differently for a reason the reader cannot see. The open list
+  scrolls inside a box of at most `min(40vh, 18em)` — the Shots panel is often
+  a short dock pane — so the score strip and the rows move down by no more
+  than that; each line leads with its timecode, which seeks through the rows'
+  own source→timeline projection, and its tags are a hover rather than chips
+  the rows already show. The section is the panel's first child in both of its
+  states, so opening the details before an analysis survives the rows landing.
 - **On-screen text is quoted, not returned.** Shown a title card, the model
   answered with the card's words alone and in their language. The timeline
   prompt's language rule now says to quote on-screen text verbatim inside a

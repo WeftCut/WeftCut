@@ -730,13 +730,12 @@ describe("ShotsPanel — the description column", () => {
     render(<ShotsPanel />);
     const lead = await screen.findByTestId("shots-clip-lead");
     expect(lead.textContent).toBe("Someone walks a hallway to a door.");
-    expect(lead.dataset.summary).toBe("true");
     const details = screen.getByTestId("shots-clip-details") as HTMLDetailsElement;
     expect(details.open).toBe(false);
     expect(details.querySelector("summary")?.textContent).toBe("Details (2 segments)");
   });
 
-  it("leads a run without a summary with its first segments, the same disclosure below", async () => {
+  it("shows a run without a summary as its open details, with nothing standing in for a summary", async () => {
     const segments = Array.from({ length: 12 }, (_, i) => ({
       t_start_us: i * 500_000,
       t_end_us: (i + 1) * 500_000,
@@ -750,11 +749,9 @@ describe("ShotsPanel — the description column", () => {
     openComposition(ROOT_ID, null);
     setLayerSelection("l1", ["l1"]);
     render(<ShotsPanel />);
-    const lead = await screen.findByTestId("shots-clip-lead");
-    expect(lead.textContent).toBe("moment 0\nmoment 1\nmoment 2");
-    expect(lead.dataset.summary).toBe("false");
-    const details = screen.getByTestId("shots-clip-details") as HTMLDetailsElement;
-    expect(details.open).toBe(false);
+    const details = (await screen.findByTestId("shots-clip-details")) as HTMLDetailsElement;
+    expect(screen.queryByTestId("shots-clip-lead")).toBeNull();
+    expect(details.open).toBe(true);
     expect(details.querySelector("summary")?.textContent).toBe("Details (12 segments)");
     expect(details.querySelectorAll(".shots-clip-detail")).toHaveLength(12);
   });

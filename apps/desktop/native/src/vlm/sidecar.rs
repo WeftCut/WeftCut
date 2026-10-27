@@ -291,7 +291,7 @@ pub fn build_summary_prompt(frames: &[TimedFrame], outline: &str, language: &Lan
     lines.push(r#"{"summary": <two to four sentences, as one JSON string>}"#.to_string());
     lines.push("Rules:".to_string());
     lines.push(
-        "- Summarize the whole clip: what it is about, how it unfolds, where it takes place. Do not list every shot."
+        "- Summarize the whole clip in your own words: what it is about and how it progresses. Do not walk through the timeline or list its shots; name at most two moments as examples."
             .to_string(),
     );
     lines.push("- Keep to what the frames and the timeline show; add nothing else.".to_string());

@@ -731,7 +731,6 @@
   margin: 0 0 calc(4 * var(--ui-px));
   color: var(--foreground);
   line-height: 1.5;
-  white-space: pre-line;
 }
 
 .shots-clip-details > summary {
