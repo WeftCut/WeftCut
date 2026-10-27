@@ -1659,12 +1659,12 @@ pub(super) struct DescribeClipArgs {
     /// `t_end_us`. Must lie within the layer.
     #[serde(default)]
     pub t_end_us: Option<i64>,
-    /// Frames sampled per second, everywhere in the window (higher = finer,
-    /// more requests). Default: the app's setting, else 1.0. Cache key.
+    /// Frames sampled per second (higher = finer, more requests). Default:
+    /// the app's setting, else 1.0. Cache key.
     #[serde(default)]
     pub fps: Option<f64>,
-    /// Describe the window again even when it is cached, replacing its earlier
-    /// run instead of resuming it (default false).
+    /// Describe again even when cached, replacing the earlier run (default
+    /// false).
     #[serde(default)]
     pub refresh: bool,
     /// `"general"` or `"shot-type"` (biases `tags` toward shot type / camera).

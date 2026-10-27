@@ -291,7 +291,7 @@
     },
     {
       "name": "describe_clip",
-      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or an OpenAI-compatible endpoint). Samples the whole window at `fps` (default 1.0) in requests of at most 16 frames (endpoints: their own setting), at most 3600 frames per call. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords. Cached per source range; an interrupted call resumes; `refresh` re-describes. Optional `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") picks the prompt that fills `tags`; `language` (BCP-47, default: the app's UI language) is part of the cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine and errors naming what is missing rather than substituting, so a local choice never uploads frames; omitted, the user's preferred engine then availability (local first). Retimed clips map their window onto source time.",
+      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments with a video-understanding model (local Qwen3-VL / MiniCPM-V, or an OpenAI-compatible endpoint). Samples the whole window at `fps` (default 1.0), 16 frames per request (endpoints: their own setting), at most 3600 frames per call. Returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords. Cached per source range; an interrupted call resumes; `refresh` re-describes. `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") steers `tags`; `language` (BCP-47, default: the UI language) is a cache key. `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine and errors naming what is missing, never substituting, so a local choice never uploads frames; omitted: the preferred engine, then availability (local first). Retimed clips map onto source time.",
       "inputSchema": {
         "properties": {
           "backend": {
@@ -303,7 +303,7 @@
             "type": "string"
           },
           "fps": {
-            "description": "Frames sampled per second, everywhere in the window (higher = finer,\nmore requests). Default: the app's setting, else 1.0. Cache key.",
+            "description": "Frames sampled per second (higher = finer, more requests). Default:\nthe app's setting, else 1.0. Cache key.",
             "type": "number"
           },
           "language": {
@@ -325,7 +325,7 @@
           },
           "refresh": {
             "default": false,
-            "description": "Describe the window again even when it is cached, replacing its earlier\nrun instead of resuming it (default false).",
+            "description": "Describe again even when cached, replacing the earlier run (default\nfalse).",
             "type": "boolean"
           },
           "t_end_us": {
