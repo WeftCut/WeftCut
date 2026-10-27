@@ -72,8 +72,8 @@ Ready means the demanded range is persisted. RAM warming is displayed
 separately and never claims durable completion. Full RAM coverage displays
 "Preview ready" instead of a perpetual full-progress warming state; eviction
 can return it to warming. Read misses/corruption and
-foreground writes update the same coverage authority. Header inventory is cheap;
-payload checksums remain verified by the existing reader.
+foreground writes update the same coverage authority. Inventory is stat-only
+(ADR 0144); headers and payload checksums remain verified by the existing reader.
 
 A rejected preparation declaration is a visible failure, not permission to
 silently restart RAM-only background captures. A later acknowledged declaration

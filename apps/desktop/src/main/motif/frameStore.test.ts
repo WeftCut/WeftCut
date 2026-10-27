@@ -92,20 +92,34 @@ describe('MotifFrameStore', () => {
     expect(await store.read(hash, 0)).toBeNull()
   })
 
-  it('inventories canonical frames while rejecting truncated payloads, impossible dimensions and temporary files', async () => {
+  it('inventories canonical frames by stat alone while rejecting header-only files and temporary files', async () => {
     const { root, store } = await fixture()
     const bytes = Buffer.alloc(68)
     bytes.write('WCMFRM01'); bytes.writeUInt32LE(2, 8); bytes.writeUInt32LE(2, 12)
     await (await store.prepareWrite(hash, 2))!.encoded(bytes)
     const dir = path.join(root, 'Cache', 'raster', hash)
     await fs.writeFile(path.join(dir, '3.wfrm'), bytes.subarray(0, 52))
-    const huge = Buffer.from(bytes); huge.writeUInt32LE(9000, 8)
-    await fs.writeFile(path.join(dir, '4.wfrm'), huge)
-    const codec = Buffer.from(bytes); codec.writeUInt32LE(9, 16)
-    await fs.writeFile(path.join(dir, '5.wfrm'), codec)
     for (const name of ['02.wfrm', '-1.wfrm', '6.tmp', '7.png', '9007199254740993.wfrm']) await fs.writeFile(path.join(dir, name), bytes)
     await fs.mkdir(path.join(dir, '8.wfrm'))
-    expect(await store.inventory(hash)).toEqual([{ frame: 2, bytes: 68 }])
+    // Opening each file costs ~6 ms cold under on-access scanning (ADR 0144).
+    const open = vi.spyOn(fs, 'open')
+    try {
+      expect(await store.inventory(hash)).toEqual([{ frame: 2, bytes: 68 }])
+      expect(open).not.toHaveBeenCalled()
+    } finally { open.mockRestore() }
+  })
+
+  it('leaves invalid headers to the reader, whose miss removes the inventoried frame', async () => {
+    const { root, codec } = await fixture()
+    const changed = vi.fn()
+    const store = new MotifFrameStore(async () => root, codec, changed)
+    const bytes = Buffer.alloc(68)
+    bytes.write('WCMFRM01'); bytes.writeUInt32LE(9000, 8); bytes.writeUInt32LE(2, 12)
+    await (await store.prepareWrite(hash, 4))!.encoded(bytes)
+    expect(await store.inventory(hash)).toEqual([{ frame: 4, bytes: 68 }])
+    vi.mocked(codec.motifReadFrame).mockRejectedValue(new Error('invalid dimensions'))
+    expect(await store.read(hash, 4, vi.fn(async () => { throw new Error('invalid dimensions') }))).toBeNull()
+    expect(changed).toHaveBeenLastCalledWith(hash, 4, false)
   })
 
   it('keeps other inventory entries when one frame disappears during enumeration', async () => {
@@ -113,8 +127,8 @@ describe('MotifFrameStore', () => {
     const bytes = Buffer.alloc(68)
     bytes.write('WCMFRM01'); bytes.writeUInt32LE(2, 8); bytes.writeUInt32LE(2, 12)
     for (const frame of [0, 1]) await (await store.prepareWrite(hash, frame))!.encoded(bytes)
-    const original = fs.open.bind(fs)
-    const spy = vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const original = fs.lstat.bind(fs)
+    const spy = vi.spyOn(fs, 'lstat').mockImplementation(async (...args) => {
       if (String(args[0]).endsWith('0.wfrm')) throw Object.assign(new Error('gone'), { code: 'ENOENT' })
       return original(...args)
     })

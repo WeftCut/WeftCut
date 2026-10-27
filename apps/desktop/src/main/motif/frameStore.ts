@@ -108,7 +108,10 @@ export class MotifFrameStore {
     catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e }
   }
 
-  /** Inventory never follows directory/file links and ignores interrupted writes. */
+  /** Stat-only (ADR 0144): opening each file costs ~6 ms cold under on-access
+   * scanning. Header, dimensions and checksum are verified by the reader, whose
+   * miss drops the frame from coverage and admits a replacement capture.
+   * Inventory never follows directory/file links and ignores interrupted writes. */
   async inventory(hash: string): Promise<{ frame: number; bytes: number }[]> {
     const stem = await this.stem(hash, 0)
     if (!stem) return []
@@ -121,24 +124,10 @@ export class MotifFrameStore {
         if (!entry.isFile() || !/^(0|[1-9]\d*)\.wfrm$/.test(entry.name)) continue
         const frame = Number(entry.name.slice(0, -5))
         if (!Number.isSafeInteger(frame)) continue
-        let file
-        try { file = await fs.open(path.join(dir, entry.name), 'r') }
+        let stat
+        try { stat = await fs.lstat(path.join(dir, entry.name)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error }
-        try {
-          const header = Buffer.alloc(20)
-          const { bytesRead } = await file.read(header, 0, header.length, 0)
-          const stat = await file.stat()
-          const width = header.readUInt32LE(8), height = header.readUInt32LE(12), codec = header.readUInt32LE(16)
-          const raw = width * height * 4
-          // Match the native decoder's bounds. Checksums are verified on read;
-          // startup inventory does not decompress the entire project cache.
-          if (bytesRead === 20 && header.toString('ascii', 0, 8) === 'WCMFRM01'
-            && width > 0 && height > 0 && width <= 8192 && height <= 8192 && raw <= 256 * 1048576
-            && ((codec === 0 && stat.size === 52 + raw)
-              || (codec === 1 && stat.size > 52 && stat.size <= 52 + raw + Math.ceil(raw / 255) + 32))) {
-            frames.push({ frame, bytes: stat.size })
-          }
-        } finally { await file.close() }
+        if (stat.isFile() && stat.size > 52) frames.push({ frame, bytes: stat.size })
       }
       return frames
     } catch (error) {
