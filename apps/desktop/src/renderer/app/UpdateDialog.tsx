@@ -11,7 +11,7 @@ import { useAutoInstallUpdatesOnQuit } from '../settings/appSettingsStore'
 /// startup timer fires), and it then mirrors the main-process status machine
 /// once a second. Laid out like the other message-and-actions dialogs
 /// (checkpoint-delete, export-experimental): settings-card body, blurb copy,
-/// the shared progress track while a download runs, actions row at the foot.
+/// the shared progress track while a download runs, one actions row at the foot.
 export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const statusId = useId()
@@ -20,6 +20,15 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const available = !!status.version && ['available', 'downloading', 'ready', 'restarting', 'error'].includes(status.phase)
 
   const percent = status.percent ?? 0
+  // Alone in the row it is the dialog's only action; beside others it steps back.
+  const besideOthers = available || status.phase === 'error'
+  const releases = (
+    <Button variant={besideOthers ? 'ghost' : 'secondary'} size="lg"
+      className={besideOthers ? 'mr-auto' : undefined}
+      onClick={() => openExternal(RELEASES_URL)}>
+      {t('updates.releases')}
+    </Button>
+  )
   return (
     <AppDialog title={t(available ? 'updates.available' : 'updates.title')} onClose={status.phase === 'restarting' ? undefined : onClose} panelClassName="settings-panel update-dialog">
       <div className="settings-body">
@@ -43,17 +52,19 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
               <div className="progress-fill" style={{ width: `${percent}%` }} />
             </div>
           )}
-          {available && <UpdateActions status={status} onLater={onClose} />}
-          <div className="export-actions">
-            <Button size="lg" onClick={() => openExternal(RELEASES_URL)}>
-              {t('updates.releases')}
-            </Button>
-            {status.phase === 'error' && (
-              <Button variant="default" size="lg" onClick={() => {
-                void window.api.updates.check().catch(() => {})
-              }}>{t('help.check_updates')}</Button>
-            )}
-          </div>
+          {/* One footer row: the releases page is the quiet way out, pinned
+              left; the update itself (or a retry check) owns the right. A
+              known version's error retries through the download button. */}
+          {available
+            ? <UpdateActions status={status} onLater={onClose} leading={releases} />
+            : <div className="export-actions">
+              {releases}
+              {status.phase === 'error' && (
+                <Button variant="default" size="lg" onClick={() => {
+                  void window.api.updates.check().catch(() => {})
+                }}>{t('help.check_updates')}</Button>
+              )}
+            </div>}
         </div>
       </div>
     </AppDialog>

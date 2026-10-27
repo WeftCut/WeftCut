@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { UpdateStatus } from '../../shared/updates'
@@ -46,7 +46,9 @@ function actionLabel(phase: UpdateStatus['phase'], stage: ActionStage, needsDown
   return needsDownload ? 'updates.download_install' : 'updates.restart'
 }
 
-export function UpdateActions({ status, onLater }: { status: UpdateStatus; onLater: () => void }) {
+/** `leading` shares the row, so a host dialog adds its secondary link without
+ * stacking a second actions row under this one. */
+export function UpdateActions({ status, onLater, leading }: { status: UpdateStatus; onLater: () => void; leading?: ReactNode }) {
   const { t } = useTranslation()
   const needsDownload = status.phase === 'available' || status.phase === 'error' && !!status.version
   const { stage, errorKey, run } = useUpdateAction(needsDownload)
@@ -57,10 +59,11 @@ export function UpdateActions({ status, onLater }: { status: UpdateStatus; onLat
     </AppDialog>}
     {errorKey && <p className="settings-error" role="alert">{t(`updates.${errorKey}`)}</p>}
     <div className="export-actions">
+      {leading}
+      <Button size="lg" disabled={busy} onClick={onLater}>{t('updates.later')}</Button>
       <Button variant="default" size="lg" disabled={busy || (!needsDownload && status.phase !== 'ready')} onClick={run}>
         {t(actionLabel(status.phase, stage, needsDownload))}
       </Button>
-      <Button size="lg" disabled={busy} onClick={onLater}>{t('updates.later')}</Button>
     </div>
   </>
 }
