@@ -10,6 +10,7 @@ type Updater = Pick<AppUpdater,
 
 export function createUpdates(updater: Updater | null, lifecycle?: {
   installOnQuit: () => boolean
+  skippedVersion?: () => string | undefined
   prepareRestart: (version: string) => Promise<void>
   quit: () => void
 }) {
@@ -23,6 +24,10 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
   let automaticDownload = false
   let installing = false
   const automatic = () => lifecycle?.installOnQuit() !== false
+  // A skipped release is still offered to a manual check; only the unattended
+  // download and install-on-exit step aside for it.
+  const unattended = (version: string | undefined) =>
+    automatic() && (!version || lifecycle?.skippedVersion?.() !== version)
 
   if (updater) {
     updater.logger = console
@@ -84,7 +89,7 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
       automaticDownload = false
       // A cancelled token cannot be reused for a manual retry.
       cancellationToken = undefined
-      if (token.cancelled && automatic()) void download(true)
+      if (token.cancelled && unattended(version)) void download(true)
     })
     return downloadPending
   }
@@ -96,7 +101,7 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
     pending = (async () => {
       try {
         await updater.checkForUpdates()
-        if (status.phase === 'available' && automatic()) await download(true)
+        if (status.phase === 'available' && unattended(status.version)) await download(true)
       } catch (error) {
         console.warn('[updates]', error)
         status = { phase: 'error' }
@@ -109,8 +114,8 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
     status: (): UpdateStatus => ({ ...status }),
     check,
     preferenceChanged() {
-      if (!automatic() && automaticDownload) cancellationToken?.cancel()
-      else if (automatic() && status.phase === 'available') void download(true)
+      if (!unattended(status.version) && automaticDownload) cancellationToken?.cancel()
+      else if (unattended(status.version) && status.phase === 'available') void download(true)
     },
     async download(): Promise<UpdateDownloadResult> {
       if (!updater || !status.version || !['available', 'error', 'downloading', 'ready'].includes(status.phase)) {
@@ -143,7 +148,7 @@ export function createUpdates(updater: Updater | null, lifecycle?: {
     installOnQuit(exitCode: number) {
       if (!updater || installing || exitCode !== 0) return
       const restart = status.phase === 'restarting'
-      if (!restart && (status.phase !== 'ready' || lifecycle?.installOnQuit() === false)) return
+      if (!restart && (status.phase !== 'ready' || !unattended(status.version))) return
       installing = true
       updater.quitAndInstall(true, restart)
     },

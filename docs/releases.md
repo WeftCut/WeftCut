@@ -54,7 +54,8 @@ fix; do not replace installers under an already published version.
 
 Packaged Windows/Linux applications use electron-updater against the public
 GitHub Release feed. They check 5 seconds after startup and every six hours,
-and show a non-modal notice when an update is available. General
+and surface an available update as an icon on the start screen and in the
+editor's status bar; neither interrupts work with a notice. General
 settings' second item, "Automatically install available updates when closing
 the app", defaults on (including older settings files). With it enabled,
 background downloads begin automatically; normal exit installs the downloaded
@@ -65,7 +66,12 @@ cancels an ongoing background download; an already completed download remains
 available for an explicit restart. Turning it on downloads a known available
 update immediately. An explicitly requested download is independent of this
 preference.
-"Later" only dismisses the notice; it does not change this preference.
+"Later" only closes the dialog; it does not change this preference.
+"Skip this version" stores that version as skipped (`skipped_update_version`):
+both icons hide it, and the background download and the exit install step aside
+for it. Help → Check for Updates still offers it as usual, without mentioning the
+skip, and choosing Download and install or Update and restart there clears it.
+A newer release is never covered by an older skip.
 
 "Update and restart app" is a one-time action independent of that preference.
 It blocks further UI operations while saving, then exits normally; the final
@@ -85,10 +91,14 @@ button bearing Lucide's ArrowDownToLine download icon. Release builds show this
 icon-only button when a new version is known; development
 keeps it visible for UI work. Its tooltip and accessible name describe the
 action, and it opens the same dialog as the editor's Help → Check for Updates
-entry. Dismissing the notice does not hide an available update's icon. Opening
-the dialog is the explicit check; simply showing the button only reads status.
-The dialog shows availability/progress/readiness, offers download or restart
-and later actions, retries errors and links to manual downloads. Dev,
+entry. The editor's status bar carries the same entry as a solid theme-blue
+"Update available" pill left of the Logs toggle. Its label stays fixed, since an
+update outlives the transient job badges beside it; its tooltip and accessible
+name carry the version and phase, and a running download draws a progress ring
+around its icon. Opening the dialog is the
+explicit check; simply showing either icon only reads status. The dialog shows
+availability/progress/readiness, offers skip, later and download or restart
+actions in one row, retries errors and links to manual downloads. Dev,
 E2E and macOS builds disable update checks. macOS cannot self-update without a
 Developer ID: Squirrel.Mac installs only a build whose signature satisfies the
 running app's designated requirement, and an ad-hoc signature pins that to the

@@ -3,9 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { AppDialog } from '../components/AppDialog'
 import { Button } from '@/components/ui/button'
 import { openExternal, RELEASES_URL } from './links'
-import { useUpdateStatus } from './updateStatus'
+import { isUpdateOffered, useUpdateStatus } from './updateStatus'
 import { UpdateActions } from './UpdateActions'
-import { useAutoInstallUpdatesOnQuit } from '../settings/appSettingsStore'
+import { setAppSettings, useAutoInstallUpdatesOnQuit } from '../settings/appSettingsStore'
 
 /// Help → Check for Updates. Opening it IS the check (the same IPC the 5 s
 /// startup timer fires), and it then mirrors the main-process status machine
@@ -17,7 +17,7 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const statusId = useId()
   const status = useUpdateStatus(true)
   const autoInstall = useAutoInstallUpdatesOnQuit()
-  const available = !!status.version && ['available', 'downloading', 'ready', 'restarting', 'error'].includes(status.phase)
+  const available = isUpdateOffered(status)
 
   const percent = status.percent ?? 0
   // Alone in the row it is the dialog's only action; beside others it steps back.
@@ -27,6 +27,17 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
       className={besideOthers ? 'mr-auto' : undefined}
       onClick={() => openExternal(RELEASES_URL)}>
       {t('updates.releases')}
+    </Button>
+  )
+  // Skipping silences the passive entries and main's unattended download for
+  // this version only. An error keeps the releases link its copy points to.
+  const skip = (
+    <Button variant="ghost" size="lg" className="mr-auto" disabled={status.phase === 'restarting'}
+      onClick={() => {
+        void setAppSettings({ skipped_update_version: status.version }).catch(error => console.warn('[updates] skip', error))
+        onClose()
+      }}>
+      {t('updates.skip')}
     </Button>
   )
   return (
@@ -52,11 +63,11 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
               <div className="progress-fill" style={{ width: `${percent}%` }} />
             </div>
           )}
-          {/* One footer row: the releases page is the quiet way out, pinned
-              left; the update itself (or a retry check) owns the right. A
-              known version's error retries through the download button. */}
+          {/* One footer row: the quiet way out (skip, or the releases page)
+              pinned left; the update itself (or a retry check) owns the right.
+              A known version's error retries through the download button. */}
           {available
-            ? <UpdateActions status={status} onLater={onClose} leading={releases} />
+            ? <UpdateActions status={status} onLater={onClose} leading={status.phase === 'error' ? releases : skip} />
             : <div className="export-actions">
               {releases}
               {status.phase === 'error' && (

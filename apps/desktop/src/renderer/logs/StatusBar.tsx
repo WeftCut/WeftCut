@@ -12,6 +12,7 @@ import { useLinkOverride } from "../state/linkOverrideStore";
 import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
+import { UpdateIndicator } from "../app/UpdateIndicator";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
 import {
   computePhaseText,
@@ -232,6 +233,7 @@ export function StatusBar({
             {t("system_status.trigger", { count: notices.length })}
           </button>
         )}
+        <UpdateIndicator />
         <button
           type="button"
           className="status-bar-logs-toggle"

@@ -230,6 +230,53 @@
   cursor: not-allowed;
 }
 
+/* An offered update: the bar's one solid pill, since it is the only entry
+   that asks for a decision rather than reporting work. A download draws a
+   ring around the icon; the label stays fixed. */
+.status-bar-update {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px)) calc(2 * var(--ui-px)) calc(5 * var(--ui-px));
+  border-radius: 999px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: white;
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.status-bar-update:hover {
+  border-color: var(--color-blue-700);
+  background: var(--color-blue-700);
+}
+
+.status-bar-update-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(16 * var(--ui-px));
+  height: calc(16 * var(--ui-px));
+}
+
+.status-bar-update-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke: white;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.status-bar-update-ring .status-bar-update-track {
+  stroke: rgba(255, 255, 255, 0.3);
+}
+
 /* Non-blocking environment/capability notices open their own status panel. */
 .system-status-trigger {
   display: inline-flex;

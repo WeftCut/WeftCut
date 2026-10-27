@@ -37,6 +37,9 @@ export interface AppSettings {
   export_auto_overwrite?: boolean;
   /** Download application updates automatically and install on normal exit. Defaults on. */
   auto_install_updates_on_quit?: boolean;
+  /** A release the user chose to skip: no passive notice, automatic download or
+   *  install-on-exit for exactly this version. Help → Check for Updates still offers it. */
+  skipped_update_version?: string;
   /** One app-wide typography and dialog sizing preset; absent in old files. */
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
@@ -152,6 +155,8 @@ export interface AppSettingsPatch {
   default_export_preset_id?: string;
   export_auto_overwrite?: boolean;
   auto_install_updates_on_quit?: boolean;
+  /** Empty string un-skips. */
+  skipped_update_version?: string;
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */

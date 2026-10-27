@@ -11,7 +11,6 @@ import ReactDOM from "react-dom/client";
 import { PROJECT_OPENED_EVENT,type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { PreviousSessionReport } from './app/DiagnosticReport';
-import { UpdateNotification } from './app/UpdateNotification';
 import { initEval } from "./eval";
 import { useFocusRegions } from "./focus/useFocusRegions";
 import "./i18n";
@@ -333,7 +332,6 @@ function Root() {
       )}
       {editorMounted && <App key={projectEpoch} onCloseProject={onCloseProject} />}
       {launchReady && !splashVisible && <PreviousSessionReport />}
-      {launchReady && !splashVisible && <UpdateNotification />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

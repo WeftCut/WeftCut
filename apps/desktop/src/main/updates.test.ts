@@ -251,6 +251,56 @@ describe('application updates', () => {
     expect(await request).toBe('ready')
   })
 
+  it('offers a skipped version without downloading or installing it unattended', async () => {
+    let skipped: string | undefined = '0.2.0'
+    const { engine, updates } = setup({ installOnQuit: () => true, skippedVersion: () => skipped, prepareRestart: vi.fn(), quit: vi.fn() })
+    engine.checkForUpdates.mockImplementation(async () => {
+      engine.emit('update-available', { version: '0.2.0' })
+      return {}
+    })
+    await updates.check()
+    expect(updates.status()).toEqual({ phase: 'available', version: '0.2.0' })
+    expect(engine.downloadUpdate).not.toHaveBeenCalled()
+    // Un-skipping hands the version back to the automatic preference.
+    engine.downloadUpdate.mockImplementation(async () => {
+      engine.emit('update-downloaded', { version: '0.2.0' })
+      return ['installer']
+    })
+    skipped = undefined
+    updates.preferenceChanged()
+    await vi.waitFor(() => expect(updates.status().phase).toBe('ready'))
+    expect(engine.downloadUpdate).toHaveBeenCalledOnce()
+  })
+
+  it('stops a background download and the exit install when its version is skipped', async () => {
+    let skipped: string | undefined
+    const { engine, updates } = setup({ installOnQuit: () => true, skippedVersion: () => skipped, prepareRestart: vi.fn(), quit: vi.fn() })
+    engine.checkForUpdates.mockImplementation(async () => {
+      engine.emit('update-available', { version: '0.2.0' })
+      return {}
+    })
+    engine.downloadUpdate.mockImplementation(token => new Promise((_resolve, reject) => {
+      token.once('cancel', () => reject(new Error('cancelled')))
+    }))
+    const check = updates.check()
+    await Promise.resolve()
+    const token = engine.downloadUpdate.mock.calls[0][0]
+    skipped = '0.2.0'
+    updates.preferenceChanged()
+    await check
+    expect(token.cancelled).toBe(true)
+    expect(engine.downloadUpdate).toHaveBeenCalledOnce() // a cancelled skip is not restarted
+    expect(updates.status()).toEqual({ phase: 'available', version: '0.2.0' })
+
+    engine.emit('update-downloaded', { version: '0.2.0' })
+    updates.installOnQuit(0)
+    expect(engine.quitAndInstall).not.toHaveBeenCalled()
+    // A newer release is not covered by the skip.
+    engine.emit('update-downloaded', { version: '0.3.0' })
+    updates.installOnQuit(0)
+    expect(engine.quitAndInstall).toHaveBeenCalledExactlyOnceWith(true, false)
+  })
+
   it('delays the startup check and stops recurring checks at shutdown', async () => {
     vi.useFakeTimers()
     const { engine, updates } = setup()

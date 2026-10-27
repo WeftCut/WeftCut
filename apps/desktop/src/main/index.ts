@@ -1288,6 +1288,7 @@ app.whenReady().then(async () => {
   const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
     ? electronUpdater.autoUpdater : null, {
     installOnQuit: () => appSettings.get().auto_install_updates_on_quit !== false,
+    skippedVersion: () => appSettings.get().skipped_update_version,
     prepareRestart: async version => {
       try {
         // Persist the exact current project, including an intentionally empty

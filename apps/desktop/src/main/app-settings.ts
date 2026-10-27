@@ -92,6 +92,8 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         .some(p => p.id === parsed.default_export_preset_id) ? String(parsed.default_export_preset_id) : DEFAULT_EXPORT_PRESET_ID,
       auto_install_updates_on_quit: typeof parsed.auto_install_updates_on_quit === 'boolean'
         ? parsed.auto_install_updates_on_quit : true,
+      skipped_update_version: typeof parsed.skipped_update_version === 'string' && parsed.skipped_update_version !== ''
+        ? parsed.skipped_update_version : undefined,
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
@@ -281,6 +283,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.auto_install_updates_on_quit !== undefined) {
         if (typeof patch.auto_install_updates_on_quit !== 'boolean') throw new Error('Invalid update preference')
         current.auto_install_updates_on_quit = patch.auto_install_updates_on_quit
+      }
+      if (patch.skipped_update_version !== undefined) {
+        if (typeof patch.skipped_update_version !== 'string') throw new Error('Invalid skipped update version')
+        current.skipped_update_version = patch.skipped_update_version === '' ? undefined : patch.skipped_update_version
       }
       if (patch.export_preset_change !== undefined) {
         current.export_presets = changeExportPresets(current.export_presets ?? [], patch.export_preset_change)

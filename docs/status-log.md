@@ -239,6 +239,9 @@ Notes:
   badge sits left of the error badge; clicking it opens the agent panel on
   its Changes tab. Agent view hides the bar; the tab's badge carries the
   count there.
+- While an update is offered and not skipped, a solid blue `Update available`
+  pill sits left of the `Logs ▾` toggle and opens the update dialog
+  (`docs/releases.md`).
 
 ### Console (expanded overlay)
 

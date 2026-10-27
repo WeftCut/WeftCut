@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { UpdateStatus } from '../../shared/updates'
+import { useSkippedUpdateVersion } from '../settings/appSettingsStore'
+
+const OFFERED_PHASES: UpdateStatus['phase'][] = ['available', 'downloading', 'ready', 'restarting', 'error']
+
+/** A known release past the check: something the user can download or install. */
+export function isUpdateOffered(status: UpdateStatus): boolean {
+  return !!status.version && OFFERED_PHASES.includes(status.phase)
+}
 
 /** Read-only polling also recovers notifications across renderer reloads. */
 export function useUpdateStatus(check = false): UpdateStatus {
@@ -20,4 +28,13 @@ export function useUpdateStatus(check = false): UpdateStatus {
     return () => { alive = false; clearInterval(timer) }
   }, [check])
   return status
+}
+
+/** What the passive entries (start-screen icon, status-bar icon) announce: an
+ *  offered update the user has not skipped. Help → Check for Updates ignores
+ *  the skip, so a skipped release stays one deliberate click away. */
+export function useNoticedUpdate(): UpdateStatus | null {
+  const status = useUpdateStatus()
+  const skipped = useSkippedUpdateVersion()
+  return isUpdateOffered(status) && status.version !== skipped ? status : null
 }

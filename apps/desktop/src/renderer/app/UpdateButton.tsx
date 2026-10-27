@@ -3,15 +3,15 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDownToLineIcon } from 'lucide-react'
 import { AppIcon } from '@/components/AppIcon'
 import { Button } from '@/components/ui/button'
-import { useUpdateStatus } from './updateStatus'
+import { useNoticedUpdate } from './updateStatus'
 import { UpdateDialog } from './UpdateDialog'
 
 /** A release notice; development keeps the entry visible for UI work. */
 export function UpdateButton() {
   const { t } = useTranslation()
-  const status = useUpdateStatus()
+  const update = useNoticedUpdate()
   const [open, setOpen] = useState(false)
-  const available = !!status.version && ['available', 'downloading', 'ready', 'restarting', 'error'].includes(status.phase)
+  const available = !!update
   if (!available && !import.meta.env.DEV && !open) return null
   const label = t(available ? 'updates.available' : 'help.check_updates')
   return <>

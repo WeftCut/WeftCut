@@ -467,7 +467,7 @@ const zhCN: Resources = {
   },
   updates: {
     title: '检查更新',
-    button: '有可用更新',
+    button: '可用更新',
     available_manual: '检测到 {{version}}。点击“下载并安装”后才会下载安装包，完成后保存工作状态并重启安装。',
     download_install: '下载并安装',
     downloading_action: '正在下载…',
@@ -478,7 +478,7 @@ const zhCN: Resources = {
     later: '稍后',
     restarting: '正在保存并重启应用…',
     ready_auto: '选择稍后可继续工作，关闭应用时将自动安装，安装后保持关闭。',
-    ready_manual: '选择稍后可继续工作，可从帮助菜单或启动页的更新按钮再次打开更新。',
+    ready_manual: '选择稍后可继续工作，可从帮助菜单，或启动页、编辑器状态栏的更新图标再次打开更新。',
     'not-ready': '更新尚未准备好，请等待下载完成。',
     'save-failed': '未能保存更新前的工作状态，应用尚未重启。请检查存储空间和项目权限后重试。',
     disabled: '此构建不支持自动更新，可前往发版页面下载安装包。',
@@ -488,6 +488,10 @@ const zhCN: Resources = {
     downloading: '正在下载 {{version}}… {{percent}}%',
     error: '检查或下载更新失败，请重试或前往发版页面手动下载。',
     releases: '查看发版页面',
+    skip: '跳过此版本',
+    indicator_available: '新版本 {{version}} 可用',
+    indicator_ready: '{{version}} 已下载，可安装',
+    indicator_error: '{{version}} 下载失败',
   },
   diagnostics: {
     title: '报告问题',

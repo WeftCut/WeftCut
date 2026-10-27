@@ -72,6 +72,18 @@ describe('app-settings store', () => {
     createAppSettingsStore(deps).apply({ auto_install_updates_on_quit: true })
     expect(createAppSettingsStore(deps).get().auto_install_updates_on_quit).toBe(true)
   })
+  it('persists a skipped update version and clears it with an empty string', () => {
+    const { fs, files } = memFs()
+    const deps = { fs, path: PATH, dir: DIR }
+    expect(createAppSettingsStore(deps).get().skipped_update_version).toBeUndefined()
+    createAppSettingsStore(deps).apply({ skipped_update_version: '0.6.0' })
+    expect(createAppSettingsStore(deps).get().skipped_update_version).toBe('0.6.0')
+    createAppSettingsStore(deps).apply({ skipped_update_version: '' })
+    expect(createAppSettingsStore(deps).get().skipped_update_version).toBeUndefined()
+    const before = files.get(PATH)
+    expect(() => createAppSettingsStore(deps).apply({ skipped_update_version: 6 as never })).toThrow()
+    expect(files.get(PATH)).toBe(before)
+  })
   it('merges resource intent across windows, reprojects on restart and never reinterprets legacy caches', () => {
     const { fs, files } = memFs();
     const a = createAppSettingsStore({ fs, path: PATH, dir: DIR, totalMemoryMiB: 8192, cores: 4 });

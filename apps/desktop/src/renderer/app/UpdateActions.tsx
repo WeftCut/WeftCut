@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { UpdateStatus } from '../../shared/updates'
 import { AppDialog } from '../components/AppDialog'
+import { setAppSettings, useSkippedUpdateVersion } from '../settings/appSettingsStore'
 
 type ActionStage = 'idle' | 'downloading' | 'saving'
 
-function useUpdateAction(needsDownload: boolean) {
+function useUpdateAction(needsDownload: boolean, unskip: boolean) {
   const [stage, setStage] = useState<ActionStage>('idle')
   const [errorKey, setErrorKey] = useState<string | null>(null)
   async function run() {
@@ -15,6 +16,9 @@ function useUpdateAction(needsDownload: boolean) {
     setErrorKey(null)
     let failureKey = needsDownload ? 'download-failed' : 'save-failed'
     try {
+      // Choosing a skipped release outright is the un-skip: main must not
+      // still be holding its unattended install back.
+      if (unskip) await setAppSettings({ skipped_update_version: '' })
       if (needsDownload) {
         const result = await window.api.updates.download()
         if (result !== 'ready') {
@@ -51,7 +55,8 @@ function actionLabel(phase: UpdateStatus['phase'], stage: ActionStage, needsDown
 export function UpdateActions({ status, onLater, leading }: { status: UpdateStatus; onLater: () => void; leading?: ReactNode }) {
   const { t } = useTranslation()
   const needsDownload = status.phase === 'available' || status.phase === 'error' && !!status.version
-  const { stage, errorKey, run } = useUpdateAction(needsDownload)
+  const skipped = useSkippedUpdateVersion()
+  const { stage, errorKey, run } = useUpdateAction(needsDownload, !!skipped && skipped === status.version)
   const busy = stage !== 'idle' || status.phase === 'restarting'
   return <>
     {stage === 'saving' && <AppDialog title={t('updates.restarting')} panelClassName="settings-panel update-dialog">
