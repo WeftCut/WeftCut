@@ -125,6 +125,7 @@ async fn live_unicode_vlm_paths() {
         parser::parse_raw,
         sidecar::{LlamaMtmdSidecar, OutputStyle},
     };
+    crate::inference_endpoints_live_tests::generous_limits();
     let dir = fixture();
     let model = dir.path().join("模型.gguf");
     let projector = dir.path().join("视觉.gguf");

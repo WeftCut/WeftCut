@@ -48,6 +48,8 @@ mod inference;
 mod inference_files;
 
 #[cfg(all(test, feature = "speech"))]
+mod inference_endpoints_live_tests;
+#[cfg(all(test, feature = "speech"))]
 mod inference_paths_live_tests;
 
 #[cfg(feature = "speech")]
