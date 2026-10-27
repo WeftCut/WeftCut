@@ -168,6 +168,21 @@ function reviewedSpans(
   return spans;
 }
 
+/// Where a source instant of a `VideoClip` sits on its composition's timeline —
+/// the one projection the Panel seeks by, for a row and a described segment
+/// alike. Source endpoints and timeline endpoints can differ by a microsecond
+/// after rounding, and fractional source phases can project the first instant
+/// before the clip, so the answer is held inside the layer's envelope while
+/// interior instants stay unsnapped. Inverse time mapping matches
+/// cutsToTimeline. A non-clip layer has no source, so it answers its start.
+export function sourceToTimelineUs(layer: LayerSummary, srcUs: number): number {
+  if (layer.params.kind !== "VideoClip") return layer.t_start_us;
+  return Math.max(layer.t_start_us, Math.min(
+    layer.t_end_us,
+    layer.t_start_us + approximateTime(localAtContent(layer.params, exactTime(srcUs))),
+  ));
+}
+
 /// Build the Panel's rows from a reduced report and the layer it is reviewed
 /// against.
 ///
@@ -193,18 +208,9 @@ export function shotRows(
   // The kind gate is what narrows `src_in_us` into scope; the Panel's subject
   // is a VideoClip by construction, so no row is ever lost to it.
   if (layer.params.kind !== "VideoClip") return [];
-  const params = layer.params;
   const frameDurUs = approxFrameDurUs(compositionFps.num, compositionFps.den);
   const scoreAt = new Map(reduced.cut_scores.map((c) => [c.t_us, c.score]));
-  // Source endpoints and timeline endpoints can differ by a microsecond after
-  // rounding. Fractional source phases can also project the first row before
-  // the clip. Description requests use these times, so intersect with the
-  // actual layer envelope while leaving interior cuts unsnapped.
-  const toTimeline = (srcUs: number): number =>
-    Math.max(layer.t_start_us, Math.min(
-      layer.t_end_us,
-      layer.t_start_us + approximateTime(localAtContent(params, exactTime(srcUs))),
-    ));
+  const toTimeline = (srcUs: number): number => sourceToTimelineUs(layer, srcUs);
   const candidateAt = (srcUs: number): ShotCandidate | null => {
     const score = scoreAt.get(srcUs);
     return score === undefined

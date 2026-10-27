@@ -208,7 +208,10 @@ fn apply_device(args: &mut Vec<OsString>, device: Option<&str>) {
 ///
 /// It is emitted unconditionally, English included. A default run's prompt is
 /// then the same shape as every other run's, and a clip full of Chinese signage
-/// cannot talk the model out of the language it was asked for.
+/// cannot talk the model out of the language it was asked for. On-screen text is
+/// the one thing kept in its own language — quoted inside a sentence in the
+/// asked-for one, because a model shown a title card otherwise answered with the
+/// card's words alone (ADR 0149).
 pub fn build_prompt(frames: &[TimedFrame], focus: Focus, language: &Language) -> String {
     let mut lines = vec![
         "You are analyzing frames sampled from a single video clip.".to_string(),
@@ -242,8 +245,8 @@ pub fn build_prompt(frames: &[TimedFrame], focus: Focus, language: &Language) ->
         }
     }.to_string());
     lines.push(format!(
-        "- Write every \"text\" value and every tag in {}. Use no other language for them, whatever language appears in the frames. The JSON keys stay in English.",
-        language.prompt_name(),
+        "- Write every \"text\" value and every tag in {lang}. Use no other language for them, except on-screen text (titles, signs, captions): quote it verbatim in its original language inside a description written in {lang}, never as the whole \"text\". The JSON keys stay in English.",
+        lang = language.prompt_name(),
     ));
     lines.join("\n")
 }
@@ -518,6 +521,9 @@ mod tests {
         // The language is named the way a model understands it, not as a tag.
         assert!(zh.contains("in Simplified Chinese"));
         assert!(!zh.contains("zh-CN"));
+        // On-screen text is quoted as it appears, inside a description in the
+        // asked-for language — never handed back as the description itself.
+        assert!(zh.contains("quote it verbatim in its original language inside a description written in Simplified Chinese"));
         // …and the surrounding contract is untouched: same JSON shape, same
         // timestamp rule, so a translated answer still parses.
         assert!(zh.contains("Return ONLY a JSON array"));

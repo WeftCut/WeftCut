@@ -728,16 +728,15 @@ describe("ShotsPanel — the description column", () => {
     openComposition(ROOT_ID, null);
     setLayerSelection("l1", ["l1"]);
     render(<ShotsPanel />);
-    expect((await screen.findByTestId("shots-clip-summary")).textContent).toBe(
-      "Someone walks a hallway to a door.",
-    );
+    const lead = await screen.findByTestId("shots-clip-lead");
+    expect(lead.textContent).toBe("Someone walks a hallway to a door.");
+    expect(lead.dataset.summary).toBe("true");
     const details = screen.getByTestId("shots-clip-details") as HTMLDetailsElement;
     expect(details.open).toBe(false);
     expect(details.querySelector("summary")?.textContent).toBe("Details (2 segments)");
-    expect(screen.queryByTestId("shots-clip-more")).toBeNull();
   });
 
-  it("caps a long clip-content list without a summary and expands it on request", async () => {
+  it("leads a run without a summary with its first segments, the same disclosure below", async () => {
     const segments = Array.from({ length: 12 }, (_, i) => ({
       t_start_us: i * 500_000,
       t_end_us: (i + 1) * 500_000,
@@ -751,18 +750,62 @@ describe("ShotsPanel — the description column", () => {
     openComposition(ROOT_ID, null);
     setLayerSelection("l1", ["l1"]);
     render(<ShotsPanel />);
-    await screen.findByTestId("shots-clip-content");
-    // The rows land after the first paint; the section is the one above them.
+    const lead = await screen.findByTestId("shots-clip-lead");
+    expect(lead.textContent).toBe("moment 0\nmoment 1\nmoment 2");
+    expect(lead.dataset.summary).toBe("false");
+    const details = screen.getByTestId("shots-clip-details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe("Details (12 segments)");
+    expect(details.querySelectorAll(".shots-clip-detail")).toHaveLength(12);
+  });
+
+  it("puts each detail line's tags on hover and seeks from its timecode", async () => {
+    shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 3_000_000, text: "a hallway", tags: ["hallway", "dim"] },
+        { t_start_us: 3_000_000, t_end_us: 6_000_000, text: "a door opens", tags: [] },
+      ],
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const details = (await screen.findByTestId("shots-clip-details")) as HTMLDetailsElement;
+    act(() => { details.open = true; });
+    const lines = details.querySelectorAll<HTMLElement>(".shots-clip-detail");
+    expect(lines[0]!.title).toBe("hallway, dim");
+    expect(lines[1]!.hasAttribute("title")).toBe(false);
+    // Tags are a hover, not chips: the rows keep chips, the list does not.
+    expect(details.querySelector(".shots-description-tag")).toBeNull();
+
+    fireEvent.click(within(lines[1]!).getByRole("button", { name: /Go to/ }));
+    // Source 3 s in a clip that starts at 1 s — the rows' own projection.
+    expect(jumpToTimeUs).toHaveBeenCalledWith(4_000_000);
+  });
+
+  it("keeps the details open when the rows land under them", async () => {
+    shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
+      covered_ranges: [[0, 6_000_000]],
+      segments: [{ t_start_us: 0, t_end_us: 6_000_000, text: "whole clip content", tags: [] }],
+    });
+    let landReduce!: (r: ShotReport) => void;
+    shots.reduceShotReport.mockReturnValue(
+      new Promise<ShotReport>((res) => {
+        landReduce = res;
+      }),
+    );
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    expect(await screen.findByText("Checking for a shot analysis…")).toBeTruthy();
+    const details = (await screen.findByTestId("shots-clip-details")) as HTMLDetailsElement;
+    act(() => { details.open = true; });
+
+    landReduce(REPORT);
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
-    const lines = () =>
-      screen.getByTestId("shots-clip-content").querySelectorAll(".shots-description-span").length;
-    expect(lines()).toBe(8);
-    expect(screen.queryByTestId("shots-clip-summary")).toBeNull();
-    const more = screen.getByTestId("shots-clip-more");
-    expect(more.textContent).toBe("Show all 12");
-    fireEvent.click(more);
-    expect(lines()).toBe(12);
-    expect(screen.getByTestId("shots-clip-more").textContent).toBe("Show fewer");
+    // The same element, still open: not a remount that closed it.
+    expect(screen.getByTestId("shots-clip-details")).toBe(details);
+    expect(details.open).toBe(true);
   });
 
   it("says a shot is not described rather than leaving the cell blank", async () => {

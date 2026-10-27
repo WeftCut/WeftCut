@@ -53,10 +53,24 @@ given a handful.
   separate text model.
 - **A failed summary is not a failed call.** The segments stand on their own;
   the failure is logged and the answer goes without a summary.
-- **The panel leads with it.** The clip-content section shows the summary for
-  the clip's window (exact, else the newest covering one) and keeps the
-  segments behind a closed "Details (N segments)" disclosure. Without a summary
-  it shows the first 8 segments and a "Show all N" toggle.
+- **The panel leads with it, in one pattern.** The clip-content section is a
+  lead paragraph and one closed "Details (N segments)" disclosure, whatever the
+  run holds: the lead is the summary for the clip's window (exact, else the
+  newest covering one), or, for a run without one, its first three segments as
+  prose. Two patterns (a disclosure under a summary, a "Show all" toggle without
+  one) made the same section behave differently for a reason the reader cannot
+  see. The open list scrolls inside a box of at most 40% of the viewport, so the
+  score strip and the rows move down by no more than that; each line leads with
+  its timecode, which seeks through the rows' own source→timeline projection,
+  and its tags are a hover rather than chips the rows already show. The section
+  is the panel's first child in both of its states, so opening the details
+  before an analysis survives the rows landing.
+- **On-screen text is quoted, not returned.** Shown a title card, the model
+  answered with the card's words alone and in their language. The timeline
+  prompt's language rule now says to quote on-screen text verbatim inside a
+  description written in the asked-for language. A prompt rule, not a check:
+  whether a line is "in" a language is not decidable from its characters (a
+  quoted title, a brand, a number), so there is nothing to retry against.
 
 ## Consequences
 

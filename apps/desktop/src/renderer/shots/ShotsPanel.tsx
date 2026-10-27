@@ -74,7 +74,7 @@ import {
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { primarySelectedLayer } from "../speech/autoCaptionEligibility";
 import { ScoreStrip } from "./ScoreStrip";
-import { shotRows, type ShotCandidate, type ShotRow } from "./shotRows";
+import { shotRows, sourceToTimelineUs, type ShotCandidate, type ShotRow } from "./shotRows";
 import {
   analyzeShotSubject,
   applyShotVerb,
@@ -340,6 +340,89 @@ function ShotsDescribeJobs({
   );
 }
 
+/// How many leading segments stand in for a summary the run does not have — a
+/// short or older run's own words, as a few sentences of prose.
+const CLIP_LEAD_SEGMENTS = 3;
+
+/// What the whole clip shows, above the score strip and the rows: one lead
+/// paragraph and one closed "Details (N segments)" disclosure, whatever the run
+/// holds. The lead is the run's summary, or — for a run without one — its first
+/// few segments as prose. A long window's description runs to hundreds of
+/// segments, so the open list scrolls inside its own box and the strip and rows
+/// never move further than that box; each line leads with its timecode, which
+/// seeks like a row's (ADR 0149).
+///
+/// Rendered once, above both of the Panel's states, so opening the details
+/// before an analysis and having the rows land does not close them again.
+function ClipContentDescription({ layer, mediaId, srcInUs, srcOutUs, fpsNum, fpsDen, onSeek }: {
+  layer: LayerSummary;
+  mediaId: string;
+  srcInUs: number;
+  srcOutUs: number;
+  fpsNum: number;
+  fpsDen: number;
+  onSeek: (tUs: number) => void;
+}) {
+  const { t } = useTranslation();
+  const segments = useDescription(mediaId);
+  const summaries = useClipSummaries(mediaId);
+  useEffect(() => { void hydrateDescription(mediaId); }, [mediaId]);
+  const overlapping = segmentsForSpan(segments, srcInUs, srcOutUs);
+  const summary = summaryForWindow(summaries, srcInUs, srcOutUs);
+  if (overlapping.length === 0 && summary === null) return null;
+  const lead =
+    summary ??
+    overlapping
+      .slice(0, CLIP_LEAD_SEGMENTS)
+      .map((s) => s.text.trim())
+      // One line each: segments carry no shared punctuation to join on.
+      .join("\n");
+  return (
+    <section className="shots-clip-content" data-testid="shots-clip-content">
+      <h3>{t("shots_panel.clip_content")}</h3>
+      <p
+        className="shots-clip-lead"
+        data-testid="shots-clip-lead"
+        data-summary={summary !== null}
+      >
+        {lead}
+      </p>
+      {overlapping.length > 0 && (
+        <details className="shots-clip-details" data-testid="shots-clip-details">
+          <summary>{t("shots_panel.clip_details", { count: overlapping.length })}</summary>
+          <div className="shots-clip-detail-list">
+            {overlapping.map((segment) => {
+              // A segment straddling the in-point starts where the clip does.
+              const tUs = sourceToTimelineUs(layer, Math.max(segment.t_start_us, srcInUs));
+              const timecode = formatTimecode(tUs, fpsNum, fpsDen);
+              return (
+                <p
+                  className="shots-clip-detail"
+                  key={`${segment.t_start_us}-${segment.t_end_us}`}
+                  // The tags stay one hover away: the rows already show theirs
+                  // as chips, and a chip row per line is what made a long
+                  // list unreadable.
+                  title={segment.tags.length > 0 ? segment.tags.join(", ") : undefined}
+                >
+                  <button
+                    type="button"
+                    className="shots-clip-detail-goto"
+                    aria-label={t("shots_panel.go_to", { timecode })}
+                    onClick={() => onSeek(tUs)}
+                  >
+                    {timecode}
+                  </button>
+                  <span className="shots-description-text">{segment.text}</span>
+                </p>
+              );
+            })}
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
 /// What a vision model said about this shot's stretch of the source, plus the
 /// tags it extracted.
 ///
@@ -368,65 +451,6 @@ function ShotsDescribeJobs({
 /// the row, its status line — waiting for what, or how far — stands where
 /// "Describing" would, above any prose already there (ADR 0121). It cancels
 /// the job for everyone; a sweep stops with it.
-/// Lines of clip content shown before "Show all" when there is no summary to
-/// lead with — an older or short run's list, kept from flooding the panel.
-const CLIP_CONTENT_PREVIEW = 8;
-
-/// What the whole clip shows, above the score strip and the rows. A long
-/// window's description runs to hundreds of segments, so the section leads with
-/// the run's summary and keeps the segments behind a closed disclosure; without
-/// a summary it shows the first few and a toggle for the rest.
-function ClipContentDescription({ mediaId, srcInUs, srcOutUs }: {
-  mediaId: string; srcInUs: number; srcOutUs: number;
-}) {
-  const { t } = useTranslation();
-  const segments = useDescription(mediaId);
-  const summaries = useClipSummaries(mediaId);
-  const [showAll, setShowAll] = useState(false);
-  useEffect(() => { void hydrateDescription(mediaId); }, [mediaId]);
-  const overlapping = segmentsForSpan(segments, srcInUs, srcOutUs);
-  const summary = summaryForWindow(summaries, srcInUs, srcOutUs);
-  if (overlapping.length === 0 && summary === null) return null;
-  if (summary !== null) {
-    return (
-      <section className="shots-clip-content" data-testid="shots-clip-content">
-        <h3>{t("shots_panel.clip_content")}</h3>
-        <p className="shots-clip-summary" data-testid="shots-clip-summary">{summary}</p>
-        {overlapping.length > 0 && (
-          <details className="shots-clip-details" data-testid="shots-clip-details">
-            <summary>{t("shots_panel.clip_details", { count: overlapping.length })}</summary>
-            <ShotDescriptionCell overlapping={overlapping} waiting={false} job={null} />
-          </details>
-        )}
-      </section>
-    );
-  }
-  const capped = overlapping.length > CLIP_CONTENT_PREVIEW;
-  return (
-    <section className="shots-clip-content" data-testid="shots-clip-content">
-      <h3>{t("shots_panel.clip_content")}</h3>
-      <ShotDescriptionCell
-        overlapping={capped && !showAll ? overlapping.slice(0, CLIP_CONTENT_PREVIEW) : overlapping}
-        waiting={false}
-        job={null}
-      />
-      {capped && (
-        <Button
-          className="shots-clip-more"
-          variant="ghost"
-          size="xs"
-          data-testid="shots-clip-more"
-          onClick={() => setShowAll((v) => !v)}
-        >
-          {showAll
-            ? t("shots_panel.clip_show_less")
-            : t("shots_panel.clip_show_all", { count: overlapping.length })}
-        </Button>
-      )}
-    </section>
-  );
-}
-
 function ShotDescriptionCell({
   overlapping,
   waiting,
@@ -1331,6 +1355,24 @@ export function ShotsPanel() {
   }
 
   const running = analyzing === mediaId;
+  const onSeek = (tUs: number): void => {
+    if (compositionId !== null) activateShotRow(compositionId, tUs);
+  };
+  // The panel's FIRST child in both states below, so React keeps the one
+  // instance when the rows land: the section is about the clip, not the scan,
+  // and rendering it at a different place in each state remounted it — closing
+  // a disclosure the reviewer had just opened.
+  const clipContent = (
+    <ClipContentDescription
+      layer={layer}
+      mediaId={clip.media_id}
+      srcInUs={clip.src_in_us}
+      srcOutUs={clip.src_out_us}
+      fpsNum={composition.fps_num}
+      fpsDen={composition.fps_den}
+      onSeek={onSeek}
+    />
+  );
   if (reduced === null) {
     // "Not analyzed" is claimed ONLY on a probe that answered no. Every other
     // rowless moment — the probe still in flight, or a hit whose reduce has not
@@ -1342,6 +1384,7 @@ export function ShotsPanel() {
     // IPC failed.
     return (
       <div className="shots-panel" data-testid="shots-panel">
+        {clipContent}
         <div className="shots-offer">
           <p className="shots-empty">
             {running
@@ -1365,7 +1408,6 @@ export function ShotsPanel() {
           {error !== "" && <p className="shots-error">{error}</p>}
         </div>
         <ShotsDescribeJobs mediaId={clip.media_id} rows={NO_ROWS} />
-        <ClipContentDescription mediaId={clip.media_id} srcInUs={clip.src_in_us} srcOutUs={clip.src_out_us} />
         {/* A whole-clip description needs no scan, so its refusal must have a
             home before one too. */}
         {describeError !== "" && (
@@ -1382,7 +1424,7 @@ export function ShotsPanel() {
 
   return (
     <div className="shots-panel" data-testid="shots-panel">
-      <ClipContentDescription mediaId={clip.media_id} srcInUs={clip.src_in_us} srcOutUs={clip.src_out_us} />
+      {clipContent}
       {/* Above the rows, because the line is what the rows are a consequence
           of. The parameters are `null` only until their reads land, and the
           floor report is what the strip draws — the reduced one has already

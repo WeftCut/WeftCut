@@ -724,12 +724,14 @@
   font-weight: 600;
 }
 
-/* The summary leads the section in the row's prose colour; the segments it was
-   written from sit behind the disclosure in the caption style the rows use. */
-.shots-clip-summary {
+/* One pattern whatever the run holds: a lead paragraph in the row's prose
+   colour — the summary, or a summary-less run's first few segments — then the
+   segments behind a closed disclosure in the caption style the rows use. */
+.shots-clip-lead {
   margin: 0 0 calc(4 * var(--ui-px));
   color: var(--foreground);
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .shots-clip-details > summary {
@@ -742,9 +744,48 @@
   margin-bottom: calc(4 * var(--ui-px));
 }
 
-.shots-clip-more {
-  margin-top: calc(4 * var(--ui-px));
+/* The open list scrolls in its own box: a long clip's hundreds of lines push
+   the score strip and the rows down by at most this much. Viewport-relative
+   because the Panel is no size container; the dock panel it sits in is about
+   the window's height. */
+.shots-clip-detail-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
 }
+
+.shots-clip-detail {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6 * var(--ui-px));
+  margin: 0;
+}
+
+/* The row's go-to look: monospace digits that take the selection colour on
+   hover, and the same focus ring. */
+.shots-clip-detail-goto {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.shots-clip-detail-goto:hover {
+  color: var(--selection);
+}
+
+.shots-clip-detail-goto:focus-visible {
+  border-radius: var(--radius-control);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 
 .shots-description-tag {
   margin-left: calc(4 * var(--ui-px));
