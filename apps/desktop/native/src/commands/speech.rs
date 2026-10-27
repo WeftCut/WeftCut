@@ -1,13 +1,14 @@
-//! Speech-backend Settings commands. Key MATERIAL never crosses this surface —
-//! status reports presence only, and the key used by `settings_test_provider`
-//! is read from the in-memory `speech_config` cache (pushed in by Electron main
-//! from safeStorage), never returned. `set`/`clear` are handled in the Electron
-//! main process (safeStorage + `Backend::set_cloud_key`), so they have no
-//! dispatch arm here.
+//! Speech-backend Settings commands. Key MATERIAL never crosses this surface
+//! outward — status reports presence only, and the key `settings_test_provider`
+//! uses arrives in the injected `speechConfig` snapshot (built by Electron main
+//! from safeStorage + the config store at call time, ADR 0148), never returned.
+//! `set`/`clear` are handled in the Electron main process (safeStorage + the
+//! TS store), so they have no dispatch arm here.
+
+use std::collections::HashMap;
 
 use crate::commands::ApiKeyStatus;
 use crate::inference::EngineTag;
-use crate::napi_backend::Backend;
 use crate::speech;
 use crate::speech::backend::{Locality, SpeechBackend};
 use crate::speech::config::{availability, Availability, BackendConfig};
@@ -16,6 +17,21 @@ use crate::speech::config::{availability, Availability, BackendConfig};
 #[serde(rename_all = "camelCase")]
 pub struct SettingsTestProviderArgs {
     pub provider: String,
+    /// Injected by Electron main — see [`SpeechConfigArgs`].
+    #[serde(default)]
+    pub speech_config: HashMap<String, BackendConfig>,
+}
+
+/// Args of `settings_get_api_key_status`: only the injected snapshot.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechConfigArgs {
+    /// The merged speech backend config (keys + local paths + the active
+    /// endpoint), keyed by backend tag, injected by Electron main per call —
+    /// the same snapshot `transcribe_clip` receives, so the panel and the
+    /// resolver cannot disagree. Absent → nothing configured.
+    #[serde(default)]
+    pub speech_config: HashMap<String, BackendConfig>,
 }
 
 #[derive(serde::Deserialize)]
@@ -25,8 +41,11 @@ pub struct SpeechBackendsArgs {
     /// `"funasr"`), or `None`/`"auto"` for automatic (fall through
     /// `DEFAULT_ORDER`). Injected by Electron main from the TS-owned
     /// `speech_config.json` store, since the preferred engine is non-secret
-    /// TS-side config, not part of the Rust `speech_config` snapshot.
+    /// TS-side config, not part of the backend config snapshot.
     pub preferred: Option<String>,
+    /// Injected by Electron main — see [`SpeechConfigArgs`].
+    #[serde(default)]
+    pub speech_config: HashMap<String, BackendConfig>,
 }
 
 /// Static capability surface of a backend, echoed to the Settings UI so it can
@@ -80,14 +99,15 @@ fn parse_backend(s: &str) -> Result<SpeechBackend, String> {
 }
 
 /// Presence-only status for the Settings → Transcription panel. Reports whether an
-/// API key is cached for each cloud backend.
+/// API key is in the injected snapshot for each cloud backend.
 ///
 /// Deliberately lists **cloud backends only** (the ones an API key applies
 /// to); the full multi-backend listing incl. local engines is
 /// [`settings_get_speech_backends`]. Kept alongside it so existing TS callers
 /// don't break. `configured` is strictly "an `ApiKey` entry is present".
-pub async fn settings_get_api_key_status(b: &Backend) -> Result<Vec<ApiKeyStatus>, String> {
-    let cfg = b.speech_config.lock().expect("speech_config poisoned");
+pub async fn settings_get_api_key_status(
+    cfg: &HashMap<String, BackendConfig>,
+) -> Result<Vec<ApiKeyStatus>, String> {
     Ok(SpeechBackend::all()
         .iter()
         .copied()
@@ -103,27 +123,20 @@ pub async fn settings_get_api_key_status(b: &Backend) -> Result<Vec<ApiKeyStatus
 /// Live smoke check for a backend, routed through [`speech::probe_backend`]
 /// (cloud: `GET /v1/models`; local: binary/model file existence). Returns
 /// `SpeechError::MissingKey` (message mentions Settings) cleanly when a cloud
-/// backend has no key cached, rather than a misleading "test failed".
+/// backend has no key in the snapshot, rather than a misleading "test failed".
 pub async fn settings_test_provider(
-    b: &Backend,
+    cfg: &HashMap<String, BackendConfig>,
     provider: String,
 ) -> Result<speech::ConnectionTestInfo, String> {
     let backend = parse_backend(&provider)?;
-    // Clone the config entry out and drop the lock before the await.
-    let cfg = b
-        .speech_config
-        .lock()
-        .expect("speech_config poisoned")
-        .get(backend.as_str())
-        .cloned();
-    speech::probe_backend(backend, cfg.as_ref())
+    speech::probe_backend(backend, cfg.get(backend.as_str()))
         .await
         .map_err(|e| format!("{e}"))
 }
 
 /// Full backend listing for the Settings → Transcription/Speech panel: EVERY
 /// [`SpeechBackend`], each with its label / locality / capabilities, its live
-/// [`availability`] against the current `speech_config`, and a `selected`
+/// [`availability`] against the injected config snapshot, and a `selected`
 /// marker for the one the transcription resolver would use given `preferred`.
 ///
 /// Generalizes [`settings_get_api_key_status`] (which lists cloud backends
@@ -131,10 +144,9 @@ pub async fn settings_test_provider(
 /// see its doc. `preferred` is injected by Electron main from the TS-owned
 /// preferred-engine store (`"auto"` / absent → automatic fall-through).
 pub async fn settings_get_speech_backends(
-    b: &Backend,
+    cfg: &HashMap<String, BackendConfig>,
     preferred: Option<String>,
 ) -> Result<Vec<SpeechBackendStatus>, String> {
-    let cfg = b.speech_config.lock().expect("speech_config poisoned");
     // "auto" / unknown / absent → None (automatic); a known tag → that backend.
     let preferred_backend = preferred.as_deref().filter(|s| *s != "auto").and_then(|s| {
         SpeechBackend::all()
@@ -142,7 +154,7 @@ pub async fn settings_get_speech_backends(
             .copied()
             .find(|bk| bk.as_str() == s)
     });
-    let selected = speech::resolve_selected_transcriber_backend(preferred_backend, &cfg);
+    let selected = speech::resolve_selected_transcriber_backend(preferred_backend, cfg);
     Ok(SpeechBackend::all()
         .iter()
         .copied()

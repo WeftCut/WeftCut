@@ -571,17 +571,16 @@ app.whenReady().then(async () => {
   // Speech-backend config store — persists <userData>/speech_config.json (NON-
   // secret: preferred engine + each local engine's binary/model/device/threads).
   // The OpenAI API key stays in safeStorage (keys.ts); this is its non-secret
-  // sibling (ADR 0036). Single owner — the startup population loop + the Settings
-  // IPC intercepts below reuse this instance.
-  const { createSpeechConfigStore } = await import('./speech-config.js')
+  // sibling (ADR 0036). Single owner — `getSpeech`'s per-call snapshot and the
+  // Settings IPC intercepts below reuse this instance.
+  const { createSpeechConfigStore, toSpeechBackendSnapshot } = await import('./speech-config.js')
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
   let models: ModelManager | undefined
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
-  // the non-secret sibling of the endpoint key. Unlike speech (pushed
-  // onto the napi Backend), VLM config is injected per-call into describe_clip /
-  // media://{id}/description (stateless, ADR 0024) via the provider passed to
-  // startMcpHost below.
+  // the non-secret sibling of the endpoint key. Like speech's (ADR 0148), VLM
+  // config is injected per-call into describe_clip / media://{id}/description
+  // (stateless, ADR 0024) via the provider passed to startMcpHost below.
   const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
   const vlmConfig = createVlmConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'vlm_config.json'), dir: app.getPath('userData') })
 
@@ -733,22 +732,8 @@ app.whenReady().then(async () => {
   const legacyVlmKey = vlmConfig.takeLegacyEndpointKey()
   if (legacyVlmKey) setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey)
 
-  // Push any safeStorage-persisted cloud API keys into the backend cache so
-  // reqwest providers + settings_test_provider see them without a renderer round-trip.
-  // The VLM endpoint key is skipped: the speech resolver would never read that
-  // tag, and pushing one subsystem's secret into the other's config cache is
-  // exactly the coupling this key's own tag exists to avoid.
-  for (const [provider, key] of Object.entries(loadAllKeys())) {
-    if (provider === VLM_ENDPOINT_KEY_TAG || provider.startsWith('model-')) continue
-    backend.setCloudKey(provider, key)
-  }
-  // …and the TS-owned local-engine config (non-secret binary/model paths) so the
-  // speech resolver sees a COMPLETE speech_config snapshot (cloud keys + local
-  // config) before the first transcribe_clip. Ordered right after the keys, well
-  // ahead of the MCP host start below.
-  for (const [tag, lc] of Object.entries(speechConfig.get().local)) {
-    backend.setLocalBackend(tag, lc.binary, lc.model, lc.device ?? null, lc.threads ?? null, lc.tokens ?? null)
-  }
+  // Nothing to push into the backend: speech keys and local paths travel with
+  // each call, merged by `getSpeech` below (ADR 0148).
 
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capture singleton so
@@ -891,7 +876,10 @@ app.whenReady().then(async () => {
     probeMedia: (p: string, importId?: string) => backend!.probeMedia(p, workspaceEvents.requireCurrent(), importId),
     hashMediaSource: (p: string, importId?: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent(), importId),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
-    synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
+    // TTS reads its OpenAI key from the same per-call snapshot transcription
+    // gets (ADR 0148); injected here, the one place every synthesis passes.
+    synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(
+      JSON.stringify({ ...(JSON.parse(argsJson) as Record<string, unknown>), speech_config: getSpeech().config })),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
     reduceShotReport: (reportJson: string, sensitivity: number, minShotUs: number, inUs: number, outUs: number) =>
       backend!.reduceShotReport(reportJson, sensitivity, minShotUs, inUs, outUs),
@@ -1105,7 +1093,26 @@ app.whenReady().then(async () => {
   // `clipCompute` dispatch in `backend:invoke`: the injection is what decides
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
-  const getPreferredEngine = (): string | null => models?.active('speech')?.backend ?? null
+  const getSpeech = (): { config: Record<string, unknown>; preferred: string | null } => {
+    // Read at call time, every time: the model store owns the selection and
+    // safeStorage the keys, so a snapshot is never staler than the call.
+    const profile = models?.active('speech')
+    const keys = loadAllKeys()
+    const cloud = !!profile && !profile.local && !profile.endpoint
+    return {
+      config: toSpeechBackendSnapshot({
+        // The active local profile is already projected into the store
+        // (model-feature `applyActive`), beside any engine set up by hand.
+        local: speechConfig.get().local,
+        // The selected cloud profile's own key; otherwise the `openai` tag's,
+        // which TTS uses whatever transcribes.
+        openaiKey: cloud ? keys[profile.keyTag ?? 'openai'] : keys.openai,
+        endpoint: profile?.endpoint ?? null,
+        endpointKey: profile?.endpoint ? keys[profile.keyTag ?? ''] : null,
+      }),
+      preferred: profile?.backend ?? null,
+    }
+  }
   const getVlm = (): {
     config: Record<string, unknown>
     preferred: string | null
@@ -1146,7 +1153,7 @@ app.whenReady().then(async () => {
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, {
     getTsHost: () => tsHost,
-    getPreferredEngine,
+    getSpeech,
     getVlm,
     // `detect_pauses` reads the same peaks file the timeline draws, so the
     // agent's bands and the person's are the same bands.
@@ -1520,12 +1527,11 @@ app.whenReady().then(async () => {
       const buf = Buffer.from(b64, 'base64')
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
     }
-    // API-key writes need safeStorage (main-only) + a push into the backend
-    // cache. Intercept here; status/test fall through to the Rust dispatcher.
+    // API-key writes need safeStorage (main-only), so they are intercepted
+    // here. The next speech call reads the key through `getSpeech`.
     if (channel === 'settings_set_api_key') {
       const { provider, key } = (args ?? {}) as { provider: string; key: string }
       setKey(provider, key)
-      backend!.setCloudKey(provider, (key ?? '').trim())
       return null
     }
     if (channel === 'models_unselect') { models!.unselect((args as { family: ModelFamily }).family); return null }
@@ -1538,18 +1544,25 @@ app.whenReady().then(async () => {
     if (channel === 'settings_clear_api_key') {
       const { provider } = (args ?? {}) as { provider: string }
       clearKey(provider)
-      backend!.clearCloudKey(provider)
       return null
     }
-    // Speech backends. Like the API-key writes above, these are
-    // intercepted here — the reads merge Rust-side availability with the
-    // TS-owned config store, and the writes both persist non-secret local config
-    // AND push it into the backend cache (setLocalBackend, the non-secret sibling
-    // of setCloudKey). Intercepted BEFORE the router, so they never route to Rust.
+    // Speech backends. Like the API-key writes above, these are intercepted
+    // here — the reads carry the same per-call config snapshot transcribe_clip
+    // gets (ADR 0148), so the panel and the resolver cannot disagree, and the
+    // writes persist non-secret local config to the TS store, which IS the
+    // apply. Intercepted BEFORE the router, so they never route to Rust bare.
+    if (channel === 'settings_get_api_key_status' || channel === 'settings_test_provider') {
+      const json = await backend!.invoke(channel, JSON.stringify({
+        ...((args ?? {}) as Record<string, unknown>),
+        speechConfig: getSpeech().config,
+      }))
+      return JSON.parse(json)
+    }
     if (channel === 'settings_get_speech_backends') {
       const sc = speechConfig.get()
       const json = await backend!.invoke('settings_get_speech_backends', JSON.stringify({
         preferred: sc.preferred_engine === 'auto' ? null : sc.preferred_engine,
+        speechConfig: getSpeech().config,
       }))
       const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
       // Merge each LOCAL backend's stored paths/hints so the UI can populate its
@@ -1570,7 +1583,9 @@ app.whenReady().then(async () => {
     }
     if (channel === 'settings_set_local_backend') {
       const a = (args ?? {}) as { backend: string; binary: string; model: string; tokens?: string; device?: string; threads?: number }
-      const next = speechConfig.apply({
+      // The store sanitizes (trims paths, drops bogus threads, clears an entry
+      // with both paths blank), and the next call's snapshot reads that.
+      speechConfig.apply({
         local: {
           backend: a.backend,
           config: {
@@ -1582,26 +1597,17 @@ app.whenReady().then(async () => {
           },
         },
       })
-      // Push the PERSISTED (sanitized) entry, not the raw args — the store
-      // trims paths and drops bogus threads, and pushing anything else would
-      // give the live resolver a different config than the next launch reads.
-      // A sanitized-away entry (both paths blank) clears the cache entry too.
-      const entry = next.local[a.backend]
-      if (entry) backend!.setLocalBackend(a.backend, entry.binary, entry.model, entry.device ?? null, entry.threads ?? null, entry.tokens ?? null)
-      else backend!.clearLocalBackend(a.backend)
       return null
     }
     if (channel === 'settings_clear_local_backend') {
       const { backend: tag } = (args ?? {}) as { backend: string }
       speechConfig.apply({ local: { backend: tag, config: null } })
-      backend!.clearLocalBackend(tag)
       return null
     }
     // Video-understanding backends. Same interception rationale as the speech
-    // block above, minus its second half: there is no `backend!.setLocal*` push
-    // to mirror, because the VLM subsystem holds NO resident Rust config
-    // (ADR 0024). Persisting to the store IS the apply — the next describe_clip
-    // gets the merged snapshot injected from it.
+    // block above: the VLM subsystem holds NO resident Rust config (ADR 0024),
+    // so persisting to the store IS the apply — the next describe_clip gets the
+    // merged snapshot injected from it.
     if (channel === 'settings_get_vlm_backends') {
       const vc = vlmConfig.get()
       const endpointKey = loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null
@@ -1812,7 +1818,7 @@ app.whenReady().then(async () => {
       let result: Awaited<ReturnType<typeof callClipComputeTool>>
       try {
         result = await callClipComputeTool(
-          backend!, tsHost, channel, toolArgs, getPreferredEngine, getVlm, peaksPathFor,
+          backend!, tsHost, channel, toolArgs, getSpeech, getVlm, peaksPathFor,
           typeof requestId === 'string' ? { requestId } : {},
         )
       } catch (e) {
@@ -2444,8 +2450,8 @@ app.whenReady().then(async () => {
 
   // Fill blank speech-config fields from installed managed content — the ADR
   // 0039 consumer. The only-if-blank / whole-pair rules live in the pure
-  // speechAutofillPlan (unit-tested); this closure just applies the plan and
-  // pushes the store's SANITIZED entry to Rust, mirroring the
+  // speechAutofillPlan (unit-tested); this closure just applies the plan — the
+  // next speech call's snapshot reads the store, as after the
   // settings_set_local_backend intercept above.
   const autofillSpeechFromContent = (): void => {
     const plan = speechAutofillPlan(
@@ -2456,19 +2462,12 @@ app.whenReady().then(async () => {
       path.join,
     )
     for (const { backend: tag, config } of plan) {
-      const next = speechConfig.apply({ local: { backend: tag, config } })
-      const entry = next.local[tag]
-      if (entry) {
-        backend!.setLocalBackend(
-          tag, entry.binary, entry.model,
-          entry.device ?? null, entry.threads ?? null, entry.tokens ?? null,
-        )
-      }
+      speechConfig.apply({ local: { backend: tag, config } })
     }
   }
-  // The ADR 0055 twin of the above. No Rust push to mirror: the VLM subsystem
-  // is stateless (ADR 0024), so persisting to the store IS the whole apply —
-  // the next describe_clip reads it through the injected snapshot.
+  // The ADR 0055 twin of the above: the VLM subsystem is stateless too
+  // (ADR 0024), so persisting to the store IS the whole apply — the next
+  // describe_clip reads it through the injected snapshot.
   const autofillVlmFromContent = (): void => {
     const plan = vlmAutofillPlan(
       CONTENT_CATALOG,

@@ -155,7 +155,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     const peaksPathFor = vi.fn(() => 'C:/cache/fx/abc.peaks')
     await handleCallTool(fakeBackend(spy), () => ts, 'detect_pauses', { layer_id: layerId },
-      () => null, undefined, peaksPathFor)
+      undefined, undefined, peaksPathFor)
     expect(peaksPathFor).toHaveBeenCalledWith(layerId)
     expect(JSON.parse(spy.mock.calls[0][1]).peaks_path).toBe('C:/cache/fx/abc.peaks')
     await handleCallTool(fakeBackend(spy), () => ts, 'detect_pauses', { layer_id: layerId })
@@ -174,26 +174,32 @@ describe('handleCallTool flip routing', () => {
   // STRICT Rust-side override and must pass through untouched (and suppress the
   // preference injection); "auto" defers to the Rust resolver.
   const okEnvelope = (_n: string, _a: string) => Promise.resolve('{"ok":true,"result":{"content":[{"type":"text","text":"{}"}]}}')
+  // A speech provider selecting `preferred`, with one local engine configured.
+  const speech = (preferred: string | null) => () => ({ config: { whisper_cpp: { kind: 'local', binary: 'w', model: 'm' } }, preferred })
   it('injects the preferred engine as preferred_backend when the agent omits backend', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'whisper_cpp')
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.preferred_backend).toBe('whisper_cpp')
     expect(sent.backend).toBeUndefined() // never promoted to the strict arg
+    // The config rides in with the call: native holds none (ADR 0148).
+    expect(sent.speech_config).toEqual({ whisper_cpp: { kind: 'local', binary: 'w', model: 'm' } })
   })
   it('passes an explicit transcribe_clip backend through untouched and injects no preference', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone', backend: 'openai' }, () => 'whisper_cpp')
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone', backend: 'openai' }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.backend).toBe('openai')
     expect(sent.preferred_backend).toBeUndefined()
+    // An explicit engine still needs its configuration.
+    expect(sent.speech_config).toHaveProperty('whisper_cpp')
   })
   it('injects nothing when the preferred engine is auto', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'auto')
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, speech('auto'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.backend).toBeUndefined()
     expect(sent.preferred_backend).toBeUndefined()
@@ -206,9 +212,10 @@ describe('handleCallTool flip routing', () => {
   it('resolves the slice and injects the same hints when called directly', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await callClipComputeTool(fakeBackend(spy), ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'whisper_cpp')
+    await callClipComputeTool(fakeBackend(spy), ts, 'transcribe_clip', { layer_id: 'gone' }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.preferred_backend).toBe('whisper_cpp')
+    expect(sent.speech_config).toHaveProperty('whisper_cpp')
     // The slice keys the stateless Rust handler reads, present (null for a layer
     // the actor does not hold — Rust owns the not-found refusal).
     expect(sent).toHaveProperty('layer')
@@ -219,7 +226,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
-      () => null,
+      undefined,
       () => ({
         config: { qwen3_vl: { binary: 'q' } },
         preferred: 'qwen3_vl',
@@ -247,7 +254,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone', language: 'ja' },
-      () => null,
+      undefined,
       () => ({ config: {}, preferred: null, language: 'zh-CN', fps: 1, focus: 'general' }),
     )
     expect(JSON.parse(spy.mock.calls[0][1]).language).toBe('ja')
@@ -261,7 +268,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone', fps: 4, focus: 'general' },
-      () => null,
+      undefined,
       () => ({ config: {}, preferred: null, language: null, fps: 1, focus: 'shot-type' }),
     )
     const sent = JSON.parse(spy.mock.calls[0][1])
@@ -276,7 +283,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
-      () => null,
+      undefined,
       () => ({ config: {}, preferred: null, language: null, fps: null, focus: null }),
     )
     const sent = JSON.parse(spy.mock.calls[0][1])

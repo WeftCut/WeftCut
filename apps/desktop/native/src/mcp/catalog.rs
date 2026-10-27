@@ -259,8 +259,22 @@ mod tests {
                     !props.contains_key("vlm_config"),
                     "{name}: `vlm_config` must not be advertised (schemars skip)"
                 );
+                // …and transcribe_clip the speech one (ADR 0148).
+                assert!(
+                    !props.contains_key("speech_config"),
+                    "{name}: `speech_config` must not be advertised (schemars skip)"
+                );
             }
         }
+        // TTS carries the same injected config (its OpenAI key).
+        let tts = cat
+            .tools
+            .iter()
+            .find(|t| t.name == "synthesize_speech")
+            .expect("synthesize_speech must be advertised");
+        assert!(tts.input_schema["properties"]
+            .as_object()
+            .is_some_and(|p| !p.contains_key("speech_config")));
     }
 
     #[cfg(feature = "speech")]

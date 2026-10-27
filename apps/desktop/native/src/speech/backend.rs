@@ -70,11 +70,11 @@ pub const DEFAULT_ORDER: &[SpeechBackend] = &[
 ];
 
 impl SpeechBackend {
-    /// Stable string tag — the `Backend.speech_config` map key AND the TS/napi
+    /// Stable string tag — the injected `speech_config` map key AND the TS/napi
     /// wire contract.
     ///
     /// HARD CONSTRAINT: `OpenAi` MUST stay `"openai"`. That exact string is the
-    /// `set_cloud_key("openai", …)` argument pushed in from TS, the Settings
+    /// key's safeStorage tag the host builds the `openai` entry from, the Settings
     /// status command's `provider` field, and the key format persisted in
     /// `cloud_keys.json`. New backends use `"whisper_cpp"` / `"funasr"` /
     /// `"byo_endpoint"` (the same tag as the video-understanding endpoint; the

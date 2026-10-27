@@ -1075,8 +1075,11 @@ sidecars (whisper.cpp, FunASR via sherpa-onnx) and any OpenAI-compatible
 transcription server (whisper.cpp's `whisper-server`, speaches, vLLM, a
 hosted provider) — behind one entry point.
 The API key (secret) lives in `safeStorage`; local engine paths live in a
-TS-owned config store; Electron main merges both into the snapshot the
-stateless Rust resolver reads. The resolver picks a transcriber by **user
+TS-owned config store; Electron main merges both, with the selected
+model's endpoint, into a snapshot it injects into every call that resolves a
+speech engine — `transcribe_clip`, `synthesize_speech` and the Settings
+status reads — so the stateless Rust resolver holds nothing between calls
+([ADR 0148](adr/0148-speech-configuration-travels-with-each-call.md)). The resolver picks a transcriber by **user
 preference then availability** (cloud = has key; local = binary + model
 present), falls through a default order, and errors with an actionable
 message naming every remedy when nothing is available.

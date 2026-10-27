@@ -1182,6 +1182,14 @@ pub(super) struct TranscribeClipArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub preferred_backend: Option<String>,
+    /// Injected by the TS MCP host: the merged speech backend config snapshot
+    /// (cloud key + local paths + the active endpoint), keyed by backend tag —
+    /// stateless like describe_clip's `vlm_config` (ADR 0148). Never advertised,
+    /// and never serialized: it carries keys, and these args feed log details.
+    /// Empty → "no backend available".
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
     /// Ask for exact per-word times where the engine can emit them. Default
     /// true; `false` forces SRT-style interpolated words. The result's
     /// `word_timing` reports what you got.
@@ -1240,6 +1248,11 @@ pub(crate) struct SynthesizeSpeechArgs {
     )]
     #[serde(default)]
     pub t_start_us: Option<i64>,
+    /// Injected by the TS host — see `TranscribeClipArgs::speech_config`. TTS
+    /// reads its OpenAI key from here. Never advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
 }
 
 /// Shared source-audio coordinates for transcription and model-free extraction.
@@ -1534,19 +1547,19 @@ async fn transcribe_clip_job(
     )?;
 
     let (used_backend, transcriber) = {
-        let cfg = b.speech_config.lock().expect("speech_config poisoned");
+        let cfg = &args.speech_config;
         match explicit.or(preferred) {
             Some(b) => (
                 b,
                 // Strict-resolution failures are the caller's/config's to fix
                 // (wrong choice or missing key/binary/model) → invalid_request,
                 // not internal_error.
-                speech::resolve_transcriber_exact(b, &cfg)
+                speech::resolve_transcriber_exact(b, cfg)
                     .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
             ),
             // The shared message names the Settings remedy a person acts on; an
             // agent has a path of its own, so the tool names that too.
-            None => speech::resolve_transcriber(preferred, &cfg).ok_or_else(|| {
+            None => speech::resolve_transcriber(preferred, cfg).ok_or_else(|| {
                 McpToolError::invalid_request(
                     format!(
                         "{}; or call `extract_clip_audio` and transcribe its WAV with a speech model of your own",
@@ -1674,8 +1687,8 @@ pub(super) struct DescribeClipArgs {
     pub preferred_backend: Option<String>,
     /// Injected by the TS MCP host: the merged video-understanding backend
     /// config snapshot (cloud key + local paths + endpoint), keyed by backend
-    /// tag. The subsystem is stateless (ADR 0024) — unlike transcribe_clip, VLM
-    /// config is not held on `Backend`; it rides in with the call. `#[schemars(skip)]`
+    /// tag. The subsystem is stateless (ADR 0024) — like transcribe_clip's
+    /// `speech_config`, it is not held on `Backend`; it rides in with the call. `#[schemars(skip)]`
     /// keeps it out of the advertised schema; empty → "no backend available".
     #[serde(default)]
     #[schemars(skip)]
@@ -2166,13 +2179,10 @@ pub(crate) async fn synthesize_speech_audio(
         return Err(McpToolError::invalid_params("text is empty", None));
     }
 
-    let synthesizer = {
-        let cfg = b.speech_config.lock().expect("speech_config poisoned");
-        // `preferred: None` — TTS has one capable backend (OpenAI), so there is
-        // no preference to honor; the resolver's availability walk suffices.
-        speech::resolve_synthesizer(None, &cfg)
-    }
-    .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;
+    // `preferred: None` — TTS has one capable backend (OpenAI), so there is no
+    // preference to honor; the resolver's availability walk suffices.
+    let synthesizer = speech::resolve_synthesizer(None, &args.speech_config)
+        .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;
 
     let cache_key = speech::backends::openai::tts_cache_key(&args.text, &args.voice, args.speed);
     // Cache extension hardcoded "mp3": the only TTS provider pins
@@ -2376,16 +2386,6 @@ mod compute_job_tests {
         std::fs::write(&model, b"model").unwrap();
         let sink = Arc::new(VecEventSink::new());
         let backend = Backend::new_for_test_with_sink(sink.clone());
-        backend.speech_config.lock().unwrap().insert(
-            "whisper_cpp".into(),
-            crate::speech::config::BackendConfig::Local {
-                binary,
-                model,
-                tokens: None,
-                device: None,
-                threads: None,
-            },
-        );
         let media = media(source, MediaKind::Audio);
         let layer = layer(
             LayerParams::Audio(crate::state::AudioParams {
@@ -2402,9 +2402,13 @@ mod compute_job_tests {
             }),
             1_000_000,
         );
+        // The engine rides in with the call, as the host injects it.
         let args = json!({
             "layer_id": layer.id.to_string(), "backend": "whisper_cpp",
             "word_timestamps": false, "layer": layer, "media": media,
+            "speech_config": { "whisper_cpp": {
+                "kind": "local", "binary": binary, "model": model,
+            } },
         });
         Some(Transcription {
             backend: Arc::new(backend),

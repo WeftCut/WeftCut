@@ -39,16 +39,6 @@ pub struct Backend {
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
-    /// Per-backend speech config, keyed by the stable backend tag ("openai",
-    /// "whisper_cpp", …). Cloud entries are `BackendConfig::ApiKey` (plaintext,
-    /// pushed in by Electron main after decrypting safeStorage via
-    /// `set_cloud_key`); local entries are `BackendConfig::Local` binary/model
-    /// paths (pushed by the TS config store, `main/speech-config.ts`, via
-    /// `set_local_backend`). Read synchronously by the speech resolver. Always
-    /// compiled (feature-independent) so main can push keys regardless of the
-    /// addon's feature set.
-    pub(crate) speech_config:
-        std::sync::Mutex<std::collections::HashMap<String, crate::speech::config::BackendConfig>>,
     /// Clip-compute jobs started with a host-injected `job_id`, so the host can
     /// cancel one by id (`cancel_compute_job`).
     pub(crate) compute_jobs: crate::compute_jobs::ComputeJobs,
@@ -100,7 +90,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
-        speech_config: std::sync::Mutex::new(std::collections::HashMap::new()),
         compute_jobs: crate::compute_jobs::ComputeJobs::default(),
     }
 }
@@ -261,118 +250,6 @@ impl Backend {
         self.dispatch(&cmd, &args_json)
             .await
             .map_err(Error::from_reason)
-    }
-
-    /// Push a decrypted cloud API key into the in-memory speech config, stored
-    /// as `BackendConfig::ApiKey` under the backend tag. Called by Electron main
-    /// after reading safeStorage; never a renderer-invoke arm (key material
-    /// stays off the renderer). Signature and the `cloud_keys.json` on-disk
-    /// format are a TS wire contract (`main/keys.ts` safeStorage-decrypts the
-    /// file and calls this) — do not change either. The local-config
-    /// counterpart is `set_local_backend`.
-    #[napi]
-    pub fn set_cloud_key(&self, provider: String, key: String) {
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .insert(provider, crate::speech::config::BackendConfig::ApiKey(key));
-    }
-
-    /// Remove a backend's config entry from the cache (key cleared in Settings).
-    /// Signature is a TS wire contract, same as `set_cloud_key`.
-    #[napi]
-    pub fn clear_cloud_key(&self, provider: String) {
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .remove(&provider);
-    }
-
-    /// Push a local engine's (non-secret) config into the in-memory speech
-    /// config as `BackendConfig::Local` under the backend tag — the local-config
-    /// counterpart to `set_cloud_key`; see ADR 0036 / `speech::config` for the
-    /// split-by-secrecy rule. Electron main (`speech-config.ts`) calls this on
-    /// startup and on every Settings change so the resolver sees a complete
-    /// `speech_config` snapshot before the first `transcribe_clip`.
-    ///
-    /// `tokens` is a TRAILING optional (FunASR's sherpa-onnx `tokens.txt`, part
-    /// of the model bundle) so it is backward-compatible — whisper.cpp callers
-    /// omit it (or pass `null`) and it stays `None`, unused by that engine.
-    #[napi]
-    pub fn set_local_backend(
-        &self,
-        backend: String,
-        binary: String,
-        model: String,
-        device: Option<String>,
-        threads: Option<u32>,
-        tokens: Option<String>,
-    ) {
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .insert(
-                backend,
-                crate::speech::config::BackendConfig::Local {
-                    binary: std::path::PathBuf::from(binary),
-                    model: std::path::PathBuf::from(model),
-                    tokens: tokens.map(std::path::PathBuf::from),
-                    device,
-                    threads,
-                },
-            );
-    }
-
-    /// Remove a local engine's config entry (its paths were cleared in
-    /// Settings). Mirror of `clear_cloud_key`; distinct name so the caller reads
-    /// as the local-config counterpart to `set_local_backend`.
-    #[napi]
-    pub fn clear_local_backend(&self, backend: String) {
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .remove(&backend);
-    }
-
-    /// Push an OpenAI-compatible transcription server's config into the
-    /// in-memory speech config as `BackendConfig::Endpoint` under the backend
-    /// tag (`"byo_endpoint"`). URL, model and timeout come from the active model
-    /// profile; `api_key` from safeStorage, never from a file — the same
-    /// split-by-secrecy rule as `set_cloud_key` / `set_local_backend`, in one
-    /// call because the endpoint is one profile. Blank `model` / `api_key` are
-    /// stored as absent, so no empty `model` field or bare `Bearer ` header is
-    /// ever sent. Removed with `clear_endpoint_backend`.
-    #[napi]
-    pub fn set_endpoint_backend(
-        &self,
-        backend: String,
-        url: String,
-        model: Option<String>,
-        api_key: Option<String>,
-        timeout_s: Option<u32>,
-    ) {
-        let nonblank = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .insert(
-                backend,
-                crate::speech::config::BackendConfig::Endpoint {
-                    url,
-                    api_key: nonblank(api_key),
-                    model: nonblank(model),
-                    timeout_s: timeout_s.map(u64::from),
-                },
-            );
-    }
-
-    /// Remove an endpoint's config entry. Mirror of `clear_local_backend`.
-    #[napi]
-    pub fn clear_endpoint_backend(&self, backend: String) {
-        self.speech_config
-            .lock()
-            .expect("speech_config poisoned")
-            .remove(&backend);
     }
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
@@ -1218,15 +1095,22 @@ impl Backend {
             "export_video_sink_cancel" => {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
+            // The speech arms take their config in `args` like the VLM ones
+            // below (ADR 0148): Electron main injects `speechConfig` per call.
             #[cfg(feature = "speech")]
             "settings_get_api_key_status" => {
-                ser(crate::commands::speech::settings_get_api_key_status(self).await)
+                let a: crate::commands::speech::SpeechConfigArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::speech::settings_get_api_key_status(&a.speech_config).await)
             }
             #[cfg(feature = "speech")]
             "settings_test_provider" => {
                 let a: crate::commands::speech::SettingsTestProviderArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::speech::settings_test_provider(self, a.provider).await)
+                ser(
+                    crate::commands::speech::settings_test_provider(&a.speech_config, a.provider)
+                        .await,
+                )
             }
             #[cfg(feature = "speech")]
             "settings_verify_model" => {
@@ -1245,7 +1129,11 @@ impl Backend {
             "settings_get_speech_backends" => {
                 let a: crate::commands::speech::SpeechBackendsArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::speech::settings_get_speech_backends(self, a.preferred).await)
+                ser(crate::commands::speech::settings_get_speech_backends(
+                    &a.speech_config,
+                    a.preferred,
+                )
+                .await)
             }
             // Takes no `&self`: the video-understanding subsystem is stateless
             // (ADR 0024), so its config arrives in `args` exactly as it does for
@@ -1631,39 +1519,48 @@ mod tests {
         }
     }
 
+    /// The status reads the config injected with THIS call and nothing else:
+    /// a key in one call's `speechConfig` is gone from the next call that does
+    /// not carry it — there is no resident cache to remember it (ADR 0148).
     #[cfg(feature = "speech")]
     #[tokio::test]
-    async fn settings_status_reflects_cache() {
+    async fn settings_status_reflects_the_injected_config_only() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
-        // Unconfigured: openai present in the list, configured=false.
-        let out = b
-            .dispatch("settings_get_api_key_status", "{}")
+        let openai = |out: String| {
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            v.as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["provider"] == "openai")
+                .unwrap()
+                .clone()
+        };
+        // Unconfigured (and a bare `{}`): openai listed, configured=false.
+        let row = openai(
+            b.dispatch("settings_get_api_key_status", "{}")
+                .await
+                .unwrap(),
+        );
+        assert_eq!(row["configured"], false);
+        assert!(row["label"].as_str().unwrap().contains("OpenAI"));
+        // A key in the call: configured=true.
+        let row = openai(
+            b.dispatch(
+                "settings_get_api_key_status",
+                r#"{"speechConfig":{"openai":{"kind":"api_key","key":"sk-x"}}}"#,
+            )
             .await
-            .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let openai = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["provider"] == "openai")
-            .unwrap();
-        assert_eq!(openai["configured"], false);
-        assert!(openai["label"].as_str().unwrap().contains("OpenAI"));
-        // After a push: configured=true.
-        b.set_cloud_key("openai".into(), "sk-x".into());
-        let out = b
-            .dispatch("settings_get_api_key_status", "{}")
-            .await
-            .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let openai = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["provider"] == "openai")
-            .unwrap();
-        assert_eq!(openai["configured"], true);
+            .unwrap(),
+        );
+        assert_eq!(row["configured"], true);
+        // The next call without it: nothing was kept.
+        let row = openai(
+            b.dispatch("settings_get_api_key_status", "{}")
+                .await
+                .unwrap(),
+        );
+        assert_eq!(row["configured"], false);
     }
 
     #[cfg(feature = "speech")]
@@ -1696,81 +1593,9 @@ mod tests {
         assert_eq!(reply["error"]["code"], "not_found");
     }
 
-    #[tokio::test]
-    async fn cloud_key_cache_set_and_clear() {
-        use crate::speech::config::BackendConfig;
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        assert!(!b.speech_config.lock().unwrap().contains_key("openai"));
-        // set_cloud_key stores an ApiKey entry under the backend tag.
-        b.set_cloud_key("openai".into(), "sk-abc".into());
-        assert!(
-            matches!(
-                b.speech_config.lock().unwrap().get("openai"),
-                Some(BackendConfig::ApiKey(k)) if k == "sk-abc"
-            ),
-            "set_cloud_key must store BackendConfig::ApiKey(\"sk-abc\")"
-        );
-        b.clear_cloud_key("openai".into());
-        assert!(!b.speech_config.lock().unwrap().contains_key("openai"));
-    }
-
-    /// `set_local_backend` is the non-secret counterpart to `set_cloud_key`: it
-    /// stores a `BackendConfig::Local` (binary/model/tokens/device/threads) under
-    /// the backend tag, and `clear_local_backend` removes it. This is the
-    /// population path for the local engines, pushed by the TS config store.
-    /// whisper.cpp omits `tokens` (stored `None`); FunASR passes it through.
-    #[tokio::test]
-    async fn set_local_backend_stores_local_config() {
-        use crate::speech::config::BackendConfig;
-        use std::path::PathBuf;
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        assert!(!b.speech_config.lock().unwrap().contains_key("whisper_cpp"));
-        // whisper.cpp: the trailing `tokens` param is omitted → stored None.
-        b.set_local_backend(
-            "whisper_cpp".into(),
-            "/opt/whisper/whisper-cli".into(),
-            "/opt/whisper/ggml-base.bin".into(),
-            Some("cpu".into()),
-            Some(8),
-            None,
-        );
-        assert!(
-            matches!(
-                b.speech_config.lock().unwrap().get("whisper_cpp"),
-                Some(BackendConfig::Local { binary, model, tokens: None, device, threads })
-                    if binary == &PathBuf::from("/opt/whisper/whisper-cli")
-                        && model == &PathBuf::from("/opt/whisper/ggml-base.bin")
-                        && device.as_deref() == Some("cpu")
-                        && *threads == Some(8)
-            ),
-            "set_local_backend must store BackendConfig::Local with the given paths/hints and tokens=None"
-        );
-        // FunASR: tokens is passed through into the config.
-        b.set_local_backend(
-            "funasr".into(),
-            "/opt/sherpa/sherpa-onnx-offline".into(),
-            "/opt/sherpa/paraformer.onnx".into(),
-            None,
-            None,
-            Some("/opt/sherpa/tokens.txt".into()),
-        );
-        assert!(
-            matches!(
-                b.speech_config.lock().unwrap().get("funasr"),
-                Some(BackendConfig::Local { tokens: Some(t), .. })
-                    if t == &PathBuf::from("/opt/sherpa/tokens.txt")
-            ),
-            "set_local_backend must store the FunASR tokens path"
-        );
-        b.clear_local_backend("whisper_cpp".into());
-        assert!(!b.speech_config.lock().unwrap().contains_key("whisper_cpp"));
-    }
-
     /// `settings_get_speech_backends` lists EVERY backend with its live
     /// availability and marks the one the resolver would use. With an OpenAI key
-    /// set and no `preferred`, OpenAI is `available` + `selected`; the
+    /// injected and no `preferred`, OpenAI is `available` + `selected`; the
     /// unconfigured local engines report `needs_binary`. Proves the wire shape
     /// the Settings UI consumes and that `selected` tracks the resolver.
     #[cfg(feature = "speech")]
@@ -1778,9 +1603,11 @@ mod tests {
     async fn settings_get_speech_backends_reports_availability_and_selected() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
-        b.set_cloud_key("openai".into(), "sk-x".into());
         let out = b
-            .dispatch("settings_get_speech_backends", r#"{"preferred":null}"#)
+            .dispatch(
+                "settings_get_speech_backends",
+                r#"{"preferred":null,"speechConfig":{"openai":{"kind":"api_key","key":"sk-x"}}}"#,
+            )
             .await
             .unwrap();
         let rows: serde_json::Value = serde_json::from_str(&out).unwrap();

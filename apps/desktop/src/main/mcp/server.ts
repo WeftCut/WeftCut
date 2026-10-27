@@ -82,10 +82,21 @@ function unwrapEnvelope(env: Envelope): unknown {
 }
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
+/** Per-call speech config provider (transcribe_clip): the merged backend-config
+ *  snapshot the stateless resolver reads (ADR 0148) keyed by backend tag, plus
+ *  the selected engine, injected as a SOFT preference. Built at call time, so a
+ *  key saved or a model switched a moment ago is what the next call runs on.
+ *  `synthesize_speech` gets the same `config` at the host's compute facade. */
+export type SpeechProvider = () => {
+  config: Record<string, unknown>
+  preferred: string | null
+}
+const NO_SPEECH: SpeechProvider = () => ({ config: {}, preferred: null })
+
 /** Per-call VLM config provider (describe_clip + media://{id}/description): the
  *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed
- *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
- *  on the napi `Backend` like speech — it rides in with each call.
+ *  by backend tag, plus the user's SOFT preferred engine. Like speech's, it is
+ *  not held on the napi `Backend` — it rides in with each call.
  *
  *  `preferred`, `language`, `fps` and `focus` ride along because the description
  *  cache is keyed by all four — `preferred` through the backend it resolves and
@@ -149,7 +160,7 @@ export async function callClipComputeTool(
   tsHost: TsActorHost,
   name: string,
   args: Record<string, unknown>,
-  getPreferredEngine: () => string | null = () => null,
+  getSpeech: SpeechProvider = NO_SPEECH,
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
   caller?: ComputeCaller,
@@ -163,9 +174,14 @@ export async function callClipComputeTool(
   // ADR 0064: inject the explicitly selected model backend. None stays unset;
   // native resolution does not choose another configured model implicitly.
   // An agent's explicit backend override remains authoritative.
-  if (name === 'transcribe_clip' && merged.backend == null) {
-    const pref = getPreferredEngine()
-    if (pref && pref !== 'auto') merged.preferred_backend = pref
+  // Speech, like vision below, resolves against the per-call configuration
+  // (ADR 0148): nothing is held natively, so this injection is the whole config.
+  if (name === 'transcribe_clip') {
+    const speech = getSpeech()
+    merged.speech_config = speech.config
+    if (merged.backend == null && speech.preferred && speech.preferred !== 'auto') {
+      merged.preferred_backend = speech.preferred
+    }
   }
   // Vision resolves against the selected profile's per-call configuration.
   if (name === 'describe_clip') {
@@ -297,7 +313,7 @@ export async function handleCallTool(
   getTsHost: () => TsActorHost | null,
   name: string,
   args: Record<string, unknown>,
-  getPreferredEngine: () => string | null = () => null,
+  getSpeech: SpeechProvider = NO_SPEECH,
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
   client?: string,
@@ -316,7 +332,7 @@ export async function handleCallTool(
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor, client, compute)
+    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError) return toolErrorResult({code:'invalid_params',message:e.message});
@@ -347,7 +363,7 @@ async function dispatchTool(
   route: ReturnType<typeof routeMcpTool>,
   name: string,
   args: Record<string, unknown>,
-  getPreferredEngine: () => string | null,
+  getSpeech: SpeechProvider,
   getVlm: VlmProvider,
   peaksPathFor: PeaksPathProvider,
   client: string | undefined,
@@ -546,7 +562,7 @@ async function dispatchTool(
       if (refused) return refused
       // Throws the SDK-shaped envelope error for the renderer's sake; the outer
       // catch maps its code back onto an `isError` result for the agent.
-      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm, peaksPathFor, compute)
+      return callClipComputeTool(backend, tsHost, name, args, getSpeech, getVlm, peaksPathFor, compute)
     }
     // route === 'rust' → fall through (other reads are served by the backend).
   }
@@ -882,7 +898,7 @@ export interface McpServerOptions {
    *  a seam. Absent (tests, a direct `buildMcpServer`) reports `0.0.0-dev`. */
   version?: string
   getTsHost?: () => TsActorHost | null
-  getPreferredEngine?: () => string | null
+  getSpeech?: SpeechProvider
   getVlm?: VlmProvider
   /** Resolves a subject Audio layer to the baked peaks file `detect_pauses`
    *  must read. Omitted → the raw media peaks, the pre-bake behaviour. */
@@ -898,7 +914,7 @@ export interface McpServerOptions {
 
 export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
   const getTsHost = opts.getTsHost ?? (() => null)
-  const getPreferredEngine = opts.getPreferredEngine ?? (() => null)
+  const getSpeech = opts.getSpeech ?? NO_SPEECH
   const getVlm = opts.getVlm ?? NO_VLM
   const peaksPathFor = opts.peaksPathFor ?? NO_PEAKS_PATH
   // `observe` is the session's to supply, not the caller's: it is the one log
@@ -955,7 +971,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const compute = COMPUTE_TOOLS.has(name)
       ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
       : undefined
-    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor, client, compute)
+    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(withCanonicalToolName(req), extra))

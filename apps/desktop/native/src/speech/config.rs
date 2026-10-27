@@ -2,28 +2,29 @@
 //! resolver uses to decide whether a backend can actually run right now.
 //!
 //! ADR 0036 "Config splits by secrecy": the OpenAI **key** is secret — it lives
-//! in the `safeStorage`-backed cache and is persisted as `cloud_keys.json`. A
-//! local engine's **paths** (binary, model) are non-secret and come from a
-//! TS-owned config store (`main/speech-config.ts` → `speech_config.json`).
-//! Electron main merges both into the single
-//! `Backend.speech_config: HashMap<String, BackendConfig>` snapshot the
-//! stateless Rust resolver reads (keyed by [`SpeechBackend::as_str`]) — the
-//! `ApiKey` arm arrives via the unchanged `set_cloud_key`, the `Local` arm via
-//! `set_local_backend`.
+//! in safeStorage, persisted as `cloud_keys.json`. A local engine's **paths**
+//! (binary, model) are non-secret and come from a TS-owned config store
+//! (`main/speech-config.ts` → `speech_config.json`). Electron main merges both,
+//! plus the active endpoint profile, into one `HashMap<String, BackendConfig>`
+//! snapshot (keyed by [`SpeechBackend::as_str`]) and injects it into every call
+//! that resolves a backend (`speech_config` / `speechConfig` arg, ADR 0148) —
+//! nothing is held on `Backend`, so the resolver is stateless like the VLM one.
 
 use std::path::PathBuf;
 
 use super::backend::{Locality, SpeechBackend};
 
-/// One backend's configuration, tagged by locality.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One backend's configuration, tagged by locality. Deserializes from the
+/// injected wire shape ([`WireConfig`]): `{"kind":"api_key","key":…}`,
+/// `{"kind":"local",…}` or `{"kind":"endpoint",…}`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(from = "WireConfig")]
 pub enum BackendConfig {
-    /// A cloud backend's API key (secret). Inserted by `Backend::set_cloud_key`
-    /// under the backend tag; the persisted shape is `cloud_keys.json`.
+    /// A cloud backend's API key (secret), from safeStorage; the persisted
+    /// shape is `cloud_keys.json`.
     ApiKey(String),
     /// A local sidecar's on-disk config: the CLI binary + model file, with
-    /// optional device / thread hints. Populated from the TS config store via
-    /// `Backend::set_local_backend`.
+    /// optional device / thread hints, from the TS config store.
     Local {
         binary: PathBuf,
         model: PathBuf,
@@ -45,6 +46,71 @@ pub enum BackendConfig {
         model: Option<String>,
         timeout_s: Option<u64>,
     },
+}
+
+/// The JSON each injected entry arrives as, internally tagged by `kind` like
+/// the VLM `BackendConfig`. A newtype `ApiKey(String)` cannot be internally
+/// tagged, so the wire names its key field and converts.
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum WireConfig {
+    ApiKey {
+        key: String,
+    },
+    Local {
+        binary: PathBuf,
+        model: PathBuf,
+        #[serde(default)]
+        tokens: Option<PathBuf>,
+        #[serde(default)]
+        device: Option<String>,
+        #[serde(default)]
+        threads: Option<u32>,
+    },
+    Endpoint {
+        url: String,
+        #[serde(default)]
+        api_key: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        timeout_s: Option<u64>,
+    },
+}
+
+impl From<WireConfig> for BackendConfig {
+    fn from(wire: WireConfig) -> Self {
+        // Blank `model` / `api_key` are absent: no empty `model` field and no
+        // bare `Bearer ` header is ever sent to a server that wants neither.
+        let nonblank = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
+        match wire {
+            WireConfig::ApiKey { key } => BackendConfig::ApiKey(key.trim().to_string()),
+            WireConfig::Local {
+                binary,
+                model,
+                tokens,
+                device,
+                threads,
+            } => BackendConfig::Local {
+                binary,
+                model,
+                tokens,
+                device,
+                threads,
+            },
+            WireConfig::Endpoint {
+                url,
+                api_key,
+                model,
+                timeout_s,
+            } => BackendConfig::Endpoint {
+                url,
+                api_key: nonblank(api_key),
+                model: nonblank(model),
+                timeout_s,
+            },
+        }
+    }
 }
 
 /// Whether a backend can run right now, and if not, the single most-actionable
@@ -277,6 +343,51 @@ mod tests {
         assert_eq!(
             availability(SpeechBackend::WhisperCpp, Some(&cfg)),
             Availability::Available,
+        );
+    }
+
+    #[test]
+    fn the_injected_wire_shape_deserializes_into_each_arm() {
+        let map: std::collections::HashMap<String, BackendConfig> =
+            serde_json::from_value(serde_json::json!({
+                "openai": { "kind": "api_key", "key": " sk-x " },
+                "whisper_cpp": { "kind": "local", "binary": "w", "model": "m", "threads": 4 },
+                "funasr": { "kind": "local", "binary": "s", "model": "p", "tokens": "t",
+                            "device": "cpu" },
+                "byo_endpoint": { "kind": "endpoint", "url": "http://h/v1/audio/transcriptions",
+                                  "api_key": "", "model": " ", "timeout_s": 900 },
+            }))
+            .unwrap();
+        assert_eq!(map["openai"], BackendConfig::ApiKey("sk-x".into()));
+        assert_eq!(
+            map["whisper_cpp"],
+            BackendConfig::Local {
+                binary: "w".into(),
+                model: "m".into(),
+                tokens: None,
+                device: None,
+                threads: Some(4),
+            }
+        );
+        assert_eq!(
+            map["funasr"],
+            BackendConfig::Local {
+                binary: "s".into(),
+                model: "p".into(),
+                tokens: Some("t".into()),
+                device: Some("cpu".into()),
+                threads: None,
+            }
+        );
+        // Blank key and model are absent, never sent.
+        assert_eq!(
+            map["byo_endpoint"],
+            BackendConfig::Endpoint {
+                url: "http://h/v1/audio/transcriptions".into(),
+                api_key: None,
+                model: None,
+                timeout_s: Some(900),
+            }
         );
     }
 }

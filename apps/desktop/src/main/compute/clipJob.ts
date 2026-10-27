@@ -16,10 +16,11 @@ export interface ClipJobSpec {
 
 /** The args that change a tool's ANSWER, beyond the source span. Everything
  *  else on the call (the layer id, the injected slice) is identity, read
- *  through the source below. `vlm_config` is in because it names the model a
- *  description resolves to; it is hashed with the rest, never kept. */
+ *  through the source below. `speech_config` / `vlm_config` are in because they
+ *  name the model an answer resolves to; they are hashed with the rest, never
+ *  kept in the key. */
 const ANSWER_ARGS: Record<ComputeTool, readonly string[]> = {
-  transcribe_clip: ['backend', 'preferred_backend', 'language', 'normalize_audio', 'word_timestamps'],
+  transcribe_clip: ['backend', 'preferred_backend', 'language', 'normalize_audio', 'word_timestamps', 'speech_config'],
   describe_clip: ['backend', 'preferred_backend', 'language', 'fps', 'focus', 'vlm_config', 'purpose'],
 }
 

@@ -40,7 +40,7 @@ describe('clipJobSpec', () => {
 
   it('separates every answer-changing arg, the tool, the span and the source', () => {
     const base = key({})
-    for (const args of [{ language: 'en' }, { backend: 'openai' }, { preferred_backend: 'whisper_cpp' }, { normalize_audio: true }, { word_timestamps: false }, { t_end_us: 4_000_000 }]) {
+    for (const args of [{ language: 'en' }, { backend: 'openai' }, { preferred_backend: 'whisper_cpp' }, { normalize_audio: true }, { word_timestamps: false }, { speech_config: { whisper_cpp: { kind: 'local', binary: 'w', model: 'x' } } }, { t_end_us: 4_000_000 }]) {
       expect(key(args), JSON.stringify(args)).not.toBe(base)
     }
     expect(key({}, 'describe_clip')).not.toBe(base)

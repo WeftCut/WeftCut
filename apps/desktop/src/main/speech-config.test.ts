@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSpeechConfigStore, type SpeechConfigFs } from "./speech-config";
+import { createSpeechConfigStore, toSpeechBackendSnapshot, type SpeechConfigFs } from "./speech-config";
 
 const PATH = "/cfg/speech_config.json";
 const DIR = "/cfg";
@@ -147,5 +147,35 @@ describe("speech-config store", () => {
       local: { backend: "whisper_cpp", config: { binary: "/b", model: "/m", device: "  ", threads: 0 } },
     });
     expect(after.local.whisper_cpp).toEqual({ binary: "/b", model: "/m" });
+  });
+});
+
+describe("toSpeechBackendSnapshot", () => {
+  it("merges the key, every local engine and the endpoint into the wire shape", () => {
+    expect(toSpeechBackendSnapshot({
+      local: {
+        whisper_cpp: { binary: "w", model: "m", device: "cpu", threads: 4 },
+        funasr: { binary: "s", model: "p", tokens: "t" },
+      },
+      openaiKey: " sk-x ",
+      endpoint: { url: "http://h/v1/audio/transcriptions", model: "large-v3", timeout_s: 900 },
+      endpointKey: "ek",
+    })).toEqual({
+      openai: { kind: "api_key", key: "sk-x" },
+      whisper_cpp: { kind: "local", binary: "w", model: "m", device: "cpu", threads: 4 },
+      funasr: { kind: "local", binary: "s", model: "p", tokens: "t" },
+      byo_endpoint: { kind: "endpoint", url: "http://h/v1/audio/transcriptions", api_key: "ek", model: "large-v3", timeout_s: 900 },
+    });
+  });
+
+  it("leaves blank secrets and an unset endpoint out instead of sending them empty", () => {
+    expect(toSpeechBackendSnapshot({
+      local: {},
+      openaiKey: "  ",
+      endpoint: { url: "http://h/inference", model: "" },
+      endpointKey: "",
+    })).toEqual({ byo_endpoint: { kind: "endpoint", url: "http://h/inference" } });
+    expect(toSpeechBackendSnapshot({ local: {}, openaiKey: null, endpoint: { url: " " } })).toEqual({});
+    expect(toSpeechBackendSnapshot({ local: {} })).toEqual({});
   });
 });
