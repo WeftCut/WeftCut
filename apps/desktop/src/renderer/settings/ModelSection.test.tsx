@@ -182,6 +182,25 @@ describe("model settings", () => {
     await user.click(screen.getByRole("button", { name: "Add without selecting" }));
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "openai-whisper", backend: "openai", createCustom: true, saveOnly: true, apiKey: "test-key" }));
   });
+  // The speech twin of the vision endpoint: a transcription URL, a whisper-server
+  // hint, and no model name required (whisper-server serves the one it loaded).
+  it("adds an OpenAI-compatible transcription server without a model name", async () => {
+    readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await openPicker(user); await user.click(screen.getByRole("menuitem", { name: "Add custom model…" }));
+    await user.click(screen.getByRole("button", { name: /OpenAI-compatible/ }));
+    const url = screen.getByRole("textbox", { name: "URL" }) as HTMLInputElement;
+    expect(url.placeholder).toContain("/v1/audio/transcriptions");
+    expect(screen.getByText(/whisper-server/)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Request timeout (s)" })).toBeTruthy();
+    const add = screen.getByRole("button", { name: "Add without selecting" }) as HTMLButtonElement;
+    await user.type(screen.getByRole("textbox", { name: "Custom model name" }), "Intranet whisper");
+    expect(add.disabled).toBe(true);
+    await user.type(url, "http://10.0.0.5:8080/inference");
+    expect(add.disabled).toBe(false);
+    await user.click(add);
+    expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "speech-online", backend: "byo_endpoint", createCustom: true, saveOnly: true,
+      endpoint: { url: "http://10.0.0.5:8080/inference", model: "" } }));
+  });
   it("shows projector fields for the MiniCPM adapter and requires all local files", async () => {
     const user = userEvent.setup(); render(<ModelSection family="vlm" onError={vi.fn()} />);
     await openPicker(user); await user.click(screen.getByRole("menuitem", { name: "Add custom model…" }));

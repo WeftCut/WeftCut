@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createModelSettingsStore, freshModelSettings, migrateModelSettings, verifiedIdentity } from "./model-settings";
+import { builtinKeyTag, createModelSettingsStore, freshModelSettings, migrateModelSettings, verifiedIdentity } from "./model-settings";
 import { modelProfileToVlmSnapshot } from "./vlm-config";
 import { VLM_CONFIG_DEFAULTS } from "../shared/vlm-config";
 
@@ -95,6 +95,35 @@ describe("model settings migration", () => {
     expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint }))).toBe(before);
     expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint: { ...endpoint, timeout_s: 600 } }))).toBe(before);
     expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint: { ...endpoint, model: "n" } }))).not.toBe(before);
+  });
+  // Both families have a built-in `byo_endpoint`; a key typed for the
+  // transcription server must never be what the vision endpoint sends.
+  it("gives each family's built-in endpoint its own credential tag", () => {
+    expect(builtinKeyTag("vlm", "byo_endpoint")).toBe("vlm_endpoint");
+    expect(builtinKeyTag("speech", "byo_endpoint")).toBe("speech_endpoint");
+    expect(builtinKeyTag("speech", "openai")).toBe("openai");
+    expect(builtinKeyTag("speech", "whisper_cpp")).toBeUndefined();
+    const files = new Map<string, string>();
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    factory().set(freshModelSettings());
+    const restored = factory().get();
+    expect(restored.profiles.find(p => p.id === "speech-online")?.keyTag).toBe("speech_endpoint");
+    expect(restored.profiles.find(p => p.id === "vlm-online")?.keyTag).toBe("vlm_endpoint");
+  });
+  // Catalog entries reach a settings file written before they existed: the
+  // store starts from the catalog and overlays what is on disk.
+  it("offers the speech endpoint to a settings file that predates it, and reloads a custom one", () => {
+    const files = new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { speech: "whisper-base", vlm: null },
+      profiles: [{ id: "whisper-base" }, { id: "custom-stt", name: "Intranet", family: "speech", backend: "byo_endpoint", custom: true,
+        endpoint: { url: "http://10.0.0.5:8080/inference", model: "", timeout_s: 1200 } }] })]]);
+    const store = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    const state = store.get();
+    expect(state.profiles.find(p => p.id === "speech-online")).toMatchObject({ family: "speech", backend: "byo_endpoint", locality: "online" });
+    const custom = state.profiles.find(p => p.id === "custom-stt")!;
+    expect(custom).toMatchObject({ locality: "online", keyTag: "model-custom-stt", endpoint: { url: "http://10.0.0.5:8080/inference", model: "", timeout_s: 1200 } });
+    expect(state.active.speech).toBe("whisper-base");
   });
   it("reloads custom models while refusing forged catalog and credential references", () => {
     const files = new Map<string, string>();

@@ -38,7 +38,10 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
   // — it fills them from the catalog. Naming your own files instead makes them
   // required, since nothing else will supply them.
   const awaitingFiles = !newIdentity && !model.custom && model.locality === "local" && !model.installed;
-  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete || awaitingFiles : backend === "openai" ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && !!endpoint.model.trim());
+  // A transcription server usually serves the one model it loaded
+  // (whisper-server ignores the field), so its model name is optional.
+  const speechEndpoint = model.family === "speech" && backend === "byo_endpoint";
+  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete || awaitingFiles : backend === "openai" ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && (speechEndpoint || !!endpoint.model.trim()));
   const run = async (fn: () => Promise<void>) => {
     setBusyAction(true); onError("");
     try { await fn(); } catch (e) { onError(String(e)); }
@@ -83,9 +86,10 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
     </> : <>
       {backend === "byo_endpoint" ? <>
         <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_endpoint_url")}</span>
-          <AppInput value={endpoint.url} ariaLabel={t("settings.vlm_endpoint_url")} disabled={busy} placeholder="https://…/v1/chat/completions" onValueChange={url => setEndpoint(prev => ({ ...prev, url }))} /></div>
+          <AppInput value={endpoint.url} ariaLabel={t("settings.vlm_endpoint_url")} disabled={busy} placeholder={speechEndpoint ? "https://…/v1/audio/transcriptions" : "https://…/v1/chat/completions"} onValueChange={url => setEndpoint(prev => ({ ...prev, url }))} /></div>
+        {speechEndpoint && <p className="settings-toggle-hint">{t("models.speech_endpoint_hint")}</p>}
         <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_endpoint_model")}</span>
-          <AppInput value={endpoint.model} ariaLabel={t("settings.vlm_endpoint_model")} disabled={busy} onValueChange={model => setEndpoint(prev => ({ ...prev, model }))} /></div>
+          <AppInput value={endpoint.model} ariaLabel={t("settings.vlm_endpoint_model")} disabled={busy} {...(speechEndpoint ? { placeholder: t("models.model_optional") } : {})} onValueChange={model => setEndpoint(prev => ({ ...prev, model }))} /></div>
         {/* Saved with the endpoint but not part of its identity (the
             `endpointChanged` test above ignores it): a longer ceiling for the
             same server is the same model. Empty = automatic. */}

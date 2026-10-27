@@ -7,7 +7,7 @@ import { listen, type UnlistenFn } from "@/bridge/events";
 import { Button } from "@/components/ui/button";
 import { DialogDescription } from "@/components/ui/dialog";
 import { AppDialog } from "../components/AppDialog";
-import { canSwitchModel, ModelPicker } from "./ModelPicker";
+import { canSwitchModel, ModelPicker, ONLINE_MODEL_IDS } from "./ModelPicker";
 import { ModelEditor } from "./ModelEditor";
 import { AppIcon } from "@/components/AppIcon";
 
@@ -20,6 +20,7 @@ const adapters: Record<ModelFamily, { id: string; backend: ModelBackend; label: 
     { id: "whisper-base", backend: "whisper_cpp", label: "Whisper · whisper.cpp" },
     { id: "paraformer-zh", backend: "funasr", label: "FunASR · sherpa-onnx" },
     { id: "openai-whisper", backend: "openai", label: "OpenAI Whisper · whisper-1" },
+    { id: "speech-online", backend: "byo_endpoint", label: "OpenAI-compatible" },
   ],
   vlm: [
     { id: "qwen3-vl-4b", backend: "qwen3_vl", label: "Qwen3-VL · llama-mtmd" },
@@ -68,7 +69,7 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
   const active = models.find(m => m.id === view.active[family]);
   const operation = failure ?? view.operations.find(o => o.family === family);
   const preparing = submitting || !!operation && operation.phase !== "error";
-  const name = (m: ModelView) => m.id === "vlm-online" ? t("models.online_model") : m.name;
+  const name = (m: ModelView) => ONLINE_MODEL_IDS.includes(m.id) ? t("models.online_model") : m.name;
   const state = (m: ModelView) => t(m.locality === "local" && !m.installed ? m.custom ? "models.files_missing" : "models.not_downloaded" : m.active ? "models.current" : canSwitchModel(m) ? "models.ready" : "models.not_verified");
   const act = async (fn: () => Promise<void>) => {
     setSubmitting(true); setDialogError("");

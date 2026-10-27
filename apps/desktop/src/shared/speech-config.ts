@@ -8,13 +8,17 @@
 /// The engine the user prefers for transcription. `"auto"` lets the resolver
 /// pick by availability (its default order). The concrete tags mirror the Rust
 /// `SpeechBackend::as_str` wire contract.
-export type PreferredEngine = "auto" | "openai" | "whisper_cpp" | "funasr";
+export type PreferredEngine = "auto" | "openai" | "whisper_cpp" | "funasr" | "byo_endpoint";
 
 export const PREFERRED_ENGINES: readonly PreferredEngine[] = [
   "auto",
   "openai",
   "whisper_cpp",
   "funasr",
+  // An OpenAI-compatible transcription server (whisper-server, speaches, …).
+  // Listed so the model store's projection of a selected endpoint survives the
+  // store's validation instead of degrading to "auto".
+  "byo_endpoint",
 ];
 
 /// One local engine's on-disk config. `device` / `threads` are optional hints

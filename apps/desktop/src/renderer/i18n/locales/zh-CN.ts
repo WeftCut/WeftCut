@@ -233,6 +233,8 @@ const zhCN: Resources = {
     funasr_hint: "需要 sherpa-onnx 可执行文件、兼容的 ONNX 模型及配套的 tokens 文件。",
     whisper_hint: "需要 whisper.cpp 可执行文件和兼容的 Whisper 模型文件。",
     key_optional: "无需认证的服务可留空",
+    model_optional: "可选——多数转录服务器只提供一个模型",
+    speech_endpoint_hint: "任意兼容 OpenAI 的转录服务器。使用 whisper.cpp 时，以 --inference-path /v1/audio/transcriptions 启动 whisper-server，或直接填写其 /inference 地址。",
     endpoint_timeout: "请求超时（秒）",
     endpoint_timeout_hint: "留空为自动：等待时间随每次请求的大小增长。自建服务器较慢时可调高。",
   },

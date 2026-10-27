@@ -5,11 +5,18 @@ import { useTranslation } from "react-i18next";
 import type { ModelView } from "../../shared/inference-models";
 import { AppIcon } from "@/components/AppIcon";
 
+/** The built-in entry points for an OpenAI-compatible endpoint, one per
+ * family; shown under a translated name rather than their catalog name. */
+export const ONLINE_MODEL_IDS: readonly string[] = ["vlm-online", "speech-online"];
+
 /** Local files can be checked immediately. A service's first use needs its
- * configuration and test-request notice before any network request is sent. */
+ * configuration and test-request notice before any network request is sent.
+ * A transcription server may leave the model name blank (whisper-server
+ * serves the one it loaded); a vision endpoint must name one. */
 export function canSwitchModel(model: ModelView): boolean {
   if (model.locality === "local") return model.installed && model.supported;
-  return !!model.verified && (model.backend === "openai" ? model.hasKey : !!model.endpoint?.url && !!model.endpoint.model);
+  return !!model.verified && (model.backend === "openai" ? model.hasKey
+    : !!model.endpoint?.url && (model.family === "speech" || !!model.endpoint.model));
 }
 
 export function ModelPicker({ models, activeId, disabled, preparing, onChoose, onAdd }: {
@@ -21,7 +28,7 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
   onAdd(): void;
 }) {
   const { t } = useTranslation();
-  const name = (m: ModelView) => m.id === "vlm-online" ? t("models.online_model") : m.name;
+  const name = (m: ModelView) => ONLINE_MODEL_IDS.includes(m.id) ? t("models.online_model") : m.name;
   const host = (m: ModelView) => { try { return m.endpoint ? ` · ${new URL(m.endpoint.url).host}` : ""; } catch { return ""; } };
   const active = models.find(m => m.id === activeId);
   const status = (m: ModelView) => m.id === activeId ? t("models.current")

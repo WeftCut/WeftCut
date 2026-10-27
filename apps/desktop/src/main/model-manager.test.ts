@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ModelManager, type ModelManagerDeps } from "./model-manager";
 import { freshModelSettings, verifiedIdentity } from "./model-settings";
-import type { ModelLocalConfig } from "../shared/inference-models";
+import { MODEL_DEFINITIONS, type ModelLocalConfig } from "../shared/inference-models";
 
 const local = (id: string): ModelLocalConfig => ({ binary: `/managed/${id}/run.exe`, model: `/managed/${id}/weights`, ...(id === "qwen3-vl-4b" ? { mmproj: "/managed/projector" } : {}), ...(id === "paraformer-zh" ? { tokens: "/managed/tokens" } : {}) });
 function deferred<T>() { let resolve!: (v: T) => void; let reject!: (e: Error) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
@@ -190,6 +190,21 @@ describe("model library lifecycle", () => {
     manager.use({ id: "custom-test", endpoint, saveOnly: true }); await settle();
     expect(state().profiles.find(p => p.id === "custom-test")?.endpoint).not.toHaveProperty("timeout_s");
   });
+  // whisper-server serves the one model it loaded, so a transcription endpoint
+  // may leave the name blank; a vision endpoint still has to name its model.
+  it("activates a transcription server with a blank model name under its own key", async () => {
+    const { manager, state, keys } = setup();
+    expect(() => manager.use({ id: "vlm-online", name: "x", endpoint: { url: "http://h/v1/chat/completions", model: " " } })).toThrow(/model name/);
+    manager.use({ id: "speech-online", name: "Intranet whisper", apiKey: "stt-key",
+      endpoint: { url: "http://10.0.0.5:8080/v1/audio/transcriptions", model: "", timeout_s: 1800 } });
+    await settle();
+    const active = manager.active("speech")!;
+    expect(active).toMatchObject({ family: "speech", backend: "byo_endpoint", custom: true,
+      endpoint: { url: "http://10.0.0.5:8080/v1/audio/transcriptions", model: "", timeout_s: 1800 } });
+    expect(state().active.speech).toBe(active.id);
+    expect(keys.get(active.keyTag!)).toBe("stt-key");
+    expect(keys.get("vlm_endpoint")).toBeUndefined();
+  });
   it("refuses a request timeout outside 10–3600 whole seconds", () => {
     const { manager } = setup();
     const endpoint = { url: "http://localhost/v1/chat/completions", model: "vision" };
@@ -204,7 +219,7 @@ describe("model library lifecycle", () => {
     manager.use({ id: "whisper-base" }); await settle();
     manager.unselect("speech"); late.resolve({ device: "cpu" }); await settle();
     expect(state().active.speech).toBeNull(); expect(keys.get("openai")).toBe("saved");
-    expect(state().profiles).toHaveLength(5); expect(deps.removeContent).not.toHaveBeenCalled();
+    expect(state().profiles).toHaveLength(MODEL_DEFINITIONS.length); expect(deps.removeContent).not.toHaveBeenCalled();
   });
   it("removes the active custom profile and its key without deleting files", async () => {
     const { manager, deps, state, keys } = setup();

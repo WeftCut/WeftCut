@@ -26,6 +26,7 @@ pub mod backends;
 pub mod config;
 pub mod error;
 pub mod parse;
+pub mod split;
 pub mod synthesizer;
 pub mod transcriber;
 pub mod transcript;
@@ -103,6 +104,12 @@ pub fn resolve_transcriber_exact(
                       not found — set its path in Settings, or select another model in Settings"
                 .into(),
         }),
+        Availability::NeedsEndpoint => Err(SpeechError::Provider {
+            provider: backend,
+            message: "requested explicitly but no endpoint URL is configured — set it on the \
+                      model in Settings → Transcription, or select another model"
+                .into(),
+        }),
     }
 }
 
@@ -145,8 +152,8 @@ fn select_backend(
 }
 
 /// Build the concrete transcriber for an already-selected, `Available` backend.
-/// OpenAI (cloud), whisper.cpp and FunASR (local sidecars) all have real
-/// `impl`s. FunASR additionally requires its `tokens.txt` to be present — the
+/// OpenAI (cloud), whisper.cpp and FunASR (local sidecars) and the
+/// OpenAI-compatible endpoint all have real `impl`s. FunASR additionally requires its `tokens.txt` to be present — the
 /// arm only matches `tokens: Some(_)`, mirroring [`availability`] (which reports
 /// `NeedsModel` without it), so a tokens-less FunASR config falls to `None`
 /// rather than constructing an engine that cannot run. Reaching a `None` arm
@@ -192,6 +199,20 @@ fn construct_transcriber(
             *threads,
             device.clone(),
         ))),
+        (
+            SpeechBackend::ByoEndpoint,
+            Some(BackendConfig::Endpoint {
+                url,
+                api_key,
+                model,
+                timeout_s,
+            }),
+        ) => Some(Box::new(backends::endpoint::OpenAiCompatTranscriber::new(
+            url.clone(),
+            api_key.clone(),
+            model.clone(),
+            timeout_s.map(std::time::Duration::from_secs),
+        ))),
         _ => None,
     }
 }
@@ -232,6 +253,9 @@ pub struct ConnectionTestInfo {
 /// - **Local** — GUARD: the [`availability`] (file-existence) verdict errors
 ///   early, naming the missing binary/model (incl. FunASR's tokens), with **no
 ///   spawn**. Only once the files exist does the engine get a liveness spawn.
+/// - **Endpoint** — no URL → an error naming it; with one, a one-second
+///   synthetic silence is transcribed (there is no `/models` a whisper-server
+///   is guaranteed to serve), so the answer covers URL, key and format.
 pub async fn probe_backend(
     backend: SpeechBackend,
     cfg: Option<&BackendConfig>,
@@ -255,6 +279,34 @@ pub async fn probe_backend(
                 _ => Err(SpeechError::MissingKey { provider: backend }),
             }
         }
+        Locality::Endpoint => {
+            let Some(cfg @ BackendConfig::Endpoint { .. }) = cfg else {
+                return Err(SpeechError::Provider {
+                    provider: backend,
+                    message: "no endpoint URL configured — set it in Settings".into(),
+                });
+            };
+            let transcriber =
+                construct_transcriber(backend, Some(cfg)).ok_or_else(|| SpeechError::Provider {
+                    provider: backend,
+                    message: "no endpoint URL configured — set it in Settings".into(),
+                })?;
+            let dir = tempfile::tempdir()?;
+            let wav = dir.path().join("probe.wav");
+            tokio::fs::write(&wav, split::wav_bytes(&vec![0i16; 16_000])).await?;
+            let raw = transcriber
+                .transcribe(TranscribeRequest {
+                    audio_path: wav,
+                    language: Some("en".into()),
+                    want_word_timing: true,
+                })
+                .await?;
+            parse_raw(raw)?;
+            Ok(ConnectionTestInfo {
+                provider: backend.as_str().to_string(),
+                summary: "endpoint answered a transcription request".to_string(),
+            })
+        }
         Locality::Local => {
             // GUARD: bail on the file-existence verdict BEFORE any spawn, so a
             // missing binary/model reports NeedsBinary/NeedsModel with no child
@@ -274,8 +326,8 @@ pub async fn probe_backend(
                             .into(),
                     })
                 }
-                // Locality::Local never yields NeedsKey.
-                Availability::NeedsKey => {
+                // Locality::Local never yields NeedsKey / NeedsEndpoint.
+                Availability::NeedsKey | Availability::NeedsEndpoint => {
                     return Err(SpeechError::Provider {
                         provider: backend,
                         message: "local engine is not configured".into(),
@@ -339,7 +391,7 @@ pub async fn probe_backend(
                         }),
                     }
                 }
-                // OpenAI is Cloud — never reaches this Local arm.
+                // OpenAI / the endpoint never reach this Local arm.
                 _ => Ok(ConnectionTestInfo {
                     provider: backend.as_str().to_string(),
                     summary: "binary and model present".to_string(),

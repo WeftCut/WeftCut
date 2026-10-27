@@ -25,6 +25,18 @@ pub enum SpeechError {
     #[error("audio payload is {bytes} bytes; provider cap is {cap} bytes — narrow the [in_us, out_us] window")]
     PayloadTooLarge { bytes: u64, cap: u64 },
 
+    /// An OpenAI-compatible server refused the upload with 413. Unlike
+    /// [`Self::PayloadTooLarge`] the cap is the server's own and unknown here,
+    /// so the message names the size that was refused and the remedy.
+    #[error("{provider:?} refused the {bytes}-byte audio upload as too large (413) — transcribe a shorter window, or raise the server's upload limit")]
+    UploadRefused { provider: SpeechBackend, bytes: u64 },
+
+    /// The endpoint took the whole per-request timeout. Its own variant, not a
+    /// `Network` error, because the remedy is the user's to apply: a slow
+    /// self-hosted server needs a longer timeout on its model (#69).
+    #[error("{provider:?} did not answer within {secs}s — raise the model's request timeout in Settings → Transcription, or transcribe a shorter window")]
+    EndpointTimeout { provider: SpeechBackend, secs: u64 },
+
     #[error("{provider:?} returned an error: {message}")]
     Provider {
         provider: SpeechBackend,

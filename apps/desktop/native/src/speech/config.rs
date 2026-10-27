@@ -34,6 +34,17 @@ pub enum BackendConfig {
         device: Option<String>,
         threads: Option<u32>,
     },
+    /// An OpenAI-compatible transcription server. `url` is the full
+    /// `…/audio/transcriptions` (or whisper-server `/inference`) URL; `model`
+    /// is sent when set (whisper-server ignores it); `api_key` is optional and
+    /// only ever comes from safeStorage; `timeout_s` overrides the per-request
+    /// ceiling (absent → scaled to the audio length like the local sidecars).
+    Endpoint {
+        url: String,
+        api_key: Option<String>,
+        model: Option<String>,
+        timeout_s: Option<u64>,
+    },
 }
 
 /// Whether a backend can run right now, and if not, the single most-actionable
@@ -49,6 +60,8 @@ pub enum Availability {
     NeedsBinary,
     /// Local backend whose model file path does not exist on disk.
     NeedsModel,
+    /// Endpoint backend with no URL configured.
+    NeedsEndpoint,
 }
 
 /// Decide whether `backend` can run given its (optional) config map entry.
@@ -62,10 +75,14 @@ pub enum Availability {
 ///   so they reuse `NeedsModel` rather than a new variant), then `Available`.
 ///   Checks **file existence only**; the liveness spawn is [`super::probe_backend`].
 ///
+/// - **Endpoint** → `Available` iff an [`BackendConfig::Endpoint`] with a
+///   non-blank URL is present, else `NeedsEndpoint`. The key never gates it: a
+///   self-hosted server usually wants none, and one that does answers 401.
+///
 /// A config entry whose shape mismatches the backend's locality (e.g. an
 /// `ApiKey` filed under a local backend) is treated as "the thing it needs is
 /// absent" — a cloud backend reads it as `NeedsKey`, a local one as
-/// `NeedsBinary`.
+/// `NeedsBinary`, an endpoint as `NeedsEndpoint`.
 pub fn availability(backend: SpeechBackend, cfg: Option<&BackendConfig>) -> Availability {
     match backend.locality() {
         Locality::Cloud => match cfg {
@@ -94,6 +111,12 @@ pub fn availability(backend: SpeechBackend, cfg: Option<&BackendConfig>) -> Avai
             // No local config (or a mismatched ApiKey): the binary is the first
             // thing missing.
             _ => Availability::NeedsBinary,
+        },
+        Locality::Endpoint => match cfg {
+            Some(BackendConfig::Endpoint { url, .. }) if !url.trim().is_empty() => {
+                Availability::Available
+            }
+            _ => Availability::NeedsEndpoint,
         },
     }
 }
@@ -148,6 +171,35 @@ mod tests {
         assert_eq!(
             availability(SpeechBackend::WhisperCpp, Some(&cfg)),
             Availability::Available,
+        );
+    }
+
+    #[test]
+    fn endpoint_available_iff_url_nonblank_and_key_never_gates_it() {
+        let ep = |url: &str, key: Option<&str>| BackendConfig::Endpoint {
+            url: url.into(),
+            api_key: key.map(Into::into),
+            model: None,
+            timeout_s: None,
+        };
+        let b = SpeechBackend::ByoEndpoint;
+        assert_eq!(
+            availability(b, Some(&ep("http://127.0.0.1:8080/inference", None))),
+            Availability::Available,
+        );
+        assert_eq!(
+            availability(b, Some(&ep("https://h/v1/audio/transcriptions", Some("k")))),
+            Availability::Available,
+        );
+        assert_eq!(
+            availability(b, Some(&ep("  ", None))),
+            Availability::NeedsEndpoint
+        );
+        assert_eq!(availability(b, None), Availability::NeedsEndpoint);
+        // A mismatched shape reads as "no URL".
+        assert_eq!(
+            availability(b, Some(&BackendConfig::ApiKey("k".into()))),
+            Availability::NeedsEndpoint,
         );
     }
 

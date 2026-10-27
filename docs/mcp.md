@@ -1070,8 +1070,10 @@ change notification arrives — the notification is a hint, not a sync protocol.
 ## Speech (optional, user-supplied)
 
 For things agents can't do well themselves. Speech-to-text runs over
-**pluggable backends** — OpenAI Whisper (cloud) plus local one-shot CLI
-sidecars (whisper.cpp, FunASR via sherpa-onnx) — behind one entry point.
+**pluggable backends** — OpenAI Whisper (cloud), local one-shot CLI
+sidecars (whisper.cpp, FunASR via sherpa-onnx) and any OpenAI-compatible
+transcription server (whisper.cpp's `whisper-server`, speaches, vLLM, a
+hosted provider) — behind one entry point.
 The API key (secret) lives in `safeStorage`; local engine paths live in a
 TS-owned config store; Electron main merges both into the snapshot the
 stateless Rust resolver reads. The resolver picks a transcriber by **user
@@ -1084,7 +1086,7 @@ An agent that already has a speech model of its own needs none of that:
 
 **Capability surfaces:**
 
-- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language?, backend?, word_timestamps? }` returns a normalized transcript envelope `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }`, all times timeline-absolute; `backend` names the engine that actually served the request. Slices the layer's source audio at the requested window (defaults: the whole layer), transcribes with the picked provider, normalizes the raw output to timestamped word segments, divides source-relative timestamps by the playback rate and adds the timeline offset; the envelope is what `apply_transcripts` takes. `word_timing` records the per-word timing provenance — `exact` from an engine's token offsets, `interpolated_from_cue` when derived by splitting an SRT cue span across its words (space-less CJK cues split per character, matching FunASR's granularity). Retimed segment and word times are projected onto the composition timeline. Backends: OpenAI Whisper (cloud, SRT → interpolated words); whisper.cpp + FunASR (local sidecars, exact word timing from JSON token offsets). The `backend` arg is a **strict** override: that engine serves the call or it errors naming the missing piece — it never substitutes another engine, so an explicit local choice can never fall back to a cloud upload. The user's Settings preference stays a soft hint (injected by the host, honored by availability). `word_timestamps` defaults to **true** — the chosen engine's best precision at no extra cost; pass `false` to force SRT-style interpolated output.
+- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language?, backend?, word_timestamps? }` returns a normalized transcript envelope `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }`, all times timeline-absolute; `backend` names the engine that actually served the request. Slices the layer's source audio at the requested window (defaults: the whole layer), transcribes with the picked provider, normalizes the raw output to timestamped word segments, divides source-relative timestamps by the playback rate and adds the timeline offset; the envelope is what `apply_transcripts` takes. `word_timing` records the per-word timing provenance — `exact` from an engine's token offsets, `interpolated_from_cue` when derived by splitting an SRT cue span across its words (space-less CJK cues split per character, matching FunASR's granularity). Retimed segment and word times are projected onto the composition timeline. Backends: OpenAI Whisper (cloud, SRT → interpolated words); whisper.cpp + FunASR (local sidecars, exact word timing from JSON token offsets); `byo_endpoint`, an OpenAI-compatible server (`verbose_json` with word timestamps where the server has them — exact — else SRT, interpolated; see "Transcription servers" below). On a network engine (OpenAI, `byo_endpoint`) audio longer than 10 minutes is sent in pieces cut at the quietest 200 ms within ±30 s of each 10-minute mark, one request at a time, and reassembled on one time base; progress reports `inferring` with `done`/`total` pieces. Local engines always get the whole window. The `backend` arg is a **strict** override: that engine serves the call or it errors naming the missing piece — it never substitutes another engine, so an explicit local choice can never fall back to a cloud upload. The user's Settings preference stays a soft hint (injected by the host, honored by availability). `word_timestamps` defaults to **true** — the chosen engine's best precision at no extra cost; pass `false` to force SRT-style interpolated output.
 - **Raw audio egress** (no trait, no backend) — `extract_clip_audio { layer_id, t_start_us?, t_end_us? }` returns TWO content blocks: a JSON text block `{ layer_id, media_id, t_start_us, t_end_us, source_in_us, source_out_us, duration_us, playback_rate, sample_rate_hz, channels, bits_per_sample, byte_length, mime_type }` and an MCP `audio` block carrying base64 `audio/wav` — mono 16 kHz 16-bit PCM, the very shape every bundled engine is fed. For the agent that brings its OWN speech model: it takes the samples and recognizes them wherever it likes. The returned WAV starts at zero, so a cue at source-WAV offset `w` belongs at `t_start_us + w / playback_rate`, which is the timeline-absolute form `apply_transcripts` wants. The window arguments are `transcribe_clip`'s, unchanged: timeline-absolute, defaulting to the layer's endpoints, so the same pair serves both tools; the pair REPORTED is the window as resolved, so a caller that passed neither still learns which span it got. **60000000 us (60 s) of source audio maximum per call** (timeline windows must be at most `60000000 / playback_rate` µs) — base64 inflates the payload by 4/3, so a whole take is fetched as consecutive windows rather than as one multi-megabyte message, and an over-long window is refused naming both the cap and the requested duration. What it extracts is the ORIGINAL source audio: before gain, pan, mute, fades, effects and mixing, and a VideoClip's audio is its own source stream, never its link's. Shares `transcribe_clip`'s window resolution and its content-addressed WAV cache, so an extract already made for a transcription costs no second ffmpeg. Refuses a layer with no audio or a window outside the layer, with `transcribe_clip`'s refusals by name. No backend is resolved, nothing is uploaded, and no filesystem path leaves the tool — the agent gets bytes.
 - **Text-to-speech** (`Synthesizer` trait) — `synthesize_speech { text, voice, speed?, target_track_id?, t_start_us? }` returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`. Synthesizes audio for the supplied script, writes a content-addressed file under `<workspace>/Cache/voiceover/<hash>.mp3`, imports it as a `MediaItem`, and adds an `Audio` layer on the target Audio track (auto-creates one labeled "Voiceover" when absent). `t_start_us` defaults to the composition's current `duration_us` so voiceover appends at the end. `cached=true` means the request hit the cache and no API call billed. Provider today: OpenAI tts-1 (same key as Whisper).
 
@@ -1097,6 +1099,24 @@ the request. Opted-in results include `input_normalization` with
 `input_peak_dbfs` (null for silence), `gain_db`, `target_peak_dbfs` and
 `max_gain_db`. The UI offers this only in its low-volume warning, shows an
 estimate before proceeding, and records the actual gain in the status log.
+
+**Transcription servers.** The `byo_endpoint` engine posts the extracted WAV
+as a multipart upload (`file`, plus `model` and `language` when set) to the
+full URL the user gives — `…/v1/audio/transcriptions`, or whisper-server's own
+`/inference` (start whisper-server with `--inference-path
+/v1/audio/transcriptions` for the OpenAI path). It asks for `verbose_json`
+with `timestamp_granularities[]=word,segment` first; a 400 / 415 / 422, or an
+answer without a `segments` array, makes it retry once as `srt`, and the
+format that worked is remembered per URL for the life of the process.
+`word_timestamps: false` asks for `srt` directly. The model name is optional
+(whisper-server ignores it); the API key is optional, kept in `safeStorage`
+under its own tag (`speech_endpoint`, never the vision endpoint's), and sent
+as `Authorization: Bearer` only when set. Requests use the shared retry policy
+and the model's own request timeout (10–3600 s), defaulting to the local
+sidecars' audio-scaled hang guard (60 s + 10 s per second of audio). A
+timeout, a 413 and a 401 each fail with an error naming the remedy (raise the
+timeout, transcribe a shorter window, fix the key)
+([ADR 0146](adr/0146-transcription-reaches-any-openai-compatible-server.md)).
 
 **Config UI:** an OpenAI key activates BOTH `transcribe_clip` and
 `synthesize_speech` (TTS is cloud-only today). Settings → **Transcription /

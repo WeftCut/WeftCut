@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 /// Speech engines WeftCut can drive. `OpenAi` is a cloud HTTP API; `WhisperCpp`
 /// and `FunAsr` are local one-shot CLI sidecars (transcription only, needing a
-/// binary + model on disk).
+/// binary + model on disk); `ByoEndpoint` is any OpenAI-compatible
+/// `/v1/audio/transcriptions` server the user points us at.
 ///
 /// The serde tag (`"open-ai"`, from `rename_all = "kebab-case"`) is deliberately
 /// distinct from the stable map/wire tag [`SpeechBackend::as_str`] (`"openai"`);
@@ -26,14 +27,32 @@ pub enum SpeechBackend {
     WhisperCpp,
     /// FunASR Paraformer via the sherpa-onnx offline CLI (STT only).
     FunAsr,
+    /// Any OpenAI-compatible transcription server — whisper.cpp's
+    /// `whisper-server`, speaches, vLLM, LocalAI, or a hosted provider — at a
+    /// URL the user gives (STT only). Its own backend rather than a URL on
+    /// `OpenAi`: that tag is a wire constraint and TTS shares its key, while
+    /// this one carries its own URL, model, optional key and timeout (ADR 0146).
+    ByoEndpoint,
 }
 
 /// Where a backend runs. Drives the availability check: a cloud backend needs
-/// an API key; a local backend needs its binary + model file present.
+/// an API key; a local backend needs its binary + model file present; an
+/// endpoint needs a URL (its key is optional — a self-hosted server usually
+/// wants none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Locality {
     Cloud,
     Local,
+    Endpoint,
+}
+
+impl Locality {
+    /// Whether the audio leaves the machine over HTTP — the engines whose
+    /// request has an upload size and a network timeout to respect, and so the
+    /// ones a long clip is split for (`speech::split`).
+    pub fn is_network(self) -> bool {
+        matches!(self, Locality::Cloud | Locality::Endpoint)
+    }
 }
 
 /// The order the resolver walks after honoring the caller's `preferred` hint.
@@ -41,11 +60,13 @@ pub enum Locality {
 /// CLI sidecars). OpenAI leads: with both a key and a local engine configured
 /// and no preference set, cloud wins — it needs no local model download and
 /// its quality is the known baseline; users who want local-first say so via
-/// the Settings preferred engine.
+/// the Settings preferred engine. The user's own endpoint comes last: it is
+/// only ever used when selected (selection is strict), never as a substitute.
 pub const DEFAULT_ORDER: &[SpeechBackend] = &[
     SpeechBackend::OpenAi,
     SpeechBackend::WhisperCpp,
     SpeechBackend::FunAsr,
+    SpeechBackend::ByoEndpoint,
 ];
 
 impl SpeechBackend {
@@ -55,12 +76,15 @@ impl SpeechBackend {
     /// HARD CONSTRAINT: `OpenAi` MUST stay `"openai"`. That exact string is the
     /// `set_cloud_key("openai", …)` argument pushed in from TS, the Settings
     /// status command's `provider` field, and the key format persisted in
-    /// `cloud_keys.json`. New backends use `"whisper_cpp"` / `"funasr"`.
+    /// `cloud_keys.json`. New backends use `"whisper_cpp"` / `"funasr"` /
+    /// `"byo_endpoint"` (the same tag as the video-understanding endpoint; the
+    /// two config maps are separate, so they never meet).
     pub fn as_str(self) -> &'static str {
         match self {
             SpeechBackend::OpenAi => "openai",
             SpeechBackend::WhisperCpp => "whisper_cpp",
             SpeechBackend::FunAsr => "funasr",
+            SpeechBackend::ByoEndpoint => "byo_endpoint",
         }
     }
 
@@ -70,6 +94,7 @@ impl SpeechBackend {
             SpeechBackend::OpenAi => "OpenAI (Whisper)",
             SpeechBackend::WhisperCpp => "whisper.cpp (local)",
             SpeechBackend::FunAsr => "FunASR (local)",
+            SpeechBackend::ByoEndpoint => "OpenAI-compatible endpoint",
         }
     }
 
@@ -78,11 +103,13 @@ impl SpeechBackend {
         DEFAULT_ORDER
     }
 
-    /// Cloud (HTTP, key-gated) vs Local (spawned CLI, file-gated).
+    /// Cloud (HTTP, key-gated) vs Local (spawned CLI, file-gated) vs Endpoint
+    /// (HTTP, URL-gated).
     pub fn locality(self) -> Locality {
         match self {
             SpeechBackend::OpenAi => Locality::Cloud,
             SpeechBackend::WhisperCpp | SpeechBackend::FunAsr => Locality::Local,
+            SpeechBackend::ByoEndpoint => Locality::Endpoint,
         }
     }
 
@@ -109,6 +136,15 @@ impl SpeechBackend {
                 transcription: true,
                 tts: false,
                 exact_word_timing: true, // per-token (per-character) timestamps
+            },
+            SpeechBackend::ByoEndpoint => Capabilities {
+                transcription: true,
+                tts: false,
+                // Depends on the server: `verbose_json` with word timestamps
+                // is exact, an SRT fallback is not. The static badge promises
+                // only what every server gives; each transcript's own
+                // `word_timing` reports what actually came back.
+                exact_word_timing: false,
             },
         }
     }
@@ -137,6 +173,7 @@ mod tests {
         assert_eq!(SpeechBackend::OpenAi.as_str(), "openai");
         assert_eq!(SpeechBackend::WhisperCpp.as_str(), "whisper_cpp");
         assert_eq!(SpeechBackend::FunAsr.as_str(), "funasr");
+        assert_eq!(SpeechBackend::ByoEndpoint.as_str(), "byo_endpoint");
     }
 
     #[test]
@@ -161,6 +198,19 @@ mod tests {
             );
             assert_eq!(b.locality(), Locality::Local, "{b:?} is local");
         }
+    }
+
+    #[test]
+    fn endpoint_backend_transcribes_only_over_the_network() {
+        let b = SpeechBackend::ByoEndpoint;
+        assert_eq!(b.as_str(), "byo_endpoint");
+        assert_eq!(b.locality(), Locality::Endpoint);
+        assert!(b.locality().is_network());
+        assert!(!Locality::Local.is_network());
+        let caps = b.capabilities();
+        assert!(caps.transcription && !caps.tts && !caps.exact_word_timing);
+        // Last in the walk: never a substitute for a configured engine.
+        assert_eq!(DEFAULT_ORDER.last(), Some(&b));
     }
 
     #[test]

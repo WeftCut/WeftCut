@@ -7,12 +7,15 @@
 //!   style is each backend's internal choice.
 //! - Here, [`parse_raw`] dispatches that tag to the matching
 //!   [`TranscriptParser`] — [`srt::SrtParser`], [`whisper_json::WhisperJsonParser`],
-//!   or [`funasr_json::FunAsrParser`] (sherpa-onnx-offline / FunASR Paraformer).
+//!   [`funasr_json::FunAsrParser`] (sherpa-onnx-offline / FunASR Paraformer),
+//!   or [`openai_verbose::OpenAiVerboseParser`] (OpenAI-compatible
+//!   `verbose_json`).
 
 use super::error::SpeechError;
 use super::transcript::Transcript;
 
 pub mod funasr_json;
+pub mod openai_verbose;
 pub mod srt;
 pub mod whisper_json;
 
@@ -29,19 +32,35 @@ pub enum RawTranscript {
     /// sherpa-onnx-offline (FunASR Paraformer) stdout body — a JSON object with
     /// `text` + per-token `timestamps` (seconds) → exact (char-level) word timing.
     FunAsrJson(String),
+    /// OpenAI-compatible `response_format=verbose_json` body — segments, with
+    /// word timestamps at the top level (OpenAI) or per segment (whisper-server
+    /// and others) when the server reports them; interpolated otherwise.
+    OpenAiVerboseJson(String),
 }
 
 /// The style tag alone, without a payload — what a sidecar run declares it
 /// will produce ([`SidecarRun::format`](crate::speech::backends::sidecar::SidecarRun))
-/// before the body exists.
+/// before the body exists, or what an endpoint negotiated with its server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptFormat {
     Srt,
     WhisperJson,
     FunAsrJson,
+    OpenAiVerboseJson,
 }
 
 impl RawTranscript {
+    /// Tag `body` with the style a backend declared before the body existed —
+    /// a sidecar's flags, or the format an endpoint negotiated.
+    pub fn tagged(format: TranscriptFormat, body: String) -> Self {
+        match format {
+            TranscriptFormat::Srt => RawTranscript::Srt(body),
+            TranscriptFormat::WhisperJson => RawTranscript::WhisperJson(body),
+            TranscriptFormat::FunAsrJson => RawTranscript::FunAsrJson(body),
+            TranscriptFormat::OpenAiVerboseJson => RawTranscript::OpenAiVerboseJson(body),
+        }
+    }
+
     /// The style tag of this payload. Production code branches on the enum
     /// directly (`parse_raw`); tests use this to assert round-trip tagging.
     #[cfg(test)]
@@ -50,6 +69,7 @@ impl RawTranscript {
             RawTranscript::Srt(_) => TranscriptFormat::Srt,
             RawTranscript::WhisperJson(_) => TranscriptFormat::WhisperJson,
             RawTranscript::FunAsrJson(_) => TranscriptFormat::FunAsrJson,
+            RawTranscript::OpenAiVerboseJson(_) => TranscriptFormat::OpenAiVerboseJson,
         }
     }
 }
@@ -88,6 +108,7 @@ pub fn parse_raw(raw: RawTranscript) -> Result<Transcript, SpeechError> {
         RawTranscript::Srt(body) => srt::SrtParser.parse(&body),
         RawTranscript::WhisperJson(body) => whisper_json::WhisperJsonParser.parse(&body),
         RawTranscript::FunAsrJson(body) => funasr_json::FunAsrParser.parse(&body),
+        RawTranscript::OpenAiVerboseJson(body) => openai_verbose::OpenAiVerboseParser.parse(&body),
     }
 }
 

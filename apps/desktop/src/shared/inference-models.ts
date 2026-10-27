@@ -38,6 +38,9 @@ export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { id: "whisper-base", name: "Whisper Base", family: "speech", backend: "whisper_cpp", locality: "local", artifacts: ["whisper-cpp-runtime", "whisper-model-base"] },
   { id: "paraformer-zh", name: "Paraformer 中文", family: "speech", backend: "funasr", locality: "local", artifacts: ["funasr-runtime", "funasr-model-paraformer-zh"] },
   { id: "openai-whisper", name: "OpenAI Whisper", family: "speech", backend: "openai", locality: "online", artifacts: [] },
+  // Any OpenAI-compatible transcription server (whisper.cpp's whisper-server,
+  // speaches, vLLM, a hosted provider) — the speech twin of `vlm-online`.
+  { id: "speech-online", name: "Online model", family: "speech", backend: "byo_endpoint", locality: "online", artifacts: [] },
   { id: "qwen3-vl-4b", name: "Qwen3-VL-4B", family: "vlm", backend: "qwen3_vl", locality: "local", artifacts: ["llama-mtmd-runtime", "qwen3-vl-4b-model", "qwen3-vl-4b-mmproj"] },
   // An entry point for the existing compatible-endpoint adapter, not a new provider preset.
   { id: "vlm-online", name: "Online model", family: "vlm", backend: "byo_endpoint", locality: "online", artifacts: [] },

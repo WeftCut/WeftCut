@@ -7,6 +7,7 @@
 //! `backend::DEFAULT_ORDER` so a new variant lights up automatically once its
 //! constructor is wired into `speech::construct_*`.
 
+pub mod endpoint;
 pub mod funasr;
 pub mod openai;
 pub mod sidecar;

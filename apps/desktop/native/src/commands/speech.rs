@@ -49,10 +49,11 @@ pub struct SpeechBackendStatus {
     /// Stable wire tag (`SpeechBackend::as_str`).
     pub backend: String,
     pub label: String,
-    /// `"cloud"` | `"local"`.
+    /// `"cloud"` | `"local"` | `"endpoint"`.
     pub locality: String,
     pub capabilities: SpeechCapabilities,
-    /// `"available"` | `"needs_key"` | `"needs_binary"` | `"needs_model"`.
+    /// `"available"` | `"needs_key"` | `"needs_binary"` | `"needs_model"` |
+    /// `"needs_endpoint"`.
     pub availability: String,
     /// True on the single backend the transcription resolver would use right
     /// now given the user's preference + what is available. `false` on every
@@ -67,6 +68,7 @@ fn availability_tag(a: Availability) -> &'static str {
         Availability::NeedsKey => "needs_key",
         Availability::NeedsBinary => "needs_binary",
         Availability::NeedsModel => "needs_model",
+        Availability::NeedsEndpoint => "needs_endpoint",
     }
 }
 
@@ -155,6 +157,7 @@ pub async fn settings_get_speech_backends(
                 locality: match p.locality() {
                     Locality::Cloud => "cloud",
                     Locality::Local => "local",
+                    Locality::Endpoint => "endpoint",
                 }
                 .to_string(),
                 capabilities: SpeechCapabilities {

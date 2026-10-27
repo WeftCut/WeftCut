@@ -1171,9 +1171,9 @@ pub(super) struct TranscribeClipArgs {
     /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
-    /// Strict engine override: `"openai"` | `"whisper_cpp"` | `"funasr"`.
-    /// That engine serves or the call errors; nothing is substituted. Omitted:
-    /// the user's preferred engine, then availability.
+    /// Strict engine override: `"openai"` | `"whisper_cpp"` | `"funasr"` |
+    /// `"byo_endpoint"`. That engine serves or the call errors; nothing is
+    /// substituted. Omitted: the user's preferred engine, then availability.
     #[serde(default)]
     pub backend: Option<String>,
     /// Injected by the TS MCP host from the user's Settings preferred-engine —
@@ -1400,6 +1400,18 @@ async fn write_voiceover_atomic(dest: &std::path::Path, bytes: &[u8]) -> Result<
     Ok(())
 }
 
+/// `"a", "b", or "c"` — an unknown-tag refusal's list of the legal tags,
+/// derived from the catalog so a new backend can never be missing from it.
+#[cfg(feature = "speech")]
+fn expected_tags<'a>(tags: impl Iterator<Item = &'a str>) -> String {
+    let quoted: Vec<String> = tags.map(|t| format!("{t:?}")).collect();
+    match quoted.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{}, or {last}", rest.join(", ")),
+    }
+}
+
 /// Map a `speech::SpeechError` to an `McpToolError` so the agent sees a structured
 /// failure (missing key, invalid key, rate-limited, too-large payload) with
 /// actionable recovery steps in the message.
@@ -1409,8 +1421,10 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
     let message = e.to_string();
     match e {
         E::MissingKey { .. } | E::InvalidKey { .. } => McpToolError::invalid_request(message, None),
-        E::PayloadTooLarge { .. } => McpToolError::invalid_params(message, None),
-        E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
+        E::PayloadTooLarge { .. } | E::UploadRefused { .. } => {
+            McpToolError::invalid_params(message, None)
+        }
+        E::RateLimited { .. } | E::Provider { .. } | E::Network(_) | E::EndpointTimeout { .. } => {
             McpToolError::internal_error(message, None)
         }
         E::Io(_) | E::AudioExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
@@ -1500,7 +1514,8 @@ async fn transcribe_clip_job(
                 .ok_or_else(|| {
                     McpToolError::invalid_params(
                         format!(
-                            "unknown backend {tag:?}; expected \"openai\", \"whisper_cpp\", or \"funasr\""
+                            "unknown backend {tag:?}; expected one of {}",
+                            expected_tags(speech::SpeechBackend::all().iter().map(|b| b.as_str()))
                         ),
                         None,
                     )
@@ -1565,21 +1580,27 @@ async fn transcribe_clip_job(
     )
     .await
     .map_err(|e| McpToolError::internal_error(format!("transcription audio: {e:#}"), None))?;
-    let raw = transcriber
-        .transcribe_observed(
-            speech::TranscribeRequest {
-                audio_path: prepared.path.clone(),
-                language: args.language,
-                want_word_timing: args.word_timestamps.unwrap_or(true),
-            },
-            &|phase| job.model(phase),
-        )
-        .await
-        .map_err(map_speech_error)?;
-
-    // Normalize the backend's raw style → one Transcript, then place the
-    // audio-slice-relative times on the timeline.
-    let mut transcript = speech::parse_raw(raw).map_err(map_speech_error)?;
+    let request = speech::TranscribeRequest {
+        audio_path: prepared.path.clone(),
+        language: args.language,
+        want_word_timing: args.word_timestamps.unwrap_or(true),
+    };
+    // Normalize the backend's raw style → one Transcript (in the WAV's own
+    // time base), then place the audio-slice-relative times on the timeline. A
+    // network engine gets long audio in pieces cut at pauses (`speech::split`);
+    // a local engine reads the whole file itself.
+    let mut transcript = if used_backend.locality().is_network() {
+        speech::split::transcribe_network(&*transcriber, request, &|phase| job.model(phase)).await
+    } else {
+        match transcriber
+            .transcribe_observed(request, &|phase| job.model(phase))
+            .await
+        {
+            Ok(raw) => speech::parse_raw(raw),
+            Err(e) => Err(e),
+        }
+    }
+    .map_err(map_speech_error)?;
     for segment in &mut transcript.segments {
         segment.t_start_us = (segment.t_start_us as f64 / resolved.playback_rate).round() as i64;
         segment.t_end_us = (segment.t_end_us as f64 / resolved.playback_rate).round() as i64;

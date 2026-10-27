@@ -309,7 +309,7 @@ fn map_status_to_speech_error(
     }
 }
 
-fn trim_body(s: &str) -> String {
+pub(crate) fn trim_body(s: &str) -> String {
     const MAX: usize = 400;
     let trimmed = s.trim();
     if trimmed.len() <= MAX {

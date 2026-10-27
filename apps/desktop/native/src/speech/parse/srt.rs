@@ -104,7 +104,7 @@ fn push_or_merge(tokens: &mut Vec<String>, run_start: usize, frag: String) {
 /// ends exactly at `end_us` so accumulated rounding never drifts past the cue.
 /// An empty (all-whitespace) cue yields no words; a single-word cue takes the
 /// whole span.
-fn split_cue_into_words(start_us: i64, end_us: i64, text: &str) -> Vec<Word> {
+pub(super) fn split_cue_into_words(start_us: i64, end_us: i64, text: &str) -> Vec<Word> {
     let tokens = split_word_tokens(text);
     if tokens.is_empty() {
         return Vec::new();

@@ -18,6 +18,9 @@ pub struct LocalConfig {
 #[derive(Deserialize)]
 pub struct EndpointConfig {
     url: String,
+    /// Blank is legal for speech: whisper.cpp's `whisper-server` serves the one
+    /// model it loaded and ignores the field.
+    #[serde(default)]
     model: String,
     /// The candidate's own request timeout. Verification honours it: a slow
     /// self-hosted server is exactly the one that needs it, and it must not
@@ -140,6 +143,14 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                 .ok_or("Unknown speech model backend")?;
             let entry = if backend == SpeechBackend::OpenAi {
                 BackendConfig::ApiKey(a.api_key.unwrap_or_default())
+            } else if backend == SpeechBackend::ByoEndpoint {
+                let ep = a.endpoint.ok_or("Missing model endpoint")?;
+                BackendConfig::Endpoint {
+                    url: ep.url,
+                    api_key: a.api_key,
+                    model: Some(ep.model),
+                    timeout_s: ep.timeout_s,
+                }
             } else {
                 let l = a.local.ok_or("Missing local model configuration")?;
                 BackendConfig::Local {
@@ -260,6 +271,25 @@ mod tests {
         assert_eq!(&wav[..4], b"RIFF");
         assert_eq!(&wav[36..40], b"data");
     }
+    #[tokio::test]
+    async fn a_speech_endpoint_is_verified_with_a_real_request_and_a_blank_model() {
+        let server = crate::inference::http::test_server::serve(vec![Some((
+            200,
+            "",
+            r#"{"language":"en","segments":[]}"#.to_string(),
+        ))])
+        .await;
+        let args = serde_json::from_value(serde_json::json!({
+            "family": "speech", "backend": "byo_endpoint",
+            "endpoint": { "url": server.url, "model": "", "timeout_s": 30 },
+        }))
+        .unwrap();
+        assert_eq!(verify_model(args).await.unwrap().device, "auto");
+        let sent = &server.requests()[0];
+        assert!(!sent.contains("name=\"model\""), "blank model is not sent");
+        assert!(!sent.to_ascii_lowercase().contains("authorization:"));
+    }
+
     #[tokio::test]
     async fn missing_candidate_does_not_need_or_mutate_an_active_backend() {
         let args = serde_json::from_str(r#"{"family":"speech","backend":"whisper_cpp"}"#).unwrap();

@@ -54,13 +54,20 @@ export function createModelFeature(deps: {
     const p = manager.active("speech");
     if (p) {
       // A projection for existing IPC/readers; the model store owns the selection.
-      deps.speech.apply({ preferred_engine: p.backend as "whisper_cpp" | "funasr" | "openai" });
+      deps.speech.apply({ preferred_engine: p.backend as "whisper_cpp" | "funasr" | "openai" | "byo_endpoint" });
       if (p.local) {
         const l = p.local;
         deps.speech.apply({ local: { backend: p.backend, config: l } });
         deps.backend.setLocalBackend(p.backend, l.binary, l.model, l.device ?? null, l.threads ?? null, l.tokens ?? null);
+      } else if (p.endpoint) {
+        const ep = p.endpoint;
+        deps.backend.setEndpointBackend(p.backend, ep.url, ep.model || null, getKey(p.keyTag ?? "") || null, ep.timeout_s ?? null);
       } else deps.backend.setCloudKey("openai", getKey(p.keyTag ?? "openai"));
     }
+    // One endpoint entry, owned by the active speech profile: leaving it behind
+    // after a switch would keep a server's URL and key in the snapshot of a
+    // backend that no longer speaks to it.
+    if (!p?.endpoint) deps.backend.clearEndpointBackend("byo_endpoint");
     const v = manager.active("vlm");
     if (v) {
       deps.vlm.apply({ preferred_engine: v.backend as "qwen3_vl" | "minicpm_v" | "byo_endpoint" });

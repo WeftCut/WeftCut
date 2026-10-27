@@ -271,11 +271,7 @@ async fn read_body(
 
 /// Tag a raw body with its declared style.
 fn wrap(format: TranscriptFormat, body: String) -> RawTranscript {
-    match format {
-        TranscriptFormat::Srt => RawTranscript::Srt(body),
-        TranscriptFormat::WhisperJson => RawTranscript::WhisperJson(body),
-        TranscriptFormat::FunAsrJson => RawTranscript::FunAsrJson(body),
-    }
+    RawTranscript::tagged(format, body)
 }
 
 /// A generous hang-guard timeout scaled to the clip length — NOT the expected

@@ -239,6 +239,8 @@ const enUS = {
     funasr_hint: "Use a sherpa-onnx executable, compatible ONNX model and its tokens file.",
     whisper_hint: "Use a whisper.cpp executable and compatible Whisper model file.",
     key_optional: "Optional for services without authentication",
+    model_optional: "Optional — most transcription servers serve one model",
+    speech_endpoint_hint: "Any OpenAI-compatible transcription server. For whisper.cpp, start whisper-server with --inference-path /v1/audio/transcriptions, or enter its /inference URL.",
     endpoint_timeout: "Request timeout (s)",
     endpoint_timeout_hint: "Leave empty for automatic: the wait grows with the size of each request. Raise it for a slow self-hosted server.",
   },

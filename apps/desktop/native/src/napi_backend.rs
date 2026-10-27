@@ -334,6 +334,47 @@ impl Backend {
             .remove(&backend);
     }
 
+    /// Push an OpenAI-compatible transcription server's config into the
+    /// in-memory speech config as `BackendConfig::Endpoint` under the backend
+    /// tag (`"byo_endpoint"`). URL, model and timeout come from the active model
+    /// profile; `api_key` from safeStorage, never from a file — the same
+    /// split-by-secrecy rule as `set_cloud_key` / `set_local_backend`, in one
+    /// call because the endpoint is one profile. Blank `model` / `api_key` are
+    /// stored as absent, so no empty `model` field or bare `Bearer ` header is
+    /// ever sent. Removed with `clear_endpoint_backend`.
+    #[napi]
+    pub fn set_endpoint_backend(
+        &self,
+        backend: String,
+        url: String,
+        model: Option<String>,
+        api_key: Option<String>,
+        timeout_s: Option<u32>,
+    ) {
+        let nonblank = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
+        self.speech_config
+            .lock()
+            .expect("speech_config poisoned")
+            .insert(
+                backend,
+                crate::speech::config::BackendConfig::Endpoint {
+                    url,
+                    api_key: nonblank(api_key),
+                    model: nonblank(model),
+                    timeout_s: timeout_s.map(u64::from),
+                },
+            );
+    }
+
+    /// Remove an endpoint's config entry. Mirror of `clear_local_backend`.
+    #[napi]
+    pub fn clear_endpoint_backend(&self, backend: String) {
+        self.speech_config
+            .lock()
+            .expect("speech_config poisoned")
+            .remove(&backend);
+    }
+
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
     /// the per-workspace LogBus — the pre-broadcast workspace bundle shared by
     /// open / save-as / new-workspace (cache.set_workspace → workspace.set →
