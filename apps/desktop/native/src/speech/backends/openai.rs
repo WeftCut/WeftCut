@@ -2,7 +2,7 @@
 //! read the same key from `backend::SpeechBackend::OpenAi`; see `speech::backend`
 //! for the one-key rationale.
 
-use std::time::Instant;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::multipart::{Form, Part};
@@ -10,11 +10,9 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use tokio::fs;
 
+use crate::inference::http::{bearer_auth, parse_retry_after, send_with_retry, shared_client};
 use crate::speech::backend::SpeechBackend;
 use crate::speech::error::SpeechError;
-use crate::speech::http::{
-    bearer_auth, retry_delay_for_status, shared_client, MAX_RETRY_ATTEMPTS, RETRY_TOTAL_BUDGET,
-};
 use crate::speech::parse::RawTranscript;
 use crate::speech::synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
@@ -26,6 +24,13 @@ pub const WHISPER_MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 
 const WHISPER_ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
 const WHISPER_MODEL: &str = "whisper-1";
+
+/// Per-request ceiling for every OpenAI call (Whisper, tts-1, the models
+/// probe). Whisper on a 13-minute 25 MB upload takes ~60s end-to-end; 180s is
+/// comfortable headroom without letting a wedged provider freeze the MCP tool
+/// indefinitely. The shared client has no timeout of its own
+/// (`inference::http`), so this is the whole bound.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Whisper transcription client. Carries the API key resolved from the
 /// in-memory cache at construction time.
@@ -62,10 +67,8 @@ impl Transcriber for OpenAiWhisper {
             .to_string();
 
         let auth = bearer_auth(&self.key);
-        let started = Instant::now();
-        let mut attempt: u32 = 0;
-        let response = loop {
-            // Rebuild the multipart form each iteration — `Form`/`Part` aren't
+        let make = || {
+            // Rebuild the multipart form each attempt — `Form`/`Part` aren't
             // cleanly cloneable, but the bytes/filename/language are cheap to
             // re-wrap. `bytes.clone()` runs on every attempt (incl. the first);
             // at ≤25 MB per upload that copy is acceptable.
@@ -80,30 +83,13 @@ impl Transcriber for OpenAiWhisper {
             if let Some(lang) = req.language.as_deref() {
                 form = form.text("language", lang.to_string());
             }
-            let response = shared_client()
+            shared_client()
                 .post(WHISPER_ENDPOINT)
                 .header("Authorization", &auth)
                 .multipart(form)
-                .send()
-                .await?;
-            let status = response.status();
-            if status.is_success() {
-                break response;
-            }
-            if let Some(delay) = next_retry_delay(status, &response, attempt, started) {
-                tracing::warn!(
-                    target: "weftcut::speech",
-                    "OpenAI Whisper {status} (attempt {attempt}); retrying in {delay:?}",
-                );
-                drop(response);
-                tokio::time::sleep(delay).await;
-                attempt += 1;
-                continue;
-            }
-            let retry_after_s = parse_retry_after(&response);
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(map_status_to_speech_error(status, retry_after_s, body_text));
         };
+        let response = send_with_retry(make, REQUEST_TIMEOUT, "OpenAI Whisper").await?;
+        let response = ok_or_speech_error(response).await?;
         let srt_body = response.text().await?;
         // SRT style: cue-granular, no language tag. The SRT parser derives
         // interpolated word times and leaves `language = None`.
@@ -111,24 +97,17 @@ impl Transcriber for OpenAiWhisper {
     }
 }
 
-/// Shared retry-decision helper used by both Whisper and tts-1. Returns the
-/// delay to sleep, or `None` if the failure is permanent or the budget is
-/// exhausted.
-fn next_retry_delay(
-    status: StatusCode,
-    response: &reqwest::Response,
-    attempt: u32,
-    started: Instant,
-) -> Option<std::time::Duration> {
-    if attempt + 1 >= MAX_RETRY_ATTEMPTS {
-        return None;
+/// Pass a successful response through, or map the final failure (after
+/// [`send_with_retry`] has spent its retries) to a [`SpeechError`]. Shared by
+/// Whisper and tts-1.
+async fn ok_or_speech_error(response: reqwest::Response) -> Result<reqwest::Response, SpeechError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
     }
-    let retry_after_s = parse_retry_after(response);
-    let delay = retry_delay_for_status(status, retry_after_s, attempt)?;
-    if started.elapsed() + delay > RETRY_TOTAL_BUDGET {
-        return None;
-    }
-    Some(delay)
+    let retry_after_s = parse_retry_after(&response);
+    let body_text = response.text().await.unwrap_or_default();
+    Err(map_status_to_speech_error(status, retry_after_s, body_text))
 }
 
 // ============================================================
@@ -211,33 +190,14 @@ impl Synthesizer for OpenAiTts {
             speed: req.speed,
         };
         let auth = bearer_auth(&self.key);
-        let started = Instant::now();
-        let mut attempt: u32 = 0;
-        let response = loop {
-            let response = shared_client()
+        let make = || {
+            shared_client()
                 .post(TTS_ENDPOINT)
                 .header("Authorization", &auth)
                 .json(&body)
-                .send()
-                .await?;
-            let status = response.status();
-            if status.is_success() {
-                break response;
-            }
-            if let Some(delay) = next_retry_delay(status, &response, attempt, started) {
-                tracing::warn!(
-                    target: "weftcut::speech",
-                    "OpenAI tts-1 {status} (attempt {attempt}); retrying in {delay:?}",
-                );
-                drop(response);
-                tokio::time::sleep(delay).await;
-                attempt += 1;
-                continue;
-            }
-            let retry_after_s = parse_retry_after(&response);
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(map_status_to_speech_error(status, retry_after_s, body_text));
         };
+        let response = send_with_retry(make, REQUEST_TIMEOUT, "OpenAI tts-1").await?;
+        let response = ok_or_speech_error(response).await?;
         let bytes = response.bytes().await?.to_vec();
         Ok(SynthesizeResponse {
             audio: bytes,
@@ -297,14 +257,10 @@ pub async fn test_connection(key: &str) -> Result<OpenAiConnectionInfo, SpeechEr
     let response = shared_client()
         .get(MODELS_ENDPOINT)
         .header("Authorization", auth)
+        .timeout(REQUEST_TIMEOUT)
         .send()
         .await?;
-    let status = response.status();
-    if !status.is_success() {
-        let retry_after_s = parse_retry_after(&response);
-        let body_text = response.text().await.unwrap_or_default();
-        return Err(map_status_to_speech_error(status, retry_after_s, body_text));
-    }
+    let response = ok_or_speech_error(response).await?;
     let json: serde_json::Value = response.json().await?;
     let model_count = json
         .get("data")
@@ -351,14 +307,6 @@ fn map_status_to_speech_error(
             ),
         },
     }
-}
-
-fn parse_retry_after(response: &reqwest::Response) -> Option<u64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
 fn trim_body(s: &str) -> String {

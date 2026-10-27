@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ModelManager, type ModelManagerDeps } from "./model-manager";
-import { freshModelSettings } from "./model-settings";
+import { freshModelSettings, verifiedIdentity } from "./model-settings";
 import type { ModelLocalConfig } from "../shared/inference-models";
 
 const local = (id: string): ModelLocalConfig => ({ binary: `/managed/${id}/run.exe`, model: `/managed/${id}/weights`, ...(id === "qwen3-vl-4b" ? { mmproj: "/managed/projector" } : {}), ...(id === "paraformer-zh" ? { tokens: "/managed/tokens" } : {}) });
@@ -176,6 +176,26 @@ describe("model library lifecycle", () => {
     expect(state().profiles.filter(p => p.custom)).toHaveLength(1);
     expect(state().profiles.find(p => p.id === "custom-test")?.endpoint?.model).toBe("second");
     expect(state().active.vlm).toBeNull();
+  });
+  it("saves a request timeout in place without forking the model or verifying again", async () => {
+    const { manager, state, deps } = setup({ fingerprint: p => JSON.stringify(verifiedIdentity(p)) });
+    const endpoint = { url: "http://localhost/v1/chat/completions", model: "vision" };
+    manager.use({ id: "vlm-online", name: "Slow server", endpoint, saveOnly: true }); await settle();
+    expect(deps.verify).toHaveBeenCalledTimes(1);
+    manager.use({ id: "custom-test", endpoint: { ...endpoint, timeout_s: 1200 }, saveOnly: true }); await settle();
+    expect(state().profiles.filter(p => p.custom)).toHaveLength(1);
+    expect(state().profiles.find(p => p.id === "custom-test")?.endpoint?.timeout_s).toBe(1200);
+    expect(deps.verify).toHaveBeenCalledTimes(1);
+    // An empty field sends no timeout, which clears it back to automatic.
+    manager.use({ id: "custom-test", endpoint, saveOnly: true }); await settle();
+    expect(state().profiles.find(p => p.id === "custom-test")?.endpoint).not.toHaveProperty("timeout_s");
+  });
+  it("refuses a request timeout outside 10–3600 whole seconds", () => {
+    const { manager } = setup();
+    const endpoint = { url: "http://localhost/v1/chat/completions", model: "vision" };
+    for (const timeout_s of [5, 3601, 30.5]) {
+      expect(() => manager.use({ id: "vlm-online", name: "x", endpoint: { ...endpoint, timeout_s } })).toThrow(/Request timeout/);
+    }
   });
   it("None cancels pending activation while preserving credentials and files", async () => {
     const late = deferred<{ device: "cpu" }>(); const { manager, deps, keys, state } = setup();

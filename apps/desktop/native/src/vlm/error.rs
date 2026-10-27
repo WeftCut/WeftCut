@@ -34,6 +34,12 @@ pub enum VlmError {
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
 
+    /// The endpoint took the whole per-request timeout. Its own variant, not a
+    /// `Network` error, because the remedy is the user's to apply: a slow
+    /// self-hosted server needs a longer timeout on its model (#69).
+    #[error("{provider:?} did not answer within {secs}s — raise the model's request timeout in Settings → Video understanding, or describe a shorter window")]
+    EndpointTimeout { provider: VlmBackend, secs: u64 },
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

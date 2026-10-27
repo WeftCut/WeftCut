@@ -119,6 +119,7 @@ mod tests {
             url: url.into(),
             api_key: None,
             model: None,
+            timeout_s: None,
         }
     }
 

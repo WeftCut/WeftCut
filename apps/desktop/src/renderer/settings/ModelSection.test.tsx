@@ -12,6 +12,7 @@ vi.mock("@/bridge/dialog", () => ({ open: vi.fn(async () => "/custom/file") }));
 vi.mock("../search/searchIndexStore", () => ({ onDescribeViewChanged: vi.fn() }));
 import { open as openFileDialog } from "@/bridge/dialog";
 import { ModelSection } from "./ModelSection";
+import { ModelEditor } from "./ModelEditor";
 import { VlmSection } from "./VlmSection";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
 
@@ -242,5 +243,35 @@ describe("model settings", () => {
     expect((input as HTMLInputElement).value).toBe("cpu");
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ saveOnly: true, local: expect.objectContaining({ device: "cpu" }) }));
+  });
+});
+
+describe("endpoint request timeout", () => {
+  function endpointModel(timeout_s?: number) {
+    const base = initial().models.find(m => m.id === "vlm-online")!;
+    return { ...base, id: "custom-ep", name: "Intranet", custom: true, customized: true, hasKey: false,
+      endpoint: { url: "http://intranet/v1/chat/completions", model: "vision", ...(timeout_s !== undefined ? { timeout_s } : {}) } };
+  }
+  it("saves a typed timeout with the endpoint, and an emptied field clears it", async () => {
+    const onUse = vi.fn(async () => {});
+    const user = userEvent.setup();
+    const { unmount } = render(<ModelEditor model={endpointModel()} name="Intranet" mode="edit" operation={undefined} submittingRequest={false}
+      onUse={onUse} onError={vi.fn()} onCancel={vi.fn()} />);
+    const field = screen.getByRole("textbox", { name: "Request timeout (s)" });
+    expect((field as HTMLInputElement).value).toBe("");
+    await user.type(field, "900");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(onUse).toHaveBeenCalledTimes(1));
+    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ id: "custom-ep", saveOnly: true,
+      endpoint: { url: "http://intranet/v1/chat/completions", model: "vision", timeout_s: 900 } }));
+    unmount();
+
+    onUse.mockClear();
+    render(<ModelEditor model={endpointModel(900)} name="Intranet" mode="edit" operation={undefined} submittingRequest={false}
+      onUse={onUse} onError={vi.fn()} onCancel={vi.fn()} />);
+    await user.clear(screen.getByRole("textbox", { name: "Request timeout (s)" }));
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(onUse).toHaveBeenCalledTimes(1));
+    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ endpoint: { url: "http://intranet/v1/chat/completions", model: "vision" } }));
   });
 });

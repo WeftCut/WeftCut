@@ -15,6 +15,7 @@
 //! shifts onto the timeline; here the tool shifts onto source-absolute time.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
 
@@ -33,7 +34,9 @@ pub struct TimedFrame {
     /// verbatim. The parser echoes these back; the tool shifts them by the
     /// source-window start to reach source-absolute time.
     pub t_us: i64,
-    /// Extracted still (PNG) for this timestamp.
+    /// Extracted still for this timestamp — a JPEG from `frame_extract`; any
+    /// format the engine reads works (the endpoint names the type from the
+    /// extension, llama-mtmd sniffs the content).
     pub path: PathBuf,
 }
 
@@ -177,6 +180,19 @@ impl Default for Language {
     }
 }
 
+/// How long one describe request may run before it is abandoned — the hang
+/// guard for EVERY engine, local sidecar and HTTP endpoint alike. NOT the
+/// expected runtime, a ceiling that kills a wedged request. A cold local start
+/// pays model-load + shader compile (~40s) and an 8B on CPU can run tens of
+/// seconds per frame; a self-hosted server on modest hardware is no faster, so
+/// an endpoint gets the same budget unless its model sets one (#69: a flat 180s
+/// timed out a slow intranet server where the local engine would have waited).
+pub fn describe_hang_guard(n_frames: usize) -> Duration {
+    const FLOOR_SECS: u64 = 300;
+    const PER_FRAME_SECS: u64 = 20;
+    Duration::from_secs(FLOOR_SECS + (n_frames as u64).saturating_mul(PER_FRAME_SECS))
+}
+
 /// A fully-specified describe request: the sampled frames, the prompt focus and
 /// the language the answer must come back in.
 #[derive(Debug, Clone)]
@@ -210,6 +226,12 @@ pub trait SceneDescriber: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hang_guard_scales_with_frame_count() {
+        assert!(describe_hang_guard(16) > describe_hang_guard(1));
+        assert!(describe_hang_guard(0).as_secs() >= 300);
+    }
 
     #[test]
     fn language_absent_or_blank_is_the_default() {

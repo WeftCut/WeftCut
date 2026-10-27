@@ -6,7 +6,7 @@ import { CONTENT_CATALOG } from "../shared/content-catalog";
 import { MODEL_DEFINITIONS, type ModelLocalConfig } from "../shared/inference-models";
 import type { ContentPlatformKey } from "../shared/content-download";
 import { ModelManager } from "./model-manager";
-import { createModelSettingsStore, migrateModelSettings } from "./model-settings";
+import { createModelSettingsStore, migrateModelSettings, verifiedIdentity } from "./model-settings";
 import { type ContentDeps, itemStatus } from "./contentDownload";
 import type { ContentQueue } from "./contentQueue";
 import type { SpeechConfigStore, SpeechConfigFs } from "./speech-config";
@@ -92,7 +92,7 @@ export function createModelFeature(deps: {
       const files = [p.local?.binary, p.local?.model, p.local?.tokens, p.local?.mmproj].filter((s): s is string => !!s).map(file => {
         try { const st = fs.statSync(file); return [file, st.size, st.mtimeMs]; } catch { return [file, null]; }
       });
-      return createHash("sha256").update(JSON.stringify({ backend: p.backend, local: p.local, endpoint: p.endpoint, files })).digest("hex");
+      return createHash("sha256").update(JSON.stringify({ ...verifiedIdentity(p), files })).digest("hex");
     },
     installComponents: () => installModelComponents(deps.cacheDir),
     verify: async (p, key, signal) => {

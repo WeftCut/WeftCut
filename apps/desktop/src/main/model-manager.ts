@@ -1,4 +1,4 @@
-import { MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
+import { ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isEndpointTimeout, MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
 import { cleanModelLocal, sameModelFiles, withKnownPaths, type ModelSettingsStore } from "./model-settings";
 
 export interface ModelManagerDeps {
@@ -95,7 +95,14 @@ export class ModelManager {
         const url = new URL(request.endpoint.url.trim());
         if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use an HTTP(S) endpoint without embedded credentials");
         if (!request.endpoint.model.trim()) throw new Error("Enter a model name");
-        candidate.endpoint = { url: url.href, model: request.endpoint.model.trim() };
+        const timeout = request.endpoint.timeout_s;
+        if (timeout !== undefined && !isEndpointTimeout(timeout)) {
+          throw new Error(`Request timeout must be a whole number of seconds from ${ENDPOINT_TIMEOUT_MIN_S} to ${ENDPOINT_TIMEOUT_MAX_S}`);
+        }
+        // An absent timeout clears it: the editor sends the whole endpoint, and
+        // an empty field means "automatic". It is not part of `endpointChanged`
+        // below — a slower ceiling is the same model on the same server.
+        candidate.endpoint = { url: url.href, model: request.endpoint.model.trim(), ...(timeout !== undefined ? { timeout_s: timeout } : {}) };
       }
     }
     const filesChanged = !!candidate.local && !!this.resolved(original).local && !sameModelFiles(candidate.local, this.resolved(original).local!);

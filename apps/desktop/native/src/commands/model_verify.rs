@@ -19,6 +19,11 @@ pub struct LocalConfig {
 pub struct EndpointConfig {
     url: String,
     model: String,
+    /// The candidate's own request timeout. Verification honours it: a slow
+    /// self-hosted server is exactly the one that needs it, and it must not
+    /// fail its first request on a ceiling the real runs will not have.
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +201,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                         url: ep.url,
                         model: Some(ep.model),
                         api_key: a.api_key,
+                        timeout_s: ep.timeout_s,
                     },
                 )]);
                 let d =

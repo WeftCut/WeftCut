@@ -25,7 +25,6 @@ pub mod backend;
 pub mod backends;
 pub mod config;
 pub mod error;
-pub mod http;
 pub mod parse;
 pub mod synthesizer;
 pub mod transcriber;

@@ -1178,6 +1178,16 @@ its `llama-mtmd-cli` runtime are also an app-managed download there
 ([ADR 0055](adr/0055-third-content-slice-is-windows-qwen3-vl-4b-on-llama-mtmd.md)),
 which fills the local engine's three paths on install.
 
+**Endpoint requests.** Frames go out as JPEG data URLs. A 408, 429 or 5xx is
+retried with backoff (at most 3 attempts within 45 s, the same policy as the
+OpenAI speech calls, `native/src/inference/http.rs`). Each request is bounded
+by the model's own **request timeout** (Settings → the endpoint model, 10–3600
+s). When none is set, the bound is the hang guard the local sidecar gets
+(300 s + 20 s per frame). A request that hits it fails with an error that
+names the timeout and where to raise it. The timeout is run tuning: it is
+outside the description cache key and the verification fingerprint, so
+changing it neither forks the model nor re-verifies it.
+
 ## Observability
 
 Tool calls flow through the `LogBus` and surface in the status-bar

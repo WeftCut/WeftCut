@@ -116,12 +116,14 @@ fn construct_describer(
                 url,
                 api_key,
                 model,
+                timeout_s,
             }),
         ) => Some(Box::new(OpenAiCompatDescriber::new(
             url.clone(),
             api_key.clone(),
             model.clone().unwrap_or_else(|| "default".into()),
             VlmBackend::ByoEndpoint,
+            timeout_s.map(std::time::Duration::from_secs),
         ))),
         _ => None,
     }
@@ -240,6 +242,7 @@ mod tests {
             url: url.into(),
             api_key: None,
             model: Some("qwen2-vl".into()),
+            timeout_s: None,
         }
     }
 

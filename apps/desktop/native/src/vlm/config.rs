@@ -41,13 +41,18 @@ pub enum BackendConfig {
     /// is the full `/v1/chat/completions` URL; `api_key` is optional (self-hosted
     /// servers usually need none, hosted ones do) and is merged in from
     /// safeStorage, never read off disk; `model` names the served model
-    /// (defaults downstream).
+    /// (defaults downstream). `timeout_s` is the model's own per-request
+    /// ceiling; absent → the frame-scaled hang guard every engine gets
+    /// (`describer::describe_hang_guard`). It is run tuning, not identity, so it
+    /// stays out of the description cache key.
     Endpoint {
         url: String,
         #[serde(default)]
         api_key: Option<String>,
         #[serde(default)]
         model: Option<String>,
+        #[serde(default)]
+        timeout_s: Option<u64>,
     },
 }
 
@@ -119,6 +124,7 @@ mod tests {
                     url: "http://localhost:8080/v1/chat/completions".into(),
                     api_key: None,
                     model: None,
+                    timeout_s: None,
                 }),
             ),
             Availability::Available,
@@ -129,7 +135,8 @@ mod tests {
                 Some(&BackendConfig::Endpoint {
                     url: "  ".into(),
                     api_key: None,
-                    model: None
+                    model: None,
+                    timeout_s: None,
                 }),
             ),
             Availability::NeedsEndpoint,
@@ -148,6 +155,7 @@ mod tests {
                     url: "https://api.example.com/v1/chat/completions".into(),
                     api_key: Some("sk-x".into()),
                     model: Some("some-vlm".into()),
+                    timeout_s: None,
                 }),
             ),
             Availability::Available,
@@ -210,6 +218,19 @@ mod tests {
         .unwrap();
         assert!(matches!(ep, BackendConfig::Endpoint { .. }));
 
+        // A model's own request timeout rides the same entry.
+        let timed: BackendConfig = serde_json::from_value(serde_json::json!({
+            "kind": "endpoint", "url": "http://h/v1/chat/completions", "timeout_s": 900
+        }))
+        .unwrap();
+        assert!(matches!(
+            timed,
+            BackendConfig::Endpoint {
+                timeout_s: Some(900),
+                ..
+            }
+        ));
+
         // The key rides the SAME entry main merges it into — it is not its own
         // config shape any more.
         let keyed: BackendConfig = serde_json::from_value(serde_json::json!({
@@ -225,6 +246,7 @@ mod tests {
                 url: "https://api.example.com/v1/chat/completions".into(),
                 api_key: Some("sk-x".into()),
                 model: Some("some-vlm".into()),
+                timeout_s: None,
             },
         );
     }

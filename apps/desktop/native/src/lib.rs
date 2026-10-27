@@ -40,6 +40,10 @@ mod resources;
 // console-window suppression trait can't live behind a feature gate.
 mod process;
 
+// What speech and vlm share, whichever engine serves them (the HTTP client and
+// retry policy). Gated with them on `speech`.
+#[cfg(feature = "speech")]
+mod inference;
 #[cfg(feature = "speech")]
 mod inference_files;
 
@@ -50,7 +54,7 @@ mod inference_paths_live_tests;
 mod speech;
 // Video-understanding sidecar (scene description). Twin of `speech/`; gated on
 // the same `speech` feature — it reuses `jobs` ffmpeg (frame sampling) and the
-// `speech::http` cloud client, both of which `speech` already pulls in.
+// `inference::http` client, both of which `speech` already pulls in.
 #[cfg(feature = "export")]
 mod export;
 #[cfg(feature = "speech")]

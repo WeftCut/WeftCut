@@ -233,6 +233,8 @@ const zhCN: Resources = {
     funasr_hint: "需要 sherpa-onnx 可执行文件、兼容的 ONNX 模型及配套的 tokens 文件。",
     whisper_hint: "需要 whisper.cpp 可执行文件和兼容的 Whisper 模型文件。",
     key_optional: "无需认证的服务可留空",
+    endpoint_timeout: "请求超时（秒）",
+    endpoint_timeout_hint: "留空为自动：等待时间随每次请求的大小增长。自建服务器较慢时可调高。",
   },
   motion_path: {
     conversion_calculating:'正在计算预览…仍可调整参数或取消。',

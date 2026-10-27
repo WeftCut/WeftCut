@@ -30,7 +30,9 @@ use crate::compute_jobs::{ignore_model_phase, ModelObserver, ModelPhase};
 use crate::inference_files::{program_path, InferenceFiles};
 use crate::process::{output_watching_stderr, NoConsoleWindow};
 
-use super::describer::{DescribeRequest, Focus, Language, SceneDescriber, TimedFrame};
+use super::describer::{
+    describe_hang_guard, DescribeRequest, Focus, Language, SceneDescriber, TimedFrame,
+};
 use super::error::VlmError;
 use super::parser::RawDescription;
 
@@ -115,9 +117,18 @@ impl LlamaMtmdSidecar {
         let files = InferenceFiles::new()?;
         let mut frames = Vec::with_capacity(req.frames.len());
         for (i, frame) in req.frames.iter().enumerate() {
+            // Keep the source's extension: the frames are JPEG now, and an
+            // alias named `.png` would be a lie to anything that trusts it.
+            let ext = frame
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png");
             frames.push(TimedFrame {
                 t_us: frame.t_us,
-                path: files.input(&frame.path, &format!("frame-{i}.png")).await?,
+                path: files
+                    .input(&frame.path, &format!("frame-{i}.{ext}"))
+                    .await?,
             });
         }
         // llama supports Unicode weights. Resolve relative config paths before
@@ -129,7 +140,7 @@ impl LlamaMtmdSidecar {
             &prompt,
         );
         apply_device(&mut args, self.device.as_deref());
-        let timeout = sidecar_timeout(req.frames.len());
+        let timeout = describe_hang_guard(req.frames.len());
         let mut cpu = self.device.as_deref() == Some("cpu");
         let body = match run(&self.binary, &args, files.cwd(), timeout, observer).await {
             Ok(body) => body,
@@ -285,16 +296,6 @@ pub fn build_args(
         "--repeat-last-n".into(),
         REPEAT_LAST_N.into(),
     ]
-}
-
-/// A generous hang-guard timeout — NOT the expected runtime, a ceiling that
-/// kills a wedged child. Cold start pays model-load + shader compile (~40s), and
-/// an 8B on CPU can run tens of seconds per frame, so allow a large floor plus
-/// per-frame headroom.
-fn sidecar_timeout(n_frames: usize) -> Duration {
-    const FLOOR_SECS: u64 = 300;
-    const PER_FRAME_SECS: u64 = 20;
-    Duration::from_secs(FLOOR_SECS + (n_frames as u64).saturating_mul(PER_FRAME_SECS))
 }
 
 /// Spawn the one-shot child, wait (bounded by `timeout`), capture stdout as the
@@ -505,12 +506,6 @@ mod tests {
         let p = build_prompt(&frames, Focus::General, &Language::parse(Some("ja")));
         let anchor = p.find("Return ONLY a JSON array").expect("anchor");
         assert!(p.find("in Japanese").expect("language line") > anchor);
-    }
-
-    #[test]
-    fn timeout_scales_with_frame_count() {
-        assert!(sidecar_timeout(16) > sidecar_timeout(1));
-        assert!(sidecar_timeout(0).as_secs() >= 300);
     }
 
     /// Opt-in LIVE smoke of the whole local path — frame extraction → the exact

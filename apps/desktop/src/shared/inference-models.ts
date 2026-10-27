@@ -9,7 +9,23 @@ export interface ModelLocalConfig {
   device?: string;
   threads?: number;
 }
-export interface ModelEndpoint { url: string; model: string }
+export interface ModelEndpoint {
+  url: string;
+  model: string;
+  /** Per-request timeout in seconds, for a server slower than the automatic
+   *  ceiling allows (#69). Absent → native scales the ceiling with the request.
+   *  Run tuning, not identity: changing it neither forks a custom model nor
+   *  invalidates verification. Bounds: ENDPOINT_TIMEOUT_MIN_S..MAX_S. */
+  timeout_s?: number;
+}
+/** Legal request-timeout range, read by the store's parsing, the manager's
+ *  validation and the editor field alike. */
+export const ENDPOINT_TIMEOUT_MIN_S = 10;
+export const ENDPOINT_TIMEOUT_MAX_S = 3600;
+/** Whether `v` is a request timeout the store keeps. */
+export function isEndpointTimeout(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= ENDPOINT_TIMEOUT_MIN_S && v <= ENDPOINT_TIMEOUT_MAX_S;
+}
 export interface ModelDefinition {
   id: string;
   name: string;

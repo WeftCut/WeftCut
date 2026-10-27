@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createModelSettingsStore, freshModelSettings, migrateModelSettings } from "./model-settings";
+import { createModelSettingsStore, freshModelSettings, migrateModelSettings, verifiedIdentity } from "./model-settings";
 import { modelProfileToVlmSnapshot } from "./vlm-config";
 import { VLM_CONFIG_DEFAULTS } from "../shared/vlm-config";
 
@@ -72,6 +72,29 @@ describe("model settings migration", () => {
     expect(modelProfileToVlmSnapshot(profile).qwen3_vl).toEqual({
       kind: "local", binary: "C:/my/llama.exe", model: "C:/my/q.gguf", mmproj: "",
     });
+  });
+  it("round-trips an endpoint's request timeout and drops one out of range", () => {
+    const files = new Map<string, string>();
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    const store = factory(); const state = store.get();
+    const ep = (id: string, timeout_s: number) => ({ id, name: id, family: "vlm" as const, backend: "byo_endpoint" as const, locality: "online" as const,
+      custom: true, artifacts: [], endpoint: { url: "http://local/v1/chat/completions", model: "a", timeout_s } });
+    state.profiles.push(ep("custom-slow", 900), ep("custom-bogus", 5), ep("custom-fraction", 30.5));
+    store.set(state);
+    const restored = factory().get();
+    expect(restored.profiles.find(p => p.id === "custom-slow")?.endpoint?.timeout_s).toBe(900);
+    expect(restored.profiles.find(p => p.id === "custom-bogus")?.endpoint).not.toHaveProperty("timeout_s");
+    expect(restored.profiles.find(p => p.id === "custom-fraction")?.endpoint).not.toHaveProperty("timeout_s");
+  });
+  // Fingerprints stored before the timeout existed must keep matching, and a
+  // timeout-only edit must not read as a different verified model.
+  it("leaves the request timeout out of what verification vouches for", () => {
+    const endpoint = { url: "http://h/v1/chat/completions", model: "m" };
+    const before = JSON.stringify({ backend: "byo_endpoint", local: undefined, endpoint });
+    expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint }))).toBe(before);
+    expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint: { ...endpoint, timeout_s: 600 } }))).toBe(before);
+    expect(JSON.stringify(verifiedIdentity({ backend: "byo_endpoint", endpoint: { ...endpoint, model: "n" } }))).not.toBe(before);
   });
   it("reloads custom models while refusing forged catalog and credential references", () => {
     const files = new Map<string, string>();

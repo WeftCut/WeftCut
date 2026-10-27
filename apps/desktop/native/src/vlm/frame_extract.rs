@@ -4,7 +4,7 @@
 //! [`super::describer`]). We own the sampling so the timestamps become a quantity
 //! WE define (the whole premise of the design): given a source window
 //! `[in_us, out_us]` and a sampling `fps`, we midpoint-sample N frames, extract
-//! each as a downscaled PNG, and return them tagged with their **window-relative**
+//! each as a downscaled JPEG, and return them tagged with their **window-relative**
 //! timestamp.
 //!
 //! One ffmpeg child per frame, all under a single user-compute admission
@@ -35,6 +35,16 @@ const MAX_SIDE: u32 = 768;
 /// than spawning an OOM.
 pub const MAX_FRAMES: usize = 16;
 
+/// Where the `i`-th sampled frame lands. JPEG, not PNG: a 768 px PNG still is
+/// several hundred KB, so a dozen of them base64-encoded made a request body
+/// past 10 MB for an OpenAI-compatible endpoint — slow to upload to a modest
+/// self-hosted server, and its time counted against the request timeout. A
+/// q 3 JPEG is an order of magnitude smaller, and the description cannot tell.
+/// llama-mtmd reads it too (stb_image sniffs the content).
+fn frame_path(out_dir: &Path, i: usize) -> std::path::PathBuf {
+    out_dir.join(format!("f{i:02}.jpg"))
+}
+
 /// Plan the sampling anchors for `[in_us, out_us]` at `fps`: midpoint sampling
 /// (no exact-boundary frames), N = round(duration_s * fps) clamped to
 /// `[1, MAX_FRAMES]`. Returns window-relative anchor times in µs. Pure so the
@@ -55,7 +65,7 @@ pub fn plan_anchors(in_us: i64, out_us: i64, fps: f64) -> Vec<i64> {
         .collect()
 }
 
-/// Extract one downscaled PNG per planned anchor into `out_dir`, returning the
+/// Extract one downscaled JPEG per planned anchor into `out_dir`, returning the
 /// [`TimedFrame`]s (window-relative time + path). `source_in_us` is where the
 /// window starts in the SOURCE; anchors are window-relative, so the absolute
 /// seek time is `source_in_us + anchor`.
@@ -91,7 +101,7 @@ pub async fn sample_frames(
     for (i, &anchor_us) in anchors.iter().enumerate() {
         let abs_us = (source_in_us + anchor_us).max(0);
         let abs_s = abs_us as f64 / 1_000_000.0;
-        let path = out_dir.join(format!("f{i:02}.png"));
+        let path = frame_path(out_dir, i);
 
         // -ss BEFORE -i = fast keyframe seek (matches spike.mjs + jobs/frame.rs);
         // description is robust to thumbnail-grade seek accuracy.
@@ -115,8 +125,9 @@ pub async fn sample_frames(
                 "1",
                 "-vf",
                 &format!("scale='min({MAX_SIDE},iw)':-2"),
+                // The extension picks mjpeg; q 3 is `jobs/frame.rs`'s setting.
                 "-q:v",
-                "2",
+                "3",
                 "-update",
                 "1",
                 "-f",
@@ -168,6 +179,12 @@ mod tests {
         assert_eq!(plan_anchors(0, 600_000_000, 5.0).len(), MAX_FRAMES);
         // Zero-duration window → a single anchor at 0.
         assert_eq!(plan_anchors(5_000_000, 5_000_000, 1.0), vec![0]);
+    }
+
+    #[test]
+    fn frames_are_written_as_jpeg() {
+        let p = frame_path(Path::new("out"), 3);
+        assert_eq!(p, Path::new("out").join("f03.jpg"));
     }
 
     #[test]

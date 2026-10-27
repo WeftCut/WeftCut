@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ModelBackend, ModelLocalConfig, ModelOperation, ModelUseRequest, ModelView } from "../../shared/inference-models";
+import { ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, type ModelBackend, type ModelEndpoint, type ModelLocalConfig, type ModelOperation, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
 import { modelsInstallComponents } from "../ipc";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
   const isNew = mode === "new";
   const backend = backendOverride ?? model.backend;
   const [local, setLocal] = useState<ModelLocalConfig>(draft?.local ?? (isNew ? { binary: "", model: "" } : model.local ?? { binary: "", model: "" }));
-  const [endpoint, setEndpoint] = useState(draft?.endpoint ?? (isNew ? { url: "", model: "" } : model.endpoint ?? { url: "", model: "" }));
+  const [endpoint, setEndpoint] = useState<ModelEndpoint>(draft?.endpoint ?? (isNew ? { url: "", model: "" } : model.endpoint ?? { url: "", model: "" }));
   const [apiKey, setApiKey] = useState(draft?.apiKey ?? "");
   const [name, setName] = useState(draft?.name ?? (!isNew && model.custom ? model.name : ""));
   const [busyAction, setBusyAction] = useState(false);
@@ -86,6 +86,14 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
           <AppInput value={endpoint.url} ariaLabel={t("settings.vlm_endpoint_url")} disabled={busy} placeholder="https://…/v1/chat/completions" onValueChange={url => setEndpoint(prev => ({ ...prev, url }))} /></div>
         <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_endpoint_model")}</span>
           <AppInput value={endpoint.model} ariaLabel={t("settings.vlm_endpoint_model")} disabled={busy} onValueChange={model => setEndpoint(prev => ({ ...prev, model }))} /></div>
+        {/* Saved with the endpoint but not part of its identity (the
+            `endpointChanged` test above ignores it): a longer ceiling for the
+            same server is the same model. Empty = automatic. */}
+        <div className="settings-key-input-row"><span className="settings-slider-label">{t("models.endpoint_timeout")}</span>
+          <AppNumberField value={endpoint.timeout_s ?? null} min={ENDPOINT_TIMEOUT_MIN_S} max={ENDPOINT_TIMEOUT_MAX_S} step={10} ariaLabel={t("models.endpoint_timeout")} disabled={busy}
+            onValueChange={timeout => setEndpoint(prev => ({ ...prev, timeout_s: Math.round(timeout) }))}
+            onClear={() => setEndpoint(prev => { const next = { ...prev }; delete next.timeout_s; return next; })} /></div>
+        <p className="settings-toggle-hint">{t("models.endpoint_timeout_hint")}</p>
       </> : <p className="settings-toggle-hint">{t("models.openai_speech_hint")}</p>}
       <div className="settings-key-input-row"><span className="settings-slider-label">API Key</span>
         <AppInput type="password" value={apiKey} autoComplete="off" spellCheck={false} ariaLabel="API Key" disabled={busy}

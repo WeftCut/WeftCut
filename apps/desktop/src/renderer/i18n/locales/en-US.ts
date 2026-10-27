@@ -239,6 +239,8 @@ const enUS = {
     funasr_hint: "Use a sherpa-onnx executable, compatible ONNX model and its tokens file.",
     whisper_hint: "Use a whisper.cpp executable and compatible Whisper model file.",
     key_optional: "Optional for services without authentication",
+    endpoint_timeout: "Request timeout (s)",
+    endpoint_timeout_hint: "Leave empty for automatic: the wait grows with the size of each request. Raise it for a slow self-hosted server.",
   },
   motion_path: {
     conversion_calculating:'Calculating preview… You can keep editing or cancel.',

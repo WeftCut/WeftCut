@@ -623,6 +623,7 @@ mod stateless_tests {
             url: "http://127.0.0.1:1/v1/chat/completions".into(),
             api_key: None,
             model: Some("test-model".into()),
+            timeout_s: None,
         };
         let model = vlm::resolve::cache_model_identity(vlm::VlmBackend::ByoEndpoint, Some(&cfg));
         let state = serde_json::json!({

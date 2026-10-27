@@ -1781,7 +1781,7 @@ fn map_vlm_error(e: crate::vlm::VlmError) -> McpToolError {
             McpToolError::internal_error(message, None)
         }
         E::Io(_) | E::FrameExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
-        E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } => {
+        E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } | E::EndpointTimeout { .. } => {
             McpToolError::internal_error(message, None)
         }
     }

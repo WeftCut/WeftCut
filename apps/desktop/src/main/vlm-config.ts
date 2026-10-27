@@ -226,7 +226,7 @@ export function createVlmConfigStore(deps: {
 /// enum deserializes (`#[serde(tag = "kind", rename_all = "snake_case")]`).
 export type BackendConfigJson =
   | { kind: "local"; binary: string; model: string; mmproj: string; device?: string }
-  | { kind: "endpoint"; url: string; api_key?: string; model?: string };
+  | { kind: "endpoint"; url: string; api_key?: string; model?: string; timeout_s?: number };
 
 /// Merge the non-secret store config + the secret endpoint key into the
 /// `Record<backendTag, BackendConfig>` snapshot the stateless describe_clip
@@ -305,6 +305,8 @@ export function modelProfileToVlmSnapshot(
       url: profile.endpoint.url,
       ...(key !== "" ? { api_key: key } : {}),
       ...(profile.endpoint.model ? { model: profile.endpoint.model } : {}),
+      // Absent → native's frame-scaled ceiling; only a set one rides along.
+      ...(profile.endpoint.timeout_s !== undefined ? { timeout_s: profile.endpoint.timeout_s } : {}),
     };
   }
   return out;

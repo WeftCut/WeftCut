@@ -314,4 +314,13 @@ describe("modelProfileToVlmSnapshot", () => {
   it("has no entry at all when nothing is configured", () => {
     expect(modelProfileToVlmSnapshot({ backend: "qwen3_vl" })).toEqual({});
   });
+
+  // Absent means "native scales the ceiling with the request", so only a set
+  // timeout may ride along — a `null` or `0` would read as a real value.
+  it("carries the endpoint's request timeout only when one is set", () => {
+    const endpoint = { url: "http://h/v1/chat/completions", model: "m" };
+    expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint }).byo_endpoint).not.toHaveProperty("timeout_s");
+    expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint: { ...endpoint, timeout_s: 900 } }).byo_endpoint)
+      .toEqual({ kind: "endpoint", url: "http://h/v1/chat/completions", model: "m", timeout_s: 900 });
+  });
 });
