@@ -2530,6 +2530,9 @@ mod compute_job_tests {
     use crate::napi_backend::Backend;
     use crate::state::{new_id, Layer, LayerParams, MediaItem, MediaKind};
 
+    /// A job's phases, without `queued`: admission goes through the
+    /// process-wide governor, so a test can queue behind whatever a parallel
+    /// test holds. Queuing itself is pinned in `compute_jobs` and `resources`.
     fn phases(sink: &VecEventSink, job_id: &str) -> Vec<Value> {
         sink.events
             .lock()
@@ -2537,6 +2540,7 @@ mod compute_job_tests {
             .iter()
             .filter(|(name, p)| name == EVENT_COMPUTE_JOB_PHASE && p["job_id"] == job_id)
             .map(|(_, p)| p["phase"].clone())
+            .filter(|phase| phase["kind"] != "queued")
             .collect()
     }
 
