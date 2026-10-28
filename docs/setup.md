@@ -83,6 +83,29 @@ distros as a release (ADR 0143). The first build downloads that toolchain
 into `~/.napi-rs/cross-toolchain/`; each build then checks its addon with
 `objdump` (from `build-essential`'s binutils) against the glibc floor.
 
+### Native local Linux builds
+
+On newer Ubuntu systems, the legacy cross-linker can fail on system libraries
+with `unknown type [0x13] section .relr.dyn`. For local development, explicitly
+use the host Rust/C/C++ toolchain instead:
+
+```sh
+WEFTCUT_NATIVE_BUILD=1 npm run bootstrap
+npm run dev
+```
+
+Only the exact value `1` enables this option, and only on Linux x64. It applies
+to both addons, omits `--use-napi-cross` and the cross target, and does not inject
+cross-compilers. Existing caller compiler and Rust settings still apply; remove
+any settings pointing at the legacy cross-toolchain when using this option.
+The per-addon glibc floor checks are skipped because these local binaries may
+require the host's newer glibc. They are not portable release artifacts.
+
+Keep this variable unset for release builds. Packaging still enforces the glibc
+floor. To return to portable addons, rerun `npm run bootstrap` without the
+variable; Cargo rebuilds for the portable target. The default cross-toolchain
+and its compatibility checks are unchanged.
+
 ## ffmpeg
 
 WeftCut will auto-download ffmpeg via `ffmpeg-sidecar` on first run,

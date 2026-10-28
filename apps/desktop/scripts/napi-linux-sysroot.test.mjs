@@ -26,3 +26,24 @@ test('a compiler the caller already chose is left alone', () => {
   assert.equal(env.CC_x86_64_unknown_linux_gnu, undefined)
   assert.ok(env.CXX_x86_64_unknown_linux_gnu)
 })
+
+test('explicit native Linux x64 builds return no cross-build arguments or environment overrides', () => {
+  const env = { WEFTCUT_NATIVE_BUILD: '1', CC: '/opt/cc', RUSTFLAGS: '-C debuginfo=1' }
+  const before = { ...env }
+  assert.deepEqual(linuxSysroot(env, { platform: 'linux', arch: 'x64' }), { args: '', env: {} })
+  assert.deepEqual(env, before)
+})
+
+test('only the exact native opt-in disables the portable Linux x64 default', () => {
+  for (const value of [undefined, '', '0', 'false', 'true', 'yes']) {
+    const result = linuxSysroot({ WEFTCUT_NATIVE_BUILD: value }, { platform: 'linux', arch: 'x64' })
+    assert.equal(result.args, '--use-napi-cross --target x86_64-unknown-linux-gnu')
+    assert.ok(result.env.CC_x86_64_unknown_linux_gnu)
+  }
+})
+
+test('the native opt-in leaves other hosts unchanged', () => {
+  for (const [platform, arch] of [['win32', 'x64'], ['darwin', 'arm64'], ['linux', 'arm64']]) {
+    assert.deepEqual(linuxSysroot({ WEFTCUT_NATIVE_BUILD: '1' }, { platform, arch }), { args: '', env: {} })
+  }
+})

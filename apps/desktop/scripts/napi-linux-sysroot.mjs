@@ -19,10 +19,15 @@ export const LINUX_TRIPLE = 'x86_64-unknown-linux-gnu'
 
 /**
  * Extra `napi build` arguments and environment for this host: the sysroot build
- * on Linux x64, nothing anywhere else (the package ships no other Linux arch).
+ * on Linux x64 unless explicitly opting into a host-native local build.
+ * Nothing anywhere else (the package ships no other Linux arch).
  */
 export function linuxSysroot(env = process.env, { platform = process.platform, arch = process.arch } = {}) {
   if (platform !== 'linux' || arch !== 'x64') return { args: '', env: {} }
+  // Native builds use the caller's host toolchain and skip the per-addon
+  // glibc floor check (both wrappers gate it on args). Release defaults stay
+  // portable; only the exact opt-in value enables this local workaround.
+  if (env.WEFTCUT_NATIVE_BUILD === '1') return { args: '', env: {} }
   // The directory napi extracts the toolchain into on first use. The package is
   // the CLI's dependency, not ours, so resolve it from where the CLI does.
   const cli = createRequire(import.meta.url).resolve('@napi-rs/cli/package.json')
