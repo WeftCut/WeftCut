@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installResourceDiagnostics, resourceDiagnostics, startResourceJournal } from './resourceDiagnostics'
 import { ownProcessTree, closeProcessTree } from '../../lib/process-cleanup.mjs'
+import { startMacProcessProbe } from '../../lib/macos-process-probe.mjs'
 
 /// Type-only, so Playwright's transform erases it: the stall probe reads the
 /// renderer's `ExportState` mirror field by field (labels, progress.frame,
@@ -310,6 +311,7 @@ export async function launchApp(
   })
   liveApps.set(app, mintedUserDataDir)
   processTrees.set(app, ownProcessTree(app.process()))
+  startMacProcessProbe(app.process(), test.info().outputPath(`process-probe-${app.process().pid}`))
   app.close = wrapClose(app)
   try {
     const page = await app.firstWindow({ timeout: 60_000 })
