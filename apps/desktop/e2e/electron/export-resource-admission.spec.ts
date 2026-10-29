@@ -97,7 +97,7 @@ test('cancelling bounded production releases export leases and permits a subsequ
     await page.evaluate(outputAbsPath => {
       const w = window as any
       w.__cancelExportDone = false
-      void w.__weftcutTest.exportTimeline({ outputAbsPath, settings: { decodeEngine: 'webcodecs', audio: { include: false } } })
+      void w.__weftcutTest.exportTimeline({ outputAbsPath, settings: { hwAccel: 'software', decodeEngine: 'webcodecs', audio: { include: false } } })
         .catch(() => {}) // cancellation produces no output file
         .finally(() => { w.__cancelExportDone = true })
     }, path.join(outDir, 'cancelled.mp4'))
@@ -109,7 +109,7 @@ test('cancelling bounded production releases export leases and permits a subsequ
     })
     await page.waitForFunction(() => (window as any).__cancelExportDone)
     await expect.poll(() => app.evaluate(() => (globalThis as any).__cancelExportLeases.size)).toBe(0)
-    const result = await driveExport(page, { outputAbsPath: path.join(outDir, 'completed.mp4'), settings: { decodeEngine: 'webcodecs', audio: { include: false } } }, { hook: 'exportTimeline' })
+    const result = await driveExport(page, { outputAbsPath: path.join(outDir, 'completed.mp4'), settings: { hwAccel: 'software', decodeEngine: 'webcodecs', audio: { include: false } } }, { hook: 'exportTimeline' })
     expect(result.done.ok, result.done.error).toBe(true)
     expect(await page.evaluate(() => (window as any).__weftcutExportPerf.totalFrames)).toBe(180)
   } finally { await app.close() }
