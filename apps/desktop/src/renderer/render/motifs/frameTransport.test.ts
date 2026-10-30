@@ -32,7 +32,8 @@ describe('capture `stored` reply', () => {
     const bitmap = { width: 1 };
     reader.readAddress.mockResolvedValueOnce(bitmap);
     replies = [{ bitmap: null, persisted: true, stored: true }];
-    await expect(captureMotifResult(capture, 2)).resolves.toEqual({ bitmap, persisted: true });
+    // Stored under that divisor in L0, unlike a live capture.
+    await expect(captureMotifResult(capture, 2)).resolves.toEqual({ bitmap, persisted: true, scaleDiv: 2 });
     expect(reader.readAddress).toHaveBeenCalledWith(cache, 2, { finalizationToken: 'fin' });
     expect(requests).toHaveLength(1);
   });
@@ -48,7 +49,7 @@ describe('capture `stored` reply', () => {
   it('a miss captures again without `cache`, once', async () => {
     reader.readAddress.mockResolvedValue(null);
     replies = [{ bitmap: null, persisted: true, stored: true }, { bitmap: { width: 2 }, persisted: false }];
-    await expect(captureMotifResult(capture)).resolves.toEqual({ bitmap: { width: 2 }, persisted: false });
+    await expect(captureMotifResult(capture)).resolves.toEqual({ bitmap: { width: 2 }, persisted: false, scaleDiv: 'live' });
     expect(requests.map(r => r.capture)).toEqual([capture, { motifId: 'm', finalizationToken: 'fin' }]);
 
     replies = [{ bitmap: null, persisted: true, stored: true }, { bitmap: null, persisted: true, stored: true }];

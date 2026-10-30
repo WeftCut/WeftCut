@@ -3,9 +3,9 @@
 // selects cache-owned bitmaps and coalesces asynchronous frame demand.
 //
 // Frames are stored in a process-wide `sharedMotifFrameCache` (an in-RAM
-// LRU keyed by `(cacheKey, frameIndex)`) so two sprites referencing the same
-// Motif with the same canonical props / dims / fps share one bitmap per
-// frame. Frames whose descriptor resolved with a pending params-page patch
+// LRU keyed by `(cacheKey, frameIndex, scaleDiv)`) so two sprites referencing
+// the same Motif with the same canonical props / dims / fps share one bitmap
+// per frame. Frames whose descriptor resolved with a pending params-page patch
 // (`overlayActive`) go to the separate small `sharedMotifOverlayCache`
 // instead, so gesture churn can't evict committed content. Sprite dispose
 // tears down the sprite's Pixi Texture wrapper but does NOT close the
@@ -14,8 +14,13 @@
 // Cache misses resolve through the shared broker (disk first, then the hidden
 // capture host). Useful late results advance forward playback. The export
 // Worker binds exact pre-baked `injectedFrames` by index instead.
+//
+// Preview reads stored frames at the Playback Resolution divisor (ADR 0154).
+// The sprite draws every preview frame at the Motif's logical (manifest) size
+// whatever the bitmap's size, so geometry, anchors and the gizmo do not move
+// with the divisor.
 
-import { type Container, Sprite, Texture } from "pixi.js";
+import { type Container, Rectangle, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
@@ -29,6 +34,7 @@ import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
 import { MotifTextureSource } from "./MotifTextureSource";
 import type { InjectedMotifFrames } from "../worker/motifStream";
+import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
@@ -58,6 +64,8 @@ export interface MotifSpriteInit {
   /// pick up the new texture). NOT fired on a synchronous cache hit — that
   /// happens inside the current paint, so a repaint would be churn.
   onLoaded?: () => void;
+  /// Preview's Playback Resolution divisor; 1 when absent.
+  scaleDiv?: () => MotifReaderDiv;
 }
 
 export class MotifSprite implements StageableSprite {
@@ -74,6 +82,11 @@ export class MotifSprite implements StageableSprite {
   private injectedFrame = -1;
   private source: MotifTextureSource | null = null;
   private texture: Texture | null = null;
+  /// The texture's local size (`Texture.orig`): the Motif's logical size for
+  /// preview frames, the bitmap's own for the placeholder and export frames.
+  /// The texture's frame still follows the bitmap, so a 1/2 bitmap stretches
+  /// over the same quad.
+  private readonly orig = new Rectangle();
   /// The raster `source` wraps, pinned in its lane cache while bound so an
   /// LRU eviction can't close it under a texture Pixi may still re-upload.
   private bound: ImageBitmap | HTMLCanvasElement | null = null;
@@ -97,8 +110,9 @@ export class MotifSprite implements StageableSprite {
     this.motif = getMotif(this.motifId);
     this.playback = new MotifPlaybackCursor({
       motif: () => this.motif, fpsNum: this.fpsNum, fpsDen: this.fpsDen,
-      bind: (bitmap, lane) => this.bindBitmap(bitmap, lane),
+      bind: (bitmap, lane, d) => this.bindBitmap(bitmap, lane, { width: d.renderW, height: d.renderH }),
       onLoaded: () => this.onLoaded?.(),
+      scaleDiv: init.scaleDiv ?? (() => 1),
     });
     if (!this.motif && typeof document !== "undefined") {
       // eslint-disable-next-line no-console
@@ -142,8 +156,8 @@ export class MotifSprite implements StageableSprite {
     // transform-only change with an unchanged frame must still take.
     this.sprite.scale.set(view.scale_x, view.scale_y);
     // Position is the anchor in composition pixels (anchorPivot.ts).
-    // The raster's own dimensions are the local space here, so a Motif captured
-    // at a different size still pivots at the same relative point.
+    // The texture's local size (`orig`) is the local space: the logical size
+    // for preview frames, so the pivot does not move with the divisor.
     const pivot = anchorPivot({
       x: view.x,
       y: view.y,
@@ -236,10 +250,12 @@ export class MotifSprite implements StageableSprite {
   /// lands there and the matching release reads `boundCache`, so the two lanes'
   /// pin tables never cross. Foreign bitmaps (the placeholder canvas, export-
   /// injected frames) pin in the shared lane as before — retain is safe on
-  /// anything, the cache never closes what it doesn't hold.
+  /// anything, the cache never closes what it doesn't hold. `size` is the
+  /// local size the bitmap is drawn at; foreign bitmaps keep their own.
   private bindBitmap(
     bitmap: ImageBitmap | HTMLCanvasElement,
     pinCache: MotifFrameCache = sharedMotifFrameCache,
+    size: { width: number; height: number } = bitmap,
   ): void {
     // Pin the new raster before letting go of the old one, so a rebind of the
     // same bitmap never drops its count to zero in between. The old pin is
@@ -249,21 +265,26 @@ export class MotifSprite implements StageableSprite {
     const previousCache = this.boundCache;
     this.bound = bitmap;
     this.boundCache = pinCache;
+    const resized = this.orig.width !== size.width || this.orig.height !== size.height;
+    this.orig.width = size.width;
+    this.orig.height = size.height;
     // WebGPU caches batch BindGroups by source identity. Keep one source and
     // texture per sprite: destroying them each frame leaves the previous
     // batch bound to a dead source/sampler and produces a warning every tick.
     if (this.source) {
       this.source.resource = bitmap;
       this.source.update(); // uploads new pixels; also resizes when needed
+      if (resized) this.texture!.update();
     } else {
       this.source = new MotifTextureSource({
         resource: bitmap,
         width: bitmap.width,
         height: bitmap.height,
       });
-      // Dynamic keeps Sprite geometry in sync when a placeholder or an edited
-      // Motif changes dimensions while retaining the same Texture identity.
-      this.texture = new Texture({ source: this.source, dynamic: true });
+      // Dynamic keeps Sprite geometry in sync when a placeholder, an edited
+      // Motif or a divisor changes dimensions while retaining the same Texture
+      // identity. No `frame`: it follows the source; `orig` is the local size.
+      this.texture = new Texture({ source: this.source, orig: this.orig, dynamic: true });
       this.sprite.texture = this.texture;
     }
     this.boundOnce = true;

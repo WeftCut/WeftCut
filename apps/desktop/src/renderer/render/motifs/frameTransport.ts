@@ -1,7 +1,11 @@
 import type { MotifCacheAddress, MotifCaptureControl, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
-export interface CapturedFrame { bitmap: ImageBitmap; persisted: boolean }
+/** The divisor a Motif bitmap is at. `'live'` is a live capture: full size
+ * whatever was asked, because a frame that is not stored has no smaller form.
+ * L0 stores it as divisor 1 (ADR 0154). */
+export type MotifFrameDiv = MotifReaderDiv | 'live';
+export interface CapturedFrame { bitmap: ImageBitmap; persisted: boolean; scaleDiv: MotifFrameDiv }
 interface FrameReply {
   bitmap: ImageBitmap | null;
   persisted: boolean;
@@ -72,7 +76,7 @@ export function captureMotifResult(capture: Record<string, unknown>, scaleDiv: M
 
 async function captureOnce(capture: Record<string, unknown>, scaleDiv: MotifReaderDiv, recaptured: boolean): Promise<CapturedFrame> {
   const { bitmap, persisted, stored } = await request({ capture });
-  if (bitmap) return { bitmap, persisted };
+  if (bitmap) return { bitmap, persisted, scaleDiv: 'live' };
   if (!stored) throw new Error("Motif capture returned no frame");
   // Main sent no pixels (ADR 0154): read the frame through the reader. A
   // joined bake persisted at `bake`; otherwise the `cache` re-check found it.
@@ -82,7 +86,7 @@ async function captureOnce(capture: Record<string, unknown>, scaleDiv: MotifRead
     // A transport error propagates: the file is not known to be bad.
     const read = await motifFrameReader().readAddress(address, scaleDiv,
       typeof capture.finalizationToken === 'string' ? { finalizationToken: capture.finalizationToken } : {});
-    if (read) return { bitmap: read, persisted: true };
+    if (read) return { bitmap: read, persisted: true, scaleDiv };
   }
   // The stored frame did not read, and the reader reported it to main. Capture
   // live, without the `cache` re-check, so a corrupt file cannot loop.

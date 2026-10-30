@@ -29,10 +29,12 @@ export function planExportMotifFrame(
       async read(signal) {
         signal.throwIfAborted();
         if (sharedBakedKeyIndex.has(desc.cacheKey)) {
-          try {
-            const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, desc.contentFrame, finalizationToken);
-            if (bitmap) return bitmap; // producer closes late results on cancel
-          } catch { /* missing/corrupt cache: produce the required pixels */ }
+          // Export reads full size. A missing or corrupt frame (null) is
+          // captured below; a `MotifTransportError` fails the export instead,
+          // because the file is not known to be bad (ADR 0154).
+          const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, desc.contentFrame, 1,
+            finalizationToken ? { finalizationToken } : {});
+          if (bitmap) return bitmap; // producer closes late results on cancel
         }
         signal.throwIfAborted();
         const key = `export-motif:${crypto.randomUUID()}`;

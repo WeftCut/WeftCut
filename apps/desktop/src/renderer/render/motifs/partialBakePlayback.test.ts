@@ -6,9 +6,12 @@ import {
   setMotifPreparationCoverage,
 } from './motifRasterCache';
 import { captureMotifFrameResult } from './host';
+import { MotifTransportError } from './frameTransport';
 
 vi.mock('./host', () => ({ captureMotifFrameResult: vi.fn() }));
-vi.mock('./frameTransport', () => ({ controlStoredMotifCapture: vi.fn() }));
+vi.mock('./frameTransport', async importOriginal => ({
+  ...await importOriginal<typeof import('./frameTransport')>(), controlStoredMotifCapture: vi.fn(),
+}));
 
 const bitmap = () => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap;
 const motif = { manifest: { id: 'long', size: [1, 1], settle_rafs: 2 } } as unknown as Parameters<typeof resolveMotifFrame>[0];
@@ -20,7 +23,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {});
   vi.stubGlobal('createImageBitmap', vi.fn(async () => bitmap()));
   vi.mocked(captureMotifFrameResult).mockImplementation(() => new Promise(resolve => {
-    cleanup.push(() => resolve({ bitmap: bitmap(), persisted: false }));
+    cleanup.push(() => resolve({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' }));
   }));
 });
 afterEach(async () => {
@@ -38,9 +41,9 @@ function warm(keys = ['long']) {
   const callbacks: (() => void)[] = [];
   const prewarmer = new MotifPrewarmer({
     capBytes: 40,
-    hasFrame: (key, frame) => sharedMotifFrameCache.hasFrame(key, frame),
-    setFrame: (key, frame, value) => { sharedMotifFrameCache.setFrame(key, frame, value); },
-    prioritizeFrames: targets => sharedMotifFrameCache.prioritizeFrames(targets),
+    hasFrame: (key, frame) => sharedMotifFrameCache.hasFrame(key, frame, 1),
+    setFrame: (key, frame, div, value) => { sharedMotifFrameCache.setFrame(key, frame, div, value); },
+    prioritizeFrames: targets => sharedMotifFrameCache.prioritizeFrames(targets, 1),
     schedule: cb => { callbacks.push(cb); return callbacks.length; }, cancel: () => {},
     cancelRequest: cancelMotifFrameRequest,
   });
@@ -84,8 +87,8 @@ it('waits for main-owned preparation instead of switching its capture page for s
   sharedBakedKeyIndex.add('long', 2);
   setMotifPreparationCoverage(['long']);
   await settle();
-  expect(read).toHaveBeenCalledExactlyOnceWith('long', 2);
-  expect(sharedMotifFrameCache.hasFrame('long', 2)).toBe(true);
+  expect(read).toHaveBeenCalledExactlyOnceWith('long', 2, 1);
+  expect(sharedMotifFrameCache.hasFrame('long', 2, 1)).toBe(true);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
 });
 
@@ -99,9 +102,9 @@ it('foreground demand promotes a waiting main-owned frame and still shares one c
   expect(captureMotifFrameResult).toHaveBeenCalledOnce();
   expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].high).toBe(true);
   cleanup.at(-1)!();
-  (await foreground).close();
+  (await foreground).bitmap.close();
   await settle();
-  expect(sharedMotifFrameCache.hasFrame('long', 0)).toBe(true);
+  expect(sharedMotifFrameCache.hasFrame('long', 0, 1)).toBe(true);
   expect(captureMotifFrameResult).toHaveBeenCalledOnce();
 });
 
@@ -128,7 +131,7 @@ it('retries a failed disk read only after main publishes repaired coverage', asy
   setMotifPreparationCoverage(['long']);
   await settle();
   expect(read).toHaveBeenCalledTimes(2);
-  expect(sharedMotifFrameCache.hasFrame('long', 0)).toBe(true);
+  expect(sharedMotifFrameCache.hasFrame('long', 0, 1)).toBe(true);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
 });
 
@@ -151,20 +154,35 @@ it('an uncached sibling does not reduce saved-frame read concurrency', async () 
   }));
   warm(['cold', 'long']);
   await settle();
-  expect(read.mock.calls).toEqual([['long', 0], ['long', 1], ['long', 2]]);
+  expect(read.mock.calls).toEqual([['long', 0, 1], ['long', 1, 1], ['long', 2, 1]]);
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(1);
 });
 
-it('transient read failure preserves disk coverage and never starts a replacement capture', async () => {
+it('a transport error preserves disk coverage and never starts a replacement capture', async () => {
   sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
-  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockRejectedValueOnce(new Error('transport unavailable'));
-  vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false });
-  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'first', 60, 1)).rejects.toThrow('transport unavailable');
+  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockRejectedValueOnce(new MotifTransportError('utility', 'closed'));
+  vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' });
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'first', 60, 1, false, 'foreground', 2))
+    .rejects.toBeInstanceOf(MotifTransportError);
   expect(sharedBakedKeyIndex.hasFrame('long', 0)).toBe(true);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
   read.mockResolvedValue(bitmap());
-  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'retry', 60, 1)).resolves.toBeTruthy();
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'retry', 60, 1, false, 'foreground', 2))
+    .resolves.toMatchObject({ persisted: true, scaleDiv: 2 });
+  expect(read.mock.calls.map(([, , div]) => div)).toEqual([2, 2]);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
+});
+
+it('reads saved frames at the preview divisor and captures holes at full size', async () => {
+  sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
+  const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockResolvedValue(bitmap());
+  vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' });
+  const saved = await resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'a', 60, 1, false, 'foreground', 4);
+  const hole = await resolveMotifFrame(motif, 'long', 1, 1 / 60, 1, {}, 'b', 60, 1, false, 'foreground', 4);
+  expect(read).toHaveBeenCalledExactlyOnceWith('long', 0, 4);
+  expect([saved.scaleDiv, hole.scaleDiv]).toEqual([4, 'live']);
+  // A capture's `stored` reply is read at the same divisor.
+  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].scaleDiv).toBe(4);
 });
 
 it('missing frames release disk capacity and use only one capture slot', async () => {
@@ -177,7 +195,7 @@ it('missing frames release disk capacity and use only one capture slot', async (
   await settle();
   expect(read).toHaveBeenCalledTimes(10);
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(1);
-  for (let frame = 3; frame < 10; frame++) expect(sharedMotifFrameCache.hasFrame('long', frame)).toBe(true);
+  for (let frame = 3; frame < 10; frame++) expect(sharedMotifFrameCache.hasFrame('long', frame, 1)).toBe(true);
   expect(sharedBakedKeyIndex.hasFrame('long', 0)).toBe(false);
 });
 
@@ -190,8 +208,8 @@ it('a newly baked queued frame starts reading while an unrelated capture is stil
   expect(read).not.toHaveBeenCalled();
   sharedBakedKeyIndex.add('long', 2);
   await settle();
-  expect(read).toHaveBeenCalledExactlyOnceWith('long', 2);
-  expect(sharedMotifFrameCache.hasFrame('long', 2)).toBe(true);
+  expect(read).toHaveBeenCalledExactlyOnceWith('long', 2, 1);
+  expect(sharedMotifFrameCache.hasFrame('long', 2, 1)).toBe(true);
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(1);
 });
 
@@ -235,9 +253,9 @@ it('foreground demand promotes a queued prewarm read without acquiring it twice'
   expect(read.mock.calls.map(([, frame]) => frame)).toEqual([0, 1, 2, 9]);
   finish.get(9)!();
   const value = await foreground;
-  value.close();
+  value.bitmap.close();
   await settle();
-  expect(sharedMotifFrameCache.hasFrame('long', 9)).toBe(true);
+  expect(sharedMotifFrameCache.hasFrame('long', 9, 1)).toBe(true);
   expect(read.mock.calls.filter(([, frame]) => frame === 9)).toHaveLength(1);
 });
 
@@ -261,8 +279,8 @@ it('retiring prewarm demand does not cancel the foreground subscriber sharing it
   h.prewarmer.setTargets([]);
   finish();
   const value = await foreground;
-  expect(value.close).not.toHaveBeenCalled();
-  value.close();
+  expect(value.bitmap.close).not.toHaveBeenCalled();
+  value.bitmap.close();
   await settle();
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(1);
   expect(sharedMotifFrameCache.size()).toBe(0);
@@ -276,5 +294,5 @@ it('a capture failure returns its slot and allows a later retry', async () => {
   await settle();
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(2);
   cleanup.at(-1)!();
-  (await retry).close();
+  (await retry).bitmap.close();
 });

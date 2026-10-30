@@ -33,6 +33,7 @@ import {
   type PreviewDecodePriorityPlan,
 } from "./decoder/previewDecodePriority";
 import { MotifFrameService } from "./motifs/MotifFrameService";
+import { isMotifReaderDiv } from "../../shared/motifs/readerProtocol";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
@@ -314,6 +315,7 @@ export class Compositor {
       sourceColor: (id) => this.sourceColor(id),
       mediaById: (id) => this.mediaById(id),
       motifFrames: (key) => this.motifFrames.get(key),
+      motifScaleDiv: () => this.motifService.scaleDiv,
       ensureTenBitIngest: () => this.ensureTenBitIngest(),
       ensureNv12Ingest: () => this.ensureNv12Ingest(),
       releaseIngest: (key) => {
@@ -421,11 +423,17 @@ export class Compositor {
   }
 
   /// Preview-only: hand the decoder pool a new playback-resolution divisor
-  /// (1 | 2 | 4). Pure passthrough — the pool owns both the value and the
-  /// in-place transport re-open. Optional-chained because the export pool has
-  /// no such method (export always decodes full size).
+  /// (1 | 2 | 4). The pool owns its value and the in-place transport re-open.
+  /// Optional-chained because the export pool has no such method (export
+  /// always decodes full size). Motif preview, scrub and prewarm read stored
+  /// frames at the same divisor (ADR 0154); export reads them at 1.
   setPlaybackScaleDiv(div: number): void {
     this.pool.setPlaybackScaleDiv?.(div);
+    const motifDiv = isMotifReaderDiv(div) ? div : 1;
+    if (motifDiv === this.motifService.scaleDiv) return;
+    this.motifService.setScaleDiv(motifDiv);
+    // A paused preview refills its Motif frames at the new divisor.
+    this.scheduleRepaint();
   }
 
   /// Adopt a new composition size mid-session — the open composition's. Child

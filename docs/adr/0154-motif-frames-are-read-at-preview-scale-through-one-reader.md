@@ -153,9 +153,11 @@ Other results:
     cache.
 - **The divisor is part of the frame's identity in L0.** A 1/2 bitmap and a
   full bitmap of the same frame are different entries. A resolution change
-  misses and refills; it does not clear the cache. Only an exact divisor
-  matches: until the new frame arrives, preview keeps the previous frame, as
-  on any miss.
+  misses and refills; it does not clear the cache. A stored read matches only
+  its exact divisor: until the new frame arrives, preview keeps the previous
+  frame, as on any miss. A live capture is full size, the only size that frame
+  exists in, so its entry serves every divisor; asking again at the divisor
+  would only capture it again.
 - **`MotifSprite` keeps the Motif's logical size.** A smaller bitmap is drawn
   at the manifest width and height, so geometry, anchors and the gizmo do not
   change with the divisor.

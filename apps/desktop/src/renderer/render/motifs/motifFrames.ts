@@ -97,7 +97,7 @@ export interface MotifFrameCacheKeyInput {
   mediaKeys?: Record<string, string>;
 }
 
-/// Stable opaque key for `MotifFrameCache`. The cache appends `#<frame>`;
+/// Stable opaque key for `MotifFrameCache`. The cache appends `#<frame>@<div>`;
 /// callers must not. `canonicalProps` is already in stable key order
 /// (`canonicalizeProps` or `canonicalizePropsLenient`), so its JSON is deterministic. Exported for unit
 /// testing.

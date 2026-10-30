@@ -24,7 +24,7 @@ export function captureMotifFrameResult(
 ): Promise<CapturedFrame> {
   if (typeof window === 'undefined' || typeof window.postMessage !== 'function' || typeof MessageChannel === 'undefined') {
     return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash,
-      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false }));
+      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false, scaleDiv: 'live' as const }));
   }
   if (typeof window !== 'undefined') {
     const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
