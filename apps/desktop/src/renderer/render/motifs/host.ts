@@ -2,6 +2,7 @@ import { invoke } from "@/bridge/ipc";
 import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors";
 import { captureMotifResult, type CapturedFrame } from './frameTransport';
 import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface CaptureOptions {
   key: string;
@@ -11,6 +12,9 @@ export interface CaptureOptions {
   /** Return valid pixels even when optional cache persistence is unavailable. */
   bakeOptional?: boolean;
   finalizationToken?: string;
+  /** The divisor a `stored` reply is read at; 1 when absent. A live capture
+   * is always full size. */
+  scaleDiv?: MotifReaderDiv;
 }
 
 export function captureMotifFrameResult(
@@ -32,7 +36,7 @@ export function captureMotifFrameResult(
     coalesceKey: options.key, high: options.high, bake: options.bake,
     cache: options.cache,
     bakeOptional: options.bakeOptional, finalizationToken: options.finalizationToken,
-  });
+  }, options.scaleDiv ?? 1);
 }
 
 /**

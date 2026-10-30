@@ -53,6 +53,6 @@ describe("captureMotifFramePngBlob", () => {
       .resolves.toEqual({ bitmap, persisted: true });
     expect(captureMotifResult).toHaveBeenCalledWith(expect.objectContaining({
       bake, bakeOptional: true, finalizationToken: 'finalization', coalesceKey: 'export',
-    }));
+    }), 1);
   });
 });
