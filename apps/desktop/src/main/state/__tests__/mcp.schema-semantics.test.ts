@@ -81,6 +81,7 @@ describe('update_layer_params advertises one variant per kind, from the table th
         // The value type is the field's own business; the KEY must pass the gate.
         const probe: Record<string, unknown> = { kind, [k]: v.properties[k].type === 'boolean' ? true : v.properties[k].type === 'string' ? 'x' : v.properties[k].type === 'integer' ? 1 : k === 'props' ? {} : k === 'color' || k === 'outline_color' ? { r: 0, g: 0, b: 0, a: 255 } : k === 'shadow' ? null : 1 }
         if (k === 'crop') probe[k] = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }
+        if (k === 'media_id') probe[k] = '00000000-0000-4000-8000-000000000001'
         if (k === 'font_weight') probe[k] = 700
         if (k === 'align') probe[k] = 'Left'
         if (k === 'valign') probe[k] = 'Top'
