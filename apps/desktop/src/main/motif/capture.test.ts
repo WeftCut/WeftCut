@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 
 let opened = 0
+let backgroundThrottling: boolean | undefined
 let screenshotCalls = 0
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
 /// the meta.fps assertions parse the third argument out of it.
@@ -114,8 +115,9 @@ vi.mock('electron', () => {
         },
       },
     })
-    constructor() {
+    constructor(options: { webPreferences?: { backgroundThrottling?: boolean } }) {
       opened++
+      backgroundThrottling = options.webPreferences?.backgroundThrottling
     }
     loadURL = async (url: string): Promise<void> => {
       currentUrl = url; committedSurface = -1
@@ -172,6 +174,7 @@ describe('capture host shutdown', () => {
     setRuntimeSource('/* clock-takeover runtime */')
     await expect(captureMotifFrameB64(args)).resolves.toBe('UE5H')
     expect(opened).toBe(1)
+    expect(backgroundThrottling).toBe(false)
   })
 
   it('allows a 6s setup but bounds initialization and each frame independently', async () => {

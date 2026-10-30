@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { UserMotifStore } from "./store";
 import { composeMotifHtml, type Manifest } from "../../shared/motifs/catalog";
+import { motifContentHash } from './contentHash';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "motif-store-")); });
@@ -73,6 +74,39 @@ describe("UserMotifStore path safety", () => {
 });
 
 describe("UserMotifStore reads", () => {
+  it('keeps fonts of three live pages readable while other pages pin snapshots', () => {
+    const s = new UserMotifStore(root);
+    const versions = ['plate', 'title', 'illustration', 'next-title', 'next-plate'].map(id => {
+      const html = composeMotifHtml(man(id, id, 1), body);
+      s.writeDraftPackage(id, html, [{ path: 'assets/font.woff2', bytes: Buffer.from(id) }]);
+      return { id, hash: motifContentHash(s.getMotif(id)!.manifest, html, s.packageFiles(id)) };
+    });
+    const releases = versions.slice(0, 3).map(v => s.retainPackage(v.id, v.hash)!);
+    for (const v of versions.slice(3)) s.pinPackage(v.id, v.hash);
+    for (const v of versions) expect(s.readFile(v.id, `.revisions/${v.hash}/assets/font.woff2`)?.toString()).toBe(v.id);
+    // A live page must not read changed draft bytes under its old revision.
+    writeFileSync(path.join(root, 'drafts', 'plate', 'assets/font.woff2'), 'changed');
+    expect(s.readFile('plate', `.revisions/${versions[0]!.hash}/assets/font.woff2`)?.toString()).toBe('plate');
+    for (const release of releases) { release(); release(); } // idempotent
+    expect(versions.filter(v => s.readFile(v.id, `.revisions/${v.hash}/index.html`))).toHaveLength(2);
+  });
+  it('reference-counts a package shared by two pages and accounts its bytes', () => {
+    const s = new UserMotifStore(root);
+    const html = composeMotifHtml(man('shared', 'Shared', 1), body);
+    s.writeDraftPackage('shared', html, [{ path: 'font.woff2', bytes: Buffer.from('font') }]);
+    const hash = motifContentHash(s.getMotif('shared')!.manifest, html, s.packageFiles('shared'));
+    const first = s.retainPackage('shared', hash)!, second = s.retainPackage('shared', hash)!;
+    expect(s.pinnedPackageBytes('shared', hash)).toBe(Buffer.byteLength(html) + 4);
+    first(); first();
+    for (const id of ['one', 'two', 'three']) {
+      const source = composeMotifHtml(man(id, id, 1), body);
+      s.writeDraft(id, source);
+      s.pinPackage(id, motifContentHash(s.getMotif(id)!.manifest, source, s.packageFiles(id)));
+    }
+    expect(s.readFile('shared', `.revisions/${hash}/font.woff2`)?.toString()).toBe('font');
+    second();
+    expect(s.readFile('shared', `.revisions/${hash}/font.woff2`)).toBeNull();
+  });
   it("reads an existing asset + html", () => {
     const dir = path.join(root, "user-x");
     mkdirSync(path.join(dir, "assets"), { recursive: true });

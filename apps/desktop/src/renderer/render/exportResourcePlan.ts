@@ -93,10 +93,15 @@ export async function prepareExportResourcePlans(input: {
   const pixels=comp.width*comp.height*(input.bitDepth===10?8:4);
   const motifs=motifLayersToBake(input.summary,input.startUs,input.endUs,comp.fps_num,comp.fps_den);
   const hasMotifs=motifs.length>0;
-  // Each producer frame has at most one capture in flight plus one GPU lane.
+  // Each producer frame pays for one capture plus one GPU lane. PNG export
+  // may additionally keep a resident page per credit (up to three), while
+  // executing at most two pages. Include the package's 256 MiB import limit:
+  // live pages must retain immutable assets until navigation/teardown.
+  // Reduced plans can reuse a single page.
   const captureMiB=Math.max(0,...motifs.map(m => {
     const bytes=m.motif.manifest.size[0]*m.motif.manifest.size[1]*4;
-    return Math.ceil(16+bytes*4/1048576)+Math.ceil(bytes/1048576);
+    return Math.ceil(16+bytes*4/1048576)+Math.ceil(bytes/1048576)
+      + Math.ceil(128+256+bytes*7/1048576);
   }));
   const motifBytes=Object.fromEntries(motifs.map(m => [m.layerId,m.motif.manifest.size[0]*m.motif.manifest.size[1]*8]));
   const motifSpans: ExportActiveDemand[]=[];

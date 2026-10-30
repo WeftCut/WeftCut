@@ -25,6 +25,46 @@ function fixture(enabled = true) {
 }
 
 describe('Motif capture and persistence', () => {
+  it('keeps the exact PNG path when the automatic performance gate rejects GPU', async () => {
+    const h = fixture(false);
+    const exportTexture = vi.fn(), exportCopy = vi.fn(), exportReady = vi.fn(async () => false);
+    const service = new MotifCaptureService({ ...h.deps, exportReady, exportTexture, exportCopy }, false);
+    expect(await service.capture(owner, { ...args, bakeOptional: true }, () => true, 71)).toMatchObject({ kind: 'png', persisted: true });
+    expect(exportTexture).not.toHaveBeenCalled(); expect(h.writer.png).toHaveBeenCalledOnce();
+  });
+  it('uses direct GPU snapshots only for admitted exports, not mandatory persistent bakes', async () => {
+    const h = fixture(false);
+    const exportCopy = vi.fn(async () => ({ kind: 'bitmap' as const, token: 'gpu-snapshot' }));
+    const exportTexture = vi.fn(async (_a, _p, consume) => consume(texture));
+    const service = new MotifCaptureService({ ...h.deps, exportCopy, exportTexture }, false);
+    expect(await service.capture(owner, { ...args, bakeOptional: true }, () => true, 71)).toMatchObject({ kind: 'bitmap', persisted: false, cacheWriteSkipped: true });
+    expect(h.writer.png).not.toHaveBeenCalled();
+    expect(h.deps.png).not.toHaveBeenCalled();
+    await service.capture(owner, args, () => true, 71);
+    expect(exportTexture).toHaveBeenCalledOnce();
+    expect(h.writer.png).toHaveBeenCalledOnce();
+  });
+  it('disables a failed export GPU import, preserves content errors, and falls back to the same PNG frame', async () => {
+    const h = fixture(false);
+    const exportCopy = vi.fn(async () => ({ kind: 'bitmap' as const, token: 'gpu-snapshot' }));
+    const exportTexture = vi.fn(async () => { throw new Error('unsupported GPU handle'); });
+    const service = new MotifCaptureService({ ...h.deps, exportCopy, exportTexture }, false);
+    expect(await service.capture(owner, { ...args, bakeOptional: true }, () => true, 71)).toMatchObject({ kind: 'png' });
+    await service.capture(owner, { ...args, bakeOptional: true }, () => true, 71);
+    expect(exportTexture).toHaveBeenCalledOnce();
+    expect(h.deps.png).toHaveBeenCalledTimes(2);
+  });
+  it('uses parallel PNG pages only with a main-resolved export reservation', async () => {
+    const h = fixture(false);
+    const exportPng = vi.fn(async () => Buffer.from('export png').toString('base64'));
+    const service = new MotifCaptureService({ ...h.deps, exportPng }, false);
+    const { bake: _bake, ...request } = args;
+    await service.capture(owner, request);
+    expect(exportPng).not.toHaveBeenCalled();
+    await service.capture(owner, request, () => true, 71);
+    expect(exportPng).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ motifId: 'synthetic' }), 71, '12:job', false, expect.any(Function));
+    expect(h.deps.png).toHaveBeenCalledOnce();
+  });
   it('does not deliver an old document capture to its replacement or disable GPU capture', async () => {
     const h = fixture(); const { bake: _bake, ...preview } = args;
     let current = true;

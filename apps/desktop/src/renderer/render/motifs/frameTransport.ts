@@ -1,7 +1,7 @@
 import type { MotifCaptureControl } from '../../../shared/motifs/frameTransport';
 
-export interface CapturedFrame { bitmap: ImageBitmap; persisted: boolean }
-interface FrameReply { bitmap: ImageBitmap | null; persisted: boolean }
+export interface CapturedFrame { bitmap: ImageBitmap; persisted: boolean; cacheWriteSkipped?: boolean }
+interface FrameReply { bitmap: ImageBitmap | null; persisted: boolean; cacheWriteSkipped?: boolean }
 let port: MessagePort | null = null;
 let nextId = 0;
 const pending = new Map<number, { resolve: (frame: FrameReply) => void; reject: (error: Error) => void }>();
@@ -15,9 +15,9 @@ export async function captureStoredMotifFrame(capture: Record<string, unknown>):
 }
 
 export async function captureMotifResult(capture: Record<string, unknown>): Promise<CapturedFrame> {
-  const { bitmap, persisted } = await request({ capture });
+  const { bitmap, persisted, cacheWriteSkipped } = await request({ capture });
   if (!bitmap) throw new Error("Motif capture returned no frame");
-  return { bitmap, persisted };
+  return { bitmap, persisted, ...(cacheWriteSkipped ? { cacheWriteSkipped: true } : {}) };
 }
 
 // Same port as capture admission, so promote/cancel cannot overtake its request.
@@ -29,12 +29,13 @@ function request(args: Record<string, unknown>): Promise<FrameReply> {
   if (!port) {
     const channel = new MessageChannel();
     port = channel.port1;
-    port.onmessage = ({ data }: MessageEvent<{ id: number; bitmap?: ImageBitmap | null; persisted?: boolean; error?: string }>) => {
+    port.onmessage = ({ data }: MessageEvent<{ id: number; bitmap?: ImageBitmap | null; persisted?: boolean; cacheWriteSkipped?: boolean; error?: string }>) => {
       const request = pending.get(data.id);
       if (!request) { data.bitmap?.close(); return; }
       pending.delete(data.id);
       if (data.error) request.reject(new Error(data.error));
-      else request.resolve({ bitmap: data.bitmap ?? null, persisted: data.persisted === true });
+      else request.resolve({ bitmap: data.bitmap ?? null, persisted: data.persisted === true,
+        ...(data.cacheWriteSkipped === true ? { cacheWriteSkipped: true } : {}) });
     };
     port.start();
     window.postMessage({ type: "weftcut:motif-frame-port" }, "*", [channel.port2]);

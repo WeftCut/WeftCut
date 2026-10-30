@@ -13,6 +13,9 @@ import { MIB } from '../shared/performance-settings.js'
 import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
 import { describePerformanceGraphics } from './performanceHardware.js'
 import { createLinuxHardwareDiagnostics } from './hardwareDiagnostics.js'
+import { MotifGpuSelector } from './motif/gpuSelector.js'
+import { runExportGpuProbe } from './motif/exportGpuProbe.js'
+import { copyDirectMotifTexture } from './motif/directGpuTransport.js'
 import { createMacDecodeProbe } from './macDecodeProbe.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
@@ -31,7 +34,7 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureExportMotifFrameB64, captureExportMotifTexture, retireExportCaptureHosts, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
@@ -581,7 +584,7 @@ app.whenReady().then(async () => {
   }).catch(error => console.warn('[resources] disk size unavailable:', error))
   installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)), {
     prepare: owner => motifGpu?.close(owner),
-    retire: (owner, id) => motifGpu?.closeExport(owner, id),
+    retire: (owner, id) => { retireExportCaptureHosts(id); motifGpu?.closeExport(owner, id) },
   })
   hydratePerformanceSettings(initialAppSettings.performance,
     !initialAppSettings.performance_policy || initialAppSettings.performance_policy.decode === 'tested' && initialAppSettings.performance_test_compatible
@@ -1374,8 +1377,16 @@ app.whenReady().then(async () => {
   const motifGpu = process.platform === 'win32' && motifPoolClass
     ? new MotifGpuTransport((w, h, bgra) => new motifPoolClass(w, h, 1, bgra)) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
+  const exportGpuSelector = new MotifGpuSelector<{ owner: Electron.WebContents; parent?: number }>(context => {
+    if (!context) throw new Error('GPU probe owner missing');
+    return runExportGpuProbe(context.owner, context.parent);
+  }, process.platform === 'linux' && process.env.WEFTCUT_EXPORT_MOTIF_GPU !== '0' && process.env.WEFTCUT_MOTIF_CAPTURE !== 'png');
   const motifCapture = new MotifCaptureService({
     store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
+    exportPng: captureExportMotifFrameB64,
+    ...(process.platform === 'linux' ? { exportTexture: captureExportMotifTexture, exportCopy: copyDirectMotifTexture,
+      exportReady: (owner: Electron.WebContents, parent: number) => exportGpuSelector.ready({ owner, parent }),
+      exportFailed: () => exportGpuSelector.failed() } : {}),
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
@@ -1397,7 +1408,7 @@ app.whenReady().then(async () => {
   app.once('will-quit', () => motifCapture.dispose())
   // A restarted GPU process gives the offscreen capture host a new, unproven
   // compositor surface: its next shared-texture lease must fence again.
-  app.on('child-process-gone', (_event, details) => { if (details.type === 'GPU') invalidateCaptureSurface() })
+  app.on('child-process-gone', (_event, details) => { if (details.type === 'GPU') { invalidateCaptureSurface(); exportGpuSelector.reset(); motifCapture.resetExportGpu(); } })
   const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
   const motifConsumers = new WeakMap<Electron.WebContents, { document: object | null }>()
   const trackMotifConsumer = (owner: Electron.WebContents, frame: Electron.WebFrameMain | null): (() => boolean) => {
@@ -1502,7 +1513,7 @@ app.whenReady().then(async () => {
       // snake-case alias). Only this sender's live continuation token qualifies.
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
       const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
-      if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
+      if (parent !== undefined) { retireExportCaptureHosts(parent); motifGpu?.closeExport(_e.sender, parent); }
       args = { ...rest, finalizationId: parent };
     }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
@@ -1523,7 +1534,7 @@ app.whenReady().then(async () => {
       return motifBakes!.reconcile(plan)
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
-    if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
+    if (channel === 'motif_capture_diagnostics') return { ...captureDiagnostics(args?.reset === true), gpu_transport: exportGpuSelector.snapshot() }
     if (channel === 'motif_read_cached_frame') return currentMotifStore().read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
@@ -1964,14 +1975,17 @@ app.whenReady().then(async () => {
       cpu: { name: os.cpus()[0]?.model ?? '', logical_processors: os.availableParallelism() },
       gpu: performanceGpu,
       graphics: await graphicsInfo,
-      hardware: await hardwareDiagnostics?.read(refresh === true),
+      hardware: hardwareDiagnostics ? { ...await hardwareDiagnostics.read(refresh === true), motif_gpu: exportGpuSelector.snapshot() } : undefined,
       gpu_buffer_transport: process.platform === 'win32' ? 'shared-texture' : 'copy-back',
       gpu_buffers: gpuBufferBudget.snapshot(),
     }
   })
-  ipcMain.handle('performanceResources:probe', () => {
-    if (!hardwareDiagnostics) throw new Error('Hardware probes are only available on Linux')
-    return hardwareDiagnostics.probe()
+  ipcMain.handle('performanceResources:probe', async event => {
+    if (!hardwareDiagnostics) throw new Error('Hardware probes are only available on Linux');
+    if (exportJobs.isActive()) throw new Error('Hardware probes are unavailable during export');
+    if (exportGpuSelector.snapshot().state !== 'testing') { exportGpuSelector.reset(); motifCapture.resetExportGpu(); }
+    await exportGpuSelector.ready({ owner: event.sender });
+    return hardwareDiagnostics.probe();
   })
 
   // Availability of the optional native-decode component (level-0 gate). The

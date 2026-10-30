@@ -206,6 +206,8 @@ export interface ExportPerf {
   /// and the whole export, in ms. Producer execution overlaps consumption.
   decodeMs: number;
   waitMs: number;
+  videoWaitMs?: number;
+  motifWaitMs?: number;
   queueWaitMs?: number;
   totalMs: number;
   /// E2E color diagnostic off the first decoded frame (config vs stamped

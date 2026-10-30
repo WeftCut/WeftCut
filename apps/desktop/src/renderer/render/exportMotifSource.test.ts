@@ -84,6 +84,18 @@ describe('streamed Motif selection', () => {
     expect(sharedBakedKeyIndex.add).toHaveBeenCalledWith(expect.any(String), 60);
   });
 
+  it('does not PNG-readback GPU frames that deliberately skip optional persistence', async () => {
+    const b = bitmap();
+    vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false, cacheWriteSkipped: true });
+    const canvas = vi.fn(() => { throw new Error('Unexpected GPU readback'); });
+    vi.stubGlobal('OffscreenCanvas', canvas);
+    expect(await planExportMotifFrame(summary(), 0, 'export-token')[0]!.read(new AbortController().signal)).toBe(b);
+    expect(canvas).not.toHaveBeenCalled();
+    expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
+    expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
+  });
+
   it.each(['missing', 'corrupt', 'unbaked'])('repairs a %s frame and makes it reusable', async kind => {
     const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false });
     if (kind === 'corrupt') vi.mocked(sharedMotifFrameCache.readBitmap).mockRejectedValue(new Error('bad cache'));
@@ -104,6 +116,36 @@ describe('streamed Motif selection', () => {
     expect(b.close).not.toHaveBeenCalled(); expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
     vi.mocked(captureMotifFrameResult).mockRejectedValueOnce(new Error('capture failed'));
     await expect(task.read(new AbortController().signal)).rejects.toThrow('capture failed');
+  });
+
+  it('stops optional PNG encoding and write retries after quota exhaustion, but keeps exact pixels and cache reads', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const b = bitmap();
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false });
+    vi.mocked(sharedMotifFrameCache.writeFrame).mockRejectedValue(new Error('motif-disk-capacity: quota reached'));
+    const png = vi.fn(async () => new Blob(['pixels']));
+    vi.stubGlobal('OffscreenCanvas', class {
+      width = 480; height = 480;
+      getContext() { return { drawImage: vi.fn() }; }
+      convertToBlob = png;
+    });
+    const planner = exportMotifPlanner(summary(), 0, 30, 1);
+    const signal = new AbortController().signal;
+    expect(await planner(0)[0]!.read(signal)).toBe(b);
+    expect(await planner(1)[0]!.read(signal)).toBe(b);
+    expect(await planner(2)[0]!.read(signal)).toBe(b);
+    expect(png).toHaveBeenCalledOnce();
+    expect(sharedMotifFrameCache.writeFrame).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledOnce();
+    expect(vi.mocked(captureMotifFrameResult).mock.calls[1]?.[9]?.bake).toBeUndefined();
+    expect(b.close).not.toHaveBeenCalled();
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(b);
+    expect(await planner(3)[0]!.read(signal)).toBe(b);
+    expect(captureMotifFrameResult).toHaveBeenCalledTimes(3);
+    // A new export retries persistence; the failure isn't a process-wide flag.
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
+    await exportMotifPlanner(summary(), 0, 30, 1)(0)[0]!.read(signal);
+    expect(png).toHaveBeenCalledTimes(2);
   });
 
   it('cancels an admitted capture and skips cache writes for late results', async () => {
