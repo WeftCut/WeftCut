@@ -1,5 +1,5 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
-import type { StoredMotifFrame, MotifCaptureControl } from '../shared/motifs/frameTransport'
+import type { StoredMotifFrame, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
 
 // ImageBitmap cannot cross contextBridge. A same-renderer MessagePort transfers
 // ownership to the main world without serializing pixels or changing isolation.
@@ -13,11 +13,15 @@ export function installMotifFrames(
     if (!port) return
     port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; finalizationToken?: string; capture?: Record<string, unknown>; control?: MotifCaptureControl }>) => {
       if (data.control) { ipcRenderer.send('motif:capture-control', data.control); return }
-      let frame: StoredMotifFrame | null = null
+      let frame: StoredMotifFrame | MotifReadUnavailable | null = null
       let bitmap: ImageBitmap | null = null
       let failed = true
       try {
-        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? { hash: data.hash, frame: data.frame, finalizationToken: data.finalizationToken }) as StoredMotifFrame | null
+        // Full size until the renderer reader passes Playback Resolution (ADR 0154).
+        const read: MotifTextureReadRequest = { hash: data.hash, frame: data.frame, div: 1, finalizationToken: data.finalizationToken }
+        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? read) as StoredMotifFrame | MotifReadUnavailable | null
+        // Not a miss: the texture lane cannot serve this read.
+        if (frame?.kind === 'unavailable') throw new Error('Motif texture lane unavailable')
         if (frame?.kind === 'texture') {
           const texture = imported(frame.key)
           if (!texture) throw new Error('Motif texture import missing')
@@ -30,7 +34,8 @@ export function installMotifFrames(
         } else if (frame?.kind === 'png') {
           bitmap = await createImageBitmap(new Blob([frame.bytes as BlobPart], { type: 'image/png' }))
         }
-        port.postMessage({ id: data.id, bitmap, persisted: frame?.persisted === true }, bitmap ? [bitmap] : [])
+        // `stored`: no pixels; the renderer reads the frame through its reader.
+        port.postMessage({ id: data.id, bitmap, persisted: frame?.persisted === true, ...(frame?.kind === 'stored' ? { stored: true } : {}) }, bitmap ? [bitmap] : [])
         bitmap = null
         failed = false
       } catch (error) {

@@ -1,8 +1,5 @@
-import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
+import { isMotifFrameAddress, isMotifFrameError, motifFrameStem } from './frameAddress'
 import { isMotifReaderDiv, type MotifReadReply, type MotifReaderControl, type MotifReaderMissReport, type MotifReadTiming } from '../../shared/motifs/readerProtocol'
-
-/** The native core's file-originated failures carry this prefix (ticket 05). */
-const FRAME_ERROR = 'motif-frame: '
 
 export interface MotifReaderHostPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): unknown
@@ -37,8 +34,7 @@ export function createMotifReaderHost(deps: Dependencies) {
       const { width, height, rgba, timing } = await deps.read(`${motifFrameStem(root, hash, frame as number)}.wfrm`, div)
       return { id, frame: { width, height, rgba, timing } }
     } catch (error) {
-      const message = String((error as Error)?.message ?? error)
-      if (!message.startsWith(FRAME_ERROR)) return { id, error: message.slice(0, 512) }
+      if (!isMotifFrameError(error)) return { id, error: String((error as Error)?.message ?? error).slice(0, 512) }
       deps.report({ type: 'miss', generation, hash, frame: frame as number })
       return { id, miss: true }
     }

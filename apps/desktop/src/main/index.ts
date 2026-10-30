@@ -39,7 +39,9 @@ import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
 import { MotifReaderService } from './motif/readerService.js'
-import { MOTIF_READER_CONNECT } from '../shared/motifs/readerProtocol.js'
+import { MOTIF_READER_CONNECT, isMotifReaderDiv } from '../shared/motifs/readerProtocol.js'
+import type { MotifTextureReadRequest, MotifTextureReadResult } from '../shared/motifs/frameTransport.js'
+import { isMotifFrameAddress } from './motif/frameAddress.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
@@ -1428,15 +1430,18 @@ app.whenReady().then(async () => {
     motifGpu?.close(owner)
     reader.retire(owner)
   })
-  ipcMain.handle('motif:read', (event, args: { hash: string; frame: number; finalizationToken?: string }) => {
+  // Texture-only (ADR 0154): without shared textures the renderer reads
+  // through the Motif reader utility, never through main.
+  ipcMain.handle('motif:read', async (event, args: MotifTextureReadRequest): Promise<MotifTextureReadResult> => {
+    if (!isMotifFrameAddress(args?.hash, args?.frame) || !isMotifReaderDiv(args.div)) throw new Error('Invalid Motif read request')
+    if (!motifGpu) return { kind: 'unavailable' }
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     const parent = resolveExportFinalization(owner.id, args.finalizationToken)
-    return currentMotifStore().read(args.hash, args.frame,
-      motifGpu ? (file, w, h) => {
-        if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
-        return motifGpu.read(owner, file, w, h, parent)
-      } : undefined)
+    return currentMotifStore().readTexture(args.hash, args.frame, args.div, (file, w, h, div) => {
+      if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
+      return motifGpu.read(owner, file, w, h, div, parent)
+    })
   })
   ipcMain.on(MOTIF_READER_CONNECT, event => {
     // Registers the document's retirement before it holds a port.
@@ -1532,7 +1537,9 @@ app.whenReady().then(async () => {
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
     if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
-    if (channel === 'motif_read_cached_frame') return currentMotifStore().read(args.hash, args.frame)
+    // ADR 0154 removed main's CPU read; ticket 10 deletes this channel and the
+    // renderer's retry onto it. A transport failure, never a miss.
+    if (channel === 'motif_read_cached_frame') throw new Error('Motif CPU reads were removed (ADR 0154)')
     if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()

@@ -2,8 +2,9 @@ import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { notifyResourceCacheWrite } from '../resources'
-import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
-import type { MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport.js'
+import { isMotifFrameAddress, isMotifFrameError, motifFrameStem } from './frameAddress'
+import { isMotifReaderDiv, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
+import type { MotifReadUnavailable, MotifTextureFrame, MotifTextureReadResult } from '../../shared/motifs/frameTransport.js'
 
 async function replaceFile(temp: string, destination: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
@@ -20,7 +21,28 @@ async function replaceFile(temp: string, destination: string): Promise<void> {
 
 export interface FrameCodec {
   motifEncodePng(png: Buffer, compressed: boolean): Promise<Buffer>
-  motifReadFrame(path: string): Promise<{ width: number; height: number; rgba: Uint8Array }>
+}
+
+/** Uploads `file` scaled by `div` into a `width × height` texture. Rejects
+ * with a `motif-frame: ` error when the file itself cannot be read. */
+export type MotifTextureUpload = (file: string, width: number, height: number, div: MotifReaderDiv) => Promise<MotifTextureFrame | MotifReadUnavailable>
+
+const HEADER_MAGIC = 'WCMFRM01'
+/** The native core's dimension bounds (`motif_frame.rs`). */
+const MAX_DIMENSION = 8192
+
+/** Stored width and height from the `.wfrm` header, or null when the file is
+ * absent, short or not a frame. The native read verifies everything else. */
+async function readHeaderSize(file: string): Promise<{ width: number; height: number } | null> {
+  const header = Buffer.alloc(16)
+  try {
+    const handle = await fs.open(file, 'r')
+    try { if ((await handle.read(header, 0, 16, 0)).bytesRead < 16) return null } finally { await handle.close() }
+  } catch { return null /* the native read would fail on the same file */ }
+  if (header.toString('ascii', 0, 8) !== HEADER_MAGIC) return null
+  const width = header.readUInt32LE(8), height = header.readUInt32LE(12)
+  const valid = (n: number): boolean => n > 0 && n <= MAX_DIMENSION
+  return valid(width) && valid(height) ? { width, height } : null
 }
 
 export interface FrameWriter {
@@ -45,26 +67,29 @@ export class MotifFrameStore {
     return root ? motifFrameStem(root, hash, frame) : null
   }
 
-  async read(hash: string, frame: number, gpu?: (file: string, width: number, height: number) => Promise<MotifTextureFrame>): Promise<StoredMotifFrame | null> {
+  /** The Windows texture lane (ADR 0154). The header names the stored size;
+   * `gpu` uploads the frame scaled by `div` into a pool of the rounded-up size.
+   * A file failure is a miss: the frame leaves coverage and null is returned.
+   * `unavailable` (no texture, GPU budget, a failed pool or import) keeps it. */
+  async readTexture(hash: string, frame: number, div: MotifReaderDiv, gpu: MotifTextureUpload): Promise<MotifTextureReadResult> {
+    if (!isMotifReaderDiv(div)) throw new Error('Invalid Motif read divisor')
     const stem = await this.stem(hash, frame)
     if (!stem) return null
-    if (gpu) {
-      try {
-        const file = await fs.open(`${stem}.wfrm`, 'r')
-        const header = Buffer.alloc(16)
-        try { await file.read(header, 0, 16, 0) } finally { await file.close() }
-        if (header.toString('ascii', 0, 8) === 'WCMFRM01') {
-          return await gpu(`${stem}.wfrm`, header.readUInt32LE(8), header.readUInt32LE(12))
-        }
-      } catch { /* unavailable GPU / bad cache: use the CPU fallback */ }
-    }
+    const file = `${stem}.wfrm`
+    const size = await readHeaderSize(file)
+    if (!size) { this.changed(hash, frame, false); return null }
     try {
-      return { kind: 'rgba', ...await this.codec.motifReadFrame(`${stem}.wfrm`) }
-    } catch { this.changed(hash, frame, false); return null /* absent, corrupt, or unsupported cache: render again */ }
+      return await gpu(file, Math.ceil(size.width / div), Math.ceil(size.height / div), div)
+    } catch (error) {
+      // Lifecycle errors (closed consumer, superseded export) are not misses.
+      if (!isMotifFrameError(error)) throw error
+      this.changed(hash, frame, false)
+      return null
+    }
   }
 
   /** The Motif reader utility could not read a stored frame (ADR 0154): drop it
-   * from coverage, as a failed `read` does, so a replacement capture is admitted. */
+   * from coverage, as a failed `readTexture` does, so a replacement capture is admitted. */
   reportMiss(hash: string, frame: number): void {
     this.changed(hash, frame, false)
   }
