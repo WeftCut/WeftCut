@@ -1,5 +1,5 @@
 import { isMotifFrameAddress, isMotifFrameError, motifFrameStem } from './frameAddress'
-import { isMotifReaderDiv, type MotifReadReply, type MotifReaderControl, type MotifReaderMissReport, type MotifReadTiming } from '../../shared/motifs/readerProtocol'
+import { isMotifReaderDiv, type MotifReadReply, type MotifReaderControl, type MotifReaderReport, type MotifReadTiming } from '../../shared/motifs/readerProtocol'
 
 export interface MotifReaderHostPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): unknown
@@ -11,7 +11,8 @@ export interface MotifReaderHostPort {
 
 interface Dependencies {
   read(path: string, div: number): Promise<{ width: number; height: number; rgba: Uint8Array; timing: MotifReadTiming }>
-  report(miss: MotifReaderMissReport): void
+  /** To main: miss reports and port acknowledgements. */
+  report(message: MotifReaderReport): void
 }
 
 /** The Motif reader utility process (ADR 0154), without Electron. Main owns
@@ -61,6 +62,8 @@ export function createMotifReaderHost(deps: Dependencies) {
     // The document's end closes on navigation, reload or crash.
     port.on('close', () => { if (ports.get(id) === port) ports.delete(id) })
     port.start()
+    // Main hands the document its end only once this one is attached here.
+    deps.report({ type: 'port-ready', id })
   }
 
   return {

@@ -89,14 +89,15 @@ describe('Motif reader utility', () => {
     expect(report).toHaveBeenCalledTimes(1)
   })
 
-  it('answers on each document port until it is retired or closed', async () => {
-    const { host } = fixture()
+  it('acknowledges each document port once attached and answers on it until it is retired or closed', async () => {
+    const { host, report } = fixture()
     host.control({ type: 'workspace', generation: 1, root })
     const a = new Port()
     const b = new Port()
+    report.mockImplementationOnce(() => expect(a.start).toHaveBeenCalled())
     host.control({ type: 'port', id: 1 }, [a])
     host.control({ type: 'port', id: 2 }, [b])
-    expect(a.start).toHaveBeenCalled()
+    expect(report.mock.calls).toEqual([[{ type: 'port-ready', id: 1 }], [{ type: 'port-ready', id: 2 }]])
     expect(host.ports).toBe(2)
 
     a.emit('message', { data: { id: 10, hash, frame: 0, div: 2 } })
@@ -109,5 +110,6 @@ describe('Motif reader utility', () => {
     // A port without its transferred end is ignored.
     host.control({ type: 'port', id: 3 }, [])
     expect(host.ports).toBe(0)
+    expect(report).toHaveBeenCalledTimes(2)
   })
 })

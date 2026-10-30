@@ -14,6 +14,6 @@ const holdFrame = process.env.WEFTCUT_E2E_BUILD === '1'
   ? motifReadHoldFrame(process.env.WEFTCUT_E2E_MOTIF_READER_HOLD_FRAME) : null
 const host = createMotifReaderHost({
   read: holdFrame === null ? read : holdMotifReads(read, holdFrame),
-  report: miss => process.parentPort.postMessage(miss),
+  report: message => process.parentPort.postMessage(message),
 })
 process.parentPort.on('message', event => host.control(event.data, event.ports))

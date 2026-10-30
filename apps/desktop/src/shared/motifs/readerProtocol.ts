@@ -28,7 +28,8 @@ export type MotifReadReply =
 
 /** Main → utility. `workspace` replaces the raster root and its generation;
  * both are null during a workspace transition. `port` carries one document's
- * `port1`; `retire` closes it again. */
+ * `port1`, which the utility acknowledges with `port-ready`; `retire` closes
+ * it again. */
 export type MotifReaderControl =
   | { type: 'workspace'; generation: number | null; root: string | null }
   | { type: 'port'; id: number }
@@ -37,6 +38,14 @@ export type MotifReaderControl =
 /** Utility → main: a stored frame could not be read. Main drops it from
  * coverage only when `generation` is still current. */
 export interface MotifReaderMissReport { type: 'miss'; generation: number; hash: string; frame: number }
+
+/** Utility → main: the utility attached `port1` of connection `id`. Main
+ * posts `port2` to the document only then, so a page never holds a port the
+ * utility died before taking. */
+export interface MotifReaderPortReady { type: 'port-ready'; id: number }
+
+/** Utility → main. */
+export type MotifReaderReport = MotifReaderMissReport | MotifReaderPortReady
 
 /** Main → renderer channels. The renderer asks with `motif:reader-connect`. */
 export const MOTIF_READER_CONNECT = 'motif:reader-connect'
