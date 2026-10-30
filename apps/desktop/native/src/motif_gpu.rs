@@ -12,6 +12,19 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 type Reply = tokio::sync::oneshot::Sender<Result<(), String>>;
+type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>>;
+
+/// Stage times of one upload, in milliseconds.
+#[napi(object)]
+#[derive(Clone, Copy, Default)]
+pub struct MotifUploadTiming {
+    pub read: crate::motif_frame::MotifReadTiming,
+    pub premultiply_ms: f64,
+    /// Waiting for the consumer to release the slot's keyed mutex.
+    pub acquire_ms: f64,
+    /// `UpdateSubresource` through device completion.
+    pub gpu_ms: f64,
+}
 
 /// Disk frames have straight alpha; Electron imports premultiplied textures.
 fn premultiply(pixels: &mut [u8]) {
@@ -29,7 +42,7 @@ fn premultiply(pixels: &mut [u8]) {
 }
 
 enum Command {
-    Upload(String, usize, Reply),
+    Upload(String, usize, u32, TimedReply),
     Copy(usize, usize, Reply),
     Stop,
 }
@@ -72,8 +85,8 @@ impl MotifGpuPool {
                             return;
                         }
                         while let Ok(command) = rx.recv() {
-                            let (path, slot, reply) = match command {
-                                Command::Upload(path, slot, reply) => (path, slot, reply),
+                            let (path, slot, div, reply) = match command {
+                                Command::Upload(path, slot, div, reply) => (path, slot, div, reply),
                                 Command::Copy(handle, slot, reply) => {
                                     let result = unsafe { pool.copy(handle, slot) };
                                     let _ = reply.send(result.map_err(|e| e.to_string()));
@@ -82,13 +95,24 @@ impl MotifGpuPool {
                                 Command::Stop => break,
                             };
                             let result = (|| {
-                                let (w, h, mut pixels) = crate::motif_frame::read_pixels(&path)?;
+                                let (w, h, mut pixels, read) =
+                                    crate::motif_frame::read_scaled(&path, div)?;
+                                // The file does not fit this pool: a miss, not a device failure.
                                 anyhow::ensure!(
                                     w == width && h == height,
-                                    "Motif GPU size changed"
+                                    "{}scaled frame {w}x{h} does not fit the {width}x{height} pool",
+                                    crate::motif_frame::FRAME_ERROR
                                 );
+                                let start = std::time::Instant::now();
                                 premultiply(&mut pixels);
-                                unsafe { pool.upload(slot, &pixels) }
+                                let premultiply_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                let (acquire_ms, gpu_ms) = unsafe { pool.upload(slot, &pixels) }?;
+                                Ok(MotifUploadTiming {
+                                    read,
+                                    premultiply_ms,
+                                    acquire_ms,
+                                    gpu_ms,
+                                })
                             })();
                             let _ = reply.send(result.map_err(|e: anyhow::Error| e.to_string()));
                         }
@@ -111,13 +135,21 @@ impl MotifGpuPool {
         self.handles.iter().cloned().map(Buffer::from).collect()
     }
 
+    /// Reads, verifies and downscales the frame by `div` (default 1) before the
+    /// upload; the pool must be created at the scaled size. A `motif-frame: `
+    /// error is a miss; any other error is a transport failure.
     #[napi]
-    pub async fn upload_file(&self, path: String, slot: u32) -> napi::Result<()> {
+    pub async fn upload_file(
+        &self,
+        path: String,
+        slot: u32,
+        div: Option<u32>,
+    ) -> napi::Result<MotifUploadTiming> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
             .as_ref()
             .ok_or_else(|| napi::Error::from_reason("Motif GPU pool closed"))?
-            .send(Command::Upload(path, slot as usize, tx))
+            .send(Command::Upload(path, slot as usize, div.unwrap_or(1), tx))
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         rx.await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?
@@ -246,7 +278,8 @@ impl Pool {
         })
     }
 
-    unsafe fn upload(&self, slot: usize, pixels: &[u8]) -> anyhow::Result<()> {
+    /// Returns the keyed-mutex wait and the write through completion, in ms.
+    unsafe fn upload(&self, slot: usize, pixels: &[u8]) -> anyhow::Result<(f64, f64)> {
         self.write(slot, |texture| {
             self.context.UpdateSubresource(
                 texture,
@@ -284,22 +317,25 @@ impl Pool {
         if let Some(mutex) = mutex {
             mutex.ReleaseSync(0)?;
         }
-        result
+        result.map(|_| ())
     }
 
     unsafe fn write(
         &self,
         slot: usize,
         write: impl FnOnce(&ID3D11Texture2D),
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(f64, f64)> {
         let slot = self
             .slots
             .get(slot)
             .ok_or_else(|| anyhow::anyhow!("Invalid Motif GPU slot"))?;
+        let acquire = std::time::Instant::now();
         let hr =
             (Interface::vtable(&slot.mutex).AcquireSync)(Interface::as_raw(&slot.mutex), 0, 1000);
         anyhow::ensure!(hr.0 == 0, "Motif GPU mutex unavailable: {hr:?}");
+        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.0;
         // Always release after acquisition, even when device completion fails.
+        let gpu = std::time::Instant::now();
         let result = (|| {
             write(&slot.texture);
             self.context.End(&self.query);
@@ -317,10 +353,11 @@ impl Pool {
             }
             Ok(())
         })();
+        let gpu_ms = gpu.elapsed().as_secs_f64() * 1000.0;
         let release = slot.mutex.ReleaseSync(0);
         result?;
         release?;
-        Ok(())
+        Ok((acquire_ms, gpu_ms))
     }
 }
 
