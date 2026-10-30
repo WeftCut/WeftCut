@@ -4,6 +4,7 @@ import subprocess
 import sys
 import json
 import signal
+import time
 from pathlib import Path
 
 
@@ -39,7 +40,15 @@ def consume_restart_intent(path, pid):
         path.unlink(missing_ok=True)
 
 
-def run_editor(args):
+def wait_for_restart(intent, pid, is_stopping):
+    while not is_stopping():
+        if intent.exists() and consume_restart_intent(intent, pid):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def run_editor(args, before_start=None, keep_alive=False):
     """Keep VNC/gateway alive across an explicitly saved, graceful app restart."""
     intent = Path(os.environ.get('XDG_RUNTIME_DIR', '/data/run')) / 'editor-restart.json'
     intent.unlink(missing_ok=True)  # A stale request never restarts a future PID.
@@ -55,10 +64,23 @@ def run_editor(args):
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, stop)
     while not stopping:
+        if before_start:
+            before_start()
         child = subprocess.Popen(['/opt/WeftCut/WeftCut', *args])
+        runtime = intent.with_name('editor-runtime.json')
+        temporary = runtime.with_suffix('.tmp')
+        supervisor = {'supervisor_pid': os.getpid()} if keep_alive else {}
+        temporary.write_text(json.dumps({'pid': child.pid, 'state': 'running', **supervisor}))
+        temporary.replace(runtime)
         code = child.wait()
+        temporary.write_text(json.dumps({'pid': child.pid, 'state': 'stopped', **supervisor}))
+        temporary.replace(runtime)
         restart = consume_restart_intent(intent, child.pid)
-        if stopping or code != 0 or not restart:
+        print(f'EDITOR_EXIT pid={child.pid} code={code} restart={int(restart)} stopping={int(stopping)}', flush=True)
+        if not stopping and keep_alive and not restart:
+            print('EDITOR_WAITING explicit_start_required=1', flush=True)
+            restart = wait_for_restart(intent, child.pid, lambda: stopping)
+        if stopping or not restart:
             return code
         print('EDITOR_RESTART graceful=1 project_resume=1', flush=True)
     return 0

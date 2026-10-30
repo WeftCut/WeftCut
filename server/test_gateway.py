@@ -4,13 +4,68 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
-from gateway import cookie_value, create_app, load_key, media_path, valid_cookie
+from gateway import cookie_value, create_app, load_key, media_path, valid_cookie, load_vnc_credentials, gateway_tls_context, vnc_credentials
 from bootstrap import seed_settings
 
 KEY = 'synthetic-test-key-' + 'a' * 32
 
 
+class ClosedEditorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_closed_editor_queues_start_for_live_managed_supervisor(self):
+        import json
+        from unittest.mock import patch
+        from gateway import restart_native_editor
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'run').mkdir()
+            (root / 'run/editor-runtime.json').write_text(json.dumps({'pid': 123, 'state': 'stopped', 'supervisor_pid': 456}))
+            with patch.object(Path, 'read_bytes', return_value=b'python3\0/opt/editor/server/wayland_session.py\0'):
+                status, result = await restart_native_editor({'managed_wayland': True, 'files_root': root})
+            self.assertEqual(status, 202)
+            self.assertTrue(result['previously_closed'])
+            self.assertEqual(json.loads((root / 'run/editor-restart.json').read_text()), {'pid': 123})
+
+    async def test_closed_editor_does_not_signal_unrelated_process(self):
+        import json
+        from unittest.mock import patch
+        from gateway import restart_native_editor
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'run').mkdir()
+            (root / 'run/editor-runtime.json').write_text(json.dumps({'pid': 123, 'state': 'stopped', 'supervisor_pid': 456}))
+            with patch.object(Path, 'read_bytes', return_value=b'python3\0/unrelated.py\0'), patch('gateway.native_auth', side_effect=OSError()):
+                status, _ = await restart_native_editor({'managed_wayland': True, 'files_root': root})
+            self.assertEqual(status, 503)
+            self.assertFalse((root / 'run/editor-restart.json').exists())
+
+
 class StorageTests(unittest.TestCase):
+    def test_tls_requires_both_paths(self):
+        from unittest.mock import patch
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertIsNone(gateway_tls_context())
+            with self.assertRaises(ValueError):
+                gateway_tls_context(cert='/missing/cert')
+
+    def test_desktop_credentials_reject_public_files_and_links(self):
+        import json
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / 'credentials.json'
+            credentials = {'username': 'desktop', 'password': 'synthetic-password-long'}
+            path.write_text(json.dumps(credentials))
+            path.chmod(0o600)
+            self.assertEqual(load_vnc_credentials(path), credentials)
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                load_vnc_credentials(path)
+            link = Path(name) / 'link'
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                load_vnc_credentials(link)
+            path.chmod(0o600)
+            path.write_text(json.dumps({'username': 'desktop', 'password': 'short'}))
+            with self.assertRaises(ValueError):
+                load_vnc_credentials(path)
     def test_bootstrap_does_not_replace_preferences(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -47,18 +102,72 @@ class StorageTests(unittest.TestCase):
 
 
 class AuthTests(AioHTTPTestCase):
+    async def test_display_is_protected_and_rolls_back_when_editor_is_busy(self):
+        from display_settings import read_mode, write_mode
+        headers = {'Authorization': 'Bearer ' + KEY}
+        self.assertEqual((await self.client.get('/api/editor/runtime')).status, 401)
+        self.assertEqual((await self.client.post('/api/editor/display', json={})).status, 401)
+        self.app['managed_wayland'] = True
+        async def busy(_app):
+            return 409, {'error': 'editor_busy'}
+        self.app['restart_editor'] = busy
+        with tempfile.TemporaryDirectory() as name:
+            self.app['files_root'] = Path(name)
+            path = Path(name) / 'desktop-display.json'
+            write_mode(path, '1920x1080')
+            response = await self.client.post('/api/editor/display', headers=headers, json={'confirm': True, 'resolution': '2560x1440'})
+            self.assertEqual(response.status, 409)
+            self.assertEqual(read_mode(path), '1920x1080')
+            response = await self.client.post('/api/editor/display', headers=headers, json={'confirm': True, 'resolution': '99999x99999'})
+            self.assertEqual(response.status, 400)
+            async def accepted(_app):
+                return 202, {'status': 'restarting'}
+            self.app['restart_editor'] = accepted
+            response = await self.client.post('/api/editor/display', headers=headers, json={'confirm': True, 'resolution': '2560x1440'})
+            self.assertEqual(response.status, 202)
+            self.assertEqual(read_mode(path), '2560x1440')
+
     async def get_application(self):
         web_root = Path(__file__).parent.parent / 'web'
         return create_app(KEY, web_root=web_root, novnc_root=web_root)
 
     async def test_mcp_upload_audio_and_vnc_are_protected(self):
-        for path in ('/mcp', '/api/audio', '/websockify', '/api/media', '/api/gpu', '/api/files', '/api/files/events', '/api/files/unknown/download'):
+        for path in ('/mcp', '/api/audio', '/websockify', '/api/vnc-credentials', '/api/media', '/api/gpu', '/api/files', '/api/files/events', '/api/files/unknown/download'):
             response = await self.client.get(path)
             self.assertEqual(response.status, 401, path)
         response = await self.client.put('/api/media/clip.mp4', data=b'not-media')
         self.assertEqual(response.status, 401)
         response = await self.client.post('/api/editor/restart', json={'confirm': True})
         self.assertEqual(response.status, 401)
+
+    async def test_desktop_credentials_are_opt_in_and_require_tls(self):
+        headers = {'Authorization': 'Bearer ' + KEY}
+        response = await self.client.get('/api/vnc-credentials', headers=headers)
+        self.assertEqual(response.status, 404)
+        self.app['vnc_credentials_file'] = '/not-read-over-http'
+        response = await self.client.get('/api/vnc-credentials', headers=headers)
+        self.assertEqual(response.status, 426)
+        response = await self.client.get('/api/vnc-credentials', headers={**headers, 'X-Forwarded-Proto': 'https'})
+        self.assertEqual(response.status, 426)
+
+    async def test_tls_desktop_credentials_response_is_private_and_contains_no_api_key(self):
+        import json
+        from aiohttp.test_utils import make_mocked_request
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / 'credentials.json'
+            credentials = {'username': 'desktop', 'password': 'synthetic-desktop-password'}
+            path.write_text(json.dumps(credentials))
+            path.chmod(0o600)
+            self.app['vnc_credentials_file'] = path
+            # TLS is a transport property; an absolute HTTPS target alone does
+            # not make a mocked connection secure on newer aiohttp versions.
+            import ssl
+            request = make_mocked_request('GET', '/api/vnc-credentials', app=self.app,
+                                          sslcontext=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER))
+            response = await vnc_credentials(request)
+            self.assertEqual(json.loads(response.body), credentials)
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertNotIn(KEY, response.text)
 
     async def test_editor_restart_requires_confirmation_and_preserves_native_busy_refusal(self):
         calls = []

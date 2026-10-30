@@ -1,0 +1,159 @@
+--- a/libweston/backend-vnc/vnc.c
++++ b/libweston/backend-vnc/vnc.c
+@@ -70,6 +70,9 @@
+ 
+ 	struct xkb_rule_names xkb_rule_name;
+ 	struct xkb_keymap *xkb_keymap;
++	/* One desktop must keep one wl_seat across browser reconnects. */
++	struct weston_seat *shared_seat;
++	struct vnc_peer *input_peer;
+ 
+ 	struct aml *aml;
+ 	struct wl_event_source *aml_event;
+@@ -101,6 +104,7 @@
+ 	struct nvnc_client *client;
+ 
+ 	enum nvnc_button_mask last_button_mask;
++	bool pressed_keys[KEY_CNT];
+ 	struct wl_list link;
+ };
+ 
+@@ -283,6 +287,40 @@
+ };
+ 
+ static void
++vnc_reset_peer_input(struct vnc_peer *peer)
++{
++	struct timespec time;
++	unsigned int key;
++	if (!peer)
++		return;
++	weston_compositor_get_time(&time);
++	for (key = 0; key < KEY_CNT; key++) {
++		if (peer->pressed_keys[key])
++			notify_key(peer->seat, &time, key,
++				   WL_KEYBOARD_KEY_STATE_RELEASED,
++				   STATE_UPDATE_AUTOMATIC);
++		peer->pressed_keys[key] = false;
++	}
++	if (peer->last_button_mask & NVNC_BUTTON_LEFT)
++		notify_button(peer->seat, &time, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
++	if (peer->last_button_mask & NVNC_BUTTON_MIDDLE)
++		notify_button(peer->seat, &time, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
++	if (peer->last_button_mask & NVNC_BUTTON_RIGHT)
++		notify_button(peer->seat, &time, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED);
++	peer->last_button_mask = 0;
++	notify_pointer_frame(peer->seat);
++}
++
++static void
++vnc_activate_peer(struct vnc_peer *peer)
++{
++	if (!peer->backend->shared_seat || peer->backend->input_peer == peer)
++		return;
++	vnc_reset_peer_input(peer->backend->input_peer);
++	peer->backend->input_peer = peer;
++}
++
++static void
+ vnc_handle_key_event(struct nvnc_client *client, uint32_t keysym,
+ 		     bool is_pressed)
+ {
+@@ -327,6 +365,9 @@
+ 	}
+ 
+ 	/* emulate lshift press */
++	vnc_activate_peer(peer);
++	if (key < KEY_CNT)
++		peer->pressed_keys[key] = is_pressed;
+ 	if (needs_shift)
+ 		notify_key(peer->seat, &time, KEY_LEFTSHIFT,
+ 			   WL_KEYBOARD_KEY_STATE_PRESSED,
+@@ -357,6 +398,10 @@
+ 	else
+ 		state = WL_KEYBOARD_KEY_STATE_RELEASED;
+ 
++	if (key >= KEY_CNT)
++		return;
++	vnc_activate_peer(peer);
++	peer->pressed_keys[key] = is_pressed;
+ 	notify_key(peer->seat, &time, key, state, STATE_UPDATE_AUTOMATIC);
+ }
+ 
+@@ -422,6 +467,7 @@
+ 	struct timespec time;
+ 	enum nvnc_button_mask changed_button_mask;
+ 
++	vnc_activate_peer(peer);
+ 	weston_compositor_get_time(&time);
+ 
+ 	if (x < output->base.width && y < output->base.height) {
+@@ -492,9 +538,16 @@
+ 	struct vnc_output *output = peer->backend->output;
+ 
+ 	wl_list_remove(&peer->link);
+-	weston_seat_release_keyboard(peer->seat);
+-	weston_seat_release_pointer(peer->seat);
+-	weston_seat_release(peer->seat);
++	if (peer->backend->input_peer == peer) {
++		vnc_reset_peer_input(peer);
++		peer->backend->input_peer = NULL;
++	}
++	if (!peer->backend->shared_seat) {
++		weston_seat_release_keyboard(peer->seat);
++		weston_seat_release_pointer(peer->seat);
++		weston_seat_release(peer->seat);
++		free(peer->seat);
++	}
+ 	free(peer);
+ 	weston_log("VNC Client disconnected\n");
+ 
+@@ -759,12 +812,14 @@
+ 	peer = xzalloc(sizeof(*peer));
+ 	peer->client = client;
+ 	peer->backend = backend;
+-	peer->seat = xzalloc(sizeof(*peer->seat));
++	peer->seat = backend->shared_seat;
++	if (!peer->seat) {
++		peer->seat = xzalloc(sizeof(*peer->seat));
++		weston_seat_init(peer->seat, backend->compositor, seat_name);
++		weston_seat_init_pointer(peer->seat);
++		weston_seat_init_keyboard(peer->seat, backend->xkb_keymap);
++	}
+ 
+-	weston_seat_init(peer->seat, backend->compositor, seat_name);
+-	weston_seat_init_pointer(peer->seat);
+-	weston_seat_init_keyboard(peer->seat, backend->xkb_keymap);
+-
+ 	if (wl_list_empty(&output->peers))
+ 		weston_output_power_on(&output->base);
+ 
+@@ -937,6 +992,12 @@
+ 	struct weston_head *head, *next;
+ 
+ 	nvnc_close(backend->server);
++	if (backend->shared_seat) {
++		weston_seat_release_keyboard(backend->shared_seat);
++		weston_seat_release_pointer(backend->shared_seat);
++		weston_seat_release(backend->shared_seat);
++		free(backend->shared_seat);
++	}
+ 
+ 	wl_list_remove(&backend->base.link);
+ 
+@@ -1285,6 +1346,15 @@
+ 		goto err_output;
+ 	}
+ 
++	/* Opt-in: shared remote desktop, not a multi-seat workstation. */
++	if (getenv("WEFTCUT_VNC_SHARED_SEAT") &&
++	    strcmp(getenv("WEFTCUT_VNC_SHARED_SEAT"), "1") == 0) {
++		backend->shared_seat = xzalloc(sizeof(*backend->shared_seat));
++		weston_seat_init(backend->shared_seat, compositor, "WeftCut remote desktop");
++		weston_seat_init_pointer(backend->shared_seat);
++		weston_seat_init_keyboard(backend->shared_seat, backend->xkb_keymap);
++		weston_log("VNC: persistent shared input seat enabled\n");
++	}
+ 	return backend;
+ 
+ err_output:

@@ -6,11 +6,12 @@ export const PREVIEW_PROFILES = Object.freeze({
 });
 
 export class PreviewConnection {
-  constructor({ RFB, screen, url, onState, profile = 'smooth' }) {
+  constructor({ RFB, screen, url, onState, profile = 'smooth', getCredentials }) {
     this.RFB = RFB;
     this.screen = screen;
     this.url = url;
     this.onState = onState;
+    this.getCredentials = getCredentials;
     this.profile = Object.hasOwn(PREVIEW_PROFILES, profile) ? profile : 'smooth';
     this.current = null;
     this.suspended = false;
@@ -26,16 +27,32 @@ export class PreviewConnection {
     const session = { rfb, host };
     this.current = session;
     rfb.scaleViewport = true;
-    rfb.resizeSession = true;
+    // Resize the browser's presentation, never the shared compositor output.
+    // Fullscreen/HiDPI and a second client must not rebuild every preview GPU
+    // surface mid-playback or grow the shared desktop to an ultrawide viewport.
+    rfb.resizeSession = false;
     rfb.clipViewport = false;
     this.applyProfile();
     session.connected = () => { if (this.current === session) this.onState('connected'); };
+    session.credentialsRequested = async () => {
+      if (this.current !== session || session.credentialsPending) return;
+      session.credentialsPending = true;
+      try {
+        if (!this.getCredentials) throw new Error('Desktop authentication unavailable');
+        const credentials = await this.getCredentials();
+        // A request may finish after the user closed/replaced this connection.
+        if (this.current === session) rfb.sendCredentials(credentials);
+      } catch {
+        if (this.current === session) { this.close(); this.onState('authentication_failed'); }
+      } finally { session.credentialsPending = false; }
+    };
     session.disconnected = () => {
       if (this.current !== session) return;
-      this.close();
+      this.close(false);
       this.onState('disconnected');
     };
     rfb.addEventListener('connect', session.connected);
+    rfb.addEventListener('credentialsrequired', session.credentialsRequested);
     rfb.addEventListener('disconnect', session.disconnected);
     this.onState('connecting');
   }
@@ -53,13 +70,14 @@ export class PreviewConnection {
     this.applyProfile();
   }
 
-  close() {
+  close(disconnect = true) {
     const previous = this.current;
     this.current = null;
     if (!previous) return;
     previous.rfb.removeEventListener('connect', previous.connected);
+    previous.rfb.removeEventListener('credentialsrequired', previous.credentialsRequested);
     previous.rfb.removeEventListener('disconnect', previous.disconnected);
-    previous.rfb.disconnect();
+    if (disconnect) previous.rfb.disconnect();
     previous.host.remove();
   }
 

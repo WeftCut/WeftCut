@@ -78,6 +78,9 @@ import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
 import { revealServerFile } from './serverFileReveal.js';
+import { previewRendererArgument } from '../shared/preview-renderer.js';
+import { fitServerWindow } from './serverWindowFit.js';
+import { minimizeEditorWindow, restoreEditorWindow, editorWindowMinimized, onEditorWindowStateChanged } from './serverWindowLifecycle.js';
 import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -334,7 +337,7 @@ async function createWindow(): Promise<BrowserWindow> {
     webPreferences: {
       preload: path.join(import.meta.dirname, '../preload/index.js'),
       // Theme the splash's first frame; settings hydration lands after it.
-      additionalArguments: [layoutThemeArgument(layoutTheme)],
+      additionalArguments: [layoutThemeArgument(layoutTheme), previewRendererArgument(process.platform, !!process.env.WEFTCUT_SERVER, app.commandLine.getSwitchValue('ozone-platform'), process.env.WEFTCUT_PREVIEW_RENDERER)],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1188,7 +1191,10 @@ app.whenReady().then(async () => {
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, {
-    ...(process.env.WEFTCUT_SERVER ? { prepareEditorRestart: () => serverRestart() } : {}),
+    ...(process.env.WEFTCUT_SERVER ? { prepareEditorRestart: () => serverRestart(), restoreEditorWindow: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Editor window unavailable');
+      restoreEditorWindow(mainWindow, !!process.env.WAYLAND_DISPLAY);
+    } } : {}),
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,
@@ -2168,7 +2174,10 @@ app.whenReady().then(async () => {
   // invoked the IPC; mainWindow is the fallback if it can't (shouldn't happen).
   const ctlWin = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null =>
     BrowserWindow.fromWebContents(e.sender) ?? mainWindow
-  ipcMain.handle('window:minimize', (e) => ctlWin(e)?.minimize())
+  ipcMain.handle('window:minimize', (e) => {
+    const w = ctlWin(e);
+    if (w) minimizeEditorWindow(w, !!process.env.WEFTCUT_SERVER && !!process.env.WAYLAND_DISPLAY);
+  })
   ipcMain.handle('window:toggleMaximize', (e) => {
     const w = ctlWin(e)
     if (w?.isMaximized()) w.unmaximize()
@@ -2838,6 +2847,29 @@ app.whenReady().then(async () => {
     void confirmQuit().then(confirmed => { if (confirmed && !win.isDestroyed()) win.close(); }).catch(console.error);
   });
 
+  if(process.env.WEFTCUT_SERVER){
+    const fit=()=>fitServerWindow(win,()=>screen.getDisplayMatching(win.getBounds()).workArea);
+    fit();screen.on('display-metrics-changed',fit);screen.on('display-added',fit);
+    win.once('closed',()=>{screen.removeListener('display-metrics-changed',fit);screen.removeListener('display-added',fit);});
+  }
+  if (process.env.WEFTCUT_SERVER) {
+    const target = path.join(process.env.XDG_RUNTIME_DIR || '/data/run', 'editor-window.json');
+    const writeWindowState = () => {
+      if (win.isDestroyed()) return;
+      try {
+        fs.writeFileSync(target + '.tmp', JSON.stringify({ pid: process.pid, minimized: editorWindowMinimized(win, !!process.env.WAYLAND_DISPLAY), visible: win.isVisible() }), { mode: 0o600 });
+        fs.renameSync(target + '.tmp', target);
+      } catch (error) { console.warn('Could not publish editor window state', error); }
+    };
+    win.on('minimize', writeWindowState);
+    win.on('restore', writeWindowState);
+    win.on('show', writeWindowState);
+    win.on('hide', writeWindowState);
+    win.on('focus', writeWindowState);
+    win.on('blur', writeWindowState);
+    win.once('closed', onEditorWindowStateChanged(win, writeWindowState));
+    writeWindowState();
+  }
   win.once('ready-to-show', () => win.show())
   updates.start()
 

@@ -12,9 +12,12 @@ from pathlib import Path
 import secrets
 import time
 import stat
+import ssl
+import re
 from urllib.parse import quote
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType, web
+from display_settings import MODES, read_mode, write_mode
 
 ROOT = Path(os.environ.get('WEFTCUT_DATA', '/data'))
 WEB = Path(os.environ.get('WEFTCUT_WEB', '/opt/editor/web'))
@@ -177,6 +180,52 @@ async def vnc(request):
     return downstream
 
 
+def load_vnc_credentials(path):
+    # The file describes the container-local desktop account, never a host
+    # account or the MCP API key. Reject links, public files and unbounded input.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or not 0 < info.st_size <= 4096:
+            raise ValueError('Invalid desktop credential file')
+        data = json.loads(os.read(fd, 4097))
+    finally:
+        os.close(fd)
+    if not isinstance(data, dict):
+        raise ValueError('Invalid desktop credentials')
+    username, password = data.get('username'), data.get('password')
+    if (not isinstance(username, str) or not re.fullmatch(r'[a-z_][a-z0-9_-]{0,63}', username)
+            or not isinstance(password, str) or not 16 <= len(password) <= 256):
+        raise ValueError('Invalid desktop credentials')
+    return {'username': username, 'password': password}
+
+
+async def vnc_credentials(request):
+    path = request.app['vnc_credentials_file']
+    if path is None:
+        raise web.HTTPNotFound(text='Desktop credentials are not configured')
+    if not request.secure:
+        raise web.HTTPUpgradeRequired(text='Use HTTPS to connect to this desktop')
+    try:
+        credentials = load_vnc_credentials(path)
+    except (OSError, ValueError):
+        raise web.HTTPServiceUnavailable(text='Desktop authentication is not ready')
+    return web.json_response(credentials, headers={'Cache-Control': 'no-store', 'Pragma': 'no-cache'})
+
+
+def gateway_tls_context(cert=None, key=None):
+    cert = cert or os.environ.get('WEFTCUT_TLS_CERT')
+    key = key or os.environ.get('WEFTCUT_TLS_KEY')
+    if not cert and not key:
+        return None
+    if not cert or not key:
+        raise ValueError('Both WEFTCUT_TLS_CERT and WEFTCUT_TLS_KEY are required')
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert, key)
+    return context
+
+
 async def audio(request):
     response = web.StreamResponse(headers={'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store'})
     await response.prepare(request)
@@ -247,6 +296,8 @@ async def response_headers(request, response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Frame-Options'] = 'DENY'
+    if request.path.startswith('/novnc/') or request.path.endswith(('.js', '.mjs')):
+        response.headers.setdefault('Cache-Control', 'no-cache')
 
 
 async def gpu_info(request):
@@ -257,6 +308,23 @@ async def gpu_info(request):
 
 
 async def restart_native_editor(app):
+    # Closing the native window leaves the managed desktop alive. Ask its
+    # supervisor to start again, rather than calling the now-absent MCP server.
+    if app.get('managed_wayland'):
+        root = app['files_root'] / 'run'
+        try:
+            runtime = json.loads((root / 'editor-runtime.json').read_text())
+            supervisor_pid = runtime.get('supervisor_pid')
+            if runtime.get('state') == 'stopped' and isinstance(supervisor_pid, int) and supervisor_pid > 1:
+                argv = Path(f'/proc/{supervisor_pid}/cmdline').read_bytes().split(b'\0')
+                if b'/opt/editor/server/wayland_session.py' in argv:
+                    intent = root / 'editor-restart.json'
+                    temporary = intent.with_suffix('.gateway.tmp')
+                    temporary.write_text(json.dumps({'pid': runtime['pid']}))
+                    temporary.replace(intent)
+                    return 202, {'status': 'restarting', 'previously_closed': True}
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
     try:
         auth = native_auth()
         async with app['http'].post(f'http://127.0.0.1:{auth["port"]}/mcp/editor-restart',
@@ -274,7 +342,61 @@ async def editor_restart(request):
         raise web.HTTPBadRequest(text='Explicit confirmation is required')
     if confirmed != {'confirm': True}:
         raise web.HTTPBadRequest(text='Explicit confirmation is required')
-    status, result = await request.app['restart_editor'](request.app)
+    async with request.app['editor_change_lock']:
+        status, result = await request.app['restart_editor'](request.app)
+    return web.json_response(result, status=status)
+
+
+async def editor_runtime(request):
+    root = request.app['files_root']
+    try:
+        runtime = json.loads((root / 'run' / 'editor-runtime.json').read_text())
+    except (OSError, ValueError):
+        runtime = {'pid': None, 'state': 'unknown'}
+    try:
+        window = json.loads((root / 'run' / 'editor-window.json').read_text())
+        if window.get('pid') == runtime.get('pid'):
+            runtime['window'] = {'minimized': window.get('minimized') is True, 'visible': window.get('visible') is True}
+    except (OSError, ValueError, AttributeError):
+        pass
+    return web.json_response({**runtime, 'display_supported': request.app['managed_wayland'],
+        'resolution': read_mode(root / 'run' / 'desktop-display-active.json'), 'modes': MODES},
+        headers={'Cache-Control': 'no-store'})
+
+
+async def editor_window(request):
+    try:
+        data = await request.json()
+    except (ValueError, web.HTTPException):
+        raise web.HTTPBadRequest(text='Invalid window action')
+    if data != {'action': 'restore'}:
+        raise web.HTTPBadRequest(text='Only restore is supported')
+    try:
+        auth = native_auth()
+        async with request.app['http'].post(f'http://127.0.0.1:{auth["port"]}/mcp/editor-window',
+                headers={'Authorization': 'Bearer ' + auth['token']}, json=data,
+                timeout=ClientTimeout(total=5)) as response:
+            return web.json_response(await response.json(), status=response.status)
+    except (OSError, ValueError, ClientError, asyncio.TimeoutError):
+        return web.json_response({'error': 'editor_unavailable'}, status=503)
+
+
+async def editor_display(request):
+    if not request.app['managed_wayland']:
+        raise web.HTTPConflict(text='Managed Wayland display is unavailable')
+    try:
+        data = await request.json()
+    except (ValueError, web.HTTPException):
+        raise web.HTTPBadRequest(text='Invalid resolution request')
+    if not isinstance(data, dict) or set(data) != {'resolution', 'confirm'} or data.get('confirm') is not True or data.get('resolution') not in MODES:
+        raise web.HTTPBadRequest(text='Choose a supported resolution and confirm saving/restarting')
+    root = request.app['files_root']
+    async with request.app['editor_change_lock']:
+        previous = read_mode(root / 'desktop-display.json')
+        write_mode(root / 'desktop-display.json', data['resolution'])
+        status, result = await request.app['restart_editor'](request.app)
+        if status != 202:
+            write_mode(root / 'desktop-display.json', previous)
     return web.json_response(result, status=status)
 
 
@@ -419,14 +541,17 @@ async def file_download(request):
         os.close(fd)
 
 
-def create_app(key=None, web_root=WEB, novnc_root=Path('/usr/share/novnc'), browser_password=None, data_root=ROOT):
+def create_app(key=None, web_root=WEB, novnc_root=Path('/usr/share/novnc'), browser_password=None, data_root=ROOT, vnc_credentials_file=None):
     app = web.Application(middlewares=[gate], client_max_size=50 * 1024**2)
     app['key'] = key or load_key()
     app['browser_password'] = browser_password or os.environ.get('WEFTCUT_BROWSER_PASSWORD') or app['key']
     if len(app['browser_password']) < 4:
         raise ValueError('Browser password must contain at least four characters')
     app['attempts'] = {}
+    app['vnc_credentials_file'] = vnc_credentials_file or os.environ.get('WEFTCUT_VNC_CREDENTIALS_FILE')
     app['restart_editor'] = restart_native_editor
+    app['editor_change_lock'] = asyncio.Lock()
+    app['managed_wayland'] = os.environ.get('WEFTCUT_MANAGED_WAYLAND') == '1'
     app['files_root'] = data_root
     app['export_files'] = {}
     app['file_watchers'] = set()
@@ -437,10 +562,14 @@ def create_app(key=None, web_root=WEB, novnc_root=Path('/usr/share/novnc'), brow
     app.router.add_get('/login', login_page)
     app.router.add_post('/api/login', login)
     app.router.add_route('*', '/mcp', mcp)
+    app.router.add_get('/api/vnc-credentials', vnc_credentials)
     app.router.add_get('/websockify', vnc)
     app.router.add_get('/api/audio', audio)
     app.router.add_get('/api/gpu', gpu_info)
     app.router.add_post('/api/editor/restart', editor_restart)
+    app.router.add_get('/api/editor/runtime', editor_runtime)
+    app.router.add_post('/api/editor/window', editor_window)
+    app.router.add_post('/api/editor/display', editor_display)
     app.router.add_post('/api/files/reveal', file_reveal)
     app.router.add_get('/api/files/events', file_events)
     app.router.add_get('/api/files', file_list)
@@ -454,4 +583,5 @@ def create_app(key=None, web_root=WEB, novnc_root=Path('/usr/share/novnc'), brow
 
 
 if __name__ == '__main__':
-    web.run_app(create_app(), host='0.0.0.0', port=8080, access_log=None)
+    web.run_app(create_app(novnc_root=Path(os.environ.get('WEFTCUT_NOVNC_ROOT', '/usr/share/novnc'))),
+                host='0.0.0.0', port=8080, access_log=None, ssl_context=gateway_tls_context())
