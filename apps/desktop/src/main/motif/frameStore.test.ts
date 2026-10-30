@@ -122,6 +122,17 @@ describe('MotifFrameStore', () => {
     expect(changed).toHaveBeenLastCalledWith(hash, 4, false)
   })
 
+  it('takes a reader utility miss as a failed read: the frame leaves coverage, nothing else', async () => {
+    const { root, codec } = await fixture()
+    const changed = vi.fn()
+    const admit = vi.fn()
+    const store = new MotifFrameStore(async () => root, codec, changed, admit)
+    store.reportMiss(hash, 4)
+    expect(changed.mock.calls).toEqual([[hash, 4, false]])
+    expect(admit).not.toHaveBeenCalled()
+    expect(codec.motifReadFrame).not.toHaveBeenCalled()
+  })
+
   it('keeps other inventory entries when one frame disappears during enumeration', async () => {
     const { store } = await fixture()
     const bytes = Buffer.alloc(68)

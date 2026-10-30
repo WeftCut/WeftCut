@@ -74,8 +74,8 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: process.env.VITE_WEFTCUT_E2E === '1'
-        ? { index: 'src/main/entry.ts', calibration: 'src/main/calibration-host.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts' }
-        : { index: 'src/main/entry.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts' } },
+        ? { index: 'src/main/entry.ts', calibration: 'src/main/calibration-host.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts', motifReader: 'src/main/motif-reader-host.ts' }
+        : { index: 'src/main/entry.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts', motifReader: 'src/main/motif-reader-host.ts' } },
       // Externalize native + node-resolved deps. `@modelcontextprotocol/sdk`
       // ships ESM with subpath `.js` imports (e.g. `…/sdk/server/index.js`);
       // the regex keeps those subpaths external too, so Node resolves them from

@@ -2,6 +2,7 @@ import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { notifyResourceCacheWrite } from '../resources'
+import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
 import type { MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport.js'
 
 async function replaceFile(temp: string, destination: string): Promise<void> {
@@ -39,11 +40,9 @@ export class MotifFrameStore {
   ) {}
 
   private async stem(hash: string, frame: number): Promise<string | null> {
-    if (!/^[0-9a-f]{32}$/.test(hash) || !Number.isSafeInteger(frame) || frame < 0) {
-      throw new Error('Invalid Motif cache address')
-    }
+    if (!isMotifFrameAddress(hash, frame)) throw new Error('Invalid Motif cache address')
     const root = await this.workspace()
-    return root ? path.join(root, 'Cache', 'raster', hash, String(frame)) : null
+    return root ? motifFrameStem(root, hash, frame) : null
   }
 
   async read(hash: string, frame: number, gpu?: (file: string, width: number, height: number) => Promise<MotifTextureFrame>): Promise<StoredMotifFrame | null> {
@@ -62,6 +61,12 @@ export class MotifFrameStore {
     try {
       return { kind: 'rgba', ...await this.codec.motifReadFrame(`${stem}.wfrm`) }
     } catch { this.changed(hash, frame, false); return null /* absent, corrupt, or unsupported cache: render again */ }
+  }
+
+  /** The Motif reader utility could not read a stored frame (ADR 0154): drop it
+   * from coverage, as a failed `read` does, so a replacement capture is admitted. */
+  reportMiss(hash: string, frame: number): void {
+    this.changed(hash, frame, false)
   }
 
   async write(hash: string, frame: number, png: Uint8Array): Promise<void> {

@@ -17,7 +17,7 @@ import { createMacDecodeProbe } from './macDecodeProbe.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell, utilityProcess } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { PNG_CANVAS_RUNTIME_SOURCE } from './motif/pngCanvasRuntime.js'
@@ -37,6 +37,9 @@ import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
+import { createMotifConsumers } from './motif/consumers.js'
+import { MotifReaderService } from './motif/readerService.js'
+import { MOTIF_READER_CONNECT } from '../shared/motifs/readerProtocol.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
@@ -816,6 +819,9 @@ app.whenReady().then(async () => {
   // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
   // buildProjectSummary's fileExists + autosave see the right dir).
   let wsCache: string | null = null
+  // The Motif reader utility follows the same generation and root as
+  // `currentMotifStore()`; it is created with the Motif services below.
+  let motifReader: MotifReaderService | null = null
   try {
     wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
   } catch { /* no workspace at cold boot */ }
@@ -844,6 +850,7 @@ app.whenReady().then(async () => {
     commitWorkspace: async (p: string) => {
       const previous = workspaceEvents.current()
       workspaceEvents.beginTransition()
+      motifReader?.workspaceChanged()
       motifBakes?.reset()
       // Native commit can schedule a sweep before the incoming actor/catalog
       // is ready. Protect its existing cache until main has accepted a plan.
@@ -854,9 +861,11 @@ app.whenReady().then(async () => {
         emitToRenderer('import:queue', [])
       } catch (error) {
         if (previous !== null) workspaceEvents.activate(previous)
+        motifReader?.workspaceChanged()
         throw error
       }
       wsCache = p
+      motifReader?.workspaceChanged()
       measureCacheDisk(p)
       // Replay AFTER wsCache is set, so every replayed row takes the direct path
       // and cannot re-queue itself, and after the commit resolves, because that
@@ -865,10 +874,12 @@ app.whenReady().then(async () => {
     },
     endWorkspace: async () => {
       workspaceEvents.beginTransition()
+      motifReader?.workspaceChanged()
       motifBakes?.reset()
       const generation = await backend!.endWorkspace()
       workspaceEvents.activate(generation)
       wsCache = null
+      motifReader?.workspaceChanged()
       emitToRenderer('import:queue', [])
     },
   }
@@ -1399,32 +1410,24 @@ app.whenReady().then(async () => {
   // compositor surface: its next shared-texture lease must fence again.
   app.on('child-process-gone', (_event, details) => { if (details.type === 'GPU') invalidateCaptureSurface() })
   const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
-  const motifConsumers = new WeakMap<Electron.WebContents, { document: object | null }>()
-  const trackMotifConsumer = (owner: Electron.WebContents, frame: Electron.WebFrameMain | null): (() => boolean) => {
-    let consumer = motifConsumers.get(owner)
-    if (!consumer) {
-      consumer = { document: {} }
-      motifConsumers.set(owner, consumer)
-      const state = consumer
-      // Imports belong to a document, not its long-lived WebContents. A reload
-      // must cancel old work and re-import pools for the replacement preload.
-      owner.on('did-start-navigation', details => {
-        if (details.isMainFrame && !details.isSameDocument) {
-          state.document = null
-          motifGpu?.close(owner)
-        }
-      })
-      owner.on('dom-ready', () => { state.document = {} })
-      // A cancelled/failed navigation can leave the original document usable.
-      owner.on('did-stop-loading', () => { state.document ??= {} })
-      owner.on('render-process-gone', () => { state.document = null; motifGpu?.close(owner) })
-      owner.once('destroyed', () => { state.document = null; motifGpu?.close(owner) })
-    }
-    const document = consumer.document
-    // Bind at IPC admission, BEFORE async disk reads/capture. Work from the
-    // outgoing document must not acquire leases in the replacement document.
-    return () => document !== null && consumer.document === document && !owner.isDestroyed() && frame !== null && !frame.detached
-  }
+  motifReader = new MotifReaderService({
+    fork: () => utilityProcess.fork(path.join(import.meta.dirname, 'motifReader.js'), [], {
+      serviceName: 'WeftCut Motif reader', stdio: 'ignore',
+    }),
+    channel: () => new MessageChannelMain(),
+    workspace: () => {
+      const generation = workspaceEvents.current()
+      return { generation, root: generation === null ? null : wsCache }
+    },
+    reportMiss: (hash, frame) => currentMotifStore().reportMiss(hash, frame),
+    log: line => console.warn(line),
+  })
+  const reader = motifReader
+  app.once('will-quit', () => reader.stop())
+  const trackMotifConsumer = createMotifConsumers(owner => {
+    motifGpu?.close(owner)
+    reader.retire(owner)
+  })
   ipcMain.handle('motif:read', (event, args: { hash: string; frame: number; finalizationToken?: string }) => {
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
@@ -1434,6 +1437,11 @@ app.whenReady().then(async () => {
         if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
         return motifGpu.read(owner, file, w, h, parent)
       } : undefined)
+  })
+  ipcMain.on(MOTIF_READER_CONNECT, event => {
+    // Registers the document's retirement before it holds a port.
+    trackMotifConsumer(event.sender, event.senderFrame)
+    if (event.senderFrame && !event.senderFrame.detached) reader.connect(event.sender)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
   ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
