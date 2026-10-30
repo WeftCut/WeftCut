@@ -21,6 +21,7 @@ export interface CaptureServiceDeps {
   store: MotifFrameStore
   texture: (args: CaptureArgs, consume: (texture: OffscreenSharedTexture) => Promise<StoredMotifFrame>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<StoredMotifFrame>
   png: (args: CaptureArgs, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
+  exportPng?: (args: CaptureArgs, parent: number, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
   copy: ((owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null
   setTextureEnabled: (enabled: boolean) => void
@@ -278,7 +279,10 @@ export class MotifCaptureService {
           this.deps.setTextureEnabled(false)
         }
       }
-      const bytes = Buffer.from(await this.deps.png(args, key, high, isCurrent), 'base64')
+      const png = finalizationId !== undefined && this.deps.exportPng
+        ? this.deps.exportPng(args, finalizationId, key, high, isCurrent)
+        : this.deps.png(args, key, high, isCurrent)
+      const bytes = Buffer.from(await png, 'base64')
       acceptingBake = false
       if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
       const persisted = destination ? await write(await destination, bytes, true) : false

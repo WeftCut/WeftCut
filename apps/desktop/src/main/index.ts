@@ -31,7 +31,7 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureExportMotifFrameB64, retireExportCaptureHosts, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
@@ -581,7 +581,7 @@ app.whenReady().then(async () => {
   }).catch(error => console.warn('[resources] disk size unavailable:', error))
   installResourceIpc((status) => recordDiagnostic('resources', JSON.stringify(status)), {
     prepare: owner => motifGpu?.close(owner),
-    retire: (owner, id) => motifGpu?.closeExport(owner, id),
+    retire: (owner, id) => { retireExportCaptureHosts(id); motifGpu?.closeExport(owner, id) },
   })
   hydratePerformanceSettings(initialAppSettings.performance,
     !initialAppSettings.performance_policy || initialAppSettings.performance_policy.decode === 'tested' && initialAppSettings.performance_test_compatible
@@ -1376,6 +1376,7 @@ app.whenReady().then(async () => {
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const motifCapture = new MotifCaptureService({
     store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
+    exportPng: captureExportMotifFrameB64,
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
@@ -1502,7 +1503,7 @@ app.whenReady().then(async () => {
       // snake-case alias). Only this sender's live continuation token qualifies.
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
       const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
-      if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
+      if (parent !== undefined) { retireExportCaptureHosts(parent); motifGpu?.closeExport(_e.sender, parent); }
       args = { ...rest, finalizationId: parent };
     }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
