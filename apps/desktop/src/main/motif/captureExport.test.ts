@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors';
 
-const state = vi.hoisted(() => ({ opened: 0, loads: 0, active: 0, peak: 0, closed: 0, leases: 0, released: 0, shots: 0 }));
+const state = vi.hoisted(() => ({ opened: 0, loads: 0, active: 0, peak: 0, closed: 0, leases: 0, released: 0, shots: 0,
+  failures: [] as Error[], onFailure: undefined as (() => void) | undefined }));
 vi.mock('../resources.js', () => ({ reserveResources: vi.fn((_threads: number, _size: number, parent: number) => {
   expect(parent).toBe(77); state.leases++;
   return () => { state.released++; };
@@ -12,6 +14,7 @@ vi.mock('electron', () => ({ BrowserWindow: class {
   webContents = { debugger: { attach() {}, detach() {}, sendCommand: async (method: string, params: { expression?: string } = {}) => {
     if (method === 'Page.captureScreenshot') {
       state.shots++;
+      if (state.failures.length) { state.onFailure?.(); throw state.failures.shift(); }
       state.active++; state.peak = Math.max(state.peak, state.active);
       const data = Buffer.from(JSON.stringify([this.url, this.t])).toString('base64');
       await new Promise(resolve => setTimeout(resolve, 10)); state.active--;
@@ -27,7 +30,51 @@ vi.mock('electron', () => ({ BrowserWindow: class {
 } }));
 
 import { captureExportMotifFrameB64, captureDiagnostics, retireExportCaptureHosts, setRuntimeSource, setMotifStore } from './capture';
-afterEach(async () => { retireExportCaptureHosts(77); await new Promise(resolve => setTimeout(resolve, 0)); setMotifStore(null as never); });
+afterEach(async () => {
+  state.failures.length = 0; state.onFailure = undefined;
+  retireExportCaptureHosts(77); await new Promise(resolve => setTimeout(resolve, 0)); setMotifStore(null as never);
+  Object.assign(state, { opened: 0, loads: 0, active: 0, peak: 0, closed: 0, leases: 0, released: 0, shots: 0 });
+});
+
+const retryFrame = () => ({ motifId: 'retry-transition', tSec: .433333, propsJson: '{"direction":1}',
+  width: 32, height: 16, settleRafs: 2, contentHash: 'retry-test', fpsNum: 30, fpsDen: 1 });
+
+it('rebuilds a timed-out screenshot page and captures exactly the same export frame once', async () => {
+  setRuntimeSource('/* runtime */');
+  const opened = state.opened, shots = state.shots, closed = state.closed;
+  state.failures.push(new MotifCaptureTimeoutError(5000, 'Page.captureScreenshot'));
+  const a = retryFrame(), data = await captureExportMotifFrameB64(a, 77);
+  expect(state.opened - opened).toBe(2);
+  expect(state.closed - closed).toBe(1);
+  expect(state.shots - shots).toBe(2);
+  const [url, time] = JSON.parse(Buffer.from(data, 'base64').toString());
+  expect(url).toContain('motif://retry-transition/'); expect(time).toBe(a.tSec);
+});
+
+it('fails after the second screenshot timeout instead of retrying forever', async () => {
+  const shots = state.shots;
+  state.failures.push(new MotifCaptureTimeoutError(5000, 'Page.captureScreenshot'),
+    new MotifCaptureTimeoutError(5000, 'Page.captureScreenshot'));
+  await expect(captureExportMotifFrameB64(retryFrame(), 77)).rejects.toThrow('Page.captureScreenshot');
+  expect(state.shots - shots).toBe(2);
+});
+
+it.each([new Error('authored content failed'), new MotifCaptureTimeoutError(5000, 'Runtime.evaluate')])(
+  'does not retry other failures: %s', async failure => {
+    const shots = state.shots; state.failures.push(failure);
+    await expect(captureExportMotifFrameB64(retryFrame(), 77)).rejects.toBe(failure);
+    expect(state.shots - shots).toBe(1);
+  },
+);
+
+it('does not rebuild a screenshot page after export work becomes stale', async () => {
+  let current = true; const shots = state.shots;
+  state.onFailure = () => { current = false; };
+  state.failures.push(new MotifCaptureTimeoutError(5000, 'Page.captureScreenshot'));
+  await expect(captureExportMotifFrameB64(retryFrame(), 77, undefined, true, () => current))
+    .rejects.toThrow(CAPTURE_SUPERSEDED_MESSAGE);
+  expect(state.shots - shots).toBe(1);
+});
 
 it('captures three persistent pages with exact frame identity and at most two simultaneous operations', async () => {
   setRuntimeSource('/* runtime */');

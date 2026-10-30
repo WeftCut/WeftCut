@@ -7,6 +7,7 @@ import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shar
 import { resolveMotifMediaProps } from './mediaProps.js'
 import type { UserMotifStore } from './store.js'
 import { ExportCapturePool } from './exportCapturePool.js'
+import { retryExportScreenshot } from './exportScreenshotRetry.js'
 import { reserveResources } from '../resources.js'
 import { isResourceCapacityError } from '../../shared/resource-policy.js'
 
@@ -591,7 +592,10 @@ export function captureExportMotifFrameB64(a: CaptureArgs, parent: number, key?:
       }
       slot.cachedPng = undefined
       counters.pngCaptures++
-      const result = await doCapture(a, pngOutput(a), slot)
+      const result = await retryExportScreenshot(
+        () => doCapture(a, pngOutput(a), slot), current,
+        () => { counters.pngCaptures++; console.warn(`[weftcut/motif] Retrying export screenshot once on a fresh page: ${a.motifId} at ${a.tSec.toFixed(6)}s`) },
+      )
       if (!current()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
       if (canCache) slot.cachedPng = { identity, data: result }
       counters.completed++; return result
