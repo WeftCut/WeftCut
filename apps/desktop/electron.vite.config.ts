@@ -70,6 +70,9 @@ export default defineConfig({
     define: {
       'process.env.WEFTCUT_BUILD_COMMIT': JSON.stringify(buildCommit),
       'process.env.WEFTCUT_BUILD_VERSION': JSON.stringify(buildVersion),
+      // Main-side E2E seams (the Motif reader utility's read hold) check this;
+      // a production build folds them away, like the renderer's VITE_WEFTCUT_E2E.
+      'process.env.WEFTCUT_E2E_BUILD': JSON.stringify(process.env.VITE_WEFTCUT_E2E === '1' ? '1' : '0'),
     },
     build: {
       outDir: 'out/main',
