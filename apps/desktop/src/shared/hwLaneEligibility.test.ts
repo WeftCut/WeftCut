@@ -12,7 +12,7 @@ import {
 // exactly. Tested per lane so a future widening of one lane cannot silently
 // leak into another.
 
-const LEGACY_LANES = ["nvdec", "vaapi", "d3d11va"] as const;
+const LEGACY_LANES = ["d3d11va"] as const;
 
 describe("hwEligibleOnLane — legacy lanes keep today's gate exactly", () => {
   for (const lane of LEGACY_LANES) {
@@ -71,9 +71,23 @@ describe("hwEligibleOnAnyLane — the renderer's probe-kick union", () => {
   });
   it("rejects what no lane admits", () => {
     expect(hwEligibleOnAnyLane("mpeg2video", "yuv420p")).toBe(false);
-    expect(hwEligibleOnAnyLane("av1", "yuv420p")).toBe(false);
+    expect(hwEligibleOnAnyLane("av1", "yuv420p")).toBe(true);
     expect(hwEligibleOnAnyLane(null, null)).toBe(false);
   });
+});
+
+describe('Linux codec candidates are runtime-probed per GPU and bit depth', () => {
+  for (const lane of ['nvdec', 'vaapi']) {
+    it(`${lane} admits HEVC/VP9/AV1 8/10 but not 12-bit, 422, H264 High10 or legacy seek hazards`, () => {
+      for (const codec of ['hevc', 'vp9', 'av1']) {
+        for (const format of ['yuv420p', 'yuv420p10le', 'p010le']) expect(hwEligibleOnLane(lane, codec, format)).toBe(true);
+        for (const format of ['yuv420p12le', 'yuv422p10le']) expect(hwEligibleOnLane(lane, codec, format)).toBe(false);
+      }
+      expect(hwEligibleOnLane(lane, 'h264', 'yuv420p10le')).toBe(false);
+      expect(hwEligibleOnLane(lane, 'mpeg2video', 'yuv420p')).toBe(false);
+      expect(hwEligibleOnLane(lane, 'vc1', 'yuv420p')).toBe(false);
+    });
+  }
 });
 
 describe("isTenBitPixFmt / isHwDecodeLane", () => {

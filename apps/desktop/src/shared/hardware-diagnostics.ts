@@ -28,7 +28,7 @@ export interface HardwareProbeResult {
   detail?: string;
 }
 export interface CodecHardwareProbe extends HardwareProbeResult {
-  codec: 'h264' | 'hevc' | 'vp9';
+  codec: 'h264' | 'hevc' | 'vp9' | 'av1';
   bit_depth: 8 | 10;
   backend: string;
   device_id: string | null;

@@ -49,7 +49,9 @@ function eligibleEightBitInterframe(codec: string | null, pixFmt: string | null)
 /// - `videotoolbox`: the interframe trio PLUS ProRes, with 10-bit pixel
 ///   formats allowed (ProRes 422 is yuv422p10le; 10-bit HEVC/VP9 decode on the
 ///   same OS engine). The preview session ships such sources as I420P10.
-/// - `nvdec` / `vaapi` / `d3d11va`: `eligibleEightBitInterframe`.
+/// - `nvdec` / `vaapi`: H264 8-bit; HEVC/VP9/AV1 4:2:0 8/10-bit
+///   candidates. Real GPU-surface probes still decide availability.
+/// - `d3d11va`: `eligibleEightBitInterframe` (unchanged).
 export function hwEligibleOnLane(
   lane: string,
   codec: string | null,
@@ -58,7 +60,12 @@ export function hwEligibleOnLane(
   if (lane === "videotoolbox") {
     return codec === "h264" || codec === "hevc" || codec === "vp9" || codec === "prores";
   }
-  if (lane === "nvdec" || lane === "vaapi" || lane === "d3d11va") {
+  if (lane === "nvdec" || lane === "vaapi") {
+    if (codec === "h264") return !isTenBitPixFmt(pixFmt);
+    return (codec === "hevc" || codec === "vp9" || codec === "av1") &&
+      (pixFmt == null || ["yuv420p", "nv12", "yuv420p10le", "p010", "p010le"].includes(pixFmt.toLowerCase()));
+  }
+  if (lane === "d3d11va") {
     return eligibleEightBitInterframe(codec, pixFmt);
   }
   return false;
