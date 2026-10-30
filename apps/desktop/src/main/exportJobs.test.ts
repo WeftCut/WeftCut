@@ -35,7 +35,7 @@ it('distinguishes absent output files from filesystem failures during filename c
   }
 });
 afterEach(async () => { vi.useRealTimers(); await Promise.all(cleanup.splice(0).map(p => fs.rm(p, { recursive: true, force: true }))); });
-async function setup(exportPreferences?: () => ExportPresetPreferences) {
+async function setup(exportPreferences?: () => ExportPresetPreferences, telemetry?: ConstructorParameters<typeof ExportJobs>[0]['telemetry']) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weftcut-export-test-')); cleanup.push(dir);
   const project = blankProject(() => crypto.randomUUID(), 'Project');
   rootComposition(project).duration_us = 1_000_000;
@@ -47,7 +47,7 @@ async function setup(exportPreferences?: () => ExportPresetPreferences) {
     if (channel === 'export_publish_output') { await fs.writeFile(String(args.output), 'complete'); return args.output; }
     return null;
   });
-  const jobs = new ExportJobs({ host: () => host, send, native, readyTimeoutMs: 40, exportPreferences });
+  const jobs = new ExportJobs({ host: () => host, send, native, readyTimeoutMs: 40, exportPreferences, telemetry });
   const ready = () => jobs.rendererReady('renderer', project.root_id);
   const run = () => send.mock.calls.find(([event]) => event === 'export:run')![1] as ExportRun;
   return { jobs, dir, project, send, native, ready, run, close: () => { opened = null; } };
@@ -124,6 +124,75 @@ it('does not accept a completion acknowledgement without publication', async () 
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
   await expect(s.jobs.update(job.job_id, 'renderer', { state: 'completed' })).rejects.toMatchObject({ code: 'invalid_state' });
   await s.jobs.rendererGone(); expect(s.jobs.status(job.job_id)?.state).toBe('failed');
+});
+
+it('shares a measured encoding ETA with UI and reconnecting MCP clients, then clears it for finalization', async () => {
+  const s = await setup(); s.ready();
+  let now = 100_000;
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  try {
+    const job = await s.jobs.start({ request_id: 'timed-export' });
+    expect(s.jobs.status(job.job_id)?.render_elapsed_ms).toBeUndefined();
+    await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0 });
+    expect(s.jobs.status(job.job_id)?.estimated_remaining_ms).toBeNull();
+    now += 10_000;
+    await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.25 });
+    expect(s.jobs.status(job.job_id)).toMatchObject({ render_elapsed_ms: 10_000, estimated_remaining_ms: 30_000 });
+    expect((await s.jobs.start({ request_id: 'timed-export' })).estimated_remaining_ms).toBe(30_000);
+    expect(s.send.mock.calls.filter(([event]) => event === 'export:status').at(-1)?.[1]).toMatchObject({ estimated_remaining_ms: 30_000 });
+    now += 30_000;
+    expect(s.jobs.status(job.job_id)?.estimated_remaining_ms).toBeNull();
+    await s.jobs.update(job.job_id, 'renderer', { state: 'finalizing', phase: 'mux' });
+    expect(s.jobs.status(job.job_id)?.estimated_remaining_ms).toBeUndefined();
+    await s.jobs.publish(job.job_id, 'renderer');
+    await s.jobs.update(job.job_id, 'renderer', { state: 'completed' });
+    expect(s.jobs.status(job.job_id)?.render_elapsed_ms).toBeUndefined();
+    const next = await s.jobs.start({});
+    await s.jobs.update(next.job_id, 'renderer', { state: 'rendering', progress: 0 });
+    expect(s.jobs.status(next.job_id)).toMatchObject({ render_elapsed_ms: 0, estimated_remaining_ms: null });
+    await s.jobs.cancel(next.job_id);
+    expect(s.jobs.status(next.job_id)?.estimated_remaining_ms).toBeUndefined();
+    await s.jobs.update(next.job_id, 'renderer', { state: 'cancelled' });
+  } finally { clock.mockRestore(); }
+});
+
+it('samples telemetry at most every three seconds and hides it after rendering', async () => {
+  const telemetry = vi.fn(async () => ({ encoder: 'h264_nvenc', device: 'gpu' as const, utilization_percent: 0 }));
+  const s = await setup(undefined, telemetry);s.ready();
+  let now = 100_000;
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  try {
+    const job = await s.jobs.start({});
+    await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0 });
+    expect(telemetry).toHaveBeenCalledOnce();
+    expect(telemetry).toHaveBeenCalledWith(s.run().encoded_video_path);
+    expect(s.jobs.status(job.job_id)?.encoder_load).toMatchObject({ device: 'gpu', utilization_percent: 0 });
+    for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+    now += 2_000;
+    await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.1 });
+    expect(telemetry).toHaveBeenCalledOnce();
+    now += 1_001;
+    await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.2 });
+    expect(telemetry).toHaveBeenCalledTimes(2);
+    now += 10_000;
+    expect(s.jobs.status(job.job_id)?.encoder_load?.utilization_percent).toBeNull();
+    await s.jobs.update(job.job_id, 'renderer', { state: 'finalizing', phase: 'mux' });
+    expect(s.jobs.status(job.job_id)?.encoder_load).toBeUndefined();
+    await s.jobs.cancel(job.job_id);await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  } finally { clock.mockRestore(); }
+});
+
+it('a restart admission gate blocks new export without cancelling an existing one', async () => {
+  const s = await setup();s.ready();
+  const job = await s.jobs.start({});
+  expect(() => s.jobs.holdForRestart()).toThrow('An export is active');
+  expect(s.jobs.status(job.job_id)?.state).toBe('preparing');
+  await s.jobs.cancel(job.job_id);await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  const release = s.jobs.holdForRestart();
+  await expect(s.jobs.start({})).rejects.toMatchObject({ code: 'app_closing' });
+  release();
+  const next = await s.jobs.start({});
+  await s.jobs.cancel(next.job_id);await s.jobs.update(next.job_id, 'renderer', { state: 'cancelled' });
 });
 
 it('sanitizes portable default filenames', () => {
