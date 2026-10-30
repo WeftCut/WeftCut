@@ -98,12 +98,12 @@ pub(crate) fn downscale(
     for (y, row) in out.chunks_exact_mut(ow as usize * 4).enumerate() {
         let lines = &rgba[y * d * stride..((y + 1) * d).min(h) * stride];
         let covered = lines.len() / stride;
-        for (x, px) in row.chunks_exact_mut(4).enumerate() {
+        for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x0, x1) = (x * d, ((x + 1) * d).min(w));
             let n = ((x1 - x0) * covered) as u32;
             let (mut a, mut r, mut g, mut b) = (0u32, 0u32, 0u32, 0u32);
             for line in lines.chunks_exact(stride) {
-                for s in line[x0 * 4..x1 * 4].chunks_exact(4) {
+                for s in line[x0 * 4..x1 * 4].as_chunks::<4>().0 {
                     let alpha = u32::from(s[3]);
                     a += alpha;
                     r += u32::from(s[0]) * alpha;
