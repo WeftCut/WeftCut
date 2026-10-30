@@ -511,7 +511,9 @@ export interface E2EHook {
   /// `underrun.droppedFrames`/`underrun.lateFrames`, per-clip
   /// `decodedFrameCount`/`ringSize`/
   /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
-  /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
+  /// hardware lane's `handoff` barrier percentiles, per-Motif rows (`motifs`)
+  /// and the Motif frame reader's lanes, divisor and stage medians
+  /// (`motifReader`). Null until the preview mounts.
   compositorPerfSnapshot(): CompositorPerfSnapshot | null;
   /// Live concurrent-HW-session budget from main (`used`/`max`). The lane mix a
   /// perf snapshot reports says WHICH lane each clip took; this says whether

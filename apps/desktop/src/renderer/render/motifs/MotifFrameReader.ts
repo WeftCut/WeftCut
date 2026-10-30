@@ -262,6 +262,19 @@ class UtilityLane {
 
 let shared: MotifFrameReader | null = null;
 
+/** The document's reader if a read has created it, else null. Diagnostics
+ * read this, so polling them never listens, spawns the worker or connects. */
+export function currentMotifFrameReader(): MotifFrameReader | null {
+  return shared;
+}
+
+/** Stats before the first read: zero counts, no stage samples. */
+export function idleMotifReaderStats(): MotifReaderStats {
+  const stages = {} as Record<MotifReaderStage, number | null>;
+  for (const stage of STAGES) stages[stage] = null;
+  return { reads: { texture: 0, utility: 0 }, misses: 0, fallbacks: 0, transportFailures: 0, restarts: 0, stages };
+}
+
 /** The document's reader. */
 export function motifFrameReader(): MotifFrameReader {
   return shared ??= new MotifFrameReader({

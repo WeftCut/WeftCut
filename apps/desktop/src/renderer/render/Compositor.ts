@@ -33,7 +33,12 @@ import {
   type PreviewDecodePriorityPlan,
 } from "./decoder/previewDecodePriority";
 import { MotifFrameService } from "./motifs/MotifFrameService";
-import { isMotifReaderDiv } from "../../shared/motifs/readerProtocol";
+import {
+  currentMotifFrameReader,
+  idleMotifReaderStats,
+  type MotifReaderStats,
+} from "./motifs/MotifFrameReader";
+import { isMotifReaderDiv, type MotifReaderDiv } from "../../shared/motifs/readerProtocol";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
@@ -68,6 +73,10 @@ const UPCOMING_CLIP_PREWARM_US = 1_000_000;
 export interface CompositorPerfSnapshot {
   sync?: PreviewSyncSnapshot;
   motifs?: MotifPerfRow[];
+  /// The document's Motif frame reader (ADR 0154): lane counts, fallbacks,
+  /// transport failures, restarts and stage medians, plus the divisor
+  /// preview reads at. Zeros and nulls until the first read.
+  motifReader?: MotifReaderPerfSnapshot;
   /// Most recent `compositeFrame` body duration in ms.
   compositeMsLast: number;
   /// Running peak since the last `resetPerfPeaks()`.
@@ -90,6 +99,10 @@ export interface CompositorPerfSnapshot {
   } | null;
   /// Every live clip, Groups' included.
   clips: ClipPerfRow[];
+}
+
+export interface MotifReaderPerfSnapshot extends MotifReaderStats {
+  scaleDiv: MotifReaderDiv;
 }
 
 export interface UpcomingClipPrewarmSnapshot {
@@ -781,6 +794,11 @@ export class Compositor {
       underrun: this.underrun.snapshot(),
       sync: this.sync.snapshot(),
       motifs,
+      // Never `motifFrameReader()`: a poll must not create the reader.
+      motifReader: {
+        ...(currentMotifFrameReader()?.stats ?? idleMotifReaderStats()),
+        scaleDiv: this.motifService.scaleDiv,
+      },
       transitions: this.root.transitionStats(),
       clips,
     };
