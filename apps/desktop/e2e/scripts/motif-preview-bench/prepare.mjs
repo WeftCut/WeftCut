@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { PNG } from 'pngjs';
 import common from './common.cjs';
+import { typicalFrame, denseFrame } from './content.mjs';
 
 const { desktop, output } = common;
 const options = new Set(process.argv.slice(2));
@@ -36,6 +37,18 @@ for (const width of [3840, 1920]) {
   }
 }
 
+// Fair-comparison tiers (see fair-main.cjs): 8 frames each at 4K.
+for (const [content, draw] of [['typical', typicalFrame], ['dense', denseFrame]]) {
+  const directory = path.join(output, `frames-${content}-3840`);
+  fs.mkdirSync(directory, { recursive: true });
+  for (let frame = 0; frame < 8; frame++) {
+    const file = path.join(directory, `${frame}.wfrm`);
+    if (fs.existsSync(file)) continue;
+    const png = PNG.sync.write({ width: 3840, height: 2160, data: Buffer.from(draw(3840, 2160, frame).buffer) }, { deflateLevel: 1 });
+    fs.writeFileSync(file, await native.motifEncodePng(png, true));
+  }
+}
+
 if (options.has('--video') || options.has('--all')) {
   const file = path.join(output, 'footage-4k.mp4');
   if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
@@ -52,11 +65,14 @@ if (options.has('--video') || options.has('--all')) {
 
 if (options.has('--decoder') || options.has('--all')) {
   const directory = path.join(output, 'decoder');
-  if (!fs.existsSync(path.join(directory, 'node_modules/fzstd/esm/index.mjs'))) {
+  const decoders = { fzstd: 'esm/index.mjs', zstddec: 'dist/zstddec.mjs', 'hash-wasm': 'dist/index.esm.js' };
+  if (Object.entries(decoders).some(([name, entry]) => !fs.existsSync(path.join(directory, 'node_modules', name, entry)))) {
     fs.mkdirSync(directory, { recursive: true });
-    // Isolated dependency, never a change to the application's package files.
+    // Isolated dependencies, never a change to the application's package files.
+    // Node refuses to spawn npm.cmd without a shell; the arguments are constants.
     execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--prefix', directory,
-      '--ignore-scripts', '--no-package-lock', '--no-audit', '--no-fund', 'fzstd@0.1.1'], { stdio: 'inherit' });
+      '--ignore-scripts', '--no-package-lock', '--no-audit', '--no-fund', 'fzstd@0.1.1', 'zstddec@0.3.4', 'hash-wasm@4.12.0'],
+      { stdio: 'inherit', shell: process.platform === 'win32' });
   }
 }
 console.log('Synthetic frames prepared in the ignored benchmark output directory.');

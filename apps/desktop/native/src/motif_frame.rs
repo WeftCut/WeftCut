@@ -36,6 +36,13 @@ pub(crate) fn encode(w: u32, h: u32, rgba: &[u8], compressed: bool) -> anyhow::R
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    let (w, h, rgba) = unpack(bytes)?;
+    verify(bytes, &rgba)?;
+    Ok((w, h, rgba))
+}
+
+/// Header + decompression. Stage split exists for the #62 transport bench.
+fn unpack(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     anyhow::ensure!(
         bytes.len() >= HEADER && &bytes[..8] == MAGIC,
         "invalid motif frame header"
@@ -50,11 +57,94 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
         _ => anyhow::bail!("unsupported motif frame codec"),
     };
     anyhow::ensure!(rgba.len() == size, "invalid motif frame length");
+    Ok((w, h, rgba))
+}
+
+fn verify(bytes: &[u8], rgba: &[u8]) -> anyhow::Result<()> {
     anyhow::ensure!(
-        blake3::hash(&rgba).as_bytes() == &bytes[20..HEADER],
+        blake3::hash(rgba).as_bytes() == &bytes[20..HEADER],
         "corrupt motif frame"
     );
-    Ok((w, h, rgba))
+    Ok(())
+}
+
+/// Alpha-weighted box downscale of straight RGBA by an integer divisor: a fully
+/// transparent texel carries no colour. Rounds half up, like the bench's JS
+/// reference (`downscale.mjs`), so both produce identical bytes.
+pub(crate) fn downscale(
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+    div: u32,
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    anyhow::ensure!((1..=8).contains(&div), "invalid motif scale divisor");
+    anyhow::ensure!(
+        w % div == 0 && h % div == 0,
+        "motif size is not divisible by the scale divisor"
+    );
+    let (ow, oh, d) = (w / div, h / div, div as usize);
+    let (stride, n) = (w as usize * 4, div * div);
+    let mut out = vec![0u8; ow as usize * oh as usize * 4];
+    for (y, row) in out.chunks_exact_mut(ow as usize * 4).enumerate() {
+        let block = &rgba[y * d * stride..(y + 1) * d * stride];
+        for (x, px) in row.chunks_exact_mut(4).enumerate() {
+            let (mut a, mut r, mut g, mut b) = (0u32, 0u32, 0u32, 0u32);
+            for line in block.chunks_exact(stride) {
+                for s in line[x * d * 4..(x + 1) * d * 4].chunks_exact(4) {
+                    let alpha = u32::from(s[3]);
+                    a += alpha;
+                    r += u32::from(s[0]) * alpha;
+                    g += u32::from(s[1]) * alpha;
+                    b += u32::from(s[2]) * alpha;
+                }
+            }
+            if a != 0 {
+                px[0] = ((2 * r + a) / (2 * a)) as u8;
+                px[1] = ((2 * g + a) / (2 * a)) as u8;
+                px[2] = ((2 * b + a) / (2 * a)) as u8;
+            }
+            px[3] = ((2 * a + n) / (2 * n)) as u8;
+        }
+    }
+    Ok((ow, oh, out))
+}
+
+/// Stage times of one read, in milliseconds (#62 transport bench).
+#[napi(object)]
+#[derive(Clone, Copy, Default)]
+pub struct MotifReadTiming {
+    pub read_ms: f64,
+    pub decode_ms: f64,
+    pub hash_ms: f64,
+    pub scale_ms: f64,
+}
+
+fn elapsed_ms(start: std::time::Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
+/// `read_pixels` followed by `downscale`, timed per stage.
+pub(crate) fn read_scaled(
+    path: &str,
+    div: u32,
+) -> anyhow::Result<(u32, u32, Vec<u8>, MotifReadTiming)> {
+    let mut timing = MotifReadTiming::default();
+    let start = std::time::Instant::now();
+    let bytes = read_file(path)?;
+    timing.read_ms = elapsed_ms(start);
+    let start = std::time::Instant::now();
+    let (w, h, rgba) = unpack(&bytes)?;
+    timing.decode_ms = elapsed_ms(start);
+    let start = std::time::Instant::now();
+    verify(&bytes, &rgba)?;
+    timing.hash_ms = elapsed_ms(start);
+    if div == 1 {
+        return Ok((w, h, rgba, timing));
+    }
+    let start = std::time::Instant::now();
+    let (w, h, rgba) = downscale(&rgba, w, h, div)?;
+    timing.scale_ms = elapsed_ms(start);
+    Ok((w, h, rgba, timing))
 }
 
 #[napi(object)]
@@ -66,6 +156,10 @@ pub struct MotifPixels {
 }
 
 pub(crate) fn read_pixels(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    decode(&read_file(path)?)
+}
+
+fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
     // Bounds both LZ4 and zstd's worst case (zstd's is MAX_BYTES / 256 + framing).
     let limit = MAX_BYTES + MAX_BYTES / 255 + HEADER + 32;
     let file = std::fs::File::open(path)?;
@@ -76,7 +170,7 @@ pub(crate) fn read_pixels(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let mut bytes = Vec::new();
     file.take((limit + 1) as u64).read_to_end(&mut bytes)?;
     anyhow::ensure!(bytes.len() <= limit, "motif cache file exceeds budget");
-    decode(&bytes)
+    Ok(bytes)
 }
 
 /// The caller authorizes the path. File IO and decompression stay off main's JS thread.
@@ -89,6 +183,33 @@ pub async fn motif_read_frame(path: String) -> napi::Result<MotifPixels> {
             width,
             height,
             rgba: rgba.into(),
+        })
+    })
+    .await
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi(object)]
+#[cfg_attr(test, allow(dead_code))] // Host-only wire type; exercised by the #62 transport bench.
+pub struct MotifScaledPixels {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Buffer,
+    pub timing: MotifReadTiming,
+}
+
+/// Read, verify and downscale on the blocking pool (#62 transport bench).
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<MotifScaledPixels> {
+    tokio::task::spawn_blocking(move || {
+        let (width, height, rgba, timing) = read_scaled(&path, div)?;
+        Ok::<_, anyhow::Error>(MotifScaledPixels {
+            width,
+            height,
+            rgba: rgba.into(),
+            timing,
         })
     })
     .await
@@ -148,6 +269,23 @@ mod tests {
         bytes.truncate(HEADER);
         bytes.extend_from_slice(&zstd::bulk::compress(&[23; 20], 1).unwrap());
         assert!(decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn downscale_weights_colour_by_alpha_and_rounds_half_up() {
+        // One 2×2 block: opaque red, transparent white, half-alpha blue, opaque green.
+        let block = [
+            255, 0, 0, 255, 255, 255, 255, 0, 0, 0, 255, 128, 0, 255, 0, 255,
+        ];
+        let (w, h, out) = downscale(&block, 2, 2, 2).unwrap();
+        assert_eq!((w, h), (1, 1));
+        // r = 255·255 / 638, g = 255·255 / 638, b = 255·128 / 638, a = 638 / 4.
+        assert_eq!(out, [102, 102, 51, 160]);
+        assert_eq!(
+            downscale(&[9, 9, 9, 0].repeat(16), 4, 4, 4).unwrap().2,
+            [0, 0, 0, 0]
+        );
+        assert!(downscale(&block, 2, 2, 3).is_err());
     }
 
     #[test]
