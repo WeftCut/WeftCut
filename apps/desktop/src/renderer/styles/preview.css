@@ -74,6 +74,10 @@
   max-width: calc(280 * var(--ui-px));
 }
 
+.preview-quality-control { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); min-width: 0; }
+.preview-quality-select { min-width: 9rem; font-variant-numeric: tabular-nums; }
+.preview-quality-error { color: var(--destructive, #ff9494); font-size: var(--font-size-caption); }
+
 /* Both preview dropdowns use the compact toolbar scale and the trigger's
    surface. The zoom menu also sizes from its anchor, like the target Select. */
 .preview-select-popup {
