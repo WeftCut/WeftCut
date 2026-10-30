@@ -406,6 +406,13 @@ export class Compositor {
   /// actively ticking (paused state).
   scheduleRepaint(): void {
     if (this.disposed) return;
+    // Export's frame driver owns decode admission and compositing. An image
+    // preload completing before its first dispatch must not paint at t=0:
+    // ensureClip would create a WebCodecs handle before the driver installs
+    // the native handle, invalidating the admitted decoder memory estimate.
+    // Async arrivals still repaint paused previews; export consumes them on
+    // the next explicitly requested output frame (including render_frames).
+    if (this.mode === "export") return;
     if (!this.presentationVisible) {
       this.presentationDirty = true;
       return;
