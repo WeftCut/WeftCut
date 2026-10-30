@@ -5,7 +5,7 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description='Validate and summarize completed preview benchmark cases.')
 parser.add_argument('files', nargs='*', default=['preview-result.json'])
-parser.add_argument('--expect', type=int, default=13, help='Expected completed case count (default: all 13 cases).')
+parser.add_argument('--expect', type=int, default=15, help='Expected completed case count (default: all 15 cases).')
 parser.add_argument('--directory', type=Path, default=Path(os.environ.get('WEFTCUT_MOTIF_BENCH_DIR',
     Path(__file__).resolve().parents[3] / 'reports/motif-preview-bench')))
 args = parser.parse_args()
@@ -37,7 +37,7 @@ for c in cases:
         assert c['projectSettings']['prefer_proxies'] is True
         assert c['videoProbe']['usingProxy'] is True
     if c.get('motif') and not c.get('hidden'):
-        assert c['bake'] == dict(phase='ready', done=1828, total=1828), c['name']
+        assert all(b == dict(phase='ready', done=1828, total=1828) for b in c['bake']), c['name']
     perf = c['measurement']['perf']
     assert c['warnings'] == int(perf['underrun']['lateFrames'] > 0 or perf['underrun']['droppedFrames'] > 0), c['name']
     summary.append(dict(name=c['name'], durationMs=c['durationMs'], elapsedMs=c['elapsedMs'],

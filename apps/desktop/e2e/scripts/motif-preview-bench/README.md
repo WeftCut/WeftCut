@@ -33,11 +33,12 @@ node apps/desktop/e2e/scripts/motif-preview-bench/verify-preview.mjs --all
 python3 apps/desktop/e2e/scripts/motif-preview-bench/summarize-results.py
 ```
 
-The full run covers 13 cases, each with a fresh application profile and a
+The full run covers 15 cases, each with a fresh application profile and a
 60-second observation window. It includes Group Full/Half/Quarter, hidden Group,
-Color-only root/Group controls, root 4K/1080p Motifs, a 2048 MiB cache experiment,
-and four video cases with a ready quick proxy. Without `--all`, only the nine
-non-video cases run; pass `--expect 9` to the summarizer for that subset.
+Color-only root/Group controls, root 4K Full/Half, two root 4K Motifs, a root
+1080p Motif, a 2048 MiB cache experiment, and four video cases with a ready
+quick proxy. Without `--all`, only the eleven non-video cases run; pass
+`--expect 11` to the summarizer for that subset.
 
 Each case records `perf.motifReader` (ADR 0154) before and after playback. The
 summary reports reads per lane, Windows fallbacks, restarts, the divisor and the

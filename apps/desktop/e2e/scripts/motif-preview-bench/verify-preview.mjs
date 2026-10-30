@@ -55,6 +55,8 @@ for (const scenario of [
   { name: 'shape-group-half', resolution: 'half', group: true },
   { name: 'root-motif-4k-half', resolution: 'half', motif: 3840, trace: true },
   { name: 'root-motif-1080-half', resolution: 'half', motif: 1920, trace: true },
+  { name: 'root-motif-4k-full', resolution: 'full', motif: 3840 },
+  { name: 'root-two-motifs-4k-half', resolution: 'half', motif: 3840, motifs: 2 },
   { name: 'root-motif-4k-cache2048-half', resolution: 'half', motif: 3840, cache: 2048 },
   { name: 'video-group-motif-full', resolution: 'full', motif: 3840, group: true, video: true },
   { name: 'video-group-motif-half', resolution: 'half', motif: 3840, group: true, video: true },
@@ -107,9 +109,11 @@ for (const scenario of [
       }, 180000);
     }
     const layerIds = [];
-    if (scenario.motif) {
+    row.keys = [];
+    if (scenario.motif) for (let n = 0; n < (scenario.motifs ?? 1); n++) {
       const w = scenario.motif, h = w * 9 / 16;
-      const manifest = { id: 'periodic-overlay', name: 'Periodic overlay', version: 1, size: [w, h], default_duration_s: 61, props_schema: {} };
+      // Distinct Motifs, so each layer has its own cache key and frame stream.
+      const manifest = { id: `periodic-overlay-${n}`, name: `Periodic overlay ${n}`, version: 1, size: [w, h], default_duration_s: 61, props_schema: {} };
       const html = `<!doctype html><style>html,body{margin:0;background:transparent}#box{position:absolute;background:rgba(220,70,110,.5019607843);width:${Math.floor(w/5)}px;height:${Math.floor(h/5)}px;top:${Math.floor(h/3)}px}</style><div id="box"></div><script>motif.define({frame(t){document.querySelector('#box').style.left=Math.floor((Math.round(t*30000/1001)%30)*${w}/40)+'px'}})</script>`;
       const draft = await invoke(page, 'open_motif_draft', { source: { kind: 'empty', name: manifest.name } });
       await invoke(page, 'update_motif_files', { draft_id: draft.draft_id, expected_revision: draft.revision, files: [{ path: 'manifest.json', text: JSON.stringify(manifest) }, { path: 'index.html', text: html }] });
@@ -122,8 +126,9 @@ for (const scenario of [
       fs.mkdirSync(hashDir, { recursive: true });
       const frameCount = Math.round(61 * 30000 / 1001);
       for (let i = 0; i < frameCount; i++) fs.copyFileSync(path.join(report, `frames-${w}`, `${i%30}.wfrm`), path.join(hashDir, `${i}.wfrm`));
-      row.key = key; row.persistedFrames = frameCount;
-    } else {
+      row.keys.push(key); row.key = row.keys[0]; row.persistedFrames = frameCount;
+    }
+    if (!scenario.motif) {
       const shape = await invoke(page, 'add_color_layer', { compositionId: root, tStartUs: 0, durationUs: 61_000_000, color: { r: 220, g: 70, b: 110, a: 128 } });
       layerIds.push(shape);
     }
@@ -138,8 +143,8 @@ for (const scenario of [
     if (scenario.motif && !scenario.hidden) {
       await poll(async () => {
         const bake = await invoke(page, 'motif_bake_snapshot');
-        const status = bake.statuses[row.key]; row.bake = status;
-        return status?.phase === 'ready';
+        row.bake = row.keys.map(key => bake.statuses[key]);
+        return row.bake.every(status => status?.phase === 'ready');
       }, 60000);
     }
     await page.waitForFunction(() => !!window.__weftcutTest?.compositorPerfSnapshot?.());
