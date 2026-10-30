@@ -4,8 +4,9 @@ import { initReactI18next } from "react-i18next";
 
 import enUS from "./locales/en-US";
 import zhCN from "./locales/zh-CN";
+import ruRU from "./locales/ru-RU";
 
-export const SUPPORTED_LOCALES = ["en-US", "zh-CN"] as const;
+export const SUPPORTED_LOCALES = ["en-US", "zh-CN", "ru-RU"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 /// Autonyms (each language's name in itself). Combined with a globe
@@ -16,6 +17,7 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export const LOCALE_LABELS: Record<Locale, string> = {
   "en-US": "English",
   "zh-CN": "中文",
+  "ru-RU": "Русский",
 };
 
 // Register the same payload under the bare language code as well as the
@@ -27,6 +29,8 @@ const resources = {
   en: { translation: enUS },
   "zh-CN": { translation: zhCN },
   zh: { translation: zhCN },
+  "ru-RU": { translation: ruRU },
+  ru: { translation: ruRU },
 };
 
 i18n
@@ -35,7 +39,7 @@ i18n
   .init({
     resources,
     fallbackLng: "en-US",
-    supportedLngs: ["en-US", "en", "zh-CN", "zh"],
+    supportedLngs: ["en-US", "en", "zh-CN", "zh", "ru-RU", "ru"],
     nonExplicitSupportedLngs: true,
     load: "currentOnly",
     detection: {

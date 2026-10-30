@@ -64,6 +64,21 @@ describe("wireAppSettingsStream — the UI language", () => {
     expect(persistedLanguage()).toBeUndefined();
   });
 
+  it("restores Russian after reopening the application", async () => {
+    mocks.appSettingsGet.mockResolvedValue(settings({ language: "ru-RU" }));
+    await wireAppSettingsStream();
+    expect(i18n.resolvedLanguage).toBe("ru-RU");
+    expect(i18n.t("language.switch_label")).toBe("Переключить язык");
+    expect(persistedLanguage()).toBeUndefined();
+  });
+
+  it("pins a detected bare Russian language code", async () => {
+    mocks.appSettingsGet.mockResolvedValue(settings({}));
+    await i18n.changeLanguage("ru");
+    await wireAppSettingsStream();
+    expect(persistedLanguage()).toBe("ru-RU");
+  });
+
   // A first launch: the field used to stay unset, which meant main had nothing
   // to inject. It is now pinned to whatever the OS detection resolved to — and
   // nothing is taken away by that, because the language control is a TOGGLE over
