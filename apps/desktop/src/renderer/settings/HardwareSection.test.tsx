@@ -28,6 +28,17 @@ beforeEach(async () => {
   Object.defineProperty(window, 'api', { configurable: true, value: { performanceResources: { probe } } });
 });
 afterEach(cleanup);
+it('offers CPU and named hardware as local test preferences, with measured memory independent of renderer ID', async () => {
+  const info = resources(); info.hardware!.render_device_id = null;
+  const chooseDevice = vi.fn();
+  render(<HardwareSection resources={info} stale={false} refresh={refresh} chooseDevice={chooseDevice} decodeDevice="auto" />);
+  expect(screen.getAllByTestId('hardware-memory-meter')).toHaveLength(1);
+  expect(screen.getByRole('meter', { name: 'NVIDIA Example' }).getAttribute('value')).toBe('1024');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Preview decoding device (test override)' }));
+  await userEvent.click(screen.getByRole('option', { name: 'CPU (software decoding)' }));
+  expect(chooseDevice).toHaveBeenCalledWith('cpu');
+  expect(probe).not.toHaveBeenCalled();
+});
 it('shows no decoding session without substituting the rendering adapter or hardware inventory', () => {
   render(<HardwareSection resources={resources()} stale={false} refresh={refresh} />);
   expect(screen.getByText('No decoding sessions')).toBeDefined();

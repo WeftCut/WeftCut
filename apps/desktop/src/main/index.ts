@@ -72,6 +72,7 @@ import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
+import { decodeDeviceTargets } from './decodeDeviceTargets';
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
@@ -2020,6 +2021,10 @@ app.whenReady().then(async () => {
   // special-casing.
   const macDecodeProbe = process.platform === 'darwin' ? createMacDecodeProbe() : null
   const resolveHardware = coalesceHwLaneResolution(async a => {
+    const choice = appSettings.get().decode_device ?? 'auto';
+    const hardware = await hardwareDiagnostics?.read();
+    const targets = hardware ? decodeDeviceTargets(choice, hardware.devices, nd.lanes)
+      : { lanes: choice === 'cpu' ? [] : nd.lanes, nodes: enumerateDrmRenderNodes() };
     // Session failure takes precedence even over a positive disk cache from a
     // different format class. Never repeatedly enter a wedged driver lane.
     if (macDecodeProbe?.unavailableReason) {
@@ -2036,14 +2041,14 @@ app.whenReady().then(async () => {
     // exactly the clean-skip the e2e wants. Absent = normal priority walk.
     const forcedHwLane = process.env.WEFTCUT_FORCE_HW_LANE
     const advertisedLanes = forcedHwLane
-      ? nd.lanes.filter((l) => l === forcedHwLane || l === 'software')
-      : nd.lanes
+      ? targets.lanes.filter((l) => l === forcedHwLane || l === 'software')
+      : targets.lanes
     const r = await resolveHwLane({
       lanes: advertisedLanes,
       store: decodeCapability,
       classKey: a.classKey,
-      envKey: () => hwEnvKey(),
-      devices: (lane) => (lane === 'vaapi' ? enumerateDrmRenderNodes() : [null]),
+      envKey: async () => JSON.stringify([await hwEnvKey(), nd.version, choice, hardware?.devices.map(d => [d.id,d.driver,d.driver_version])]),
+      devices: (lane) => (lane === 'vaapi' ? targets.nodes : [null]),
       unavailableReason: (lane) => lane === 'videotoolbox' ? macDecodeProbe?.unavailableReason ?? null : null,
       probe: (lane, device) => {
         // Each advertised lane routes to its native one-frame probe: d3d11va to

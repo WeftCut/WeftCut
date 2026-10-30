@@ -29,6 +29,7 @@ import {
   usePreviewRenderTargetId,
 } from "../state/compositionAnchorStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
+import { resetFfmpegCapabilitySession } from './decoder/ffmpegCapability';
 import {
   useDecodeComponentAvailable,
 } from "../settings/decodeComponentStore";
@@ -286,6 +287,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const composition = compositionOrRoot(summary, targetId) ?? undefined;
   useEffect(() => resetPreviewView(), [targetId]);
   const decodeEngine = useDecodeEngine();
+  const decodeDevice = useAppSettingsStore(s => s.settings.decode_device ?? 'auto');
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
   // Called by @pixi/react once the underlying PIXI.Application is
@@ -766,6 +768,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   useEffect(() => {
     compositorRef.current?.scheduleRepaint();
   }, [decodeEngine, decodeComponentAvailable]);
+
+  useEffect(() => {
+    resetFfmpegCapabilitySession();
+    compositorRef.current?.resetPreviewDecoders();
+  }, [decodeDevice]);
 
   // Playback resolution can change mid-session, and drives BOTH halves of the
   // setting from this one subscription: the decode side (fewer pixels shipped

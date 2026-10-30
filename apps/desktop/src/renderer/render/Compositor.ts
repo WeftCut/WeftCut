@@ -530,6 +530,15 @@ export class Compositor {
     }
   }
 
+  /** An explicit machine-local decoder test choice opens fresh transports.
+   * Never resume or interfere with a preview already suspended for export. */
+  resetPreviewDecoders(): void {
+    if (this.suspended || this.mode !== 'preview') return;
+    this.setSuspended(true);
+    this.setSuspended(false);
+    this.scheduleRepaint();
+  }
+
   /// Replace the project snapshot and name the composition to draw: `openId`
   /// (the preview's render target — compositionAnchorStore.ts), the root
   /// when omitted or unknown. Export always omits it: a Group is a source, and
