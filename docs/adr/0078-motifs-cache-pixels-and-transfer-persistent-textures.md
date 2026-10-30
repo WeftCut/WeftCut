@@ -4,6 +4,14 @@ status: accepted
 
 # Motifs cache lossless pixels and transfer persistent textures
 
+> **Revised by [ADR 0154](0154-motif-frames-are-read-at-preview-scale-through-one-reader.md).**
+> The CPU path for cached frames is gone: off Windows, and on Windows when a
+> slot cannot be used, a utility process reads, verifies and downscales the
+> frame and posts it to a renderer worker; full RGBA no longer crosses
+> `motif:read`, and the preload's `ImageData` path is deleted. The texture
+> lane now uploads frames scaled to the Playback Resolution divisor into slots
+> sized for it. Live capture keeps its texture and PNG paths.
+
 This revises ADR 0017's **PNG-only capture output**, while preserving its single
 HTML renderer and deterministic clock takeover. PNG decoding and whole-pixel
 IPC both consume a substantial part of a frame budget. Motifs now persist a

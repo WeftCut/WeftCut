@@ -35,6 +35,14 @@ export interface MotifReaderStats {
 
 export interface MotifReadOptions { finalizationToken?: string }
 
+/** E2E builds only: wraps each admitted read, so a spec can delay it or answer
+ * a stale miss on every lane. */
+type E2EMotifReadInterceptor = (
+  address: MotifCacheAddress,
+  scaleDiv: MotifReaderDiv,
+  next: () => Promise<ImageBitmap | null>,
+) => Promise<ImageBitmap | null>;
+
 /** `Worker`, as far as the reader uses it. */
 export interface MotifReaderWorkerLike {
   onmessage: ((event: MessageEvent<MotifReaderWorkerOut>) => void) | null;
@@ -83,7 +91,7 @@ export class MotifFrameReader {
   async readAddress(address: MotifCacheAddress, scaleDiv: MotifReaderDiv, options: MotifReadOptions = {}): Promise<ImageBitmap | null> {
     if (!isMotifReaderDiv(scaleDiv)) throw new RangeError(`Invalid Motif read divisor: ${String(scaleDiv)}`);
     await this.admit();
-    try { return await this.readAdmitted(address, scaleDiv, options); }
+    try { return await this.intercept(address, scaleDiv, () => this.readAdmitted(address, scaleDiv, options)); }
     finally { this.release(); }
   }
 
@@ -92,6 +100,17 @@ export class MotifFrameReader {
     for (const stage of STAGES) stages[stage] = median(this.samples.get(stage));
     const { texture, utility, misses, fallbacks, transportFailures } = this.counts;
     return { reads: { texture, utility }, misses, fallbacks, transportFailures, restarts: this.utility.restarts, stages };
+  }
+
+  private intercept(address: MotifCacheAddress, scaleDiv: MotifReaderDiv, next: () => Promise<ImageBitmap | null>): Promise<ImageBitmap | null> {
+    // Production builds fold this branch away.
+    if (import.meta.env.VITE_WEFTCUT_E2E === '1') {
+      const interceptor = (globalThis as typeof globalThis & {
+        __weftcutE2EMotifReadInterceptor?: E2EMotifReadInterceptor;
+      }).__weftcutE2EMotifReadInterceptor;
+      if (interceptor) return interceptor(address, scaleDiv, next);
+    }
+    return next();
   }
 
   private async readAdmitted(address: MotifCacheAddress, div: MotifReaderDiv, options: MotifReadOptions): Promise<ImageBitmap | null> {

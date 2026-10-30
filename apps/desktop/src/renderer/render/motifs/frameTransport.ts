@@ -59,12 +59,6 @@ export async function readMotifTexture(read: MotifTextureReadRequest): Promise<M
   };
 }
 
-export async function readStoredMotifFrame(hash: string, frame: number, finalizationToken?: string): Promise<ImageBitmap | null> {
-  const reply = await request({ hash, frame, div: 1, finalizationToken });
-  if (reply.unavailable) throw new Error("Motif texture lane unavailable");
-  return reply.bitmap;
-}
-
 export async function captureStoredMotifFrame(capture: Record<string, unknown>): Promise<ImageBitmap> {
   return (await captureMotifResult(capture)).bitmap;
 }

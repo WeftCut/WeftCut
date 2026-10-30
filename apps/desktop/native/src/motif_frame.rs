@@ -36,7 +36,8 @@ pub(crate) fn encode(w: u32, h: u32, rgba: &[u8], compressed: bool) -> anyhow::R
     Ok(out)
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+#[cfg(test)]
+fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let (w, h, rgba) = unpack(bytes)?;
     verify(bytes, &rgba)?;
     Ok((w, h, rgba))
@@ -173,18 +174,6 @@ pub(crate) fn read_scaled(
     Ok((w, h, rgba, timing))
 }
 
-#[napi(object)]
-#[cfg_attr(test, allow(dead_code))] // Host-only wire type; exercised by the Electron conformance harness.
-pub struct MotifPixels {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Buffer,
-}
-
-pub(crate) fn read_pixels(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    from_file(|| decode(&read_file(path)?))
-}
-
 fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
     // Bounds both LZ4 and zstd's worst case (zstd's is MAX_BYTES / 256 + framing).
     let limit = MAX_BYTES + MAX_BYTES / 255 + HEADER + 32;
@@ -197,23 +186,6 @@ fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
     file.take((limit + 1) as u64).read_to_end(&mut bytes)?;
     anyhow::ensure!(bytes.len() <= limit, "motif cache file exceeds budget");
     Ok(bytes)
-}
-
-/// The caller authorizes the path. File IO and decompression stay off main's JS thread.
-#[napi]
-#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_read_frame(path: String) -> napi::Result<MotifPixels> {
-    tokio::task::spawn_blocking(move || {
-        let (width, height, rgba) = read_pixels(&path)?;
-        Ok::<_, anyhow::Error>(MotifPixels {
-            width,
-            height,
-            rgba: rgba.into(),
-        })
-    })
-    .await
-    .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi(object)]
@@ -428,12 +400,8 @@ mod tests {
                 .starts_with(FRAME_ERROR));
         }
         let absent = dir.path().join("absent.wfrm");
-        for error in [
-            read_scaled(&absent.to_string_lossy(), 2).unwrap_err(),
-            read_pixels(&absent.to_string_lossy()).unwrap_err(),
-        ] {
-            assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
-        }
+        let error = read_scaled(&absent.to_string_lossy(), 2).unwrap_err();
+        assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
     }
 
     #[test]

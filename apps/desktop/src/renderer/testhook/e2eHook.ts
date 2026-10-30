@@ -30,6 +30,7 @@ import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
 import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
+import { motifFrameReader } from "../render/motifs/MotifFrameReader";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
@@ -300,6 +301,9 @@ export interface E2EHook {
   /// Evict every L0 (in-RAM) frame for a cacheKey, so a subsequent resolve must
   /// come from disk (L2) or a fresh raster. Used to prove the disk read path.
   clearMotifCacheKey(cacheKey: string): void;
+  /// One stored-frame read by hashed address through the document's
+  /// `MotifFrameReader` (ADR 0154), on whichever lane it picks. Null is a miss.
+  readMotifFrame(args: { hash: string; frame: number; div: 1 | 2 | 4 }): Promise<ImageBitmap | null>;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
@@ -1030,6 +1034,9 @@ export function installMotifTestHooks(): void {
   hookSlot().clearMotifCacheKey = (cacheKey: string): void => {
     sharedMotifFrameCache.clearKey(cacheKey);
   };
+
+  hookSlot().readMotifFrame = ({ hash, frame, div }) =>
+    motifFrameReader().readAddress({ hash, frame }, div);
 
   hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
     return sharedBakedKeyIndex.has(cacheKey);

@@ -866,6 +866,16 @@ from the package and regenerated when its content or capture runtime changes;
 independent of a placed layer's props, project frame rate and frame bake.
 _Avoid_: authored cover field, preview bake
 
+**Motif frame reader**:
+The renderer's one way to get a stored Motif frame: read `(cacheKey, frame,
+scaleDiv)` gives a bitmap, or null when the frame is not stored or is invalid.
+Preview reads at the Playback Resolution divisor; export and finalization read
+at 1. Lane choice (the Windows texture lane, otherwise a utility process and a
+reader worker), verification, downscaling and fallback stay behind it. A
+transport failure is never null, so it never drops a frame from coverage. A
+live capture is not a read (ADR 0154).
+_Avoid_: frame transport, CPU read, cached-frame IPC
+
 **Props schema (data plane)**:
 A Motif's `props_schema` — the four typed variants (string, color, number, enum)
 its parameters may take. It is the *data* contract and nothing else: validation,

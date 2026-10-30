@@ -193,6 +193,37 @@ describe('MotifFrameReader utility lane', () => {
     h.worker.answer({ id: h.worker.reads[1]!.id, miss: true });
     await expect(read).resolves.toBeNull();
   });
+
+  it('an E2E interceptor wraps admitted reads; production builds ignore it', async () => {
+    const g = globalThis as { __weftcutE2EMotifReadInterceptor?: unknown };
+    const seen: unknown[] = [];
+    g.__weftcutE2EMotifReadInterceptor = (address: unknown, div: number, next: () => Promise<ImageBitmap | null>) => {
+      seen.push({ address, div });
+      return seen.length === 1 ? Promise.resolve(null) : next();
+    };
+    try {
+      const h = setup();
+      vi.stubEnv('VITE_WEFTCUT_E2E', '1');
+      await expect(h.reader.readAddress({ hash: 'a'.repeat(32), frame: 2 }, 2)).resolves.toBeNull();
+      expect(h.worker).toBeUndefined();
+      const read = h.reader.read('key', 0, 1);
+      await flush();
+      h.worker.answer({ id: h.worker.reads[0]!.id, miss: true });
+      await expect(read).resolves.toBeNull();
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toEqual({ address: { hash: 'a'.repeat(32), frame: 2 }, div: 2 });
+
+      vi.stubEnv('VITE_WEFTCUT_E2E', '');
+      const plain = h.reader.read('key', 1, 1);
+      await flush();
+      h.worker.answer({ id: h.worker.reads[1]!.id, miss: true });
+      await expect(plain).resolves.toBeNull();
+      expect(seen).toHaveLength(2);
+    } finally {
+      vi.unstubAllEnvs();
+      delete g.__weftcutE2EMotifReadInterceptor;
+    }
+  });
 });
 
 describe('MotifFrameReader texture lane', () => {

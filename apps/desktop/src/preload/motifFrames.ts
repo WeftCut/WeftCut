@@ -41,9 +41,6 @@ export function installMotifFrames(
           try { bitmap = await createImageBitmap(vf) } finally { vf.close() }
           bitmap = await finishRead(bitmap)
           importMs = performance.now() - start
-        } else if (frame?.kind === 'rgba') {
-          const pixels = new Uint8ClampedArray(frame.rgba.buffer as ArrayBuffer, frame.rgba.byteOffset, frame.rgba.byteLength)
-          bitmap = await createImageBitmap(new ImageData(pixels, frame.width, frame.height))
         } else if (frame?.kind === 'png') {
           bitmap = await createImageBitmap(new Blob([frame.bytes as BlobPart], { type: 'image/png' }))
         }

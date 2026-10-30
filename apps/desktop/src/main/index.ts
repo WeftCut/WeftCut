@@ -1537,9 +1537,6 @@ app.whenReady().then(async () => {
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
     if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
-    // ADR 0154 removed main's CPU read; ticket 10 deletes this channel and the
-    // renderer's retry onto it. A transport failure, never a miss.
-    if (channel === 'motif_read_cached_frame') throw new Error('Motif CPU reads were removed (ADR 0154)')
     if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()

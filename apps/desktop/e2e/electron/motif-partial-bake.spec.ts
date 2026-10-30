@@ -70,24 +70,30 @@ for (const complete of [false, true]) {
 
       running = await launchApp({ userDataDir })
       await running.app.evaluate(({ ipcMain }) => {
-        const stats = { reads: 0, active: 0, maxActive: 0, captures: [] as number[] }
-        ;(globalThis as any).__partialBakeStats = stats
-        const read = ipcMain._invokeHandlers.get('motif:read')!
-        ipcMain._invokeHandlers.set('motif:read', async (...args: any[]) => {
-          stats.reads++; stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active)
-          try {
-            // Slow storage must preserve progress and concurrent admission.
-            await new Promise(resolve => setTimeout(resolve, 250))
-            return await read(...args)
-          } finally { stats.active-- }
-        })
+        const captures: number[] = []
+        ;(globalThis as any).__partialBakeCaptures = captures
         const capture = ipcMain._invokeHandlers.get('motif:capture')!
         ipcMain._invokeHandlers.set('motif:capture', (...args: any[]) => {
-          stats.captures.push(args[1].tSec)
+          captures.push(args[1].tSec)
           return capture(...args)
         })
       })
       await waitForHook(running.page, 'motifReopenProject')
+      // Reads go through the renderer's Motif frame reader on every lane
+      // (ADR 0154); main is not on the utility lane's path. Delay each read
+      // the reader admitted: slow storage must preserve progress and the
+      // reader's three reads in flight.
+      await running.page.evaluate(() => {
+        const stats = { reads: 0, active: 0, maxActive: 0 }
+        ;(globalThis as any).__partialBakeReads = stats
+        ;(globalThis as any).__weftcutE2EMotifReadInterceptor = async (_address: unknown, _div: number, next: () => Promise<ImageBitmap | null>) => {
+          stats.reads++; stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active)
+          try {
+            await new Promise(resolve => setTimeout(resolve, 250))
+            return await next()
+          } finally { stats.active-- }
+        }
+      })
       await invokeCmd(running.page, 'motif_capture_diagnostics', { reset: true })
       await running.page.evaluate(path =>
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifReopenProject({ path }), projectPath)
@@ -95,7 +101,7 @@ for (const complete of [false, true]) {
       await expect.poll(() => running.page.evaluate(() =>
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.compositorPerfSnapshot()?.motifs?.[0]?.boundFrame),
       { timeout: 30_000 }).toBe(0)
-      await expect.poll(() => running.app.evaluate(() => (globalThis as any).__partialBakeStats.maxActive),
+      await expect.poll(() => running.page.evaluate(() => (globalThis as any).__partialBakeReads.maxActive),
         { timeout: 15_000 }).toBe(3)
 
       // Starts the real baker; the partial case must keep writing the tail
@@ -125,9 +131,10 @@ for (const complete of [false, true]) {
         } finally { hook.transportPause() }
         return { rows, observedPlaybackPause }
       })
-      const stats = await running.app.evaluate(() => (globalThis as any).__partialBakeStats as {
-        reads: number; maxActive: number; captures: number[];
-      })
+      const stats = {
+        ...await running.page.evaluate(() => (globalThis as any).__partialBakeReads as { reads: number; maxActive: number }),
+        captures: await running.app.evaluate(() => (globalThis as any).__partialBakeCaptures as number[]),
+      }
       const captureDiagnostics = await invokeCmd<{ lanes: { motifId: string; captures: number }[] }>(running.page, 'motif_capture_diagnostics')
       const bakeSnapshot = await invokeCmd<MotifBakeSnapshot>(running.page, 'motif_bake_snapshot')
       // Attach before assertions so a playback failure retains the evidence.
