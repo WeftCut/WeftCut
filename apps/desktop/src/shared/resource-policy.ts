@@ -65,11 +65,14 @@ export function automaticDiskCacheMiB(diskMiB?: number): number {
 }
 export function resolveResourcePolicy(policy: ResourcePolicy, memoryMiB = 8192, cores = 4, diskMiB?: number): ResourceAllocation {
   const memory = policy.memory_mib ?? Math.max(1024, Math.min(32768, Math.floor(memoryMiB * .35 / 256) * 256));
-  const fraction = { low: .25, balanced: .5, high: .85 }[policy.processing];
+  // Maximum processing uses the runtime's entire available CPU allocation,
+  // including both sockets. The caller supplies affinity/cgroup-aware capacity;
+  // never substitute a fixed desktop-sized thread count.
+  const fraction = { low: .25, balanced: .5, high: 1 }[policy.processing];
   const cpu = Math.max(1, Math.floor(Math.max(1, cores) * fraction));
   return Object.freeze({ memory_mib: memory, cache_mib: Math.floor(memory * .25), work_mib: Math.floor(memory * .4),
     export_mib: Math.max(64, Math.floor(memory * .125)),
-    cpu_threads: cpu, task_threads: Math.max(1, Math.min(4, Math.floor(cpu / 2))),
+    cpu_threads: cpu, task_threads: policy.processing === 'high' ? cpu : Math.max(1, Math.floor(cpu / 2)),
     background_jobs: Math.max(1, Math.min(8, Math.floor(cpu / 2))),
     disk_cache_mib: policy.disk_cache_mib ?? automaticDiskCacheMiB(diskMiB), background_playback: policy.background_playback });
 }

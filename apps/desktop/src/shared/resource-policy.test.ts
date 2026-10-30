@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RESOURCE_POLICY, automaticDiskCacheMiB, patchResourcePolicy, readResourcePolicy, resolveResourcePolicy } from './resource-policy';
 
 describe('application resource intent', () => {
+  it('uses all available threads in maximum mode without an eight-core ceiling', () => {
+    for (const cores of [2, 8, 36, 72, 128]) {
+      const allocation = resolveResourcePolicy({ ...DEFAULT_RESOURCE_POLICY, processing: 'high' }, 65536, cores);
+      expect(allocation.cpu_threads).toBe(cores);
+      expect(allocation.task_threads).toBe(cores);
+    }
+    expect(resolveResourcePolicy({ ...DEFAULT_RESOURCE_POLICY, processing: 'low' }, 65536, 72).cpu_threads).toBe(18);
+  });
   it('scales processing and memory independently on small and large machines', () => {
     const small = resolveResourcePolicy(DEFAULT_RESOURCE_POLICY, 4096, 2);
     const large = resolveResourcePolicy(DEFAULT_RESOURCE_POLICY, 65536, 32);
