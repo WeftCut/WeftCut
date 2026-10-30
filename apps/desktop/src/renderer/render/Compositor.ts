@@ -40,7 +40,7 @@ import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { installCjkLineBreaking } from "./fonts/lineBreak";
 import type { TextFit } from "./textBox";
-import { STAGE, stageAdd, stageRecord } from "./perf/stageTimers";
+import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
 import {
   UnderrunTracker,
   type UnderrunSessionSummary,
@@ -230,6 +230,9 @@ export class Compositor {
   /// see motifs/MotifFrameService.ts. Inert in the export Worker (no DOM).
   private readonly motifService: MotifFrameService;
   private repaintScheduled = false;
+  private playbackFrameDirty = true;
+  private lastCompositedFrameUs: number | null = null;
+  private lastPlaybackSweepMs = Number.NEGATIVE_INFINITY;
   /// Engine's playing state — written by PlaybackEngine on play /
   /// pause / seek. Decoder targeting reads this presentation state.
   private playing = false;
@@ -413,15 +416,20 @@ export class Compositor {
     // Async arrivals still repaint paused previews; export consumes them on
     // the next explicitly requested output frame (including render_frames).
     if (this.mode === "export") return;
+    this.playbackFrameDirty = true;
     if (!this.presentationVisible) {
       this.presentationDirty = true;
       return;
     }
+    // PlaybackEngine owns the next display tick. Async arrivals invalidate it
+    // instead of scheduling a second full scene/decode sweep beside it.
+    if (this.playing) return;
     if (this.repaintScheduled) return;
     this.repaintScheduled = true;
     requestAnimationFrame(() => {
       this.repaintScheduled = false;
       if (this.disposed) return;
+      if (this.playing) return;
       this.setAnchorTime(this.lastTUs);
       this.compositeFrame(this.lastTUs);
     });
@@ -474,6 +482,7 @@ export class Compositor {
   /// PlaybackEngine flips this during rapid scrub; rationale on the
   /// `scrubbing` field.
   setScrubbing(s: boolean): void {
+    if (s !== this.scrubbing) this.playbackFrameDirty = true;
     if (s) this.root.invalidateMotifPlayback();
     this.scrubbing = s;
   }
@@ -481,6 +490,7 @@ export class Compositor {
   /// PlaybackEngine writes its current play state here on play /
   /// pause / seek so decoder targeting knows whether to advance.
   setMasterPlayState(playing: boolean): void {
+    if (playing !== this.playing) this.playbackFrameDirty = true;
     if (playing !== this.playing) this.root.invalidateMotifPlayback();
     // Master-clock release = new play session: reset the dropped-frame
     // counters so the indicator reflects this run, not history.
@@ -527,6 +537,7 @@ export class Compositor {
   setSuspended(s: boolean): void {
     if (this.suspended === s) return;
     this.suspended = s;
+    this.playbackFrameDirty = true;
     if (s) {
       this.root.suspend();
       this.tenBitIngest?.dispose();
@@ -545,6 +556,7 @@ export class Compositor {
   /// none of them belongs to the new timeline; a new snapshot of the same
   /// composition only evicts the layers that disappeared.
   setProject(summary: ProjectSummary | null, openId: string | null = null): void {
+    this.playbackFrameDirty = true;
     this.decodePriorityPlanCache = null;
     const prevProjectId = this.projectSummary?.project_id ?? null;
     this.projectSummary = summary;
@@ -584,6 +596,28 @@ export class Compositor {
     // project change. Called AFTER the fps update above so its planning reads
     // the new frame grid.
     this.motifService.handleProjectChanged();
+  }
+
+  /** Ticker-only entry. A 30fps timeline on a 60/120Hz display needs one scene
+   * sweep per authored frame, not per screen refresh. Explicit edit, seek,
+   * extraction and export calls still use compositeFrame unconditionally.
+   * Paused preview retains a cheap 10Hz retry for decoder/capture readiness
+   * that has no arrival notification; notified arrivals invalidate immediately.
+   * The audio clock, ticker and final-frame presentation are never stopped. */
+  compositePlaybackFrame(tUs: number): void {
+    if (this.disposed || this.suspended) return;
+    const now = performance.now();
+    const frameUs = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
+    if (this.mode === 'preview' && this.presentationVisible && !this.playbackFrameDirty
+      && this.lastCompositedFrameUs === frameUs
+      && (this.playing || now - this.lastPlaybackSweepMs < 100)) {
+      this.underrun.tickDecay();
+      return;
+    }
+    const anchorStart = stageNow();
+    this.setAnchorTime(tUs);
+    stageAdd(STAGE.Anchor, anchorStart);
+    this.compositeFrame(tUs);
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -636,6 +670,9 @@ export class Compositor {
       return;
     }
     this.presentationDirty = false;
+    // Clear before the sweep: an arrival/invalidation during it must survive
+    // to the next tick, not be erased by the completion of this older sweep.
+    this.playbackFrameDirty = false;
     this.presentedCompositeCount += 1;
 
     // Export ignores the preview-only LOD toggle — effects are always
@@ -725,6 +762,8 @@ export class Compositor {
     // (disposed, suspended, no project) is correctly excluded from
     // the average, since the body did no real work.
     this.compositeMsLast = performance.now() - compositeStart;
+    this.lastCompositedFrameUs = tUsSnapped;
+    this.lastPlaybackSweepMs = performance.now();
     if (this.compositeMsLast > this.compositeMsMax) {
       this.compositeMsMax = this.compositeMsLast;
     }

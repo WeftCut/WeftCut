@@ -166,4 +166,72 @@ describe("Compositor presentation gate", () => {
     runRepaint();
     expect(compositor.presentationSnapshot().presentedCompositeCount).toBe(2);
   });
+
+  it('sweeps a 30fps timeline only 30 times on a 120Hz display', () => {
+    compositor.setMasterPlayState(true);
+    const sweep = vi.spyOn(compositor.rootNode(), 'compositeVisual');
+    for (let tick = 0; tick < 120; tick++) compositor.compositePlaybackFrame(tick * 8_333);
+    expect(sweep).toHaveBeenCalledTimes(30);
+    expect(rafCallbacks).toHaveLength(0);
+  });
+
+  it('coalesces async arrivals into the playing tick, including the same authored frame', () => {
+    compositor.setMasterPlayState(true);
+    compositor.compositePlaybackFrame(0);
+    const sweep = vi.spyOn(compositor.rootNode(), 'compositeVisual');
+    compositor.compositePlaybackFrame(10_000);
+    expect(sweep).not.toHaveBeenCalled();
+    compositor.scheduleRepaint();
+    compositor.scheduleRepaint();
+    expect(rafCallbacks).toHaveLength(0);
+    compositor.compositePlaybackFrame(12_000);
+    expect(sweep).toHaveBeenCalledOnce();
+    compositor.compositePlaybackFrame(20_000);
+    expect(sweep).toHaveBeenCalledOnce();
+  });
+
+  it('retains paused readiness retries without sweeping every display refresh', () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const sweep = vi.spyOn(compositor.rootNode(), 'compositeVisual');
+    try {
+      compositor.compositePlaybackFrame(0);
+      for (now = 1; now < 100; now++) compositor.compositePlaybackFrame(0);
+      expect(sweep).toHaveBeenCalledOnce();
+      now = 100;
+      compositor.compositePlaybackFrame(0);
+      expect(sweep).toHaveBeenCalledTimes(2);
+      compositor.scheduleRepaint();
+      expect(rafCallbacks).toHaveLength(1);
+      runRepaint();
+      expect(sweep).toHaveBeenCalledTimes(3);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('does not suppress explicit edits, same-frame seeks or project changes', () => {
+    compositor.setMasterPlayState(true);
+    compositor.compositePlaybackFrame(0);
+    const sweep = vi.spyOn(compositor.rootNode(), 'compositeVisual');
+    compositor.compositeFrame(0); // transient edit/extraction path
+    expect(sweep).toHaveBeenCalledOnce();
+    compositor.setScrubbing(true);
+    compositor.compositePlaybackFrame(0);
+    expect(sweep).toHaveBeenCalledTimes(2);
+    compositor.setScrubbing(false);
+    compositor.setProject(summary);
+    compositor.compositePlaybackFrame(0);
+    expect(sweep).toHaveBeenCalledTimes(3);
+    compositor.compositePlaybackFrame(0);
+    expect(sweep).toHaveBeenCalledTimes(3);
+  });
+
+  it('a queued paused repaint cannot add a second sweep after Play starts', () => {
+    compositor.scheduleRepaint();
+    compositor.setMasterPlayState(true);
+    const sweep = vi.spyOn(compositor.rootNode(), 'compositeVisual');
+    runRepaint();
+    expect(sweep).not.toHaveBeenCalled();
+    compositor.compositePlaybackFrame(0);
+    expect(sweep).toHaveBeenCalledOnce();
+  });
 });
