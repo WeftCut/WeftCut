@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><title>Issue 62 transport benchmark</title>
+<h1>Issue 62 transport benchmark</h1><canvas width="1920" height="1080" style="width:960px;height:540px"></canvas>
+<script type="module">
+const channel = new MessageChannel(), pending = new Map(); let nextId = 0;
+window.postMessage({ type: 'bench-port' }, '*', [channel.port2]);
+const worker = new Worker('./transport-renderer-worker.js', { type: 'module' });
+worker.onerror = event => { window.__benchResult = { error: event.message }; };
+const workerPending = new Map();
+worker.onmessage = ({ data }) => { const p = workerPending.get(data.id); workerPending.delete(data.id); data.error ? p.reject(Error(data.error)) : p.resolve(data); };
+channel.port1.onmessage = ({ data }) => { const p = pending.get(data.id); pending.delete(data.id); data.error ? p.reject(Error(data.error)) : p.resolve(data); };
+const read = (mode, width, frame) => new Promise((resolve, reject) => { const id = ++nextId; pending.set(id, { resolve, reject }); channel.port1.postMessage({ id, mode, width, frame }); });
+const decompress = data => new Promise((resolve, reject) => { workerPending.set(data.id, { resolve, reject }); worker.postMessage(data, [data.compressed.buffer]); });
+const longTasks = []; new PerformanceObserver(list => longTasks.push(...list.getEntries().map(e => ({ start: e.startTime, ms: e.duration })))).observe({ type: 'longtask' });
+const samples = [], ctx = document.querySelector('canvas').getContext('2d', { willReadFrequently: true });
+try {
+  for (let round = -3; round < 40; round++) for (const mode of ['a', 'b', 'c', 'd'].slice(round%4).concat(['a','b','c','d'].slice(0,round%4))) {
+    const start = performance.now();
+    performance.mark(`bench:${mode}:${round}:start`);
+    let data = await read(mode, 3840, (round+30)%30);
+    if (mode === 'd') data = { ...data, ...await decompress(data) };
+    const end = performance.now();
+    performance.mark(`bench:${mode}:${round}:end`);
+    const drawStart = performance.now();
+    ctx.clearRect(0,0,1920,1080); ctx.drawImage(data.bitmap,0,0,1920,1080);
+    const px = [...ctx.getImageData(Math.floor(((round+30)%30)*3840/40/2)+20, 380, 1, 1).data];
+    data.bitmap.close();
+    if (px[3] < 120 || px[3] > 135 || Math.abs(px[0]-220)>3) throw Error(`Pixel mismatch ${mode}: ${px}`);
+    if (round >= 0) samples.push({ mode, round, start, elapsedMs: end-start, mainMs: data.mainMs, syncMs: data.syncMs ?? 0, bitmapMs: data.bitmapMs ?? 0, workerMs: data.workerMs ?? 0, decodeMs: data.decodeMs ?? 0, bytes: data.byteLength, drawReadMs: performance.now()-drawStart });
+    await new Promise(r=>setTimeout(r, 10));
+  }
+  const percentile = (arr,q) => arr.slice().sort((a,b)=>a-b)[Math.max(0,Math.ceil(q*arr.length)-1)];
+  const summary = ['a','b','c','d'].map(mode => { const s=samples.filter(s=>s.mode===mode); return { mode, count:s.length, bytes:s[0].bytes, medianMs:percentile(s.map(s=>s.elapsedMs),.5), p95Ms:percentile(s.map(s=>s.elapsedMs),.95), medianSyncMs:percentile(s.map(s=>s.syncMs),.5), medianWorkerMs:percentile(s.map(s=>s.workerMs),.5), medianDrawReadMs:percentile(s.map(s=>s.drawReadMs),.5) }; });
+  window.__benchResult = { samples, summary, longTasks };
+} catch (e) { window.__benchResult = { error: String(e.stack), samples }; }
+</script>
