@@ -6,6 +6,7 @@ import type { StoredMotifFrame, MotifCaptureControl } from '../shared/motifs/fra
 export function installMotifFrames(
   imported: (key: string) => SharedTextureImported | undefined,
   finishRead: (bitmap: ImageBitmap) => Promise<ImageBitmap>,
+  takeSnapshot?: (token: string) => ImageBitmap,
 ): void {
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.type !== 'weftcut:motif-frame-port') return
@@ -18,7 +19,10 @@ export function installMotifFrames(
       let failed = true
       try {
         frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? { hash: data.hash, frame: data.frame, finalizationToken: data.finalizationToken }) as StoredMotifFrame | null
-        if (frame?.kind === 'texture') {
+        if (frame?.kind === 'bitmap') {
+          if (!takeSnapshot) throw new Error('Motif GPU snapshot receiver unavailable');
+          bitmap = takeSnapshot(frame.token);
+        } else if (frame?.kind === 'texture') {
           const texture = imported(frame.key)
           if (!texture) throw new Error('Motif texture import missing')
           const vf = texture.getVideoFrame()
@@ -30,7 +34,8 @@ export function installMotifFrames(
         } else if (frame?.kind === 'png') {
           bitmap = await createImageBitmap(new Blob([frame.bytes as BlobPart], { type: 'image/png' }))
         }
-        port.postMessage({ id: data.id, bitmap, persisted: frame?.persisted === true }, bitmap ? [bitmap] : [])
+        port.postMessage({ id: data.id, bitmap, persisted: frame?.persisted === true,
+          ...(frame?.cacheWriteSkipped ? { cacheWriteSkipped: true } : {}) }, bitmap ? [bitmap] : [])
         bitmap = null
         failed = false
       } catch (error) {

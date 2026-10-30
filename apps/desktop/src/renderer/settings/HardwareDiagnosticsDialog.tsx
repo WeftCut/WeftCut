@@ -126,6 +126,16 @@ export function HardwareDiagnosticsDialog({ hardware, renderer, onClose, testing
       </section>
       <section className="settings-section">
         <h3>{t('hardware.acceleration_heading')}</h3>
+        {hardware.motif_gpu && <div data-testid="motif-gpu-transport">
+          <h4>{t('hardware.motif_gpu_heading')}</h4>
+          <p role="status">{t(`hardware.motif_gpu_${hardware.motif_gpu.state}`)}</p>
+          {hardware.motif_gpu.reason && <p className="settings-toggle-hint">{t(`hardware.motif_gpu_reason_${hardware.motif_gpu.reason}`)}</p>}
+          {hardware.motif_gpu.gpu_ms !== null && hardware.motif_gpu.png_ms !== null && <dl className="settings-performance-allocation">
+            <div><dt>{t('hardware.motif_gpu_timing')}</dt><dd>{hardware.motif_gpu.gpu_ms.toFixed(1)} ms</dd></div>
+            <div><dt>{t('hardware.motif_png_timing')}</dt><dd>{hardware.motif_gpu.png_ms.toFixed(1)} ms</dd></div>
+          </dl>}
+          <p className="settings-toggle-hint">{t('hardware.motif_gpu_scope')}</p>
+        </div>}
         <CodecResults title={t('hardware.decode_heading')} results={hardware.acceleration.decode} devices={hardware.devices} />
         <CodecResults title={t('hardware.encode_heading')} results={hardware.acceleration.encode} devices={hardware.devices} />
         <p className="settings-toggle-hint">{t('hardware.decode_scope')}</p>

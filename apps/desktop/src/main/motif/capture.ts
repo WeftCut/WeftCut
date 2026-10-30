@@ -35,7 +35,7 @@ const READY_ATTEMPTS = 30
 const READY_POLL_MS = 100
 const MAX_BACKGROUND_WAIT_MS = 2000
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, pngCaptures: 0, exportCacheHits: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, pngCaptures: 0, exportCacheHits: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0, texturePaintMs: 0, textureDeliveryMs: 0 })
 let captureCounters = newCaptureCounters()
 const captureLanes = new Map<string, { motifId: string; contentHash: string; captures: number; pageLoads: number }>()
 function diagnosticsLane(motifId: string, contentHash: string) {
@@ -258,7 +258,7 @@ async function buildHost(sharedTexture = textureCaptureEnabled): Promise<Host> {
     // context isolation, web security. The complementary egress half (no network /
     // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
     transparent: sharedTexture,
-    webPreferences: { offscreen: sharedTexture ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    webPreferences: { offscreen: sharedTexture ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, backgroundThrottling: false },
   })
   captureCounters.hostBuilds++
   // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
@@ -551,8 +551,7 @@ export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): 
 
 /** Main-only export entry: the native parent id has already been resolved for
  * this renderer. Preview, MCP and the shared-texture transport stay serial. */
-export function captureExportMotifFrameB64(a: CaptureArgs, parent: number, key?: string, _high?: boolean, isCurrent: () => boolean = () => true): Promise<string> {
-  if (shuttingDown) return Promise.reject(new Error('motif capture host is shut down (the app is quitting)'))
+function exportPool(parent: number) {
   let pool = exportPools.get(parent)
   if (!pool) {
     pool = new ExportCapturePool<HostSlot & { release(): void }>({
@@ -563,6 +562,47 @@ export function captureExportMotifFrameB64(a: CaptureArgs, parent: number, key?:
     })
     exportPools.set(parent, pool)
   }
+  return pool
+}
+
+export function captureExportMotifTexture<T>(a: CaptureArgs, parent: number, consume: (texture: OffscreenSharedTexture) => Promise<T>, key?: string, isCurrent: () => boolean = () => true): Promise<T> {
+  if (shuttingDown) return Promise.reject(new Error('motif capture host is shut down (the app is quitting)'))
+  const pool = exportPool(parent)
+  const current = () => !pool.retired && isCurrent()
+  const affinity = JSON.stringify(['gpu', a.motifId, a.contentHash, a.propsJson, a.width, a.height, a.fpsNum, a.fpsDen])
+  const packageBytes = /^[0-9a-f]{64}$/.test(a.contentHash) ? motifStore?.pinnedPackageBytes?.(a.motifId, a.contentHash) ?? 0 : 0
+  const residentMiB = Math.ceil(128 + (a.width * a.height * 28 + packageBytes) / 1048576)
+  const queuedAt = performance.now()
+  return pool.capture(affinity, residentMiB, key, current, async slot => {
+    if (!slot.texture) { teardownHost(slot); slot.texture = true }
+    const error = failedLanes.get(laneKeyOf(a.motifId, a.contentHash))
+    if (error) throw error
+    const counters = captureCounters, started = performance.now()
+    counters.queueMs += started - queuedAt; counters.captures++; counters.textureCaptures++
+    diagnosticsLane(a.motifId, a.contentHash).captures++
+    try {
+      const result = await doCapture(a, async host => {
+        if (!host.frames) throw new Error('Motif export GPU surface unavailable')
+        const paintStarted = performance.now()
+        const texture = await host.frames.capture(a.width, a.height, () => host.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true }))
+        counters.texturePaintMs += performance.now() - paintStarted
+        try {
+          if (!current()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+          const deliveryStarted = performance.now()
+          try { return await consume(texture) }
+          finally { counters.textureDeliveryMs += performance.now() - deliveryStarted }
+        } finally { texture.release() }
+      }, slot)
+      if (!current()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      counters.completed++; return result
+    } catch (error) { counters.failed++; throw error }
+    finally { counters.captureMs += performance.now() - started }
+  })
+}
+
+export function captureExportMotifFrameB64(a: CaptureArgs, parent: number, key?: string, _high?: boolean, isCurrent: () => boolean = () => true): Promise<string> {
+  if (shuttingDown) return Promise.reject(new Error('motif capture host is shut down (the app is quitting)'))
+  const pool = exportPool(parent)
   const current = () => !pool!.retired && isCurrent()
   const queuedAt = performance.now()
   // Keep three independent elements resident (plate, title, illustration),
@@ -574,6 +614,7 @@ export function captureExportMotifFrameB64(a: CaptureArgs, parent: number, key?:
   // with UTF-16 storage. It never becomes a growing per-frame cache.
   const residentMiB = Math.ceil(128 + (a.width * a.height * 28 + packageBytes) / 1048576)
   return pool.capture(affinity, residentMiB, key, current, async slot => {
+    if (slot.texture) { teardownHost(slot); slot.texture = false }
     const error = failedLanes.get(laneKeyOf(a.motifId, a.contentHash))
     if (error) throw error
     const started = performance.now(), counters = captureCounters

@@ -1,7 +1,7 @@
 import type { OffscreenSharedTexture, WebContents } from 'electron'
 import type { CaptureArgs } from './capture'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
-import type { MotifCacheAddress, MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport'
+import type { MotifCacheAddress, MotifTextureFrame, MotifBitmapFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport'
 import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors'
 import { reserveResources } from '../resources'
 import { isResourceCapacityError } from '../../shared/resource-policy'
@@ -22,6 +22,10 @@ export interface CaptureServiceDeps {
   texture: (args: CaptureArgs, consume: (texture: OffscreenSharedTexture) => Promise<StoredMotifFrame>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<StoredMotifFrame>
   png: (args: CaptureArgs, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
   exportPng?: (args: CaptureArgs, parent: number, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
+  exportTexture?: (args: CaptureArgs, parent: number, consume: (texture: OffscreenSharedTexture) => Promise<StoredMotifFrame>, key?: string, isCurrent?: () => boolean) => Promise<StoredMotifFrame>
+  exportCopy?: (owner: WebContents, texture: OffscreenSharedTexture, parent?: number) => Promise<MotifBitmapFrame>
+  exportReady?: (owner: WebContents, parent: number) => Promise<boolean>
+  exportFailed?: () => void
   copy: ((owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null
   setTextureEnabled: (enabled: boolean) => void
@@ -53,12 +57,14 @@ export class MotifCaptureService {
   private useTexture: boolean
   private encoder: TextureEncoder | null = null
   private encoderFailed = false
+  private exportGpuFailed = false
   private jobs = new Map<string, { attach: (address: MotifCacheAddress) => void }>()
   private readonly workspaceJobs = new WeakMap<MotifFrameStore, WorkspaceJobs>()
   constructor(private readonly deps: CaptureServiceDeps, enabled: boolean) {
     this.useTexture = enabled && !!(deps.copy || deps.createEncoder)
     deps.setTextureEnabled(this.useTexture)
   }
+  resetExportGpu(): void { this.exportGpuFailed = false }
 
   /** Only a failure of the shared-texture output itself may switch the session
    * to PNG. A disk write, a resource refusal, a superseded request, the Motif's
@@ -225,7 +231,8 @@ export class MotifCaptureService {
       return true
     } }
     register(job.attach)
-    if (bake) job.attach(bake)
+    const directExport = finalizationId !== undefined && !!this.deps.exportTexture && !!this.deps.exportCopy && !this.exportGpuFailed && (!bake || bakeOptional)
+    if (bake && !directExport) job.attach(bake)
     if (key) this.jobs.set(key, job)
     const write = async (writer: FrameWriter | null, bytes: Uint8Array, png: boolean): Promise<boolean> => {
       if (!writer) {
@@ -248,6 +255,25 @@ export class MotifCaptureService {
         const stored = await store.read(cache.hash, cache.frame)
         if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
         if (stored && (!destinationAddress || sameAddress(cache, destinationAddress))) return { ...stored, persisted: true }
+      }
+      if (directExport) {
+        const ready = !this.deps.exportReady || await this.deps.exportReady(owner, finalizationId!)
+        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (ready) {
+          acceptingBake = false
+          try {
+            return await this.deps.exportTexture!(args, finalizationId!, async texture => {
+              if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+              return { ...await this.deps.exportCopy!(owner, texture, finalizationId), persisted: false, cacheWriteSkipped: true }
+            }, key, isCurrent)
+          } catch (error) {
+            if (this.keepsTexturePath(args, error, false)) throw error
+            console.warn('[weftcut/motif] Export GPU snapshot unavailable; using exact PNG fallback:', error)
+            this.exportGpuFailed = true
+            this.deps.exportFailed?.()
+            if (bake) { acceptingBake = true; job.attach(bake) }
+          }
+        } else if (bake) job.attach(bake)
       }
       if (this.useTexture && this.deps.copy) {
         try {

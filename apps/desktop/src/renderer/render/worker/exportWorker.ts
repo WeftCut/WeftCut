@@ -352,6 +352,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const totals = {
     decodeMs: 0,
     waitMs: 0,
+    videoWaitMs: 0,
+    motifWaitMs: 0,
     compositeMs: 0,
     captureMs: 0,
     encodeMs: 0,
@@ -502,12 +504,16 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
             }),
           );
         }
-        waitMs += performance.now() - waitT0;
+        const videoWaitMs = performance.now() - waitT0;
+        waitMs += videoWaitMs;
+        totals.videoWaitMs += videoWaitMs;
 
         const motifWaitT0 = performance.now();
         const motifPacket = req.motifStream ? await motifInbox.take(i) : null;
         if (motifPacket) compositor.setMotifFrames(motifPacket.frames);
-        waitMs += performance.now() - motifWaitT0;
+        const motifWaitMs = performance.now() - motifWaitT0;
+        waitMs += motifWaitMs;
+        totals.motifWaitMs += motifWaitMs;
         const compT0 = performance.now();
         try {
           compositor.setAnchorTime(tUs);
@@ -691,7 +697,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         `  setup       ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)  ` +
         `← source readiness + scheduling\n` +
         `  wait        ${totals.waitMs.toFixed(0).padStart(7)}ms  (${pct(totals.waitMs)}%)  ` +
-        `${(totals.waitMs / totalFrames).toFixed(2)} ms/frame  ← awaiting decoder output\n` +
+        `${(totals.waitMs / totalFrames).toFixed(2)} ms/frame  ← video + motion sources\n` +
+        `    video     ${totals.videoWaitMs.toFixed(0).padStart(7)}ms  (${pct(totals.videoWaitMs)}%)\n` +
+        `    motion    ${totals.motifWaitMs.toFixed(0).padStart(7)}ms  (${pct(totals.motifWaitMs)}%)\n` +
         `  composite   ${totals.compositeMs.toFixed(0).padStart(7)}ms  (${pct(totals.compositeMs)}%)  ` +
         `${(totals.compositeMs / totalFrames).toFixed(2)} ms/frame\n` +
         `  capture     ${totals.captureMs.toFixed(0).padStart(7)}ms  (${pct(totals.captureMs)}%)  ` +
@@ -724,6 +732,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         nativeHandles,
         decodeMs: Math.round(totals.decodeMs),
         waitMs: Math.round(totals.waitMs),
+        videoWaitMs: Math.round(totals.videoWaitMs),
+        motifWaitMs: Math.round(totals.motifWaitMs),
         queueWaitMs: Math.round(totals.queueWaitMs),
         totalMs: Math.round(totalMs),
         colorDiag,

@@ -42,6 +42,7 @@ export interface HardwareAccelerationDiagnostics {
   encode: CodecHardwareProbe[];
 }
 export interface HardwareDiagnostics {
+  motif_gpu?: import('./motifs/gpuProbe').MotifGpuProbe;
   platform: string;
   sampled_at: number;
   devices: HardwareDevice[];

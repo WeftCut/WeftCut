@@ -19,6 +19,13 @@ const zhCN: Resources = {
     normal: '资源可用。', usage: '应用内存约 {{used}} GiB。', waiting: '{{count}} 个任务等待中。',
   },
   hardware: {
+    "motif_gpu_heading": "导出时通过 GPU 传输动画",
+    "motif_gpu_not-tested": "尚未测试 · 当前使用 PNG", "motif_gpu_testing": "正在检查画面准确性和速度…",
+    "motif_gpu_gpu": "已选择 GPU 传输", "motif_gpu_png": "已选择原有 PNG 传输",
+    "motif_gpu_reason_disabled": "GPU 传输已禁用。", "motif_gpu_reason_unsupported": "GPU 传输不可用或检查未完成。",
+    "motif_gpu_reason_quality": "像素与参考图不一致，保留原有方式。", "motif_gpu_reason_slower": "性能提升不足，未切换。",
+    "motif_gpu_reason_failed": "GPU 传输失败，已回退到 PNG。", "motif_gpu_timing": "GPU · 每帧中位耗时", "motif_png_timing": "PNG · 每帧中位耗时",
+    "motif_gpu_scope": "自动选择要求全高清像素完全一致，且 7 组配对测试至少提升 15%。这是动画传输测试，并非整个导出速度。在此处或首次使用前测试；失败时保留 PNG。",
     "probe_heading": "编解码加速",
     "test_complete": "检测完成",
     "current_decode_device": "当前解码设备",

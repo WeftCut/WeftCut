@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
 import { MotifReadBarrier } from './motifReadBarrier'
+import { decodeProbePng, matchesProbePng } from './motifProbePixels'
+import { MotifBitmapMailbox } from './motifBitmapMailbox'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import type {
   WeftcutApi,
@@ -364,12 +366,14 @@ const api: WeftcutApi = {
 // Populated once per slot at open by pairing the receiver callbacks (which carry
 // no slot id) to `previewGpu:slot` announces in FIFO order.
 const importedByKey = new Map<string, SharedTextureImported>()
+const motifBitmapMailbox = new MotifBitmapMailbox()
 let importsClosed = false
 // A document reload destroys this preload without closing its WebContents.
 // Electron's imported textures need an explicit release before that context
 // disappears; otherwise retired Motif pools keep consuming main's budget.
 window.addEventListener('pagehide', () => {
   importsClosed = true
+  motifBitmapMailbox.close()
   for (const imported of importedByKey.values()) {
     try { imported.release() } catch { /* GPU process already gone */ }
   }
@@ -501,13 +505,38 @@ ipcRenderer.on('evt:previewGpu:barrier', (_e, { streamId, mode }: { streamId: st
 // the slot texture, Electron frees the underlying pool only once every import
 // releases, and nothing else will ever see this one — one leaked slot texture
 // per dispose-races-open occurrence, for the process lifetime.
-sharedTexture.setSharedTextureReceiver(async (data) => {
+sharedTexture.setSharedTextureReceiver(async (data, metadata?: unknown) => {
+  const message = metadata as { kind?: string; token?: string; probe?: { referencePng?: string } } | undefined
+  if (message?.kind === 'motif-export-snapshot') {
+    let bitmap: ImageBitmap | undefined
+    try {
+      if (importsClosed || typeof message.token !== 'string' || !/^[0-9a-f-]{36}$/.test(message.token)) throw new Error('Invalid Motif GPU snapshot')
+      const frame = data.importedSharedTexture.getVideoFrame()
+      try { bitmap = await createImageBitmap(frame) } finally { frame.close() }
+      bitmap = await motifReadBarrier.complete(bitmap)
+      const quality = message.probe?.referencePng ? await matchesProbePng(bitmap, message.probe.referencePng) : true
+      if (!message.probe) { motifBitmapMailbox.put(message.token, bitmap); bitmap = undefined }
+      ipcRenderer.send('motif:gpu-frame-result', { token: message.token, value: quality })
+    } catch (error) {
+      ipcRenderer.send('motif:gpu-frame-result', { token: message.token, error: String(error).slice(0, 300) })
+    } finally { bitmap?.close(); data.importedSharedTexture.release() }
+    return
+  }
   const a = announceQueue.shift()
   if (a && !importsClosed) {
     importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
   } else {
     try { data.importedSharedTexture.release() } catch { /* already torn down */ }
   }
+})
+ipcRenderer.on('motif:gpu-probe-png', async (_event, message: { token: string; base64: string }) => {
+  let bitmap: ImageBitmap | undefined
+  try {
+    if (importsClosed) throw new Error('Motif consumer closed')
+    bitmap = await decodeProbePng(message.base64)
+    ipcRenderer.send('motif:gpu-frame-result', { token: message.token, value: true })
+  } catch (error) { ipcRenderer.send('motif:gpu-frame-result', { token: message.token, error: String(error).slice(0, 300) }) }
+  finally { bitmap?.close() }
 })
 
 // Cross-device read-completion barrier (native-hw frame-REORDER fix).
@@ -580,7 +609,7 @@ function forceSharedTextureReadComplete(bmp: ImageBitmap): BarrierCost | null {
 }
 
 const motifReadBarrier = new MotifReadBarrier(bitmap => forceSharedTextureReadComplete(bitmap) !== null)
-installMotifFrames(key => importedByKey.get(`${key}:0`), bitmap => motifReadBarrier.complete(bitmap))
+installMotifFrames(key => importedByKey.get(`${key}:0`), bitmap => motifReadBarrier.complete(bitmap), token => motifBitmapMailbox.take(token))
 
 // The one WebGL2 context both GPU-side barriers share. One 1×1 context and ONE
 // texture, created lazily and reused: the binding is set once at creation

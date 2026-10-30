@@ -43,8 +43,9 @@ export function planExportMotifFrame(
         signal.addEventListener("abort", cancel, { once: true });
         let bitmap: ImageBitmap;
         let persisted: boolean;
+        let cacheWriteSkipped: boolean | undefined;
         try {
-          ({ bitmap, persisted } = await captureMotifFrameResult(spec.motif.manifest.id,
+          ({ bitmap, persisted, cacheWriteSkipped } = await captureMotifFrameResult(spec.motif.manifest.id,
             desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
             spec.motif.manifest.settle_rafs, spec.motif.manifest.content_hash,
             comp.fps_num, comp.fps_den, { key, high: true,
@@ -59,7 +60,10 @@ export function planExportMotifFrame(
         // Native capture persists during the existing OSR lease; only portable
         // capture or unavailable native readback needs this PNG compatibility path.
         // Await within the read reservation so writes cannot build an unbounded queue.
-        if (!signal.aborted && cacheWrites.enabled) {
+        // A direct GPU snapshot deliberately skips optional persistence. Do not
+        // undo that decision with a CPU readback + PNG encode in this renderer.
+        // It is NOT a persisted frame and must not enter the disk-ready index.
+        if (!signal.aborted && cacheWrites.enabled && !cacheWriteSkipped) {
           let canvas: OffscreenCanvas | undefined;
           try {
             canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
