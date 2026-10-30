@@ -1,0 +1,41 @@
+import unittest
+import json
+import tempfile
+from pathlib import Path
+from gpu_launch import launch_args, consume_restart_intent
+
+
+class LaunchTests(unittest.TestCase):
+    def test_restart_requires_an_intent_for_the_exact_exited_editor_pid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            intent = Path(directory) / 'editor-restart.json'
+            self.assertFalse(consume_restart_intent(intent, 123))
+            for body, expected in (('invalid', False), ('{"pid":456}', False), ('{"pid":123}', True)):
+                intent.write_text(body)
+                self.assertEqual(consume_restart_intent(intent, 123), expected)
+                self.assertFalse(intent.exists())
+
+    def test_cpu_fallback(self):
+        hardware, args = launch_args('auto', False)
+        self.assertFalse(hardware)
+        self.assertIn('--use-angle=swiftshader', args)
+
+    def test_assigned_gpu_uses_vulkan_not_swiftshader(self):
+        for mode in ('auto', 'nvidia'):
+            hardware, args = launch_args(mode, True)
+            self.assertTrue(hardware)
+            self.assertIn('--use-angle=vulkan', args)
+            self.assertFalse(any('swiftshader' in arg for arg in args))
+
+    def test_explicit_gpu_must_not_silently_fallback(self):
+        with self.assertRaises(RuntimeError):
+            launch_args('nvidia', False)
+        with self.assertRaises(ValueError):
+            launch_args('arbitrary-flags', True)
+
+    def test_explicit_software(self):
+        self.assertFalse(launch_args('software', True)[0])
+
+    def test_hardware_icd_does_not_use_bundled_software_driver(self):
+        manifest = json.loads(Path(__file__).with_name('nvidia_icd.json').read_text())
+        self.assertEqual(manifest['ICD']['library_path'], 'libGLX_nvidia.so.0')

@@ -1,0 +1,15 @@
+{
+  "editor_version": "0.5.5",
+  "release": "0.5.5-server-draft",
+  "upstream": "https://github.com/WeftCut/WeftCut",
+  "upstream_revision": "ebfcd1c6467e38d6c407b0b10ee33e7578372ff2",
+  "native_release_url": "https://github.com/WeftCut/WeftCut/releases/download/v0.5.5/WeftCut-linux-amd64.deb",
+  "native_release_sha256": "49bb4fc1449401dd23498f54f7403e6f9c882c6859a59eeea3ed1e4cb0d64a23",
+  "runtime_compatibility": [
+    "odd-height full-proxy filter: even padding via a narrowly guarded FFmpeg exec shim"
+  ],
+  "wasm_note": "Build eval and conversion WASM from the checked-out Rust sources; do not reuse a generated module from a different source tree.",
+  "platforms": [
+    "linux/amd64"
+  ]
+}

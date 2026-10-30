@@ -77,6 +77,7 @@ import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw,
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
+import { revealServerFile } from './serverFileReveal.js';
 import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -2217,6 +2218,7 @@ app.whenReady().then(async () => {
   // only: showItemInFolder never dispatches to a protocol handler, so unlike
   // shell:open there is no scheme allowlist to enforce here.
   ipcMain.handle('shell:reveal', async (_e, { target }: { target: string }) => {
+    if (process.env.WEFTCUT_SERVER === '1') { await revealServerFile(target); return }
     const err = await revealPathRobust(target)
     if (err) throw new Error(err)
   })
