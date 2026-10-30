@@ -19,9 +19,20 @@ for c in cases:
     assert not c['pageErrors'], c['name']
     assert c['measurement']['positionUs'] > c['durationMs'] * 900, c['name']
     assert c['settings']['prebake_motifs'] is True
+    div = {'full': 1, 'half': 2, 'quarter': 4}[c['resolution']]
+    before, after = c['reader']['before'], c['reader']['after']
+    delta = lambda pick: pick(after) - pick(before)
+    lanes = {lane: delta(lambda s: s['reads'][lane]) for lane in ('texture', 'utility')}
+    assert after['scaleDiv'] == div, c['name']
+    assert delta(lambda s: s['transportFailures']) == 0, c['name']
+    assert delta(lambda s: s['misses']) == 0, c['name']
+    # Main sees only texture-lane reads; `unavailable` ones fall back to the utility lane.
     for read in c['reads']:
-        assert read['kind'] == 'rgba', c['name']
-        assert read['bytes'] == (8_294_400 if c.get('motif') == 1920 else 33_177_600), c['name']
+        assert read['kind'] in ('texture', 'unavailable'), c['name']
+        assert read['div'] == div, c['name']
+    if c.get('motif') and not c.get('hidden'):
+        assert sum(lanes.values()) > 0, c['name']
+    texture_ms = sorted(r['ms'] for r in c['reads'] if r['kind'] == 'texture')
     if c.get('video'):
         assert c['projectSettings']['prefer_proxies'] is True
         assert c['videoProbe']['usingProxy'] is True
@@ -31,7 +42,10 @@ for c in cases:
     assert c['warnings'] == int(perf['underrun']['lateFrames'] > 0 or perf['underrun']['droppedFrames'] > 0), c['name']
     summary.append(dict(name=c['name'], durationMs=c['durationMs'], elapsedMs=c['elapsedMs'],
         positionUs=c['measurement']['positionUs'], late=perf['underrun']['lateFrames'],
-        dropped=perf['underrun']['droppedFrames'], warnings=c['warnings'], reads=len(c['reads']),
+        dropped=perf['underrun']['droppedFrames'], warnings=c['warnings'], reads=lanes,
+        fallbacks=delta(lambda s: s['fallbacks']), restarts=delta(lambda s: s['restarts']),
+        scaleDiv=after['scaleDiv'], stages=after['stages'],
+        textureReadMs=texture_ms and dict(p50=texture_ms[len(texture_ms) // 2], p90=texture_ms[len(texture_ms) * 9 // 10]),
         longTasks=len(c['measurement']['longTasks']), canvas=c['measurement']['canvas'],
         targets=c['measurement']['targets'], cache=c['cacheAfter'],
         pressureBefore=c['resourcesBefore']['pressure'], pressureAfter=c['resourcesAfter']['pressure']))

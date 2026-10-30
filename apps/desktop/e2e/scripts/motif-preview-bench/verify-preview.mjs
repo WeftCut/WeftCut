@@ -157,9 +157,11 @@ for (const scenario of [
     await app.evaluate(({ ipcMain }) => {
       const original = ipcMain._invokeHandlers.get('motif:read');
       globalThis.__issue62Reads = [];
-      ipcMain._invokeHandlers.set('motif:read', async (...args) => {
-        const start = performance.now(); const r = await original(...args);
-        globalThis.__issue62Reads.push({ ms: performance.now()-start, kind: r?.kind, bytes: r?.rgba?.byteLength ?? 0 });
+      // Main serves only the Windows texture lane (ADR 0154); the utility lane
+      // never passes through it, so off Windows this stays empty.
+      ipcMain._invokeHandlers.set('motif:read', async (event, args) => {
+        const start = performance.now(); const r = await original(event, args);
+        globalThis.__issue62Reads.push({ ms: performance.now()-start, kind: r?.kind, div: args?.div });
         return r;
       });
     });
@@ -189,6 +191,7 @@ for (const scenario of [
       h.transportPause(); window.__issue62Observer.disconnect(); return data;
     });
     row.reads = await app.evaluate(() => globalThis.__issue62Reads);
+    row.reader = { before: row.startPerf.motifReader, after: row.measurement.perf.motifReader };
     row.cacheAfter = await cacheSnapshot(page);
     row.resourcesAfter = await page.evaluate(() => window.api.resources.status());
     if (cdp) {
@@ -200,7 +203,7 @@ for (const scenario of [
       fs.closeSync(fd); await cdp.send('IO.close', { handle: stream }); await cdp.detach();
     }
     row.ok = true;
-    console.log(JSON.stringify({ name: row.name, elapsedMs: row.elapsedMs, positionUs: row.measurement.positionUs, underrun: row.measurement.perf.underrun, reads: row.reads.length, targets: row.measurement.targets, longTasks: row.measurement.longTasks.length, canvas: row.measurement.canvas }));
+    console.log(JSON.stringify({ name: row.name, elapsedMs: row.elapsedMs, positionUs: row.measurement.positionUs, underrun: row.measurement.perf.underrun, reads: row.reads.length, reader: row.reader.after, targets: row.measurement.targets, longTasks: row.measurement.longTasks.length, canvas: row.measurement.canvas }));
   } catch (e) { row.error = String(e.stack ?? e); result.error = row.error; console.error(sanitize(row.error)); record(); process.exitCode = 1; }
   finally {
     const kill = setTimeout(() => app.process().kill('SIGTERM'), 5000);

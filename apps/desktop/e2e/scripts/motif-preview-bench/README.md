@@ -39,6 +39,13 @@ Color-only root/Group controls, root 4K/1080p Motifs, a 2048 MiB cache experimen
 and four video cases with a ready quick proxy. Without `--all`, only the nine
 non-video cases run; pass `--expect 9` to the summarizer for that subset.
 
+Each case records `perf.motifReader` (ADR 0154) before and after playback. The
+summary reports reads per lane, Windows fallbacks, restarts, the divisor and the
+reader's stage medians. It fails on a transport failure, a miss, or a divisor
+that does not match Playback Resolution. Main still times `motif:read`, but
+only the Windows texture lane passes through it, so `textureReadMs` stays empty
+on other platforms.
+
 For a short wiring check (not comparable performance data):
 
 ```sh
