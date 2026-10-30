@@ -283,9 +283,8 @@ const settled = (page: Page, key: string, timeout = 30_000) => eventually(async 
 }, `the read "${key}" never settled`, timeout)
 
 async function readerStats(page: Page): Promise<ReaderStats> {
-  await waitForHook(page, 'compositorPerfSnapshot')
-  return eventually(() => page.evaluate(() => (window as any).__weftcutTest.compositorPerfSnapshot()?.motifReader ?? null) as Promise<ReaderStats | null>,
-    'no perf.motifReader snapshot: the preview is not mounted')
+  await waitForHook(page, 'motifReaderStats')
+  return page.evaluate(() => (window as any).__weftcutTest.motifReaderStats()) as Promise<ReaderStats>
 }
 
 /** `ours` reads went through `lane`. The preview reads its layer on the same
@@ -622,9 +621,15 @@ for (const lane of LANES) {
         await waitForHook(page, 'readMotifFrame')
         await readAll(`after reload ${round}`)
         const delta = (await connectCount(app)) - connects
+        const stats = await readerStats(page)
         if (utility) {
-          // A retired or superseded port would fail a read and reconnect.
-          expect(delta, `reload ${round}: the new document takes exactly one port`).toBe(1)
+          // The outgoing document's held read sees its port retired and may
+          // reconnect once before it unloads; the new document must read on
+          // its first port without a failure or a reconnect.
+          expect(delta, `reload ${round}: connects from the outgoing and the new document`).toBeGreaterThanOrEqual(1)
+          expect(delta, `reload ${round}: connects from the outgoing and the new document`).toBeLessThanOrEqual(2)
+          expect({ transportFailures: stats.transportFailures, restarts: stats.restarts },
+            `reload ${round}: the new document reads without a transport failure`).toEqual({ transportFailures: 0, restarts: 0 })
           expect(await readerPid(app), `reload ${round}: one utility process serves every document`).toBe(pid)
         } else {
           expect(delta, `reload ${round}: the texture lane never connects to the utility`).toBe(0)

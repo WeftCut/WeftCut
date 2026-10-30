@@ -30,7 +30,12 @@ import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
 import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
-import { motifFrameReader } from "../render/motifs/MotifFrameReader";
+import {
+  currentMotifFrameReader,
+  idleMotifReaderStats,
+  motifFrameReader,
+  type MotifReaderStats,
+} from "../render/motifs/MotifFrameReader";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
@@ -304,6 +309,9 @@ export interface E2EHook {
   /// One stored-frame read by hashed address through the document's
   /// `MotifFrameReader` (ADR 0154), on whichever lane it picks. Null is a miss.
   readMotifFrame(args: { hash: string; frame: number; div: 1 | 2 | 4 }): Promise<ImageBitmap | null>;
+  /// The document's reader stats (`perf.motifReader` without the divisor),
+  /// readable before any preview mounts. Zeros until the first read.
+  motifReaderStats(): MotifReaderStats;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
@@ -1037,6 +1045,8 @@ export function installMotifTestHooks(): void {
 
   hookSlot().readMotifFrame = ({ hash, frame, div }) =>
     motifFrameReader().readAddress({ hash, frame }, div);
+
+  hookSlot().motifReaderStats = () => currentMotifFrameReader()?.stats ?? idleMotifReaderStats();
 
   hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
     return sharedBakedKeyIndex.has(cacheKey);

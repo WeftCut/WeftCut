@@ -42,12 +42,10 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       }
     }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), pngs })
     await waitForHook(page, 'readMotifFrame')
-    await waitForHook(page, 'compositorPerfSnapshot')
-    await expect.poll(() => page.evaluate(() => (window as any).__weftcutTest.compositorPerfSnapshot()?.motifReader != null),
-      { timeout: 15_000 }).toBe(true)
+    await waitForHook(page, 'motifReaderStats')
     const { pixels, before, after } = await page.evaluate(async hash => {
       const hook = (window as any).__weftcutTest
-      const stats = () => hook.compositorPerfSnapshot().motifReader
+      const stats = () => hook.motifReaderStats()
       const before = stats()
       const read = async (frame: number): Promise<ImageBitmap> => {
         const bitmap = await hook.readMotifFrame({ hash, frame, div: 1 }) as ImageBitmap | null
