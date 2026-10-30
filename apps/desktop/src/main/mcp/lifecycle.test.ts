@@ -34,6 +34,17 @@ const INITIALIZE = {
 const hosts: McpHost[] = []
 const sockets: http.ClientRequest[] = []
 
+it('authenticates window restoration and refuses arbitrary window actions', async () => {
+  const restore = vi.fn(); const host = await startMcpHost({} as Backend, { restoreEditorWindow: restore }); hosts.push(host);
+  const url = host.getInfo().url + '/editor-window';
+  expect((await fetch(url, { method: 'POST' })).status).toBe(401);
+  const headers = { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' };
+  expect((await fetch(url, { method: 'POST', headers, body: JSON.stringify({ action: 'close' }) })).status).toBe(400);
+  expect(restore).not.toHaveBeenCalled();
+  expect((await fetch(url, { method: 'POST', headers, body: JSON.stringify({ action: 'restore' }) })).status).toBe(200);
+  expect(restore).toHaveBeenCalledOnce();
+});
+
 afterEach(async () => {
   // Destroy the client side first: an initialize POST is answered with an SSE
   // stream that stays open, so the runner would otherwise wait on it.
@@ -41,6 +52,31 @@ afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close()
   vi.restoreAllMocks()
 })
+
+it('protects the server restart endpoint and commits only an accepted safe restart', async () => {
+  const commit = vi.fn();
+  const prepare = vi.fn(async () => commit);
+  const host = await startMcpHost({} as Backend, { prepareEditorRestart: prepare });
+  hosts.push(host);
+  const url = host.getInfo().url + '/editor-restart';
+  expect((await fetch(url, { method: 'POST' })).status).toBe(401);
+  expect(prepare).not.toHaveBeenCalled();
+  const headers = { Authorization: 'Bearer test-token' };
+  const invalidHostStatus = await new Promise<number>((resolve, reject) => {
+    const req = http.request(url, { method: 'POST', headers: { ...headers, Host: 'evil.invalid' } }, res => {
+      res.resume(); res.once('end', () => resolve(res.statusCode ?? 0));
+    });
+    req.on('error', reject); req.end();
+  });
+  expect(invalidHostStatus).toBe(403);
+  prepare.mockRejectedValueOnce(Object.assign(new Error('Export active'), { code: 'export_busy' }));
+  expect((await fetch(url, { method: 'POST', headers })).status).toBe(409);
+  expect(commit).not.toHaveBeenCalled();
+  const response = await fetch(url, { method: 'POST', headers });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ status: 'restarting' });
+  expect(commit).toHaveBeenCalledOnce();
+});
 
 function collector(): { rows: McpLogEntryInput[]; deps: McpLogDeps } {
   const rows: McpLogEntryInput[] = []
