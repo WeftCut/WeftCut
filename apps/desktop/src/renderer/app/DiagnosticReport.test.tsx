@@ -20,6 +20,14 @@ function stub(value = summary) {
 }
 afterEach(cleanup)
 
+it('dismisses immediately even when diagnostics acknowledgement never completes', async () => {
+  const api = stub(); api.diagnostics.dismissPrevious.mockReturnValue(new Promise(() => {}));
+  render(<PreviousSessionReport />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Not Now' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(api.diagnostics.dismissPrevious).toHaveBeenCalledOnce();
+});
+
 it('shows the previous-session notice under StrictMode without acknowledging on read', async () => {
   const api = stub()
   render(<React.StrictMode><PreviousSessionReport /></React.StrictMode>)

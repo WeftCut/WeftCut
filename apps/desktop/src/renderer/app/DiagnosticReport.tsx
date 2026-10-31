@@ -41,10 +41,15 @@ export function DiagnosticReport({ onClose, initialSummary }: {
     finally { setBusy(false) }
   }
   const close = () => {
-    void run(async () => {
-      if (summary?.previousSession) await window.api.diagnostics.dismissPrevious()
-      onClose()
-    })
+    // Dismissing an optional notice must never wait on diagnostics disk/IPC.
+    // An unavailable diagnostics store may show the notice next time, but
+    // cannot trap the user behind a modal now.
+    onClose()
+    if (summary?.previousSession) {
+      void window.api.diagnostics.dismissPrevious().catch(error => {
+        console.warn('[diagnostics] Could not acknowledge previous-session notice', error)
+      })
+    }
   }
   return (
     <AppDialog title={t(summary?.previousSession ? 'diagnostics.previous_title' : 'diagnostics.title')}
