@@ -236,7 +236,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // three above use: the CHANNEL is the renderer's name for it, the OP is the
   // dispatch arm's. jump_to takes an absolute stack index (cursor-only, rejects
   // under the revert lock); create/delete_checkpoint are the User-actor half of
-  // the checkpoint surface the MCP tools already cover for agents.
+  // the checkpoint surface (agents create and restore; deleting is the user's).
   // Markers — the renderer's first marker channels (marker-authoring slice).
   // `label` defaults to the EMPTY string, not absence: the dispatch arm turns an
   // absent label into agent shorthand ('m'), and a human marker must instead stay

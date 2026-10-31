@@ -6,7 +6,7 @@ import { MOTIF_TOOL_DEFS } from './motifToolDefs'
 
 describe('routeMcpTool', () => {
   it('routes ported mutations + reads to ts', () => {
-    for (const t of ['add_color_layer', 'set_keyframe', 'undo', 'get_param_track', 'list_checkpoints', 'dry_run'])
+    for (const t of ['add_color_layer', 'set_keyframe', 'undo', 'get_param_track', 'export_captions'])
       expect(routeMcpTool(t), t).toBe('ts')
   })
   it('routes import_media + apply_subtitles + synthesize_speech to the native-compute → TS-write hybrid', () => {

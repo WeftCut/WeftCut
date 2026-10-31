@@ -63,7 +63,7 @@ export class AgentServiceError extends Error {
   }
   toJson(): McpToolErrorJson {
     const options = this.variant === 'AgentSessionBusy' || this.variant === 'AgentSessionOwnerMismatch'
-      ? [{ action: 'wait_for_session_end' }, { action: 'take_over', tool: 'end_agent_session', force: true }]
+      ? [{ action: 'wait_for_session_end' }, { action: 'take_over', tool: 'begin_agent_session', force: true }]
       : undefined
     return { code: this.code, message: this.message, data: { error: this.variant, ...(this.holder ? { holder: this.holder } : {}), ...(this.field ? { field: this.field } : {}), ...(options ? { options } : {}) } }
   }
@@ -79,7 +79,6 @@ export class AgentActivityService {
   private sessions: AgentWorkSession[] = []
   private active: AgentWorkSession | null = null
   private evicted = 0
-  private lockOwner: { connection: string; session: string | null; client: string; reason: string; at: string } | null = null
   private scheduled = false
   private dirty = new Set<string>()
   private removed: string[] = []
@@ -158,7 +157,6 @@ export class AgentActivityService {
     this.sessions = []
     this.activities = []
     this.evicted = 0
-    this.lockOwner = null
     this.tacks.clear()
     this.dirty.clear(); this.removed = []; this.resetPending = true
     this.dirtyTacks.clear(); this.removedTacks = []
@@ -253,16 +251,28 @@ export class AgentActivityService {
     this.publish(a)
   }
 
-  begin(reason: string): AgentWorkSession {
+  /** Begin this connection's work session, or answer the one it holds.
+   *  `lock` (default true) locks history for everyone but this session's own
+   *  connection, so the user's undo waits while the agent can still undo its
+   *  own mistake. The default applies to the first begin only: a repeat
+   *  changes the lock only when `lock` is passed, so a repeat never undoes
+   *  the user's Unlock behind their back. `force` ends another
+   *  connection's session first (`end_reason: 'forced'`) — the takeover of a
+   *  session whose owner is gone, in one call. */
+  begin(reason: string, opts: { lock?: boolean; force?: boolean } = {}): AgentWorkSession {
     const ctx = this.context.getStore()
     if (!ctx || ctx.workspace !== this.workspace) throw new AgentServiceError('NoMcpConnection', 'internal', 'An agent work session needs a current MCP connection, and this call has none')
     const connection = ctx.activity.connection_id!
-    if (this.active) {
-      if (this.active.connection_id !== connection) throw new AgentServiceError('AgentSessionBusy', 'invalid_request', `Another work session is running: ${this.describeOwner()}. Wait for it to finish, or take it over with end_agent_session { force: true } (its owner may be gone — a connection whose stream dropped is closed automatically, but not instantly). read_project { view: "session" } shows the holder.`, this.holder())
+    if (this.active && this.active.connection_id === connection) {
       ctx.activity.session_id = this.active.id
+      if (opts.lock !== undefined) this.setLock(this.active, opts.lock)
       return this.active
     }
     if (!reason.trim()) throw new AgentServiceError('InvalidArgument', 'invalid_params', 'reason must be non-empty: say in a few words what the session is for', undefined, 'reason')
+    if (this.active) {
+      if (opts.force !== true) throw new AgentServiceError('AgentSessionBusy', 'invalid_request', `Another work session is running: ${this.describeOwner()}. Wait for it to finish, or take it over with begin_agent_session { force: true } when its owner is gone (a connection whose stream dropped is closed automatically, but not instantly). read_project { view: "session" } shows the holder.`, this.holder())
+      this.close(this.active, 'forced')
+    }
     const checkpoint = this.actor.checkpoint(`Pre-agent: ${reason.trim()}`, { kind: 'Agent', client: ctx.activity.client })
     this.actor.pinReviewBaseline(checkpoint)
     const session: AgentWorkSession = {
@@ -273,10 +283,23 @@ export class AgentActivityService {
     this.sessions.push(session)
     ctx.activity.session_id = session.id
     this.checkpoint('checkpoint', checkpoint, `Pre-agent: ${session.reason}`)
+    this.setLock(session, opts.lock ?? true)
     this.publish()
     this.send(AGENT_VIEW_EVENT, { workspace_id: this.workspace, session_id: session.id })
     return session
   }
+
+  /** Lock history for `session`, exempting its own connection's calls, or
+   *  release the lock. Only a session takes the lock, so it is the holder. */
+  private setLock(session: AgentWorkSession, locked: boolean): void {
+    if (locked === this.locked()) return
+    if (locked) this.actor.lockHistory(session.reason, () => this.currentCall()?.connection_id === session.connection_id)
+    else this.actor.unlockHistory()
+    this.publish()
+  }
+
+  /** Whether history is locked now (the user may have unlocked it). */
+  locked(): boolean { return this.actor.historyStatus().lock_reason !== undefined }
 
   /** The active session's holder, for the two refusals' data. */
   private holder(): AgentHolder {
@@ -284,12 +307,10 @@ export class AgentActivityService {
     return { client: s.client, connection_id: s.connection_id, session_id: s.id, reason: s.reason, started_at: s.started_at }
   }
 
-  /** Who took the history lock, or null when it is not locked (or the lock
-   *  predates this project opening). `HistoryLocked` names it. */
+  /** Who holds the history lock — the active session, the only taker — or
+   *  null when history is not locked. `HistoryLocked` names it. */
   lockHolder(): AgentHolder | null {
-    const o = this.lockOwner
-    if (!o || this.actor.historyStatus().lock_reason === undefined) return null
-    return { client: o.client, connection_id: o.connection, session_id: o.session, reason: o.reason, started_at: o.at }
+    return this.active && this.locked() ? this.holder() : null
   }
 
   /** Who holds the session, for the two refusals: the client, a short
@@ -300,32 +321,28 @@ export class AgentActivityService {
     return `${s.client} (connection ${s.connection_id.slice(0, 8)}…) began the work session "${s.reason}" ${ageMin} min ago (${s.started_at})`
   }
 
-  /** `forced` is the takeover: another connection ends a session it does not
-   *  own, because the owner is gone and the prescribed batch flow is otherwise
-   *  disabled app-wide until the app restarts. Recorded as `end_reason: 'forced'`
-   *  so the panel and the log say what happened.
-   *
-   *  Either way the ending side's history lock goes with it — the one it took
-   *  inside this session, or the one its CONNECTION took before the session
-   *  began — because a lock whose owner is gone blocks every revert for nobody.
-   *  Another live connection's lock is never touched. */
-  end(reason: 'agent' | 'user' | 'disconnected' | 'forced', connection?: string): void {
+  /** End the active session: the owner's `end_agent_session` ('agent'), the
+   *  panel's End ('user'), or its connection going away ('disconnected', with
+   *  that connection; another connection's session is left alone). Any other
+   *  caller is refused: a stale session is taken over by `begin { force }`.
+   *  The session's history lock goes with it — a lock whose owner is gone
+   *  blocks every revert for nobody. */
+  end(reason: 'agent' | 'user' | 'disconnected', connection?: string): void {
     if (reason === 'disconnected' && connection !== undefined) this.markDisconnected(connection)
-    // A connection going away releases the lock it holds even with no work
-    // session to end: nothing else ever would.
-    if (reason === 'disconnected' && connection !== undefined && this.lockOwner?.connection === connection) this.unlock()
     if (!this.active) return
     const caller = connection ?? this.context.getStore()?.activity.connection_id
-    if (reason !== 'user' && reason !== 'forced' && caller !== this.active.connection_id) {
+    if (reason !== 'user' && caller !== this.active.connection_id) {
       if (reason === 'disconnected') return
-      throw new AgentServiceError('AgentSessionOwnerMismatch', 'invalid_request', `This work session belongs to another connection: ${this.describeOwner()}; only that connection can end it. Pass end_agent_session { force: true } to take it over when its owner is gone.`, this.holder())
+      throw new AgentServiceError('AgentSessionOwnerMismatch', 'invalid_request', `This work session belongs to another connection: ${this.describeOwner()}; only that connection can end it. begin_agent_session { force: true } takes it over when its owner is gone.`, this.holder())
     }
-    const ended = this.active
+    this.close(this.active, reason)
+  }
+
+  private close(ended: AgentWorkSession, reason: NonNullable<AgentWorkSession['end_reason']>): void {
     ended.ended_at = new Date().toISOString()
     ended.end_reason = reason
     this.active = null
-    const owner = this.lockOwner
-    if (owner !== null && (owner.session === ended.id || owner.connection === ended.connection_id)) this.unlock()
+    if (this.locked()) this.actor.unlockHistory()
     this.trim()
     this.publish()
   }
@@ -341,14 +358,8 @@ export class AgentActivityService {
     }
   }
 
-  lock(reason: string): void {
-    const ctx = this.context.getStore()
-    this.actor.lockHistory(reason)
-    this.lockOwner = ctx ? { connection: ctx.activity.connection_id!, session: ctx.activity.session_id, client: ctx.activity.client, reason, at: new Date().toISOString() } : null
-    this.publish()
-  }
-
-  unlock(): void { this.actor.unlockHistory(); this.lockOwner = null; this.publish() }
+  /** The user's Unlock: history opens for everyone; the session runs on. */
+  unlock(): void { this.actor.unlockHistory(); this.publish() }
 
   checkpoint(kind: 'checkpoint' | 'restore', id: string, label: string): void {
     const ctx = this.context.getStore()

@@ -441,34 +441,36 @@ async function dispatchTool(
     const answer = exportRecordForAgent(record as Record<string, unknown>)
     return {content:[{type:'text',text:JSON.stringify(answer)}],structuredContent:answer} as ServerResult;
   }
-  if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
+  if (tsHost?.agent && (name === 'begin_agent_session' || name === 'end_agent_session')) {
     try {
-      // Every arm reads its args through the tool's own parser, so a refusal
-      // reads the same whichever path reaches the service, and answers with
-      // the record it committed like every other mutator.
+      // Both arms read their args through the tool's own parser, so a refusal
+      // reads the same whichever path reaches the service, and answer with
+      // the record they committed like every other mutator.
       let result: Record<string, unknown>
+      const active = tsHost.agent.snapshot().session
       if (name === 'begin_agent_session') {
         const p = mcpDef('begin_agent_session').parseDedicated!(args)
-        result = tsHost.agent.begin(p.reason as string) as unknown as Record<string, unknown>
-      } else if (name === 'end_agent_session') {
-        // Answer with the session that ended (null when none was active), so a
-        // takeover says whose work it closed.
-        const p = mcpDef('end_agent_session').parseDedicated!(args)
-        const active = tsHost.agent.snapshot().session
+        const session = tsHost.agent.begin(p.reason as string, { lock: p.lock as boolean | undefined, force: p.force as boolean })
+        result = { ...session, locked: tsHost.agent.locked() }
+        // A takeover says whose work it closed.
+        if (active !== null && active.id !== session.id) result.taken_over = tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active
+      } else {
+        mcpDef('end_agent_session').parseDedicated!(args)
         // A handoff is of checked work (spec H1-D6). Agents that never ran the
         // audit ignored a reported `never` (bench 2026-10-21), so the app runs
         // it here when the last one is not fresh. Hard or warning findings the
-        // agent has not seen keep its session open and come back to it; the
-        // next call, at a fresh audit, ends the session whatever it found.
-        // A takeover is never held: the owner is gone.
-        if (active !== null && tsHost.audits && p.force !== true && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
+        // agent has not seen keep its session open and come back to it
+        // (`ended: false`); the next call, at a fresh audit, ends the session
+        // whatever it found.
+        if (active !== null && tsHost.audits && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
           const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
           if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') {
             const check = tsHost.audits.run(snap, snap.root_id, taste)
             if (check.counts.hard + check.counts.warning > 0) return toolRecord(heldForAudit(check)) as ServerResult
           }
         }
-        tsHost.agent.end(p.force === true ? 'forced' : 'agent')
+        // Answer with the session that ended (null when none was active).
+        tsHost.agent.end('agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
         // The client's open tacks that no longer point where they were made
         // to — the agent's last chance to fix or resolve them. Omitted when none.
@@ -480,13 +482,6 @@ async function dispatchTool(
           const snap = tsHost.actor.snapshot()
           result.audit = tsHost.audits.summary(snap, snap.root_id, tsHost.taste?.() ?? null)
         }
-      } else {
-        // The lock is taken here rather than through mcpCall because the OWNER
-        // is the connection, which only this seam knows.
-        const p = mcpDef('set_history_lock').parseDedicated!(args)
-        if (p.locked as boolean) tsHost.agent.lock(p.reason as string)
-        else tsHost.agent.unlock()
-        result = { locked: p.locked as boolean, reason: (p.reason as string | undefined) ?? null }
       }
       return toolRecord(result) as ServerResult
     } catch (e) {
@@ -699,20 +694,15 @@ function exportRecordForAgent(record: Record<string, unknown>): Record<string, u
   return { ...record, error: { ...error, message: fault.message, ...(fault.error ? { error: fault.error, ...fault.data } : {}) } }
 }
 
-/** `HistoryLocked` with its holder, which only the host knows: the activity
- *  service records which connection took the lock. The caller that holds it is
- *  told how to clear it; anyone else is told to wait or ask the user, never to
- *  unlock another session's lock. */
+/** `HistoryLocked` with its holder, which only the host knows: the work
+ *  session that took the lock. Its own connection is never refused (the lock
+ *  exempts it), so the caller here is someone else, told to wait or ask the
+ *  user — never to clear another session's lock. */
 function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpToolErrorJson {
   const data = err.data as { error?: unknown; reason?: unknown } | undefined
   if (data?.error !== 'HistoryLocked' || !tsHost.agent) return err
   const holder = tsHost.agent.lockHolder()
   if (!holder) return err
-  const caller = tsHost.agent.currentCall()?.connection_id
-  if (caller === holder.connection_id) {
-    return { ...err, message: `history is locked: ${String(data.reason)}. undo, redo, jump_to and restore_checkpoint are blocked; you hold this lock (connection ${holder.connection_id.slice(0, 8)}…): set_history_lock { locked: false } clears it, and end_agent_session releases it`,
-      data: { ...data, holder, options: [{ action: 'unlock_history', tool: 'set_history_lock', locked: false }] } }
-  }
   return { ...err, message: `${err.message} — the lock is held by ${holder.client} (connection ${holder.connection_id.slice(0, 8)}…); read_project { view: "session" } shows its work session`, data: { ...data, holder } }
 }
 

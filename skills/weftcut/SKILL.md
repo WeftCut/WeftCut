@@ -49,7 +49,7 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
    or unlock locally; closing your connection ends its owned session, and the
    app closes a session whose connection has gone quiet. If `begin_agent_session`
    answers `AgentSessionBusy`, the message names the holder — wait, or take over
-   with `end_agent_session { force: true }` when that holder is gone.
+   with `begin_agent_session { force: true }` when that holder is gone.
    None of these cancels running calls or prohibits later tools. Do not infer
    that a session ended because the user returned to the editor.
 4. Errors are instructions: WeftCut errors name the cause and list concrete
@@ -210,9 +210,7 @@ it.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.
-- Going back further than one undo: read `project://history` and `jump_to` a row
-  by its absolute index — the way back to a state that is neither one undo away
-  nor a checkpoint.
+- Going back further than one undo: `jump_to { op_id }`, an op of `project://history`.
 
 ## Pointing the user at something
 

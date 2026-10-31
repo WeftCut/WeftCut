@@ -581,7 +581,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_HISTORY,
         name: "History",
-        description: "Recent operations and named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`; absolute indices are the only ones `jump_to` accepts. `evicted` > 0 means the oldest entries were dropped for good.",
+        description: "Recent operations and this opening's named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`. `jump_to` takes an op's `op_id`, which no eviction shifts. `evicted` > 0 means the oldest entries were dropped for good.",
     },
     ResourceDescriptor {
         uri: URI_COMPILED,
@@ -718,7 +718,7 @@ mod stateless_tests {
     }
 
     /// The advertised `project://history` description must teach the window
-    /// semantics (`window_start`, `evicted`, absolute `jump_to` indices):
+    /// semantics (`window_start`, `evicted`, `jump_to` by `op_id`):
     /// several MCP clients surface only `resources/list` to the model, so a
     /// semantic that lives nowhere else is a semantic agents never see.
     #[test]

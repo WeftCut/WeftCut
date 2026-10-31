@@ -126,24 +126,6 @@ describe('MCP adapter routing — add_video_layer Image media (dedicated)', () =
     expect(track.layers[0].t_end_us - track.layers[0].t_start_us).toBe(5_000_000)
   })
 
-  it('dry_run uses the same ImageOverlay routing for still images', () => {
-    const a = freshActor()
-    const trackId = aRollId(a)
-    const mediaId = addShortStillMedia(a)
-    const r = a.mcpCall('dry_run', JSON.stringify({ operations: [{
-      kind: 'add_video_layer',
-      track_id: trackId,
-      media_id: mediaId,
-      t_start_us: 0,
-      t_end_us: 5_000_000,
-    }] }))
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    const body = JSON.parse(r.result.content[0].text) as { halted_at: number | null; results: Array<{ status: string }> }
-    expect(body.halted_at).toBeNull()
-    expect(body.results[0].status).toBe('ok')
-    expect(totalLayerCount(a)).toBe(0)
-  })
 })
 
 // ── Dedicated-exec: add_marker ────────────────────────────────────────────────

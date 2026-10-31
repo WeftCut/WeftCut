@@ -31,8 +31,8 @@ function host() {
     motifTool: () => [], handleInvoke: async () => null, start: () => {}, stop: () => {},
   } as any
   const backend = { mcpCallTool: async () => { throw new Error('rust must not be called') }, mcpReadResource: async () => '{"ok":true,"result":{}}', mcpCatalog: async () => RUST_CATALOG } as any
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
-    const r = await agent.run('one', 'client-one', name, args, false, () => handleCallTool(backend, () => ts, name, args)) as { isError?: boolean; content: Array<{ text: string }> }
+  const call = async (name: string, args: Record<string, unknown> = {}, connection = 'one') => {
+    const r = await agent.run(connection, `client-${connection}`, name, args, false, () => handleCallTool(backend, () => ts, name, args)) as { isError?: boolean; content: Array<{ text: string }> }
     const text = r.content[0]!.text
     if (r.isError) return { isError: true, body: { text } as Record<string, any> }
     return { isError: r.isError, body: JSON.parse(text) as Record<string, any> }
@@ -51,7 +51,7 @@ describe('check_composition and audit freshness', () => {
 
     // Never audited: the end runs the audit, and its warnings hold the session.
     const held = await call('end_agent_session')
-    expect(held.body).toMatchObject({ ended: null, held: 'audit', audit: { state: 'fresh', hard: 0 } })
+    expect(held.body).toMatchObject({ ended: false, held: 'audit', audit: { state: 'fresh', hard: 0 } })
     expect(held.body.audit.findings.map((f: { rule: string }) => f.rule)).toEqual(expect.arrayContaining(['title-hold', 'text-pops']))
     expect(held.body.next).toMatch(/call end_agent_session again/)
     // Seen and unchanged: the next end goes through.
@@ -87,9 +87,12 @@ describe('check_composition and audit freshness', () => {
     await call('begin_agent_session', { reason: 'abandoned' })
     const added = await call('add_text_layer', { track_id: bRoll, content: 'Title', t_start_us: 0, t_end_us: 1_000_000 })
     await call('update_layer_params', { layer_id: added.body.layer_id, patch: { kind: 'Text', graphic_role: 'title' } })
-    const forced = await call('end_agent_session', { force: true })
-    expect(forced.body.ended).not.toBeNull()
-    expect(forced.body.audit).toMatchObject({ state: 'stale' })
+    // The takeover is a begin from another connection: the stale session ends
+    // unaudited (its owner is gone) and the newcomer's begins.
+    const forced = await call('begin_agent_session', { reason: 'next', force: true }, 'two')
+    expect(forced.isError).toBeFalsy()
+    expect(forced.body).toMatchObject({ connection_id: 'two', taken_over: { reason: 'abandoned', end_reason: 'forced' } })
+    expect(forced.body).not.toHaveProperty('held')
   })
 
   it('narrows the findings to a range but remembers the whole composition, and refuses half a range', async () => {

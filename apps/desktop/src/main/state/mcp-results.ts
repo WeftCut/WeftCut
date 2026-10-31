@@ -481,8 +481,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // just reverted.
   undo: (c) => ({ ...historyOf(c), undone: c.entryAt(c.cursorBefore) }),
   redo: (c) => ({ ...historyOf(c), redone: c.entryAt(c.history.cursor) }),
-  jump_to: (c) => ({ index: c.args.index, ...historyOf(c) }),
-  delete_checkpoint: (c) => ({ checkpoint_id: str(c.args.checkpoint_id) }),
+  jump_to: (c) => ({ ...historyOf(c), at: c.entryAt(c.history.cursor) }),
   // ── captions / roles ──
   restyle_captions: (c) => ({ captions: captionCueCount(c.after), restyled: typeof c.value === 'number' ? c.value : 0 }),
   merge_captions: (c) => {

@@ -10,6 +10,7 @@
 // the preferences actually changes behaviour downstream.
 import { describe, it, expect } from 'vitest'
 import { createActor } from '../actor'
+import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { seededGen } from '../ids'
 import { blankProject, type Project, type Track } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
@@ -274,86 +275,40 @@ describe('captions with word timing', () => {
 })
 
 describe('jump_to', () => {
-  it('moves the cursor to a named index and back', () => {
+  const opIds = (a: ReturnType<typeof actorWithPool>) => a.historyView(50).ops.map((o) => o.op_id)
+  it('moves the cursor to a named op and back', () => {
     const a = actorWithPool()
+    const seed = opIds(a)[0]!
     threeClips(a)
-    const top = a.historyStatus().cursor
-    expect(call(a, 'jump_to', { index: 0 }).ok).toBe(true)
+    const top = opIds(a).at(-1)!
+    expect(call(a, 'jump_to', { op_id: seed }).ok).toBe(true)
     expect(a.historyStatus().cursor).toBe(0)
     expect(layerCount(a)).toBe(0)
-    expect(call(a, 'jump_to', { index: top }).ok).toBe(true)
+    expect(call(a, 'jump_to', { op_id: top }).ok).toBe(true)
     expect(layerCount(a)).toBe(3)
   })
 
-  it('refuses an index outside the live stack, naming the bounds', () => {
+  it('refuses an op the stack does not hold, naming where they are listed', () => {
     const a = actorWithPool()
     threeClips(a)
-    expect(errorOf(call(a, 'jump_to', { index: 99 }))).toContain('outside')
+    expect(errorOf(call(a, 'jump_to', { op_id: '00000000-0000-7000-8000-00000000dead' }))).toContain('project://history')
     expect(layerCount(a)).toBe(3)
   })
 
-  it('is a revert path, so set_history_lock blocks it with the lock reason', () => {
+  it('is a revert path, so the history lock blocks it with the lock reason', () => {
     const a = actorWithPool()
+    const seed = opIds(a)[0]!
     threeClips(a)
-    expect(call(a, 'set_history_lock', { locked: true, reason: 'mid-batch' }).ok).toBe(true)
-    expect(call(a, 'jump_to', { index: 0 }).ok).toBe(false)
+    a.lockHistory('mid-batch')
+    expect(errorOf(call(a, 'jump_to', { op_id: seed }))).toContain('mid-batch')
     expect(layerCount(a)).toBe(3)
-    expect(call(a, 'set_history_lock', { locked: false }).ok).toBe(true)
-    expect(call(a, 'jump_to', { index: 0 }).ok).toBe(true)
+    a.unlockHistory()
+    expect(call(a, 'jump_to', { op_id: seed }).ok).toBe(true)
   })
 })
 
-describe('delete_checkpoint', () => {
-  it('drops the restore point and leaves the edits it marked in place', () => {
-    const a = actorWithPool()
-    threeClips(a)
-    const cpId = id(call(a, 'create_checkpoint', { label: 'after three' }), 'checkpoint_id')
-    expect(json<unknown[]>(call(a, 'list_checkpoints')).length).toBe(1)
-    expect(call(a, 'delete_checkpoint', { checkpoint_id: cpId }).ok).toBe(true)
-    expect(json<unknown[]>(call(a, 'list_checkpoints'))).toEqual([])
-    expect(layerCount(a)).toBe(3)
-  })
-
-  it('refuses an id no checkpoint holds', () => {
-    const a = actorWithPool()
-    expect(call(a, 'delete_checkpoint', { checkpoint_id: '00000000-0000-7000-8000-00000000dead' }).ok).toBe(false)
-  })
-
-  it('is NOT blocked by set_history_lock — forgetting a restore point reverts nothing', () => {
-    const a = actorWithPool()
-    threeClips(a)
-    const cpId = id(call(a, 'create_checkpoint', { label: 'pinned' }), 'checkpoint_id')
-    expect(call(a, 'set_history_lock', { locked: true, reason: 'mid-batch' }).ok).toBe(true)
-    expect(call(a, 'restore_checkpoint', { checkpoint_id: cpId }).ok).toBe(false)
-    expect(call(a, 'delete_checkpoint', { checkpoint_id: cpId }).ok).toBe(true)
-  })
-})
-
-describe('dry_run over the new creation ops', () => {
-  it('rehearses a text and an audio layer without committing either', () => {
-    const a = actorWithPool()
-    const r = json<{ results: Array<{ index: number; status: string }> }>(call(a, 'dry_run', { operations: [
-      { kind: 'add_text_layer', track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: 'Title' },
-      { kind: 'add_audio_layer', track_id: bRoll(a), media_id: AUDIO, src_in_us: 0, src_out_us: 1_000_000, t_start_us: 0, t_end_us: 1_000_000, role: 'sfx' },
-    ] }))
-    expect(r.results.map((x) => x.status)).toEqual(['ok', 'ok'])
-    expect(layerCount(a)).toBe(0)
-  })
-
-  it('predicts the overlap a real add would hit', () => {
-    const a = actorWithPool()
-    threeClips(a)
-    const r = json<{ results: Array<{ status: string }>; halted_at: number | null }>(call(a, 'dry_run', { operations: [
-      { kind: 'add_text_layer', track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: 'collides' },
-    ] }))
-    expect(r.results[0].status).toBe('error')
-    expect(layerCount(a)).toBe(3)
-  })
-
-  it('refuses the batch when add_video_layer names audio-only media', () => {
-    const a = actorWithPool()
-    expect(errorOf(call(a, 'dry_run', { operations: [
-      { kind: 'add_video_layer', track_id: aRoll(a), media_id: AUDIO, src_in_us: 0, src_out_us: 1_000_000, t_start_us: 0, t_end_us: 1_000_000 },
-    ] }))).toContain('add_audio_layer')
+describe('checkpoints over MCP', () => {
+  it('create and restore only: listing is project://history, deleting is the History panel', () => {
+    for (const gone of ['list_checkpoints', 'delete_checkpoint', 'set_history_lock', 'dry_run']) expect(MCP_TOOL_DEFS.some((d) => d.name === gone), gone).toBe(false)
   })
 })

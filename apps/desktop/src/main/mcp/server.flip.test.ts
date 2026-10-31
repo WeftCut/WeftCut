@@ -165,9 +165,9 @@ describe('handleCallTool flip routing', () => {
   it('begins work through the session service when the host provides it', async () => {
     const ts = tsHostStub()
     const begin = vi.fn(() => ({ id: 'session' }))
-    ;(ts as any).agent = { begin }
+    ;(ts as any).agent = { begin, snapshot: () => ({ session: null, sessions: [] }), locked: () => true }
     await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'begin_agent_session', { reason: 'cleanup' })
-    expect(begin).toHaveBeenCalledWith('cleanup')
+    expect(begin).toHaveBeenCalledWith('cleanup', { lock: undefined, force: false })
   })
   // ADR 0036: transcribe_clip selects by user preference THEN availability.
   // The host injects the stored preferred engine as the SOFT `preferred_backend`

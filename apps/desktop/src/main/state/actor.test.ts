@@ -67,22 +67,24 @@ describe('actor commit pipeline', () => {
     expect(events.length).toBe(1)
   })
 
-  it('dry_run applies+validates each op without committing, halting at the first error', () => {
-    const { actor, aRoll } = fresh()
-    const out = actor.dryRun([
-      { kind: 'AddLayer', track_id: aRoll, params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), t_start_us: 0, t_end_us: 1_000_000 },
-      { kind: 'AddLayer', track_id: aRoll, params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), t_start_us: 500_000, t_end_us: 1_500_000 },
-    ])
-    expect(out[0].ok).toBe(true)
-    expect(out[1].ok).toBe(false)
-    expect(root(actor.snapshot()).tracks[0].layers).toHaveLength(0) // never committed
-  })
-
   it('lock blocks undo with HistoryLocked', () => {
     const { actor, aRoll } = fresh()
     actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     actor.lockHistory('agent')
     expect(actor.dispatch('undo', {})).toEqual({ ok: false, error: { error: 'HistoryLocked', reason: 'agent' } })
+  })
+
+  it("the lock's holder may still revert: holderMay decides per call", () => {
+    const { actor, aRoll } = fresh()
+    actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 1_000_000, t_end_us: 2_000_000 })
+    let holder = true
+    actor.lockHistory('agent', () => holder)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    holder = false
+    expect(actor.dispatch('undo', {})).toEqual({ ok: false, error: { error: 'HistoryLocked', reason: 'agent' } })
+    actor.unlockHistory()
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
   })
 })
 
@@ -926,20 +928,6 @@ describe('dispatch: transitions', () => {
     const { actor } = withCrossfade()
     const r = actor.dispatch('update_transition', { transition: '00000000-0000-0000-0000-000000000000', duration_us: 500_000 })
     expect([errOf(r).error]).toEqual(['TransitionNotFound'])
-  })
-
-  // ── dryRun ↔ commit alignment ──
-  it('dryRun runs reconcile like commit: a trim over a transition edge predicts succeed-with-drop, not ValidationFailed', () => {
-    // a2 sits at [1M,3M] (overlap add); pulling its In edge to 2.5M — past
-    // a1's end — collapses the overlap to 0 ≠ duration 1M, so reconcile drops
-    // the transition.
-    const { actor, a2 } = withCrossfade()
-    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 2_500_000, escape_link: false }])
-    expect(out[0].ok, 'dry-run must match the real succeed-with-drop outcome').toBe(true)
-    expect(root(actor.snapshot()).transitions).toHaveLength(1) // dry-run committed nothing
-    // parity: the real command also succeeds and drops the transition
-    expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 2_500_000 }).ok).toBe(true)
-    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 })
 

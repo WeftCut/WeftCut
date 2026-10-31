@@ -221,7 +221,7 @@ describe('level follows the tool route', () => {
 
   it('a read-shaped tool on the ts route still logs at Info — routing decides, not write-ness', async () => {
     const { entries, deps } = collector()
-    await decoratedCallTool(deps)('list_checkpoints')
+    await decoratedCallTool(deps)('export_captions', { format: 'srt' })
     expect(entries[0].level).toBe('info')
   })
 
@@ -405,10 +405,10 @@ describe('a mutation row reads the way the history panel does', () => {
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
     await call('add_color_layer', {}) // refused before any commit
-    await call('list_checkpoints') // a read that happens to route 'ts'
+    await call('export_captions', { format: 'srt' }) // a read that happens to route 'ts'
     expect(entries.map((e) => [e.level, e.message])).toEqual([
       ['error', 'MCP: add_color_layer'],
-      ['info', 'MCP: list_checkpoints'],
+      ['info', 'MCP: export_captions'],
     ])
   })
 })

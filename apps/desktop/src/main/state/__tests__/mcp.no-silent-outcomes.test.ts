@@ -295,7 +295,7 @@ const CASES: Record<string, Case> = {
     end_t_us: lit(6 * S), anchor_layer_id: val((i) => i.vl, { with: () => ({ t_us: 3 * S }) }),
     composition_id: val((i) => i.groupComp, { with: () => ({ t_us: S }) }),
   } },
-  set_history_lock: { base: () => ({ locked: true }), values: { reason: lit('cutting') } },
+  begin_agent_session: { base: () => ({ reason: 'cutting' }), values: { lock: lit(false) } },
   set_keyframe: { base: (i) => ({ layer_id: i.x, param_key: 'opacity', t_us: 500_000, value: 0.25 }), values: { interp: lit({ kind: 'Hold' }) } },
   update_keyframe: { base: (i) => ({ layer_id: i.x, param_key: 'opacity', keyframe_id: i.k0 }), values: {
     t_us: lit(500_000), easing: lit({ kind: 'Hold' }), out: lit({ x: 0.3, y: 0.1 }), continuity: lit('Smooth'),
@@ -328,7 +328,7 @@ const EXCEPTIONS: Record<string, string> = {
   start_export: 'its fields shape an asynchronous job that needs the renderer (exportJobs.test.ts; the pre-reservation refusals in this file)',
   retry_export: 'needs a job awaiting finalization retry (exportJobs.test.ts)',
   create_project: 'replaces the open workspace (projectTools / workspace-orchestrator tests)',
-  end_agent_session: 'force only acts on a session another connection holds (server.session.test.ts)',
+  'begin_agent_session.force': 'force only acts on a session another connection holds (server.session.test.ts)',
   'set_marker_anchor.layer_id': 'the null arm is probed (it detaches); a value re-ties, which the base call already does',
 }
 

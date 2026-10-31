@@ -102,18 +102,20 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   the status log.
 - No edit locks or per-agent state; a conflicting commit fails its invariants
   and the agent re-reads and retries.
-- `set_history_lock` is the cooperative pen: while held, every revert path
-  (`undo`, `redo`, `jump_to`, `restore_checkpoint`) from any source fails with
-  `HistoryLocked` (`invalid_request`), which names the holder and tells any
-  other connection to wait or ask the user; only the holder is offered the
-  unlock. It gates reverting only; edits still commit and record
-  (`features.md#undo-stack-scope`).
+- The work session owns the history lock (`begin_agent_session`, `lock: true`
+  by default). While it is held, every revert path (`undo`, `redo`, `jump_to`,
+  `restore_checkpoint`, Revert all) from any other source fails with
+  `HistoryLocked` (`invalid_request`), which names the holder and tells the
+  caller to wait or ask the user. The owning connection's own reverts pass, so
+  an agent undoes its own mistake without unlocking. The lock gates reverting
+  only; edits still commit and record (`features.md#undo-stack-scope`). The
+  session's end, its connection closing and the Agent panel's Unlock release it.
 - A work session belongs to a connection, and a connection can vanish without
   a `DELETE`. The host closes a session whose client is gone (its standalone
   SSE stream closed for 90 s, or no request for 30 min when it never opened
   one — `REAPER_DEFAULTS` in `main/mcp/index.ts`); the shim terminates its app
-  session when stdin closes; `end_agent_session { force: true }` is the
-  takeover. `AgentSessionBusy` / `AgentSessionOwnerMismatch`
+  session when stdin closes; `begin_agent_session { force: true }` is the
+  takeover (it ends the stale session and begins the caller's). `AgentSessionBusy` / `AgentSessionOwnerMismatch`
   (`invalid_request`) carry the `holder`, also visible in `project://session`.
 - `transcribe_clip` and `describe_clip` are clip-compute jobs (ADR 0121,
   `main/compute/jobs.ts`): a call with a `progressToken` gets
@@ -263,8 +265,8 @@ as image blocks), through the same function, so the two never disagree.
 
 **`project://history` positions.** `ops` is a window (the last 100 of a
 200-entry cap) and `cursor` is an absolute stack index. `window_start` is the
-absolute index of `ops[0]` — the only index space `jump_to` accepts. `evicted`
-counts entries dropped off the front at capacity (the Initial entry included).
+absolute index of `ops[0]`; `jump_to` takes an op's `op_id`, which no eviction
+shifts. `evicted` counts entries dropped off the front at capacity (the Initial entry included).
 Only `window_start === 0 && evicted === 0` means `ops[0]` is the project's
 start. Each op carries `summary`, `label_key`/`label_args`, `affected` and
 `entity_labels` (resolved against whichever snapshot still holds each ref, so
@@ -526,25 +528,34 @@ annotated destructive), `delete_motif`, and the transfer tools
 ### Workflow / safety
 
 - `ping` — liveness; app-scoped, so it separates "host down" from "refused".
-- `create_checkpoint`, `list_checkpoints`, `restore_checkpoint` (clears redo),
-  `delete_checkpoint` (not blocked by the history lock — forgetting a restore
-  point reverts nothing).
-- `undo` / `redo` answer the stepped-over op as a history row. `jump_to` takes
-  an absolute history index.
-- `set_history_lock` — locking needs a `reason` (shown to the user in place of
-  undo); unlocking refuses one.
-- `begin_agent_session` — one Pre-agent checkpoint and one switch to the agent
-  view; one active session per project; a repeat from the same connection
-  returns it, another connection gets `AgentSessionBusy`.
-- `end_agent_session` — ends the caller's session and releases its lock;
-  another connection needs `force: true`. When the root's audit is not fresh
-  the owner's end runs `check_composition` first and is held once on `hard` or
-  `warning` findings (`{ ended: null, held: "audit", … }`); ending again with no
-  edit between ends it. Reports `audit` and `tacks_to_review`. Ending changes
-  no view and cancels nothing.
-- `dry_run` — applies a batch to a clone, validating after each op, halting at
-  the first error; supported ops are listed in its schema (`delete_layers` as a
-  lift only).
+- `begin_agent_session { reason, lock?, force? }` — a batch the user agreed to:
+  one Pre-agent checkpoint, the review baseline pinned to it, one switch to the
+  agent view and, unless `lock: false`, the history lock with `reason` shown in
+  place of undo. One active session per project. A repeat from the same
+  connection returns it and changes the lock only when `lock` is passed, so a
+  repeat never undoes the user's Unlock (idempotent); another connection gets
+  `AgentSessionBusy`, or with `force: true` ends that session (`end_reason:
+  "forced"`, answered as `taken_over`) and begins its own. Answers the session
+  with `locked`.
+- `end_agent_session` — ends the caller's session and releases its lock; another
+  connection gets `AgentSessionOwnerMismatch`. When the root's audit is not
+  fresh the owner's end runs `check_composition` first and is held once on
+  `hard` or `warning` findings (`{ ended: false, held: "audit", … }`); ending
+  again with no edit between ends it. Reports `ended` (the session, null with
+  none), `audit` and `tacks_to_review`. Ending changes no view and cancels
+  nothing.
+- `undo` / `redo` answer the stepped-over op as a history row. History is
+  shared, so `undo` reverts the newest edit by anyone: `undone.actor` says whose.
+- `jump_to { op_id }` — to the state right after an op of `project://history`.
+  An op id survives the cap's front eviction; an index would shift under it.
+- `create_checkpoint` — a named restore point for this project opening only:
+  opening another project or quitting drops it. `restore_checkpoint` records the
+  restore (clears redo). `project://history` lists checkpoints; deleting one is
+  the History panel's.
+- Siblings: `create_checkpoint` vs `begin_agent_session` — begin already makes a
+  checkpoint, so a separate one is a restore point the user names.
+  `restore_checkpoint` vs `jump_to` — a named state that survives eviction vs a
+  row of the stack.
 
 ### Tacks
 
@@ -661,8 +672,8 @@ Each closes with the missing-key recovery hint.
   agent view once. The main-owned `AgentActivityService`
   (`main/agent/activity.ts`) holds one work session per project opening, keyed
   by the initiating MCP connection.
-- A session ends by `end_agent_session`, a local end, or a definite transport
-  close, releasing only its own undo lock; the user has a separate unlock.
+- A session ends by `end_agent_session`, a local end, a takeover or a definite
+  transport close, releasing its undo lock; the user has a separate Unlock.
   There is no idle timeout. Running calls keep their attribution
   (`AsyncLocalStorage` carries call identity) and outcome.
 - Activity is a structured stream separate from diagnostic logs: history ids,

@@ -22,9 +22,8 @@ export const RETIRED_MCP_TOOL_NAMES: Readonly<Record<string, string>> = {
   // app) when it is in fact a sibling of `add_video_layer` (which adds a clip to
   // the timeline).
   add_motif: 'add_motif_layer',
-  // A bare noun in a family whose other three members are verb-first
-  // (`list_checkpoints`, `restore_checkpoint`, `delete_checkpoint`), and the
-  // name the production op already carried.
+  // A bare noun in a family whose other members were verb-first
+  // (`restore_checkpoint`), and the name the production op already carried.
   checkpoint: 'create_checkpoint',
   // Partial-patch semantics, which `update_*` names on this surface and `set_*`
   // does not — `set_*` replaces one named value.

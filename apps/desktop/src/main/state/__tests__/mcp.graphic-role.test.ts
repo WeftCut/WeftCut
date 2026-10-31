@@ -106,17 +106,6 @@ describe('graphic_role at creation', () => {
     expect(video).not.toHaveProperty('graphic_role')
   })
 
-  it('dry_run rehearses the role the wet call would store', () => {
-    const a = actor()
-    const r = record(call(a, 'dry_run', { operations: [
-      { kind: 'add_text_layer', track_id: bRoll(a), content: 'A', t_start_us: 0, t_end_us: 1_000_000, graphic_role: 'credit' },
-      { kind: 'add_video_layer', track_id: bRoll(a), media_id: IMAGE, t_start_us: 2_000_000, t_end_us: 3_000_000, graphic_role: 'plate' },
-    ] }))
-    expect(r.halted_at).toBeNull()
-    expect(refusal(call(a, 'dry_run', { operations: [
-      { kind: 'add_text_layer', track_id: bRoll(a), content: 'A', t_start_us: 0, t_end_us: 1_000_000, graphic_role: 'Bad' },
-    ] }))).toMatch(/graphic_role/)
-  })
 })
 
 describe('graphic_role through update_layer_params', () => {

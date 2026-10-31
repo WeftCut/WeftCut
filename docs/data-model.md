@@ -539,7 +539,8 @@ sharing), capped at 200 entries, plus named checkpoints and an optional lock.
 - Undo/redo move the cursor and broadcast the snapshot there.
 - Checkpoints are in-memory snapshots that survive stack eviction; they are not
   written to `project.json`. Restoring one records a new entry, which drops redo.
-- While the lock is set (`set_history_lock`), undo / redo / restore are refused.
+- While a work session holds the lock, undo / redo / jump / restore are refused
+  to everyone but that session's connection.
 - **Unrecorded mutation classes** patch every snapshot and checkpoint in place
   (`replace*Everywhere` in `history.ts`), broadcast a non-recorded change and
   leave the cursor: unreferenced media import/removal, derivative and path
@@ -632,7 +633,6 @@ Command contracts not stated elsewhere:
 | `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects, Normal) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
 | `set_composition(patch, composition_id?)` | never recorded; lattice fields cascade; `fps` behind the lock |
 | `restore_checkpoint` | records a new entry (clears redo) |
-| `dry_run(operations)` | runs the batch on a clone, stops at the first error, commits nothing |
 | `replace_state(snapshot)` | project open / new; full validation; resets history |
 
 Agent keyframe tools (`get_param_track`, `set_keyframe`, `update_keyframe`,

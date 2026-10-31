@@ -28,9 +28,9 @@ History lives in `apps/desktop/src/main/state/history.ts`; per-op routing in
 | `set_composition` (any field, incl. `fps`, size, `duration_us`, `duration_pinned`), `fit_composition_to_layers` | **no** — project setup; the patch runs as a transform per snapshot (`History.replaceCompositionEverywhere`), so each snapshot refits/re-snaps against its own content |
 | passive duration shrink on delete / inward trim (unpinned) | rides the edit that caused it |
 | `replace_state` (open / new project) | no — resets history to one entry, drops checkpoints and the lock |
-| `undo`, `redo`, `jump_to { index }` | cursor-only |
+| `undo`, `redo`, `jump_to` | cursor-only |
 | `restore_checkpoint`, Revert all (review baseline) | yes |
-| `create_checkpoint`, `delete_checkpoint` | no entry and no `project:changed` broadcast; a surface listing checkpoints refetches itself (the History panel does) |
+| `create_checkpoint`, checkpoint delete (History panel) | no entry and no `project:changed` broadcast; a surface listing checkpoints refetches itself (the History panel does) |
 
 Because canvas changes cannot be undone, Settings → Project → Canvas opens with
 **Lock canvas settings** on; resolution and rate are inert until it is turned off,
@@ -46,12 +46,13 @@ project. The settings panel disables the control from `composition.fps_locked`.
 
 **User vs agent.** Both write one `History`; entries carry `Actor::User` /
 `Actor::Agent { client }` for the History panel, and Ctrl-Z walks across both.
-While `set_history_lock { locked: true, reason }` is held, every revert path —
-`undo`, `redo`, `jump_to`, `restore_checkpoint`, Revert all — fails with
-`HistoryLocked`; edits still record, and checkpoint create/delete is not gated.
-The lock is released by `set_history_lock { locked: false }` (any connection),
-the Agent panel's Unlock, the owning connection disconnecting or its work
-session ending, or a project swap.
+A work session holds the history lock (`begin_agent_session`, unless
+`lock: false`): every revert path — `undo`, `redo`, `jump_to`,
+`restore_checkpoint`, Revert all — from anyone but the session's own connection
+fails with `HistoryLocked`; edits still record, and checkpoint create/delete is
+not gated. The lock is released by the session ending (`end_agent_session`, a
+takeover, its connection disconnecting, the panel's End), the Agent panel's
+Unlock, or a project swap.
 
 ## Timeline selection
 

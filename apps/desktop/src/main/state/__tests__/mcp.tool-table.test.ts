@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS } from '../mcp-commands'
+import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS, mapCommandError } from '../mcp-commands'
 import { MCP_RESULT_READERS } from '../mcp-results'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
@@ -20,7 +20,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'add_transition', 'update_transition', 'delete_transition',
   'update_composition', 'set_project_settings',
   'update_marker', 'delete_marker', 'set_marker_anchor',
-  'delete_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
+  'delete_media', 'undo', 'redo', 'jump_to',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
@@ -28,11 +28,10 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
   'add_motif_layer',
-  'set_history_lock',
   'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
   'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
   'update_link', 'read_project',
-  'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project',
+  'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project',
   'create_tacks', 'update_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
   'apply_subtitles', 'auto_split_by_shot', 'remove_pauses',
 ])
@@ -66,7 +65,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(37)
+    expect(dedicated.length).toBe(34)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -74,7 +73,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(53)
+    expect(table.length).toBe(52)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -84,27 +83,14 @@ describe('MCP tool table projections', () => {
   // the prose docs. Both must agree. When `jump_to` joined the revert paths both docs were
   // updated and this drifted, leaving the agent told it could still be reverted
   // by the one path the panel makes easiest.
-  const REVERT_PATHS = 'undo / redo / jump_to / restore_checkpoint'
-  it('set_history_lock ENUMERATES every revert path the lock actually rejects', () => {
-    const def = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!
-    // The enumeration itself, not just a mention somewhere in the prose: an
-    // agent reads the list in the parentheses to decide what is still available.
-    expect(def.description).toContain(REVERT_PATHS)
-    // …and it must not re-tell the myth docs/mcp.md used to: the lock rejects
-    // reverts, it never changes what RECORDS (docs/features.md#undo-stack-scope).
-    expect(def.description).toMatch(/never affects what records|does not fold/i)
-  })
-
-  // `reason` is what the user is shown in place of undo, so locking without one
-  // is refused rather than badged blank; unlocking WITH one is refused too, so a
-  // caller cannot believe it left an explanation behind.
-  it('set_history_lock gates `reason` on the direction of the write', () => {
-    const parse = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!.parseDedicated!
-    expect(parse({ locked: true, reason: 'batch' })).toEqual({ locked: true, reason: 'batch' })
-    expect(parse({ locked: false })).toEqual({ locked: false, reason: null })
-    expect(() => parse({ locked: true })).toThrow(/reason/)
-    expect(() => parse({ locked: true, reason: '   ' })).toThrow(/reason/)
-    expect(() => parse({ locked: false, reason: 'done' })).toThrow(/reason/)
+  const REVERT_PATHS = 'undo, redo, jump_to and restore_checkpoint'
+  it('the session lock and its refusal ENUMERATE every revert path the lock gates', () => {
+    // begin_agent_session: what the owner keeps under its own lock.
+    expect(MCP_TOOL_DEFS.find((d) => d.name === 'begin_agent_session')!.description).toContain(REVERT_PATHS)
+    // HistoryLocked: what everyone else is refused — and that edits still record.
+    const refusal = mapCommandError({ error: 'HistoryLocked', reason: 'batch' }).message
+    expect(refusal).toContain(REVERT_PATHS)
+    expect(refusal).toMatch(/edits still record/)
   })
 
   it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
@@ -482,10 +468,6 @@ describe('dedicated arms reject malformed scalars before commit', () => {
   })
   it('set_keyframe rejects non-string param_key', () => {
     const r = mk().mcpCall('set_keyframe', JSON.stringify({ layer_id: '00000000-0000-7000-8000-000000000001', param_key: 42, t_us: 0, value: 1 }))
-    expect(r.ok).toBe(false)
-  })
-  it('dry_run rejects non-array operations', () => {
-    const r = mk().mcpCall('dry_run', JSON.stringify({ operations: 'nope' }))
     expect(r.ok).toBe(false)
   })
 })

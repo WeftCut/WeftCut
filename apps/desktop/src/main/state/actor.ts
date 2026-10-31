@@ -25,7 +25,7 @@ import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePl
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
 import { applyRestackLayer, applyRestackLayerAgainstTrack, type RestackPosition } from './mutations/restack'
-import { applyTrimLayer, type LayerEdge } from './mutations/trim'
+import { applyTrimLayer } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { withTrackCleanup } from './mutations/trackCleanup'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
@@ -54,7 +54,7 @@ import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, checkEffectParamValues, parseLayerPatch, parseLayerParamsPatch, parseGraphicRoleOpt, GRAPHIC_ROLE_VIDEO_REFUSAL, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseBoolOpt, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, GRAPHIC_ROLE_VIDEO_REFUSAL, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
@@ -122,25 +122,6 @@ function checkEffectKeyframeValues(p: Project, layerId: Uuid, paramKey: string, 
   if (kind) checkEffectParamValues(kind, eff[1], values, field)
 }
 
-export type DryRunOp =
-  | { kind: 'AddLayer'; track_id: Uuid; params: LayerParams; t_start_us: number; t_end_us: number }
-  | { kind: 'DeleteLayers'; ids: Uuid[] }
-  | { kind: 'UpdateLayer'; id: Uuid; patch: LayerPatch }
-  | { kind: 'UpdateLayerParams'; id: Uuid; patch: LayerParamsPatch }
-  | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_link: boolean }
-  | { kind: 'SplitLayer'; id: Uuid; at_t_us: number; escape_link: boolean }
-  | { kind: 'TrimLayer'; id: Uuid; edge: LayerEdge; new_t_us: number; escape_link: boolean }
-  // `transition_kind`, not `kind`: the discriminant owns that name.
-  | { kind: 'AddTransition'; from: Uuid; to: Uuid; duration_us: number; transition_kind: TransitionKind; placement: 'overlap' | 'extend' }
-export type DryRunOutput =
-  | { kind: 'AddLayer'; layer_id: Uuid }
-  | { kind: 'SplitLayer'; left_id: Uuid; right_id: Uuid }
-  // The overlap add's side effects are the payload: `bounces` predicts sibling
-  // lane moves and lane spawns exactly as the wet command would perform (and
-  // log) them — same code path, produce-and-discard.
-  | { kind: 'AddTransition'; transition_id: Uuid; bounces: TransitionBounce[] }
-  | { kind: 'Void' }
-
 /** Status-log row payload — structurally matches TsActorHostDeps.emitLog so the
  *  host passes its LogBus seam (backend `log_emit`) straight through. Schema:
  *  docs/status-log.md. */
@@ -155,9 +136,9 @@ export interface ActorLogEntry {
 export interface ActorOptions {
   assertWritable?: () => void
   initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog
-  /** Live app preference, sampled for each edit and dry-run; never part of history. */
+  /** Live app preference, sampled for each edit; never part of history. */
   autoDeleteEmptyTracks?: () => boolean
-  /** Live default for authored text, shared by UI, MCP and rehearsals. */
+  /** Live default for authored text, shared by UI and MCP. */
   defaultTextFont?: () => string | undefined
   /** The project's merged style tokens (`project://taste`), which new layers
    *  are born in. Absent (tests, a bare actor): today's defaults. */
@@ -189,7 +170,10 @@ export interface ActorHandle {
    *  consumer with a different need). Delegates to History so the number is never
    *  restated at a call site. */
   historyCapacity(): number
-  lockHistory(reason: string): void
+  /** Block every revert path (undo, redo, jump_to, restore, Revert all) with
+   *  `HistoryLocked { reason }` — except for a call `holderMay` answers true
+   *  for: a work session's own reverts stay open under the lock it took. */
+  lockHistory(reason: string, holderMay?: () => boolean): void
   unlockHistory(): void
   /** Cursor-only random access; rejects under the revert lock. See jumpTo. */
   jumpTo(index: number): void
@@ -220,7 +204,6 @@ export interface ActorHandle {
    *  re-pin, approval, attribution, reset) — synchronously, possibly inside a
    *  commit; a consumer should defer its own work. */
   subscribeReview(cb: (revision: number) => void): () => void
-  dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   /** Everything the call records is stamped with the agent `client` names
    *  (normalized; the fallback when absent), never the instance actor. */
   mcpCall(name: string, argsJson: string, client?: string): McpCallResult
@@ -652,9 +635,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
 
   // ── meta ──
+  /** Who may still revert under the history lock (`lockHistory`). */
+  let lockHolderMay: (() => boolean) | null = null
+  /** The lock's reason when it blocks the call in flight, else null: the
+   *  holder's own reverts pass. */
+  function revertBlockedBy(): string | null {
+    const reason = history.lockReason()
+    return reason !== null && lockHolderMay?.() !== true ? reason : null
+  }
   function undo(): void {
     opts.assertWritable?.()
-    const reason = history.lockReason()
+    const reason = revertBlockedBy()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason })
     const snap = history.undo()
     if (snap === null) throw new CommandFailure({ error: 'NothingToUndo' })
@@ -662,7 +653,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   function redo(): void {
     opts.assertWritable?.()
-    const reason = history.lockReason()
+    const reason = revertBlockedBy()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason })
     const snap = history.redo()
     if (snap === null) throw new CommandFailure({ error: 'NothingToRedo' })
@@ -680,12 +671,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  costs one no-op refetch and keeps the arm free of a second no-op branch. */
   function jumpTo(index: number): void {
     opts.assertWritable?.()
-    const reason = history.lockReason()
+    const reason = revertBlockedBy()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
     const snap = history.jumpTo(index)
     if (snap === null) // 0 ids
       throw new CommandFailure({ error: 'InvalidArgument', field: 'index', detail: `history index ${index} outside [0, ${history.len()})` })
     broadcastUnrecorded('Jump to history entry', snap)
+  }
+  /** `jumpTo` by the op's id, which no later commit shifts: MCP's `jump_to`.
+   *  An id the stack no longer holds (evicted, truncated, never there) is
+   *  refused before anything moves. */
+  function jumpToOp(opId: Uuid): void {
+    const index = history.indexOf(opId)
+    if (index === null) throw new CommandFailure({ error: 'InvalidArgument', field: 'op_id', detail: `no history op ${opId}: project://history lists the ops it holds (the oldest are evicted past the cap; a redo tail is dropped by the next edit)` })
+    jumpTo(index)
   }
 
   // ── checkpoints — used by the MCP checkpoint + begin_agent_session tools.
@@ -698,7 +697,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   function restoreCheckpoint(id: Uuid): void {
     opts.assertWritable?.()
-    const reason = history.lockReason()
+    const reason = revertBlockedBy()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
     const opId = idGen() // entry op_id — minted FIRST
@@ -707,7 +706,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   function revertReviewAll(): void {
     opts.assertWritable?.()
-    const reason = history.lockReason()
+    const reason = revertBlockedBy()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
     if (history.reviewBaseline() === null) throw new CommandFailure({ error: 'InvalidArgument', field: 'review', detail: 'no review baseline' }) // 0 ids
     const opId = idGen()
@@ -728,8 +727,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (!history.deleteCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids
   }
   function listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }> {
-    // list_checkpoints serializes history_view().checkpoints, which INCLUDES actor
-    // — only the snapshot is dropped. The MCP path stores the agent actor.
+    // The rows of history_view().checkpoints, actor INCLUDED — only the
+    // snapshot is dropped. The MCP path stores the agent actor.
     return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
   }
 
@@ -918,54 +917,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     opts.assertWritable?.()
     runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
     history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
+    lockHolderMay = null
     broadcastUnrecorded('Replaced project state', current(), { kind: 'Coarse' }, undefined, true)  // +1 id (the event op_id)
-  }
-
-  function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
-    const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
-    let scratch = current()
-    for (const op of ops) {
-      try {
-        let value: DryRunOutput = { kind: 'Void' }
-        const next = withTrackCleanup(opts.autoDeleteEmptyTracks?.() ?? true, () => produce(scratch, (d) => {
-          switch (op.kind) {
-            case 'AddLayer': value = { kind: 'AddLayer', layer_id: applyAddLayer(d, idGen, op.track_id, op.params, op.t_start_us, op.t_end_us) }; break
-            case 'DeleteLayers':
-              // Validated once at the end, exactly as the real arm's single
-              // commit is — a rehearsal that checked between members would
-              // reject a set the wet call accepts.
-              requireSameComposition(d, op.ids)
-              for (const id of op.ids) applyDeleteLayer(d, id)
-              break
-            // The rehearsal is the agent's, so it runs under the MCP arms' rule
-            // for a time it sends: a start below 0 or a trim past the window is
-            // refused (`strict`) — exactly what the real call answers.
-            case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
-            case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
-            case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link, true); break
-            case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_link); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
-            case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_link, true); break
-            // The SAME apply the wet arm runs, so moves, bounces, spawns and
-            // refusals are predicted by one code path (bounces are primitives —
-            // safe to carry out of the discarded draft).
-            case 'AddTransition': { const r = applyAddTransition(d, idGen, op.from, op.to, op.duration_us, op.transition_kind, op.placement); value = { kind: 'AddTransition', transition_id: r.id, bounces: r.bounces }; break }
-          }
-          // Same point as commit(): after the recipe, before validate — so a
-          // dry-run of an edit that breaks a transition predicts the real
-          // succeed-with-drop outcome instead of a spurious ValidationFailed.
-          // Drop info is discarded: DryRunOutput has no vocabulary for it.
-          reconcileTransitions(d)
-        }))
-        assertLockedLayersUnchanged(scratch, next)
-        runValidate(next)
-        scratch = next
-        results.push({ ok: true, value })
-      } catch (e) {
-        if (e instanceof CommandFailure) { results.push({ ok: false, error: e.err }); break } // halt at first error
-        throw e
-      }
-    }
-    return results
   }
 
   // ── string dispatch — the op-name core that command(), mcpCall() and the unit
@@ -1201,13 +1154,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }
         case 'jump_to': jumpTo(parseNum(a.index, 'index')); return { ok: true, value: null }
+        case 'jump_to_op': jumpToOp(parseUuid(a.op_id, 'op_id')); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
         // The renderer's User-actor path: `checkpoint()` defaults cpActor to the
         // recording actor, `{kind:'User'}` on the production instance. The
         // agent's `create_checkpoint` is a same-named DEDICATED tool with its own
-        // arm in mcpCall's switch, which records as the calling agent;
-        // `delete_checkpoint` is table-exec and lands here, the actor being
-        // immaterial to a removal.
+        // arm in mcpCall's switch, which records as the calling agent.
+        // `delete_checkpoint` is the History panel's alone.
         case 'create_checkpoint': {
           const label = parseStr(a.label, 'label')
           if (label.trim() === '') throw new CommandFailure({ error: 'InvalidArgument', field: 'label', detail: 'label must be non-empty' }) // 0 ids
@@ -1814,86 +1767,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return given && typeof given === 'object' && !Array.isArray(given) ? { ...styled, ...(given as Record<string, unknown>) } : given ?? styled
   }
 
-  // spec_to_op — MCP OperationSpec (tagged "kind", snake_case) → DryRunOp.
-  function specToDryRunOp(spec: Record<string, unknown>): DryRunOp {
-    const kind = spec.kind as string
-    switch (kind) {
-      case 'add_color_layer':
-        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
-          params: colorParams(parseRgba(spec.color, 'color'), parseNumOpt(spec.width, 'width') ?? 1920, parseNumOpt(spec.height, 'height') ?? 1080),
-          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
-      case 'add_video_layer': {
-        const media = parseUuid(spec.media_id, 'media_id')
-        const srcIn = parseNumOpt(spec.src_in_us, 'src_in_us') ?? null
-        const srcOut = parseNumOpt(spec.src_out_us, 'src_out_us') ?? null
-        const kind = current().media_pool[media]?.kind
-        // The wet arm's order: an id that names nothing is MediaNotFound before
-        // any rule about what the media is.
-        if (kind === undefined) throw new McpArgError(mapCommandError({ error: 'MediaNotFound', media }).message, 'media_id')
-        // The wet arm's media-kind refusal, so a rehearsal predicts it instead
-        // of reporting a clip that the real call would reject. It throws rather
-        // than failing one op: the batch is being planned, and every later op
-        // was written expecting this layer to exist.
-        if (kind === 'Audio') throw new McpArgError(`media ${media} is audio-only — a visual layer over it draws nothing and the mixer does not read it; use add_audio_layer`, 'media_id')
-        if (kind === 'Subtitle') throw new McpArgError(`media ${media} is a subtitle document, not a picture; use apply_subtitles (not dry-runnable) or add_text_layer`, 'media_id')
-        // The wet arm's rule too: an Image takes no source window, a Video
-        // needs one.
-        if (kind === 'Image' && (srcIn !== null || srcOut !== null)) throw new McpArgError(IMAGE_SOURCE_WINDOW_REFUSAL(media), 'src_in_us')
-        if (kind !== 'Image' && (srcIn === null || srcOut === null)) throw new McpArgError(`src_in_us and src_out_us are required for Video media ${media}; only an Image may omit them`, 'src_in_us')
-        const role = parseGraphicRoleOpt(spec.graphic_role)
-        if (kind !== 'Image' && role != null) throw new McpArgError(GRAPHIC_ROLE_VIDEO_REFUSAL(media), 'graphic_role')
-        const params = kind === 'Image' ? imageOverlayParams(media, mediaExtent(current().media_pool[media]), role ?? null) : videoClipParams(media, srcIn as number, srcOut as number, mediaExtent(current().media_pool[media]))
-        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
-          params,
-          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
-      }
-      case 'add_audio_layer': {
-        const media = parseUuid(spec.media_id, 'media_id')
-        const item = current().media_pool[media]
-        if (item === undefined) throw new McpArgError(mapCommandError({ error: 'MediaNotFound', media }).message, 'media_id')
-        if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
-          throw new McpArgError(`media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play`, 'media_id')
-        const base = audioParams(media, parseNum(spec.src_in_us, 'src_in_us'), parseNum(spec.src_out_us, 'src_out_us'))
-        const params = spec.role === undefined || spec.role === null ? base : { ...base, role: parseRole(spec.role) as AudioRole }
-        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'), params,
-          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
-      }
-      // The canvas the title is centred on is the TRACK's composition; a bogus
-      // track id falls back to the root and is then refused by applyAddLayer
-      // with the TrackNotFound the wet call gives, so nothing is centred wrong.
-      case 'add_text_layer': {
-        const track = parseUuid(spec.track_id, 'track_id')
-        const comp = locateTrack(current(), track)?.comp ?? scopeComposition(current(), null)
-        return { kind: 'AddLayer', track_id: track,
-          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y, graphic_role: spec.graphic_role }, comp, opts.defaultTextFont?.(), opts.tasteTokens?.()),
-          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
-      }
-      case 'update_layer':
-        return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: parseLayerPatch(spec.patch) }
-      case 'update_layer_params':
-        return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: parseLayerParamsPatch(spec.patch) }
-      case 'move_layer':
-        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(spec.escape_link, 'escape_link', false) }
-      case 'split_layer':
-        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_link: parseBoolOpt(spec.escape_link, 'escape_link', false) }
-      case 'delete_layers': {
-        if (spec.ripple === true) throw new McpArgError('delete_layers with `ripple: true` is not dry-runnable in v1 — rehearse the lift, or run the ripple for real', 'ripple')
-        return { kind: 'DeleteLayers', ids: asArray(spec.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) }
-      }
-      case 'add_transition':
-        // Same gates as the wet tool's boundary: strict (kind, direction)
-        // pairing and the closed placement enum, so a dry-run's arg rejection
-        // matches the real call's. The transition kind rides as
-        // `transition_kind` — the OperationSpec's own `kind` names the op.
-        return { kind: 'AddTransition', from: parseUuid(spec.from_layer_id, 'from_layer_id'), to: parseUuid(spec.to_layer_id, 'to_layer_id'),
-          duration_us: parseNum(spec.duration_us, 'duration_us'),
-          transition_kind: parseTransitionKind(spec.transition_kind ?? 'Crossfade', spec.direction),
-          placement: parseTransitionPlacement(spec.placement) }
-      default:
-        throw new McpArgError(`unknown operation kind '${kind}'`)
-    }
-  }
-
   function mcpCall(name: string, argsJson: string, client?: string): McpCallResult {
     return recordingAs(mcpActor(client), () => mcpCallAsAgent(name, argsJson))
   }
@@ -2124,21 +1997,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applySplitLayerBatch(d, idGen, layer, p.at_t_us as number[], p.escape_link as boolean))
           return { ok: true, result: toolRecord(result) }
         }
-        // The reason's presence is gated in the parser (locking needs one,
-        // unlocking refuses one), so this arm reads `locked` and nothing else.
-        case 'set_history_lock': {
-          const p = mcpDef('set_history_lock').parseDedicated!(a)
-          if (p.locked as boolean) history.lock(p.reason as string)
-          else history.unlock()
-          return { ok: true, result: toolRecord({ locked: p.locked as boolean, reason: (p.reason as string | null) ?? null }) }
-        }
         case 'create_checkpoint': {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)
           const label = p.label as string
           if (label.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
           return { ok: true, result: toolRecord({ checkpoint_id: checkpoint(label), label }) }
         }
-        case 'list_checkpoints': { mcpDef('list_checkpoints').parseDedicated!(a); return { ok: true, result: toolJson(listCheckpoints()) } }
         // export_captions — the caption corpus of one composition (or one of its
         // caption lanes) as an SRT or WebVTT body: a read, nothing recorded.
         case 'export_captions': {
@@ -2389,19 +2253,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: false, error: { code: 'invalid_params', message: err instanceof Error ? err.message : String(err) } }
           }
         }
-        case 'dry_run': {
-          const p = mcpDef('dry_run').parseDedicated!(a)
-          const specs = p.operations as Array<Record<string, unknown>>
-          const ops: DryRunOp[] = []
-          for (let i = 0; i < specs.length; i++) {
-            try { ops.push(specToDryRunOp(specs[i])) }
-            catch (e) {
-              if (e instanceof McpArgError) return { ok: false, error: { code: 'invalid_params', message: `operations[${i}]: ${e.mcpMessage}` } }
-              throw e
-            }
-          }
-          return { ok: true, result: shapeDryRunResponse(dryRun(ops)) }
-        }
         case 'add_motif_layer': {
           // add_motif_layer MCP arm: pure TS, dedicated mcpCall.
           const p = mcpDef('add_motif_layer').parseDedicated!(a)
@@ -2466,8 +2317,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     historyStatus: () => history.status(),
     historyEffects: (ids) => history.effectStates(ids),
     historyCapacity: () => history.capacity(),
-    lockHistory: (r) => history.lock(r),
-    unlockHistory: () => history.unlock(),
+    lockHistory: (r, holderMay) => { history.lock(r); lockHolderMay = holderMay ?? null },
+    unlockHistory: () => { history.unlock(); lockHolderMay = null },
     jumpTo,
     checkpoint,
     restoreCheckpoint,
@@ -2480,7 +2331,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
     revertReviewAll,
     reviewOpDiff: (ids) => history.opDiff(ids),
     subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
-    dryRun,
     setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },
   }
 }

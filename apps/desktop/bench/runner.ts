@@ -94,7 +94,7 @@ const GATE_1_TIMETABLE = 'The brief looks right. Go on to the timetable, and sho
 /** Tools an agent may call before its plan is approved although they are not
  *  read-only: they open and close its work session and change nothing a
  *  viewer sees. */
-const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'set_history_lock', 'create_checkpoint'])
+const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'create_checkpoint'])
 
 /** The recipe's plan is a timetable: a markdown table whose first column is
  *  `Time`. The agent writes it into its message or a markdown file in its

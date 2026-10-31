@@ -58,7 +58,7 @@ describe('the read set', () => {
   // A name-shaped fixture the read set is pinned against: the tools this
   // pattern names must be exactly the annotated reads, so a read tool whose
   // name starts with a verb is caught HERE if its annotation is wrong.
-  const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/
+  const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|preview_)/
   // Reads whose names the pattern does not match — each one a review
   // decision, listed here so a stray annotation is still caught.
   const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition', 'render_frames']
@@ -66,7 +66,7 @@ describe('the read set', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
     expect(byAnnotation).toEqual(byRegex)
-    for (const n of ['read_project', 'dry_run', 'get_param_track', 'list_checkpoints', 'preview_motif', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
+    for (const n of ['read_project', 'get_param_track', 'preview_motif', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
   })
 
   it('every TS read tool commits nothing — the snapshot and the history are what they were', () => {
@@ -79,9 +79,7 @@ describe('the read set', () => {
     const argsFor: Record<string, Record<string, unknown>> = {
       get_frame_interpolation_capabilities: { layer_ids: [layerId], purpose: 'Preview' },
       read_project: { view: 'current' },
-      list_checkpoints: {},
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour
-      dry_run: { operations: [{ kind: 'add_color_layer', track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 2_000_000, t_end_us: 3_000_000 }] },
       export_captions: { format: 'srt' },
       check_composition: {},
     }
@@ -102,7 +100,7 @@ describe('the destructive set', () => {
   it('is every removal and revert, and no read', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
-      'delete_composition', 'delete_keyframe', 'delete_checkpoint', 'delete_motif', 'clear_keyframes',
+      'delete_composition', 'delete_keyframe', 'delete_motif', 'clear_keyframes',
       'ripple_delete_gap', 'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
       expect(destructive, n).toContain(n)
     }
@@ -164,15 +162,15 @@ describe('the wire and the activity service read the same fact', () => {
 describe('an unrecorded mutator says so', () => {
   it('in one word, at the end, on every tool whose write undo walks past', () => {
     const desc = (name: string): string => merged.find((t) => t.name === name)?.description ?? ''
-    for (const n of ['set_track_flags', 'create_checkpoint', 'delete_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
+    for (const n of ['set_track_flags', 'create_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
     for (const n of ['update_composition', 'set_project_settings', 'set_role_flags', 'delete_media', 'import_media']) expect(desc(n), n).toContain('Unrecorded')
     // The session tools write too — a view, a lock, a checkpoint pin — and undo
     // walks past all three.
-    for (const n of ['begin_agent_session', 'end_agent_session', 'set_history_lock']) expect(desc(n), n).toContain('Unrecorded')
+    for (const n of ['begin_agent_session', 'end_agent_session']) expect(desc(n), n).toContain('Unrecorded')
     // and a recorded edit does not carry the word
     for (const n of ['add_color_layer', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
   })
   it('ANN_READ is what the TS reads carry', () => {
-    for (const n of ['read_project', 'list_checkpoints', 'get_param_track', 'dry_run', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
+    for (const n of ['read_project', 'get_param_track', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
   })
 })

@@ -51,8 +51,8 @@ None of that rides on a stripped-down editor. Everything an agent can reach, you
 Copy the prompt in settings into your client, and your agent is holding the editor.
 
 - **It edits the project you are watching.** No import/export round trip, no separate headless copy.
-- **Every batch is reversible.** Agents checkpoint at logical boundaries, and each checkpoint is one click from being restored. The agent can also rehearse a whole multi-step edit against a throwaway clone first (`dry_run`) and find the collision before it touches your project.
-- **Multi-agent, with rules.** Sessions are per-connection. An agent that is mid-batch can `set_history_lock` so a stray Ctrl-Z doesn't land in the middle of its work — and the lock, plus the reason it gave, is shown to you.
+- **Every batch is reversible.** A work session begins with a checkpoint that is one click from being restored, and every edit the agent commits is a step of your undo history.
+- **Multi-agent, with rules.** Sessions are per-connection. A work session locks undo for everyone but its agent, so a stray Ctrl-Z doesn't land in the middle of its work — the lock and the reason it gave are shown to you, and Unlock is yours.
 
 ### Watch and review in Agent view
 

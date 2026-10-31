@@ -185,15 +185,6 @@ describe('an unknown media id is MediaNotFound before any other rule', () => {
     expect(layerCount(a)).toBe(0)
   })
 
-  it('dry_run predicts both refusals, before a batch is written expecting the layer', () => {
-    const a = actorWithPool()
-    for (const kind of ['add_video_layer', 'add_audio_layer']) {
-      const msg = refusal(call(a, 'dry_run', { operations: [
-        { kind, media_id: NOWHERE, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) },
-      ] }))
-      expect(msg, kind).toContain(`media ${NOWHERE} not found`)
-    }
-  })
 })
 
 describe('a collision names the layer that was already there', () => {

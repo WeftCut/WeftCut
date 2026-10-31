@@ -738,7 +738,7 @@ export function toolEmpty(): ToolResultJson { return { content: [] } }
 /** json results travel as a text block whose text is the SERIALIZED JSON with
  *  alpha-sorted keys (Rust serde_json preserve_order OFF → BTreeMap). Uses
  *  sortKeys (NOT canonicalize): wall-clock fields must stay real here — Rust
- *  returned real DateTime<Utc> (e.g. list_checkpoints.created_at), so the
+ *  returned real DateTime<Utc> (e.g. a checkpoint's created_at), so the
  *  harness sentinel must not leak to MCP agents. The differential gate compares
  *  via its own canonicalize() of both sides, so this stays green. */
 export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }] } }
@@ -768,65 +768,6 @@ export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unk
       }
     }),
   }
-}
-
-/** A failed dry-run op's `error` text. The grid rules carry the corrected value
- *  so an agent planning a batch can fix the op without a second round trip, and
- *  the ripple and transition refusals read as one line of prose; everything else
- *  takes the mapper's own sentence, so a rehearsal names the ids and the remedy
- *  exactly as the wet call would. */
-export function dryRunErrorString(e: CommandError): string {
-  if (e.error === 'InvalidArgument') return `${e.field}: ${e.detail}`
-  if (e.error === 'Backend') return e.detail
-  if (e.error === 'ValidationFailed') {
-    const d = e.detail
-    // The two grid rules carry the corrected value, so say it even in dry-run prose:
-    // an agent planning a batch can fix the op without a second round trip.
-    if (d.rule === 'OffGridLayerBoundary' || d.rule === 'OffGridTime') return `validation failed: ${d.rule} (${d.field} ${d.t} µs → send ${d.snap_to})`
-    return mapCommandError(e).message
-  }
-  if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
-  if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
-  if (e.error === 'TransitionParticipantsShareLink') return `layers ${e.from} and ${e.to} share a link, so the incoming layer cannot move to open the overlap`
-  if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
-  // Ripple delete: what a refusal is about is the SPAN being closed, not the
-  // deleted layer's length, so the two variants carrying a hole print it.
-  if (e.error === 'RippleInsideHole') return `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close — add it to layer_ids, or delete without rippling`
-  if (e.error === 'RippleCollision') return `layer ${e.moving} would ripple left onto layer ${e.blocking} on track ${e.track}`
-  if (e.error === 'RippleLinkStraddles') return `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close`
-  if (e.error === 'RippleLockedLayer') return `layer ${e.layer} is locked and would have to move`
-  if (e.error === 'GapNotFound') return `[${e.s}, ${e.e}) µs is not a gap on track ${e.track}`
-  return mapCommandError(e).message
-}
-
-/** Dry-run response: per-op {index, status, output|error} flattened, plus
- *  halted_at (the first failing index, or null). DryRunOutput is kind-tagged,
- *  snake_case: add_layer{layer_id} / split_layer{left_id, right_id} /
- *  add_transition{transition_id, bounces} / void. `bounces` predicts the
- *  overlap placement's sibling lane moves (spawned = a lane would be minted) —
- *  the same info the wet add's LogBus rows carry. Wrapped in toolJson (sorted
- *  keys). */
-export function shapeDryRunResponse(
-  results: Array<{ ok: true; value:
-    | { kind: 'AddLayer'; layer_id: string }
-    | { kind: 'SplitLayer'; left_id: string; right_id: string }
-    | { kind: 'AddTransition'; transition_id: string; bounces: Array<{ layer: string; from_track: string; to_track: string; spawned: boolean }> }
-    | { kind: 'Void' } } | { ok: false; error: CommandError }>,
-): ToolResultJson {
-  let haltedAt: number | null = null
-  const entries = results.map((r, index) => {
-    if (r.ok) {
-      const o = r.value
-      const output = o.kind === 'AddLayer' ? { kind: 'add_layer', layer_id: o.layer_id }
-        : o.kind === 'SplitLayer' ? { kind: 'split_layer', left_id: o.left_id, right_id: o.right_id }
-        : o.kind === 'AddTransition' ? { kind: 'add_transition', transition_id: o.transition_id, bounces: o.bounces }
-        : { kind: 'void' }
-      return { index, status: 'ok', output }
-    }
-    if (haltedAt === null) haltedAt = index
-    return { index, status: 'error', error: dryRunErrorString(r.error) }
-  })
-  return toolJson({ results: entries, halted_at: haltedAt })
 }
 
 /** The remedy a ripple refusal offers depends on WHICH tool rippled: only
@@ -1106,7 +1047,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     case 'TransitionLayersNotAdjacent':
       return { code: 'invalid_params', message: `layers ${e.from} (outgoing) and ${e.to} (incoming) are not adjacent on one track: the outgoing layer must END exactly where the incoming one STARTS, on the same track (or already overlap by exactly ${e.duration} µs to attach as-is). move_layer / trim_layer them to meet, then retry; project://tracks shows both spans`, data: { error: 'TransitionLayersNotAdjacent', from: e.from, to: e.to, duration_us: e.duration } }
     case 'CheckpointNotFound':
-      return { code: 'invalid_params', message: `checkpoint ${e.checkpoint} not found — list_checkpoints reports the ones that exist (a deleted checkpoint's id is gone for good)` }
+      return { code: 'invalid_params', message: `checkpoint ${e.checkpoint} not found — project://history lists the checkpoints of this opening (opening a project or quitting drops them; a deleted one's id is gone for good)` }
     case 'MediaNotFound':
       return { code: 'invalid_params', message: `media ${e.media} not found — project://media lists the pool; import_media adds a file and answers its media_id` }
     case 'TrackPositionOutOfRange':
@@ -1934,21 +1875,17 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Answers `undone`: the op reverted.",
+    description: "Undo the newest edit by anyone: history is shared, so it may be the user's — check `undone.actor`, and `redo` puts it back. `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Answers `undone`: the op reverted.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Move the history cursor to an absolute stack index — the history panel's click-a-row, and the way to a state that is neither one undo away nor a checkpoint. `index` uses `project://history`'s numbering (`ops[i]` sits at `window_start + i`; `cursor` is where you are), so jumping is reading that resource and naming a row; out of range is refused naming the live bounds, and `evicted > 0` means index 0 is the oldest SURVIVING state. A revert path like undo/redo/`restore_checkpoint`, so `set_history_lock` blocks it. Records nothing; a later edit truncates whatever sat ahead, as after an undo.",
-    inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
-    parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
+    description: "Move the history cursor to the state right after op `op_id` (an `ops[].op_id` of `project://history`): the way to a state that is neither one undo away nor a checkpoint. An op the stack no longer holds is refused. A revert path like undo, so another session's history lock blocks it. Records nothing; a later edit drops whatever sat ahead, as after an undo. Answers `at`: the op the cursor now sits on.",
+    inputSchema: { type: 'object', properties: { op_id: { type: 'string', description: 'The op to land on: an `ops[].op_id` of `project://history`.' } }, required: ['op_id'] },
+    parseArgs: (a) => ({ op: 'jump_to_op', args: { op_id: parseUuid(a.op_id, 'op_id') } }) },
   { name: 'redo', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail. Answers `redone`: the op reapplied.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
-  { name: 'delete_checkpoint', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay, nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `set_history_lock`: the lock rejects revert paths, and forgetting a restore point reverts nothing. Unrecorded.",
-    inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
-    parseArgs: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') } }) },
   // ── table-exec: captions ─────────────────────────────────────────────────
   // Project-wide by design (one commit over every Caption-role track in every
   // composition): caption lanes multiply as cues collide, and restyling them
@@ -2119,21 +2056,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'set_history_lock', exec: 'dedicated', annotations: ANN_SET,
-    description: "Block reverts (undo / redo / jump_to / restore_checkpoint) while a batch runs, or release the block. `locked: true` needs a `reason`, shown beside the lock badge in the agent and history panels and returned to any revert attempt; `locked: false` takes none and is idempotent. Never affects what records: the lock rejects reverts, it does not fold a batch into one history entry. Last writer wins. Always pair the lock with its release: ending the work session that OWNS it releases it, as does that connection going away; a lock taken outside a work session is released only by `locked: false` (from any connection) or by the user, and switching views never releases one. Unrecorded.",
-    inputSchema: { type: 'object', properties: {
-      locked: { type: 'boolean', description: 'true blocks reverts; false releases the block.' },
-      reason: { type: 'string', description: 'Why the history is locked — required when locking, refused when unlocking.' },
-    }, required: ['locked'] },
-    parseDedicated: (a) => {
-      const locked = parseBool(a.locked, 'locked')
-      const reason = a.reason === undefined || a.reason === null ? null : parseStr(a.reason, 'reason')
-      if (locked && (reason === null || reason.trim() === ''))
-        throw new McpArgError('set_history_lock needs a non-empty `reason` when locking — it is what the user is shown in place of undo', 'reason')
-      if (!locked && reason !== null)
-        throw new McpArgError('set_history_lock takes no `reason` when unlocking — there is nothing left to explain', 'reason')
-      return { locked, reason }
-    } },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
     description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key on the snapped frame is updated in place, id kept. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalars, `{r,g,b,a}` (0..255) for \"color\"; an effect param must sit in its catalogued range (`effects://catalog`). `interp` eases the segment LEAVING this key (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce); omitted, it inherits the preceding segment's. A Bezier on the LAST key is refused — its p2 lands on the next key, so add that key first. One side, the continuity or a preset: `update_keyframe`; Auto tangents: `smooth_keyframes`.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
@@ -2213,14 +2135,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         throw new McpArgError(`set_extrapolation needs at least one of before, after (each ${EXTRAPOLATE_OPTIONS}) — nothing to write`)
       return p
     } },
-  { name: 'dry_run', exec: 'dedicated', annotations: ANN_READ,
-    description: "Run a sequence of edit operations against a clone of the project WITHOUT committing — check overlaps and invariants before touching real state. Validates after each op exactly as `commit()` does and HALTS at the first error. Returns `{ results: [{ index, status, output? | error? }], halted_at: number | null }`. Supported ops: `add_color_layer`, `add_video_layer`, `add_audio_layer`, `add_text_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layers` (lift only — `ripple: true` is refused), `add_transition` (the transition kind rides as `transition_kind`, since `kind` names the op). Motifs, caption import, media import and undo/redo are not dry-runnable.",
-    inputSchema: { type: 'object', properties: { operations: {
-      type: 'array',
-      description: 'The edits to rehearse, in order.',
-      items: { type: 'object', description: "{ kind: <one of the supported tool names>, ...that tool's args }. For add_transition the transition kind rides as `transition_kind` (plus optional `placement`)." },
-    } }, required: ['operations'] },
-    parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props take the style's tokens (project://taste), else defaults. Unknown props reject.",
     inputSchema: { type: 'object',
@@ -2244,7 +2158,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'create_checkpoint', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries. Unrecorded.",
+    description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. It lasts for this project opening only: opening another project or quitting drops it. It survives later commits (unlike the redo tail); `project://history` lists checkpoints and the agent panel shows each with a Restore button. `begin_agent_session` already makes one. Unrecorded.",
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Checkpoint name.' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
   { name: 'export_captions', exec: 'dedicated', annotations: ANN_READ,
@@ -2259,22 +2173,22 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       track_id: a.track_id === undefined || a.track_id === null ? null : parseUuid(a.track_id, 'track_id'),
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
-  { name: 'list_checkpoints', exec: 'dedicated', annotations: ANN_READ,
-    description: "List all named checkpoints, oldest first. Returns id, label, actor, created_at per checkpoint (no project snapshot).",
-    inputSchema: { type: 'object', properties: {}, required: [] },
-    parseDedicated: (_a) => ({}) },
   { name: 'restore_checkpoint', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Restore a named checkpoint. Records a new history entry — undo will return to the pre-restore state. Errors with CheckpointNotFound if the id doesn't exist. The agent panel preserves activity and inserts a restore boundary; only edits with known history provenance are marked reverted.",
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
   { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "End your work session and release its history lock; the view, activity, running tasks and connection stay. Only the owning connection may end it, unless `force: true` takes over a session whose owner is gone (`read_project { view: \"session\" }` shows the holder). Unless your last `check_composition` is current, the app audits first; hard or warning findings keep the session open (`held: \"audit\"`): settle them and end again. Answers `{ ended, audit }`, plus `tacks_to_review` when open tacks are outdated. Unrecorded.",
-    inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
-    parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
-  { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session. Unrecorded.",
-    inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'What this work session is for; shown to the user beside the busy badge.' } }, required: ['reason'] },
-    parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
+    description: "End your work session and release its history lock; the view, activity, running tasks and connection stay. Only the owning connection may end it (`begin_agent_session { force: true }` takes over a stale one). Unless your last `check_composition` is current, the app audits first; hard or warning findings keep the session open (`ended: false, held: \"audit\"`): settle them and end again. Answers `{ ended, audit }` (`ended`: the closed session, null with none), plus `tacks_to_review` when open tacks are outdated. Unrecorded.",
+    inputSchema: { type: 'object', properties: {} },
+    parseDedicated: (_a) => ({}) },
+  { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_SET,
+    description: "Begin a work session for a batch: one Pre-agent checkpoint, the review baseline pinned to it, and the lightweight agent view. `lock` (default true) locks the user's undo until the session ends, `reason` shown in its place; your own undo, redo, jump_to and restore_checkpoint still work. Repeating on the same connection returns the session, changing the lock only when `lock` is passed. Another connection's session refuses (`AgentSessionBusy` names the holder) unless `force: true` ends it and begins yours. `end_agent_session`, the user or your connection closing ends it. Answers the session with `locked`, and `taken_over` after a force. Unrecorded.",
+    inputSchema: { type: 'object', properties: {
+      reason: { type: 'string', description: 'What this work session is for; shown to the user beside the busy badge and in place of undo.' },
+      lock: { type: 'boolean', description: "Lock the user's undo for the session. Default true; false leaves it free." },
+      force: { type: 'boolean', description: "End another connection's session (its owner gone) and begin yours. Default false." },
+    }, required: ['reason'] },
+    parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason'), lock: a.lock === undefined ? undefined : parseBool(a.lock, 'lock'), force: parseBoolOpt(a.force, 'force', false) }) },
   // ── tacks (ADR 0115) — served by the MCP host's TackStore beside the agent
   //    activity (`mcp/tackTools.ts`), not by the actor: they are not project
   //    state, record nothing and ignore the history lock. A bare actor refuses. ──

@@ -153,20 +153,3 @@ describe('mapCommandError — TrimEdgeOutOfRange carries the window into the mes
     expect(out.message).not.toContain('within')
   })
 })
-
-describe('dry_run rehearses under the same rule', () => {
-  type DryRun = { results: Array<{ status: string; error?: string }> }
-  const dry = (a: Actor, operations: unknown[]): DryRun => {
-    const r = call(a, 'dry_run', { operations })
-    if (!r.ok) throw new Error(r.error.message)
-    return JSON.parse(r.result.content[0].text) as DryRun
-  }
-  it('a rehearsed move below 0 is an error naming the start, as the wet call refuses it', () => {
-    const a = freshActor()
-    const id = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
-    const r = dry(a, [{ kind: 'move_layer', layer_id: id, new_track_id: aRollId(a), new_t_start_us: -500_000 }])
-    expect(r.results[0].status).toBe('error')
-    expect(r.results[0].error).toMatch(/NegativeLayerStart|-500000/)
-    expect(layerOf(a, id).t_start_us).toBe(1_000_000)
-  })
-})

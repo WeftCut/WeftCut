@@ -70,7 +70,8 @@ describe('create_tacks / update_tack / delete_tacks', () => {
 
   it('records nothing, commits nothing and answers while history is locked', async () => {
     const h = host()
-    await h.call('set_history_lock', { locked: true, reason: 'cutting' })
+    await h.call('begin_agent_session', { reason: 'cutting' })
+    expect(h.actor.historyStatus().lock_reason).toBe('cutting')
     const before = h.actor.snapshot()
     const len = h.actor.historyStatus().len
     const created = await h.call('create_tacks', { tacks: [{ label: 'x', t_us: 0 }] })

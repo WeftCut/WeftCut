@@ -31,15 +31,15 @@ describe('agent work sessions', () => {
     expect(again.id).toBe(first.id)
     expect(actor.listCheckpoints()).toHaveLength(1)
     expect(send.mock.calls.filter(([event]) => event === AGENT_VIEW_EVENT)).toHaveLength(1)
-    await expect(run('two', () => service.begin('Other job'))).rejects.toMatchObject({ variant: 'AgentSessionBusy', code: 'invalid_request' })
+    await expect(run('two', () => service.begin('Other job'))).rejects.toMatchObject({ variant: 'AgentSessionBusy', code: 'invalid_request', holder: { connection_id: 'one' } })
     expect(service.snapshot().session?.id).toBe(first.id)
     expect(service.snapshot().activities.at(-1)?.session_id).toBeNull()
   })
 
   it('local end releases its lock, preserves records, and permits later operations', async () => {
     const { service, actor, run, add, send } = setup()
-    const session = await run('one', () => { const s = service.begin('Edit'); service.lock(''); return s })
-    expect(actor.historyStatus().lock_reason).toBe('')
+    const session = await run('one', () => service.begin('Edit'))
+    expect(actor.historyStatus().lock_reason).toBe('Edit')
     service.end('user')
     expect(service.snapshot().session).toBeNull()
     expect(actor.historyStatus().lock_reason).toBeUndefined()
@@ -49,29 +49,71 @@ describe('agent work sessions', () => {
     expect(send.mock.calls.filter(([event]) => event === AGENT_VIEW_EVENT)).toHaveLength(1)
   })
 
-  it('does not release a different connection’s newer lock or end its work', async () => {
+  it('locks history by default, and not with lock: false', async () => {
     const { service, actor, run } = setup()
-    await run('one', () => { service.begin('Edit'); service.lock('one') })
-    await run('two', () => service.lock('two'))
-    await expect(run('two', () => service.end('agent'))).rejects.toMatchObject({ variant: 'AgentSessionOwnerMismatch', code: 'invalid_request' })
-    // 'two' is still connected, so ending 'one's session leaves its lock alone.
+    await run('one', () => service.begin('Cut'))
+    expect(service.lockHolder()).toMatchObject({ connection_id: 'one', reason: 'Cut' })
     service.end('user')
+    await run('one', () => service.begin('Look', { lock: false }))
+    expect(actor.historyStatus().lock_reason).toBeUndefined()
+    expect(service.lockHolder()).toBeNull()
+    // A repeat on the same connection changes the lock only when `lock` is passed.
+    await run('one', () => service.begin('Look'))
+    expect(actor.historyStatus().lock_reason).toBeUndefined()
+    await run('one', () => service.begin('Look', { lock: true }))
+    expect(actor.historyStatus().lock_reason).toBe('Look')
+  })
+
+  it("the owner's undo works under its own lock; another connection's and the user's are refused", async () => {
+    const { service, actor, run, add } = setup()
+    await run('one', () => service.begin('Cut'))
+    await run('one', add)
+    await run('one', add)
+    const undo = () => actor.mcpCall('undo', '{}', 'client')
+    const own = await run('one', undo)
+    expect(own.ok).toBe(true)
+    const other = await run('two', undo)
+    expect(other).toMatchObject({ ok: false, error: { code: 'invalid_request', data: { error: 'HistoryLocked', reason: 'Cut' } } })
+    expect(actor.command('project_undo', {})).toMatchObject({ ok: false, error: { error: 'HistoryLocked' } })
+    // The owner's restore of its own Pre-agent checkpoint, too.
+    const cp = service.snapshot().session!.checkpoint_id
+    expect((await run('one', () => actor.mcpCall('restore_checkpoint', JSON.stringify({ checkpoint_id: cp }), 'client'))).ok).toBe(true)
+  })
+
+  it('a dropped connection releases its session and its lock', async () => {
+    const { service, actor, run } = setup()
+    await run('one', () => service.begin('Edit'))
+    service.end('disconnected', 'two')
+    expect(actor.historyStatus().lock_reason).toBe('Edit')
+    service.end('disconnected', 'one')
     expect(service.snapshot().session).toBeNull()
-    expect(actor.historyStatus().lock_reason).toBe('two')
-    service.unlock()
     expect(actor.historyStatus().lock_reason).toBeUndefined()
   })
 
-  it('releases the lock of a connection that went away, work session or not', async () => {
-    // A lock taken outside a work session belongs to its CONNECTION, and once
-    // that is gone nothing else would ever release it while it blocks every
-    // revert.
+  it('force takes another connection’s session over in one call', async () => {
     const { service, actor, run } = setup()
-    await run('one', () => { service.begin('Edit'); service.lock('one') })
-    await run('two', () => service.lock('two'))
-    service.end('disconnected', 'two')
+    const stale = await run('one', () => service.begin('Old'))
+    await expect(run('two', () => service.end('agent'))).rejects.toMatchObject({ variant: 'AgentSessionOwnerMismatch', code: 'invalid_request' })
+    const mine = await run('two', () => service.begin('New', { force: true }))
+    expect(mine.connection_id).toBe('two')
+    expect(service.snapshot().sessions.find((s) => s.id === stale.id)).toMatchObject({ end_reason: 'forced' })
+    expect(service.lockHolder()).toMatchObject({ connection_id: 'two', reason: 'New' })
+    expect(actor.listCheckpoints().map((c) => c.label)).toEqual(['Pre-agent: Old', 'Pre-agent: New'])
+  })
+
+  it("the user's Unlock opens history while the session runs on", async () => {
+    const { service, actor, run } = setup()
+    await run('one', () => service.begin('Edit'))
+    service.unlock()
     expect(actor.historyStatus().lock_reason).toBeUndefined()
     expect(service.snapshot().session).not.toBeNull()
+    expect(service.lockHolder()).toBeNull()
+    // The user's action wins over a repeat begin that does not pass `lock`…
+    await run('one', () => service.begin('Edit'))
+    expect(actor.historyStatus().lock_reason).toBeUndefined()
+    // …while an explicit `lock: true` (visible in the panel) locks again.
+    await run('one', () => service.begin('Edit', { lock: true }))
+    expect(actor.historyStatus().lock_reason).toBe('Edit')
   })
 
   it('closes on explicit disconnect but retains the actual running task outcome', async () => {

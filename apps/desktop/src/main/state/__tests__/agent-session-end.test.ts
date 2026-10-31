@@ -36,7 +36,6 @@ describe('host agent lifecycle', () => {
     host.start()
     await host.agent.run('connection', 'Client', 'begin_agent_session', {}, false, () => {
       host.agent.begin('Edit')
-      host.agent.lock('')
     })
     send.mockClear()
     await host.handleInvoke('agent_session_end', {})
