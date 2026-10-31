@@ -1144,6 +1144,48 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(feature = "speech")]
+    #[test]
+    fn describe_default_window_on_a_frame_snapped_layer_stops_at_src_out() {
+        // NEW-5: a full-length clip whose envelope end is on the frame grid and
+        // whose src_out is not maps a few ms past src_out by rounding; the
+        // default window must stop at the source end rather than refuse.
+        use crate::state::{Transform, VideoClipParams};
+        let mut layer = audio_layer(0, 215_200_000);
+        let mut media = audio_media("snapped-video");
+        media.kind = crate::state::MediaKind::Video;
+        layer.params = LayerParams::VideoClip(VideoClipParams {
+            timing: Default::default(),
+            media: media.id,
+            src_in_us: 0,
+            src_out_us: 215_197_848,
+            transform: Transform::default(),
+            opacity: Default::default(),
+            crop: None,
+            flip_h: false,
+            flip_v: false,
+            blend_mode: Default::default(),
+            fade_in_us: 0,
+            fade_out_us: 0,
+        });
+        let resolved = resolve_clip_video_source(Some(&layer), Some(&media), layer.id, None, None)
+            .expect("the default window is the layer's own and must resolve");
+        assert_eq!(resolved.source_in_us, 0);
+        assert_eq!(resolved.source_out_us, 215_197_848);
+        let inner = resolve_clip_video_source(
+            Some(&layer),
+            Some(&media),
+            layer.id,
+            Some(1_000_000),
+            Some(2_000_000),
+        )
+        .expect("an inner window maps as is");
+        assert_eq!(
+            (inner.source_in_us, inner.source_out_us),
+            (1_000_000, 2_000_000)
+        );
+    }
+
     // Subtitle cue-shift + parse coverage lives in the subtitles module tests +
     // the TS-side hybrid e2e.
 }
@@ -1784,10 +1826,21 @@ fn resolve_clip_video_source(
     let source_in = timing
         .content_time(src_in_us, (t_start - layer.t_start_us) as f64)
         .round() as i64;
-    let source_out = timing
+    let mapped_out = timing
         .content_time(src_in_us, (t_end - layer.t_start_us) as f64)
         .round() as i64;
-    if source_out > timing.source_end(src_out_us).ceil() as i64 {
+    let source_end = timing.source_end(src_out_us).ceil() as i64;
+    // A window that ends where the layer ends (the default one included) ends
+    // where its source does: the envelope sits on the frame grid and the
+    // source window does not, so the layer's last frame can map up to a frame
+    // past `src_out_us` by rounding alone. Any other window that maps past the
+    // source asks for frames that are not there.
+    let source_out = if t_end == layer.t_end_us {
+        mapped_out.min(source_end)
+    } else {
+        mapped_out
+    };
+    if source_out > source_end {
         return Err(McpToolError::invalid_params(
             format!(
                 "description window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",

@@ -630,7 +630,10 @@ impl Backend {
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
     /// workspace internally; no-op when none is set (the item keeps referencing the
     /// original source). The copy job's write-back is seam-routed (the TS host
-    /// applies it), so no actor handle is threaded through.
+    /// applies it), so no actor handle is threaded through. Answers the
+    /// workspace-relative `Media/<name>` the copy is reserved to land at, so
+    /// `import_media` can say where the pooled file will be before the copy
+    /// ran; `null` when nothing was queued.
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn enqueue_workspace_copy(
@@ -638,7 +641,7 @@ impl Backend {
         media_id: String,
         source_path: String,
         expected_generation: Option<u32>,
-    ) -> napi::Result<()> {
+    ) -> napi::Result<Option<String>> {
         let cache = self
             .cache
             .snapshot_expected(expected_generation)
@@ -646,16 +649,17 @@ impl Backend {
         let id = uuid::Uuid::parse_str(&media_id)
             .map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
         if self.workspace.current().is_none() {
-            return Ok(());
+            return Ok(None);
         }
         let ws = cache
             .current_root()
             .parent()
             .expect("workspace cache has a parent")
             .to_path_buf();
-        self.import_queue
-            .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache);
-        Ok(())
+        Ok(self
+            .import_queue
+            .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache)
+            .map(|rel| rel.to_string_lossy().into_owned()))
     }
 
     /// Open the agent-session slot: installs a new session with the given

@@ -162,8 +162,22 @@ describe('open_project / create_project', () => {
     await call(ts, 'create_project', { name: 'A' })
     await call(ts, 'create_project', { name: 'B' })
     const out = await call(ts, 'open_project', { path: '/work/A' })
-    expect(out.structuredContent).toEqual({ name: 'A', dir: '/work/A', replaced: '/work/B' })
+    expect(out.structuredContent).toEqual({ name: 'A', dir: '/work/A', replaced: '/work/B', already_open: false })
     expect(ts.openedProject()).toEqual({ dir: '/work/A' })
+  })
+
+  it('open_project on the folder already open reloads nothing and keeps the undo history (W12)', async () => {
+    const { ts, sent } = host({ parent: '/work' })
+    await call(ts, 'create_project', { name: 'A' })
+    await call(ts, 'add_track', { label: 'kept' })
+    const history = ts.actor.historyStatus().len
+    const opens = sent.filter(([e]) => e === PROJECT_OPENED_EVENT).length
+    for (const path of ['/work/A', '/work/A/', '/work/./A']) {
+      const out = await call(ts, 'open_project', { path })
+      expect(out.structuredContent, path).toEqual({ name: 'A', dir: '/work/A', replaced: null, already_open: true })
+    }
+    expect(ts.actor.historyStatus().len).toBe(history)
+    expect(sent.filter(([e]) => e === PROJECT_OPENED_EVENT)).toHaveLength(opens)
   })
 
   it('refuses a missing folder, a non-project folder and an existing target, by name, changing nothing', async () => {

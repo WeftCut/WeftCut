@@ -90,7 +90,12 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
             if (a.path !== undefined) {
                 if (!path.isAbsolute(a.path as string))
                     throw new Error('Export path must be absolute');
-                writeFileSync(a.path as string, bytes);
+                if (path.extname(a.path as string).toLowerCase() !== '.zip')
+                    throw new Error(`export_motif writes a ZIP: path must end in .zip, got ${a.path as string}`);
+                // `wx`: never over an existing file (the same policy as
+                // start_export's on_conflict: fail), and a missing parent folder
+                // is ENOENT, not a folder made on the caller's behalf.
+                writeFileSync(a.path as string, bytes, { flag: 'wx' });
                 return { id: a.id, revision: info.revision, path: a.path };
             }
             return { id: a.id, revision: info.revision, ...transfers.put(bytes) };

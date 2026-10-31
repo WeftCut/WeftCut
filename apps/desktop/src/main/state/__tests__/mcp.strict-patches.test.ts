@@ -126,12 +126,25 @@ describe('update_layer — the envelope set, and only the envelope set', () => {
     expect(refusal(call(a, 'update_layer', { layer_id: id, patch: { opacity: 0.5 } }))).toMatch(/update_layer_params/)
   })
 
-  it('refuses an empty patch and type-gates the four fields', () => {
+  it('refuses an empty patch and type-gates the two fields', () => {
     expect(() => parseLayerPatch({})).toThrow(/names no field/)
-    expect(() => parseLayerPatch({ t_start_us: 'now' })).toThrow(/patch\.t_start_us/)
-    expect(() => parseLayerPatch({ t_end_us: 1.5 })).toThrow(/integer/)
+    expect(() => parseLayerPatch({ label: 3 })).toThrow(/patch\.label/)
     expect(() => parseLayerPatch({ locked: 'yes' })).toThrow(/patch\.locked/)
-    expect(parseLayerPatch({ label: null, t_start_us: 0, t_end_us: 1_000_000, locked: true })).toEqual({ label: null, t_start_us: 0, t_end_us: 1_000_000, locked: true })
+    expect(parseLayerPatch({ label: null, locked: true })).toEqual({ label: null, locked: true })
+  })
+
+  it('the times are not update_layer\'s: the refusal names move_layer and trim_layer (T1)', () => {
+    for (const k of ['t_start_us', 't_end_us']) {
+      expect(() => parseLayerPatch({ [k]: 1_000_000 })).toThrow(/move_layer .*trim_layer/)
+    }
+  })
+
+  it('label: null clears the name (T2)', () => {
+    const a = freshActor()
+    const id = colorLayer(a)
+    ok(call(a, 'update_layer', { layer_id: id, patch: { label: 'slate' } }))
+    ok(call(a, 'update_layer', { layer_id: id, patch: { label: null } }))
+    expect(layerOf(a, id).label).toBeNull()
   })
 
   it('a well-formed patch still applies', () => {

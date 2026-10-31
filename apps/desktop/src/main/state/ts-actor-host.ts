@@ -1,4 +1,5 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
+import { resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
@@ -72,7 +73,7 @@ export interface TsActorHostDeps {
   /** Rust compute facade for the native-compute → TS-write hybrids. */
   compute: ComputeNapi
   /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
-  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
+  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<string | null | void>
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
   /** node:fs stat folded to `PathFacts` — `import_media` refuses on it before any write. */
@@ -154,7 +155,9 @@ export interface ProjectStatus {
 
 /** What an agent's open / create answers: the project now open, and the one
  *  it replaced (flushed to disk first), if any. */
-export interface ProjectOpened { name: string; dir: string; replaced: string | null }
+/** `already_open`: `open_project` named the folder already open, so nothing
+ *  was flushed or reloaded and the undo history stands. */
+export interface ProjectOpened { name: string; dir: string; replaced: string | null; already_open?: boolean }
 
 export interface TsActorHost {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -528,13 +531,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
+  /** Two spellings of one folder: resolved (`.`/`..`, trailing separators),
+   *  then through the real path (symlinks, and on Windows and macOS the
+   *  on-disk case) when the host can read it. */
+  const sameFolder = (a: string, b: string): boolean => {
+    const norm = (p: string) => resolvePath(deps.realPath ? deps.realPath(p) : p)
+    return norm(a) === norm(b)
+  }
   const agentProjects: TsActorHost['projects'] = {
     shuttingDown: () => quitting,
     open: async (dir) => {
       const replaced = opened?.dir ?? null
+      // The folder already open is not reopened: a reload would flush and
+      // drop the undo history, checkpoints, tacks and the work session of the
+      // very project the caller wanted open.
+      if (replaced !== null && sameFolder(replaced, dir)) return { name: actor.snapshot().metadata.name, dir: replaced, replaced: null, already_open: true }
       await persistence.open(dir)
       deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
-      return { name: actor.snapshot().metadata.name, dir, replaced }
+      return { name: actor.snapshot().metadata.name, dir, replaced, already_open: false }
     },
     create: async (a) => {
       const replaced = opened?.dir ?? null

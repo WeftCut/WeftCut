@@ -139,8 +139,8 @@ const NO_VLM: VlmProvider = () => ({
 export type PeaksPathProvider = (subjectLayerId: string) => string | null
 const NO_PEAKS_PATH: PeaksPathProvider = () => null
 
-/** The arguments `preview_motif` takes (`motif_id` is an older name for `id`). */
-const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(['id', 'motif_id', 't_sec', 'props', 'width', 'height', 'expected_revision'])
+/** The arguments `preview_motif` takes: its advertised schema's, no alias. */
+const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(Object.keys((MOTIF_TOOL_DEFS.find((d) => d.name === 'preview_motif')!.inputSchema as { properties: Record<string, unknown> }).properties))
 
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
@@ -412,9 +412,16 @@ async function dispatchTool(
     if (['cancel_export','retry_export'].includes(name) && typeof args.job_id !== 'string') throw new ExportJobError('invalid_params','job_id is required');
     const result = name === 'get_export_options' ? {...await jobs.options(args.preset_id) as Record<string,unknown>, settings_schema:exportSettingsSchema()}
       : name === 'start_export' ? await jobs.start(args)
-      : name === 'get_export_status' ? jobs.status(args.job_id as string | undefined)
+      : name === 'get_export_status' ? null
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)
       : await jobs.cancel(args.job_id as string);
+    // One shape whatever was asked: `{ job }`, the job named, else the active
+    // or most recent one, null only when no job has run this session.
+    if (name === 'get_export_status') {
+      const job = typeof args.job_id === 'string' ? jobs.status(args.job_id) : jobs.latest();
+      const answer = { job: job === null ? null : exportRecordForAgent(exportWire(job, true) as Record<string, unknown>) };
+      return { content: [{ type: 'text', text: JSON.stringify(answer) }], structuredContent: answer } as ServerResult;
+    }
     const record = (name === 'get_export_options' ? result : exportWire(result, true)) ?? {job:null};
     // An export is where unchecked work would leave the app: audit the root
     // unless its last audit is still fresh, and report — never block, in
@@ -608,14 +615,17 @@ async function dispatchTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif') {
-    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
-    const motifId = a.id ?? a.motif_id ?? ''
+    const a = args as { id: string; t_sec: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
     // One frame per call, at a time the caller names: an H4 run sent
     // `times_s: [...]`, got the t = 0 frame (nothing drawn yet) and concluded
     // the Motif was broken.
     const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
     if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at t_sec`, data: { field: unknown[0] } })
-    if (typeof a.t_sec !== 'number' || !Number.isFinite(a.t_sec)) return toolErrorResult({ code: 'invalid_params', message: 'preview_motif needs t_sec: the time into the Motif, in seconds, of the one frame it renders', data: { field: 't_sec' } })
+    // The schema check every motif tool runs: `id` and `t_sec` present and
+    // typed, named together.
+    const refused = await refuseBadArgs(backend, name, args)
+    if (refused) return refused
+    const motifId = a.id
     // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
     // few catalog fields, so it serves both the advertised default size and the
     // props defaults below. A bare-core call (no host) has no catalog to ask:

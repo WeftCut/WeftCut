@@ -50,9 +50,9 @@ export const EXPORT_PRESET_TOOLS = new Set(EXPORT_PRESET_TOOL_DEFS.map(d => d.na
 export const EXPORT_TOOL_DEFS = [
   ...EXPORT_PRESET_TOOL_DEFS,
   definition('get_export_options', 'Read effective export settings and composition limits. Optional preset_id previews that preset without changing project settings; otherwise uses saved project settings, then the global default.', schema({ preset_id: presetId }), true, true),
-  definition('start_export', 'Start an asynchronous export in the editor. Use one request_id per intent; reuse it when reconnecting. Poll get_export_status for the actual completed path. Default conflicts add a numeric suffix.', schema({
+  definition('start_export', 'Start an asynchronous export in the editor. Use one request_id per intent; reuse it when reconnecting. Settings, path, extension and an on_conflict: fail collision are refused before a job exists. Poll get_export_status for the actual completed path. Default conflicts add a numeric suffix.', schema({
     request_id: { ...id, maxLength: 200, description: 'Unique export intent id. Reuse with identical arguments after reconnecting.' },
-    output_path: { ...id, description: 'Absolute candidate file path. Omit for project/output/project-name.ext; explicit parent must exist.' },
+    output_path: { ...id, description: 'Absolute candidate file path in an existing folder; its extension must be the one get_export_options reports. Omit for project/output/project-name.ext.' },
     on_conflict: { enum: ['rename', 'fail'], description: 'Default rename adds a number. Fail requires the exact name. Neither overwrites.' },
     preset_id: presetId,
     settings: { ...exportSettingsSchema(), description: 'Partial per-job overrides, applied after preset_id. Without preset_id, uses saved project settings then the global default. Does not change the preset or saved project settings.' },
@@ -65,7 +65,7 @@ export const EXPORT_TOOL_DEFS = [
     width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
     sheet: { type: 'boolean', description: 'One contact sheet (default true) or one image per frame.' },
   }), true, true),
-  definition('get_export_status', 'Read an export job. Omit job_id to discover the current UI or MCP job. Records survive MCP reconnects until the app exits.', schema({ job_id: id }), true, true),
+  definition('get_export_status', 'Read an export job as { job }. Omit job_id for the active job, else the most recent one (UI or MCP); job is null only when none has run. Records survive MCP reconnects until the app exits.', schema({ job_id: id }), true, true),
   definition('retry_export', 'Retry only finalization of an awaiting_retry job. Optional filename changes the basename in the same directory; keep its extension.', schema({ job_id: id, filename: { ...id, description: 'New basename including matching extension. Directory and encoded settings cannot change.' } }, ['job_id']), false, false),
   definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; poll status until terminal.', schema({ job_id: id }, ['job_id']), false, true),
 ];
@@ -80,6 +80,8 @@ const EXPORT_REFUSALS: Record<string, { code: McpErrorCode; error: string; next?
   invalid_params: { code: 'invalid_params', error: 'InvalidArgument' },
   preset_not_found: { code: 'invalid_params', error: 'ExportPresetNotFound' },
   job_not_found: { code: 'invalid_params', error: 'ExportJobNotFound', next: 'get_export_status without job_id reports the current job' },
+  output_conflict: { code: 'invalid_params', error: 'PathExists', next: "send another output_path, or on_conflict 'rename' to add a number" },
+  output_parent_missing: { code: 'invalid_params', error: 'PathNotFound', next: 'create the folder first or choose another output_path' },
   request_id_conflict: { code: 'invalid_params', error: 'RequestIdConflict', next: 'reuse a request_id only with the same arguments; send a new one for a new export' },
   export_busy: { code: 'invalid_request', error: 'ExportBusy', next: 'get_export_status reports its progress; wait for it to finish, or cancel_export it' },
   export_active: { code: 'invalid_request', error: 'ExportBusy', next: 'get_export_status reports its progress; retry when it is terminal' },

@@ -50,8 +50,9 @@ function requireMarker(p: Project, id: Uuid): LocatedMarker {
   return found
 }
 
-/** MarkerPatch. null/absent = "don't touch"; end_t_us can only be SET, never
- *  cleared (clearing → remove+add).
+/** MarkerPatch. Absent = "don't touch"; `end_t_us: null` turns a region back
+ *  into a point. The renderer never sends a null; the MCP parser refuses one
+ *  on every other field.
  *
  *  `anchor` is deliberately NOT a patch field, and never becomes one: an anchor
  *  is set and cleared only by the dedicated attach/detach ops, which check the
@@ -134,14 +135,16 @@ export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): voi
   const { comp: c, marker: m } = requireMarker(p, id)
   const movesTime = typeof patch.t_us === 'number'
   const patchesEnd = typeof patch.end_t_us === 'number'
+  const clearsEnd = patch.end_t_us === null
   const anchor = movesTime ? m.anchor : null
   if (anchor !== null) {
     retimeAnchor(p, m, anchor, snapFrameRound(patch.t_us as number, c.fps.num, c.fps.den), patchesEnd)
+    if (clearsEnd) m.end_t_us = null
   } else {
     const snapped = snapMarkerTimes(c, movesTime ? (patch.t_us as number) : m.t_us,
-      patchesEnd ? (patch.end_t_us as number) : m.end_t_us)
+      patchesEnd ? (patch.end_t_us as number) : clearsEnd ? null : m.end_t_us)
     if (movesTime) m.t_us = snapped.tUs
-    if (patchesEnd) m.end_t_us = snapped.endTUs
+    if (patchesEnd || clearsEnd) m.end_t_us = snapped.endTUs
   }
   if (typeof patch.label === 'string') m.label = patch.label
   if (typeof patch.note === 'string') m.note = patch.note

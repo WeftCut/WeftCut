@@ -138,3 +138,16 @@ it('requires an explicit target version and rejects a second editor overwriting 
     const edited = workspace.update(draft.draft_id, draft.revision, [{ path: 'scene.js', text: 'new' }]);
     expect(() => workspace.install(draft.draft_id, edited.revision)).toThrow(/version conflict/);
 });
+it('export_motif with a path writes a new .zip only: an existing file, another extension or a missing folder is refused (ME1)', () => {
+    const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []);
+    const draft = workspace.open({ kind: 'directory', path: folder() });
+    const call = (args: Record<string, unknown>) => runMotifTool('export_motif', { id: draft.draft_id, ...args }, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;
+    const out = temp();
+    const target = path.join(out, 'card.zip');
+    expect(call({ path: target }).path).toBe(target);
+    const written = readFileSync(target);
+    expect(() => call({ path: target })).toThrow(/EEXIST/);
+    expect(readFileSync(target)).toEqual(written);
+    expect(() => call({ path: path.join(out, 'card.txt') })).toThrow(/\.zip/);
+    expect(() => call({ path: path.join(out, 'no-such-folder', 'card.zip') })).toThrow(/ENOENT/);
+});

@@ -695,9 +695,7 @@ export interface TransitionSummary {
 }
 
 export interface LayerPatch {
-  label?: string;
-  t_start_us?: number;
-  t_end_us?: number;
+  label?: string | null;
   enabled?: boolean;
   locked?: boolean;
 }

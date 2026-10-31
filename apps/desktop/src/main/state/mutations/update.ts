@@ -2,23 +2,22 @@
 import type { Project, Uuid } from '../model'
 import { checkLayerEditable, requireLayer, requireSameComposition } from './helpers'
 
-/** LayerPatch. null/absent = "don't touch". */
+/** LayerPatch. Absent = "don't touch"; `label: null` clears the name.
+ *  `enabled` is the renderer's inspector toggle (MCP writes it through
+ *  `set_layers_enabled`). The times are not here: a move or a trim carries
+ *  link siblings, the source window and the autofit, which an envelope write
+ *  cannot (`move_layer`, `trim_layer`). */
 export interface LayerPatch {
   label?: string | null
-  t_start_us?: number | null
-  t_end_us?: number | null
-  enabled?: boolean | null
-  locked?: boolean | null
+  enabled?: boolean
+  locked?: boolean
 }
 
-/** Envelope-only patch. Only a lock-only patch bypasses content protection.
- *  Does NOT autofit: a t_end edit here never moves composition.duration_us. */
+/** Envelope-only patch. Only a lock-only patch bypasses content protection. */
 export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void {
-  const lockOnly = Object.entries(patch).every(([key, value]) => key === 'locked' || value == null)
+  const lockOnly = Object.entries(patch).every(([key, value]) => key === 'locked' || value === undefined)
   const { layer } = lockOnly ? requireLayer(p, id) : checkLayerEditable(p, id)
-  if (typeof patch.label === 'string') layer.label = patch.label
-  if (typeof patch.t_start_us === 'number') layer.t_start_us = patch.t_start_us
-  if (typeof patch.t_end_us === 'number') layer.t_end_us = patch.t_end_us
+  if (patch.label !== undefined) layer.label = patch.label
   if (typeof patch.enabled === 'boolean') layer.enabled = patch.enabled
   if (typeof patch.locked === 'boolean') layer.locked = patch.locked
 }

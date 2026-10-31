@@ -113,11 +113,24 @@ it('times out waiting for initialization without retaining the edit lock', async
   expect(s.jobs.isActive()).toBe(false);
 });
 
-it('rejects strict conflicts before starting native encoding and never changes defaults', async () => {
+it('refuses an agent request that cannot run before a job exists: strict conflict, wrong extension, missing folder (ME10)', async () => {
   const s = await setup(); const output = path.join(s.dir, 'exists.mp4'); await fs.writeFile(output, 'original');
-  const job = await s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { include_audio: false } });
+  await expect(s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { include_audio: false } })).rejects.toMatchObject({ code: 'output_conflict' });
+  expect(await fs.readFile(output, 'utf8')).toBe('original');
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'cut.txt') })).rejects.toMatchObject({ code: 'invalid_params' });
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'no-such-folder', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing' });
+  await expect(s.jobs.start({ output_path: 'relative/cut.mp4' })).rejects.toMatchObject({ code: 'invalid_params' });
+  expect(s.native.mock.calls.some(([c]) => c === 'export_begin' || c === 'export_prepare_output')).toBe(false);
+  expect(s.jobs.latest()).toBeNull();
+});
+
+it('the UI\'s strict conflict still fails in view, and the latest job outlives its end (ME11)', async () => {
+  const s = await setup(); const output = path.join(s.dir, 'exists.mp4'); await fs.writeFile(output, 'original');
+  const job = await s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { includeAudio: false } }, false);
   expect(job).toMatchObject({ state: 'failed', error: { code: 'output_conflict' }, can_retry: false, can_cancel: false }); expect(await fs.readFile(output, 'utf8')).toBe('original');
   expect(s.native.mock.calls.some(([c]) => c === 'export_begin')).toBe(false);
+  expect(s.jobs.status()).toBeNull();
+  expect(s.jobs.latest()).toMatchObject({ job_id: job.job_id, state: 'failed' });
 });
 
 it('does not accept a completion acknowledgement without publication', async () => {

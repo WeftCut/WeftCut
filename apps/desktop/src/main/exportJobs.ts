@@ -141,6 +141,13 @@ export class ExportJobs {
     if (id && !j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     return j ? structuredClone({ ...j.view, can_cancel: !exportTerminal(j.view.state), can_retry: j.view.state === 'awaiting_retry' && !j.cancelling }) : null;
   }
+  /** The active job, else the most recently started one, else null —
+   *  `get_export_status` without a `job_id`, so a job that just finished is
+   *  still the one an agent polling "the current job" reads. */
+  latest(): ExportJob | null {
+    const j = this.active ?? [...this.entries.values()].pop();
+    return j ? this.status(j.view.job_id) : null;
+  }
   private notify(j: Entry) { this.deps.send('export:status', this.status(j.view.job_id)); }
   start(args: Record<string, unknown>, agent = true): Promise<ExportJob> {
     const fingerprint = canonical({ args, agent });
@@ -179,30 +186,31 @@ export class ExportJobs {
     }
     // Snapshot the selected recipe before any await; edits cannot change an admitted job.
     const preset = this.preset(a.preset_id);
-    // Reserve synchronously before reading defaults or touching the filesystem.
+    const policy = (a.on_conflict ?? (agent ? 'rename' : 'fail')) as Entry['policy'];
+    // An agent's settings, path, extension and conflict are checked BEFORE a
+    // job exists, so a request that cannot run is refused as the call's answer
+    // rather than reported as a job that failed in preparation. The UI's job
+    // is reserved first and fails in view, as its panel expects.
+    const session = this.session(h);
+    const planned = agent ? await this.plan(h, preset, a, agent, policy) : undefined;
+    if (agent) {
+      // The plan awaited: whatever started or switched meanwhile wins.
+      if (this.stopping) throw new ExportJobError('app_closing', 'The application is closing');
+      this.assertWritable();
+      if (this.session(this.host()) !== session) throw new ExportJobError('project_busy', 'The project changed while the export was being prepared; start it again');
+    }
+    // Reserve synchronously from here (a UI job before reading defaults or
+    // touching the filesystem).
     const j: Entry = {
       view: { job_id: randomUUID(), state: 'preparing', output_path: '', filename: '', agent, settings: {} as ExportJob['settings'], range: { startUs: 0, endUs: 0 } },
-      staging: '', video: '', audio: '', policy: (a.on_conflict ?? (agent ? 'rename' : 'fail')) as Entry['policy'], session: this.session(h), dispatched: false, cancelling: false, published: false, preparation: Promise.resolve()
+      staging: '', video: '', audio: '', policy, session, dispatched: false, cancelling: false, published: false, preparation: Promise.resolve()
     };
     this.active = j; this.entries.set(j.view.job_id, j);
     j.preparation = (async () => {
-      const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
-        this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+      const { resolved, destination } = planned ?? await this.plan(h, preset, a, agent, policy);
       Object.assign(j.view, { settings: resolved.settings, range: resolved.range });
       j.video = path.join(os.tmpdir(), `weftcut-export-${j.view.job_id}-video.${['prores', 'dnxhr'].includes(resolved.settings.codec) ? 'mov' : 'mp4'}`);
       j.audio = path.join(os.tmpdir(), `weftcut-export-${j.view.job_id}-audio.${resolved.settings.audio.codec === 'opus' ? 'mka' : 'm4a'}`);
-      let destination: string;
-      if (a.output_path === undefined) {
-        const dir = path.join(h.openedProject()!.dir, 'output');
-        await fs.mkdir(dir, { recursive: true });
-        destination = path.join(dir, `${exportBasename(h.actor.snapshot().metadata.name)}.${resolved.extension}`);
-      } else {
-        if (typeof a.output_path !== 'string' || !path.isAbsolute(a.output_path)) throw new ExportValidationError('output_path must be absolute');
-        destination = path.resolve(a.output_path);
-        if (!agent) await fs.mkdir(path.dirname(destination), { recursive: true });
-      }
-      if (path.extname(destination).toLowerCase() !== `.${resolved.extension}`) throw new ExportValidationError(`output_path must end in .${resolved.extension}`);
-      if (j.policy === 'fail' && await exportPathExists(destination)) throw new ExportJobError('output_conflict', 'Output already exists; choose another filename');
       j.view.output_path = destination; j.view.filename = path.basename(destination);
       j.staging = await this.deps.native('export_prepare_output', { output: destination }) as string;
       await this.deps.native('export_begin', {});
@@ -221,6 +229,30 @@ export class ExportJobs {
       }
     } catch (e) { await this.finish(j, 'failed', e instanceof Error ? e.message : String(e), e instanceof ExportJobError ? e.code : e instanceof ExportValidationError ? 'invalid_params' : 'output_unavailable'); }
     return this.status(j.view.job_id)!;
+  }
+  /** The resolved settings and the destination file of a start request:
+   *  settings validated, an explicit `output_path` absolute and in a folder
+   *  that exists (the UI's is created), its extension the one the settings
+   *  write (`get_export_options`), and no file there under `on_conflict:
+   *  fail`. */
+  private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
+    const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
+      this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+    let destination: string;
+    if (a.output_path === undefined) {
+      const dir = path.join(h.openedProject()!.dir, 'output');
+      await fs.mkdir(dir, { recursive: true });
+      destination = path.join(dir, `${exportBasename(h.actor.snapshot().metadata.name)}.${resolved.extension}`);
+    } else {
+      if (typeof a.output_path !== 'string' || !path.isAbsolute(a.output_path)) throw new ExportValidationError(`output_path must be an absolute file path, got ${JSON.stringify(a.output_path)}`);
+      destination = path.resolve(a.output_path);
+      if (!agent) await fs.mkdir(path.dirname(destination), { recursive: true });
+      else if (!(await fs.stat(path.dirname(destination)).then(st => st.isDirectory(), () => false)))
+        throw new ExportJobError('output_parent_missing', `${path.dirname(destination)} is not an existing folder; an export is written only into a folder that already exists`, { path: path.dirname(destination) });
+    }
+    if (path.extname(destination).toLowerCase() !== `.${resolved.extension}`) throw new ExportValidationError(`output_path must end in .${resolved.extension}, the extension these settings write (get_export_options reports it); got ${path.basename(destination)}`);
+    if (policy === 'fail' && await exportPathExists(destination)) throw new ExportJobError('output_conflict', `${destination} already exists and on_conflict is fail; nothing is overwritten`, { path: destination });
+    return { resolved, destination };
   }
   rendererReady(token: string, rootId: string, generation = 0) {
     const h = this.host();

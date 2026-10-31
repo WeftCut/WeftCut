@@ -307,25 +307,28 @@ export function parseGraphicRoleOpt(v: unknown, field = 'graphic_role'): string 
 export const GRAPHIC_ROLE_VIDEO_REFUSAL = (media: string): string =>
   `graphic_role applies to an Image item, and media ${media} is a Video: a VideoClip carries no graphic role. Omit graphic_role, or place a still with an Image item`
 
-const LAYER_PATCH_KEYS: readonly string[] = ['label', 't_start_us', 't_end_us', 'locked']
-/** `update_layer`'s envelope patch. `enabled` is refused by name — the
- *  mutation would apply it, but visibility is `set_layers_enabled`'s — and a
- *  param key is pointed at `update_layer_params`. */
+const LAYER_PATCH_KEYS: readonly string[] = ['label', 'locked']
+/** `update_layer`'s envelope patch: the name and the lock. `enabled` is
+ *  refused by name — the mutation would apply it, but visibility is
+ *  `set_layers_enabled`'s — the two times are pointed at the tools that move
+ *  and trim (they carry link siblings, the source window, keyframes and the
+ *  autofit; a raw envelope write would carry none of them), and a param key is
+ *  pointed at `update_layer_params`. */
 export function parseLayerPatch(v: unknown): LayerPatch {
   const o = parseObj(v, 'patch')
   const keys = Object.keys(o)
   if (keys.length === 0) throw new McpArgError(`patch names no field; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}`, 'patch')
   for (const k of keys) {
     if (k === 'enabled') throw new McpArgError(`patch.enabled is not update_layer's: visibility is set_layers_enabled { layer_ids, enabled }`, 'patch')
+    if (k === 't_start_us' || k === 't_end_us') throw new McpArgError(`patch.${k} is not update_layer's: move a layer with move_layer { layer_id, new_track_id, new_t_start_us }, change one edge with trim_layer { layer_id, edge, new_t_us } — both carry link siblings and the source window with them`, 'patch')
     if (!LAYER_PATCH_KEYS.includes(k)) {
       const owner = Object.values(LAYER_PARAMS_KEYS).some((ks) => ks.includes(k)) ? ` — '${k}' is a kind-specific param, which is update_layer_params { patch: { kind, ${k} } }` : ''
       throw new McpArgError(`invalid patch: unknown key '${k}'; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}${owner}`, 'patch')
     }
   }
   const out: LayerPatch = {}
+  // null is a value here: it clears the label (Layer.label is nullable).
   if ('label' in o) out.label = parseStrOpt(o.label, 'patch.label')
-  if ('t_start_us' in o) out.t_start_us = parseIntNum(o.t_start_us, 'patch.t_start_us')
-  if ('t_end_us' in o) out.t_end_us = parseIntNum(o.t_end_us, 'patch.t_end_us')
   if ('locked' in o) out.locked = parseBool(o.locked, 'patch.locked')
   return out
 }
@@ -527,26 +530,30 @@ export function parseEffectPatch(v: unknown): EffectPatch {
 }
 
 /** Strict update_marker patch — same lie-prevention as parseEffectPatch.
- *  null = "don't touch" (end_t_us can be set, never cleared: remove+add).
+ *  Absent = "don't touch"; the one null is `end_t_us: null`, which turns a
+ *  region back into a point. Every other field refuses null: a null that meant
+ *  "leave it" would answer success for a write that wrote nothing.
  *
  *  `anchor` is absent from the accepted set on purpose and is rejected like any
  *  other unknown key: an anchor is established only by the dedicated
  *  attach/detach ops, which is what keeps the pair (`anchor`, `t_us`) from ever
  *  being written apart (see `MarkerPatch`). */
+const MARKER_PATCH_KEYS: readonly string[] = ['t_us', 'end_t_us', 'label', 'note', 'color']
 export function parseMarkerPatch(v: unknown): MarkerPatch {
   const o = parseObj(v, 'patch')
-  for (const k of Object.keys(o)) {
-    if (k !== 't_us' && k !== 'end_t_us' && k !== 'label' && k !== 'note' && k !== 'color')
-      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, note?, color? }`)
+  const keys = Object.keys(o)
+  if (keys.length === 0) throw new McpArgError(`patch names no field; update_marker writes ${MARKER_PATCH_KEYS.join(', ')}`, 'patch')
+  for (const k of keys) {
+    if (!MARKER_PATCH_KEYS.includes(k))
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, note?, color? }`, 'patch')
   }
-  parseNumOpt(o.t_us, 'patch.t_us')
-  parseNumOpt(o.end_t_us, 'patch.end_t_us')
-  if (o.label !== undefined && o.label !== null && typeof o.label !== 'string')
-    throw new McpArgError(`patch.label must be a string`, 'patch')
-  if (o.note !== undefined && o.note !== null && typeof o.note !== 'string')
-    throw new McpArgError(`patch.note must be a string`, 'patch')
-  if (o.color !== undefined && o.color !== null) parseRgba(o.color, 'patch.color')
-  return o as MarkerPatch
+  const out: MarkerPatch = {}
+  if ('t_us' in o) out.t_us = parseNum(o.t_us, 'patch.t_us')
+  if ('end_t_us' in o) out.end_t_us = o.end_t_us === null ? null : parseNum(o.end_t_us, 'patch.end_t_us')
+  if ('label' in o) out.label = parseStr(o.label, 'patch.label')
+  if ('note' in o) out.note = parseStr(o.note, 'patch.note')
+  if ('color' in o) out.color = parseRgba(o.color, 'patch.color')
+  return out
 }
 
 const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
@@ -1570,14 +1577,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('The layers to show or hide.'), enabled: { type: 'boolean', description: 'true shows, false hides — preview and export alike.' } }, required: ['layer_ids', 'enabled'] },
     parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
   { name: 'update_layer', exec: 'table', annotations: ANN_SET,
-    description: "Update a layer's envelope: `label`, `t_start_us`/`t_end_us`, `locked`. Only fields you set apply; time changes are validated; any other key is refused naming the set. Visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`. Locks reject content edits; unlock with a separate lock-only patch.",
+    description: "Rename a layer (`label`; null clears it) or lock it (`locked`). Only fields you set apply; any other key is refused naming the set. Times are `move_layer` (start) and `trim_layer` (one edge); visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`. Locks reject content edits; unlock with a separate lock-only patch.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: {
       type: 'object',
       description: 'Envelope patch; only the fields you set apply.',
       properties: {
         label: { type: ['string', 'null'], description: 'Display name; null clears it.' },
-        t_start_us: { ...T_START_SCHEMA, description: 'New timeline start, µs (snapped to the grid and echoed).' },
-        t_end_us: { ...T_END_SCHEMA, description: 'New timeline end (exclusive), µs (snapped and echoed).' },
         locked: { type: 'boolean', description: 'Refuse edits to this layer.' },
       },
     } }, required: ['layer_id', 'patch'] },
@@ -1887,12 +1892,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip's span is refused, and `t_us` together with `end_t_us` is refused (an anchored region's end follows its anchor by itself; patch one or the other).",
     inputSchema: { type: 'object', properties: { marker_id: ID_SCHEMA('Marker'), patch: {
       type: 'object',
-      description: 'Marker patch; only fields you set apply. `end_t_us` can be set, never cleared (remove + re-add). The anchor is `set_marker_anchor`\'s, not patchable here.',
+      description: 'Marker patch; only fields you set apply. The anchor is `set_marker_anchor`\'s, not patchable here.',
       properties: {
         t_us: US_SCHEMA('New time, timeline'),
-        end_t_us: US_SCHEMA('Region end, timeline; turns a point marker into a region'),
-        label: { type: ['string', 'null'], description: 'Short name — what the marker lane and the search palette show. Keep it to a few words; long text belongs in `note`.' },
-        note: { type: ['string', 'null'], description: 'Long text, shown only in the marker panel.' },
+        end_t_us: { type: ['integer', 'null'], description: 'Region end, timeline µs (exclusive); a point marker becomes a region. null turns a region back into a point.' },
+        label: { type: 'string', description: 'Short name — what the marker lane and the search palette show. Keep it to a few words; long text belongs in `note`.' },
+        note: { type: 'string', description: 'Long text, shown only in the marker panel.' },
         color: { ...RGBA_SCHEMA, description: 'Marker colour.' },
       },
     } }, required: ['marker_id', 'patch'] },
@@ -1998,11 +2003,15 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. Recorded (undoable). Folds into every layer of that role at mix time.",
     inputSchema: { type: 'object', properties: { gain_db: { type: 'number', description: 'Bus gain, dB; 0 = unity.' }, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' } }, required: ['gain_db', 'role'] },
     parseArgs: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: parseNum(a.gain_db, 'gain_db') } }) },
-  // set_role_flags: patch stays structural (muted/solo are nullable booleans validated by the mutation)
   { name: 'set_role_flags', exec: 'table', annotations: ANN_SET,
-    description: "Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.",
+    description: "Mute/solo an audio role; omit one flag to leave it alone, and name at least one. role ∈ {dialogue,music,sfx,voiceover}. Mute wins over solo; any solo silences non-soloed roles. Gates preview AND export. Unrecorded (undo does not revert it) and not in the review diff — restore the flags before handing back. A mix change the user reviews is `set_role_gain`.",
     inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' }, muted: { type: 'boolean', description: 'Silence the bus. Omitted leaves it alone.' }, solo: { type: 'boolean', description: 'Play this bus alone. Omitted leaves it alone.' } }, required: ['role'] },
-    parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
+    parseArgs: (a) => {
+      const muted = parseBoolTriState(a.muted, 'muted')
+      const solo = parseBoolTriState(a.solo, 'solo')
+      if (muted === null && solo === null) throw new McpArgError('set_role_flags needs at least one of `muted` / `solo`; a call that names no flag would report success having changed nothing')
+      return { op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted, solo } } }
+    } },
   // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
   { name: 'add_color_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a solid-color layer to a track and return its record — `layer_id`, `track_id`, the span as committed, `adjusted` for any grid snap. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.",
@@ -2012,8 +2021,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
-    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; ignored for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; ignored for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Image only.` }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
+    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; `src_in_us`/`src_out_us` are refused. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
+    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; refused for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; refused for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Image only.` }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
       graphic_role: parseGraphicRoleOpt(a.graphic_role),
@@ -2120,7 +2129,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { locked, reason }
     } },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
-    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalars, `{r,g,b,a}` (0..255) for \"color\"; an effect param must sit in its catalogued range (`effects://catalog`). `interp` (optional) eases the segment LEAVING this key (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce); omitted, it inherits the preceding segment's. A Bezier on the LAST key is refused — its p2 lands on the next key, so add that key first. One side, the continuity or a preset: `update_keyframe`; Auto tangents: `smooth_keyframes`.",
+    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key on the snapped frame is updated in place, id kept. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalars, `{r,g,b,a}` (0..255) for \"color\"; an effect param must sit in its catalogued range (`effects://catalog`). `interp` eases the segment LEAVING this key (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce); omitted, it inherits the preceding segment's. A Bezier on the LAST key is refused — its p2 lands on the next key, so add that key first. One side, the continuity or a preset: `update_keyframe`; Auto tangents: `smooth_keyframes`.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
@@ -2137,7 +2146,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key') }) },
   { name: 'update_keyframe', exec: 'dedicated', annotations: ANN_SET,
-    description: "Change one keyframe in one commit — any of: `t_us` (move it, timeline-absolute; the track re-sorts), `easing` (the segment LEAVING the key: {\"preset\":\"<id>\"} from the canonical table, read back as `preset_id`, or a raw kind {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}; writes this key's out tangent and the next key's in tangent, both Free), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number). At least one; applied in that order. Auto tangents on one or every key: `smooth_keyframes`.",
+    description: "Change one keyframe in one commit — any of: `t_us` (move it, timeline-absolute, snapped to the frame; the track re-sorts; a frame another key holds is refused, `KeyframeOccupied`), `easing` (the segment LEAVING the key: {\"preset\":\"<id>\"} from the canonical table, read back as `preset_id`, or a raw kind {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}; writes this key's out tangent and the next key's in tangent, both Free), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number). At least one; applied in that order. Auto tangents on one or every key: `smooth_keyframes`.",
     inputSchema: { type: 'object', properties: {
       keyframe_id: ID_SCHEMA('Keyframe'),
       layer_id: LAYER_ID_SCHEMA,
@@ -2373,7 +2382,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    actor: opening swaps the actor's whole state and the renderer follows.
   //    Both answer while no project is open (`APP_SCOPE_TOOLS`).
   { name: 'open_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Open a project folder (the one holding project.json) in the editor, as the start screen's Open does; only one the user asked for. The project open before is saved; its undo history is dropped. Recent projects: `read_project { view: \"session\" }`. Returns `{ name, dir, replaced }`.",
+    description: "Open a project folder (the one holding project.json) in the editor, as the start screen's Open does; only one the user asked for. The project open before is saved; its undo history is dropped. The folder already open is not reloaded and answers `already_open: true`. Recent projects: `read_project { view: \"session\" }`. Returns `{ name, dir, replaced, already_open }`.",
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the project folder.' } }, required: ['path'] },
     parseDedicated: (a) => ({ path: parseAbsolutePath(a.path, 'path') }) },
   { name: 'create_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,

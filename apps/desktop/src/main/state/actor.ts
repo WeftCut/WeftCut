@@ -16,6 +16,7 @@ import { applyRestyleToTaste, type RestyleGroup } from './mutations/restyleTaste
 import { styleText } from '../taste/apply'
 import { motifTokenProps } from '../taste/motifProps'
 import { captionLimits } from '../../shared/craft'
+import { keyTimeUs } from '../../shared/keyframe'
 import { buildLimits } from './mutations/captionSegments'
 import type { Tokens } from '../taste/schema'
 import { checkComposition } from '../lint/checkComposition'
@@ -72,19 +73,18 @@ export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
 export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint; replaced?: true }
 
-/** `update_layer`'s one rule for the times an agent sends, wet or rehearsed:
- *  landed on the layer's own grid rather than refused as off-grid (the answer's
- *  `adjusted` says so). A layer that does not exist gets its patch back as is —
- *  the mutation names the missing layer. */
-function snapEnvelopePatch(p: Project, id: Uuid, patch: LayerPatch): LayerPatch {
-  const loc = locateLayer(p, id)
-  if (!loc) return patch
+/** `add_video_layer` over an Image with a source window: a still has none. */
+const IMAGE_SOURCE_WINDOW_REFUSAL = (media: string): string =>
+  `media ${media} is an Image: a still has no source window, so src_in_us / src_out_us would be dropped. Omit them; t_start_us / t_end_us place the still`
+
+/** The lattice a layer's keys are written on, as a snap of a layer-local µs:
+ *  the frame grid of its composition, or 48 kHz samples for Audio — the snap
+ *  `applyUpdateLayerParamTrack` applies at write time. */
+function keyLatticeOf(p: Project, layer: Uuid): (localUs: number) => number {
+  const loc = locateLayer(p, layer)
+  if (!loc) return (t) => t
   const grid = gridForLayerKind(loc.layer.params.kind, loc.comp.fps)
-  return {
-    ...patch,
-    ...(typeof patch.t_start_us === 'number' ? { t_start_us: snapOnGrid(patch.t_start_us, grid) } : {}),
-    ...(typeof patch.t_end_us === 'number' ? { t_end_us: snapOnGrid(patch.t_end_us, grid) } : {}),
-  }
+  return (t) => snapOnGrid(t, grid)
 }
 
 /** `validate` names the EARLIER-starting layer of a colliding pair `a` and the
@@ -938,10 +938,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
               for (const id of op.ids) applyDeleteLayer(d, id)
               break
             // The rehearsal is the agent's, so it runs under the MCP arms' rule
-            // for a time it sends: an envelope time lands on the grid, a start
-            // below 0 or a trim past the window is refused (`strict`) — exactly
-            // what the real call answers.
-            case 'UpdateLayer': applyUpdateLayer(d, op.id, snapEnvelopePatch(scratch, op.id, op.patch)); break
+            // for a time it sends: a start below 0 or a trim past the window is
+            // refused (`strict`) — exactly what the real call answers.
+            case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
             case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
             case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link, true); break
             case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_link); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
@@ -1837,8 +1836,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // was written expecting this layer to exist.
         if (kind === 'Audio') throw new McpArgError(`media ${media} is audio-only — a visual layer over it draws nothing and the mixer does not read it; use add_audio_layer`, 'media_id')
         if (kind === 'Subtitle') throw new McpArgError(`media ${media} is a subtitle document, not a picture; use apply_subtitles (not dry-runnable) or add_text_layer`, 'media_id')
-        // The wet arm's rule too: an Image ignores the source window, a Video
+        // The wet arm's rule too: an Image takes no source window, a Video
         // needs one.
+        if (kind === 'Image' && (srcIn !== null || srcOut !== null)) throw new McpArgError(IMAGE_SOURCE_WINDOW_REFUSAL(media), 'src_in_us')
         if (kind !== 'Image' && (srcIn === null || srcOut === null)) throw new McpArgError(`src_in_us and src_out_us are required for Video media ${media}; only an Image may omit them`, 'src_in_us')
         const role = parseGraphicRoleOpt(spec.graphic_role)
         if (kind !== 'Image' && role != null) throw new McpArgError(GRAPHIC_ROLE_VIDEO_REFUSAL(media), 'graphic_role')
@@ -1958,6 +1958,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           const role = p.graphic_role as string | null | undefined
           if (item.kind === 'Image') {
+            // A still has no source window: one sent would be dropped.
+            if (srcIn !== null || srcOut !== null) return { ok: false, error: { code: 'invalid_params', message: IMAGE_SOURCE_WINDOW_REFUSAL(media), data: { field: srcIn !== null ? 'src_in_us' : 'src_out_us' } } }
             const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media, mediaExtent(current().media_pool[media]), role ?? null), t0, t1))
             return { ok: true, result: toolRecord(addedVideo(imageId, null, null, p)) }
           }
@@ -2214,7 +2216,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           checkEffectKeyframeValues(current(), layer, paramKey, [p.value], 'value')
           const easing = p.interp as Interpolation | undefined
-          const rel = (p.t_us as number) - tStartUs
+          // Snapped to the layer's lattice FIRST, so "a key at the same frame"
+          // is the key the write-time snap would land on: a time a few µs off
+          // an existing key updates that key (its id stays), never a second key
+          // the snap then dedupes away.
+          const rel = keyLatticeOf(current(), layer)((p.t_us as number) - tStartUs)
           const next = upsertKeyframe(track, rel, p.value as TrackValue, easing, idGen)
           // A Bezier's p2 shapes the ARRIVAL at the next key and is stored there;
           // on the last key it has nowhere to land and would be dropped under a
@@ -2260,7 +2266,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // settles the pair in — then continuity.
           let next = track
           const tUs = p.t_us as number | null
-          if (tUs !== null) next = retimeKeyframe(next, keyframeId, tUs - tStartUs)
+          if (tUs !== null) {
+            // A retime onto a frame another key holds would merge the two (the
+            // write-time dedupe keeps one): refused, naming the key there.
+            const rel = keyLatticeOf(current(), layer)(tUs - tStartUs)
+            const occupant = track.mode === 'Keyframed' ? track.value.find((k) => k.id !== keyframeId && keyTimeUs(k) === rel) : undefined
+            if (occupant) return { ok: false, error: { code: 'invalid_params',
+              message: `keyframe ${occupant.id} already sits at t_us ${rel + tStartUs} on layer ${layer} param '${paramKey}'; moving ${keyframeId} there would merge the two keys. Pick another frame, or delete_keyframe ${occupant.id} first`,
+              data: { error: 'KeyframeOccupied', keyframe_id: occupant.id, t_us: rel + tStartUs } } }
+            next = retimeKeyframe(next, keyframeId, rel)
+          }
           const easing = p.easing as Interpolation | null
           if (easing) next = setSegmentEasing(next, keyframeId, easing)
           const inXy = p.in as { x: number; y: number } | null
@@ -2429,11 +2444,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const eff = locateLayer(current(), args.layer as Uuid)?.layer.effects.find((e) => e.id === args.effect)
         if (eff) checkEffectPatchAgainst(eff.kind, args.patch as EffectPatch)
       }
-      // `update_layer`'s times land on the layer's own grid like every other
-      // placing tool's (snap, and the answer's `adjusted` says so) rather than
-      // being refused by the grid backstop with a `snap_to` the caller then
-      // has to send again: one rule for a time an agent sends — snap and echo.
-      if (name === 'update_layer') args.patch = snapEnvelopePatch(current(), args.layer as Uuid, args.patch as LayerPatch)
       const r = dispatch(op, args)
       if (!r.ok) return { ok: false, error: mapCommandError(orientOverlap(r.error, before, subjectsOf(args)), name) }
       const reader = MCP_RESULT_READERS[name]

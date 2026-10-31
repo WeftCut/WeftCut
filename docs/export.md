@@ -157,8 +157,11 @@ frozen while a job is active or awaiting retry (ADR 0111).
   the directory and extension and clears that job's overwrite consent.
 - **MCP tools.** `get_export_options`, `start_export`, `get_export_status`,
   `retry_export`, `cancel_export`. A repeated `request_id` with identical
-  arguments returns the same job; different arguments conflict. Records
-  survive reconnects, not app restart. Agents must report the completed
+  arguments returns the same job; different arguments conflict. An agent's
+  settings, path, extension and `on_conflict: fail` collision are refused
+  before a job exists; `get_export_status` answers `{ job }` (the named, else
+  active, else most recent job). Records survive reconnects, not app
+  restart. Agents must report the completed
   `output_path`. MCP settings are per-job overrides; MCP never falls back from
   native to WebCodecs.
 

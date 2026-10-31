@@ -106,11 +106,13 @@ describe('MCP adapter routing — add_video_layer Image media (dedicated)', () =
     const a = freshActor()
     const trackId = aRollId(a)
     const mediaId = addShortStillMedia(a)
+    // A still has no source window: one sent is refused, never dropped.
+    const windowed = a.mcpCall('add_video_layer', JSON.stringify({ track_id: trackId, media_id: mediaId, src_in_us: 0, src_out_us: 5_000_000, t_start_us: 0, t_end_us: 5_000_000 }))
+    expect(windowed.ok).toBe(false)
+    if (!windowed.ok) expect(windowed.error.message).toContain('no source window')
     const r = a.mcpCall('add_video_layer', JSON.stringify({
       track_id: trackId,
       media_id: mediaId,
-      src_in_us: 0,
-      src_out_us: 5_000_000,
       t_start_us: 0,
       t_end_us: 5_000_000,
     }))
@@ -132,8 +134,6 @@ describe('MCP adapter routing — add_video_layer Image media (dedicated)', () =
       kind: 'add_video_layer',
       track_id: trackId,
       media_id: mediaId,
-      src_in_us: 0,
-      src_out_us: 5_000_000,
       t_start_us: 0,
       t_end_us: 5_000_000,
     }] }))

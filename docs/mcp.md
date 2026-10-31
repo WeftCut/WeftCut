@@ -139,6 +139,16 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   only `add_motif`, `checkpoint`, `set_composition`, `compositions_delete`.
 - Before adding a tool, check an existing tool's arguments: two verbs that
   differ by one boolean are one tool with a flag.
+- **No silent no-op, no silent degrade.** A write that would ignore, drop or
+  not apply an argument refuses: an empty patch, a flag call naming no flag, a
+  `null` on a field where null means nothing, a time a few µs off a key. A
+  `null` arm is advertised only where it means something (`label: null`
+  clears, `end_t_us: null` makes a point). A read or render that delivers less
+  than asked refuses, or says so in a typed field. Gate:
+  `mcp.no-silent-outcomes.test.ts` sends every optional and nullable field of
+  every write tool (TS, Motif, export, Rust) alone on a fixture project and
+  fails unless the state changed or the call refused; its exceptions are an
+  explicit list, each with a reason.
 
 ### Projects and the no-project rule
 
@@ -163,7 +173,9 @@ otherwise they ask. `project://session` reports `project` (null when none),
 `recent_projects` and `default_parent_folder`. `open_project` takes an
 absolute project folder; both tools flush the previous project, drop its
 history and checkpoints (as UI Close + Open does) and report `replaced`; the
-renderer follows via `project:opened`. `create_project` validates the name with
+renderer follows via `project:opened`. `open_project` on the folder already
+open (compared by resolved real path) reloads nothing and answers
+`{ name, dir, replaced: null, already_open: true }`. `create_project` validates the name with
 the New Project dialog's rules (`shared/newProject.ts`), defaults the canvas to
 1920×1080 at 60 fps and refuses a missing `parent_folder` when no default
 exists.
@@ -291,7 +303,9 @@ surface").
 Media and tracks: `import_media` (absolute or project-relative path; a file
 the pool already holds — same file or same bytes — answers `existing: true`,
 or relinks a missing item and answers `relinked: true`; files outside `Media/`
-are copied in, ADR 0151; subtitle documents become `Subtitle` items; `.svg` is
+are copied in, ADR 0151, and the answer's `path` / `path_rel` name the pooled
+copy — reserved under `Media/` when the copy is queued, with `copying: true`
+until it lands; subtitle documents become `Subtitle` items; `.svg` is
 rasterised once to a 2048-px PNG), `delete_media` (`force` cascades like
 `delete_layers`), `add_track`, `delete_track` (A/B roll protected),
 `rename_track`, `move_track`, `set_track_flags` (`enabled`/`locked`; no
@@ -304,8 +318,10 @@ audio-only media; never paired; sample-lattice endpoints; `role` defaults to
 `music`), `add_text_layer` (born in the style's tokens for its
 `graphic_role`), `add_motif_layer` (props validated against `props_schema`;
 omitted props take style tokens, then manifest defaults; a `media` prop names
-`"<media_id>"` or `"<media_id>@<t_us>"`), `update_layer` (envelope only:
-`label`, times, `locked`; anything else is refused naming the right tool),
+`"<media_id>"` or `"<media_id>@<t_us>"`), `update_layer` (`label`, `null`
+clears it, and `locked`; `t_start_us` / `t_end_us` are refused naming
+`move_layer` / `trim_layer`, which carry link siblings and the source window;
+anything else is refused naming the right tool),
 `update_layer_params` (one closed `oneOf` variant per kind; static transform
 writes replace keyframes; Text has no scale fields — a bigger title is a
 bigger box, ADR 0049; Text `intro` (`FadeIn`/`SlideUp`/`SlideDown`/
@@ -397,7 +413,10 @@ param key), `move_effect`, `delete_effect`. `audio.*` params are static only
 
 Keyframes (timeline-absolute µs; record: [data-model.md](data-model.md#animated-values),
 ADR 0058): `get_param_track` (read ids before editing), `set_keyframe`
-(insert-or-update), `update_keyframe` (one key, applied in order: time, easing,
+(insert-or-update; the time snaps to the layer's lattice first, so a write a
+few µs off a key updates that key and keeps its id), `update_keyframe` (one
+key, applied in order: time — onto a frame another key holds is refused,
+`KeyframeOccupied` naming it — easing,
 sides with `out` last, continuity; easing presets from
 `src/shared/easing.ts::EASING_PRESETS`), `delete_keyframe`, `smooth_keyframes`,
 `set_extrapolation`, `clear_keyframes`, `set_param_track` (whole track in one
@@ -423,7 +442,9 @@ provenance; `TransitionRestoreCollision` if the gap was filled). Visual layers
 only.
 
 Audio roles (a mix fold, not a bus; ADR 0023): `set_role_gain` (recorded),
-`set_role_flags` (mute/solo; unrecorded; mute wins).
+`set_role_flags` (mute/solo, at least one; mute wins; gates preview and
+export; unrecorded and absent from the review diff, so an agent restores the
+flags before handing back).
 
 Links ([features.md](features.md#links)): `create_link`, `update_link` (add →
 remove, one edit; below two members dissolves), `delete_link`. Membership is
@@ -436,8 +457,9 @@ composition, keeping screen position), `ungroup_layer` (plain Groups only,
 `GroupNotPlain`), `rename_composition`, `delete_composition` (orphans only,
 `CompositionInUse`).
 
-Markers and composition: `add_marker`, `update_marker`, `delete_marker`,
-`set_marker_anchor`. A marker is the user's content — agents add one only when
+Markers and composition: `add_marker`, `update_marker` (`end_t_us: null`
+turns a region back into a point; no other field takes null),
+`delete_marker`, `set_marker_anchor`. A marker is the user's content — agents add one only when
 asked, and use tacks otherwise. An anchored marker stores `{ layer, src_us }`
 and re-derives `t_us` every commit; patching `t_us` moves the anchor; a
 marker whose `src_us` leaves the clip's window is `hibernating` (kept, not
@@ -456,8 +478,10 @@ CompositionRef retime; static images, Text and Color do not.
 Motifs ([motif-workspaces.md](motif-workspaces.md)): `list_motifs`,
 `open_motif_draft`, `read_motif`, `update_motif_files` (revision-checked
 batch; exact-match `edits`), `preview_motif` (whole canvas scaled to bounds,
-never cropped), `install_motif` (publishes; replacing another target needs its
-version), `export_motif`, `delete_motif`, and the transfer tools
+never cropped; `id`, no alias), `install_motif` (publishes; replacing another
+target needs its version), `export_motif` (with `path`: an absolute `.zip` in
+an existing folder; an existing file is `PathExists`, never overwritten;
+annotated destructive), `delete_motif`, and the transfer tools
 `begin_file_upload` (≤ 256 MiB), `write_file_chunk` (≤ 256 KiB decoded),
 `read_file_transfer`, `delete_file_transfer`.
 
@@ -548,7 +572,13 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   settings over the default preset. Neither writes the project or a preset.
   Reuse a `request_id` only when unsure a request arrived; different arguments
   under one id fail. Conflict policy `rename` (default) or `fail`; MCP never
-  overwrites. Only a completed status certifies `output_path`. Export locks
+  overwrites. Settings, `output_path` (absolute, in an existing folder, the
+  extension `get_export_options` reports) and an `on_conflict: fail` collision
+  are checked before a job exists and refused as `invalid_params`
+  (`PathExists`, `PathNotFound`, `InvalidArgument`). `get_export_status`
+  answers `{ job }`: the job named, else the active one, else the most recent;
+  `null` only before any job ran. Only a completed status certifies
+  `output_path`. Export locks
   editing and project switching until terminal; closing MCP does not affect
   the job; jobs do not survive an app restart.
 - `render_frames` — read-only JPEGs of the root through the export pipeline

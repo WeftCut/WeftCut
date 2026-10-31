@@ -151,8 +151,10 @@ tool_table! {
     "compare_frames" => ("Compare two video frames for perceptual similarity — dedup shots, match a cutaway. Each side is `{ layer_id, t_us }`: a VideoClip layer and a SOURCE-ABSOLUTE µs timestamp (the space `analyze_clip`'s `keyframe_t_us` and `media://{id}/frame/<t_us>` use); the two may be the same clip or different clips. Returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 distance between the frames' perceptual hashes (0 = identical, 20+ = a different scene), `ssim` is structural similarity 0..1, and `similar` is `phash_hamming <= 10 && ssim >= 0.5`. Read-only; VideoClip layers only, errors naming the offending side.", tools::CompareFramesArgs, tools::compare_frames, ToolAnnotations::READ),
     #[cfg(feature = "jobs")]
     "import_media" => ("Import ONE media file. Hashes it (blake3) and probes it with \
-                          ffprobe when installed. Returns `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; \
-                          a subtitle (.srt/.vtt/.ass) is pooled for `apply_subtitles`. \
+                          ffprobe when installed. Returns `{ media_id, kind, label, path, path_rel, duration_us, width, height, has_audio }`: \
+                          `path` is the pooled copy in the project's Media/ folder (`copying: true` while it is copied from the \
+                          source); `relinked: true` when a pooled item whose file was gone now reads this one. \
+                          A subtitle (.srt/.vtt/.ass) is pooled for `apply_subtitles`. \
                           A directory, a missing path or an unreadable file is refused by name before anything is written; a read that \
                           fails mid-import rolls the provisional pool row back. A pooled file answers \
                           `existing: true`; `same_content_as` names copies of its bytes. Unrecorded.", tools::ImportMediaArgs, tools::import_media, ToolAnnotations::WRITE),

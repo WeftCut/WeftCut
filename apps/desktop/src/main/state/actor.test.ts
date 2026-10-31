@@ -579,19 +579,19 @@ describe('dispatch: update_marker + remove_marker', () => {
 })
 
 describe('dispatch: update_layer + fit_composition_to_layers', () => {
-  it('update_layer patches the envelope; fit refits duration', () => {
+  it('update_layer patches the name and the lock; a null label clears the name', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'd'); const a = root(initial).tracks[0].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     const l = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     expect(l.ok).toBe(true)
     const lid = (l as { ok: true; value: unknown }).value as string
-    expect(actor.dispatch('update_layer', { layer: lid, patch: { t_end_us: 4_000_000, label: 'x' } }).ok).toBe(true)
-    const snap = actor.snapshot()
-    const layer = root(snap).tracks.flatMap((t) => t.layers).find((x) => x.id === lid)!
-    expect(layer.t_end_us).toBe(4_000_000); expect(layer.label).toBe('x')
-    expect(root(snap).duration_us).toBe(1_000_000) // update_layer did NOT autofit (stayed at add_layer end)
-    expect(actor.dispatch('fit_composition_to_layers', {}).ok).toBe(true)
-    expect(root(actor.snapshot()).duration_us).toBe(4_000_000) // fit refit to layer end
+    const layerOf = () => root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((x) => x.id === lid)!
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { label: 'x' } }).ok).toBe(true)
+    expect(layerOf()).toMatchObject({ label: 'x', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { label: null } }).ok).toBe(true)
+    expect(layerOf().label).toBeNull()
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { locked: true } }).ok).toBe(true)
+    expect(layerOf().locked).toBe(true)
   })
 })
 

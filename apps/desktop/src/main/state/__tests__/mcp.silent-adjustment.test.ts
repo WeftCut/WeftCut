@@ -47,15 +47,6 @@ describe('a grid snap is applied and echoed', () => {
     expect(ok(call(a, 'move_layer', { layer_id: id, new_track_id: aRollId(a), new_t_start_us: 1_000_000 })).adjusted).toEqual([])
   })
 
-  it('update_layer\'s times snap like every other placing tool\'s instead of being refused with snap_to', () => {
-    const a = freshActor()
-    const id = colorLayer(a, aRollId(a), 0, 2_000_000)
-    const rec = ok(call(a, 'update_layer', { layer_id: id, patch: { t_end_us: 1_990_000 } }))
-    expect(rec.t_end_us).toBe(2_000_000)
-    expect(rec.adjusted).toEqual([{ field: 't_end_us', requested: 1_990_000, applied: 2_000_000, reason: 'grid' }])
-    expect(layerOf(a, id).t_end_us).toBe(2_000_000)
-  })
-
   it('add_marker snaps to the frame and echoes', () => {
     const a = freshActor()
     const rec = ok(call(a, 'add_marker', { t_us: 40_000, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 } }))
@@ -177,11 +168,5 @@ describe('dry_run rehearses under the same rule', () => {
     expect(r.results[0].status).toBe('error')
     expect(r.results[0].error).toMatch(/NegativeLayerStart|-500000/)
     expect(layerOf(a, id).t_start_us).toBe(1_000_000)
-  })
-  it('a rehearsed off-grid envelope time is snapped, as the wet call snaps it', () => {
-    const a = freshActor()
-    const id = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
-    const r = dry(a, [{ kind: 'update_layer', layer_id: id, patch: { t_start_us: 1_010_000 } }])
-    expect(r.results[0].status).toBe('ok')
   })
 })

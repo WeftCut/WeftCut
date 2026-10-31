@@ -103,7 +103,8 @@ to the publication. To create a separate publication, first copy the draft's
 ZIP into a new draft. Source provenance never implicitly chooses an overwrite.
 
 export_motif produces a complete ZIP and returns a downloadable file_id, or
-writes an absolute local path. It accepts expected_revision. Deleting a draft
+writes an absolute local `.zip` path in an existing folder; an existing file
+is refused, never overwritten. It accepts expected_revision. Deleting a draft
 removes app-owned data and its association, never linked author files.
 Published content is a snapshot independent of later draft edits.
 

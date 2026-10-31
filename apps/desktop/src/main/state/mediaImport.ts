@@ -5,7 +5,7 @@ import type { Actor } from './history'
 import type { MediaItem } from './model'
 import { McpArgError, mapCommandError } from './mcp-commands'
 import type { ImportTrace } from '../importDiagnostics'
-import { absoluteSource, mediaFolderPath, nextImportStep, spelledKey, type FileKey, type Holding } from './importSource'
+import { absoluteSource, mediaFolderPath, nextImportStep, pathLib, spelledKey, type FileKey, type Holding } from './importSource'
 
 export type MediaImportDeps = {
   beginImport?: () => ImportTrace
@@ -18,8 +18,10 @@ export type MediaImportDeps = {
    *  of pool items — thin wrapper over the Backend `enqueueJobsForMedia` napi. */
   enqueueDerivatives: (items: unknown[]) => Promise<void>
   /** Queue the background workspace-copy job for an inserted media item. No-op
-   *  napi when no workspace; the copy's path/hash write-back is seam-routed. */
-  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
+   *  napi when no workspace; the copy's path/hash write-back is seam-routed.
+   *  Answers the workspace-relative `Media/<name>` the copy is reserved to land
+   *  at (null or nothing when none was queued). */
+  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<string | null | void>
   /** Current workspace dir, or null. Gate for the workspace-copy enqueue. */
   workspaceDir: () => string | null
   /** Changes on close/reopen, even when the same project id and path return. */
@@ -53,6 +55,10 @@ export interface ImportOutcome {
   disposition: 'added' | 'reused' | 'relinked'
   existing: boolean
   sameContentAs: string[]
+  /** Where the pooled file lands while its copy into `Media/` is still
+   *  running: the reserved workspace-relative and absolute paths. Null once the
+   *  pool record holds its own `path_rel`, or when nothing is being copied. */
+  copying: { path_rel: string; path_abs: string } | null
 }
 
 const errText = (e: unknown): string => e instanceof Error ? e.message : String(e)
@@ -71,24 +77,44 @@ export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
   // Each import between its provisional row and its settling, by media id: an
   // import of the same file meanwhile answers what that one does.
   const inFlight = new Map<string, Promise<string>>()
+  // Where each queued copy lands, so an answer given before the copy ran
+  // still names the pooled file.
+  const reserved: Reservations = new Map()
   return {
     ensureImported(asked, { by } = {}) {
-      return ensureImported(asked, deps, (command, args) => deps.actor.dispatch(command, args, by), inFlight)
+      return ensureImported(asked, deps, (command, args) => deps.actor.dispatch(command, args, by), inFlight, reserved)
     },
   }
+}
+
+/** The `Media/` name each queued copy is reserved to land at, by media id. */
+type Reservations = Map<string, { source: string; path_rel: string }>
+
+/** Queue the workspace copy of `source` for `mediaId`, remembering where it
+ *  will land. */
+async function enqueueCopy(deps: MediaImportDeps, reserved: Reservations, mediaId: string, source: string): Promise<void> {
+  const rel = await deps.enqueueWorkspaceCopy(mediaId, source)
+  if (typeof rel === 'string') reserved.set(mediaId, { source, path_rel: rel })
 }
 
 /** An actor write attributed to the importing caller. */
 type Write = (command: string, args: Record<string, unknown>) => ReturnType<ActorHandle['dispatch']>
 
-async function ensureImported(asked: string, deps: MediaImportDeps, write: Write, inFlight: Map<string, Promise<string>>): Promise<ImportOutcome> {
+async function ensureImported(asked: string, deps: MediaImportDeps, write: Write, inFlight: Map<string, Promise<string>>, reserved: Reservations): Promise<ImportOutcome> {
   if (deps.canImport?.() === false) throw new Error('Project is changing; retry importing after it opens')
   const trace = deps.beginImport?.()
   const priorIds = new Set(Object.keys(deps.actor.snapshot().media_pool))
   const outcome = (mediaId: string, disposition: ImportOutcome['disposition']): ImportOutcome => {
     const pool = deps.actor.snapshot().media_pool
-    const hash = pool[mediaId]?.file_hash_blake3
-    return { mediaId, disposition, existing: priorIds.has(mediaId), sameContentAs: hash === undefined ? []
+    const item = pool[mediaId]
+    const hash = item?.file_hash_blake3
+    // A copy still on its way: the record reads the source until it lands.
+    const pending = reserved.get(mediaId)
+    const workspaceDir = deps.workspaceDir()
+    const copying = item && item.path_rel === null && pending && pending.source === item.path_abs && workspaceDir
+      ? { path_rel: pending.path_rel, path_abs: pathLib(deps.platform ?? process.platform).join(workspaceDir, pending.path_rel) }
+      : null
+    return { mediaId, disposition, existing: priorIds.has(mediaId), copying, sameContentAs: hash === undefined ? []
       : Object.values(pool).filter(m => m.id !== mediaId && m.file_hash_blake3 === hash).map(m => m.id) }
   }
   try {
@@ -153,7 +179,7 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
         return outcome(step.id, 'reused')
       } else {
         const held = deps.actor.snapshot().media_pool[step.id]
-        const relinked = relink(held, item, path, workspaceDir, inMedia, assertCurrent, write, deps).then(() => held.id)
+        const relinked = relink(held, item, path, workspaceDir, inMedia, assertCurrent, write, deps, reserved).then(() => held.id)
         inFlight.set(held.id, relinked)
         try { await relinked }
         finally { inFlight.delete(held.id) }
@@ -166,7 +192,7 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
     const r = write('add_media_item', { media: item })
     if (!r.ok) throw new Error(JSON.stringify(r.error))
     trace?.bind(item, Boolean(workspaceDir) && !inMedia)
-    const settled = settleImport(item, path, hash, { hashSource, workspaceDir, inMedia, assertCurrent, write, trace }, deps)
+    const settled = settleImport(item, path, hash, { hashSource, workspaceDir, inMedia, assertCurrent, write, trace, reserved }, deps)
     inFlight.set(item.id, settled)
     try {
       const mediaId = await settled
@@ -198,14 +224,14 @@ async function holdingOf(item: MediaItem, deps: MediaImportDeps): Promise<Holdin
  *  derivatives regenerate whatever left with the file. */
 async function relink(
   held: MediaItem, found: MediaItem, path: string, workspaceDir: string | null, inMedia: string | null,
-  assertCurrent: () => void, write: Write, deps: MediaImportDeps,
+  assertCurrent: () => void, write: Write, deps: MediaImportDeps, reserved: Reservations,
 ): Promise<void> {
   const r = write('set_media_workspace_paths', { media: held.id, paths: {
     path_abs: path, path_rel: inMedia, file_hash_blake3: held.file_hash_blake3, file_size: found.file_size, file_mtime: found.file_mtime } })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   await deps.enqueueDerivatives([deps.actor.snapshot().media_pool[held.id]])
   assertCurrent()
-  if (workspaceDir && !inMedia) await deps.enqueueWorkspaceCopy(held.id, path)
+  if (workspaceDir && !inMedia) await enqueueCopy(deps, reserved, held.id, path)
 }
 
 /** The rest of an import once its provisional row is in the pool: the real
@@ -213,9 +239,9 @@ async function relink(
  *  back. Shared with any import of the same file that lands meanwhile. */
 async function settleImport(item: MediaItem, path: string, hashed: string | null, ctx: {
   hashSource: () => Promise<string>; workspaceDir: string | null; inMedia: string | null
-  assertCurrent: () => void; write: Write; trace: ImportTrace | undefined
+  assertCurrent: () => void; write: Write; trace: ImportTrace | undefined; reserved: Reservations
 }, deps: MediaImportDeps): Promise<string> {
-  const { hashSource, workspaceDir, inMedia, assertCurrent, write, trace } = ctx
+  const { hashSource, workspaceDir, inMedia, assertCurrent, write, trace, reserved } = ctx
   let hash = hashed
   // Compute the REAL content hash (a lightweight standalone read pass), set it
   // on the pool item, THEN enqueue derivatives — so every job bakes the final
@@ -254,7 +280,7 @@ async function settleImport(item: MediaItem, path: string, hashed: string | null
     const wr = write('set_media_workspace_paths', { media: item.id, paths: {
       path_abs: path, path_rel: inMedia, file_hash_blake3: hash, file_size: item.file_size, file_mtime: item.file_mtime } })
     if (!wr.ok) throw new Error(JSON.stringify(wr.error))
-  } else if (workspaceDir) await deps.enqueueWorkspaceCopy(item.id, path)
+  } else if (workspaceDir) await enqueueCopy(deps, reserved, item.id, path)
   assertCurrent()
   trace?.queued()
   return item.id

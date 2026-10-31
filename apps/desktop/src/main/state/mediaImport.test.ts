@@ -95,12 +95,27 @@ describe('ensureImported', () => {
     const actor = freshActor(), deps = makeDeps(actor)
     const source = 'C:/x.mp4'
     deps._probeMedia.mockResolvedValue(JSON.stringify({ ...probedItem(), path_abs: source }))
-    expect(await ensureImported(source, deps)).toEqual({ mediaId: MID, disposition: 'added', existing: false, sameContentAs: [] })
-    expect(await ensureImported(source, deps)).toEqual({ mediaId: MID, disposition: 'reused', existing: true, sameContentAs: [] })
+    expect(await ensureImported(source, deps)).toEqual({ mediaId: MID, disposition: 'added', existing: false, sameContentAs: [], copying: null })
+    expect(await ensureImported(source, deps)).toEqual({ mediaId: MID, disposition: 'reused', existing: true, sameContentAs: [], copying: null })
     deps.statPath = p => p === source ? null : { kind: 'file', readable: true }
     deps._probeMedia.mockResolvedValue(JSON.stringify({ ...probedItem(), path_abs: 'D:/backup.mp4' }))
-    expect(await ensureImported('D:/backup.mp4', deps)).toEqual({ mediaId: MID, disposition: 'relinked', existing: true, sameContentAs: [] })
+    expect(await ensureImported('D:/backup.mp4', deps)).toEqual({ mediaId: MID, disposition: 'relinked', existing: true, sameContentAs: [], copying: null })
     expect(actor.snapshot().media_pool[MID].path_abs).toBe('D:/backup.mp4')
+  })
+
+  it('answers where the copy into Media/ lands while it runs, and the pooled path once it landed (NEW-4)', async () => {
+    const actor = freshActor(), deps = makeDeps(actor, { workspaceDir: 'C:/proj' })
+    deps._enqueueWorkspaceCopy.mockResolvedValue('Media/x.mp4')
+    deps._probeMedia.mockResolvedValue(JSON.stringify({ ...probedItem(), path_abs: 'D:/pictures/x.mp4' }))
+    const queued = await ensureImported('D:/pictures/x.mp4', deps)
+    expect(queued.copying).toEqual({ path_rel: 'Media/x.mp4', path_abs: path.win32.join('C:/proj', 'Media/x.mp4') })
+    expect(deps._enqueueWorkspaceCopy).toHaveBeenCalledWith(MID, 'D:/pictures/x.mp4')
+    // A second import while the copy runs names the same place.
+    expect((await ensureImported('D:/pictures/x.mp4', deps)).copying).toEqual(queued.copying)
+    // The copy lands: the pool record holds Media/ itself, and nothing is said to be copying.
+    const item = actor.snapshot().media_pool[MID]!
+    expect(actor.dispatch('set_media_workspace_paths', { media: MID, paths: { path_abs: 'C:/proj/Media/x.mp4', path_rel: 'Media/x.mp4', file_hash_blake3: item.file_hash_blake3, file_size: item.file_size, file_mtime: item.file_mtime } }).ok).toBe(true)
+    expect((await ensureImported('C:/proj/Media/x.mp4', deps)).copying).toBeNull()
   })
 
   it('joins an import across callers without attributing writes to the joining caller', async () => {
@@ -339,7 +354,7 @@ describe('ensureImported', () => {
       const actor = holding('C:/proj/Media/x.mp4')
       const deps = makeDeps(actor, { workspaceDir: 'C:/proj' })
       deps._hashMediaSource.mockImplementation(async (p: string) => (p === 'C:/proj/Media/x.mp4' ? 'otherhash' : 'heldhash'))
-      expect(await ensureImported('D:/backup/x.mp4', deps)).toEqual({ mediaId: HELD, disposition: 'relinked', existing: true, sameContentAs: [] })
+      expect(await ensureImported('D:/backup/x.mp4', deps)).toEqual({ mediaId: HELD, disposition: 'relinked', existing: true, sameContentAs: [], copying: null })
       expect(actor.snapshot().media_pool[HELD]).toMatchObject({ path_abs: 'D:/backup/x.mp4', file_hash_blake3: 'heldhash' })
       expect(deps._enqueueWorkspaceCopy).toHaveBeenCalledWith(HELD, 'D:/backup/x.mp4')
     })

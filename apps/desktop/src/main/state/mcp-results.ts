@@ -329,11 +329,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     const params = hit?.layer.params as { transform?: { scale_linked: boolean } } | undefined
     return { ...layerOf(c), scale_linked: params?.transform?.scale_linked ?? null }
   },
-  update_layer: (c) => {
-    const rec = layerOf(c)
-    const patch = obj(c.args.patch)
-    return { ...rec, adjusted: adjusted([['t_start_us', patch.t_start_us, rec.t_start_us as number], ['t_end_us', patch.t_end_us, rec.t_end_us as number]]) }
-  },
+  update_layer: (c) => layerOf(c),
   move_layer: (c) => {
     const rec = layerOf(c)
     return {
