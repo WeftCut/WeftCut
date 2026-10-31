@@ -135,6 +135,22 @@ fn join_stderr(shared: &SinkShared) {
 /// Kill and reap `shared.child`, ignoring all errors.
 fn abort_child(shared: &SinkShared) {
     if let Some(mut c) = shared.child.lock().unwrap().take() {
+        // Diagnosis: let ffmpeg close its encoder session before the kill.
+        // EOF first unless a writer holds stdin, so ffmpeg's reader can finish.
+        #[cfg(unix)]
+        {
+            if let Ok(mut stdin) = shared.stdin.try_lock() {
+                drop(stdin.take());
+            }
+            unsafe { libc::kill(c.id() as libc::pid_t, libc::SIGTERM) };
+            let deadline = Instant::now() + std::time::Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if matches!(c.try_wait(), Ok(Some(_))) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
         let _ = c.kill();
         let _ = c.wait();
     }
