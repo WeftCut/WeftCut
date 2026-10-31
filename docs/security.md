@@ -69,7 +69,7 @@ Decoder Workers may be created only during `setup()`, at most 8 live, and are
 retired after it (`renderer/render/motifs/runtime.ts`); `SharedWorker` is
 refused. Setup has a 30 s deadline, frame/CDP operations 5 s. The worker cap is
 a lifecycle contract, not an isolation boundary; worker clocks are not
-virtualized (ADR 0093).
+virtualized ([motifs.md](motifs.md#security)).
 
 A Motif's **parameter page** has its own policy (`MOTIF_PARAMS_CSP`):
 `default-src 'none'; script-src 'unsafe-inline' motif:; style-src 'unsafe-inline' motif:; img-src data: motif:; font-src data: motif:`.

@@ -19,7 +19,9 @@ the scope rule and the one law below.
 A Motif draws one element with one purpose — a title, a lower third, a
 callout, a credit, a logo, a full-frame background plate — with one entrance
 and one exit. If describing what it shows needs "and", it is several Motifs on
-several layers.
+several layers. Splitting keeps the frame editable in the NLE: each element is
+retimed, moved and retexted on the timeline, the audit sees its role, and a
+prop change recaptures only that element.
 
 The one exception is an **interaction**: elements whose motion depends on each
 other may share a Motif, because a Motif cannot see another layer. Examples
@@ -29,7 +31,9 @@ and a leader line tied to a moving object. An interaction Motif:
 - says in a comment why its pieces share it;
 - exposes its text as props;
 - exposes its key times as number props named `cue_<name>_s`, in seconds of
-  its own time, so the user can retime it in the inspector.
+  its own time, so the user can retime it in the inspector. Trimming the
+  layer's head advances `src_in_us` and leaves cues where they were in the
+  Motif's time; retime by changing the cue prop.
 
 Anything that enters, holds and leaves on its own is still its own layer.
 

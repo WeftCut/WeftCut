@@ -63,7 +63,7 @@ Retry; telemetry failure never blocks editing.
 | Import lookahead | The renderer keeps at most `max(1, min(cpu_threads, floor(work_mib / 128)))` paths in flight; pressure pauses submission, setting changes resize it. Bounds request buildup, not execution concurrency. |
 | Workspace copy | Separate serial queue, one thread / 8 MiB; does not wait for transcode slots or the preparation lane. |
 | Interactive | On-demand frames, audio effects, audio export, mux. Waits time out after 15 s; renderer requests fail promptly. |
-| User compute | Clip compute a person or agent waits on; 60 s wait, ignores the background cap and playback gate ([ADR 0120](adr/0120-compute-a-person-waits-on-has-its-own-admission-lane.md)). |
+| User compute | Transcription audio slice/normalize and description frame sampling (`resources::user_compute`). Ignores the background cap and the playback gate; still blocked by memory pressure, a finishing export, or a full CPU/memory budget. While it waits no new background claim is admitted; running derivatives are never interrupted (a killed proxy has no resume). Waits at most 60 s (`USER_COMPUTE_WAIT`; interactive's 15 s fails routinely behind a transcode or a mux), then fails with `resource-capacity-exceeded:` naming the rule (`memory` / `finalization` / `budget`, also the queued job's reason). 128 MiB; frame sampling holds one admission across all its frames. |
 | Export finalization | Stream-copy tail reserved before encoding and lent to production; runs ahead of new compute; ordinary RSS pressure does not block it, critical host memory does ([ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md)). |
 
 Resident decoders keep memory leases and per-session thread caps but no
