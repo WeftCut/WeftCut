@@ -340,7 +340,7 @@ type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<Lay
 const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true, intro: true, outro: true }),
-  VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
+  VideoClip: keysOf('VideoClip', { media_id: true, crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
   ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true, graphic_role: true }),
   Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true, graphic_role: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
@@ -371,6 +371,7 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
     throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
   }
   switch (k) {
+    case 'media_id': return parseUuid(v, field)
     case 'crop': {
       const problem = cropProblem(v)
       if (problem) throw new McpArgError(problem, field)
@@ -1385,6 +1386,7 @@ const PARAM_KEY_SCHEMA = {
  *  pins it). A client that reads `oneOf` sees each kind's exact set; one that
  *  does not still sees `kind` and its enum. */
 const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>>> = {
+  media_id: { type: 'string', description: 'Replace this placed video source with an imported Video media UUID, retaining the clip timing and editing.' },
   content: { type: 'string', description: 'The text; newlines are honoured.' },
   font_family: { type: 'string', description: 'Font family name.' },
   font_size_px: { type: 'number', description: 'Font size, composition px.' },

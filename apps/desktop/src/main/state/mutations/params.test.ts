@@ -1,3 +1,5 @@
+import { applyTrimLayer } from './trim'
+import { mediaItemTemplate } from './media'
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Animated, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
@@ -804,3 +806,42 @@ describe('applyUpdateLayerParamTrack — an audio effect param', () => {
     expect(layerOf(p, id).effects[0].params.strength.mode).toBe('Keyframed')
   })
 })
+
+
+describe('H3 take replacement', () => {
+  it('rebinds only the selected layer without changing trim, transform, effects or neighbours', () => {
+    const g=seededGen(), p=blankProject(g,'test'), next='00000000-0000-0000-0000-0000000000bb';
+    p.media_pool[MID]=mediaItemTemplate(MID,'Video',5_000_000);
+    p.media_pool[next]=mediaItemTemplate(next,'Video',5_000_000);
+    const id=applyAddLayer(p,g,root(p).tracks[0].id,videoClipParams(MID,500_000,4_000_000),0,3_500_000);
+    const second=applyAddLayer(p,g,root(p).tracks[0].id,videoClipParams(MID,0,5_000_000),4_000_000,5_000_000);
+    const before=structuredClone(layerOf(p,id));
+    applyUpdateLayerParams(p,id,{kind:'VideoClip',media_id:next},new MotifCatalog());
+    const after=structuredClone(layerOf(p,id));
+    expect((after.params as any).media).toBe(next);
+    (after.params as any).media=MID;expect(after).toEqual(before);
+    expect((layerOf(p,second).params as any).media).toBe(MID);
+  });
+  it('refuses missing or audio replacements without altering the layer', () => {
+    const g=seededGen(),p=blankProject(g,'test'),bad='00000000-0000-0000-0000-0000000000cc';
+    p.media_pool[MID]=mediaItemTemplate(MID,'Video',5_000_000);
+    const id=applyAddLayer(p,g,root(p).tracks[0].id,videoClipParams(MID,0,5_000_000),0,5_000_000),before=structuredClone(p);
+    expectCmd(()=>applyUpdateLayerParams(p,id,{kind:'VideoClip',media_id:bad},new MotifCatalog()),'InvalidArgument');
+    expect(p).toEqual(before);
+    p.media_pool[bad]=mediaItemTemplate(bad,'Audio',5_000_000);
+    const audioBefore=structuredClone(p);
+    expectCmd(()=>applyUpdateLayerParams(p,id,{kind:'VideoClip',media_id:bad},new MotifCatalog()),'InvalidArgument');expect(p).toEqual(audioBefore);
+  });
+});
+
+
+describe('H3 original song import',()=>{
+ it('trims placement before slipping source audio so timing and rate stay intact',()=>{
+  const g=seededGen(),p=blankProject(g,'test');p.media_pool[MID]=mediaItemTemplate(MID,'Audio',163_224_000);
+  const id=applyAddLayer(p,g,root(p).tracks[0].id,audioParams(MID,0,163_224_000),0,163_224_000);
+  applyTrimLayer(p,id,'Out',15_000_000,true);
+  applyUpdateLayerParams(p,id,{kind:'Audio',src_in_us:10_000_000,src_out_us:25_000_000,role:'music'},new MotifCatalog());
+  const layer=layerOf(p,id);expect(layer.t_start_us).toBe(0);expect(layer.t_end_us).toBe(15_000_000);
+  expect((layer.params as any).src_in_us).toBe(10_000_000);expect((layer.params as any).src_out_us).toBe(25_000_000);
+ });
+});

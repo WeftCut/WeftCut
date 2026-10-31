@@ -30,7 +30,7 @@ import { graphicRoleProblem } from '../../../shared/graphicRole'
  *  `graphic_role` (Text, ImageOverlay, Motif) is another: null clears the tag. */
 export type LayerParamsPatch =
   | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba; graphic_role?: string | null; intro?: TextAnimPreset | null; outro?: TextAnimPreset | null }
-  | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
+  | { kind: 'VideoClip'; media_id?: Uuid; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number; graphic_role?: string | null }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown>; graphic_role?: string | null }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
@@ -281,6 +281,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     }
     case 'VideoClip': {
       const v = p as VideoClipParams
+      if (patch.media_id !== undefined) v.media = patch.media_id
       if (patch.crop !== undefined) {
         const problem = cropProblem(patch.crop)
         if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'crop', detail: problem })
@@ -418,6 +419,9 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
   const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked
+  if (patch.kind === 'VideoClip' && patch.media_id !== undefined) {
+    if (p.media_pool[patch.media_id]?.kind !== 'Video') throw new CommandFailure({ error:'InvalidArgument', field:'media_id', detail:'Replacement must name imported video media' });
+  }
   if (layer.params.kind !== 'Color' && layer.params.kind !== 'Text') {
     const pa = layer.params;
     if (pa.source_phase && 'src_in_us' in patch && patch.src_in_us !== undefined) pa.source_phase.in = { num: 0, den: 1 };
