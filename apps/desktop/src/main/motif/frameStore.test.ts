@@ -162,7 +162,7 @@ describe('MotifFrameStore', () => {
     await fs.writeFile(path.join(dir, '3.wfrm'), bytes.subarray(0, 52))
     for (const name of ['02.wfrm', '-1.wfrm', '6.tmp', '7.png', '9007199254740993.wfrm']) await fs.writeFile(path.join(dir, name), bytes)
     await fs.mkdir(path.join(dir, '8.wfrm'))
-    // Opening each file costs ~6 ms cold under on-access scanning (ADR 0144).
+    // Opening each file costs ~6 ms cold under on-access scanning.
     const open = vi.spyOn(fs, 'open')
     try {
       expect(await store.inventory(hash)).toEqual([{ frame: 2, bytes: 68 }])

@@ -20,7 +20,7 @@ export type ContentPlatformKey =
 /// (docs/licensing.md): the URL is versioned and immutable — never a rolling
 /// "latest" — and sha256 + exact byte count are pinned so the artifact, not
 /// the claim, is what gets verified. (The one URL exception on record: the
-/// Paraformer model hangs off a rolling release tag — ADR 0043 — where the
+/// Paraformer model hangs off a rolling release tag — ADR 0039 — where the
 /// pinned sha256 is what carries the trust.)
 export interface ContentArtifact {
   url: string;
@@ -36,7 +36,7 @@ export interface ContentArtifact {
   /// Which local-engine config field(s) this platform's payload fills, each a
   /// path relative to the item's install dir. A map rather than a single
   /// field because one archive can carry several config inputs (the Paraformer
-  /// bundle ships model AND tokens — ADR 0043); per-platform rather than
+  /// bundle ships model AND tokens — ADR 0039); per-platform rather than
   /// per-item because the layout inside an archive is the platform's own —
   /// `Release/whisper-cli.exe` against `whisper-bin-ubuntu-x64/whisper-cli`.
   /// The item's `entryPath` is always one of these paths (catalog invariant).
@@ -63,7 +63,7 @@ export interface SpeechConsumer {
   backend: "whisper_cpp" | "funasr";
 }
 
-/// The video-understanding twin of `SpeechConsumer` (ADR 0055): which local VLM
+/// The video-understanding twin of `SpeechConsumer` (ADR 0039): which local VLM
 /// backends an item serves. A separate interface rather than a widened
 /// `SpeechConsumer` because the two write to DIFFERENT config stores
 /// (speech_config.json vs vlm_config.json) and have different required fields —

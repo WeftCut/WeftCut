@@ -1030,11 +1030,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: null }
         }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
-        // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
-        // decision 2). ONE commit: the lane is minted, the layers move onto it,
-        // and every lane the raise emptied goes with them, so one undo restores
-        // all of it. `affected` takes commit's function form because the lane's
-        // id is minted inside the recipe.
+        // move_layers_to_new_track — the whole of z-order rearrangement
+        // (docs/features.md#track-placement). ONE commit: the lane is minted,
+        // the layers move onto it, and every lane the raise emptied goes with
+        // them, so one undo restores all of it. `affected` takes commit's
+        // function form because the lane's id is minted inside the recipe.
         //
         // `anchor_layer_id` + `t_start_us` are the drop strip's landing and travel
         // TOGETHER: the pair is one value on the wire's flat shape, so half of it
@@ -1055,9 +1055,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (newTrackId: Uuid) => [...layerRefs(layers), { kind: 'Track', id: newTrackId }],
             { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers, anchor)) }
         }
-        // restack_layer — anchored z-reorder (ADR 0044): ONE commit. Degradation
-        // and the destination-or-null return contract are applyRestackLayer's
-        // story (mutations/restack.ts). Here, `affected` takes the function form
+        // restack_layer — anchored z-reorder
+        // (docs/features.md#track-placement): ONE commit. Degradation and the
+        // destination-or-null return contract are applyRestackLayer's story
+        // (mutations/restack.ts). Here, `affected` takes the function form
         // because the split path mints its track inside the recipe; null trips
         // commit's no-op guard (nothing recorded, no op_id — the move_track
         // contract), so the null arm is unreachable but keeps the annotation
@@ -1114,8 +1115,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // rather than a partial delete: checkTrackLock is the realistic thrower,
         // and no selection a user can build holds a locked layer (a locked clip
         // cannot be clicked, the marquee skips it, and Select All excludes rather
-        // than refuses it — docs/features.md § Select All). A TrackLocked here
-        // therefore means the caller sent a set the UI cannot produce.
+        // than refuses it — docs/features.md § Timeline selection). A
+        // TrackLocked here therefore means the caller sent a set the UI cannot
+        // produce.
         //
         // Empty `layers` leaves the draft untouched, so commit's no-op guard
         // records nothing. The set is ONE composition's (CrossCompositionSet
@@ -1130,11 +1132,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: null }
         }
         // ripple_delete_layers — the selection's delete AND the closing of what
-        // it vacated, on every track of the one composition it lives in (ADR
-        // 0062). The same verbatim set delete_layers takes; what the ripple adds
-        // is the sweep, and the sweep is why the two cannot share an entry: one
-        // commit, one undo, so the layers, the landings, the transitions
-        // reconcile dropped and the markers it re-derived come back together.
+        // it vacated, on every track of the one composition it lives in
+        // (docs/features.md#ripple-delete). The same verbatim set delete_layers
+        // takes; what the ripple adds is the sweep, and the sweep is why the
+        // two cannot share an entry: one commit, one undo, so the layers, the
+        // landings, the transitions reconcile dropped and the markers it
+        // re-derived come back together.
         //
         // Every refusal is PRE-WRITE — the planner runs off untouched state
         // inside the recipe and throws before the first splice, so a refused
@@ -1151,11 +1154,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         // ripple_delete_gap — a selected gap closes: nothing is deleted, and every
         // layer of the composition starting at or after the gap's end moves left
-        // by its length (ADR 0069). The span travels as BOTH edges so the actor
-        // closes exactly what the renderer highlighted; the planner refuses a
-        // span that is no longer a gap (`GapNotFound`) instead of re-measuring.
-        // Refusals are pre-write for `ripple_delete_layers`' reason; the
-        // degenerate span is refused here, above the commit, as the empty set is.
+        // by its length (docs/features.md#ripple-delete). The span travels as
+        // BOTH edges so the actor closes exactly what the renderer highlighted;
+        // the planner refuses a span that is no longer a gap (`GapNotFound`)
+        // instead of re-measuring. Refusals are pre-write for
+        // `ripple_delete_layers`' reason; the degenerate span is refused here,
+        // above the commit, as the empty set is.
         case 'ripple_delete_gap': {
           const track = a.track as Uuid
           const s = parseNum(a.s, 's')
@@ -1249,23 +1253,24 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // `ripple` (default false) changes only how the rejects leave: the doomed
         // pieces go to applyRippleDeleteLayers as ONE set instead of through the
         // per-layer delete loop, so the split and the closing of the gaps it threw
-        // away are one undo (ADR 0062). The set is every named segment, every
-        // segment `drop_short_us` prunes, AND the fan-out partners of each —
-        // collected before a single delete runs, for the same reason the loop
-        // reads its link early: a two-member link dissolves under the first
-        // delete and the second read would find no siblings. One set and not one
-        // ripple per segment, because a ripple measures its holes against what
-        // remains and merges the touching ones; run segment by segment, the
-        // second call would measure against a timeline the first had already
-        // re-timed and two adjacent rejects would close as two holes instead of
-        // the one they are. The refusals here are the planner's, raised pre-write
-        // inside the ripple — but the ripple can only be planned once the splits
-        // exist, so they land AFTER them: produce discards the draft, leaving the
-        // clip unsplit and recording nothing, while the ids the split halves drew
-        // from idGen stay spent (one per new layer half and new right-side link).
-        // Unavoidable without simulating the whole split, and
-        // harmless — ids are opaque and only ever compared for equality.
-        // Returns the ordered target segment layer ids that survived.
+        // away are one undo (docs/features.md#ripple-delete). The set is every
+        // named segment, every segment `drop_short_us` prunes, AND the fan-out
+        // partners of each — collected before a single delete runs, for the
+        // same reason the loop reads its link early: a two-member link
+        // dissolves under the first delete and the second read would find no
+        // siblings. One set and not one ripple per segment, because a ripple
+        // measures its holes against what remains and merges the touching ones;
+        // run segment by segment, the second call would measure against a
+        // timeline the first had already re-timed and two adjacent rejects
+        // would close as two holes instead of the one they are. The refusals
+        // here are the planner's, raised pre-write inside the ripple — but the
+        // ripple can only be planned once the splits exist, so they land AFTER
+        // them: produce discards the draft, leaving the clip unsplit and
+        // recording nothing, while the ids the split halves drew from idGen
+        // stay spent (one per new layer half and new right-side link).
+        // Unavoidable without simulating the whole split, and harmless — ids
+        // are opaque and only ever compared for equality. Returns the ordered
+        // target segment layer ids that survived.
         case 'split_layer_multi': {
           const layer = a.layer as Uuid
           const ats = (a.at_t_us_list as number[]) ?? []
@@ -1484,8 +1489,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
         // RECORDED, unlike the flags patch below: a name is content, and the
         // layer label is already recorded — two rename surfaces with opposite
-        // undo behaviour would be indefensible (ADR 0042). The Track ref is what
-        // makes the row name the lane it renamed.
+        // undo behaviour would be indefensible (docs/data-model.md#track). The
+        // Track ref is what makes the row name the lane it renamed.
         case 'rename_track': commit(HISTORY_SUMMARY.trackRename, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRenameTrack(d, a.track as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
         case 'add_effect': return { ok: true, value: commit(HISTORY_SUMMARY.effectAdd, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
@@ -1628,7 +1633,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // No free track — spawn one in its OWN commit (the track add is a
           // separate commit, so it gets its own op_id), THEN add the layer in a
           // second commit. Two op_ids. `label: null` leaves the new lane's name
-          // to be derived from its position (ADR 0042).
+          // to be derived from its position (docs/data-model.md#track).
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, null, undefined, scope.id))
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>

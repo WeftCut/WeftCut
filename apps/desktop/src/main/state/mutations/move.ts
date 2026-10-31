@@ -144,8 +144,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
 }
 
 /** Raise a set of layers onto ONE fresh lane at the tail of the track vector —
- *  the top of the z-stack, which is the only spawn point (ADR 0042 decision 2).
- *  Returns the new track's id.
+ *  the top of the z-stack, which is the only spawn point
+ *  (docs/features.md#track-placement). Returns the new track's id.
  *
  *  Lives beside `applyMoveLayer` because it is a lane change and nothing else:
  *  the new lane is the destination, not the subject. Z-order is rearranged by
@@ -226,7 +226,7 @@ export function applyMoveLayersToNewTrack(
   })()
 
   // `label: null` lets the renderer derive the name — a literal written here
-  // could never be localized (ADR 0042).
+  // could never be localized (docs/data-model.md#track).
   const trackId = applyAddTrack(p, idGen, null, undefined, c.id)
   const dest = c.tracks.find((t) => t.id === trackId)! // just inserted
   for (const id of ids) {

@@ -171,14 +171,15 @@ export type PreviewGpuOpenReply = {
   barrierMode: HwBarrierMode
 }
 
-/// Reason `previewGpu:open` rejects with when either HW admission currency is
-/// full. A CAPACITY condition, not a capability one: the same media on the same
-/// machine opens on hardware again as soon as enough reservation frees. Callers must
-/// treat it as "software for THIS open" and must NOT record it as a per-media
-/// hardware verdict (see `FfmpegSource`'s open-failure branch — doing so pinned a
-/// source to software for the rest of the app session the first time concurrent
-/// load exceeded admission, and kept it there after the extra clips were
-/// deleted). Shared so main and the renderer can't drift on the string.
+/// Reason `previewGpu:open` rejects with when either HW admission currency
+/// (sessions, coded pixel area) or the shared GPU buffer budget is full. A CAPACITY
+/// condition, not a capability one: the same media on the same machine opens on
+/// hardware again as soon as enough reservation frees. Callers must treat it as
+/// "software for THIS open" and must NOT record it as a per-media hardware verdict
+/// (see `FfmpegSource`'s open-failure branch — doing so pinned a source to software
+/// for the rest of the app session the first time concurrent load exceeded
+/// admission, and kept it there after the extra clips were deleted). Shared so main
+/// and the renderer can't drift on the string.
 export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
 
 /// The native session opened at dimensions different from the coded size main
@@ -218,7 +219,7 @@ export type PreviewGpuTimingSummary = {
 /// throughput-bottleneck probe — `ackToEmit` (a slot's ConsumeAck -> its next
 /// FrameReady, the one per-slot-cycle segment coordRtt does NOT cover) plus
 /// `lookaheadGatedSkips` (how often the pump idled on the lookahead gate rather
-/// than pool-full). See docs/decode-bench.md §Native strategy.
+/// than pool-full). See docs/decode-bench.md § Strategies.
 export type PreviewGpuTimingReport = {
   coordRtt: PreviewGpuTimingSummary
   decodeCopy: PreviewGpuTimingSummary

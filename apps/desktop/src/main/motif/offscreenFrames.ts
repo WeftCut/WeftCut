@@ -8,7 +8,7 @@ import type { OffscreenSharedTexture, WebContents } from 'electron'
  * a new surface, and its first paint can still hold the previous or the
  * uninitialised content even after the page's own frames settled — a full
  * readback (the caller's `fence`) is the one step known to synchronise it
- * (ADR 0078, ADR 0138). The lease pays that readback once per surface, never
+ * (ADR 0078). The lease pays that readback once per surface, never
  * per frame, and the caller cannot forget it: the invariant lives here. */
 export class OffscreenFrames {
   private pending: { width: number; height: number; resolve: (t: OffscreenSharedTexture) => void; reject: (e: Error) => void } | null = null

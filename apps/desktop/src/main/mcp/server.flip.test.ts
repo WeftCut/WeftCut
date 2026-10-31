@@ -184,7 +184,7 @@ describe('handleCallTool flip routing', () => {
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.preferred_backend).toBe('whisper_cpp')
     expect(sent.backend).toBeUndefined() // never promoted to the strict arg
-    // The config rides in with the call: native holds none (ADR 0148).
+    // The config rides in with the call: native holds none (ADR 0036).
     expect(sent.speech_config).toEqual({ whisper_cpp: { kind: 'local', binary: 'w', model: 'm' } })
   })
   it('passes an explicit transcribe_clip backend through untouched and injects no preference', async () => {

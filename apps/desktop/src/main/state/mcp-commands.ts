@@ -974,10 +974,11 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
       error: 'TransitionUnsupportedLayerKind', layer: e.layer, kind: e.kind,
     } }
   }
-  // ── Ripple delete (ADR 0062). Each message spells the span as [s, e) µs — the
-  // hole is the deleted layer's footprint clipped to its neighbours, not its
-  // length, so an agent that assumed the length would otherwise read the refusal
-  // against the wrong numbers. Every one is pre-write: the retry costs nothing. ──
+  // ── Ripple delete (docs/features.md#ripple-delete). Each message spells the
+  // span as [s, e) µs — the hole is the deleted layer's footprint clipped to
+  // its neighbours, not its length, so an agent that assumed the length would
+  // otherwise read the refusal against the wrong numbers. Every one is
+  // pre-write: the retry costs nothing. ──
   if (e.error === 'RippleInsideHole') {
     const verb = tool === RIPPLE_TOOL.pauses ? 'the pause cut' : tool === RIPPLE_TOOL.gap ? 'closing the gap' : 'ripple delete'
     const remedy = rippleRemedy(tool, e.layer,
@@ -1009,9 +1010,10 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
       error: 'RippleLockedLayer', layer: e.layer, tool: tool ?? null,
     } }
   }
-  // ── Gap closing (ADR 0069). The span is echoed because the fix is to re-read
-  // the track and send the gap as it is NOW: either a layer has reached into
-  // the span since it was measured, or an edge is not a layer boundary. ──
+  // ── Gap closing (docs/features.md#ripple-delete). The span is echoed because
+  // the fix is to re-read the track and send the gap as it is NOW: either a
+  // layer has reached into the span since it was measured, or an edge is not a
+  // layer boundary. ──
   if (e.error === 'GapNotFound') {
     return { code: 'invalid_params', message: `[${e.s}, ${e.e}) µs is not a gap on track ${e.track}: a gap is the WHOLE empty span between two layer boundaries on one track — end_us exactly where a layer starts, start_us exactly where one ends (or 0) — with no layer reaching into it. Re-read the track (project://compositions) and send the gap as it is now; the space after the last layer on a track is not a gap.`, data: {
       error: 'GapNotFound', track: e.track, span_us: [e.s, e.e],

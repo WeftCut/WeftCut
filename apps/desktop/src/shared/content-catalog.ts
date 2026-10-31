@@ -2,14 +2,12 @@
 // the user, pinned to immutable versioned URLs with byte counts and SHA-256
 // digests (supply-chain rule, docs/licensing.md — never a rolling "latest").
 //
-// Values are verbatim from ADR 0039 (CPU-only whisper.cpp v1.9.1 +
-// multilingual Base), ADR 0043 (sherpa-onnx v1.13.4 + Paraformer-zh for the
-// FunASR backend), ADR 0055 (llama.cpp b10103 Vulkan + Qwen3-VL-4B-Instruct
-// Q4_K_M for the video-understanding backend), and ADR 0073 (the Linux x64
-// artifacts of all three, at those same upstream versions), ADR 0075 (the
-// macOS arm64 artifacts of sherpa-onnx and llama.cpp), and ADR 0076 (the macOS
-// arm64 whisper-cli, which whisper.cpp does not publish — this repo builds it
-// from the pinned upstream commit and releases it). Do not re-derive
+// Values are verbatim from ADR 0039: whisper.cpp v1.9.1 + multilingual Base,
+// sherpa-onnx v1.13.4 + Paraformer-zh for the FunASR backend, and llama.cpp
+// b10103 + Qwen3-VL-4B-Instruct Q4_K_M for the video-understanding backend,
+// on win32-x64, linux-x64 and darwin-arm64 at those same upstream versions
+// (the macOS arm64 whisper-cli, which whisper.cpp does not publish, is built
+// by this repo from the pinned upstream commit and released). Do not re-derive
 // or "refresh" them — a new upstream release is a NEW catalog entry with its
 // own pinned url/bytes/sha, decided through an ADR update, not an edit here.
 //
@@ -44,7 +42,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       },
       // CPU-only like the Windows artifact, and for the same reason: the
       // upstream Linux tarball ships the libggml-cpu-*.so set and no GPU
-      // backend at all (ADR 0073). The runtime is its whole extracted
+      // backend at all (ADR 0039). The runtime is its whole extracted
       // directory — whisper-cli's RUNPATH is $ORIGIN, so libwhisper.so.1 and
       // the ggml backends it dlopens must keep sitting beside it, SYMLINKS
       // INCLUDED (libwhisper.so.1 is a link to libwhisper.so.1.9.1): an
@@ -62,7 +60,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // xcframework), so this is WeftCut's own release asset: whisper-cli
       // v1.9.1 built from the pinned upstream commit by
       // scripts/build-whisper-cli-macos.mjs in the content-whisper-cli
-      // workflow (ADR 0076). One static binary with Metal and its shader
+      // workflow (ADR 0039). One static binary with Metal and its shader
       // library embedded — it links only system frameworks, so nothing needs
       // to sit beside it. The pin is the CI-published asset, not a local build.
       "darwin-arm64": {
@@ -132,7 +130,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       "win32-x64": {
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2",
         // Double-confirmed: GitHub's release-asset digest and the locally
-        // validated archive agree (ADR 0043).
+        // validated archive agree.
         sha256:
           "d4dacc8be5afe03f22ade4d50cfd587c03a625eaca8c41f2d99a24d3db463eab",
         bytes: 20034576,
@@ -144,7 +142,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
             "sherpa-onnx-v1.13.4-win-x64-shared-MD-Release/bin/sherpa-onnx-offline.exe",
         },
         // The shared-MD build dynamically links the MSVC v14 x64 runtime, same
-        // as the whisper.cpp runtime above (ADR 0043).
+        // as the whisper.cpp runtime above (ADR 0039).
         prerequisiteKey: "content_prereq_msvc14",
       },
       // The `shared` build, the Linux twin of the Windows shared-MD choice —
@@ -167,7 +165,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // and @loader_path/../lib, so bin/ and lib/ stay in one tree. ⚠️ Upstream
       // ships lib/libonnxruntime*.dylib with a signature that no longer covers
       // the file, which Apple Silicon answers with SIGKILL at load — the
-      // install's macOS seal step re-signs it ad hoc (contentSign.ts, ADR 0075).
+      // install's macOS seal step re-signs it ad hoc (contentSign.ts, ADR 0039).
       "darwin-arm64": {
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-osx-arm64-shared.tar.bz2",
         sha256:
@@ -188,7 +186,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
     labelKey: "content_funasr_model_paraformer",
     // Apache-2.0 per the official FunASR org's Hugging Face model card; the
     // FunASR repo's bespoke MODEL_LICENSE is the second recorded signal — both
-    // in ADR 0043. The manifest's name + upstream record satisfies its
+    // in ADR 0039. The manifest's name + upstream record satisfies its
     // attribution requirement.
     license: {
       name: "Apache-2.0",
@@ -201,7 +199,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // so coverage stays an explicit decision as other OSes phase in.
       "win32-x64": {
         // ⚠️ Rolling `asr-models` release tag, not a version tag — the pinned
-        // sha256 below is what carries the trust (ADR 0043): a swapped asset
+        // sha256 below is what carries the trust (ADR 0039): a swapped asset
         // fails verification loudly instead of installing.
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2",
         sha256:
@@ -261,7 +259,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // is a strict superset — it uses the GPU where a Vulkan driver exists
       // (every current NVIDIA / AMD / Intel Windows driver ships one) and
       // falls back to the same CPU backends the CPU archive would have given.
-      // 33 MB against the CPU archive's 18 MB buys that (ADR 0055).
+      // 33 MB against the CPU archive's 18 MB buys that (ADR 0039).
       "win32-x64": {
         url: "https://github.com/ggml-org/llama.cpp/releases/download/b10103/llama-b10103-bin-win-vulkan-x64.zip",
         sha256:
@@ -282,7 +280,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // same shape as its Windows twin: one top-level directory whose whole
       // contents are the runtime (llama-mtmd-cli's RUNPATH is $ORIGIN). A
       // machine with no Vulkan driver loads the libggml-cpu-*.so this archive
-      // also carries (ADR 0073).
+      // also carries (ADR 0039).
       "linux-x64": {
         url: "https://github.com/ggml-org/llama.cpp/releases/download/b10103/llama-b10103-bin-ubuntu-vulkan-x64.tar.gz",
         sha256:
@@ -297,7 +295,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
       // beside libggml-metal, so it is the same superset shape as the Vulkan
       // archives. Same one-directory layout (RPATH @loader_path, versioned
       // dylibs behind symlinks the tar lane recreates); its signatures are
-      // valid as shipped (ADR 0075).
+      // valid as shipped (ADR 0039).
       "darwin-arm64": {
         url: "https://github.com/ggml-org/llama.cpp/releases/download/b10103/llama-b10103-bin-macos-arm64.tar.gz",
         sha256:

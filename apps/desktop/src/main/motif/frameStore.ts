@@ -50,7 +50,7 @@ export interface FrameWriter {
   encoded(bytes: Uint8Array): Promise<void>
 }
 
-/** Disposable zstd frame cache (ADR 0145). Native work runs on blocking workers.
+/** Disposable zstd frame cache (ADR 0078). Native work runs on blocking workers.
  * Callers supply a hash/frame, never a filesystem path. Cache misses render live. */
 export class MotifFrameStore {
   private writeTail: Promise<void> = Promise.resolve()
@@ -138,10 +138,11 @@ export class MotifFrameStore {
     catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e }
   }
 
-  /** Stat-only (ADR 0144): opening each file costs ~6 ms cold under on-access
-   * scanning. Header, dimensions and checksum are verified by the reader, whose
-   * miss drops the frame from coverage and admits a replacement capture.
-   * Inventory never follows directory/file links and ignores interrupted writes. */
+  /** Stat-only (docs/motifs.md#preparation-l2-baking): opening each file costs
+   *  ~6 ms cold under on-access scanning. Header, dimensions and checksum are
+   *  verified by the reader, whose miss drops the frame from coverage and
+   *  admits a replacement capture. Inventory never follows directory/file links
+   *  and ignores interrupted writes. */
   async inventory(hash: string): Promise<{ frame: number; bytes: number }[]> {
     const stem = await this.stem(hash, 0)
     if (!stem) return []

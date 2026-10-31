@@ -133,7 +133,7 @@ export interface CaptionStylePatch {
 
 /** add_caption_track — lay the cues onto Caption tracks (one Text layer per
  *  cue), packing into the caption tracks the composition ALREADY HAS before
- *  opening a new one (ADR 0070). Cues stable-sorted by start_us; each cue goes to
+ *  opening a new one (ADR 0026). Cues stable-sorted by start_us; each cue goes to
  *  the FIRST unlocked Caption-role track, in track order, whose layers leave the
  *  cue's snapped span free, else a new Caption track is appended after the
  *  existing tracks and joins the candidates. Existing tracks come first because

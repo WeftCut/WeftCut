@@ -55,7 +55,7 @@ export function createModelFeature(deps: {
     if (p) {
       // A projection for existing IPC/readers; the model store owns the selection.
       // Nothing is pushed to native: each speech call's snapshot reads the
-      // active profile, its key and this store then (ADR 0148).
+      // active profile, its key and this store then (ADR 0036).
       deps.speech.apply({ preferred_engine: p.backend as "whisper_cpp" | "funasr" | "openai" | "byo_endpoint" });
       if (p.local) deps.speech.apply({ local: { backend: p.backend, config: p.local } });
     }

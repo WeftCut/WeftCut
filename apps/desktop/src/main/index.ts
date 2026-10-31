@@ -602,7 +602,7 @@ app.whenReady().then(async () => {
   let models: ModelManager | undefined
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
-  // the non-secret sibling of the endpoint key. Like speech's (ADR 0148), VLM
+  // the non-secret sibling of the endpoint key. Like speech's (ADR 0036), VLM
   // config is injected per-call into describe_clip / media://{id}/description
   // (stateless, ADR 0024) via the provider passed to startMcpHost below.
   const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
@@ -757,7 +757,7 @@ app.whenReady().then(async () => {
   if (legacyVlmKey) setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey)
 
   // Nothing to push into the backend: speech keys and local paths travel with
-  // each call, merged by `getSpeech` below (ADR 0148).
+  // each call, merged by `getSpeech` below (ADR 0036).
 
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capture singleton so
@@ -911,7 +911,7 @@ app.whenReady().then(async () => {
     hashMediaSource: (p: string, importId?: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent(), importId),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     // TTS reads its OpenAI key from the same per-call snapshot transcription
-    // gets (ADR 0148); injected here, the one place every synthesis passes.
+    // gets (ADR 0036); injected here, the one place every synthesis passes.
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(
       JSON.stringify({ ...(JSON.parse(argsJson) as Record<string, unknown>), speech_config: getSpeech().config })),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
@@ -1592,7 +1592,7 @@ app.whenReady().then(async () => {
     }
     // Speech backends. Like the API-key writes above, these are intercepted
     // here — the reads carry the same per-call config snapshot transcribe_clip
-    // gets (ADR 0148), so the panel and the resolver cannot disagree, and the
+    // gets (ADR 0036), so the panel and the resolver cannot disagree, and the
     // writes persist non-secret local config to the TS store, which IS the
     // apply. Intercepted BEFORE the router, so they never route to Rust bare.
     if (channel === 'settings_get_api_key_status' || channel === 'settings_test_provider') {
@@ -2391,7 +2391,7 @@ app.whenReady().then(async () => {
     clearMarker(migrationMarkerPath, migrationFs)
   })
 
-  // App-managed content downloads (ADR 0039, 0043, 0055, 0073, 0075) — driven by the model
+  // App-managed content downloads (ADR 0039) — driven by the model
   // feature (models:* below), never by the renderer directly. The lifecycle
   // itself is pure + DI (contentDownload.ts); these deps bind it to node:fs,
   // fflate, and Electron net.fetch — Chromium's network stack, which honors the
@@ -2482,13 +2482,13 @@ app.whenReady().then(async () => {
       const entries = unzipSync(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength))
       return Object.entries(entries).map(([p, data]) => ({ path: p, data }))
     },
-    // Rust stateless compute (ADR 0043) — native bzip2/gzip for archives up to
+    // Rust stateless compute (ADR 0039) — native bzip2/gzip for archives up to
     // the 234 MB model one; the tar crate's unpack containment is the traversal
     // guard, and its unpack is what carries modes and symlinks across.
     extractTar: async (archivePath, destDir) => {
       await backend!.invoke('content_extract_archive', JSON.stringify({ archivePath, destDir }))
     },
-    // macOS only (ADR 0075): Apple Silicon SIGKILLs code whose signature does
+    // macOS only (ADR 0039): Apple Silicon SIGKILLs code whose signature does
     // not cover its bytes, and the upstream sherpa-onnx osx-arm64 tarball
     // ships its libonnxruntime that way — re-sign what fails to verify, ad hoc,
     // before the install is marked complete.
@@ -2522,7 +2522,7 @@ app.whenReady().then(async () => {
       speechConfig.apply({ local: { backend: tag, config } })
     }
   }
-  // The ADR 0055 twin of the above: the VLM subsystem is stateless too
+  // The VLM twin of the above: the VLM subsystem is stateless too
   // (ADR 0024), so persisting to the store IS the whole apply — the next
   // describe_clip reads it through the injected snapshot.
   const autofillVlmFromContent = (): void => {

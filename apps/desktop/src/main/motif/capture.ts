@@ -398,8 +398,10 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
       // committed frame of a new document could be empty — every paint and
       // readback transparent until the page drew again (7% of
       // first-after-navigation captures on the macOS runner); sized to match,
-      // 384 of 384 captures were whole (ADR 0142). The emulation override
-      // stays: it is what pins deviceScaleFactor to 1 for the screenshot.
+      // 384 of 384 captures were whole
+      // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
+      // The emulation override stays: it is what pins deviceScaleFactor to 1
+      // for the screenshot.
       h.win.setContentSize(a.width, a.height)
       await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height, deviceScaleFactor: 1, mobile: false })
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })

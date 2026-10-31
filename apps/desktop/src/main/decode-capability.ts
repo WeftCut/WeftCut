@@ -1,4 +1,4 @@
-// Machine capability cache (ADR 0030; docs/preview.md §Decode engine):
+// Machine capability cache (ADR 0030; docs/preview.md § Decode engine):
 // probe verdicts keyed (lane, format class[, device]), persisted at
 // <userData>/decode_capability.json. envKey pins the environment the verdict
 // was measured in — SW: the component's ffmpeg version; HW: the GPU +
@@ -6,8 +6,8 @@
 // `device` is the extra dimension VAAPI needs: one machine can carry several
 // DRM render nodes with different driver capability, so a verdict is keyed to
 // the node it was measured on (NVDEC/d3d11va decode on the sole GPU handle and
-// pass device=null). NOT the session bridge and NOT per-file (ADR 0010 stays:
-// per-file incapability is session-scoped; this caches per-format-CLASS
+// pass device=null). NOT the session bridge and NOT per-file (per-file
+// incapability stays session-scoped; this caches per-format-CLASS
 // capability).
 import type { AppSettingsFs } from './app-settings'
 import { hwEligibleOnLane } from '../shared/hwLaneEligibility'
@@ -152,7 +152,7 @@ export function coalesceHwLaneResolution(
   }
 }
 
-/// Advertisement-gated HW-lane resolution (ADR 0030 §Lane advertisement; issue
+/// Advertisement-gated HW-lane resolution (ADR 0030; issue
 /// #5 Block C). PURE apart from its injected collaborators (cache store, per-lane
 /// envKey resolver, DRM-device enumerator, and the one-frame probe), so lane
 /// selection is unit-testable with fake capabilities and fake verdicts — no GPU,

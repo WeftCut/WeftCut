@@ -544,7 +544,7 @@ describe('dispatch: ripple_delete_layers records one entry that one undo unwinds
   })
 })
 
-// ── a selected gap (ADR 0069) ────────────────────────────────────────────────
+// ── a selected gap (docs/features.md#ripple-delete) ──────────────────────────
 
 const closeGap = (actor: ActorHandle, track: Uuid, s: number, e: number): DispatchResult =>
   actor.dispatch('ripple_delete_gap', { track, s, e })

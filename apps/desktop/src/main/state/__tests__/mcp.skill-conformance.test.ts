@@ -20,7 +20,7 @@
 //
 // The skill's layer folders are scanned the same way, and every
 // recipes/<name>.md must compose stages and signals from that vocabulary
-// (ADR 0123): a recipe naming anything else fails here.
+// (ADR 0046): a recipe naming anything else fails here.
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
@@ -97,7 +97,7 @@ const KNOWN_NON_TOOLS = new Set([
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
   // motif-authoring.md — npm package example and private draft metadata file
   'three', 'target', 'model', 'eval',
-  // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0130)
+  // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0126)
   'duration_s', 'exit',
   // The `media` prop variant and its frame time (ADR 0132).
   'media', 't_us',

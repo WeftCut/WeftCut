@@ -18,11 +18,11 @@ export function applyDeleteTrack(p: Project, id: Uuid, force: boolean): void {
  *  FALLBACK, not a lock — so this gates on nothing but the id existing.
  *
  *  A blank name stores `null`, which is what restores the derived name
- *  (ADR 0042). This is deliberately NOT the layer rename's "an empty value
- *  abandons the edit": a lane's derived name is a meaningful default the user
- *  needs a route back to, and a layer has no equivalent. Trimming here rather
- *  than at each caller is what keeps a blank out of the project file, so the
- *  display layer never has to defend against one. */
+ *  (docs/data-model.md#track). This is deliberately NOT the layer rename's "an
+ *  empty value abandons the edit": a lane's derived name is a meaningful
+ *  default the user needs a route back to, and a layer has no equivalent.
+ *  Trimming here rather than at each caller is what keeps a blank out of the
+ *  project file, so the display layer never has to defend against one. */
 export function applyRenameTrack(p: Project, id: Uuid, label: string | null): void {
   const { track } = requireTrack(p, id)
   const next = label?.trim()

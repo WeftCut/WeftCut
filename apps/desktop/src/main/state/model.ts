@@ -60,7 +60,8 @@ export type TextAnimPreset = 'FadeIn' | 'FadeOut' | 'SlideUp' | 'SlideDown' | 'T
 
 export interface VideoClipParams extends TimingFields {
   kind: 'VideoClip'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
-  /** Static retained source rectangle, normalized 0..1; null = full source (ADR 0090). */
+  /** Static retained source rectangle, normalized 0..1; null = full source
+   *  (docs/features.md#rectangular-video-crop). */
   transform: Transform; opacity: Animated<number>; crop: Rect | null
   flip_h: boolean; flip_v: boolean; blend_mode: BlendMode
   fade_in_us: number; fade_out_us: number
@@ -295,8 +296,9 @@ export interface Project {
 }
 
 /** A reserved-skeleton track. `label` is null because the name is DERIVED from
- *  `role` renderer-side (ADR 0042) — a literal written here could never be
- *  localized, and localizability is the whole point of the role stamp. */
+ *  `role` renderer-side (docs/data-model.md#track) — a literal written here
+ *  could never be localized, and localizability is the whole point of the role
+ *  stamp. */
 function newTrack(id: Uuid, role: TrackRole): Track {
   return { id, label: null, enabled: true, locked: false, muted: false, solo: false,
     removable: false, role, transient: false, height_px: 64, layers: [] }
@@ -305,11 +307,12 @@ export function defaultCompositionSettings(): CompositionSettings {
   return { width: 1920, height: 1080, fps: { num: 30, den: 1 }, sample_rate: 48000, channels: 2,
     color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 } }
 }
-/** Settings + the reserved A/B skeleton (ADR 0042), empty timeline. Mints the
- *  two track ids (A roll, then B roll); the caller mints `id` itself so it can
- *  choose where the composition id falls in the det-id order (see blankProject).
- *  Pre-compose builds here; blankProject inlines the same skeleton because its
- *  det-id order puts project_id between the two track ids and the root id.
+/** Settings + the reserved A/B skeleton (docs/data-model.md#track), empty
+ *  timeline. Mints the two track ids (A roll, then B roll); the caller mints
+ *  `id` itself so it can choose where the composition id falls in the det-id
+ *  order (see blankProject). Pre-compose builds here; blankProject inlines the
+ *  same skeleton because its det-id order puts project_id between the two track
+ *  ids and the root id.
  *
  *  `ordinal` is passed in rather than read off a project, because a composition
  *  is built before it joins one — the caller takes it from

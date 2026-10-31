@@ -286,7 +286,7 @@ function normalizeTextParams(o: Record<string, unknown>): void {
  *  and a missing `anchor` would reach every `m.anchor === null` test as a value
  *  that is neither — this codebase's documented route to a blank screen, and
  *  the reason the backfill sits HERE and nowhere else. One pass in one place
- *  (docs/data-model.md § additive-field backfill): a second site would let
+ *  (docs/data-model.md § Versioning): a second site would let
  *  `replaceState` and `project_open` disagree about what a marker holds.
  *
  *  The `metadata` map these fields replace is NOT stripped. It has no writer
@@ -565,7 +565,7 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // extended_us-less build could write (its adds borrowed the outgoing tail by
   // the FULL duration); a pre-positioned add (MCP-only, layers hand-overlapped
   // first) would deserve 0, but no project containing one exists to load.
-  // This is the one backfill site (docs/data-model.md § additive-field
+  // This is the one backfill site (docs/data-model.md § Versioning
   // backfill — one pass in one place): a second one would let
   // `replaceState` and `project_open` disagree, and a consumer reading the field
   // as required (remove/update routing) would see `undefined` and shrink NaN µs.

@@ -301,8 +301,9 @@ describe("coverage is all-or-nothing per engine on every platform", () => {
   // An engine is the set of items that together make one backend runnable. If
   // a platform carried some of them and not others, its Settings row would
   // offer a download that installs part of a set and can never configure the
-  // engine — the trap ADR 0055 avoided for MiniCPM-V, and the reason ADR 0075
-  // left whisper.cpp's runtime AND model off macOS together until ADR 0076.
+  // engine — the trap docs/notes/descriptions-vlm-facts.md records for
+  // MiniCPM-V, and why whisper.cpp's runtime AND model reach macOS together
+  // (ADR 0039).
   const engines = new Map<string, string[]>();
   for (const item of CONTENT_CATALOG) {
     const keys = [

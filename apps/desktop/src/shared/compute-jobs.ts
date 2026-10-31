@@ -4,8 +4,9 @@
  *  (`main/compute/jobs.ts`); the renderer mirrors it (`renderer/compute/`). */
 
 /** Why a queued job is still waiting for admission — Phase 02's wire tags
- *  (ADR 0120). `null` = not told yet: every job starts here, before native has
- *  said anything, so no job is ever phase-less. */
+ *  (docs/performance-settings.md#admission-lanes). `null` = not told yet: every
+ *  job starts here, before native has said anything, so no job is ever
+ *  phase-less. */
 export type ComputeQueueReason = 'memory' | 'finalization' | 'budget' | null
 
 /** Where a job is. `extracting` counts sampled frames for a description and

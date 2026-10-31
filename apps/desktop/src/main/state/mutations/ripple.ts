@@ -10,7 +10,7 @@
 // slot owns dropping a deleted participant's transition and a deleted anchor's
 // markers, so neither is repeated here.
 //
-// ADR 0062.
+// docs/features.md#ripple-delete.
 import type { Composition, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../../../renderer/ripple/plan'
@@ -75,10 +75,11 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
 /**
  * Close the gap `[s, e)` on `trackId`: every layer of its composition that starts
  * at or after `e` moves left by `e - s`, on every track, and nothing is deleted
- * (ADR 0069). The plan is computed FIRST, off untouched state, and a refusal is
- * thrown before a single layer is re-timed — `GapNotFound` when the span is not
- * a gap as the actor sees it (the renderer's mirror can lag), and the ripple's
- * own four when the closing would not be clean.
+ * (docs/features.md#ripple-delete). The plan is computed FIRST, off untouched
+ * state, and a refusal is thrown before a single layer is re-timed —
+ * `GapNotFound` when the span is not a gap as the actor sees it (the renderer's
+ * mirror can lag), and the ripple's own four when the closing would not be
+ * clean.
  */
 export function applyRippleDeleteGap(p: Project, trackId: Uuid, s: number, e: number): RippleGapResult {
   const { comp: c } = requireTrack(p, trackId) // TrackNotFound
@@ -144,7 +145,8 @@ function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[]
   }
 
   // The sweep lowered the high-water mark; each delete's own autofit ran before
-  // it (ADR 0005 — a pinned composition keeps its length either way).
+  // it (docs/data-model.md#composition — a pinned composition keeps its length
+  // either way).
   applyDurationAutofit(c)
   return moved
 }

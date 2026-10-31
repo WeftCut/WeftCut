@@ -187,7 +187,7 @@ describe('ensureImported', () => {
     expect(arg).toHaveLength(1)
     expect(arg[0].id).toBe(MID)
     // The provisional probe hash ('0' from probedItem) must NEVER reach enqueue —
-    // derivatives bake the real content hash (ADR 0007 superseded).
+    // derivatives bake the real content hash.
     expect(arg[0].file_hash_blake3).toBe('realhash-deadbeef')
   })
 
