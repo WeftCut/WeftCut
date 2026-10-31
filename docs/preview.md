@@ -64,7 +64,8 @@ a `CustomSource` over `weftcut-media://` HTTP Range requests (see
 - **GOP crossings do not reset the decoder.** During continuous play the pump
   sends the next IDR into the same `VideoDecoder`, and the ring continues. A
   reset happens only on a backward seek outside the ring, or a forward jump
-  far past the pump frontier.
+  far past the pump frontier. An unconditional reset at every GOP boundary
+  measured a ~400 ms stall per boundary (`PacketPump.ts`).
 - **Idle and failure.** A handle with no use for 5 s is disposed and rebuilt
   on the next request. `decoderFallback.ts` handles hardware failures: a
   zero-output first-frame error reconfigures the decoder with
@@ -176,11 +177,14 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   awaits `onSubmittedWorkDone`, then acks (`slotFenceQueue.ts`; default
   `HwBarrierMode` `rendererFence`). A WebGL2 `fenceSync` was rejected: it needs
   a busy flush-and-poll loop, which cost ~2 s per 20 s on one 1080p track and
-  failed at 4K. The ack does not depend on painting. An unsignalled slot stays
-  owned until the GPU signals completion or the stream closes; elapsed time
-  never releases it. `preview-gpu-order.spec.ts` checks this with per-frame
-  barcodes, on one session and on three concurrent sessions (Windows), and on
-  the copy-back lanes with one session.
+  failed at 4K. The ack does not depend on painting, and the renderer never
+  acks on elapsed time. Native reclaims a slot left un-acked for 3 s
+  (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) with a generation bump: a wedged
+  consumer costs one possibly-torn frame instead of a stalled session, and its
+  late ack fails the generation check (a routine non-zero `lease_timeouts` counter means the
+  consumer is stalling). `preview-gpu-order.spec.ts` checks the ordering with
+  per-frame barcodes, on one session and on three concurrent sessions
+  (Windows), and on the copy-back lanes with one session.
 - **`SwTransport`.** libavcodec decodes in the main process, and NV12 (or
   I420P10) bytes go over classic IPC
   ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).

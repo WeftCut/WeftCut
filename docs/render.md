@@ -21,6 +21,12 @@ Motif capture and caching: [`motifs.md`](motifs.md).
   contrast, saturation; chroma key and sharpen are shaders authored here).
   `EffectChain` caches filters per layer. See
   [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
+- **Crop** is the last filter on a video sprite: after the effect chain,
+  before transition capture, and applied even when preview effects are
+  bypassed. One cached `CropFilter` per layer (`render/CropFilter.ts`,
+  `CompositionNode.stageVisual`) multiplies premultiplied RGBA by an
+  analytically antialiased coverage; export runs the same filter. Preview
+  reads the in-progress draft from `cropEditingStore`.
 
 ## Directory layout
 
