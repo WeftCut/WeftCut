@@ -109,7 +109,7 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 ![WeftCut editor](docs/assets/editor.png)
 
 **Timeline** — A/B-roll rows with filmstrips and waveforms, frame-accurate SMPTE editing, ripple delete that closes the gap behind it, linked A/V that trims as one clip, cross-track groups, and nested compositions.
-<br/><sub>Agent: `move_layer` · `trim_layer` · `split_layer` · `ripple_delete_gap` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
+<br/><sub>Agent: `move_layers` · `trim_layer` · `split_layer` · `shift_layers` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
 
 **Keyframes** — animate any parameter, with bézier easing, a curve editor, tangent control, motion paths and extrapolation.
 <br/><sub>Agent: `set_keyframe` · `update_keyframe` · `smooth_keyframes` · `set_extrapolation`</sub>

@@ -7,13 +7,13 @@ import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
 const EXPECTED_TOOL_NAMES = new Set<string>([
-  'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
+  'retime_layers',
   // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
-  'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
-  'move_layer', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
-  'separate_audio_to_new_track', 'restyle_captions', 'merge_captions',
+  'rename_layer', 'set_layer_flags', 'update_layer_params', 'set_scale_linked',
+  'move_layers', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers',
+  'restyle_captions', 'merge_captions',
   'create_link', 'delete_link',
   'create_group', 'add_group_members', 'move_layers_to_composition', 'ungroup_layer', 'rename_composition', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'delete_effect',
@@ -72,7 +72,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(51)
+    expect(table.length).toBe(46)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -92,31 +92,57 @@ describe('MCP tool table projections', () => {
     expect(refusal).toMatch(/edits still record/)
   })
 
-  it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
+  it('paste_layers / set_layer_flags / rename_layer round-trip valid args and reject malformed ones', () => {
     const u1 = '00000000-0000-7000-8000-000000000001'
     const u2 = '00000000-0000-7000-8000-000000000002'
     const t = '00000000-0000-7000-8000-0000000000aa'
     expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1, u2], t_start_us: 1_000_000 }))
-      .toEqual({ op: 'paste_layers', args: { layers: [u1, u2], t_start_us: 1_000_000, target_track_id: null } })
-    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: t }).args.target_track_id).toBe(t)
+      .toEqual({ op: 'paste_layers', args: { layers: [u1, u2], t_start_us: 1_000_000, target_track_id: null, unique: false } })
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, track_id: t }).args.target_track_id).toBe(t)
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, unique: true }).args.unique).toBe(true)
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: u1, t_start_us: 0 })).toThrow()               // not an array
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 'later' })).toThrow()      // non-number start
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: 'A roll' })).toThrow() // non-uuid track
-    expect(MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1, u2], enabled: false }))
-      .toEqual({ op: 'set_layers_enabled', args: { layers: [u1, u2], enabled: false } })
-    expect(() => MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, track_id: 'A roll' })).toThrow() // non-uuid track
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: t })).toThrow(/track_id/) // the old spelling is refused, not dropped
+    expect(MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1, u2], enabled: false }))
+      .toEqual({ op: 'set_layer_flags', args: { layers: [u1, u2], enabled: false, locked: null } })
+    expect(MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1], locked: true }).args).toEqual({ layers: [u1], enabled: null, locked: true })
+    expect(() => MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
+    expect(() => MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1] })).toThrow(/at least one/)       // names no flag
+    expect(MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: null })).toEqual({ op: 'update_layer', args: { layer: u1, patch: { label: null } } })
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1 })).toThrow(/label/)
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: 'x', t_end_us: 5 })).toThrow(/trim_layer/)
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: 'x', opacity: 0.5 })).toThrow(/update_layer_params/)
   })
 
-  // The landing is named ONCE: `t_start_us` (absolute) or `t_offset_us` (the
+  // The landing is named ONCE: `t_start_us` (absolute) or `delta_us` (the
   // shift itself). Neither is a landing at all, and both name two — a caller
   // sending both believes one of them, and the parser cannot know which.
-  it('paste_layers takes exactly one of t_start_us / t_offset_us', () => {
+  it('paste_layers takes exactly one of t_start_us / delta_us', () => {
     const u1 = '00000000-0000-7000-8000-000000000001'
-    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 2_000_000 }))
-      .toEqual({ op: 'paste_layers', args: { layers: [u1], t_offset_us: 2_000_000, target_track_id: null } })
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], delta_us: 2_000_000 }))
+      .toEqual({ op: 'paste_layers', args: { layers: [u1], t_offset_us: 2_000_000, target_track_id: null, unique: false } })
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1] })).toThrow(/t_start_us/)
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, t_offset_us: 5 })).toThrow(/two landings/)
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 'later' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, delta_us: 5 })).toThrow(/two landings/)
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], delta_us: 'later' })).toThrow()
+  })
+
+  // move_layers speaks paste_layers' vocabulary, and a stale spelling of the
+  // old move is refused by name rather than dropped into a lane-only move.
+  it('move_layers names one landing (or a lane) and refuses the old spelling', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    const t = '00000000-0000-7000-8000-0000000000aa'
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, insert: true }))
+      .toEqual({ op: 'move_layer_set', args: { layers: [u1], request: { layers: [u1], tStartUs: 0, deltaUs: null, track: null, insert: true, escapeLink: false } } })
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], track_id: 'spawn' }).args.request).toMatchObject({ track: 'spawn', tStartUs: null, deltaUs: null })
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], delta_us: -5, track_id: t }).args.request).toMatchObject({ track: t, deltaUs: -5 })
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1] })).toThrow(/would move nothing/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, delta_us: 5 })).toThrow(/two landings/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], delta_us: 0 })).toThrow(/nothing would move/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], new_t_start_us: 0, track_id: t })).toThrow(/t_start_us/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, escape_link: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['shift_layers']({ layer_ids: [u1], from_t_us: 0, delta_us: 5 })).toThrow(/move_layers/)
+    expect(() => MCP_ARG_PARSERS['shift_layers']({ delta_us: 5 })).toThrow()
   })
 
   // `ripple` is the whole difference between the two deletes, so it has to pick
@@ -143,8 +169,7 @@ describe('MCP tool table projections', () => {
 
   it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    const u2 = '00000000-0000-7000-8000-000000000002'
-    expect(() => MCP_ARG_PARSERS['move_layer']({ layer_id: u, new_track_id: u2, new_t_start_us: 0, escape_link: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['trim_layer']({ layer_id: u, edge: 'in', new_t_us: 0, escape_link: 'true' })).toThrow()
   })
 
   it('asArray hardening: layer_ids rejects non-array', () => {

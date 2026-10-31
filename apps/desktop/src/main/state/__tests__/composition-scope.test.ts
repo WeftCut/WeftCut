@@ -24,19 +24,19 @@ const groupOf = (actor: ActorHandle, id: string) => actor.snapshot().composition
 const errorOf = (r: { ok: boolean; error?: unknown }): string => JSON.stringify(r.error ?? null)
 
 describe('composition scope — MCP tools', () => {
-  it('move_layer on a layer inside a Group takes no scope argument', () => {
+  it('move_layers on a layer inside a Group takes no scope argument', () => {
     const { actor, groupId, innerId } = mk()
     const bRoll = groupOf(actor, groupId).tracks[1].id
-    const r = actor.mcpCall('move_layer', JSON.stringify({ layer_id: innerId, new_track_id: bRoll, new_t_start_us: 2_000_000 }))
+    const r = actor.mcpCall('move_layers', JSON.stringify({ layer_ids: [innerId], track_id: bRoll, t_start_us: 2_000_000 }))
     expect(r.ok).toBe(true)
     expect(groupOf(actor, groupId).tracks[1].layers[0]).toMatchObject({ id: innerId, t_start_us: 2_000_000 })
     expect(groupOf(actor, groupId).duration_us).toBe(3_000_000)
     expect(root(actor.snapshot()).duration_us).toBe(1_000_000) // the root did not autofit
   })
-  it('move_layer to a track in another composition → CrossCompositionMove, nothing committed', () => {
+  it('move_layers to a track in another composition → CrossCompositionMove, nothing committed', () => {
     const { actor, innerId } = mk()
     const len = actor.historyStatus().len
-    const r = actor.mcpCall('move_layer', JSON.stringify({ layer_id: innerId, new_track_id: root(actor.snapshot()).tracks[1].id, new_t_start_us: 0 }))
+    const r = actor.mcpCall('move_layers', JSON.stringify({ layer_ids: [innerId], track_id: root(actor.snapshot()).tracks[1].id, t_start_us: 0 }))
     expect(r.ok).toBe(false)
     expect(errorOf(r)).toMatch(/lives in composition .*destination is in composition/)
     expect(actor.historyStatus().len).toBe(len)

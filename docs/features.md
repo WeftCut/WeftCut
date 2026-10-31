@@ -362,7 +362,7 @@ compositions (`CrossCompositionSet`); locked member or lane (`GroupLockedMember`
 including the destination itself (`CompositionCycle`); landing before time 0
 (`InvalidArgument`, naming the earliest landing the whole set clears — never
 clamped); unknown destination or lane (`CompositionNotFound`, `TrackNotFound`);
-destination = current composition (that is `move_layer`). Add to Group adds:
+destination = current composition (that is a move: `move_layer`, `move_layers` for agents). Add to Group adds:
 target not a Group layer (`WrongLayerKind`) or not a sibling of the set
 (`CrossCompositionSet`).
 
@@ -495,9 +495,9 @@ neighbours never move. Refusals (the local preview and the commit alike) name th
 colliding clips and, when known, the maximum duration and approximate minimum
 speed; a transition refusal names the transition. Only frame sampling is
 available. A retimed Group can be entered and edited, but ungrouping it or adding
-members needs rate 1. Agents: `retime_layers`, `set_preserve_pitch`,
-`set_frame_interpolation`, `get_frame_interpolation_capabilities`
-([mcp.md](mcp.md)). Code: `renderer/properties/RetimeFields.tsx`,
+members needs rate 1. Agents: `retime_layers` (rate or duration, and the
+`preserve_pitch` policy; its answer names the link partners left at their old
+rate; [mcp.md](mcp.md)). Code: `renderer/properties/RetimeFields.tsx`,
 `renderer/retimePlan.ts`, `main/state/mutations/retime.ts`.
 
 ## Split at the playhead
@@ -582,13 +582,16 @@ a gap on a locked lane always refuses. The span is sent as **both edges**; if it
 is no longer exactly a gap when it arrives, the actor refuses (`GapNotFound`)
 rather than re-measuring. History row: *Closed gap*.
 
-**Agents:** `delete_layers { layer_ids, ripple: true }` and
-`ripple_delete_gap { track_id, start_us, end_us }`. The internal
+**Agents:** `delete_layers { layer_ids, ripple: true }`, and for a gap
+`shift_layers { from_t_us, delta_us < 0 }` — one edge and a length, through the
+same planner, so whatever starts inside the span is named instead of
+`GapNotFound`. `move_layers { insert: true }` closes a moved set's span with
+the same planner and opens room at its landing. The internal
 `split_layer_multi` op carries a `ripple` flag so a split plus closing the
 discarded spans is one undo — what [Remove pauses](#pauses) and the
 `/cut-pauses` prompt use.
 
-Deliberately unbuilt: ripple trim, insert edits, per-track Sync Lock, rippling
+Deliberately unbuilt: ripple trim, insert edits in the timeline UI, per-track Sync Lock, rippling
 free markers, and a parent rippling when a Group shrinks. Rejected: bare `Delete`
 rippling (it stays the lift), same-track ripple (desyncs linked A/V on two
 tracks), and sliding a layer that starts inside the hole (a B-roll cut for the

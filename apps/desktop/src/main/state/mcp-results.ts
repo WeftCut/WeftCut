@@ -42,7 +42,7 @@ export interface LayerRecord {
   locked: boolean
   /** Text, Motif and ImageOverlay only: what the layer is for; null = untagged. */
   graphic_role?: string | null
-  /** The link this layer is a member of, or null. What `move_layer` and
+  /** The link this layer is a member of, or null. What `move_layers` and
    *  `trim_layer` fan out along, and what a transition refuses across. */
   link_id: Uuid | null
 }
@@ -198,6 +198,34 @@ export function movedLayers(before: Project, after: Project, exclude: ReadonlySe
   return out
 }
 
+/** The link partners a split of `target` cut too, each with its segments in
+ *  timeline order — what `split_layer` and `auto_split_by_shot` answer as
+ *  `siblings`, so the next step (a ripple delete of one shot and its audio)
+ *  needs no read of the tracks. A partner's segments are the layers on its
+ *  track, inside its old span, that are it or did not exist before; a partner
+ *  the split left whole is not listed. A/V partners share a track, so the
+ *  target's own segments and other kinds are left out. */
+export function splitSiblings(before: Project, after: Project, target: Uuid, targetSegments: readonly Uuid[] = []): Array<{ layer_id: Uuid; segments: Uuid[] }> {
+  const own = new Set(targetSegments)
+  const was = located(before, target)
+  const link = was?.comp.links.find((l) => l.members.includes(target))
+  if (!was || !link) return []
+  const out: Array<{ layer_id: Uuid; segments: Uuid[] }> = []
+  for (const member of link.members) {
+    if (member === target) continue
+    const prev = located(before, member)
+    const track = prev && after.compositions[prev.comp.id]?.tracks.find((t) => t.id === prev.trackId)
+    if (!prev || !track) continue
+    const segments = track.layers
+      .filter((l) => !own.has(l.id) && l.params.kind === prev.layer.params.kind && (l.id === member || !located(before, l.id))
+        && l.t_start_us >= prev.layer.t_start_us && l.t_end_us <= prev.layer.t_end_us)
+      .sort((x, y) => x.t_start_us - y.t_start_us)
+      .map((l) => l.id)
+    if (segments.length !== 1 || segments[0] !== member) out.push({ layer_id: member, segments })
+  }
+  return out
+}
+
 /** Text layers on Caption-role tracks, project-wide — what `restyle_captions`
  *  touches and what a caption import adds to. */
 export function captionCueCount(p: Project): number {
@@ -301,10 +329,25 @@ function changedKeys(before: object, after: object): string[] {
  *  `content: []`, which `mcp.tool-table` refuses for a table-exec mutator — a
  *  new tool cannot land without saying what it committed. */
 export const MCP_RESULT_READERS: Record<string, ResultReader> = {
-  get_frame_interpolation_capabilities: c => obj(c.value),
-  retime_layers: c => obj(c.value),
-  set_frame_interpolation: c => obj(c.value),
-  set_preserve_pitch: c => ({ layer_ids: c.args.layer_ids, preserve_pitch: c.args.preserve_pitch }),
+  // The planner's edits, the pitch policy as written, and the link partners
+  // of the targets that were not among them — a retimed video whose dialogue
+  // stayed at its old rate drifts out of sync, and the agent should not have
+  // to read the links to find out.
+  retime_layers: (c) => {
+    const v = obj(c.value)
+    const ids = strs(c.args.layer_ids)
+    const named = new Set(ids)
+    const partners = new Set<string>()
+    if (c.args.target !== undefined && c.args.target !== null) for (const id of ids) {
+      const comp = located(c.after, id)?.comp
+      for (const m of comp?.links.find((l) => l.members.includes(id))?.members ?? []) if (!named.has(m)) partners.add(m)
+    }
+    return {
+      layers: v.layers ?? [],
+      ...(typeof c.args.preserve_pitch === 'boolean' ? { preserve_pitch: { value: c.args.preserve_pitch, layer_ids: v.pitched ?? [] } } : {}),
+      unretimed_partners: [...partners],
+    }
+  },
   // ── layers ──
   set_position: (c) => {
     const params = located(c.after, str(c.args.layer_id))?.layer.params
@@ -330,13 +373,24 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     const params = hit?.layer.params as { transform?: { scale_linked: boolean } } | undefined
     return { ...layerOf(c), scale_linked: params?.transform?.scale_linked ?? null }
   },
-  update_layer: (c) => layerOf(c),
-  move_layer: (c) => {
-    const rec = layerOf(c)
+  rename_layer: (c) => layerOf(c),
+  // `layers` is the set as it moved, seed first, each with `adjusted` against
+  // where the request put it (the seed's delta from its own start); `rippled`
+  // what an insert shifted to close the span behind and open the room.
+  move_layers: (c) => {
+    const v = c.value as { moved: Uuid[]; rippled: Uuid[]; spawned_track: Uuid | null; delta_us: number }
+    const seed = located(c.before, v.moved[0] ?? '')
+    const requested = typeof c.args.t_start_us === 'number' && seed ? c.args.t_start_us - seed.layer.t_start_us
+      : typeof c.args.delta_us === 'number' ? c.args.delta_us : 0
     return {
-      ...rec,
-      siblings: movedLayers(c.before, c.after, new Set([str(c.args.layer_id)])),
-      adjusted: adjusted([['t_start_us', c.args.new_t_start_us, rec.t_start_us as number]]),
+      layers: v.moved.map((id) => {
+        const prev = located(c.before, id)
+        const now = located(c.after, id)
+        return { ...(layerRecord(c.after, id) ?? { layer_id: id }), adjusted: prev ? adjusted([['t_start_us', prev.layer.t_start_us + requested, now?.layer.t_start_us]]) : [] }
+      }),
+      rippled: layerRecords(c.after, v.rippled),
+      ...(v.spawned_track ? { track: trackOf(c, v.spawned_track) } : {}),
+      pruned_tracks: prunedTrackIds(c.before, c.after),
     }
   },
   trim_layer: (c) => {
@@ -348,11 +402,15 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       adjusted: adjusted([[field, c.args.new_t_us, rec[field] as number]]),
     }
   },
-  set_layers_enabled: (c) => ({ layers: layerRecords(c.after, strs(c.args.layer_ids)) }),
+  set_layer_flags: (c) => ({ layers: layerRecords(c.after, strs(c.args.layer_ids)) }),
   paste_layers: (c) => {
     const clones = (obj(c.value).clones ?? []) as Array<{ source: string; clone: string }>
     const records = layerRecords(c.after, clones.map((x) => x.clone))
-    return { clones, layers: records, adjusted: adjusted([['t_start_us', c.args.t_start_us, records[0]?.t_start_us]]) }
+    const groups = c.args.unique === true ? clones.flatMap(({ clone }) => {
+      const params = located(c.after, clone)?.layer.params
+      return params?.kind === 'CompositionRef' ? [{ layer_id: clone, composition_id: params.composition }] : []
+    }) : null
+    return { clones, layers: records, ...(groups ? { groups } : {}), adjusted: adjusted([['t_start_us', c.args.t_start_us, records[0]?.t_start_us]]) }
   },
   delete_layers: (c) => {
     const ids = strs(c.args.layer_ids)
@@ -363,10 +421,10 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       moved: ripple ? movedLayers(c.before, c.after, new Set(ids)) : [],
     }
   },
-  // `moved` is the whole set the shift addressed, partners included, each
-  // with where it landed and `adjusted` for its own grid snap: the set has no
-  // single applied delta, since a frame-grid member and a sample-grid member
-  // land different distances from one request.
+  // `moved` is every layer the sweep re-timed, each with where it landed and
+  // `adjusted` for its own grid snap: the set has no single applied delta,
+  // since a frame-grid member and a sample-grid member land different
+  // distances from one request.
   shift_layers: (c) => {
     const v = c.value as { moved: Uuid[]; delta_us: number }
     const requested = typeof c.args.delta_us === 'number' ? c.args.delta_us : v.delta_us
@@ -379,10 +437,6 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       delta_us: requested,
     }
   },
-  ripple_delete_gap: (c) => ({
-    track_id: str(c.args.track_id), start_us: c.args.start_us, end_us: c.args.end_us,
-    moved: movedLayers(c.before, c.after),
-  }),
   // ── tracks ──
   add_track: (c) => trackOf(c, str(c.value)),
   delete_track: (c) => {
@@ -451,7 +505,6 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     }
   },
   // ── composition / settings ──
-  separate_audio_to_new_track: (c) => ({ ...trackOf(c, str(c.value)), layer: layerRecord(c.after, str(c.args.layer_id)) }),
   update_composition: (c) => {
     const id = str(c.args.composition_id) || c.after.root_id
     const comp = c.after.compositions[id]

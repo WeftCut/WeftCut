@@ -171,9 +171,8 @@ it.
   the speech either side keeps its breath (or let the user review them first:
   `detect_pauses` → one `create_tacks` batch, a region tack per pause; both
   packaged as the `/cut-pauses` prompt).
-- Make room, or move the tail: `shift_layers` shifts every layer from a time
-  (or a named set, link partners included) by one delta as one undoable edit —
-  a positive delta from a time is the ripple insert; then place into the gap.
+- Reorder: `move_layers`; `insert: true` moves a part and closes the gap
+  behind it. Make room or close a gap: `shift_layers` from a time.
 - Captions: `transcribe_clip` → inspect the returned `segments` → `apply_transcripts`,
   passing the envelope's `segments` and `word_timing` through (also
   `/auto-caption`). The cues come out within the style's caption limits, so
@@ -182,10 +181,7 @@ it.
   time 0 at `t_start_us`. Correcting names and jargon: put the script or
   notes in `set_project_settings { correction_script }`, then
   `correct_caption_text`. Restyle every caption at once with `restyle_captions`.
-- Retime: `retime_layers` sets an absolute rational rate or target duration,
-  preserving the selected source window. Pass every intended clip explicitly:
-  links do not expand the selection. `set_preserve_pitch` sets the Audio/Group
-  pitch policy. The ordinary duration/trim tools trim instead of changing rate.
+- Retime: `retime_layers`, with the link partners too.
 - Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
   mono source WAV block (at most 60 s of source per call) and the window's
   mapping; place each WAV offset by it, then `apply_transcripts` with `word_timing:
@@ -197,17 +193,14 @@ it.
   should close behind it.
 - Placing clips, titles, music, stills: one `add_layers` call for the whole
   batch.
-- Music alignment: `analyze_audio` reads a media item's source waveform
-  energy, onset candidates and energy changes, at most 60 s per call, outside
-  existing trims too; its description gives the slip that lands one at a
-  timeline time. Audition: amplitude onsets do not identify beats or main
-  melodies.
+- Music alignment: `analyze_audio` onsets, then slip the clip with
+  `update_layer_params { src_in_us }`. Onsets are not beats: audition.
 - A title, a lower third, a credit: a text layer with its `graphic_role`.
   Adjust it with `update_layer_params`. Subtitles from a document are
   `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
-  `update_layer` clears.
+  `set_layer_flags` clears.
 - Going back further than one undo: `jump_to { op_id }`, an op of `project://history`.
 
 ## Pointing the user at something

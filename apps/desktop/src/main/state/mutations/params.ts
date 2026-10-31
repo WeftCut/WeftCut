@@ -115,6 +115,21 @@ const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Over
  *  zero scale, a face outside its range, a Path-mode x/y). Animated fields
  *  collapse to Static(v), overwriting any keyframe track. Motif props merge
  *  field-wise; only a rebind (a new `motif_id`) replaces them. */
+/** A source-window write on a media-bearing kind. `src_in_us` alone is a SLIP:
+ *  the window moves and keeps its length, so the span and what it plays still
+ *  agree — the Motif rule. With `src_out_us` beside it the window is written as
+ *  sent; `src_out_us` alone moves only the end (a Group's window may overhang
+ *  its composition, ADR 0052 §6). */
+function writeWindow(layer: Layer, q: VideoClipParams | AudioParams | CompositionRefParams, srcIn: number | undefined, srcOut: number | undefined): void {
+  if (srcIn !== undefined && srcOut === undefined) {
+    const span = subtractTime(sourceOut(layer), sourceIn(q))
+    writeSourceWindow(q, exactTime(srcIn), addTime(exactTime(srcIn), span))
+    return
+  }
+  if (srcIn !== undefined) q.src_in_us = srcIn
+  if (srcOut !== undefined) q.src_out_us = srcOut
+}
+
 export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   const p = layer.params
   if ('transform' in p && p.transform.position.mode === 'Path' && ('x' in patch || 'y' in patch)) throw new CommandFailure({ error:'InvalidArgument',field:'position',detail:'This layer follows a path. Translate or edit its path, or explicitly bake to XY.' })
@@ -293,8 +308,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'speed',
           detail: 'Use retime_layers to change playback rate' })
       }
-      if (patch.src_in_us !== undefined) v.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) v.src_out_us = patch.src_out_us
+      writeWindow(layer, v, patch.src_in_us, patch.src_out_us)
       if (a.x !== undefined) setPositionTrack(v.transform.position, 'x', stat(a.x))
       if (a.y !== undefined) setPositionTrack(v.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) v.transform.scale_x = stat(a.scale_x)
@@ -359,8 +373,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'blend_mode',
           detail: `blend_mode must be one of ${BLEND_MODES.join(' | ')}` })
       }
-      if (patch.src_in_us !== undefined) g.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) g.src_out_us = patch.src_out_us
+      writeWindow(layer, g, patch.src_in_us, patch.src_out_us)
       if (a.x !== undefined) setPositionTrack(g.transform.position, 'x', stat(a.x))
       if (a.y !== undefined) setPositionTrack(g.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) g.transform.scale_x = stat(a.scale_x)
@@ -394,8 +407,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       // Refusing here makes the store the truth; that clamp stays as a guard for
       // projects written before this check existed.
       const panP = authored('pan', patch.pan)
-      if (patch.src_in_us !== undefined) au.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) au.src_out_us = patch.src_out_us
+      writeWindow(layer, au, patch.src_in_us, patch.src_out_us)
       if (gainP !== undefined) au.gain_db = stat(gainP)
       if (panP !== undefined) au.pan = stat(panP)
       if (patch.fade_in_us !== undefined) au.fade_in_us = patch.fade_in_us

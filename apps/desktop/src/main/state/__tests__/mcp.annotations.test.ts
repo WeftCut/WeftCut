@@ -77,7 +77,6 @@ describe('the read set', () => {
     if (!added.ok) throw new Error(added.error.message)
     const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const argsFor: Record<string, Record<string, unknown>> = {
-      get_frame_interpolation_capabilities: { layer_ids: [layerId], purpose: 'Preview' },
       read_project: { view: 'current' },
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour
       export_captions: { format: 'srt' },
@@ -101,7 +100,7 @@ describe('the destructive set', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
       'delete_composition', 'delete_keyframe', 'delete_motif', 'clear_keyframes',
-      'ripple_delete_gap', 'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
+      'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
       expect(destructive, n).toContain(n)
     }
     for (const n of destructive) expect(n, 'a destructive read is a contradiction').not.toMatch(/^(get_|list_|read_)/)
@@ -112,7 +111,10 @@ describe('the destructive set', () => {
   it('a set is idempotent, a creation is not', () => {
     expect(ann('set_position').idempotentHint).toBeUndefined() // replacement generates fresh node/key IDs
     expect(ann('set_param_track').idempotentHint).toBeUndefined()
-    expect(ann('update_layer').idempotentHint).toBe(true)
+    expect(ann('rename_layer').idempotentHint).toBe(true)
+    expect(ann('set_layer_flags').idempotentHint).toBe(true)
+    expect(ann('move_layers').idempotentHint).toBeUndefined() // a delta is not idempotent
+    expect(ann('shift_layers').idempotentHint).toBeUndefined()
     expect(ann('add_track').idempotentHint).toBeUndefined()
     expect(ann('paste_layers').idempotentHint).toBeUndefined()
   })

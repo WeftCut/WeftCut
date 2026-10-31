@@ -245,7 +245,10 @@ describe('renamed tools', () => {
     }
     for (const old of ['remove_track', 'remove_media', 'remove_effect', 'remove_transition', 'remove_marker', 'remove_keyframe',
       'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
-      'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename'])
+      'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename',
+      // Spec ticket 09: merged into move_layers / shift_layers / set_layer_flags / retime_layers, no aliases.
+      'move_layer', 'update_layer', 'set_layers_enabled', 'ripple_delete_gap', 'separate_audio_to_new_track',
+      'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities'])
       expect(refusal(call(a, old, {})).code, old).toBe('not_found')
   })
 })

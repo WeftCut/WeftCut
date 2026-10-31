@@ -15,11 +15,11 @@ function one(): Project { const p = blankProject(seededGen(), 't'); root(p).trac
 function expectCmd(fn: () => void, code: string) { try { fn(); throw new Error(`expected ${code}`) } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe(code) } }
 
 describe('applyUpdateLayer', () => {
-  it('applies only the provided fields (label/times/flags)', () => {
+  it('applies only the provided fields (label/flags); the times are not a patch field', () => {
     const p = one()
-    applyUpdateLayer(p, 'a', { label: 'hi', t_end_us: 2_000_000, enabled: false })
+    applyUpdateLayer(p, 'a', { label: 'hi', enabled: false })
     const l = root(p).tracks[0].layers[0]
-    expect(l.label).toBe('hi'); expect(l.t_end_us).toBe(2_000_000); expect(l.enabled).toBe(false)
+    expect(l.label).toBe('hi'); expect(l.t_end_us).toBe(1_000_000); expect(l.enabled).toBe(false)
     expect(l.t_start_us).toBe(0); expect(l.locked).toBe(false) // untouched
   })
   it('treats null/absent patch fields as "do not touch"', () => {

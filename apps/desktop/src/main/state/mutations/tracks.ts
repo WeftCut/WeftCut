@@ -30,16 +30,19 @@ export function applyRenameTrack(p: Project, id: Uuid, label: string | null): vo
 }
 
 /** Reposition a track within its composition. TrackNotFound →
- *  TrackPositionOutOfRange → remove+reinsert. The cur===new no-op (skip commit)
- *  is handled by the actor. */
+ *  TrackPositionOutOfRange → TrackReserved (A roll / B roll keep their place,
+ *  as `restack_layer` keeps them and the timeline's `canReorderTrack` does) →
+ *  TrackLocked → LayerLocked (a locked layer pins its track) →
+ *  remove+reinsert. The cur===new no-op (skip commit) is handled by the actor. */
 export function applyMoveTrack(p: Project, id: Uuid, newPosition: number): void {
   const { comp: c, track, trackIndex: cur } = requireTrack(p, id)
   // `splice` counts a negative index from the end, which would place the
   // track and report success; the range is 0..len-1 and nothing else.
   if (!Number.isInteger(newPosition) || newPosition < 0 || newPosition >= c.tracks.length) throw new CommandFailure({ error: 'TrackPositionOutOfRange', position: newPosition, len: c.tracks.length })
+  if (track.role === 'ARoll' || track.role === 'BRoll') throw new CommandFailure({ error: 'TrackReserved', track: id })
   if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: id })
   const locked = track.layers.find((layer) => layer.locked)
-  if (locked) throw new CommandFailure({ error: 'InvalidArgument', field: 'track', detail: `layer ${locked.id} is locked` })
+  if (locked) throw new CommandFailure({ error: 'LayerLocked', layer: locked.id })
   const [t] = c.tracks.splice(cur, 1)
   c.tracks.splice(newPosition, 0, t)
 }

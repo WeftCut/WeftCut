@@ -61,6 +61,7 @@ const EVERY_VARIANT: CommandError[] = [
   { error: 'TrackPositionOutOfRange', position: 7, len: 3 },
   { error: 'TrackNotEmpty', track: T1 },
   { error: 'TrackNotRemovable', track: T1 },
+  { error: 'TrackReserved', track: T1 },
   { error: 'TrackLocked', track: T1 },
   { error: 'RippleInsideHole', layer: L1, hole: { s: 0, e: 5 } },
   { error: 'RippleCollision', moving: L1, blocking: L2, track: T1 },
@@ -146,15 +147,22 @@ describe('the ripple remedies are per tool', () => {
     expect(out.message).toContain('without ripple')
   })
 
-  it('ripple_delete_gap and remove_pauses have no layer_ids and are told to move or delete the blocker first', () => {
-    for (const tool of ['ripple_delete_gap', 'remove_pauses']) {
+  it('shift_layers and remove_pauses have no layer_ids and are told to move or delete the blocker first', () => {
+    for (const tool of ['shift_layers', 'remove_pauses']) {
       const out = mapCommandError(inside, tool)
       expect(out.message, tool).not.toContain('layer_ids')
-      expect(out.message, tool).toContain(`move_layer or delete_layers ${L1} first`)
+      expect(out.message, tool).toContain(`move_layers or delete_layers ${L1} first`)
       expect((out.data as { tool: string }).tool).toBe(tool)
     }
     expect(mapCommandError(inside, 'remove_pauses').message).toContain('the pause cut')
-    expect(mapCommandError(inside, 'ripple_delete_gap').message).toContain('closing the gap')
+    expect(mapCommandError(inside, 'shift_layers').message).toContain('the shift')
+  })
+
+  it('move_layers { insert } is told to add the blocker to its set, or move without insert', () => {
+    const out = mapCommandError(inside, 'move_layers')
+    expect(out.message).toContain(`add ${L1} to layer_ids`)
+    expect(out.message).toContain('without insert')
+    expect((out.data as { options: Array<{ action: string }> }).options.map((o) => o.action)).toEqual(['add_to_set_then_retry', 'move_without_insert'])
   })
 
   it('the other three ripple refusals drop the layer_ids clause for the tools that lack it', () => {
@@ -163,10 +171,12 @@ describe('the ripple remedies are per tool', () => {
     expect(mapCommandError(collision, 'remove_pauses').message).not.toContain('layer_ids')
     const straddle: CommandError = { error: 'RippleLinkStraddles', link: X1, hole: { s: 0, e: 5 } }
     expect(mapCommandError(straddle, 'delete_layers').message).toContain('add the straddling members to layer_ids')
-    expect(mapCommandError(straddle, 'ripple_delete_gap').message).not.toContain('layer_ids')
+    expect(mapCommandError(straddle, 'shift_layers').message).not.toContain('layer_ids')
+    expect(mapCommandError(straddle, 'move_layers').message).toContain('add the straddling members to layer_ids')
     const locked: CommandError = { error: 'RippleLockedLayer', layer: L1 }
     expect(mapCommandError(locked, 'delete_layers').message).toContain('narrow layer_ids')
-    expect(mapCommandError(locked, 'remove_pauses').message).not.toContain('layer_ids')
+    // The unlock names set_layer_flags' own layer_ids; the narrowing clause is gone.
+    expect(mapCommandError(locked, 'remove_pauses').message).not.toContain('narrow layer_ids')
   })
 })
 
@@ -177,7 +187,7 @@ describe('LayerOverlap options are validated against the geometry', () => {
 
   it('a request starting inside the blocker: trim its tail or split it there, plus the two that always work', () => {
     const opts = actions(overlap([0, 3_000_000], [2_000_000, 5_000_000]))
-    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layer', 'trim_existing', 'split_at_t'])
+    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layers', 'trim_existing', 'split_at_t'])
     expect(opts[2]).toMatchObject({ edge: 'out', new_t_us: 2_000_000 })
     expect(opts[3]).toMatchObject({ at_t_us: 2_000_000 })
   })
@@ -187,7 +197,7 @@ describe('LayerOverlap options are validated against the geometry', () => {
     // one-frame clip. The request covers the blocker's head, so the blocker's
     // START is what moves.
     const opts = actions(overlap([0, 3_000_000], [0, 1_000_000]))
-    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layer', 'trim_existing'])
+    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layers', 'trim_existing'])
     expect(opts[2]).toMatchObject({ edge: 'in', new_t_us: 1_000_000 })
     const msg = mapCommandError(overlap([0, 3_000_000], [0, 1_000_000])).message
     expect(msg).not.toContain('split_layer')
@@ -196,7 +206,7 @@ describe('LayerOverlap options are validated against the geometry', () => {
 
   it('a request that swallows the blocker whole offers only the two that always work', () => {
     const opts = actions(overlap([1_000_000, 2_000_000], [0, 3_000_000]))
-    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layer'])
+    expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layers'])
   })
 })
 
@@ -212,7 +222,7 @@ describe('the messages the descriptions promise', () => {
 
   it('RetimeRejected says one sentence per reason, and a collision points at the blocker', () => {
     const out = mapCommandError({ error: 'RetimeRejected', reason: { kind: 'Collision', layer_id: L1, blocking_layer_id: L2, requested_duration: { num: 9, den: 1 }, maximum_duration_us: 4_000_000, minimum_rate: { num: 3, den: 2 } } })
-    expect(out.message).toContain(`move_layer or shift_layers ${L2}`)
+    expect(out.message).toContain(`move_layers ${L2} out of the way`)
     expect(out.message).toContain('at most 4000000 µs fits')
     expect(out.message).toContain('3/2')
   })

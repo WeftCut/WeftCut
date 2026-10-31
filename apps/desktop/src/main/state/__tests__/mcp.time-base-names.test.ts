@@ -40,14 +40,13 @@ const DURATIONS: ReadonlySet<string> = new Set([
   'wait_s', 'retry_after_s',
 ])
 
-/** Timeline names with a role word before `t_`: each carries its base, and
- *  the tools they belong to are being merged (spec ticket 09) — the merge, not
- *  a rename here, is what retires the movers' spellings. */
+/** Timeline names with a role word before `t_`: each carries its base. The
+ *  movers merged into `move_layers` (spec ticket 09), which lands its seed at
+ *  a plain `t_start_us`; what is left names a role no plain base would. */
 const ROLE_QUALIFIED: ReadonlyMap<string, string> = new Map([
   ['at_t_us', 'split_layer: the cut points'],
   ['new_t_us', 'trim_layer: where the edge lands'],
-  ['new_t_start_us', 'move_layer: where the layer lands'],
-  ['anchor_t_start_us', 'move_layers_to_composition: where the anchor layer lands'],
+  ['anchor_t_start_us', 'move_layers_to_composition: where the anchor layer lands, on the destination clock'],
   ['from_t_us', 'shift_layers: the sweep origin'],
   ['end_t_us', 'markers and tacks: a region end, the stored marker field'],
 ])

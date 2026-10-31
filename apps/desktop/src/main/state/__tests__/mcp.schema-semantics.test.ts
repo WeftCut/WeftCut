@@ -152,7 +152,7 @@ describe('null arms are advertised only where null means something omission does
     // composition/codec defaults or clears an optional rate constraint.
     ...['start_export', 'create_export_preset', 'update_export_preset'].flatMap(tool =>
       ['resolution_height','fps','custom_bitrate','max_bitrate','buffer_size','crf','audio.sample_rate','audio.channels'].map(k => `${tool}.settings.${k}`)),
-    'rename_track.label', 'update_layer.patch.label', 'rename_composition.label',
+    'rename_track.label', 'rename_layer.label', 'rename_composition.label',
     // null turns a region back into a point; a marker's name and note take none.
     'update_marker.patch.end_t_us',
     'update_composition.patch.duration_us',

@@ -62,9 +62,9 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
     expect(await call<LayerRecord>('trim_layer', {
       layer_id: green.layer_id, edge: 'in', new_t_us: 5_000_000,
     })).toMatchObject({ layer_id: green.layer_id, t_start_us: 5_000_000, t_end_us: 6_000_000 })
-    expect(await call<LayerRecord>('move_layer', {
-      layer_id: green.layer_id, new_track_id: track.track_id, new_t_start_us: 1_000_000,
-    })).toMatchObject({ layer_id: green.layer_id, track_id: track.track_id,
+    expect((await call<{ layers: LayerRecord[] }>('move_layers', {
+      layer_ids: [green.layer_id], t_start_us: 1_000_000,
+    })).layers[0]).toMatchObject({ layer_id: green.layer_id, track_id: track.track_id,
       t_start_us: 1_000_000, t_end_us: 2_000_000 })
 
     const tracks = await read<Array<{ id: string; layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>>('project://tracks')

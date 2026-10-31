@@ -2,14 +2,14 @@
 // The parse boundary enforces KEY SETS, not just "is an object", because the
 // worst answer a tool can give is success for nothing done: a typo such as
 // `update_layer_params { patch: { kind: 'Color', opacityy: 0.2 } }`, an
-// `update_layer` key the tool does not take, an `add_effect` kind no catalog
+// `rename_layer` key the tool does not take, an `add_effect` kind no catalog
 // knows (`audio.compressor`, `""`), an `update_effect` param outside its range
 // (`wobble`, `strength: 500`). Every one is a refusal that names the accepted
 // set, before any write.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId } from './pbt/harness'
 import { root } from './fixtures/project'
-import { parseLayerParamsPatch, parseLayerPatch, parseEffectKind, checkEffectPatchAgainst, McpArgError, LAYER_PARAM_KINDS } from '../mcp-commands'
+import { parseLayerParamsPatch, parseEffectKind, checkEffectPatchAgainst, McpArgError, LAYER_PARAM_KINDS } from '../mcp-commands'
 import { EFFECT_KINDS } from '../../../shared/effects/params'
 
 type Actor = ReturnType<typeof freshActor>
@@ -54,8 +54,9 @@ describe('update_layer_params — unknown keys are refused, naming the kind\'s s
   it('an envelope field points at the tool that owns it', () => {
     const a = freshActor()
     const id = colorLayer(a)
-    expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Color', enabled: false } }))).toMatch(/set_layers_enabled/)
-    expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Color', t_start_us: 0 } }))).toMatch(/update_layer\b/)
+    expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Color', enabled: false } }))).toMatch(/set_layer_flags/)
+    expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Color', t_start_us: 0 } }))).toMatch(/move_layers/)
+    expect(refusal(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Color', label: 'x' } }))).toMatch(/rename_layer/)
   })
 
   it('a patch with only `kind` is refused: it would report success having changed nothing', () => {
@@ -112,45 +113,49 @@ describe('update_layer_params — unknown keys are refused, naming the kind\'s s
   })
 })
 
-describe('update_layer — the envelope set, and only the envelope set', () => {
-  it('refuses `enabled`, pointing at set_layers_enabled, and leaves the flag alone', () => {
+describe('rename_layer / set_layer_flags — the envelope, and only the envelope', () => {
+  it('rename_layer refuses `enabled`, pointing at set_layer_flags, and leaves the flag alone', () => {
     const a = freshActor()
     const id = colorLayer(a)
-    expect(refusal(call(a, 'update_layer', { layer_id: id, patch: { enabled: false } }))).toMatch(/set_layers_enabled/)
+    expect(refusal(call(a, 'rename_layer', { layer_id: id, label: 'x', enabled: false }))).toMatch(/set_layer_flags/)
     expect(layerOf(a, id).enabled).toBe(true)
   })
 
   it('refuses a param key, pointing at update_layer_params', () => {
     const a = freshActor()
     const id = colorLayer(a)
-    expect(refusal(call(a, 'update_layer', { layer_id: id, patch: { opacity: 0.5 } }))).toMatch(/update_layer_params/)
+    expect(refusal(call(a, 'set_layer_flags', { layer_ids: [id], locked: true, opacity: 0.5 }))).toMatch(/update_layer_params/)
+    expect(layerOf(a, id).locked).toBe(false)
   })
 
-  it('refuses an empty patch and type-gates the two fields', () => {
-    expect(() => parseLayerPatch({})).toThrow(/names no field/)
-    expect(() => parseLayerPatch({ label: 3 })).toThrow(/patch\.label/)
-    expect(() => parseLayerPatch({ locked: 'yes' })).toThrow(/patch\.locked/)
-    expect(parseLayerPatch({ label: null, locked: true })).toEqual({ label: null, locked: true })
+  it('type-gates the fields and refuses a call naming none', () => {
+    const a = freshActor()
+    const id = colorLayer(a)
+    expect(refusal(call(a, 'rename_layer', { layer_id: id, label: 3 }))).toMatch(/label/)
+    expect(refusal(call(a, 'set_layer_flags', { layer_ids: [id], locked: 'yes' }))).toMatch(/locked/)
+    expect(refusal(call(a, 'set_layer_flags', { layer_ids: [id] }))).toMatch(/at least one/)
   })
 
-  it('the times are not update_layer\'s: the refusal names move_layer and trim_layer (T1)', () => {
-    for (const k of ['t_start_us', 't_end_us']) {
-      expect(() => parseLayerPatch({ [k]: 1_000_000 })).toThrow(/move_layer .*trim_layer/)
-    }
+  it('the times are neither tool\'s: the refusal names move_layers and trim_layer (T1)', () => {
+    const a = freshActor()
+    const id = colorLayer(a)
+    expect(refusal(call(a, 'rename_layer', { layer_id: id, label: 'x', t_start_us: 1_000_000 }))).toMatch(/move_layers/)
+    expect(refusal(call(a, 'rename_layer', { layer_id: id, label: 'x', t_end_us: 1_000_000 }))).toMatch(/trim_layer/)
   })
 
   it('label: null clears the name (T2)', () => {
     const a = freshActor()
     const id = colorLayer(a)
-    ok(call(a, 'update_layer', { layer_id: id, patch: { label: 'slate' } }))
-    ok(call(a, 'update_layer', { layer_id: id, patch: { label: null } }))
+    ok(call(a, 'rename_layer', { layer_id: id, label: 'slate' }))
+    ok(call(a, 'rename_layer', { layer_id: id, label: null }))
     expect(layerOf(a, id).label).toBeNull()
   })
 
-  it('a well-formed patch still applies', () => {
+  it('a well-formed call still applies', () => {
     const a = freshActor()
     const id = colorLayer(a)
-    ok(call(a, 'update_layer', { layer_id: id, patch: { label: 'slate', locked: true } }))
+    ok(call(a, 'rename_layer', { layer_id: id, label: 'slate' }))
+    ok(call(a, 'set_layer_flags', { layer_ids: [id], locked: true }))
     expect(layerOf(a, id)).toMatchObject({ label: 'slate', locked: true })
   })
 })

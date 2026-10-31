@@ -173,12 +173,12 @@ describe('move_layers_to_composition — MCP tool', () => {
       expect(cycle.error.message).toBe(`composition references form a cycle: ${inside} → ${inside}`)
     }
 
-    // An in-composition landing is move_layer's, and the message says so.
+    // An in-composition landing is move_layers', and the message says so.
     const sameComp = actor.mcpCall('move_layers_to_composition', JSON.stringify({
       layer_ids: [group], to_composition_id: actor.snapshot().root_id, anchor_layer_id: group, anchor_t_start_us: 0,
     }))
     expect(sameComp.ok).toBe(false)
-    if (!sameComp.ok) expect(sameComp.error.message).toMatch(/already in composition .*move_layer/)
+    if (!sameComp.ok) expect(sameComp.error.message).toMatch(/already in composition .*move_layers/)
 
     // Malformed input never reaches the actor. A mistyped `to_track_id` is the
     // one worth pinning: the literal is not a uuid, so a lax parser would read a

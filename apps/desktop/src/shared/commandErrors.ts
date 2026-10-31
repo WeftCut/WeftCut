@@ -135,6 +135,10 @@ export type CommandError =
   | { error: 'TrackPositionOutOfRange'; position: number; len: number }
   | { error: 'TrackNotEmpty'; track: Uuid }
   | { error: 'TrackNotRemovable'; track: Uuid }
+  /** A reserved A roll / B roll track keeps its place in the stack: `move_track`
+   *  refuses it, as `restack_layer` keeps it fixed and the timeline offers no
+   *  drag for it. */
+  | { error: 'TrackReserved'; track: Uuid }
   | { error: 'TrackLocked'; track: Uuid }
   // ── Ripple delete (docs/features.md#ripple-delete). A ripple closes the span
   // a deletion vacated, so every refusal below is about the span — `hole` is

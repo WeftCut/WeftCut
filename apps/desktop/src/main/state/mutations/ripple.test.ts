@@ -634,14 +634,17 @@ describe('dispatch: ripple_delete_gap', () => {
     expect(x.burned()).toBe(ids)
   })
 
-  it('reaches the actor through the MCP surface with the span echoed on a refusal', () => {
+  // Over MCP a gap closes with ONE edge (`shift_layers` with a negative delta,
+  // through the same planner); the two-edge form is the timeline's.
+  it('reaches the actor through the MCP surface as shift_layers, refusing what the planner refuses', () => {
     const x = fx()
-    color(x, x.aRoll, sec(0), sec(2))
+    const a = color(x, x.aRoll, sec(0), sec(2))
     const b = color(x, x.aRoll, sec(4), sec(6))
     const actor = x.open()
-    const refused = actor.mcpCall('ripple_delete_gap', JSON.stringify({ track_id: x.aRoll, t_start_us: sec(2), t_end_us: sec(3) }))
+    const refused = actor.mcpCall('shift_layers', JSON.stringify({ from_t_us: sec(4), delta_us: -sec(3) }))
     expect(refused.ok).toBe(false)
-    expect(actor.mcpCall('ripple_delete_gap', JSON.stringify({ track_id: x.aRoll, t_start_us: sec(2), t_end_us: sec(4) })).ok).toBe(true)
+    if (!refused.ok) expect(refused.error.data).toMatchObject({ error: 'RippleCollision', moving: b, blocking: a })
+    expect(actor.mcpCall('shift_layers', JSON.stringify({ from_t_us: sec(4), delta_us: -sec(2) })).ok).toBe(true)
     expect(spanOf(root(actor.snapshot()), b)).toEqual([sec(2), sec(4)])
   })
 })

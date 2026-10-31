@@ -16,6 +16,7 @@ import { McpArgError, mcpDef } from './mcp-commands'
 import type { Cue } from './mutations/captions'
 import { scopeComposition } from './mutations/helpers'
 import { parseDiscardSegments } from './mutations/split'
+import { splitSiblings } from './mcp-results'
 import type { MediaImportDeps } from './mediaImport'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
@@ -810,7 +811,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // Convenience composite (reproducible with analyze_clip + split_layer):
       // the detector's boundaries for this layer, split in ONE commit
       // (split_layer_multi → single undo). Returns a JSON STRING
-      // `{ layer_ids }` — the new segment ids in timeline order.
+      // `{ layer_ids, siblings }` — the new segment ids in timeline order, and
+      // each link partner the split cut with its own (`splitSiblings`).
       const layerId = args.layer_id
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('auto_split_by_shot: layer_id is required')
@@ -819,8 +821,9 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // part of the SAME commit — so drop + split are one undo. The tool's own
       // argument is a boolean, so the length it resolves to is decided here.
       const dropShortUs = args.drop_short === true ? (minShotUs ?? shotDefaults(deps).min_shot_us) : undefined
+      const before = deps.actor.snapshot()
       const layerIds = await splitByShotCuts({ layer_id: layerId, min_shot_us: minShotUs, drop_short_us: dropShortUs }, deps)
-      return JSON.stringify({ layer_ids: layerIds })
+      return JSON.stringify({ layer_ids: layerIds, siblings: splitSiblings(before, deps.actor.snapshot(), layerId, layerIds) })
     }
     case 'drop_shot_markers': {
       // The zero-argument marker entry: apply_shot_cuts in 'mark' mode at the

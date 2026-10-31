@@ -313,6 +313,19 @@ layer). Trailing space is not a gap. Selectable; its `Delete` closes it via
 ripple. UI word: Gap / 间隙; history *Closed gap* / 闭合间隙.
 _Avoid_: hole (ripple's per-layer measure), blank space / 空白
 
+**Insert move**:
+A move that closes the moved set's span behind it and opens room at its
+landing, on every track — a ripple delete and a ripple insert in one edit
+(`move_layers { insert: true }`, agents only). The landing is read on the
+closed timeline: where the set starts afterwards.
+_Avoid_: ripple move (the trim), overwrite move, swap
+
+**Slip**:
+Moving a clip's source window under a fixed span: the span and the window's
+length stay, what plays changes (`src_in_us` on VideoClip, Audio, Motif and
+Group). Distinct from a trim (changes the span) and a retime (changes the rate).
+_Avoid_: slide (moves the span), offset, source shift
+
 ## Markers
 
 **Free marker**:

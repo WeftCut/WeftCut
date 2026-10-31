@@ -3,7 +3,7 @@
 // routes tool names → mutations (valid calls succeed + state changes as expected)
 // and rejects malformed args with a structured error envelope (no throw).
 // Coverage:
-// table-exec tools (add_track, delete_layers, trim_layer, move_layer,
+// table-exec tools (add_track, delete_layers, trim_layer, move_layers,
 // create_link, set_role_gain, undo/redo) and dedicated-exec tools
 // (add_layers, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
@@ -281,19 +281,18 @@ describe('MCP adapter routing — trim_layer (table)', () => {
   })
 })
 
-// ── Table-exec: move_layer ────────────────────────────────────────────────────
+// ── Table-exec: move_layers ────────────────────────────────────────────────────
 
-describe('MCP adapter routing — move_layer (table)', () => {
+describe('MCP adapter routing — move_layers (table)', () => {
   it('valid call routes and the layer moves to the destination track', () => {
     const a = freshActor()
     const srcTrackId = aRollId(a)
     const dstTrackId = bRollId(a)
     const layerId = addColorLayerMcp(a, srcTrackId, 0, 2_000_000)
 
-    const r = a.mcpCall('move_layer', JSON.stringify({
-      layer_id: layerId,
-      new_t_start_us: 0,
-      new_track_id: dstTrackId,
+    const r = a.mcpCall('move_layers', JSON.stringify({
+      layer_ids: [layerId],
+      track_id: dstTrackId,
     }))
     expect(r.ok).toBe(true)
     // Layer must be on the destination track now
@@ -304,15 +303,14 @@ describe('MCP adapter routing — move_layer (table)', () => {
     expect(src.layers.some((l) => l.id === layerId)).toBe(false)
   })
 
-  it('malformed new_track_id (not a UUID) → structured invalid_params error, no throw', () => {
+  it('malformed track_id (not a UUID) → structured invalid_params error, no throw', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerMcp(a, trackId, 0, 2_000_000)
 
-    const r = a.mcpCall('move_layer', JSON.stringify({
-      layer_id: layerId,
-      new_t_start_us: 0,
-      new_track_id: 'not-a-uuid',
+    const r = a.mcpCall('move_layers', JSON.stringify({
+      layer_ids: [layerId],
+      track_id: 'not-a-uuid',
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return

@@ -141,7 +141,7 @@ async function world(): Promise<World> {
   await must(w, 'rename_track', { track_id: tA, label: 'A cam' })
   const c = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'color', color: red } }] }))
   const c2 = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 2 * S, t_end_us: 4 * S, content: { kind: 'color', color: red } }] }))
-  await must(w, 'update_layer', { layer_id: c, patch: { label: 'C' } })
+  await must(w, 'rename_layer', { layer_id: c, label: 'C' })
   const x = added(await must(w, 'add_layers', { layers: [{ track_id: tB, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'text', content: 'Title' } }] }))
   const tV = id(await must(w, 'add_track', {}), 'track_id')
   const vl = added(await must(w, 'add_layers', { layers: [{ track_id: tV, t_start_us: 0, t_end_us: 4 * S, content: { kind: 'video', media_id: VIDEO, src_in_us: 0 } }] }))
@@ -212,20 +212,30 @@ const CASES: Record<string, Case> = {
   rename_track: { base: (i) => ({ track_id: i.tA }), values: { label: lit('Renamed') } },
   set_track_flags: { base: (i) => ({ track_id: i.tB }), values: { enabled: lit(false), locked: lit(true) } },
   paste_layers: { base: (i) => ({ layer_ids: [i.c] }), values: {
-    t_start_us: lit(10 * S), t_offset_us: lit(10 * S),
-    target_track_id: val((i) => i.tB, { with: () => ({ t_offset_us: 10 * S }) }),
+    t_start_us: lit(10 * S), delta_us: lit(10 * S),
+    track_id: val((i) => i.tB, { with: () => ({ delta_us: 10 * S }) }),
+    // On a colour layer the copy has no composition to make its own: refused.
+    unique: lit(true, { with: () => ({ delta_us: 10 * S }), refuses: true }),
   } },
-  update_layer: { base: (i) => ({ layer_id: i.c, patch: {} }), values: { 'patch.label': lit('New'), 'patch.locked': lit(true) } },
-  shift_layers: { base: () => ({ delta_us: S }), values: {
-    layer_ids: val((i) => [i.cap]), from_t_us: lit(0),
-    track_ids: val((i) => [i.tT], { with: () => ({ from_t_us: 0 }) }),
-    escape_link: lit(true, { with: (i) => ({ layer_ids: [i.vl] }) }),
-    composition_id: val((i) => i.groupComp, { with: () => ({ from_t_us: 0 }) }),
+  rename_layer: { base: (i) => ({ layer_id: i.c, label: 'C' }), values: { label: lit('New') } },
+  set_layer_flags: { base: (i) => ({ layer_ids: [i.c] }), values: { enabled: lit(false), locked: lit(true) } },
+  shift_layers: { base: () => ({ from_t_us: 0, delta_us: S }), values: {
+    track_ids: val((i) => [i.tT]),
+    composition_id: val((i) => i.groupComp),
   } },
   restack_layer: { base: (i) => ({ layer_id: i.c, position: 'above' }), values: {
     anchor_layer_id: val((i) => i.vl), anchor_track_id: val((i) => i.tV),
   } },
-  move_layer: { base: (i) => ({ layer_id: i.vl, new_track_id: i.tV, new_t_start_us: 6 * S }), values: { escape_link: lit(true) } },
+  move_layers: { base: (i) => ({ layer_ids: [i.vl] }), values: {
+    t_start_us: lit(6 * S), delta_us: lit(6 * S),
+    track_id: val((i) => i.tA, { with: () => ({ delta_us: 6 * S }) }),
+    // `tail` by 2 s lands on the layer after it; the insert closes and opens room.
+    insert: lit(true, { with: (i) => ({ layer_ids: [i.tail], delta_us: 2 * S }) }),
+    escape_link: lit(true, { with: () => ({ delta_us: 6 * S }) }),
+  } },
+  retime_layers: { base: (i) => ({ layer_ids: [i.al] }), values: {
+    target: lit({ kind: 'Rate', value: { num: 2, den: 1 } }), preserve_pitch: lit(false),
+  } },
   trim_layer: { base: (i) => ({ layer_id: i.vl, edge: 'out', new_t_us: 3 * S }), values: { escape_link: lit(true) } },
   delete_layers: { base: (i) => ({ layer_ids: [i.tail] }), values: { ripple: lit(true) } },
   create_link: { base: (i) => ({ layer_ids: [i.vl, i.c] }), values: { reassign: lit(true) } },
@@ -324,7 +334,7 @@ const probed = WRITES.map((t) => ({ tool: t.name, probes: probesOf(t.inputSchema
 describe('mcp.no-silent-outcomes: coverage', () => {
   it('the sweep reads the merged catalog: TS, Motif, export and Rust write tools', () => {
     const names = new Set(WRITES.map((t) => t.name))
-    for (const n of ['update_layer', 'export_motif', 'start_export', 'synthesize_speech', 'import_media']) expect(names.has(n), n).toBe(true)
+    for (const n of ['rename_layer', 'export_motif', 'start_export', 'synthesize_speech', 'import_media']) expect(names.has(n), n).toBe(true)
   })
 
   it('every write tool with an optional or nullable field has a case or an exception', () => {
@@ -422,11 +432,16 @@ describe('the audit probes refuse or change state', () => {
     expect((await must(w, 'update_marker', { marker_id: w.ids.region, patch: { end_t_us: null } })).end_t_us).toBeNull()
   })
 
-  it('T1: update_layer refuses the times, naming move_layer and trim_layer', async () => {
+  it('T1: rename_layer and set_layer_flags refuse the times, naming move_layers and trim_layer', async () => {
     const w = await world()
-    const r = await call(w, 'update_layer', { layer_id: w.ids.c, patch: { t_end_us: 3 * S } })
-    expect(r.isError).toBe(true)
-    expect(text(r)).toMatch(/move_layer .*trim_layer/)
+    const before = fingerprint(w)
+    const start = await call(w, 'rename_layer', { layer_id: w.ids.c, label: 'x', t_start_us: 3 * S })
+    expect(start.isError).toBe(true)
+    expect(text(start)).toMatch(/move_layers/)
+    const end = await call(w, 'set_layer_flags', { layer_ids: [w.ids.c], locked: true, t_end_us: 3 * S })
+    expect(end.isError).toBe(true)
+    expect(text(end)).toMatch(/trim_layer/)
+    expect(fingerprint(w)).toBe(before)
   })
 
   it('L1: set_keyframe a few µs off a key updates that key and keeps its id', async () => {

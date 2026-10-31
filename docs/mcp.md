@@ -347,8 +347,10 @@ copy — reserved under `Media/` when the copy is queued, with `copying: true`
 until it lands; subtitle documents become `Subtitle` items; `.svg` is
 rasterised once to a 2048-px PNG), `delete_media` (`force` cascades like
 `delete_layers`), `add_track`, `delete_track` (A/B roll protected),
-`rename_track`, `move_track`, `set_track_flags` (`enabled`/`locked`; no
-mute/solo — audio mixes by role, ADR 0023).
+`rename_track`, `move_track` (refuses the reserved A roll / B roll —
+`TrackReserved`, they keep their place as `restack_layer` keeps them — and a
+track holding a locked layer, `LayerLocked`), `set_track_flags`
+(`enabled`/`locked`; no mute/solo — audio mixes by role, ADR 0023).
 
 Layers: `add_layers` places 1–50 layers in one recorded edit, all or nothing
 (spec D5). Shared fields sit flat on each layer (`track_id`, `t_start_us`,
@@ -365,30 +367,67 @@ tokens, then manifest defaults; a `media` prop names `"<media_id>"` or
 composition; refuses root, cycles, empty; `t_end_us` defaults to its length).
 A layer without `track_id` opens a fresh track inside the same commit, in
 `composition_id` (else the root); with one, `composition_id` cross-checks it.
-Keys outside a kind's arm are refused, not dropped. `update_layer` (`label`, `null`
-clears it, and `locked`; `t_start_us` / `t_end_us` are refused naming
-`move_layer` / `trim_layer`, which carry link siblings and the source window;
-anything else is refused naming the right tool),
-`update_layer_params` (one closed `oneOf` variant per kind; static transform
+Keys outside a kind's arm are refused, not dropped. A layer's envelope is two
+tools, as a track's is (`rename_track` / `set_track_flags`): `rename_layer`
+(`label`; `null` clears it) and `set_layer_flags` (`enabled` and/or `locked` on
+exactly the named layers, one edit; nothing is expanded). Both refuse a key they
+do not take naming its owner — `t_start_us` → `move_layers`, `t_end_us` →
+`trim_layer` (they carry link partners and the source window), a param →
+`update_layer_params`.
+Other layer edits: `update_layer_params` (one closed `oneOf` variant per kind; static transform
 writes replace keyframes; Text has no scale fields — a bigger title is a
 bigger box, ADR 0049; Text `intro` (`FadeIn`/`SlideUp`/`SlideDown`/
 `Typewriter`) and `outro` (`FadeOut`/`SlideUp`/`SlideDown`) presets stay on the
 layer's edges and play in preview and export alike,
 [render.md](render.md#text-entrance-and-exit-presets); VideoClip `crop` is a
-normalized source rect, `null` resets), `set_scale_linked`, `set_layers_enabled` (the only writer of
-`enabled`), `move_layer`, `trim_layer`, `shift_layers` (a named set, or every
-layer from `from_t_us` — the ripple insert/close), `restack_layer` (anchored
+normalized source rect, `null` resets; `src_in_us` on VideoClip, Audio, Motif
+and Group is a **slip** — the window moves at its length, the span stays —
+and there is no `src_out_us`: a window's length is changed by `trim_layer`, its
+rate by `retime_layers`), `set_scale_linked`, `trim_layer`, `restack_layer` (anchored
 z-reorder, [features.md](features.md#track-placement)), `split_layer` (an array of cuts, one atomic edit),
-`auto_split_by_shot` (the cached shot scan at `analyze_clip`'s defaults; link
-partners split in lockstep), `separate_audio_to_new_track`, `paste_layers`
-(the one copy tool; whole-link, all-or-nothing), `move_layers_to_composition`.
+`auto_split_by_shot` (the cached shot scan at `analyze_clip`'s defaults) — both
+split link partners in lockstep and answer `siblings: [{ layer_id, segments }]`
+for them — and `move_layers_to_composition`.
+
+Moving and copying share one vocabulary: `layer_ids[0]` is the seed, its
+landing is one of `t_start_us` / `delta_us`, and `track_id` moves only the seed
+(every other member keeps its own track).
+- `move_layers { layer_ids, t_start_us | delta_us, track_id? | "spawn",
+  insert?, escape_link? }` moves a set and its link partners in one edit. A lane
+  alone (no time) is legal; `"spawn"` opens a fresh top track for the seed, so
+  lifting a dialogue Audio onto its own lane is `{ layer_ids: [audio],
+  track_id: "spawn" }` and the link survives. `insert: true` is the ripple
+  move: the set's span closes behind it (`planRipple`, the ripple delete's
+  refusals by name) and room opens at the landing on every track; the seed's
+  `t_start_us` is read on the closed timeline, i.e. where it starts afterwards.
+  "Move the part after 1:30 to the start" is `split_layer` + one `move_layers
+  { t_start_us: 0, insert: true }`. Answers `{ layers, rippled, track?,
+  pruned_tracks }`. Nearest sibling: `shift_layers`, which takes no names.
+- `shift_layers { from_t_us, delta_us, track_ids?, composition_id? }` sweeps
+  every layer starting at or after a time. Positive opens room (the ripple
+  insert); negative closes `[from_t_us + delta_us, from_t_us)` through the
+  ripple planner, so a gap closes with one edge and a layer starting inside the
+  span is `RippleInsideHole`, not a silent overlap; carried transitions keep
+  their frame count. An empty sweep refuses.
+- `paste_layers { layer_ids, t_start_us | delta_us, track_id?, unique? }` is the
+  one copy tool (whole set, all-or-nothing; nothing is expanded). A Group clone
+  is another instance of its composition unless `unique: true`, which
+  deep-copies the composition (and the Groups inside it) so the copy edits
+  independently; the answer's `groups` names each copy's `composition_id`.
+
+Set tools take exactly the ids they are given — `delete_layers`,
+`set_layer_flags`, `paste_layers`, `retime_layers` — and say so ("nothing is
+expanded"); geometry tools (`move_layers`, `trim_layer`, `split_layer`) carry
+link partners unless `escape_link`.
 
 Deletes: `delete_layers` — `ripple: false` lifts (spans stay empty);
 `ripple: true` closes each span on every track of the composition, each layer
 on its own lattice. A ripple refuses whole: `RippleInsideHole`,
 `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`.
-`ripple_delete_gap` closes an exact gap between two layer boundaries with the
-same rules plus `GapNotFound` ([features.md](features.md#ripple-delete)).
+A gap closes with `shift_layers` and a negative delta, by the same rules
+([features.md](features.md#ripple-delete)). The remedy each refusal names
+depends on the tool: only `delete_layers` and `move_layers` have a
+`layer_ids` to widen.
 
 Captions: `apply_transcripts` (keeps word timing; builds cues to the style's
 caption limits — line breaks, `max_lines`, `max_cue_s`, `min_cue_s`; ≤ 1000
@@ -517,11 +556,14 @@ with `FpsLockedByContent` once a layer exists now or in any history snapshot)
 and `set_project_settings` (unrecorded; unknown keys and empty patches
 refused; answers `{ settings, changed }`).
 
-Time remapping: `retime_layers` (absolute rate or target duration; keeps
-starts and source windows), `set_preserve_pitch`,
-`get_frame_interpolation_capabilities`, `set_frame_interpolation` (only
-`FrameSampling`). Video, Audio, animated ImageOverlay, Motif and
-CompositionRef retime; static images, Text and Color do not.
+Time remapping: `retime_layers` (an absolute rate — source µs per timeline µs,
+so 2/1 is double speed at half the length — or a target duration; keeps starts
+and source windows; `preserve_pitch` sets the policy of the Audio and Group
+clips among the targets, with or without a target). Nothing is expanded: the
+answer's `unretimed_partners` names the link partners left at their old rate.
+Frame sampling is the only interpolation, so there is no tool for it. Video,
+Audio, animated ImageOverlay, Motif and CompositionRef retime; static images,
+Text and Color do not.
 
 Motifs ([motif-workspaces.md](motif-workspaces.md)): `list_motifs`,
 `open_motif_draft`, `read_motif`, `update_motif_files` (revision-checked
@@ -758,15 +800,15 @@ lives only in `structuredContent`.
   "content": [{ "type": "text", "text": "layer overlap on track 7f3a…: [5000000, 10000000) µs collides with layer 9c1d… at [4200000, 8000000) µs. … Options: …" }],
   "structuredContent": {
     "code": "invalid_params", "message": "…", "error": "LayerOverlap",
-    "blocking_layer": "9c1d…", "options": [{ "action": "move_layer", "layer_id": "9c1d…" }]
+    "blocking_layer": "9c1d…", "options": [{ "action": "move_layers", "layer_id": "9c1d…" }]
   }
 }
 ```
 
 - Every `CommandError` has its own arm in `mapCommandError`
   (`main/state/mcp-commands.ts`), which takes the raising tool because a
-  remedy can depend on it (only `delete_layers` is told "add it to
-  `layer_ids`"). `LayerOverlap` options are validated against the geometry.
+  remedy can depend on it (only `delete_layers` and `move_layers` are told
+  "add it to `layer_ids`"). `LayerOverlap` options are validated against the geometry.
   `mcp.error-vocabulary.test.ts` keeps any variant from falling through to its
   bare name.
 - Host-raised families (not `CommandError`): `NoProjectOpen`

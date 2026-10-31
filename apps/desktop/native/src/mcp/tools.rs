@@ -162,10 +162,10 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
     Ok(ToolResult::text("pong"))
 }
 
-// Track and layer mutation tools (add_track, remove_track, move_track,
-// add_layers, update_layer, update_layer_params,
-// move_layer, trim_layer, delete_layers, split_layer, paste_layers) are
-// absent — they are served by the TS actor.
+// Track and layer mutation tools (add_track, delete_track, move_track,
+// add_layers, rename_layer, set_layer_flags, update_layer_params,
+// move_layers, shift_layers, trim_layer, delete_layers, split_layer,
+// paste_layers) are absent — they are served by the TS actor.
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct DetectPausesArgs {

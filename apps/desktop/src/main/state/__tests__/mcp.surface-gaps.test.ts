@@ -86,7 +86,7 @@ describe('delete_layers', () => {
   it("refuses the whole delete when a layer itself is locked", () => {
     const a = actorWithPool()
     const [first, second] = threeClips(a)
-    expect(call(a, 'update_layer', { layer_id: second, patch: { locked: true } }).ok).toBe(true)
+    expect(call(a, 'set_layer_flags', { layer_ids: [second], locked: true }).ok).toBe(true)
     expect(call(a, 'delete_layers', { layer_ids: [first, second] }).ok).toBe(false)
     expect(layerCount(a)).toBe(3)
   })
@@ -100,7 +100,7 @@ describe('delete_layers', () => {
   })
 })
 
-describe('separate_audio_to_new_track', () => {
+describe('move_layers { track_id: "spawn" } — the audio lift', () => {
   /** A paired A/V clip on the A roll: video + linked dialogue audio, one track. */
   function pairedClip(a: Actor): { video: string; audio: string } {
     const r = json<{ layers: Array<{ layer_id: string; linked: { audio_layer_id: string } }> }>(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } }] })).layers[0]!
@@ -111,7 +111,7 @@ describe('separate_audio_to_new_track', () => {
     const a = actorWithPool()
     const { audio } = pairedClip(a)
     const before = tracks(a).length
-    const newTrack = id(call(a, 'separate_audio_to_new_track', { layer_id: audio }), 'track_id')
+    const newTrack = json<{ track: { track_id: string } }>(call(a, 'move_layers', { layer_ids: [audio], track_id: 'spawn' })).track.track_id
     expect(tracks(a).length).toBe(before + 1)
     const lane = tracks(a).find((t) => t.id === newTrack)
     expect(lane?.layers.map((l) => l.id)).toEqual([audio])
@@ -122,16 +122,18 @@ describe('separate_audio_to_new_track', () => {
   it('keeps the A/V link alive — the lift is a lane change, not an unlink', () => {
     const a = actorWithPool()
     const { video, audio } = pairedClip(a)
-    id(call(a, 'separate_audio_to_new_track', { layer_id: audio }), 'track_id')
+    json<{ track: { track_id: string } }>(call(a, 'move_layers', { layer_ids: [audio], track_id: 'spawn' }))
     const links = root(a.snapshot()).links
     expect(links.length).toBe(1)
     expect([...links[0].members].sort()).toEqual([video, audio].sort())
   })
 
-  it('refuses a layer that is not Audio', () => {
+  it('lifts only the seed: the video stays on its track', () => {
     const a = actorWithPool()
-    const { video } = pairedClip(a)
-    expect(call(a, 'separate_audio_to_new_track', { layer_id: video }).ok).toBe(false)
+    const { video, audio } = pairedClip(a)
+    const newTrack = json<{ track: { track_id: string } }>(call(a, 'move_layers', { layer_ids: [audio], track_id: 'spawn' })).track.track_id
+    expect(tracks(a).find((t) => t.id === aRoll(a))?.layers.map((l) => l.id)).toEqual([video])
+    expect(tracks(a).find((t) => t.id === newTrack)?.layers.map((l) => l.id)).toEqual([audio])
   })
 })
 

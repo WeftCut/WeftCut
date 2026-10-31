@@ -198,7 +198,7 @@ describe('harness feedback', () => {
     const [mine] = (await h.call('create_tacks', { tacks: [{ label: 'mine', t_us: 2_000_000 }] })).structuredContent!.tack_ids
     const [theirs] = (await h.call('create_tacks', { tacks: [{ label: 'theirs', t_us: 3_000_000 }] }, 'two')).structuredContent!.tack_ids
 
-    const moved = await h.call('move_layer', { layer_id: h.clip, new_t_start_us: 2_000_000, new_track_id: track })
+    const moved = await h.call('move_layers', { layer_ids: [h.clip], t_start_us: 2_000_000, track_id: track })
     expect(moved.structuredContent!.affected_tacks).toEqual([{ tack_id: mine, label: 'mine', change: 'moved' }])
     expect(JSON.parse(moved.content[0]!.text).affected_tacks).toEqual(moved.structuredContent!.affected_tacks)
 

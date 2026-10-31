@@ -105,7 +105,7 @@ describe('placement over one clip', () => {
       range: { composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000 },
       composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000, outdated: false, follows: { layer_id: s.clip, src_us: 3_000_000 },
     })
-    s.mcp('move_layer', { layer_id: s.clip, new_t_start_us: 3_000_000, new_track_id: s.root().tracks[0]!.id })
+    s.mcp('move_layers', { layer_ids: [s.clip], t_start_us: 3_000_000, track_id: s.root().tracks[0]!.id })
     expect(s.view(id!)).toMatchObject({ t_us: 4_000_000, end_t_us: 5_000_000, outdated: false })
   })
 
@@ -232,7 +232,7 @@ describe('delta publication', () => {
     const created = s.updates().at(-1)!
 
     // An edit that moves only the anchored tack republishes only it.
-    s.mcp('move_layer', { layer_id: s.clip, new_t_start_us: 2_000_000, new_track_id: s.root().tracks[0]!.id })
+    s.mcp('move_layers', { layer_ids: [s.clip], t_start_us: 2_000_000, track_id: s.root().tracks[0]!.id })
     await flush()
     const moved = s.updates().at(-1)!
     expect(moved.from_revision).toBe(created.revision)
@@ -351,7 +351,7 @@ describe('outdated', () => {
     const gap = await m.tack(8_500_000, 9_500_000)
     m.mcp('add_layers', { layers: [{ track_id: root().tracks[0]!.id, t_start_us: 9_000_000, t_end_us: 10_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] })
     expect(m.view(gap).outdated, 'filled gap').toBe(true)
-    m.mcp('move_layer', { layer_id: m.c.C, new_t_start_us: 12_000_000, new_track_id: root().tracks[0]!.id })
+    m.mcp('move_layers', { layer_ids: [m.c.C], t_start_us: 12_000_000, track_id: root().tracks[0]!.id })
     expect(m.view(id)).toMatchObject({ t_us: 1_500_000, outdated: true, follows: { layer_id: m.c.A } })
   })
 
@@ -359,7 +359,7 @@ describe('outdated', () => {
     const m = multi()
     const id = await m.tack(5_200_000, 5_800_000)
     const bRoll = m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[1]!.id
-    m.mcp('move_layer', { layer_id: m.c.S, new_t_start_us: 12_000_000, new_track_id: bRoll })
+    m.mcp('move_layers', { layer_ids: [m.c.S], t_start_us: 12_000_000, track_id: bRoll })
     expect(m.view(id)).toMatchObject({ t_us: 12_200_000, end_t_us: 12_800_000, outdated: false })
   })
 
@@ -367,7 +367,7 @@ describe('outdated', () => {
     const m = multi()
     const id = await m.tack(3_500_000, 4_500_000)
     const aRoll = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[0]!.id
-    m.mcp('move_layer', { layer_id: m.c.D, new_t_start_us: 6_500_000, new_track_id: aRoll() })
+    m.mcp('move_layers', { layer_ids: [m.c.D], t_start_us: 6_500_000, track_id: aRoll() })
     m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_800_000 })
     m.mcp('update_layer_params', { layer_id: m.c.A, patch: { kind: 'VideoClip', flip_h: true } })
     expect(m.view(id).outdated).toBe(false)

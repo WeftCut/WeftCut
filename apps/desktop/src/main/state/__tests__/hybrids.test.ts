@@ -489,6 +489,11 @@ describe('runHybrid: auto_split_by_shot', () => {
     // under the dropped sliver goes with it rather than being left orphaned.
     expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
     expect(spansOfKind(actor, 'Audio')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+    // The partner's surviving pieces ride the answer (audit T12).
+    const siblings = (JSON.parse(result as string) as { siblings: Array<{ layer_id: string; segments: string[] }> }).siblings
+    const audioIds = root(actor.snapshot()).tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Audio').sort((x, y) => x.t_start_us - y.t_start_us).map((l) => l.id)
+    expect(siblings).toHaveLength(1)
+    expect(siblings[0]!.segments).toEqual(audioIds)
   })
 
   it('collapses sub-frame-spaced cuts to one split instead of throwing', async () => {

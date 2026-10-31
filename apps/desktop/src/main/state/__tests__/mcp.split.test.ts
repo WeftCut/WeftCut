@@ -60,6 +60,19 @@ describe('MCP split_layer batch', () => {
     }
   })
 
+  // The partner's new ids ride the answer, so the next step (a ripple delete
+  // of one shot and its audio) needs no read of the tracks (audit T12).
+  it('answers each link partner the split cut, with its segments in timeline order', () => {
+    const { actor, sibling, split } = fixture(true)
+    const result = split({ at_t_us: [2_000_000, 4_000_000] })
+    if (!result.ok) throw new Error(result.error.message)
+    const response = JSON.parse(result.result.content[0].text) as { siblings: Array<{ layer_id: string; segments: string[] }> }
+    const lane = root(actor.snapshot()).tracks[1].layers.map((l) => l.id)
+    expect(response.siblings).toEqual([{ layer_id: sibling, segments: lane }])
+    expect(lane).toHaveLength(3)
+    expect(lane[0]).toBe(sibling)
+  })
+
   it('honors escape_link for the whole batch', () => {
     const { actor, layer, sibling, split } = fixture(true)
     expect(split({ at_t_us: [2_000_000, 4_000_000], escape_link: true }).ok).toBe(true)
@@ -68,6 +81,9 @@ describe('MCP split_layer batch', () => {
     expect(c.tracks[1].layers).toHaveLength(1)
     expect(c.links).toHaveLength(1)
     expect(c.links[0].members).toEqual([layer, sibling].sort())
+    const r = split({ at_t_us: [1_000_000], escape_link: true })
+    if (!r.ok) throw new Error(r.error.message)
+    expect(JSON.parse(r.result.content[0].text).siblings).toEqual([])
   })
 
   it.each([
@@ -98,7 +114,7 @@ describe('MCP split_layer batch', () => {
     const result = split({ at_t_us: [2_000_000] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(JSON.parse(result.result.content[0].text)).toEqual({ layer_ids: [layer, expect.any(String)], at_t_us: [2_000_000] })
+    expect(JSON.parse(result.result.content[0].text)).toEqual({ layer_ids: [layer, expect.any(String)], at_t_us: [2_000_000], siblings: [] })
   })
 
   it('rolls back earlier cuts when a later cut reaches a locked linked member', () => {

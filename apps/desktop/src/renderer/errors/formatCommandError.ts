@@ -226,6 +226,8 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   // means some other path tripped it — generic is the honest fallback.
   MediaInUse: { tier: "generic" },
   TrackPositionOutOfRange: { tier: "generic" },
+  // The timeline offers no drag for a reserved lane (canReorderTrack).
+  TrackReserved: { tier: "generic" },
   TrackNotEmpty: {
     tier: "curated",
     key: "errors.track_not_empty",

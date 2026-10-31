@@ -15,7 +15,6 @@ import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY } from '../../shared/keyf
 import { isUuid, uuidV7Gen, type IdGen } from './ids'
 import type { EffectPatch } from './mutations/effects'
 import type { MarkerPatch } from './mutations/markers'
-import type { LayerPatch } from './mutations/update'
 import type { LayerParamsPatch } from './mutations/params'
 import { EFFECT_KINDS, effectParamSpecs } from '../../shared/effects/params'
 import { positionProblem } from '../../shared/position'
@@ -341,6 +340,15 @@ function refuseUnknownKeys(o: Record<string, unknown>, allowed: readonly string[
   const extra = Object.keys(o).filter((k) => !allowed.includes(k))
   if (extra.length > 0) throw new McpArgError(`${at}: ${extra.join(', ')} ${extra.length === 1 ? 'is' : 'are'} not a field of ${what} (fields: ${allowed.join(', ')})`, `${at}.${extra[0]}`)
 }
+/** A tool's top-level arguments, strictly: a key the tool does not take is
+ *  refused naming the tool that does (`owners`), never dropped — a stale
+ *  spelling silently ignored would run a different edit than the one meant. */
+function refuseUnknownArgs(a: Record<string, unknown>, allowed: readonly string[], tool: string, owners: Readonly<Record<string, string>> | ((k: string) => string | undefined) = {}): void {
+  const k = Object.keys(a).find((x) => !allowed.includes(x))
+  if (k === undefined) return
+  const owner = typeof owners === 'function' ? owners(k) : owners[k]
+  throw new McpArgError(`${tool} takes no \`${k}\`${owner ? ` — ${owner}` : ''} (arguments: ${allowed.join(', ')})`, k)
+}
 /** A `graphic_role` inside `content`: a role name, or absent. `null` would say
  *  no more than omission, so it is refused rather than accepted as a no-op. */
 function parseContentRole(v: unknown, field: string): string | undefined {
@@ -391,31 +399,23 @@ function parseAddLayer(v: unknown, at: string): AddLayerSpec {
   }
 }
 
-const LAYER_PATCH_KEYS: readonly string[] = ['label', 'locked']
-/** `update_layer`'s envelope patch: the name and the lock. `enabled` is
- *  refused by name — the mutation would apply it, but visibility is
- *  `set_layers_enabled`'s — the two times are pointed at the tools that move
- *  and trim (they carry link siblings, the source window, keyframes and the
- *  autofit; a raw envelope write would carry none of them), and a param key is
- *  pointed at `update_layer_params`. */
-export function parseLayerPatch(v: unknown): LayerPatch {
-  const o = parseObj(v, 'patch')
-  const keys = Object.keys(o)
-  if (keys.length === 0) throw new McpArgError(`patch names no field; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}`, 'patch')
-  for (const k of keys) {
-    if (k === 'enabled') throw new McpArgError(`patch.enabled is not update_layer's: visibility is set_layers_enabled { layer_ids, enabled }`, 'patch')
-    if (k === 't_start_us' || k === 't_end_us') throw new McpArgError(`patch.${k} is not update_layer's: move a layer with move_layer { layer_id, new_track_id, new_t_start_us }, change one edge with trim_layer { layer_id, edge, new_t_us } — both carry link siblings and the source window with them`, 'patch')
-    if (!LAYER_PATCH_KEYS.includes(k)) {
-      const owner = Object.values(LAYER_PARAMS_KEYS).some((ks) => ks.includes(k)) ? ` — '${k}' is a kind-specific param, which is update_layer_params { patch: { kind, ${k} } }` : ''
-      throw new McpArgError(`invalid patch: unknown key '${k}'; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}${owner}`, 'patch')
-    }
-  }
-  const out: LayerPatch = {}
-  // null is a value here: it clears the label (Layer.label is nullable).
-  if ('label' in o) out.label = parseStrOpt(o.label, 'patch.label')
-  if ('locked' in o) out.locked = parseBool(o.locked, 'patch.locked')
-  return out
+const MOVE_LAYERS_KEYS: readonly string[] = ['layer_ids', 't_start_us', 'delta_us', 'track_id', 'insert', 'escape_link']
+/** Where a key sent to `rename_layer` / `set_layer_flags` belongs instead: the
+ *  times go to the tools that move and trim (they carry link siblings, the
+ *  source window, keyframes and the autofit; a raw envelope write would carry
+ *  none of them), the name and flags to each other. */
+const LAYER_ENVELOPE_OWNER: Readonly<Record<string, string>> = {
+  t_start_us: 'move a layer with move_layers { layer_ids, t_start_us }; both carry link partners and the source window',
+  t_end_us: 'change one edge with trim_layer { layer_id, edge, new_t_us }; it carries link partners and the source window',
+  label: 'the name is rename_layer { layer_id, label }',
+  enabled: 'visibility is set_layer_flags { layer_ids, enabled }',
+  locked: 'the lock is set_layer_flags { layer_ids, locked }',
+  patch: 'send the fields themselves; kind-specific params are update_layer_params { layer_id, patch }',
+  layer_id: 'name the layers in layer_ids',
+  layer_ids: 'rename_layer names one layer_id',
 }
+const LAYER_ENVELOPE_OWNERS = (k: string): string | undefined => LAYER_ENVELOPE_OWNER[k]
+  ?? (Object.values(LAYER_PARAMS_KEYS).some((ks) => ks.includes(k)) ? `'${k}' is a kind-specific param, which is update_layer_params { layer_id, patch: { kind, ${k} } }` : undefined)
 
 /** The fields each kind's patch may carry — the key sets of `LayerParamsPatch`
  *  (mutations/params.ts) as data, so the parser can name them and the schema
@@ -423,8 +423,11 @@ export function parseLayerPatch(v: unknown): LayerPatch {
  *  side without the other fails to compile. */
 type PatchKeysOf<K extends LayerParamsPatch['kind']> = Exclude<keyof Extract<LayerParamsPatch, { kind: K }>, 'kind'>
 /** One kind's key set as a record, so tsc refuses a key the patch type does
- *  not have and demands every key it does. */
-const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table)
+ *  not have and demands every key it does. `src_out_us` is the one key the
+ *  surface leaves out: over MCP a window is written by `src_in_us` alone, as a
+ *  slip that keeps its length, so the span and what it plays cannot disagree;
+ *  its length is `trim_layer`'s, its rate `retime_layers`'. */
+const keysOf = <K extends LayerParamsPatch['kind']>(_kind: K, table: Record<PatchKeysOf<K>, true>): readonly string[] => Object.keys(table).filter((k) => k !== 'src_out_us')
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true, intro: true, outro: true }),
   VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
@@ -438,7 +441,6 @@ export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEY
 const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
 const VALIGN_OPTIONS = ['Top', 'Middle', 'Bottom'] as const
 const BLEND_MODE_OPTIONS = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference'] as const
-const ENVELOPE_KEYS = new Set(['label', 't_start_us', 't_end_us', 'locked'])
 
 function parseOneOf(v: unknown, options: readonly string[], field: string): string {
   if (typeof v !== 'string' || !options.includes(v)) throw new McpArgError(`${field} must be one of ${options.join(' | ')}, got ${describeValue(v)}`, field)
@@ -501,8 +503,8 @@ export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
   for (const k of fields) {
     if (allowed.includes(k)) continue
     const elsewhere = Object.entries(LAYER_PARAMS_KEYS).filter(([, ks]) => ks.includes(k)).map(([kk]) => kk)
-    const hint = k === 'enabled' ? ` ('enabled' is set_layers_enabled's)`
-      : ENVELOPE_KEYS.has(k) ? ` ('${k}' is update_layer's)`
+    const hint = k in LAYER_ENVELOPE_OWNER ? ` (${LAYER_ENVELOPE_OWNER[k]})`
+      : k === 'src_out_us' ? ' (the window end follows src_in_us, which slips it at its length; trim_layer changes the length)'
       : elsewhere.length > 0 ? ` ('${k}' belongs to ${elsewhere.join(', ')})` : ''
     throw new McpArgError(`invalid patch: '${k}' is not a ${kind} param — a ${kind} patch writes ${allowed.join(', ')}${hint}`, 'patch')
   }
@@ -849,17 +851,19 @@ export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unk
 }
 
 /** The remedy a ripple refusal offers depends on WHICH tool rippled: only
- *  `delete_layers` has a `layer_ids` to widen or narrow; `ripple_delete_gap`
- *  closes a span it was given, and `remove_pauses` cuts spans it computed. One
- *  sentence for all three would send two of them chasing a parameter they do
- *  not have. */
-const RIPPLE_TOOL = { deleteLayers: 'delete_layers', gap: 'ripple_delete_gap', pauses: 'remove_pauses' } as const
+ *  `delete_layers` and `move_layers` have a `layer_ids` to widen or narrow;
+ *  `shift_layers` closes a span it was given by one edge and a length, and
+ *  `remove_pauses` cuts spans it computed. One sentence for all four would send
+ *  three of them chasing a parameter they do not have. */
+const RIPPLE_TOOL = { deleteLayers: 'delete_layers', move: 'move_layers', shift: 'shift_layers', pauses: 'remove_pauses' } as const
 function rippleRemedy(tool: string | undefined, layer: string, widen: string, narrow: string): string {
-  if (tool === RIPPLE_TOOL.gap) return `move_layer or delete_layers ${layer} first so the gap closes clean, or pick a gap it does not reach into`
-  if (tool === RIPPLE_TOOL.pauses) return `move_layer or delete_layers ${layer} first, or cut the pauses with a narrower window (this tool has no layer set to widen)`
+  if (tool === RIPPLE_TOOL.shift) return `move_layers or delete_layers ${layer} first so the span closes clean, or shift by less so the span starts after it`
+  if (tool === RIPPLE_TOOL.move) return `add ${layer} to layer_ids so it moves with the set, or move without insert`
+  if (tool === RIPPLE_TOOL.pauses) return `move_layers or delete_layers ${layer} first, or cut the pauses with a narrower window (this tool has no layer set to widen)`
   if (tool === RIPPLE_TOOL.deleteLayers || tool === undefined) return `${widen}; or ${narrow}`
-  return `move_layer or delete_layers ${layer} first`
+  return `move_layers or delete_layers ${layer} first`
 }
+const hasLayerSet = (tool: string | undefined): boolean => tool === RIPPLE_TOOL.deleteLayers || tool === RIPPLE_TOOL.move || tool === undefined
 
 /** The animatable param keys, per kind — what `set_keyframe` and friends may
  *  name. Stated as data here for the `UnknownKeyframeParam` arm, which has no
@@ -888,7 +892,7 @@ function retimeRefusal(r: Record<string, unknown>): string {
   switch (r.kind) {
     case 'EmptyTargets': return 'retime_layers needs at least one layer id in layer_ids'
     case 'LayerMissing': return `layer ${String(r.layer_id)} not found — project://tracks lists the current layers`
-    case 'Locked': return `layer ${String(r.layer_id)} is locked, or sits on a locked track; unlock it (update_layer { patch: { locked: false } } or set_track_flags) and retry`
+    case 'Locked': return `layer ${String(r.layer_id)} is locked, or sits on a locked track; unlock it (set_layer_flags { layer_ids, locked: false } or set_track_flags) and retry`
     case 'UnsupportedContent': return `layer ${String(r.layer_id)} has no timed content to retime — only VideoClip, Audio, Motif, Group and animated image layers have a playback rate`
     case 'NestedTargets': return `layer ${String(r.descendant_id)} sits inside Group ${String(r.ancestor_id)}, which is also selected; retiming the Group already retimes it — drop one of the two from layer_ids`
     case 'InvalidSnapshot': return `layer ${String(r.layer_id)} has a span or timing the retime planner cannot read; read project://layers/${String(r.layer_id)} and retry, or report it`
@@ -900,7 +904,7 @@ function retimeRefusal(r: Record<string, unknown>): string {
       const fit = typeof r.maximum_duration_us === 'number'
         ? `; at most ${r.maximum_duration_us} µs fits (a rate of at least ${rate(r.minimum_rate)})`
         : '; no slower duration fits where it starts'
-      return `layer ${String(r.layer_id)} would grow onto layer ${String(r.blocking_layer_id)} on its track${fit} — move_layer or shift_layers ${String(r.blocking_layer_id)} out of the way first, or retime to a duration that fits`
+      return `layer ${String(r.layer_id)} would grow onto layer ${String(r.blocking_layer_id)} on its track${fit} — move_layers ${String(r.blocking_layer_id)} out of the way first, or retime to a duration that fits`
     }
     default: return `retime refused (${Object.entries(r).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')})`
   }
@@ -923,10 +927,10 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     // emitted option would succeed as written.
     const requestStartsInside = d.a_start < d.b_start && d.b_start < d.a_end
     const requestCoversHead = d.b_start <= d.a_start && d.a_start < d.b_end && d.b_end < d.a_end
-    const prose: string[] = [`create_new_track and retry there`, `move_layer ${d.a} elsewhere`]
+    const prose: string[] = [`create_new_track and retry there`, `move_layers ${d.a} elsewhere`]
     const options: Array<Record<string, unknown>> = [
       { action: 'create_new_track', kind: 'Video' },
-      { action: 'move_layer', layer_id: d.a },
+      { action: 'move_layers', layer_id: d.a },
     ]
     if (requestStartsInside) {
       prose.push(`trim_layer ${d.a} edge 'out' to ${d.b_start}`, `split_layer ${d.a} at ${d.b_start} and delete the right half`)
@@ -1046,7 +1050,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   // otherwise read the refusal against the wrong numbers. Every one is
   // pre-write: the retry costs nothing. ──
   if (e.error === 'RippleInsideHole') {
-    const verb = tool === RIPPLE_TOOL.pauses ? 'the pause cut' : tool === RIPPLE_TOOL.gap ? 'closing the gap' : 'ripple delete'
+    const verb = tool === RIPPLE_TOOL.pauses ? 'the pause cut' : tool === RIPPLE_TOOL.shift ? 'the shift' : tool === RIPPLE_TOOL.move ? 'the insert move' : 'ripple delete'
     const remedy = rippleRemedy(tool, e.layer,
       `add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple`,
       `call delete_layers without ripple (its default), which removes the layers and leaves the span open`)
@@ -1054,17 +1058,19 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
       error: 'RippleInsideHole', layer: e.layer, hole_us: [e.hole.s, e.hole.e], tool: tool ?? null,
       options: tool === RIPPLE_TOOL.deleteLayers || tool === undefined
         ? [{ action: 'add_to_set_then_retry', layer_ids: [e.layer] }, { action: 'delete_without_ripple', tool: 'delete_layers', ripple: false }]
-        : [{ action: 'move_or_delete_first', layer_id: e.layer }],
+        : tool === RIPPLE_TOOL.move
+          ? [{ action: 'add_to_set_then_retry', layer_ids: [e.layer] }, { action: 'move_without_insert', tool: 'move_layers', insert: false }]
+          : [{ action: 'move_or_delete_first', layer_id: e.layer }],
     } }
   }
   if (e.error === 'RippleCollision') {
-    const narrow = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? ', or narrow layer_ids so the span it closes is shorter' : ''
-    return { code: 'invalid_params', message: `layer ${e.moving} would shift left onto layer ${e.blocking} on track ${e.track}: a ripple never makes room, so move_layer or delete_layers ${e.blocking} first${narrow}. Nothing was changed. A transition's overlap is authorized only while both its participants shift by the same amount.`, data: {
+    const narrow = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? ', or narrow layer_ids so the span it closes is shorter' : tool === RIPPLE_TOOL.shift ? ', or shift by less' : ''
+    return { code: 'invalid_params', message: `layer ${e.moving} would shift left onto layer ${e.blocking} on track ${e.track}: a ripple never makes room, so move_layers or delete_layers ${e.blocking} first${narrow}. Nothing was changed. A transition's overlap is authorized only while both its participants shift by the same amount.`, data: {
       error: 'RippleCollision', moving: e.moving, blocking: e.blocking, track: e.track, tool: tool ?? null,
     } }
   }
   if (e.error === 'RippleLinkStraddles') {
-    const widen = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? '; or add the straddling members to layer_ids so the whole link goes with the cut' : ''
+    const widen = hasLayerSet(tool) ? '; or add the straddling members to layer_ids so the whole link goes with the cut' : ''
     return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Nothing was changed. Options: dissolve the link (delete_link ${e.link}) or drop the downstream member from it (update_link) and retry${widen}.`, data: {
       error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e], tool: tool ?? null,
       options: [{ action: 'unlink_then_retry', link_id: e.link }],
@@ -1072,7 +1078,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   }
   if (e.error === 'RippleLockedLayer') {
     const narrow = tool === RIPPLE_TOOL.deleteLayers || tool === undefined ? `, or narrow layer_ids so nothing downstream of ${e.layer} is removed` : ''
-    return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: a ripple shifts everything that starts at or after the span it closes. Unlock it (update_layer { patch: { locked: false } }) and retry${narrow}. Nothing was changed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
+    return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: a ripple shifts everything that starts at or after the span it closes or opens. Unlock it (set_layer_flags { layer_ids: ["${e.layer}"], locked: false }) and retry${narrow}. Nothing was changed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
       error: 'RippleLockedLayer', layer: e.layer, tool: tool ?? null,
     } }
   }
@@ -1088,8 +1094,8 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   }
   // ── Groups (ADR 0052). Each message says what was refused AND why, because the
   // client drops `data` and the fix differs per cause. ──
-  if (e.error === 'LayerLocked') return { code: 'invalid_params', message: `layer ${e.layer} is locked. Unlock it with update_layer { layer_id: "${e.layer}", patch: { locked: false } } before editing. Nothing was changed.`, data: { error: e.error, layer: e.layer } }
-  if (e.error === 'GroupLockedMember') return { code: 'invalid_params', message: `layer ${e.layer} is locked: pre-compose and add-to-Group move every selected layer or none. Unlock it (update_layer { patch: { locked: false } }) or leave it out of layer_ids` }
+  if (e.error === 'LayerLocked') return { code: 'invalid_params', message: `layer ${e.layer} is locked. Unlock it with set_layer_flags { layer_ids: ["${e.layer}"], locked: false } before editing. Nothing was changed.`, data: { error: e.error, layer: e.layer } }
+  if (e.error === 'GroupLockedMember') return { code: 'invalid_params', message: `layer ${e.layer} is locked: pre-compose and add-to-Group move every selected layer or none. Unlock it (set_layer_flags { layer_ids, locked: false }) or leave it out of layer_ids` }
   if (e.error === 'GroupNotPlain') return { code: 'invalid_params', message: `Group layer ${e.layer} is not plain: its ${e.reason} is not the identity and ungroup would discard it silently. Reset the ${e.reason} on the Group layer first (update_layer_params / delete_effect), or keep the Group` }
   if (e.error === 'CompositionInUse') return { code: 'invalid_params', message: `composition ${e.composition} is still referenced by ${e.ref_count} Group layer(s); delete or ungroup them first (project://compositions lists ref_count)` }
   if (e.error === 'RootComposition') return { code: 'invalid_params', message: `composition ${e.composition} is the root: it has no name and export renders it, so it is never renamed or deleted` }
@@ -1112,7 +1118,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   // so a new variant cannot fall through to a bare name. ──
   switch (e.error) {
     case 'ShiftLinkStraddles':
-      return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Name the whole set with shift_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
+      return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Move the whole link with move_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
     case 'RetimeRejected': return { code: 'invalid_params', message: `${retimeRefusal(e.reason)}. Nothing was changed`, data: { error: e.error, ...e.reason } }
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
@@ -1123,7 +1129,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     case 'TransitionNotFound':
       return { code: 'invalid_params', message: `transition ${e.transition} not found — the composition's \`transitions\` in project://current list them; deleting either participant removes its transition` }
     case 'TransitionLayersNotAdjacent':
-      return { code: 'invalid_params', message: `layers ${e.from} (outgoing) and ${e.to} (incoming) are not adjacent on one track: the outgoing layer must END exactly where the incoming one STARTS, on the same track (or already overlap by exactly ${e.duration} µs to attach as-is). move_layer / trim_layer them to meet, then retry; project://tracks shows both spans`, data: { error: 'TransitionLayersNotAdjacent', from: e.from, to: e.to, duration_us: e.duration } }
+      return { code: 'invalid_params', message: `layers ${e.from} (outgoing) and ${e.to} (incoming) are not adjacent on one track: the outgoing layer must END exactly where the incoming one STARTS, on the same track (or already overlap by exactly ${e.duration} µs to attach as-is). move_layers / trim_layer them to meet, then retry; project://tracks shows both spans`, data: { error: 'TransitionLayersNotAdjacent', from: e.from, to: e.to, duration_us: e.duration } }
     case 'CheckpointNotFound':
       return { code: 'invalid_params', message: `checkpoint ${e.checkpoint} not found — project://history lists the checkpoints of this opening (opening a project or quitting drops them; a deleted one's id is gone for good)` }
     case 'MediaNotFound':
@@ -1131,15 +1137,17 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     case 'TrackPositionOutOfRange':
       return { code: 'invalid_params', message: `new_position ${e.position} is out of range for a stack of ${e.len} track(s): positions run 0..${Math.max(0, e.len - 1)}, 0 being the bottom`, data: { error: 'TrackPositionOutOfRange', position: e.position, len: e.len } }
     case 'TrackNotEmpty':
-      return { code: 'invalid_params', message: `track ${e.track} still holds layers: delete_track { track_id, force: true } deletes them with it, or move_layer / delete_layers them first. Nothing was removed` }
+      return { code: 'invalid_params', message: `track ${e.track} still holds layers: delete_track { track_id, force: true } deletes them with it, or move_layers / delete_layers them first. Nothing was removed` }
+    case 'TrackReserved':
+      return { code: 'invalid_params', message: `track ${e.track} is a reserved A roll / B roll track and keeps its place in the stack; move the other tracks around it (move_track), or restack a visual layer against it (restack_layer). Nothing was moved`, data: { error: 'TrackReserved', track: e.track } }
     case 'TrackNotRemovable':
       return { code: 'invalid_params', message: `track ${e.track} is a reserved A roll / B roll track and is never removed; its layers can be — delete_layers them, and the track stays empty` }
     case 'TrackLocked':
-      return { code: 'invalid_params', message: `track ${e.track} is locked and refuses edits to the layers on it (a locked track blocks the WHOLE batch it appears in). set_track_flags { track_id: "${e.track}", locked: false } clears it; a layer's own \`locked\` is separate (update_layer)`, data: { error: 'TrackLocked', track: e.track, options: [{ action: 'unlock_track', tool: 'set_track_flags', track_id: e.track, locked: false }] } }
+      return { code: 'invalid_params', message: `track ${e.track} is locked and refuses edits to the layers on it (a locked track blocks the WHOLE batch it appears in). set_track_flags { track_id: "${e.track}", locked: false } clears it; a layer's own \`locked\` is separate (set_layer_flags)`, data: { error: 'TrackLocked', track: e.track, options: [{ action: 'unlock_track', tool: 'set_track_flags', track_id: e.track, locked: false }] } }
     case 'SplitOutsideLayer':
       return { code: 'invalid_params', message: `split at ${e.at_t} µs is outside layer ${e.layer}: at_t_us must be strictly inside the layer's span (t_start_us, t_end_us) — project://layers/${e.layer} has the span. Nothing was split`, data: { error: 'SplitOutsideLayer', layer: e.layer, at_t_us: e.at_t } }
     case 'LinkLockedMember':
-      return { code: 'invalid_params', message: `layer ${e.touched} moves with link ${e.link}, whose member ${e.locked_layer} is locked, so the whole link refuses. Unlock it (update_layer { layer_id: "${e.locked_layer}", patch: { locked: false } }) or pass escape_link: true to move ${e.touched} alone`, data: { error: 'LinkLockedMember', link: e.link, locked_layer: e.locked_layer, touched: e.touched } }
+      return { code: 'invalid_params', message: `layer ${e.touched} moves with link ${e.link}, whose member ${e.locked_layer} is locked, so the whole link refuses. Unlock it (set_layer_flags { layer_ids: ["${e.locked_layer}"], locked: false }) or pass escape_link: true to move ${e.touched} alone`, data: { error: 'LinkLockedMember', link: e.link, locked_layer: e.locked_layer, touched: e.touched } }
     case 'LayerParamsKindMismatch':
       return { code: 'invalid_params', message: `layer ${e.layer} is a ${e.actual} layer, not ${e.patch}: send patch.kind "${e.actual}" (project://tracks reports each layer's kind). Nothing was changed`, data: { error: 'LayerParamsKindMismatch', layer: e.layer, actual: e.actual, patch: e.patch } }
     case 'LinkNotFound':
@@ -1246,7 +1254,6 @@ const LAYER_IDS_SCHEMA = (what: string) => ({ type: 'array', items: { type: 'str
 const US_SCHEMA = (what: string) => ({ type: 'integer', description: `${what}, µs.` })
 const T_START_SCHEMA = US_SCHEMA('Timeline start')
 const SRC_IN_SCHEMA = US_SCHEMA('Source in point')
-const SRC_OUT_SCHEMA = US_SCHEMA('Source out point (exclusive)')
 const ESCAPE_LINK_SCHEMA = { type: 'boolean', description: 'Act on this layer alone, leaving its link partners in place. Default false.' }
 const RGBA_SCHEMA = { type: 'object', description: 'Colour, integer channels 0..255.', properties: { r: { type: 'integer', description: 'Red 0..255.' }, g: { type: 'integer', description: 'Green 0..255.' }, b: { type: 'integer', description: 'Blue 0..255.' }, a: { type: 'integer', description: 'Alpha 0..255; 255 opaque.' } }, required: ['r', 'g', 'b', 'a'] }
 // What the layer is for. Any well-formed name is stored; one outside the
@@ -1482,8 +1489,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   letter_spacing: { type: 'number', description: 'Letter spacing, px.' },
   outline_width: { type: 'number', description: 'Stroke width, composition px; 0 removes the outline.' },
   outline_color: { ...RGBA_SCHEMA, description: 'Stroke colour.' },
-  src_in_us: SRC_IN_SCHEMA,
-  src_out_us: SRC_OUT_SCHEMA,
+  src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer.' },
   scale_x: { type: 'number', description: 'Horizontal scale factor; 1 = native size.' },
   scale_y: { type: 'number', description: 'Vertical scale factor; 1 = native size.' },
   rotation_deg: { type: 'number', description: 'Rotation, degrees clockwise.' },
@@ -1593,14 +1599,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, label: { type: ['string', 'null'], description: 'The new name. null or blank clears it back to the displayed-by-default name.' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'rename_track', args: { track: parseUuid(a.track_id, 'track_id'), label: parseStrOpt(a.label, 'label') } }) },
   { name: 'move_track', exec: 'table', annotations: ANN_SET,
-    description: "Move a track to a different z-order position. 0 = bottom of stack. Position must be < current track count.",
+    description: "Move a track to a different z-order position, one recorded edit; 0 is the bottom of the stack, and the position must be below the track count (`TrackPositionOutOfRange`). Refuses a reserved A roll / B roll track (`TrackReserved`; they keep their place), a locked track (`TrackLocked`) and a track holding a locked layer (`LayerLocked`).",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, new_position: { type: 'integer', description: 'Target index in the stack; 0 is the bottom.' } }, required: ['new_position', 'track_id'] },
     parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseIntNum(a.new_position, 'new_position') } }) },
   // Two flags of four: `Track` also stores muted/solo, and they are omitted on
   // purpose — the mix folds by ROLE (ADR 0023), so nothing reads a track's, and
   // advertising them would be advertising a write that changes nothing.
   { name: 'set_track_flags', exec: 'table', annotations: ANN_SET,
-    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. A layer's own `locked` is separate (`update_layer`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`. Unrecorded.",
+    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. A layer's own `locked` is separate (`set_layer_flags`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`. Unrecorded.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, enabled: { type: 'boolean', description: "The track's output, preview and export alike. Omitted leaves it alone." }, locked: { type: 'boolean', description: 'Whether the track refuses edits to its layers. Omitted leaves it alone.' } }, required: ['track_id'] },
     parseArgs: (a) => {
       const enabled = parseBoolTriState(a.enabled, 'enabled')
@@ -1609,81 +1615,111 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'update_track_flags', args: { track: parseUuid(a.track_id, 'track_id'), patch: { enabled, locked } } }
     } },
   // ── table-exec: layers ───────────────────────────────────────────────────
-  // The one copy tool. `t_start_us` and `t_offset_us` are the two ways to say
+  // The one copy tool. `t_start_us` and `delta_us` are the two ways to say
   // where the seed's clone goes — absolute, or relative to the seed itself, so
   // a same-place copy needs no read of the timeline first. Exactly one, because
   // a call carrying both names two landings and the actor would have to pick.
+  // The vocabulary is `move_layers`': seed first, `track_id` for the seed only.
   { name: 'paste_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Duplicate a set of layers as one recorded edit — the only copy tool. `layer_ids[0]` is the seed; place its clone with exactly one of `t_start_us` (absolute) or `t_offset_us` (relative to the seed's start). Every other clone shifts by the same delta on its source's track; `target_track_id` moves only the seed's clone. All-or-nothing: a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `LayerOverlap` naming the source whose clone would collide). Two or more clones link to each other, never to their sources; pass a single id to copy one linked layer alone. Returns `{ clones: [{ source, clone }], layers }` in input order.",
+    description: "Duplicate a set of layers as one recorded edit — the only copy tool. `layer_ids[0]` is the seed; land its clone with exactly one of `t_start_us` or `delta_us` (from the seed's start). Every other clone shifts by the same delta on its source's track; `track_id` moves only the seed's clone. Nothing is expanded: pass link partners to copy them. All-or-nothing: a locked or occupied destination refuses the batch (`TrackLocked`, or `LayerOverlap` naming the source). Two or more clones link to each other. A Group clone shares its composition unless `unique`. Returns `{ clones: [{ source, clone }], layers, groups? }`; `groups` names each unique copy's `composition_id`.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to clone; the first is the seed the start time refers to.' },
-      t_start_us: { type: 'integer', description: "Absolute start time of the seed's clone; the other clones keep their offsets from it. Mutually exclusive with `t_offset_us`." },
-      t_offset_us: { type: 'integer', description: "Start of the seed's clone relative to the seed's own start, so `t_offset_us` shifts every clone by that much. Mutually exclusive with `t_start_us`." },
-      target_track_id: { type: 'string', description: "Track for the seed's clone. Omit to keep it on the seed's track." },
+      t_start_us: { type: 'integer', description: "Absolute start time of the seed's clone; the other clones keep their offsets from it. Exclusive with `delta_us`." },
+      delta_us: { type: 'integer', description: "Start of the seed's clone relative to the seed's own start, so every clone shifts by that much. Exclusive with `t_start_us`." },
+      track_id: { type: 'string', description: "Track for the seed's clone. Omit to keep it on the seed's track." },
+      unique: { type: 'boolean', description: "Give each Group clone its own deep copy of the Group's composition, so editing inside it leaves the source alone. Default false: another instance of the same composition." },
     }, required: ['layer_ids'] },
     parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_ids', 't_start_us', 'delta_us', 'track_id', 'unique'], 'paste_layers', { t_offset_us: 'the relative landing is delta_us', target_track_id: "the seed's clone's track is track_id" })
       const absolute = a.t_start_us !== undefined && a.t_start_us !== null
-      const relative = a.t_offset_us !== undefined && a.t_offset_us !== null
+      const relative = a.delta_us !== undefined && a.delta_us !== null
       if (absolute === relative) throw new McpArgError(
-        `paste_layers needs exactly one of \`t_start_us\` / \`t_offset_us\`${absolute ? ' — two of them name two landings' : ''}`,
-        absolute ? 't_offset_us' : 't_start_us')
+        `paste_layers needs exactly one of \`t_start_us\` / \`delta_us\`${absolute ? ' — two of them name two landings' : ''}`,
+        absolute ? 'delta_us' : 't_start_us')
       return { op: 'paste_layers', args: {
         layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
-        ...(absolute ? { t_start_us: parseNum(a.t_start_us, 't_start_us') } : { t_offset_us: parseNum(a.t_offset_us, 't_offset_us') }),
-        target_track_id: a.target_track_id === undefined || a.target_track_id === null ? null : parseUuid(a.target_track_id, 'target_track_id'),
+        ...(absolute ? { t_start_us: parseNum(a.t_start_us, 't_start_us') } : { t_offset_us: parseNum(a.delta_us, 'delta_us') }),
+        target_track_id: a.track_id === undefined || a.track_id === null ? null : parseUuid(a.track_id, 'track_id'),
+        unique: parseBoolOpt(a.unique, 'unique', false),
       } }
     } },
-  // `enabled` is deliberately absent from `update_layer`'s patch below and lives
-  // ONLY here: the two writes are identical for one layer, and the set form is
-  // the one that survives a fan-out (a linked A/V pair is one undo, not two).
-  { name: 'set_layers_enabled', exec: 'table', annotations: ANN_SET,
-    description: "Set `enabled` on exactly these layers in one recorded edit — the only tool that writes it, for one layer or many. Nothing is expanded: to hide a linked A/V pair, pass both members. A locked layer (`LayerLocked`) or owning track (`TrackLocked`) rejects the whole batch. Unlock before editing.",
-    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('The layers to show or hide.'), enabled: { type: 'boolean', description: 'true shows, false hides — preview and export alike.' } }, required: ['layer_ids', 'enabled'] },
-    parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
-  { name: 'update_layer', exec: 'table', annotations: ANN_SET,
-    description: "Rename a layer (`label`; null clears it) or lock it (`locked`). Only fields you set apply; any other key is refused naming the set. Times are `move_layer` (start) and `trim_layer` (one edge); visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`. Locks reject content edits; unlock with a separate lock-only patch.",
-    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: {
-      type: 'object',
-      description: 'Envelope patch; only the fields you set apply.',
-      properties: {
-        label: { type: ['string', 'null'], description: 'Display name; null clears it.' },
-        locked: { type: 'boolean', description: 'Refuse edits to this layer.' },
-      },
-    } }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
+  // A layer's envelope as tracks have it: `rename_layer` + `set_layer_flags`
+  // beside `rename_track` + `set_track_flags`. Both strict — a time or a param
+  // key is refused naming the tool that writes it.
+  { name: 'rename_layer', exec: 'table', annotations: ANN_SET,
+    description: "Rename a layer: `label`, or null to clear it. One recorded edit. Times are `move_layers` (start) and `trim_layer` (one edge); `enabled` / `locked` are `set_layer_flags`; kind-specific params are `update_layer_params`.",
+    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, label: { type: ['string', 'null'], description: 'Display name; null clears it.' } }, required: ['layer_id', 'label'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'label'], 'rename_layer', LAYER_ENVELOPE_OWNERS)
+      if (a.label === undefined) throw new McpArgError('rename_layer needs `label` — a name, or null to clear it', 'label')
+      return { op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: { label: parseStrOpt(a.label, 'label') } } }
+    } },
+  { name: 'set_layer_flags', exec: 'table', annotations: ANN_SET,
+    description: "Set `enabled` and/or `locked` on exactly these layers in one recorded edit; omit one to leave it alone, and name at least one. Nothing is expanded: pass link partners (`link_id` in project://tracks) to hide or lock a linked pair. `enabled` is the layer's output in preview and export. A locked layer refuses edits; its track's lock is separate (`set_track_flags`). A locked layer or track (`LayerLocked` / `TrackLocked`) refuses the visibility write for the whole batch: unlock in its own call first. Hide and lock is one call.",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: LAYER_IDS_SCHEMA('The layers to set, all in one composition.'),
+      enabled: { type: 'boolean', description: 'true shows, false hides — preview and export alike. Omitted leaves it alone.' },
+      locked: { type: 'boolean', description: 'Whether the layer refuses edits. Omitted leaves it alone.' },
+    }, required: ['layer_ids'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_ids', 'enabled', 'locked'], 'set_layer_flags', LAYER_ENVELOPE_OWNERS)
+      const enabled = parseBoolTriState(a.enabled, 'enabled')
+      const locked = parseBoolTriState(a.locked, 'locked')
+      if (enabled === null && locked === null) throw new McpArgError('set_layer_flags needs at least one of `enabled` / `locked`; a call that names no flag would report success having changed nothing')
+      return { op: 'set_layer_flags', args: { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer').map((s) => parseUuid(s, 'layer_ids')), enabled, locked } }
+    } },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Patch static fields of one clip. Path mode rejects independent x/y writes. Text has no scale fields; resize its box. Animated fields become Static; use set_param_track for animation. Source edits trim content; retime_layers changes playback rate. Fields are kind-specific (schema variants). Returns the updated clip; locked clips and invalid values are refused.",
+    description: "Patch static fields of one clip. Path mode rejects independent x/y writes. Text has no scale fields; resize its box. Animated fields become Static; use set_param_track for animation. `src_in_us` slips the source window (span kept); retime_layers changes playback rate. Fields are kind-specific (schema variants). Returns the updated clip; locked clips and invalid values are refused.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
   { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,
     description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `delete_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, linked: { type: 'boolean', description: 'true links scale_y to scale_x; false clears the flag only.' } }, required: ['layer_id', 'linked'] },
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
-  { name: 'move_layer', exec: 'table', annotations: ANN_SET,
-    description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. A start before 0 (for the layer or a link sibling moving with it) is refused, never clamped. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
-    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, new_t_start_us: US_SCHEMA('New timeline start'), new_track_id: { type: 'string', description: 'Destination track; the current one to move in time only.' }, escape_link: ESCAPE_LINK_SCHEMA }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
-    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
-  { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and at `from_t_us` with a positive delta the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track). Each layer snaps on its own grid; its record's `adjusted` says where it landed. Nothing moves on a refusal: a sweep splitting a link (`ShiftLinkStraddles` — use `layer_ids`), a start crossing 0, an occupied landing, a locked lane. Returns `{ moved: [layer records], delta_us }`.",
+  // The agent's move, in `paste_layers`' vocabulary: `layer_ids[0]` is the seed
+  // the landing names, `t_start_us` | `delta_us` say where, `track_id` moves
+  // only the seed. `insert` is the ripple move. Strict: a key no arm reads is
+  // refused, as add_layers refuses one.
+  { name: 'move_layers', exec: 'table', annotations: ANN_WRITE,
+    description: "Move a set of layers as one recorded edit. `layer_ids[0]` is the seed: land it with one of `t_start_us` (absolute) or `delta_us`, or with neither for a lane change alone. Every member keeps its offset on its own track, link partners included unless `escape_link`; `track_id` moves only the seed — a track of the same composition, or \"spawn\" for a fresh top track. `insert: true` is the ripple move: the set's span closes behind it and opens at its landing on every track, so a later landing is read with that span already closed; it refuses like `delete_layers { ripple: true }`. Each layer snaps on its own grid. A start before 0, an occupied landing (`LayerOverlap`) or a lock refuses whole. Returns `{ layers, rippled, track?, pruned_tracks }`.",
     inputSchema: { type: 'object', properties: {
-      layer_ids: LAYER_IDS_SCHEMA('The layers to shift, all in one composition. Exactly one of this and `from_t_us`.'),
-      from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
-      track_ids: { type: 'array', items: { type: 'string' }, description: 'With `from_t_us`: only these tracks. Omit for every track.' },
-      delta_us: { type: 'integer', description: 'Signed shift, µs; positive moves later. Not 0.' },
-      escape_link: { ...ESCAPE_LINK_SCHEMA, description: 'With `layer_ids`: leave link partners in place. Default false.' },
-      composition_id: { ...COMPOSITION_ID_SCHEMA, description: 'With `from_t_us`: the composition to sweep; omit for the root.' },
-    }, required: ['delta_us'] },
+      layer_ids: LAYER_IDS_SCHEMA('The layers to move, all in one composition; the first is the seed.'),
+      t_start_us: US_SCHEMA("Where the seed starts afterwards, timeline. Exclusive with `delta_us`"),
+      delta_us: { type: 'integer', description: 'Signed shift of the seed, µs; positive moves later. Exclusive with `t_start_us`.' },
+      track_id: { type: 'string', description: 'The seed\'s destination track, or "spawn" for a fresh top track. Omit to keep its track.' },
+      insert: { type: 'boolean', description: 'Close the span behind and open room at the landing, on every track. Default false: an occupied landing refuses.' },
+      escape_link: { ...ESCAPE_LINK_SCHEMA, description: 'Move only the named layers, leaving link partners in place. Default false.' },
+    }, required: ['layer_ids'] },
     parseArgs: (a) => {
-      const byIds = a.layer_ids !== undefined && a.layer_ids !== null
-      const byTime = a.from_t_us !== undefined && a.from_t_us !== null
-      if (byIds === byTime) throw new McpArgError(`shift_layers takes exactly one of \`layer_ids\` / \`from_t_us\`${byIds ? ' — two of them name two sets' : ' — neither names a set'}`, byIds ? 'from_t_us' : 'layer_ids')
-      for (const k of ['track_ids', 'composition_id'] as const) if (byIds && a[k] !== undefined && a[k] !== null) throw new McpArgError(`\`${k}\` goes with \`from_t_us\`; \`layer_ids\` already names the set — drop it`, k)
-      if (byTime && a.escape_link !== undefined && a.escape_link !== null) throw new McpArgError('`escape_link` goes with `layer_ids`; a sweep from `from_t_us` takes every layer by where it starts — drop it', 'escape_link')
+      refuseUnknownArgs(a, MOVE_LAYERS_KEYS, 'move_layers', { layer_id: 'name the set in layer_ids', new_t_start_us: 'the seed lands at t_start_us', new_track_id: "the seed's track is track_id", target_track_id: "the seed's track is track_id", from_t_us: 'a sweep from a time is shift_layers' })
+      const absolute = a.t_start_us !== undefined && a.t_start_us !== null
+      const relative = a.delta_us !== undefined && a.delta_us !== null
+      if (absolute && relative) throw new McpArgError('move_layers takes one of `t_start_us` / `delta_us` — two of them name two landings', 'delta_us')
+      const track = a.track_id === undefined || a.track_id === null ? null : a.track_id === 'spawn' ? 'spawn' as const : parseUuid(a.track_id, 'track_id')
+      if (!absolute && !relative && track === null) throw new McpArgError('move_layers needs `t_start_us`, `delta_us` or `track_id` — a call naming none would move nothing', 't_start_us')
+      const deltaUs = relative ? parseIntNum(a.delta_us, 'delta_us') : null
+      if (deltaUs === 0 && track === null) throw new McpArgError('delta_us is 0 and no track_id is named — nothing would move', 'delta_us')
+      // `layers` rides beside the request so a LayerOverlap is oriented
+      // against the set the call named (actor.ts `subjectsOf`).
+      const layers = asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer; the first is the seed').map((s) => parseUuid(s, 'layer_ids'))
+      return { op: 'move_layer_set', args: { layers, request: {
+        layers, tStartUs: absolute ? parseIntNum(a.t_start_us, 't_start_us') : null, deltaUs, track,
+        insert: parseBoolOpt(a.insert, 'insert', false), escapeLink: parseBoolOpt(a.escape_link, 'escape_link', false),
+      } } }
+    } },
+  { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
+    description: "Shift every layer starting at or after `from_t_us` by one `delta_us`, as one recorded edit — on `track_ids`, or on every track of the composition. A positive delta opens room there (the ripple insert); a negative one closes `[from_t_us + delta_us, from_t_us)` the way `delete_layers { ripple: true }` closes a hole, refusing by the same names (`RippleInsideHole`: a layer starts inside the span; `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer`) and keeping each carried transition. A link the sweep would split is `ShiftLinkStraddles`; a start before 0 refuses. Each layer snaps on its own grid. To move named layers, `move_layers`. Returns `{ moved: [layer records], delta_us }`.",
+    inputSchema: { type: 'object', properties: {
+      from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
+      delta_us: { type: 'integer', description: 'Signed shift, µs; positive opens room, negative closes the span before from_t_us. Not 0.' },
+      track_ids: { type: 'array', items: { type: 'string' }, description: 'Only these tracks. Omit for every track.' },
+      composition_id: { ...COMPOSITION_ID_SCHEMA, description: 'The composition to sweep; omit for the root.' },
+    }, required: ['from_t_us', 'delta_us'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['from_t_us', 'delta_us', 'track_ids', 'composition_id'], 'shift_layers', { layer_ids: 'named layers move with move_layers', escape_link: 'named layers move with move_layers' })
       const delta = parseIntNum(a.delta_us, 'delta_us')
       if (delta === 0) throw new McpArgError('delta_us is 0 — nothing would move', 'delta_us')
-      return { op: 'shift_layers', args: byIds
-        ? { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer, or sweep from a time with from_t_us').map((s) => parseUuid(s, 'layer_ids')), delta_us: delta, escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true }
-        : { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
+      return { op: 'shift_layers', args: { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
     } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
     description: "Restack a visual layer above/below a stable layer or track anchor. Supply exactly one anchor; track anchors work through gaps. A sole occupant carries its track; shared or reserved sources split onto a fresh track. Reserved tracks stay put. Audio, cross-composition and self-anchors reject. Already in place records nothing. One undo step.",
@@ -1704,25 +1740,21 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         ...(hasTrack ? { anchor_track: parseUuid(a.anchor_track_id, 'anchor_track_id') } : { anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id') }),
         position: parseRestackPosition(a.position) } }
     } },
-  { name: 'get_frame_interpolation_capabilities', exec: 'table', annotations: ANN_READ,
-    description: 'Query Preview or Export interpolation support per clip, including refusal reasons for unavailable modes.',
-    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Explicit target clips'), purpose: { type: 'string', enum: ['Preview', 'Export'], description: 'Render purpose.' } }, required: ['layer_ids', 'purpose'] },
-    parseArgs: (a) => ({ op: 'get_frame_interpolation_capabilities', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), purpose: parseOneOf(a.purpose, ['Preview', 'Export'], 'purpose') } }) },
+  // The pitch policy rides the retime it matters to (a rate of 1 plays at
+  // pitch either way), and may be sent alone to change only the policy.
   { name: 'retime_layers', exec: 'table', annotations: ANN_SET,
-    description: 'Retime exactly the selected clips, keeping their starts and source windows. Atomic; rejects collisions, illegal transitions and nested targets. Rate is absolute, positive and rational. Duration is in microseconds. Returns actual rates after grid snapping. Links do not expand the selection.',
+    description: "Retime exactly these clips in one recorded edit, keeping their starts and source windows. `target` is an absolute Rate — source µs per timeline µs, so 2/1 plays twice as fast at half the length — or a Duration (µs). `preserve_pitch` sets the pitch policy of the Audio and Group clips among them (default true), with or without a target. Nothing is expanded: pass link partners too, or their A/V sync drifts; the answer's `unretimed_partners` names any left out. Atomic; refuses collisions, transitions, locks and nested targets. Returns `{ layers: [{ layer_id, t_end_us, duration_us, actual_rate, … }], unretimed_partners }` after grid snapping.",
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Explicit target clips'), target: { type: 'object', description: 'Absolute rate or duration.', oneOf: [
-      { type: 'object', properties: { kind: { type: 'string', const: 'Rate', description: 'Rate target.' }, value: { type: 'object', description: 'Reduced positive rational.', properties: { num: { type: 'integer', minimum: 1, description: 'Numerator.' }, den: { type: 'integer', minimum: 1, description: 'Denominator.' } }, required: ['num', 'den'], additionalProperties: false } }, required: ['kind', 'value'], additionalProperties: false },
+      { type: 'object', properties: { kind: { type: 'string', const: 'Rate', description: 'Rate target.' }, value: { type: 'object', description: 'Reduced positive rational: source µs per timeline µs.', properties: { num: { type: 'integer', minimum: 1, description: 'Numerator.' }, den: { type: 'integer', minimum: 1, description: 'Denominator.' } }, required: ['num', 'den'], additionalProperties: false } }, required: ['kind', 'value'], additionalProperties: false },
       { type: 'object', properties: { kind: { type: 'string', const: 'Duration', description: 'Duration target.' }, duration_us: { type: 'integer', minimum: 1, description: 'Target microseconds.' } }, required: ['kind', 'duration_us'], additionalProperties: false }
-    ] } }, required: ['layer_ids', 'target'] },
-    parseArgs: (a) => ({ op: 'retime_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), target: parseRetimeTarget(a.target) } }) },
-  { name: 'set_preserve_pitch', exec: 'table', annotations: ANN_SET,
-    description: 'Set the pitch policy for explicitly selected Audio or Group clips. Defaults to true.',
-    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Audio or Group clips'), preserve_pitch: { type: 'boolean', description: 'Keep pitch when changing duration.' } }, required: ['layer_ids', 'preserve_pitch'] },
-    parseArgs: (a) => ({ op: 'set_preserve_pitch', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), preserve_pitch: parseBool(a.preserve_pitch, 'preserve_pitch') } }) },
-  { name: 'set_frame_interpolation', exec: 'table', annotations: ANN_SET,
-    description: 'Choose temporal frame interpolation. Only FrameSampling is available; other modes are refused.',
-    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Visual clips'), interpolation: { type: 'object', description: 'Sampling configuration.', properties: { kind: { type: 'string', enum: ['FrameSampling', 'FrameBlending', 'OpticalFlow'], description: 'Temporal interpolation mode.' } }, required: ['kind'] } }, required: ['layer_ids', 'interpolation'] },
-    parseArgs: (a) => ({ op: 'set_frame_interpolation', args: { layers: asArray(a.layer_ids, 'layer_ids').map(s => parseUuid(s, 'layer_ids')), interpolation: parseInterpolation(a.interpolation) } }) },
+    ] }, preserve_pitch: { type: 'boolean', description: 'Keep the pitch of the Audio and Group clips when the rate changes. Omit to leave the policy alone.' } }, required: ['layer_ids'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_ids', 'target', 'preserve_pitch'], 'retime_layers')
+      const hasTarget = a.target !== undefined && a.target !== null
+      const preservePitch = parseBoolTriState(a.preserve_pitch, 'preserve_pitch')
+      if (!hasTarget && preservePitch === null) throw new McpArgError('retime_layers needs `target`, `preserve_pitch` or both — a call naming neither would change nothing', 'target')
+      return { op: 'retime_layers_mcp', args: { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one clip').map(s => parseUuid(s, 'layer_ids')), target: hasTarget ? parseRetimeTarget(a.target) : null, preserve_pitch: preservePitch } }
+    } },
   { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
     description: "Trim an edge to new_t_us. Source time follows the clip rate; keyframes remain glued to content. Aligned linked edges follow unless escape_link. Refuses targets outside the legal source/timeline window. Returns committed spans, trimmed siblings and grid adjustments.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },
@@ -1734,7 +1766,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // close and refuses — so the arity check stays in the actor, where each op
   // already owns its own answer.
   { name: 'delete_layers', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Delete a set of layers as one recorded edit. `ripple` decides what happens to the vacated span: `false` (default) is the lift — it stays empty and nothing moves; `true` closes each hole so the film gets shorter — every remaining layer starting at or after a hole shifts left by its length on EVERY track of the composition (anchored markers riding along), touching holes merge, and layers starting before a hole, free markers and the playhead stay put. The set is one composition's (`CrossCompositionSet`); any locked layer or track refuses the whole batch (`LayerLocked` / `TrackLocked`); tracks the batch emptied are pruned. A ripple refuses whole, before any write, naming the blocker: `RippleInsideHole` (a remaining layer starts inside a hole — add it to `layer_ids`, or lift), `RippleCollision` (a mover would land on a layer that is not moving), `RippleLinkStraddles` (a link spans the hole), `RippleLockedLayer` (only a layer that actually shifts blocks). An empty set records nothing as a lift and is refused as a ripple.",
+    description: "Delete a set of layers as one recorded edit. Nothing is expanded: pass link partners (`link_id` in project://tracks), or a lifted video leaves its dialogue playing. `ripple` decides what happens to the vacated span: `false` (default) is the lift — it stays empty and nothing moves; `true` closes each hole so the film gets shorter — every remaining layer starting at or after a hole shifts left by its length on EVERY track of the composition (anchored markers riding along), touching holes merge, and layers starting before a hole, free markers and the playhead stay put. The set is one composition's (`CrossCompositionSet`); any locked layer or track refuses the whole batch; tracks the batch emptied are pruned. A ripple refuses whole, before any write, naming the blocker: `RippleInsideHole` (a remaining layer starts inside a hole — add it to `layer_ids`, or lift), `RippleCollision` (a mover would land on a layer that is not moving), `RippleLinkStraddles` (a link spans the hole), `RippleLockedLayer` (only a layer that shifts blocks). An empty set is refused as a ripple.",
     inputSchema: { type: 'object', properties: {
       layer_ids: LAYER_IDS_SCHEMA('The layers to delete, all in one composition.'),
       ripple: { type: 'boolean', description: 'Close each vacated span and shift everything downstream left (default false — leave the spans empty).' },
@@ -1743,10 +1775,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       op: parseBoolOpt(a.ripple, 'ripple', false) ? 'ripple_delete_layers' : 'delete_layers',
       args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) },
     }) },
-  { name: 'ripple_delete_gap', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Close a GAP — an empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter; nothing is deleted. `[t_start_us, t_end_us)` must be the whole gap as it is now: `t_end_us` exactly where a layer on `track_id` starts, `t_start_us` exactly where one ends (or 0 before the first clip); the space after the last clip is not a gap. Otherwise `GapNotFound` carries the span you sent — re-read `project://tracks` and retry. The closing is `delete_layers { ripple: true }`'s: every layer starting at or after `t_end_us` on every track shifts left, anchored markers follow, free markers and the playhead stay. Refuses whole with the same names — `RippleInsideHole` (a layer on another track starts inside the gap: delete it first), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (a gap on a locked lane always refuses). One recorded edit.",
-    inputSchema: { type: 'object', properties: { track_id: { type: 'string', description: 'The track the gap is on.' }, t_start_us: US_SCHEMA('Gap start, timeline'), t_end_us: US_SCHEMA('Gap end (exclusive), timeline') }, required: ['track_id', 't_start_us', 't_end_us'] },
-    parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.t_start_us, 't_start_us'), e: parseNum(a.t_end_us, 't_end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'create_link', exec: 'table', annotations: ANN_WRITE,
     description: "Create a new link from >=2 distinct layer ids. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
@@ -1882,13 +1910,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { transition_id: ID_SCHEMA('Transition') }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────
-  // The lane this opens is the ONE track in the model that stores a label
-  // (mutations/media.ts names the source it lifted from), which is why the
-  // result is a TRACK id and not the layer's: the layer is unchanged, it moved.
-  { name: 'separate_audio_to_new_track', exec: 'table', annotations: ANN_WRITE,
-    description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the new track's record with the layer's. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `delete_link` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip whose audio splits off onto its own layer.' } }, required: ['layer_id'] },
-    parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
   { name: 'update_composition', exec: 'table', annotations: ANN_SET,
     description: "Update a composition's envelope — canvas `width`/`height`, `fps`, `sample_rate`, `channels`, `color_space`, `background`, `duration_us`; only fields you set apply; `composition_id` names a Group's composition, the root when omitted. Unrecorded: the envelope is setup, so the patch reaches every history snapshot and undo walks past it. `fps` is LOCKED once the timeline, any history snapshot or any checkpoint holds a layer — refused with `FpsLockedByContent { current, requested, layer_count, locked_by: \"current\" | \"history\" }`; set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear a history lock. `sample_rate` is never locked. Setting `duration_us` PINS the duration so layer edits stop auto-fitting it; `duration_us: null` (alone in the patch) unpins it and refits to the layers.",
     inputSchema: { type: 'object', properties: { patch: {
@@ -2124,7 +2145,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members form a separate link per segment unless escape_link. Returns layer_ids and actual at_t_us.",
+    description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members are cut too and form a separate link per segment unless escape_link. Returns layer_ids, the actual at_t_us and `siblings: [{ layer_id, segments }]`, each link partner cut with it.",
     inputSchema: { type: 'object', properties: {
       at_t_us: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Interior timeline cuts, µs; snapped, sorted, deduplicated. Any invalid cut rejects all.' },
       escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA,
@@ -2336,7 +2357,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { media: parseUuid(a.media_id, 'media_id'), t_start_us: t, composition_id: parseCompositionIdOpt(a.composition_id) }
     } },
   { name: 'auto_split_by_shot', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Split a VideoClip at cached analyze_clip shot cuts as one edit. min_shot_us defaults to 500000. drop_short deletes shorter shots and overlapping link members. Returns layer_ids in timeline order, or the original ID when no interior cut exists.",
+    description: "Split a VideoClip at cached analyze_clip shot cuts as one edit. min_shot_us defaults to 500000. drop_short deletes shorter shots and overlapping link members. Returns layer_ids in timeline order (the original id alone when no interior cut exists) and `siblings: [{ layer_id, segments }]`, each link partner cut with it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
   { name: 'remove_pauses', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
@@ -2494,11 +2515,6 @@ function parseRetimeTarget(value: unknown): import('../../shared/timeMapping').R
   }
   throw new McpArgError('target requires a positive rational Rate or integer Duration', 'target');
 }
-function parseInterpolation(value: unknown): import('../../shared/timeMapping').FrameInterpolation {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new McpArgError('interpolation requires kind', 'interpolation');
-  return { kind: parseOneOf((value as Record<string, unknown>).kind, ['FrameSampling', 'FrameBlending', 'OpticalFlow'] as const, 'kind') as import('../../shared/timeMapping').FrameInterpolation['kind'] };
-}
-
 function parseTimeFraction(v: unknown) {
   try { const fraction = readExactTime(v); validateTimeFraction(fraction); return fraction; }
   catch { throw new McpArgError('time_fraction must be a reduced fraction with 0 <= num < den', 'time_fraction'); }

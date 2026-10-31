@@ -89,7 +89,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   })
 
   it('a TS parser refusal (bad argument) is a result, with the code and the message mirrored in structuredContent', async () => {
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'move_layer', {}))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'trim_layer', {}))
     expect(out.content[0].text).toContain('layer_id not a UUID')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params', message: out.content[0].text })
   })
@@ -228,7 +228,7 @@ describe('over the wire, the client sees a result for a refusal and a rejection 
 
   it('a refusal RESOLVES with isError and the text the model reads', async () => {
     const client = await connected()
-    const out = await client.callTool({ name: 'move_layer', arguments: {} })
+    const out = await client.callTool({ name: 'trim_layer', arguments: {} })
     expect(out.isError).toBe(true)
     expect((out.content as Array<{ text: string }>)[0].text).toContain('layer_id not a UUID')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params' })

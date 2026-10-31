@@ -189,7 +189,7 @@ function sampleFor(tool: string, field: string): unknown {
   if (field === 'edge') return 'in'
   if (field === 'kind') return 'blur'
   if (field === 'param_key') return 'opacity'
-  // A boolean, so `set_layers_enabled`'s probe isolates the omitted field
+  // A boolean, so `set_layer_flags`' probe isolates the omitted field
   // instead of tripping parseBool on the string fallback regardless.
   if (field === 'enabled') return true
   return 'x'

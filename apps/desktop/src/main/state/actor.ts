@@ -1,5 +1,5 @@
-import { applyRetimeLayers, applyPreservePitch, applyFrameInterpolation, interpolationCapabilities } from './mutations/retime'
-import type { RetimeTarget, FrameInterpolation } from '../../shared/timeMapping'
+import { applyRetimeLayers, applyPreservePitch } from './mutations/retime'
+import type { RetimeTarget } from '../../shared/timeMapping'
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
 import { assertLockedLayersUnchanged } from './layerLocks'
@@ -21,8 +21,8 @@ import { buildLimits } from './mutations/captionSegments'
 import type { Tokens } from '../taste/schema'
 import { checkComposition } from '../lint/checkComposition'
 import { DEFAULT_MARKER_COLOR, applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
-import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
-import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
+import { applyMoveLayer, applyMoveLayerSet, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement, type MoveSetRequest, type MoveSetResult } from './mutations/move'
+import { applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
 import { applyRestackLayer, applyRestackLayerAgainstTrack, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer } from './mutations/trim'
@@ -35,7 +35,7 @@ import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksR
 import { serveProjectResource } from './resource-views'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
-import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
+import { applySetLayerFlags, applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
 import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
@@ -56,7 +56,7 @@ import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
-import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
+import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitSiblings, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
 import { effectsCatalogView } from '../../shared/effects/catalogView'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
@@ -959,16 +959,24 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // the caller derives `t_us` from the anchor it supplies, and this commit's
         // reconcile re-derives it right back.
         case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', DEFAULT_MARKER_COLOR, comp, typeof a.note === 'string' ? a.note : undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
-        // shift_layers — one delta over a set: the named layers (+ link partners
-        // unless escaped) or everything starting at/after a time. One commit,
+        // shift_layers — the sweep: everything starting at/after a time, by one
+        // delta (a negative one closes through the ripple planner). One commit,
         // one undo; the value names what moved so the refs can too.
         case 'shift_layers': {
-          const strict = a.strict === true
           const delta = parseNum(a.delta_us, 'delta_us')
           const value = commit(HISTORY_SUMMARY.layersShift, (res: ShiftLayersResult) => layerRefs(res.moved), { kind: 'Coarse' }, (d) =>
-            Array.isArray(a.layers)
-              ? applyShiftLayers(d, a.layers as Uuid[], delta, (a.escape_link as boolean) ?? false, strict)
-              : applyShiftLayersFrom(d, (a.composition_id as Uuid | null) ?? null, (a.tracks as Uuid[] | null) ?? null, parseNum(a.from_t_us, 'from_t_us'), delta, strict))
+            applyShiftLayersFrom(d, (a.composition_id as Uuid | null) ?? null, (a.tracks as Uuid[] | null) ?? null, parseNum(a.from_t_us, 'from_t_us'), delta, a.strict === true))
+          return { ok: true, value }
+        }
+        // move_layer_set — the agent's set move (`move_layers`): one commit for
+        // the shift, the seed's lane change, a spawned lane and an insert's
+        // close-and-open, so one undo restores all of it. `affected` takes the
+        // function form because a spawn mints its lane inside the recipe.
+        case 'move_layer_set': {
+          const req = a.request as MoveSetRequest
+          const value = commit(req.layers.length > 1 || req.insert ? HISTORY_SUMMARY.layersShift : HISTORY_SUMMARY.layerMove,
+            (r: MoveSetResult) => [...layerRefs([...r.moved, ...r.rippled]), ...(r.spawned_track ? trackRef(r.spawned_track) : [])], { kind: 'Coarse' },
+            (d) => applyMoveLayerSet(d, idGen, req))
           return { ok: true, value }
         }
         case 'move_layers': {
@@ -1034,13 +1042,23 @@ export function createActor(opts: ActorOptions): ActorHandle {
           commit(HISTORY_SUMMARY.layerUpdateParams, (a.layers as Uuid[]).flatMap(layerRef), { kind: 'Coarse' },
             (d) => applyPreservePitch(d, a.layers as Uuid[], a.preserve_pitch as boolean));
           return { ok: true, value: null }
-        case 'set_frame_interpolation': {
-          const value = commit(HISTORY_SUMMARY.layerUpdateParams, (a.layers as Uuid[]).flatMap(layerRef), { kind: 'Coarse' },
-            (d) => applyFrameInterpolation(d, a.layers as Uuid[], a.interpolation as FrameInterpolation));
+        // retime_layers_mcp — the agent's retime: the rate and the pitch policy
+        // of the Audio / Group clips among the targets, one commit. The policy
+        // is written first, so the retime's validate sees the final state.
+        case 'retime_layers_mcp': {
+          const layers = [...new Set(a.layers as Uuid[])]
+          const target = (a.target as RetimeTarget | null) ?? null
+          const pitch = (a.preserve_pitch as boolean | null) ?? null
+          const value = commit(HISTORY_SUMMARY.layerUpdateParams, layers.flatMap(layerRef), { kind: 'Coarse' }, (d) => {
+            const pitched = pitch === null ? [] : layers.filter((id) => { const k = requireLayer(d, id).layer.params.kind; return k === 'Audio' || k === 'CompositionRef' })
+            if (pitch !== null && pitched.length === 0)
+              throw new CommandFailure({ error: 'InvalidArgument', field: 'preserve_pitch', detail: 'none of layer_ids is an Audio or Group clip, and the pitch policy is theirs alone — name the Audio layer linked to a video' })
+            if (pitch !== null) applyPreservePitch(d, pitched, pitch)
+            const retimed = target === null ? { layers: [] } : applyRetimeLayers(d, layers, target)
+            return { ...retimed, pitched }
+          })
           return { ok: true, value }
         }
-        case 'get_frame_interpolation_capabilities':
-          return { ok: true, value: interpolationCapabilities(current(), a.layers as Uuid[], a.purpose as 'Preview' | 'Export') }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // The SELECTION's delete, and the marquee's headline gesture: N swept
         // clips must cost ONE undo entry, which is why there is no singular
@@ -1134,7 +1152,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             : parseNum(a.t_start_us, 't_start_us') - seedLoc.layer.t_start_us
           const targetTrackId = (a.target_track_id as Uuid | null | undefined) ?? null
           const clones = commit(pastedLayersSummary(layers.length), (m: Map<Uuid, Uuid>) => layerRefs([...m.values()]), { kind: 'Coarse' },
-            (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId))
+            (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId, a.unique === true))
           return { ok: true, value: { clones: layers.map((source) => ({ source, clone: clones.get(source)! })) } }
         }
         // set_layers_enabled — the caller's set, verbatim (the renderer hands it a
@@ -1144,6 +1162,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layers = [...new Set((a.layers as Uuid[]) ?? [])]
           const enabled = parseBool(a.enabled, 'enabled')
           commit(layersEnabledSummary(enabled, layers.length), layerRefs(layers), { kind: 'Coarse' }, (d) => applySetLayersEnabled(d, layers, enabled))
+          return { ok: true, value: null }
+        }
+        // set_layer_flags — the agent's flag write (`set_layer_flags`): exactly
+        // the named layers, `enabled` and/or `locked`, one entry. A set already
+        // in the requested state records nothing.
+        case 'set_layer_flags': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          const enabled = (a.enabled as boolean | null | undefined) ?? null
+          const locked = (a.locked as boolean | null | undefined) ?? null
+          const summary = locked === null && enabled !== null ? layersEnabledSummary(enabled, layers.length) : HISTORY_SUMMARY.layerUpdate
+          commit(summary, layerRefs(layers), { kind: 'Coarse' }, (d) => applySetLayerFlags(d, layers, { enabled, locked }))
           return { ok: true, value: null }
         }
         case 'set_composition': setComposition(a); return { ok: true, value: null }
@@ -2020,7 +2049,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const result = commit(HISTORY_SUMMARY.layerSplit,
             (r: { layer_ids: Uuid[] }) => layerRefs(r.layer_ids), { kind: 'Coarse' },
             (d) => applySplitLayerBatch(d, idGen, layer, p.at_t_us as number[], p.escape_link as boolean))
-          return { ok: true, result: toolRecord(result) }
+          return { ok: true, result: toolRecord({ ...result, siblings: splitSiblings(before, current(), layer, result.layer_ids) }) }
         }
         case 'create_checkpoint': {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)

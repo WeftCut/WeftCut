@@ -2,7 +2,7 @@
 // One rule for a time an agent sends: a GRID SNAP is applied and echoed in
 // `adjusted` (reason 'grid'); a CLAMP — anything that changes what was asked
 // beyond the lattice — is refused before any write. So `trim_layer` past the
-// other edge never lands a one-frame clip, `move_layer` to a negative start
+// other edge never lands a one-frame clip, `move_layers` to a negative start
 // never lands at 0, and a marker is never stored negative. The renderer's drag
 // keeps its clamps (the user sees the ghost); the MCP parsers set `strict` on
 // the mutations.
@@ -38,13 +38,13 @@ describe('a grid snap is applied and echoed', () => {
     expect(rec.adjusted).toEqual([{ field: 't_start_us', requested: 350_000, applied: 366_667, reason: 'grid' }])
   })
 
-  it('move_layer to an off-grid start snaps and echoes; an on-grid one echoes nothing', () => {
+  it('move_layers to an off-grid start snaps and echoes; an on-grid one echoes nothing', () => {
     const a = freshActor()
     const id = colorLayer(a, aRollId(a), 0, 1_000_000)
-    const moved = ok(call(a, 'move_layer', { layer_id: id, new_track_id: aRollId(a), new_t_start_us: 350_000 }))
+    const moved = (ok(call(a, 'move_layers', { layer_ids: [id], t_start_us: 350_000 })).layers as Array<Record<string, unknown>>)[0]!
     expect(moved.t_start_us).toBe(366_667)
     expect(moved.adjusted).toEqual([{ field: 't_start_us', requested: 350_000, applied: 366_667, reason: 'grid' }])
-    expect(ok(call(a, 'move_layer', { layer_id: id, new_track_id: aRollId(a), new_t_start_us: 1_000_000 })).adjusted).toEqual([])
+    expect((ok(call(a, 'move_layers', { layer_ids: [id], t_start_us: 1_000_000 })).layers as Array<Record<string, unknown>>)[0]!.adjusted).toEqual([])
   })
 
   it('add_marker snaps to the frame and echoes', () => {
@@ -56,11 +56,11 @@ describe('a grid snap is applied and echoed', () => {
 })
 
 describe('a clamp is refused before any write', () => {
-  it('move_layer to a negative start: refused naming the layer and 0, and nothing moved', () => {
+  it('move_layers to a negative start: refused naming the layer and 0, and nothing moved', () => {
     const a = freshActor()
     const id = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
     const before = a.historyStatus().len
-    const msg = refusal(call(a, 'move_layer', { layer_id: id, new_track_id: aRollId(a), new_t_start_us: -500_000 }))
+    const msg = refusal(call(a, 'move_layers', { layer_ids: [id], t_start_us: -500_000 }))
     expect(msg).toContain('timeline time starts at 0')
     expect(msg).toContain(id)
     expect(layerOf(a, id).t_start_us).toBe(1_000_000)
@@ -75,7 +75,7 @@ describe('a clamp is refused before any write', () => {
     const v = colorLayer(a, aRollId(a), 1_000_000, 2_000_000)
     const s = colorLayer(a, bRollId(a), 500_000, 1_500_000)
     ok(call(a, 'create_link', { layer_ids: [v, s] }))
-    const msg = refusal(call(a, 'move_layer', { layer_id: v, new_track_id: aRollId(a), new_t_start_us: 200_000 }))
+    const msg = refusal(call(a, 'move_layers', { layer_ids: [v], t_start_us: 200_000 }))
     expect(msg).toContain(s)
     expect(msg).toContain('-300000')
     expect(layerOf(a, v).t_start_us).toBe(1_000_000)

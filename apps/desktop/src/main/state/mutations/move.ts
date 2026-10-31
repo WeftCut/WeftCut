@@ -1,11 +1,13 @@
 // apps/desktop/src/main/state/mutations/move.ts
-import type { Project, Uuid } from '../model'
+import type { Composition, Layer, Project, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { floorShiftAtZero, gridForLayerKind, shiftOnGrids, snapOnGrid, type ShiftMember } from '../snap'
 import { applyAddTrack } from './add'
 import { applyDurationAutofit, checkTrackLock, insertSorted, locateLayerIn, locateTrack, pruneEmptiedTrack, requireLayer, requireSameComposition } from './helpers'
-import { applyShiftLayers } from './shift'
-import { linkSiblingsExcluding, checkLinkLock } from './links'
+import { applyShiftLayers, linkedSet } from './shift'
+import { linkSiblingsExcluding, checkLinkLock, indexLinks } from './links'
+import { applySweep, rippleViewOfComposition } from './ripple'
+import { planRipple, type RippleMove } from '../../../renderer/ripple/plan'
 import { CommandFailure } from '../errors'
 
 export interface MovePlacement { layerId: Uuid; trackId: Uuid }
@@ -246,4 +248,137 @@ export function applyMoveLayersToNewTrack(
   // Only when this call actually retimed something — see the `anchor` contract.
   if (landings !== null) applyDurationAutofit(c)
   return trackId
+}
+
+/** `move_layers`' request: the set (seed first), where the seed lands — an
+ *  absolute `tStartUs`, a `deltaUs`, or neither for a lane change alone — and
+ *  the seed's lane (`null` keeps it, `'spawn'` mints a fresh top lane). */
+export interface MoveSetRequest {
+  layers: readonly Uuid[]
+  tStartUs: number | null
+  deltaUs: number | null
+  track: Uuid | 'spawn' | null
+  insert: boolean
+  escapeLink: boolean
+}
+
+/** What a set move touched: the set as moved (seed first, then partners), the
+ *  other layers an insert shifted to close and open room, the lane a spawn
+ *  minted, and the delta the seed was asked to travel (before its own grid). */
+export interface MoveSetResult { moved: Uuid[]; rippled: Uuid[]; spawned_track: Uuid | null; delta_us: number }
+
+/**
+ * Move a named set as ONE edit — the agent's move (`move_layers`). The set is
+ * `layers` plus their link partners unless `escapeLink`; every member shifts by
+ * the seed's delta on its own grid and stays on its own lane, and only the
+ * seed changes lane (`track`), the rule `paste_layers` places clones by.
+ *
+ * `insert` is the ripple move: the set's footprint closes behind it the way
+ * `delete_layers { ripple: true }` closes a deleted set's (`planRipple`, with
+ * its refusals by name), then every layer starting at or after the set's
+ * landing shifts right by the set's length on every track, and the set lands
+ * in the room. The seed's landing is read on the CLOSED timeline — where the
+ * seed starts afterwards — so "move the part after 1:30 to the start" is
+ * `{ t_start_us: 0, insert: true }`.
+ *
+ * Strict (the agent's mode): a member that would start before 0 is refused,
+ * never floored; a locked member or lane refuses; a request that would move
+ * nothing is `InvalidArgument`. Overlap at the landing is validate's
+ * `LayerOverlap`, run by the commit.
+ */
+export function applyMoveLayerSet(p: Project, idGen: IdGen, req: MoveSetRequest): MoveSetResult {
+  const named = [...new Set(req.layers)]
+  if (named.length === 0) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: 'name at least one layer; the first is the seed' })
+  const c = requireSameComposition(p, named)
+  const set = linkedSet(c, named, req.escapeLink)
+  const located = set.map((id) => locateLayerIn(c, id)!)
+  const links = indexLinks(c.links)
+  for (const loc of located) {
+    if (loc.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: loc.track.id })
+    if (!loc.layer.locked) continue
+    if (named.includes(loc.layer.id)) throw new CommandFailure({ error: 'LayerLocked', layer: loc.layer.id })
+    throw new CommandFailure({ error: 'LinkLockedMember', link: links.get(loc.layer.id)!, locked_layer: loc.layer.id, touched: named.find((n) => links.get(n) === links.get(loc.layer.id)) ?? named[0] })
+  }
+  const seed = located[0]
+  const srcTrackId = seed.track.id
+  let dest: Track | null = null
+  if (req.track !== null && req.track !== 'spawn') {
+    const dst = locateTrack(p, req.track)
+    if (!dst) throw new CommandFailure({ error: 'TrackNotFound', track: req.track })
+    if (dst.comp !== c) throw new CommandFailure({ error: 'CrossCompositionMove', layer: seed.layer.id, from: c.id, to: dst.comp.id })
+    if (dst.track.id !== srcTrackId) {
+      if (dst.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: dst.track.id })
+      dest = dst.track
+    }
+  }
+  const delta = req.tStartUs !== null
+    ? snapOnGrid(req.tStartUs, gridForLayerKind(seed.layer.params.kind, c.fps)) - seed.layer.t_start_us
+    : req.deltaUs ?? 0
+  if (delta === 0 && dest === null && req.track !== 'spawn')
+    throw new CommandFailure({ error: 'InvalidArgument', field: req.tStartUs !== null ? 't_start_us' : 'delta_us', detail: 'the seed already starts there on its own track, so nothing would move' })
+  const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
+  if (floorShiftAtZero(movers, delta) !== delta) {
+    const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
+    throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + delta } })
+  }
+  const landings = shiftOnGrids(movers, delta, c.fps)
+  const setMoves: RippleMove[] = located.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs }))
+
+  const rippled = new Set<Uuid>()
+  if (req.insert) {
+    // 1 — the closing, planned off untouched state: refusals before any write.
+    const close = planRipple(rippleViewOfComposition(c), set)
+    if (!close.ok) throw new CommandFailure(close.refusal)
+    // 2 — lift the set, close what it vacated.
+    const lifted = located.map((loc) => ({ track: loc.track, layer: loc.track.layers.splice(loc.track.layers.indexOf(loc.layer), 1)[0] }))
+    for (const id of applySweep(c, close.moves)) rippled.add(id)
+    // 3 — open the set's length at its landing, on every track.
+    const at = Math.min(...setMoves.map((m) => m.t_start_us))
+    const length = Math.max(...setMoves.map((m) => m.t_end_us)) - at
+    for (const id of openRoom(c, at, length)) rippled.add(id)
+    // 4 — the set goes back where it was, then lands (one sweep, so a
+    // transition between two members keeps its frame count).
+    for (const { track, layer } of lifted) insertSorted(track, layer)
+  }
+  applySweep(c, setMoves)
+
+  let spawned: Uuid | null = null
+  if (req.track === 'spawn') {
+    spawned = applyAddTrack(p, idGen, null, undefined, c.id)
+    dest = c.tracks.find((t) => t.id === spawned)!
+  }
+  if (dest !== null) {
+    const from = c.tracks.find((t) => t.id === srcTrackId)!
+    const layer: Layer = from.layers.splice(from.layers.findIndex((l) => l.id === seed.layer.id), 1)[0]
+    insertSorted(dest, layer)
+    pruneEmptiedTrack(c, srcTrackId)
+  }
+  applyDurationAutofit(c)
+  for (const id of set) rippled.delete(id)
+  return { moved: set, rippled: [...rippled], spawned_track: spawned, delta_us: delta }
+}
+
+/** Shift every layer of `c` starting at or after `at` right by `length`, each on
+ *  its own grid — the room an insert opens. A link with a member reaching
+ *  across `at` and another starting at or after it would slip
+ *  (`ShiftLinkStraddles`); a lock that would have to move refuses. */
+function openRoom(c: Composition, at: number, length: number): Uuid[] {
+  const movers: Array<{ layer: Layer; track: Track }> = []
+  for (const track of c.tracks) for (const layer of track.layers) if (layer.t_start_us >= at) movers.push({ layer, track })
+  if (movers.length === 0 || length <= 0) return []
+  const moving = new Set(movers.map((m) => m.layer.id))
+  for (const link of c.links) {
+    if (!link.members.some((m) => moving.has(m))) continue
+    const reaching = link.members.some((m) => {
+      const l = locateLayerIn(c, m)?.layer
+      return l !== undefined && !moving.has(m) && l.t_end_us > at
+    })
+    if (reaching) throw new CommandFailure({ error: 'ShiftLinkStraddles', link: link.id, from_t_us: at })
+  }
+  for (const { layer, track } of movers) {
+    if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: track.id })
+    if (layer.locked) throw new CommandFailure({ error: 'RippleLockedLayer', layer: layer.id })
+  }
+  const landings = shiftOnGrids(movers.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us })), length, c.fps)
+  return applySweep(c, movers.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs })))
 }

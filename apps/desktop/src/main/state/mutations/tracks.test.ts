@@ -66,6 +66,13 @@ describe('applyDeleteTrack', () => {
 })
 
 describe('applyMoveTrack', () => {
+  it('keeps the reserved A roll / B roll in place (TrackReserved), as restack and the timeline do', () => {
+    const { p, gen } = base()
+    applyAddTrack(p, gen, 'extra')
+    const before = structuredClone(p)
+    for (const t of root(p).tracks.filter((x) => x.role === 'ARoll' || x.role === 'BRoll')) expectCmd(() => applyMoveTrack(p, t.id, 2), 'TrackReserved')
+    expect(p).toEqual(before)
+  })
   it('rejects locked tracks and locked members without changing order', () => {
     const { p, gen } = base()
     const id = applyAddTrack(p, gen, 'locked')
@@ -78,7 +85,7 @@ describe('applyMoveTrack', () => {
     track.locked = false
     track.layers[0].locked = true
     before = structuredClone(p)
-    expectCmd(() => applyMoveTrack(p, id, 0), 'InvalidArgument')
+    expectCmd(() => applyMoveTrack(p, id, 0), 'LayerLocked')
     expect(p).toEqual(before)
   })
   it.each([-1, 0.5, NaN, Infinity])('rejects invalid position %s', (position) => {
