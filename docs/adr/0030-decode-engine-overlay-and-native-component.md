@@ -4,240 +4,69 @@ status: accepted
 
 # The decode engine is a runtime overlay, and native decode ships as a conditional component
 
+Date: 2026-07-18
+
 ## Context
 
-Decode routing has so far named exactly one persisted fact per source: the
-[Decode Route](../../CONTEXT.md#decode-routing) — which derivatives exist on
-disk, decided once by `decide()` and folded into a small enum (ADR 0028).
-That fact answers "what can this source play from," not "which decoder
-should play it right now" — a question whose answer depends on the machine
-(does it have a GPU decode path, a native software decoder, can WebCodecs
-open this codec at all), not on the project. Two mechanisms had been
-conflating those questions: an `experimental_native_sw_decode` toggle that
-hard-coded one machine-dependent choice as a project-wide boolean (ADR 0029),
-and the Session bridge, which folded a WebCodecs-decodability probe into a
-temporary preview-path override living beside — not inside — the persisted
-route.
-
-Widening native decode into a full second engine (whose hardware and software
-lanes are that one engine's private concern) standing beside WebCodecs
-multiplies this question: a source's decoder is now chosen from a settings
-choice plus two kinds of machine knowledge — a capability probe cached per
-machine, and the runtime presence of an optional native component. Naming where each of those facts lives, and
-confirming none of them leak into the project file, is this ADR's first
-decision.
-
-The native runtime is also new supply-chain surface: it links `ffmpeg-next`
-and therefore real shared libraries (avcodec, avformat, swscale) that the
-existing addon has never required. Whether linking them is safe to make
-unconditional, and what license line the linkage draws, are the second and
-third decisions.
+- The persisted [Decode Route](../../CONTEXT.md#decode-routing) answers "which
+  derivatives exist for this source". Which decoder should read the source
+  depends on the machine: a GPU decode lane, the native component, whether
+  WebCodecs opens the codec. A project moves between machines.
+- Native decode links `ffmpeg-next` and therefore shared avcodec/avformat/
+  swscale. A missing import in a `.node`'s import table fails that whole
+  addon's `require()`.
+- In-process decode must link an LGPL ffmpeg; the export/batch sidecar is a
+  GPL build. Under the FSF plugin doctrine, a dynamically loaded module forms
+  one work with what it calls; a separate `.node` file is not a separate work.
+- On Linux, Electron's bundled Chromium `libffmpeg.so` exports ~840 global
+  `av*` symbols and has no `file` protocol. Under ELF global symbol scope they
+  interpose the component's own libavformat: every open fails
+  `Protocol not found` inside Electron while the same `.node` works under plain
+  Node (electron/electron#31397, closed "not planned"). PE and Mach-O resolve
+  per module, so Windows and macOS are unaffected.
 
 ## Decision
 
-### The decode engine is a session overlay over three independent layers of truth
-
-- **Disk — `DecodeRoute`.** Unchanged by this design: still the persisted
-  record of which derivatives exist for a source, still decided once by
-  `decide()`. Nothing about engine selection reads or writes this enum
-  differently than before.
-- **Machine — the capability cache.** Whether this machine's decoders can
-  open a given format/lane is a fact about the machine, cached and
-  invalidated on driver or component change, keyed by format class rather
-  than by project or source. It is not part of any project file and does
-  not travel with a project between machines.
-- **Session — the resolution.** A pure function, `resolveDecodeEngine`, takes
-  the decode-engine setting (`auto` / `ffmpeg` / `webcodecs`), whether the
-  native-decode component is loaded, this session's WebCodecs-original probe
-  verdict, the user's proxy opt-in, and a runtime "has FFmpeg terminally
-  failed for this source" flag, and returns a resolution over two public axes
-  — an **engine** (Standard/`ffmpeg` or Lite/`webcodecs`) and a **source**
-  (original or proxy) — plus a first-class `status` (`ok` / `pending` /
-  `unsupported`). Hardware-vs-software is *not* an axis: it is private to the
-  Standard engine, which picks and swaps its own lane behind the resolution.
-  Nothing it resolves is written back to either of the other two layers —
-  reopening a project, or moving it to another machine, re-runs the resolution
-  from nothing.
-
-No engine state — setting, capability verdict, or resolved engine — is ever
-persisted into a media item or into `DecodeRoute`. Capability is a machine
-property; the project only ever records which derivatives exist, never which
-decoder should read them.
-
-An earlier revision of this design fused engine, hardware lane, and source
-into a single flat four-tier enum (`resolveEngineTier` → native-hardware /
-WebCodecs-original / native-software / proxy). Collapsing the lane into the
-Standard engine's private concern — and turning the silent proxy floor into an
-explicit `unsupported` status — is what left the resolver these two public
-axes; the overlay-over-three-layers invariant is unchanged by that reshape.
-
-### The native runtime is a conditionally-first-class split addon
-
-Native decode — its hardware and software lanes, and their `ffmpeg-next`
-linkage — lives in its own addon, `@weftcut/native-decode`, separate from the
-core addon. The isolation is structural, not a packaging nicety: a missing
-`avcodec` entry in a single addon's import table fails that addon's
-`require()` outright. If native decode lived inside the core addon, a
-missing DLL on one machine would take jobs, export, and the MCP surface down
-with it, none of which touch `ffmpeg-next` at all.
-
-Main loads the component lazily, once, in a try/catch around
-`require('@weftcut/native-decode')`. Failure is not an error state — it is
-the ordinary "this machine doesn't have it yet" case. The native tiers drop
-out of `auto`'s resolution order, the decode-engine setting's native option
-is grayed out with the failure reason, and the rest of the application stays
-fully functional. This level-0 gate is what the rest of the native-decode
-surface is built on. The component is bundled with the Windows installer
-today; its absence elsewhere is a packaging state, not a defect.
-
-### The addon split is not the license boundary
-
-In-process decode links an LGPL ffmpeg build — banner-gated at fetch, build,
-and package time so a GPL build can never enter the shipped binary — because
-LGPL decoders already cover every format this engine targets (ProRes,
-DNxHD/HR, MPEG-2, VC-1, dav1d) with no need for GPL-only encoders. The
-sidecar CLI used for export and batch jobs remains a GPL ffmpeg build,
-isolated behind a pipe.
-
-Splitting native decode into its own addon changes nothing about that line.
-Under the FSF's plugin doctrine, a plugin that is dynamically loaded and
-calls into a library's functions forms one combined work with it at runtime,
-regardless of the process or module boundary between them — a separate
-`.node` file is not a separate legal work. The boundary that matters is which
-*build* of ffmpeg a component links: LGPL in-process, GPL only in the
-sidecar behind its pipe. The addon split is a supply-chain and
-failure-isolation decision; it does no licensing work by itself.
-
-## Considered options
-
-- **Persist the resolved engine onto the media item or `DecodeRoute`**
-  (e.g. "last known good decoder"). Rejected: reintroduces exactly the bug
-  the overlay exists to avoid — a project would carry a stale, machine-bound
-  promise that either does nothing useful (faster machine, re-resolves to the
-  stronger engine anyway) or actively lies (slower machine, promised engine
-  not actually available).
-- **Fold native decode into the core addon behind a compile-time feature.**
-  Rejected: a compile-time flag bakes a yes/no decision into one binary at
-  build time, but the real requirement is a single shipped binary that
-  behaves correctly whether or not the DLLs exist on *this* machine (missing
-  redistributables, a stripped-down install). Only a runtime gate can
-  represent "present at build time, absent at run time."
-- **Treat the addon split itself as the licensing separation and skip
-  banner-gating the fetch/build/package steps.** Rejected: the plugin
-  doctrine means the split buys nothing licensing-wise on its own; the
-  actual constraint is on which ffmpeg build gets linked, and that has to be
-  asserted independently of how many addons it's linked into.
+- **Three layers of truth.** Disk: `DecodeRoute`, decided once by `decide()`.
+  Machine: the capability cache (`<userData>/decode_capability.json`), keyed by
+  lane + format class (+ DRM node for VAAPI) and wiped when the component's
+  ffmpeg version or the GPU/driver identity changes. Session:
+  `resolveDecodeEngine`, a pure function of the `auto`/`ffmpeg`/`webcodecs`
+  setting, component presence, the session's WebCodecs verdict, the proxy
+  opt-in and a "Standard failed terminally for this source" flag. It returns
+  engine (Standard/Lite) × source (original/proxy) plus `ok`/`pending`/
+  `unsupported`. Hardware vs software is private to the Standard engine.
+  **No engine state is ever written to a media item or `DecodeRoute`.**
+- **Native decode is its own addon**, `@weftcut/native-decode`, never linked
+  into the core addon. Main `require`s it lazily, once, in a try/catch. Failure
+  is the ordinary "not on this machine" state: Standard drops out of `auto`, the
+  setting's native option is greyed with the reason, the rest of the app works.
+- **The license boundary is the ffmpeg build, not the addon split.** The
+  component links only a banner-gated LGPL build (checked at fetch, build and
+  `afterPack`); GPL ffmpeg exists only as the sidecar behind a pipe.
+- **Linux loads the component with `RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND`**,
+  OR-ed into `process.dlopen` for the one `require` (`main/native-decode.ts`).
+  It cannot be a link flag: GNU `ld` ignores `-z deepbind` and no `DF_1` flag
+  exists. `LD_LIBRARY_PATH` does not fix a symbol-level collision and would
+  perturb Chromium's own media stack; `dlmopen` is not exposed by Node.
+- **Linux links the addon with `--disable-new-dtags -rpath,$ORIGIN`** (a
+  `DT_RPATH`). `DT_RUNPATH` is consulted only for direct `NEEDED`, and the BtbN
+  `.so` carry no rpath, so transitive deps (`libavcodec → libswresample`) would
+  not resolve. The `*.so*` ship beside the `.node` (asar-unpacked) with their
+  SONAME symlinks kept relative (`cpSync(..., { verbatimSymlinks: true })`).
 
 ## Consequences
 
-- Engine resolution is safe to reason about locally: given the same inputs it
-  always returns the same resolution, with no hidden mutable state to audit.
-- A project file never encodes which machine most recently played it
-  fastest; opening the same project on a weaker machine degrades gracefully
-  to the Lite engine (or an explicit `unsupported` state) instead of
-  inheriting a stale "this machine could do it" fact.
-- The core addon keeps its existing feature set and never links
-  `ffmpeg-next`; the standard build needs no `FFMPEG_DIR` or libclang. The
-  native-decode component is a second build product with its own DLL
-  bundling, and its absence is a first-class, user-visible state rather than
-  a startup crash.
-- The LGPL/GPL split is unaffected by how many addons ffmpeg is linked into;
-  any future native-decode consumer must link the same LGPL build, not a
-  convenient GPL one, or the boundary this ADR names moves with it.
+- Same inputs, same resolution; opening a project on a weaker machine
+  degrades to Lite or an explicit `unsupported`, never to a stale promise.
+- The core addon builds without `FFMPEG_DIR` or libclang; the component is a
+  second build product (libclang is a Linux build prerequisite for bindgen).
+- Deep binding is safe only while the component's sole host-shared symbols are
+  `napi_*` (absent from libav*). Adding a symbol it shares with the host
+  (e.g. an allocator) reopens the `dlopen(3)` `RTLD_DEEPBIND` hazard.
+- Any future in-process ffmpeg consumer must link the same LGPL build.
 
-## Amendment: Linux component loading and supply chain
-
-The level-0 gate and the LGPL supply chain above were built and proven
-Windows-only. Bringing the Standard engine's software lane up on Linux
-surfaced three facts the original decision did not anticipate; they are
-recorded here so that a later change to the loader or the packaging glob does
-not silently regress the fix. The point-in-time enablement log — environment
-measured, full verification list, and the packaging work still deferred — is
-[`docs/notes/linux-native-decode-spike.md`](../notes/linux-native-decode-spike.md).
-
-### Chromium's bundled libffmpeg interposes the component's own LGPL symbols
-
-Electron bundles Chromium's own `libffmpeg.so` — a minimal ffmpeg build that
-exports ~840 global `av*` `FUNC` symbols (`avformat_open_input`, `avcodec_*`,
-…) and carries no `file` protocol. Under ELF's default global symbol scope
-those symbols interpose the component's co-located full LGPL `libavformat`, so
-`avformat_open_input` runs *Chromium's* implementation, which cannot open a
-plain path: every file open fails with libavformat's `Protocol not found`,
-even though the same `.node` opens the same file correctly under plain `node`.
-Windows PE and macOS Mach-O resolve symbols per module, so the collision cannot
-arise there — this, not the shared-library supply chain, is the real reason
-native decode had been Windows-only. It is a known, upstream-wontfix Electron
-issue (electron/electron#31397, closed "not planned"), so the workaround has to
-live in the app.
-
-### The Linux load path deep-binds the component past the global symbol scope
-
-`main/native-decode.ts` wraps `process.dlopen` for the single synchronous
-`require` of the component's `.node` (napi's generated `index.js` loads it with
-a plain `require`), OR-ing in the documented maximum-isolation combination
-`RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND`. Deep binding makes the component
-resolve its `av*` symbols from its own dependency tree first — the co-located
-`$ORIGIN` LGPL build — ahead of the global scope, so `avformat_open_input`
-binds to the full LGPL implementation again. This cannot be baked into the
-binary at link time: GNU `ld` emits `-z deepbind ignored`, and there is no
-`DF_1` dynamic flag for deep binding, so it has to be a `dlopen`-time flag. The
-gate is Linux-only for the same reason the collision is Linux-only: the other
-two platforms resolve symbols per module and need no correction.
-
-The caveat, per `dlopen(3)`: `RTLD_DEEPBIND` misbehaves when a library and the
-main program define the same symbol and the library expects the program's copy
-(the textbook case is `malloc`). It is safe here because the component's only
-cross-boundary symbols are `napi_*`, which are absent from `libav*` — deep
-binding falls through to the global scope and still resolves them from the Node
-executable. Adding a symbol the component shares with its host would reopen
-this hazard, and is the thing a future change to the loader must not do
-blindly.
-
-### Runtime library resolution is per-OS, and Linux must bake DT_RPATH not DT_RUNPATH
-
-The component's own runtime-library bundling resolves differently per OS at
-load time. Windows resolves the component's `NEEDED` `*.dll` lazily through a
-process-`PATH` prepend at dlopen (`resolveDllDir` returns `null` off Windows).
-Linux resolves the addon's `NEEDED` `libav*.so` at load time from the ELF
-rpath, so the shared libraries ship *beside* the `.node` and the addon carries
-an rpath of `$ORIGIN` — no runtime environment mutation.
-
-That rpath must be `DT_RPATH`, not the modern `DT_RUNPATH` default. The BtbN
-`.so` carry no rpath of their own, and `RUNPATH` is consulted only for an
-object's *direct* `NEEDED` — not for transitive dependencies (`libavcodec` →
-`libswresample`, `libavdevice` → `libavfilter`), which would then fail to
-resolve. An ancestor's `DT_RPATH` *is* searched across the whole dependency
-subtree, so the addon links with `--disable-new-dtags` (which emits `RPATH`)
-and `-rpath,$ORIGIN`. The build then co-locates the `*.so*` beside the freshly
-built `.node` so `$ORIGIN` resolves in dev exactly as it will when packaged,
-preserving the SONAME symlink chain as relative basenames so the `DT_NEEDED`
-middle link survives relocation. libclang becomes a build prerequisite on Linux
-(bindgen in `ffmpeg-sys-next`). Packaging the Linux `.so*` into the shipped app
-(the `files` glob plus `asarUnpack`, with the LGPL manifest carried for §6) is
-the one piece the deep-bind loader does not already cover, and is now landed:
-`electron-builder.yml` whitelists and asar-unpacks the addon's `*.so*` beside
-its `.node`, ships the LGPL `LICENSE.txt` + `manifest.json` as
-`resources/native-decode/`, and an `afterPack` hook re-asserts the manifest's
-LGPL banner at pack time so a GPL build can never ship.
-
-## References
-
-- ADR 0021 — color converges at ingest; the working space is the output
-  space (the chokepoint every decode lane, native or WebCodecs, still feeds
-  into unchanged).
-- ADR 0028 — Decode Route persisted as a folded enum (the disk layer this
-  overlay reads and never writes).
-- ADR 0029 — native software decode ships bytes, not a shared texture (the
-  transport and single-color-model precedent the native software lane still
-  follows; its toggle is replaced by the decode-engine setting's `auto`).
-- [`CONTEXT.md`](../../CONTEXT.md) — Decode engine, Capability cache, Decode
-  Route, Session bridge.
-- [`docs/preview.md`](../preview.md#decode-engine) — the resolution flow and
-  the Standard engine's internals as consumed by preview.
-- [`docs/notes/linux-native-decode-spike.md`](../notes/linux-native-decode-spike.md)
-  — the Linux enablement spike this amendment condenses (measured environment,
-  the `RTLD_DEEPBIND` fix and its caveat, the full verification list, and the
-  packaging still deferred).
-- [electron/electron#31397](https://github.com/electron/electron/issues/31397)
-  — the upstream "works in Node, `Protocol not found` in Electron" report,
-  closed "not planned"; why the deep-bind workaround has to live in the app.
+Rejected: persisting a "last known good decoder" (stale, machine-bound);
+folding native decode into the core addon behind a compile-time feature (a
+missing DLL at run time would take down jobs, export and MCP); treating the
+addon split as the licensing separation.
