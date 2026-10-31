@@ -6,9 +6,32 @@
 // plus the three refusals with a shape of their own: per-tool ripple remedies,
 // overlap options that would actually succeed, and the two structured messages
 // the descriptions promise.
-import { describe, it, expect } from 'vitest'
-import { mapCommandError } from '../mcp-commands'
+//
+// The second half sweeps the WHOLE catalog through `handleCallTool` (TS, Motif,
+// export, render and the Rust snapshot), with every seam below the MCP layer
+// failing in the raw words it really uses — Electron's IPC wrapper, errno
+// text, admission JSON. Every refusal must come back in the error model's
+// shape, and no result text may carry those words or name an event no MCP
+// client receives.
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { MCP_TOOL_DEFS, mapCommandError } from '../mcp-commands'
 import type { CommandError } from '../errors'
+import { handleCallTool } from '../../mcp/server'
+import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
+import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
+import { EXPORT_TOOL_DEFS } from '../../mcp/exportTools'
+import { ExportJobError, ExportJobs } from '../../exportJobs'
+import { AgentActivityService } from '../../agent/activity'
+import { createActor } from '../actor'
+import { createMediaImporter } from '../mediaImport'
+import { uuidV7Gen } from '../ids'
+import { blankProject, rootComposition } from '../model'
+import { root } from './fixtures/project'
+
+vi.mock('../../motif/capture.js', () => ({ captureMotifFrameB64: async () => { throw new Error("Error invoking remote method 'motif:capture': Error: capture failed") } }))
 
 const L1 = '00000000-0000-7000-8000-000000000001'
 const L2 = '00000000-0000-7000-8000-000000000002'
@@ -69,6 +92,9 @@ const EVERY_VARIANT: CommandError[] = [
   { error: 'EffectKindNotApplicable', kind: 'audio.denoise', layer_kind: 'Text' },
   { error: 'AudioEffectParamStatic', effect: X1, param: 'strength' },
   { error: 'FpsLockedByContent', current: { num: 30, den: 1 }, requested: { num: 25, den: 1 }, layer_count: 3, locked_by: 'current' },
+  { error: 'RetimeRejected', reason: { kind: 'Collision', layer_id: L1, blocking_layer_id: L2, requested_duration: { num: 9, den: 1 }, maximum_duration_us: 4_000_000, minimum_rate: { num: 3, den: 2 } } },
+  { error: 'RetimeRejected', reason: { kind: 'Locked', layer_id: L1 } },
+  { error: 'RetimeRejected', reason: { kind: 'Transition', transition_id: X1 } },
   { error: 'InvalidArgument', field: 'pad_us', detail: 'must be >= 0' },
   { error: 'Backend', detail: 'ffprobe exited 1' },
 ]
@@ -92,6 +118,15 @@ describe('every CommandError variant maps to prose that names its ids', () => {
       if (e.error === 'ValidationFailed') {
         for (const [k, v] of Object.entries(e.detail)) if (k !== 'rule' && typeof v === 'string') expect(out.message).toContain(v)
       }
+      if (e.error === 'RetimeRejected') {
+        for (const v of Object.values(e.reason)) if (typeof v === 'string' && v !== e.reason.kind) expect(out.message).toContain(v)
+        expect(out.message).not.toContain('"kind"')
+      }
+      // Every arm names its variant (a rule's own name for the enriched
+      // ValidationFailed rules), whether or not it wrote other data.
+      const variant = (out.data as { error?: unknown } | undefined)?.error
+      expect(typeof variant, e.error).toBe('string')
+      if (e.error !== 'ValidationFailed') expect(variant).toBe(e.error)
     })
   }
 
@@ -166,11 +201,20 @@ describe('LayerOverlap options are validated against the geometry', () => {
 })
 
 describe('the messages the descriptions promise', () => {
-  it('HistoryLocked carries the reason and the way out', () => {
+  it('HistoryLocked carries the reason and says wait or ask the user — never unlock another session', () => {
     const out = mapCommandError({ error: 'HistoryLocked', reason: 'rough cut in progress' })
+    expect(out.code).toBe('invalid_request')
     expect(out.message).toContain('rough cut in progress')
-    expect(out.message).toContain('set_history_lock { locked: false }')
-    expect(out.data).toMatchObject({ reason: 'rough cut in progress' })
+    expect(out.message).toContain('ask the user')
+    expect(out.message).not.toContain('set_history_lock')
+    expect(out.data).toMatchObject({ error: 'HistoryLocked', reason: 'rough cut in progress', options: [{ action: 'wait_for_session_end' }, { action: 'ask_user' }] })
+  })
+
+  it('RetimeRejected says one sentence per reason, and a collision points at the blocker', () => {
+    const out = mapCommandError({ error: 'RetimeRejected', reason: { kind: 'Collision', layer_id: L1, blocking_layer_id: L2, requested_duration: { num: 9, den: 1 }, maximum_duration_us: 4_000_000, minimum_rate: { num: 3, den: 2 } } })
+    expect(out.message).toContain(`move_layer or shift_layers ${L2}`)
+    expect(out.message).toContain('at most 4000000 µs fits')
+    expect(out.message).toContain('3/2')
   })
 
   it('FpsLockedByContent carries current, requested, layer_count and locked_by, and says which scope blocked', () => {
@@ -189,5 +233,172 @@ describe('the messages the descriptions promise', () => {
     const inUse = mapCommandError({ error: 'MediaInUse', media: X1, referenced_by: [L1, L2] })
     expect(inUse.message).toContain('2 layer(s)')
     expect(inUse.message).toContain('force: true')
+  })
+})
+
+// ── The catalog-wide sweep ───────────────────────────────────────────────────
+
+const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
+const CATALOG = mergeMcpCatalog(JSON.parse(RUST_CATALOG).tools, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS])
+const NOWHERE = '00000000-0000-7000-8000-00000000dead'
+/** The words no result text may carry. */
+const FORBIDDEN: ReadonlyArray<[string, RegExp]> = [
+  ['an IPC wrapper', /Error invoking remote method/],
+  ['an errno prefix', /\bE[A-Z]{3,}\b:/],
+  ['an event no MCP client receives', /media:job_complete/],
+]
+const CODES = new Set(['invalid_params', 'invalid_request', 'internal', 'cancelled'])
+const IPC_ENOENT = "Error invoking remote method 'backend:invoke': Error: ENOENT: no such file or directory, open '/nowhere/missing.bin'"
+const ADMISSION = `Error invoking remote method 'resources:plan-export': Error: resource-capacity-exceeded: {"availableMiB":372,"kind":"blocked","reason":"busy","requestedMiB":414,"revision":3,"workMiB":512}`
+
+/** A host whose every seam below MCP fails in its real raw words. */
+function rawHost() {
+  const idGen = uuidV7Gen()
+  const initial = blankProject(idGen, 'sweep')
+  rootComposition(initial).duration_us = 1_000_000
+  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+  const raw = () => { throw new Error(IPC_ENOENT) }
+  const compute = new Proxy({}, { get: () => async () => raw() })
+  const hybridDeps = {
+    actor, compute, enqueueDerivatives: async () => {}, enqueueWorkspaceCopy: async () => {},
+    workspaceDir: () => null, readFile: () => raw(), statPath: () => ({ kind: 'file' as const, readable: true }),
+    snapshotComposition: () => root(actor.snapshot()),
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'weftcut-vocab-'))
+  const host: Record<string, unknown> = {
+    actor, hybridDeps, mediaImporter: createMediaImporter(hybridDeps as never),
+    mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson),
+    motifTool: raw,
+    handleInvoke: async (channel: string) => { if (channel === 'export_settings_get') return null; return raw() },
+    openedProject: () => ({ dir }),
+    projects: { shuttingDown: () => false, open: async () => raw(), create: async () => raw() },
+    projectStatus: () => ({ project: null, recent_projects: [], default_parent_folder: dir }),
+    agent: new AgentActivityService(actor, () => {}),
+    start: () => {}, stop: () => {},
+  }
+  // Only the output preparation fails, so a start_export is admitted and its
+  // job fails with the raw text; cleanup succeeds.
+  host.exportJobs = new ExportJobs({ host: () => host as never, send: () => {}, native: async (channel) => channel === 'export_prepare_output' ? raw() : null })
+  return host
+}
+function rawBackend() {
+  const envelope = JSON.stringify({ ok: false, error: { code: 'internal', message: IPC_ENOENT } })
+  return {
+    mcpCallTool: async () => envelope,
+    mcpReadResource: async () => envelope,
+    mcpCatalog: async () => RUST_CATALOG,
+    mcpListPrompts: async () => '[]',
+    mcpGetPrompt: async () => envelope,
+  } as never
+}
+
+/** The smallest arguments the advertised schema accepts: every required field,
+ *  each a value of its type (ids name nothing), so each call gets past the
+ *  argument gate and into its route. */
+function dummy(schema: Record<string, unknown> | undefined): unknown {
+  if (!schema) return NOWHERE
+  if ('const' in schema) return schema.const
+  if (Array.isArray(schema.enum)) return schema.enum[0]
+  const alt = (schema.oneOf ?? schema.anyOf) as Array<Record<string, unknown>> | undefined
+  if (alt) return dummy(alt[0])
+  const t = Array.isArray(schema.type) ? (schema.type as string[]).find((x) => x !== 'null') : schema.type
+  switch (t) {
+    case 'integer': case 'number': return Math.max(1, (schema.minimum as number | undefined) ?? 1)
+    case 'boolean': return false
+    case 'array': return Array.from({ length: Math.max(1, (schema.minItems as number | undefined) ?? 1) }, () => dummy(schema.items as Record<string, unknown> | undefined))
+    case 'object': {
+      const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>
+      return Object.fromEntries(((schema.required ?? []) as string[]).map((k) => [k, dummy(props[k])]))
+    }
+    default: return NOWHERE
+  }
+}
+
+type Block = { type: string; text?: string }
+type Answer = { isError?: boolean; content?: Block[]; structuredContent?: Record<string, unknown> }
+
+function assertInModel(tool: string, args: Record<string, unknown>, r: Answer) {
+  const label = `${tool} ${JSON.stringify(args)}`
+  for (const b of r.content ?? []) {
+    if (b.type !== 'text') continue
+    for (const [what, re] of FORBIDDEN) expect(b.text, `${label}: ${what}`).not.toMatch(re)
+  }
+  if (!r.isError) return
+  const sc = r.structuredContent ?? {}
+  expect(CODES.has(sc.code as string), `${label}: code ${String(sc.code)}`).toBe(true)
+  expect(typeof sc.error, `${label}: error variant`).toBe('string')
+  expect(sc.error as string, label).toMatch(/^[A-Z][A-Za-z]+$/)
+  expect(sc.message, label).toBe(r.content?.map((c) => c.text).join('\n'))
+}
+
+describe('mcp.error-vocabulary over the whole catalog', () => {
+  it('the catalog is the merged one: TS, Motif, export, render and Rust tools are all swept', () => {
+    const names = new Set(CATALOG.map((t) => t.name))
+    for (const n of ['undo', 'install_motif', 'export_motif', 'start_export', 'render_frames', 'list_export_presets', 'ping', 'detect_pauses', 'analyze_audio']) expect(names.has(n), n).toBe(true)
+  })
+
+  for (const tool of CATALOG) {
+    it(tool.name, async () => {
+      const schema = tool.inputSchema as Record<string, unknown>
+      for (const args of [{}, dummy(schema) as Record<string, unknown>]) {
+        const host = rawHost()
+        const r = await handleCallTool(rawBackend(), () => host as never, tool.name, args) as Answer
+        assertInModel(tool.name, args, r)
+      }
+    })
+  }
+
+  it('no tool, resource or prompt text in the Rust MCP sources names media:job_complete', () => {
+    const dir = 'native/src/mcp'
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.rs'))) expect(readFileSync(join(dir, f), 'utf8'), f).not.toContain('media:job_complete')
+    expect(RUST_CATALOG).not.toContain('media:job_complete')
+  })
+})
+
+describe('the export, render and Motif file routes refuse in the model', () => {
+  it('export_motif to a missing parent folder is PathNotFound, not bare ENOENT', async () => {
+    const host = rawHost()
+    const target = join(mkdtempSync(join(tmpdir(), 'weftcut-vocab-')), 'no-such-folder', 'card.zip')
+    host.motifTool = () => { writeFileSync(target, 'zip'); return null }
+    const r = await handleCallTool(rawBackend(), () => host as never, 'export_motif', { id: 'card', path: target }) as Answer
+    expect(r.isError).toBe(true)
+    assertInModel('export_motif', {}, r)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'PathNotFound', path: target })
+    expect(r.content![0]!.text).toContain('folder that already exists')
+  })
+
+  it('render_frames during an export is ExportBusy (invalid_request), flat', async () => {
+    const host = rawHost()
+    host.exportJobs = { renderStills: async () => { throw new ExportJobError('export_active', 'An export is running; render frames after it finishes') } }
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { times_us: [0] }) as Answer
+    expect(r.isError).toBe(true)
+    assertInModel('render_frames', {}, r)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'ExportBusy' })
+    expect(r.content![0]!.text).toContain('get_export_status')
+  })
+
+  it('render_frames refused by a busy admission budget is ResourceBusy with the MiB, not IPC text', async () => {
+    const host = rawHost()
+    host.exportJobs = { renderStills: async () => { throw new ExportJobError('render_failed', ADMISSION) } }
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { times_us: [0] }) as Answer
+    expect(r.isError).toBe(true)
+    assertInModel('render_frames', {}, r)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'ResourceBusy', reason: 'busy', requested_mib: 414, available_mib: 372, budget_mib: 512 })
+    expect(r.content![0]!.text).toContain('414 MiB')
+  })
+
+  it('a failed export job reports its cause without the IPC wrapper', async () => {
+    const host = rawHost()
+    const r = await handleCallTool(rawBackend(), () => host as never, 'start_export', {}) as Answer
+    expect(r.isError).toBeFalsy()
+    assertInModel('start_export', {}, r)
+    expect(r.structuredContent).toMatchObject({ state: 'failed' })
+    expect((r.structuredContent!.error as { message: string }).message).toContain('/nowhere/missing.bin')
+  })
+
+  it('an unknown export argument names the key and the tool that takes it', async () => {
+    const r = await handleCallTool(rawBackend(), () => rawHost() as never, 'update_export_preset', { preset_id: 'p', settings: {}, name: 'x' }) as Answer
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'name' })
+    expect(r.content![0]!.text).toContain('rename_export_preset takes name')
   })
 })

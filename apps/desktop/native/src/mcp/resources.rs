@@ -473,13 +473,15 @@ async fn serve_thumbnail(
     let path = b.cache.thumbnail(&media.file_hash_blake3, MID);
     crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
-        return Err(McpToolError::resource_not_found(
-            format!(
-                "thumbnail not generated yet for media {} — wait for a media:job_complete event with kind=thumbnails, or read media://{}/frame/<t_us> for an on-demand extraction",
-                media.id, media.id,
+        let (message, data) = super::wire::derivative_not_ready(
+            &media.id.to_string(),
+            "thumbnail",
+            &format!(
+                ", or read media://{}/frame/<t_us> for an on-demand extraction",
+                media.id
             ),
-            None,
-        ));
+        );
+        return Err(McpToolError::resource_not_found(message, Some(data)));
     }
     blob_response(uri, &path, IMAGE_JPEG).await
 }
@@ -506,13 +508,9 @@ async fn serve_waveform(
     let path = b.cache.waveform(&media.file_hash_blake3);
     crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
-        return Err(McpToolError::resource_not_found(
-            format!(
-                "waveform not generated yet for media {} — wait for a media:job_complete event with kind=waveform",
-                media.id,
-            ),
-            None,
-        ));
+        let (message, data) =
+            super::wire::derivative_not_ready(&media.id.to_string(), "waveform", "");
+        return Err(McpToolError::resource_not_found(message, Some(data)));
     }
     blob_response(uri, &path, APP_OCTET).await
 }

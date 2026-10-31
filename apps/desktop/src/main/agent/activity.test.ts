@@ -31,7 +31,7 @@ describe('agent work sessions', () => {
     expect(again.id).toBe(first.id)
     expect(actor.listCheckpoints()).toHaveLength(1)
     expect(send.mock.calls.filter(([event]) => event === AGENT_VIEW_EVENT)).toHaveLength(1)
-    await expect(run('two', () => service.begin('Other job'))).rejects.toThrow('AgentSessionBusy')
+    await expect(run('two', () => service.begin('Other job'))).rejects.toMatchObject({ variant: 'AgentSessionBusy', code: 'invalid_request' })
     expect(service.snapshot().session?.id).toBe(first.id)
     expect(service.snapshot().activities.at(-1)?.session_id).toBeNull()
   })
@@ -53,7 +53,7 @@ describe('agent work sessions', () => {
     const { service, actor, run } = setup()
     await run('one', () => { service.begin('Edit'); service.lock('one') })
     await run('two', () => service.lock('two'))
-    await expect(run('two', () => service.end('agent'))).rejects.toThrow('OwnerMismatch')
+    await expect(run('two', () => service.end('agent'))).rejects.toMatchObject({ variant: 'AgentSessionOwnerMismatch', code: 'invalid_request' })
     // 'two' is still connected, so ending 'one's session leaves its lock alone.
     service.end('user')
     expect(service.snapshot().session).toBeNull()

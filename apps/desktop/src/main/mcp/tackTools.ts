@@ -8,6 +8,7 @@ import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import { mcpDef, McpArgError } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { toolErrorResult } from './toolResult.js'
+import { resourceNotFound } from '../state/resource-views.js'
 import { TackError, type TackInput, type TackPatch, type TackStore } from '../agent/tacks.js'
 import type { TackView } from '../../shared/agent-activity.js'
 
@@ -103,12 +104,6 @@ export function readTacksView(store: TackStore, compositionId: string | null): S
 
 const TACKS_URI = 'project://tacks'
 
-/** The not-found the other `project://` reads throw (`resource-views.ts`). */
-function resourceNotFound(message: string): never {
-  const e = new Error(message) as Error & { code?: number }
-  e.code = -32601
-  throw e
-}
 
 /** Whether `uri` names the tacks resource (with or without its query). */
 export function isTacksUri(uri: string): boolean {

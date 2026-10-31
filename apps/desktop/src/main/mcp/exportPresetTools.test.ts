@@ -84,7 +84,7 @@ describe('MCP export preset library without an open project', () => {
       ['create_export_preset', { name: 'x'.repeat(41) }, 'invalid_params'],
       ['create_export_preset', { name: ' ' }, 'invalid_params'],
       ['create_export_preset', { name: 'x', base_preset_id: null }, 'invalid_params'],
-      ['create_export_preset', { name: 'x', base_preset_id: 'missing' }, 'not_found'],
+      ['create_export_preset', { name: 'x', base_preset_id: 'missing' }, 'ExportPresetNotFound'],
       ['create_export_preset', { name: 'x', settings: { output_path: '/tmp/out' } }, 'invalid_params'],
       ['create_export_preset', { name: 'x', settings: { encoder_engine: 'native' } }, 'invalid_params'],
       ['create_export_preset', { name: 'x', settings: { audio: { sampleRate: 48_000 } } }, 'invalid_params'],
@@ -96,16 +96,30 @@ describe('MCP export preset library without an open project', () => {
       ['update_export_preset', { preset_id: 'builtin:hd', settings: {} }, 'invalid_params'],
       ['rename_export_preset', { preset_id: 'builtin:hd', name: 'x' }, 'invalid_params'],
       ['delete_export_preset', { preset_id: 'builtin:hd' }, 'invalid_params'],
-      ['set_default_export_preset', { preset_id: 'missing' }, 'not_found'],
-      ['delete_export_preset', { preset_id: 'missing' }, 'not_found'],
+      ['set_default_export_preset', { preset_id: 'missing' }, 'ExportPresetNotFound'],
+      ['delete_export_preset', { preset_id: 'missing' }, 'ExportPresetNotFound'],
       ['set_default_export_preset', { preset_id: 3 }, 'invalid_params'],
       ['list_export_presets', { extra: true }, 'invalid_params'],
     ];
-    for (const [name, args, code] of cases) {
+    // The last column is the variant for a missing preset, the code otherwise;
+    // every refusal is in the error model's flat shape.
+    for (const [name, args, expected] of cases) {
       const result = await s.call(name, args);
       expect(result.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
-      expect(result.structuredContent.error?.code ?? result.structuredContent.code).toBe(code);
+      expect(typeof result.structuredContent.error, name).toBe('string');
+      if (expected === 'ExportPresetNotFound') expect(result.structuredContent).toMatchObject({ code: 'invalid_params', error: expected });
+      else expect(result.structuredContent.code).toBe(expected);
       expect([...s.files]).toEqual(before);
     }
+  });
+
+  it('an argument the tool does not take is named, with the export tool that takes it', async () => {
+    const s = setup();
+    const result = await s.call('update_export_preset', { preset_id: 'p', name: 'New name' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('update_export_preset does not take name');
+    expect(result.content[0].text).toContain('rename_export_preset');
+    expect(result.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'name' });
+    expect(result.structuredContent.options).toContainEqual({ action: 'call', tool: 'rename_export_preset', field: 'name' });
   });
 });

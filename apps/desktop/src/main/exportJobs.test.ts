@@ -171,7 +171,7 @@ it('uses the personal default for MCP options while keeping saved project settin
   expect(await jobs.options(preset.id)).toMatchObject({ settings: { custom_bitrate: 7_000_000, hw_accel: 'software', decode_engine: 'ffmpeg' } });
   expect(await jobs.options('builtin:hd')).toMatchObject({ settings: { resolution_height: 720, custom_bitrate: 5_000_000 } });
   expect(saved).toMatchObject({ customBitrate: 3_000_000 });
-  await expect(jobs.options('missing')).rejects.toMatchObject({ code: 'not_found' });
+  await expect(jobs.options('missing')).rejects.toMatchObject({ code: 'preset_not_found' });
   await expect(jobs.options(null)).rejects.toMatchObject({ code: 'invalid_params' });
 });
 
@@ -179,7 +179,7 @@ it('snapshots a selected preset before awaits and replays the job after that pre
   const preset = { id: 'personal', name: 'Review', version: 1 as const, values: exportPresetValues(mergeSettings({ quality: 'custom', customBitrate: 7_000_000 })) };
   const prefs: ExportPresetPreferences = { export_presets: [preset] };
   const s = await setup(() => prefs); s.ready();
-  await expect(s.jobs.start({ preset_id: 'missing' })).rejects.toMatchObject({ code: 'not_found' });
+  await expect(s.jobs.start({ preset_id: 'missing' })).rejects.toMatchObject({ code: 'preset_not_found' });
   await expect(s.jobs.start({ preset_id: null })).rejects.toMatchObject({ code: 'invalid_params' });
   expect(s.jobs.isActive()).toBe(false);
   expect(s.native).not.toHaveBeenCalled();

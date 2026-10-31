@@ -66,6 +66,21 @@ impl McpToolError {
     }
 }
 
+/// A derivative (`waveform`, `thumbnail`) the import's background jobs have
+/// not written yet: the sentence and the typed `DerivativeNotReady` data every
+/// such refusal carries. The remedy is a retry, because no MCP session
+/// receives the job events (`media:job_*` reach the renderer only). The
+/// sentence opens with "<derivative> not generated yet", which the renderer
+/// matches on.
+pub fn derivative_not_ready(media_id: &str, derivative: &str, extra: &str) -> (String, Value) {
+    (
+        format!(
+            "{derivative} not generated yet for media {media_id} — the import's background jobs are still generating it; retry in a few seconds{extra}"
+        ),
+        serde_json::json!({ "error": "DerivativeNotReady", "media_id": media_id, "derivative": derivative }),
+    )
+}
+
 impl std::fmt::Display for McpToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)

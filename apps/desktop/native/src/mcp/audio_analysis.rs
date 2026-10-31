@@ -124,7 +124,8 @@ pub(super) async fn analyze_audio(
         .filter(|p| crate::cache::cached_ok(p))
         .unwrap_or_else(|| b.cache.waveform(&media.file_hash_blake3));
     if !crate::cache::cached_ok(&path) {
-        return Err(McpToolError::invalid_request(format!("waveform not generated yet for media {id} — wait for a media:job_complete event with kind=waveform and retry"), None));
+        let (message, data) = super::wire::derivative_not_ready(&id.to_string(), "waveform", "");
+        return Err(McpToolError::invalid_request(message, Some(data)));
     }
     crate::cache::touch_if_stale(&path);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Analysis> {

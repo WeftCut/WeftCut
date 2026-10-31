@@ -69,6 +69,8 @@ describe('serveProjectResource', () => {
   })
   it('throws not-found for an absent layer id', () => {
     expect(() => serveProjectResource('project://layers/gone', mkActor())).toThrow(/not found/)
+    // MCP's resource-not-found, not JSON-RPC "method not found" (-32601).
+    try { serveProjectResource('project://layers/gone', mkActor()) } catch (e) { expect((e as { code?: number }).code).toBe(-32002) }
   })
   it('returns null for the Rust-compute resources', () => {
     const actor = mkActor()

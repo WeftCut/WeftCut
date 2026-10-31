@@ -187,12 +187,9 @@ pub(super) async fn detect_pauses(
             let raw = b.cache.waveform(&media.file_hash_blake3);
             crate::cache::touch_if_stale(&raw);
             if !cached_ok(&raw) {
-                return Err(McpToolError::invalid_request(
-                    format!(
-                        "waveform not generated yet for media {media_id} — wait for a media:job_complete event with kind=waveform and retry",
-                    ),
-                    None,
-                ));
+                let (message, data) =
+                    super::wire::derivative_not_ready(&media_id.to_string(), "waveform", "");
+                return Err(McpToolError::invalid_request(message, Some(data)));
             }
             (raw, PeaksSource::Raw)
         }

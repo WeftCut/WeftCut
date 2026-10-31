@@ -104,15 +104,17 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   and the agent re-reads and retries.
 - `set_history_lock` is the cooperative pen: while held, every revert path
   (`undo`, `redo`, `jump_to`, `restore_checkpoint`) from any source fails with
-  `HistoryLocked`. It gates reverting only; edits still commit and record
+  `HistoryLocked` (`invalid_request`), which names the holder and tells any
+  other connection to wait or ask the user; only the holder is offered the
+  unlock. It gates reverting only; edits still commit and record
   (`features.md#undo-stack-scope`).
 - A work session belongs to a connection, and a connection can vanish without
   a `DELETE`. The host closes a session whose client is gone (its standalone
   SSE stream closed for 90 s, or no request for 30 min when it never opened
   one — `REAPER_DEFAULTS` in `main/mcp/index.ts`); the shim terminates its app
   session when stdin closes; `end_agent_session { force: true }` is the
-  takeover. `AgentSessionBusy` / `AgentSessionOwnerMismatch` name the holder,
-  also visible in `project://session`.
+  takeover. `AgentSessionBusy` / `AgentSessionOwnerMismatch`
+  (`invalid_request`) carry the `holder`, also visible in `project://session`.
 - `transcribe_clip` and `describe_clip` are clip-compute jobs (ADR 0121,
   `main/compute/jobs.ts`): a call with a `progressToken` gets
   `notifications/progress` on each phase change and at least every 15 s; an
@@ -204,8 +206,10 @@ Templates (`resources/templates/list`, RFC 6570): `project://layers/{id}`,
 `media://{id}/waveform`, `media://{id}/analysis`, `media://{id}/description`,
 `media://{id}/shot-description`. `?composition=` is the only query a
 `project://` read takes; an unknown key or a scope on a project-wide read is
-refused, never answered with the root. `media://*` reads before derivatives
-exist return `404` pointing at the `media:job_complete` event.
+refused, never answered with the root. A `media://*` read before its
+derivative exists is resource-not-found with `DerivativeNotReady` data
+(`media_id`, `derivative`) and a retry hint; the job events themselves reach
+the renderer only, so no remedy names them.
 
 `read_project { view }` serves the same views as a tool for clients without
 resource support (`READ_PROJECT_VIEWS`, plus `media_thumbnail` / `media_frame`
@@ -643,8 +647,9 @@ A refusal is the tool's **answer**, not a protocol fault: every failure inside
 a tool returns `isError: true` with text that names the cause and the options
 — the one part every client shows the model. `structuredContent` mirrors it:
 `code` (`invalid_params` when the caller can fix it, `invalid_request` when no
-argument can, `internal` otherwise), `message`, `error` (the variant), ids and
-`options[]`. Nothing lives only in `structuredContent`.
+argument can, `internal` otherwise; `cancelled` for a cancelled compute job),
+`message`, `error` (the variant, always present), ids and `options[]`. Nothing
+lives only in `structuredContent`.
 
 ```json
 {
@@ -671,9 +676,26 @@ argument can, `internal` otherwise), `message`, `error` (the variant), ids and
   that retries on `invalid_params` does not loop); the tack store's
   `TackLimit` / `NoCurrentCall` (`invalid_request`) and `TackNotFound` plus
   argument errors (`invalid_params`).
+- One mapper at the boundary: every refusal, from any route (TS, Rust,
+  export, render, Motif, file IO), leaves through `toolErrorResult`
+  (`main/mcp/toolResult.ts`). It rewrites foreign text (`main/mcp/faultText.ts`):
+  Electron's `Error invoking remote method '…'` wrapper is dropped, errno text
+  becomes a sentence with its own variant (`PathNotFound`, `PathExists`,
+  `PermissionDenied`, `DiskFull`, …), and a resource-admission refusal becomes
+  `ResourceBusy` with the MiB it needed and found. A route that names no
+  variant gets the code's (`InvalidArgument`, `InvalidRequest`, `Internal`).
+  Export refusals map the job service's codes onto variants
+  (`exportRefusal`, `main/mcp/exportTools.ts`); an unknown argument names the
+  key and the export tool that takes it. A failed job's `error.message` in an
+  export record is said in the same words.
+- `mcp.error-vocabulary` sweeps every catalog tool (TS, Motif, export and the
+  Rust snapshot) and fails on a refusal outside this shape, and on
+  `Error invoking remote method`, an errno prefix or `media:job_complete` in
+  any result text.
 - JSON-RPC errors are reserved for faults of the request: an unknown tool name
   (`-32602`), a failing `resources/read` or `prompts/get` (no `isError`
-  slot; a gated resource read is `InvalidRequest` with the no-project message).
+  slot; a gated resource read is `InvalidRequest` with the no-project message;
+  a URI that names nothing is MCP's resource-not-found, `-32002`).
 - Arguments are checked before dispatch on every route: TS parsers, or the
   advertised schema for motif and Rust-parsed tools, so all missing fields are
   named at once in the tool's own vocabulary.

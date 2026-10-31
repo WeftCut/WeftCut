@@ -15,6 +15,8 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import { mapCommandError, McpArgError, type McpErrorCode, type McpToolErrorJson } from '../state/mcp-commands.js'
 import type { CommandError } from '../state/errors.js'
+import { describeFault } from './faultText.js'
+import { RESOURCE_NOT_FOUND } from '../state/resource-views.js'
 
 export interface ToolErrorResult {
   isError: true
@@ -44,14 +46,30 @@ export function noProjectOpenResult(): ServerResult {
   return toolErrorResult({ code: 'invalid_request', message: NO_PROJECT_OPEN_MESSAGE, data: { error: 'NoProjectOpen' } })
 }
 
+/** The variant a refusal names when its route gave none: what the code says. */
+const DEFAULT_VARIANT: Record<McpErrorCode, string> = {
+  invalid_params: 'InvalidArgument', invalid_request: 'InvalidRequest', internal: 'Internal', cancelled: 'Cancelled',
+  // `not_found` is the envelope's unknown-tool code and never answers a call
+  // (the route throws `UnknownToolError`); a stray one is a bad argument.
+  not_found: 'InvalidArgument',
+}
+
+/** The one mapper every refusal leaves through, whatever route raised it.
+ *  The text is cleaned of foreign failure text (IPC wrappers, errno, raw
+ *  admission JSON — `faultText.ts`), the code is one of the documented ones,
+ *  and `error` always names the variant: the route's own, the fault family's,
+ *  or the code's default. */
 export function toolErrorResult(err: McpToolErrorJson): ServerResult {
   const data = err.data !== null && typeof err.data === 'object' && !Array.isArray(err.data)
     ? (err.data as Record<string, unknown>)
     : err.data === undefined ? {} : { data: err.data }
+  const fault = describeFault(err.message)
+  const code: McpErrorCode = err.code === 'not_found' ? 'invalid_params' : err.code === 'internal' && fault.code ? fault.code : err.code
+  const error = typeof data.error === 'string' ? data.error : fault.error ?? DEFAULT_VARIANT[code]
   const out: ToolErrorResult = {
     isError: true,
-    content: [{ type: 'text', text: err.message }],
-    structuredContent: { code: err.code, message: err.message, ...data },
+    content: [{ type: 'text', text: fault.message }],
+    structuredContent: { code, message: fault.message, ...fault.data, ...data, error },
   }
   return out as unknown as ServerResult
 }
@@ -94,14 +112,21 @@ export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'intern
   const e = err as { code?: unknown; message?: unknown; data?: unknown } | null
   const raw = typeof e?.message === 'string' ? e.message : String(err)
   if (typeof e?.code === 'number') {
-    const code: McpErrorCode = e.code === -32602 ? 'invalid_params' : e.code === -32600 ? 'invalid_request' : e.code === -32601 ? 'not_found' : 'internal'
+    // A resource the call named does not exist (`RESOURCE_NOT_FOUND`): inside a
+    // tool that is a bad id, the caller's to fix.
+    const code: McpErrorCode = e.code === -32602 || e.code === RESOURCE_NOT_FOUND ? 'invalid_params' : e.code === -32600 ? 'invalid_request' : 'internal'
     return { code, message: raw.replace(SERDE_TAIL, ''), ...(e.data === undefined ? {} : { data: e.data }) }
   }
   const asCommandError = parseCommandError(raw)
   if (asCommandError) return mapCommandError(asCommandError, tool)
   const message = raw.replace(SERDE_TAIL, '')
+  // Errno text and IPC wrappers decide their own code: a missing parent folder
+  // is the caller's, a full disk is not, whatever the route's fallback says.
+  const fault = describeFault(message)
+  if (fault.error) return { code: fault.code ?? fallback, message: fault.message, data: { error: fault.error, ...fault.data } }
   return { code: ARG_FAULT.test(message) ? 'invalid_params' : fallback, message }
 }
+
 
 function parseCommandError(s: string): CommandError | null {
   if (!s.startsWith('{')) return null

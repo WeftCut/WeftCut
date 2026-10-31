@@ -120,7 +120,7 @@ export class ExportJobs {
     if (id === undefined) return undefined;
     if (typeof id !== 'string' || !id.trim()) throw new ExportValidationError('preset_id must be a nonempty string');
     const preset = exportPresetLibrary(this.deps.exportPreferences?.() ?? {}).find(p => p.id === id);
-    if (!preset) throw new ExportJobError('not_found', `Unknown export preset ${id}; call list_export_presets`);
+    if (!preset) throw new ExportJobError('preset_not_found', `Unknown export preset ${id}; list_export_presets lists the ids`);
     return structuredClone(preset);
   }
   private async savedSettings(h: TsActorHost, preset?: ExportPreset) {
@@ -138,7 +138,7 @@ export class ExportJobs {
   }
   status(id?: string): ExportJob | null {
     const j = id ? this.entries.get(id) : this.active;
-    if (id && !j) throw new ExportJobError('not_found', `Unknown export job ${id}`);
+    if (id && !j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     return j ? structuredClone({ ...j.view, can_cancel: !exportTerminal(j.view.state), can_retry: j.view.state === 'awaiting_retry' && !j.cancelling }) : null;
   }
   private notify(j: Entry) { this.deps.send('export:status', this.status(j.view.job_id)); }
@@ -164,7 +164,8 @@ export class ExportJobs {
     this.assertWritable();
     const h = this.host();
     const allowed = ['request_id', 'output_path', 'on_conflict', 'settings', 'range', 'allow_experimental_10bit', 'preset_id'];
-    if (Object.keys(a).some(k => !allowed.includes(k))) throw new ExportValidationError('Unknown export argument');
+    const unknown = Object.keys(a).filter(k => !allowed.includes(k));
+    if (unknown.length) throw new ExportValidationError(`start_export does not take ${unknown.join(', ')}; it takes ${allowed.join(', ')}`);
     if (a.on_conflict !== undefined && !['rename', 'fail', ...(!agent ? ['overwrite'] : [])].includes(String(a.on_conflict))) throw new ExportValidationError('Invalid on_conflict policy');
     if (a.allow_experimental_10bit !== undefined && typeof a.allow_experimental_10bit !== 'boolean') throw new ExportValidationError('allow_experimental_10bit must be boolean');
     if (agent) {
@@ -264,7 +265,7 @@ export class ExportJobs {
   }
   async cancel(id: string) {
     const j = this.entries.get(id);
-    if (!j) throw new ExportJobError('not_found', `Unknown export job ${id}`);
+    if (!j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     if (exportTerminal(j.view.state)) return this.status(id);
     j.cancelling = true; j.view.phase = 'cancelling'; clearTimeout(j.timer); this.notify(j);
     await j.preparation.catch(() => { });

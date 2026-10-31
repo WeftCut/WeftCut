@@ -1,4 +1,6 @@
 import { EXPORT_SETTINGS_SCHEMA } from '../../shared/exportValidation';
+import type { McpErrorCode, McpToolErrorJson } from "../state/mcp-commands";
+import { describeFault } from "./faultText";
 import { exportWire } from '../../shared/exportJob';
 import type { CatalogTool } from './mcpCatalog';
 import { EXPORT_PRESET_NAME_LIMIT } from '../../shared/export-presets';
@@ -68,3 +70,49 @@ export const EXPORT_TOOL_DEFS = [
   definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; poll status until terminal.', schema({ job_id: id }, ['job_id']), false, true),
 ];
 export const EXPORT_TOOLS = new Set(EXPORT_TOOL_DEFS.map(d => d.name));
+
+/** An export-route refusal (`ExportJobError` / `ExportValidationError`) in the
+ *  error model: the job service's own code becomes the variant, the envelope
+ *  code is the documented one, and the text says what to do next. The job
+ *  record's `error.code` (a failed job's cause) keeps the service's codes;
+ *  this table is only for a call that is refused. */
+const EXPORT_REFUSALS: Record<string, { code: McpErrorCode; error: string; next?: string }> = {
+  invalid_params: { code: 'invalid_params', error: 'InvalidArgument' },
+  preset_not_found: { code: 'invalid_params', error: 'ExportPresetNotFound' },
+  job_not_found: { code: 'invalid_params', error: 'ExportJobNotFound', next: 'get_export_status without job_id reports the current job' },
+  request_id_conflict: { code: 'invalid_params', error: 'RequestIdConflict', next: 'reuse a request_id only with the same arguments; send a new one for a new export' },
+  export_busy: { code: 'invalid_request', error: 'ExportBusy', next: 'get_export_status reports its progress; wait for it to finish, or cancel_export it' },
+  export_active: { code: 'invalid_request', error: 'ExportBusy', next: 'get_export_status reports its progress; retry when it is terminal' },
+  renderer_unavailable: { code: 'invalid_request', error: 'RendererUnavailable' },
+  no_project_open: { code: 'invalid_request', error: 'NoProjectOpen' },
+  project_busy: { code: 'invalid_request', error: 'ProjectBusy' },
+  app_closing: { code: 'invalid_request', error: 'AppClosing' },
+  not_retryable: { code: 'invalid_request', error: 'ExportNotRetryable', next: 'get_export_status reports its state; only awaiting_retry can be retried' },
+  render_timeout: { code: 'internal', error: 'RenderTimeout', next: 'retry with fewer times_us or a smaller width' },
+  render_failed: { code: 'internal', error: 'RenderFailed' },
+  export_unavailable: { code: 'internal', error: 'ExportUnavailable' },
+}
+export function exportRefusal(e: { code: string; message: string }): McpToolErrorJson {
+  const known = EXPORT_REFUSALS[e.code]
+  // A render that failed for a reason with its own family (the admission
+  // budget was busy, a file could not be written) is refused as that family.
+  const fault = describeFault(e.message)
+  if (fault.error && (known?.code ?? 'internal') === 'internal') return { code: fault.code ?? 'internal', message: fault.message, data: { error: fault.error, ...fault.data } }
+  const error = known?.error ?? e.code.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('')
+  return { code: known?.code ?? 'internal', message: known?.next ? `${e.message} — ${known.next}` : e.message, data: { error } }
+}
+
+/** The refusal for argument names a tool does not take, naming each one and,
+ *  where another export tool takes it, that tool (`update_export_preset
+ *  { name }` → `rename_export_preset`). */
+export function unknownExportArguments(tool: string, keys: string[]): McpToolErrorJson {
+  const takes = (key: string) => EXPORT_TOOL_DEFS.filter(d => d.name !== tool && key in (d.inputSchema.properties as Record<string, unknown>)).map(d => d.name)
+  const nearest = keys.map(key => ({ key, tools: takes(key) }))
+  const hints = nearest.filter(n => n.tools.length).map(n => `${n.tools.join(' or ')} takes ${n.key}`)
+  const allowed = Object.keys(EXPORT_TOOL_DEFS.find(d => d.name === tool)!.inputSchema.properties as Record<string, unknown>)
+  return {
+    code: 'invalid_params',
+    message: `${tool} does not take ${keys.join(', ')}${hints.length ? ` (${hints.join('; ')})` : ''}; it takes ${allowed.length ? allowed.join(', ') : 'no arguments'}`,
+    data: { error: 'UnknownArgument', field: keys[0], fields: keys, options: nearest.flatMap(n => n.tools.map(t => ({ action: 'call', tool: t, field: n.key }))) },
+  }
+}

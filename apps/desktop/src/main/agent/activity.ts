@@ -9,6 +9,7 @@ import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../sha
 import { appendToolResultField } from '../state/mcp-results'
 import { TackStore, type TackAttribution } from './tacks'
 import { isToolError, toolErrorCode } from '../mcp/toolResult'
+import type { McpErrorCode, McpToolErrorJson } from '../state/mcp-commands'
 
 const CAPACITY = 1000
 /** `committed`: the call reached the actor's commit path at least once. */
@@ -49,6 +50,25 @@ export function activityDetails(value: unknown): unknown {
   return text && Buffer.byteLength(text) > 4096 ? { truncated: true, preview: text.slice(0, 1000) } : result
 }
 
+/** Who holds the work session or the history lock, as a refusal names it. */
+export interface AgentHolder { client: string; connection_id: string; session_id: string | null; reason: string | null; started_at: string | null }
+
+/** A refusal of the agent service, typed: the variant, the envelope code (an
+ *  argument cannot fix a busy session, so that is `invalid_request`) and the
+ *  holder an agent needs to decide whether to wait or take over. */
+export class AgentServiceError extends Error {
+  constructor(readonly variant: 'AgentSessionBusy' | 'AgentSessionOwnerMismatch' | 'InvalidArgument' | 'NoMcpConnection', readonly code: McpErrorCode, message: string, readonly holder?: AgentHolder, readonly field?: string) {
+    super(message)
+    this.name = 'AgentServiceError'
+  }
+  toJson(): McpToolErrorJson {
+    const options = this.variant === 'AgentSessionBusy' || this.variant === 'AgentSessionOwnerMismatch'
+      ? [{ action: 'wait_for_session_end' }, { action: 'take_over', tool: 'end_agent_session', force: true }]
+      : undefined
+    return { code: this.code, message: this.message, data: { error: this.variant, ...(this.holder ? { holder: this.holder } : {}), ...(this.field ? { field: this.field } : {}), ...(options ? { options } : {}) } }
+  }
+}
+
 /** One project-open instance. AsyncLocalStorage preserves attribution through
  * native-compute awaits without observing another request's commits. */
 export class AgentActivityService {
@@ -59,7 +79,7 @@ export class AgentActivityService {
   private sessions: AgentWorkSession[] = []
   private active: AgentWorkSession | null = null
   private evicted = 0
-  private lockOwner: { connection: string; session: string | null } | null = null
+  private lockOwner: { connection: string; session: string | null; client: string; reason: string; at: string } | null = null
   private scheduled = false
   private dirty = new Set<string>()
   private removed: string[] = []
@@ -235,14 +255,14 @@ export class AgentActivityService {
 
   begin(reason: string): AgentWorkSession {
     const ctx = this.context.getStore()
-    if (!ctx || ctx.workspace !== this.workspace) throw new Error('Agent session requires a current MCP connection')
+    if (!ctx || ctx.workspace !== this.workspace) throw new AgentServiceError('NoMcpConnection', 'internal', 'An agent work session needs a current MCP connection, and this call has none')
     const connection = ctx.activity.connection_id!
     if (this.active) {
-      if (this.active.connection_id !== connection) throw new Error(`AgentSessionBusy: ${this.describeOwner()}. Wait for it to finish, or take it over with end_agent_session { force: true } (its owner may be gone — a connection whose stream dropped is closed automatically, but not instantly). read_project { view: "session" } shows the holder.`)
+      if (this.active.connection_id !== connection) throw new AgentServiceError('AgentSessionBusy', 'invalid_request', `Another work session is running: ${this.describeOwner()}. Wait for it to finish, or take it over with end_agent_session { force: true } (its owner may be gone — a connection whose stream dropped is closed automatically, but not instantly). read_project { view: "session" } shows the holder.`, this.holder())
       ctx.activity.session_id = this.active.id
       return this.active
     }
-    if (!reason.trim()) throw new Error('Agent session reason must be non-empty')
+    if (!reason.trim()) throw new AgentServiceError('InvalidArgument', 'invalid_params', 'reason must be non-empty: say in a few words what the session is for', undefined, 'reason')
     const checkpoint = this.actor.checkpoint(`Pre-agent: ${reason.trim()}`, { kind: 'Agent', client: ctx.activity.client })
     this.actor.pinReviewBaseline(checkpoint)
     const session: AgentWorkSession = {
@@ -256,6 +276,20 @@ export class AgentActivityService {
     this.publish()
     this.send(AGENT_VIEW_EVENT, { workspace_id: this.workspace, session_id: session.id })
     return session
+  }
+
+  /** The active session's holder, for the two refusals' data. */
+  private holder(): AgentHolder {
+    const s = this.active!
+    return { client: s.client, connection_id: s.connection_id, session_id: s.id, reason: s.reason, started_at: s.started_at }
+  }
+
+  /** Who took the history lock, or null when it is not locked (or the lock
+   *  predates this project opening). `HistoryLocked` names it. */
+  lockHolder(): AgentHolder | null {
+    const o = this.lockOwner
+    if (!o || this.actor.historyStatus().lock_reason === undefined) return null
+    return { client: o.client, connection_id: o.connection, session_id: o.session, reason: o.reason, started_at: o.at }
   }
 
   /** Who holds the session, for the two refusals: the client, a short
@@ -284,7 +318,7 @@ export class AgentActivityService {
     const caller = connection ?? this.context.getStore()?.activity.connection_id
     if (reason !== 'user' && reason !== 'forced' && caller !== this.active.connection_id) {
       if (reason === 'disconnected') return
-      throw new Error(`AgentSessionOwnerMismatch: ${this.describeOwner()}; only that connection can end it. Pass end_agent_session { force: true } to take it over when its owner is gone.`)
+      throw new AgentServiceError('AgentSessionOwnerMismatch', 'invalid_request', `This work session belongs to another connection: ${this.describeOwner()}; only that connection can end it. Pass end_agent_session { force: true } to take it over when its owner is gone.`, this.holder())
     }
     const ended = this.active
     ended.ended_at = new Date().toISOString()
@@ -310,7 +344,7 @@ export class AgentActivityService {
   lock(reason: string): void {
     const ctx = this.context.getStore()
     this.actor.lockHistory(reason)
-    this.lockOwner = ctx ? { connection: ctx.activity.connection_id!, session: ctx.activity.session_id } : null
+    this.lockOwner = ctx ? { connection: ctx.activity.connection_id!, session: ctx.activity.session_id, client: ctx.activity.client, reason, at: new Date().toISOString() } : null
     this.publish()
   }
 

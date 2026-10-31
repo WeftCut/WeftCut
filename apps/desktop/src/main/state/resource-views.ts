@@ -26,11 +26,16 @@ export function compositionSettings(c: Composition): Record<string, unknown> {
     color_space: c.color_space, background: c.background }
 }
 
-/** Throw the SDK-shaped not-found error (code -32601), mirroring Rust's
- *  `McpToolError::resource_not_found`. */
-function resourceNotFound(message: string): never {
+/** MCP's JSON-RPC code for a `resources/read` of a URI that names nothing
+ *  (the spec's "Resource not found"); `-32601` would say the METHOD is
+ *  unknown. Rust's `McpToolError::resource_not_found` envelope maps to it too
+ *  (`server.ts` CODE_MAP). */
+export const RESOURCE_NOT_FOUND = -32002
+
+/** Throw the SDK-shaped resource-not-found error. */
+export function resourceNotFound(message: string): never {
   const e = new Error(message) as Error & { code?: number }
-  e.code = -32601
+  e.code = RESOURCE_NOT_FOUND
   throw e
 }
 

@@ -1,4 +1,5 @@
-import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, exportSettingsSchema } from "./exportTools";
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, exportRefusal, exportSettingsSchema, unknownExportArguments } from "./exportTools";
+import { describeFault } from "./faultText";
 import { beatSamples } from "./frameSamples";
 import { runExportPresetTool } from './exportPresetTools';
 import { ExportJobError } from "../exportJobs";
@@ -29,12 +30,12 @@ import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
-import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
+import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from '../state/resource-views.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { MediaItem } from '../state/model.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
-import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type ToolAnnotations } from '../state/mcp-commands.js'
+import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type McpToolErrorJson, type ToolAnnotations } from '../state/mcp-commands.js'
 import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { mcpActor } from '../state/mcp-actor.js'
@@ -44,6 +45,7 @@ import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
 import { mcpInstructions } from './instructions.js'
+import { AgentServiceError } from '../agent/activity.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
@@ -61,8 +63,11 @@ interface Envelope {
   result?: unknown
   error?: { code: McpErrorCode; message: string; data?: unknown }
 }
+/** Envelope code → JSON-RPC code. `not_found` is Rust's resource-not-found,
+ *  which MCP spells `-32002`; for a TOOL it means an unknown name, and
+ *  `unwrapToolEnvelope` turns that into `UnknownToolError` before this map. */
 const CODE_MAP: Record<string, number> = {
-  invalid_params: -32602, invalid_request: -32600, not_found: -32601, internal: -32603,
+  invalid_params: -32602, invalid_request: -32600, not_found: RESOURCE_NOT_FOUND, internal: -32603,
 }
 
 /** Map a parsed {ok,result|error} envelope to the SDK result, or THROW the
@@ -313,8 +318,8 @@ export async function refuseUnheldSources(tsHost: Pick<TsActorHost, 'sourceFiles
   for (const media of sources as (MediaItem | null | undefined)[]) {
     if (!media) continue
     const state = await tsHost.sourceFiles.settle(media)
-    if (state === 'missing') return toolErrorResult({ code: 'invalid_request', message: `${name}: the source file ${media.path_abs} is missing — import the original file again to restore it` })
-    if (state === 'changed') return toolErrorResult({ code: 'invalid_request', message: `${name}: ${media.path_abs} was changed outside WeftCut and no longer holds this media — import the original file again to restore it, or import the new file as new media` })
+    if (state === 'missing') return toolErrorResult({ code: 'invalid_request', message: `${name}: the source file ${media.path_abs} is missing — import the original file again to restore it`, data: { error: 'SourceMissing', media_id: media.id } })
+    if (state === 'changed') return toolErrorResult({ code: 'invalid_request', message: `${name}: ${media.path_abs} was changed outside WeftCut and no longer holds this media — import the original file again to restore it, or import the new file as new media`, data: { error: 'SourceChanged', media_id: media.id } })
   }
   return null
 }
@@ -355,8 +360,7 @@ export async function handleCallTool(
     return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
-    if (e instanceof ExportValidationError) return toolErrorResult({code:'invalid_params',message:e.message});
-    if (e instanceof ExportJobError) return {isError:true, content:[{type:"text",text:JSON.stringify({error:{code:e.code,message:e.message,data:e.data}})}], structuredContent:{error:{code:e.code,message:e.message,data:e.data}}};
+    if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
     if (e instanceof UnknownToolError) throw e
     // The motif store's failures are the caller's — an unknown draft, an id
     // already installed — so a plain message there is `invalid_params`. A
@@ -394,7 +398,8 @@ async function dispatchTool(
     const definition = EXPORT_TOOL_DEFS.find(d => d.name === name);
     if (!definition) throw new UnknownToolError(name);
     const properties = definition.inputSchema.properties as Record<string,unknown>;
-    if (Object.keys(args).some(key => !(key in properties))) throw new ExportJobError('invalid_params','Unknown export argument');
+    const unknown = Object.keys(args).filter(key => !(key in properties));
+    if (unknown.length) return toolErrorResult(unknownExportArguments(name, unknown));
     if (EXPORT_PRESET_TOOLS.has(name)) {
       if (!tsHost) throw new ExportJobError('export_unavailable', 'Export preset preferences are unavailable');
       const record = await runExportPresetTool(tsHost, name, args);
@@ -419,7 +424,8 @@ async function dispatchTool(
       if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') tsHost.audits.run(snap, snap.root_id, taste)
       ;(record as Record<string, unknown>).audit = tsHost.audits.summary(snap, snap.root_id, taste)
     }
-    return {content:[{type:'text',text:JSON.stringify(record)}],structuredContent:record} as ServerResult;
+    const answer = exportRecordForAgent(record as Record<string, unknown>)
+    return {content:[{type:'text',text:JSON.stringify(answer)}],structuredContent:answer} as ServerResult;
   }
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
     try {
@@ -470,7 +476,8 @@ async function dispatchTool(
       }
       return toolRecord(result) as ServerResult
     } catch (e) {
-      return toolErrorResult({ code: 'invalid_params', message: e instanceof Error ? e.message : String(e) })
+      if (e instanceof AgentServiceError) return toolErrorResult(e.toJson())
+      return toolErrorResult(thrownToToolError(e, 'internal', name))
     }
   }
   // Tacks are runtime review state beside the agent activity, not project
@@ -519,9 +526,16 @@ async function dispatchTool(
       // The resource reader answers a missing id with the resource vocabulary
       // (`not_found`, which over tools means "no such tool"); as a tool call it
       // is a bad argument, and the reader's own sentence says which.
-      const res = await handleReadResource(backend, () => tsHost, uri, getVlm).catch((e: unknown) => {
-        throw new McpArgError(e instanceof Error ? e.message : String(e), 'id')
-      })
+      // A derivative still being generated is not a bad id: it keeps the
+      // reader's typed `DerivativeNotReady` and its retry hint.
+      let res: ServerResult
+      try { res = await handleReadResource(backend, () => tsHost, uri, getVlm) }
+      catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        const data = (e as { data?: { error?: unknown } } | null)?.data
+        if (data?.error === 'DerivativeNotReady') return toolErrorResult({ code: 'invalid_request', message, data })
+        throw new McpArgError(message, 'id')
+      }
       const first = (res as { contents?: Array<{ blob?: string; text?: string; mimeType?: string }> }).contents?.[0]
       if (first?.blob) return { content: [{ type: 'image', data: first.blob, mimeType: first.mimeType ?? 'image/jpeg' }] } as unknown as ServerResult
       return { content: [{ type: 'text', text: first?.text ?? '' }] } as unknown as ServerResult
@@ -530,7 +544,7 @@ async function dispatchTool(
       const r = tsHost.mcpCall(name, JSON.stringify(args), client)
       if (!r.ok) {
         if (r.error.code === 'not_found') throw new UnknownToolError(name)
-        return toolErrorResult(r.error)
+        return toolErrorResult(historyLockedRefusal(r.error, tsHost))
       }
       return r.result as unknown as ServerResult
     }
@@ -653,6 +667,33 @@ async function dispatchTool(
   const refused = await refuseBadArgs(backend, name, args)
   if (refused) return refused
   return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(args)), name)
+}
+
+/** A job record as an agent reads it: a failed job's `error.message` comes
+ *  from the renderer and may carry IPC or admission text, which is said in
+ *  the error model's words here (`faultText.ts`). The job service and the
+ *  Export panel keep the raw text. */
+function exportRecordForAgent(record: Record<string, unknown>): Record<string, unknown> {
+  const error = record.error as { message?: unknown } | undefined
+  if (!error || typeof error.message !== 'string') return record
+  return { ...record, error: { ...error, message: describeFault(error.message).message } }
+}
+
+/** `HistoryLocked` with its holder, which only the host knows: the activity
+ *  service records which connection took the lock. The caller that holds it is
+ *  told how to clear it; anyone else is told to wait or ask the user, never to
+ *  unlock another session's lock. */
+function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpToolErrorJson {
+  const data = err.data as { error?: unknown; reason?: unknown } | undefined
+  if (data?.error !== 'HistoryLocked' || !tsHost.agent) return err
+  const holder = tsHost.agent.lockHolder()
+  if (!holder) return err
+  const caller = tsHost.agent.currentCall()?.connection_id
+  if (caller === holder.connection_id) {
+    return { ...err, message: `history is locked: ${String(data.reason)}. undo, redo, jump_to and restore_checkpoint are blocked; you hold this lock (connection ${holder.connection_id.slice(0, 8)}…): set_history_lock { locked: false } clears it, and end_agent_session releases it`,
+      data: { ...data, holder, options: [{ action: 'unlock_history', tool: 'set_history_lock', locked: false }] } }
+  }
+  return { ...err, message: `${err.message} — the lock is held by ${holder.client} (connection ${holder.connection_id.slice(0, 8)}…); read_project { view: "session" } shows its work session`, data: { ...data, holder } }
 }
 
 /** `project://session` / `read_project { view: "session" }`: who holds the work

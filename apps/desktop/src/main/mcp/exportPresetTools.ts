@@ -21,7 +21,7 @@ export async function runExportPresetTool(host: TsActorHost, name: string, args:
   const find = (id: unknown): ExportPreset => {
     if (typeof id !== 'string' || !id.trim()) throw new ExportValidationError('preset_id must be a nonempty string');
     const preset = library.find(p => p.id === id);
-    if (!preset) throw new ExportJobError('not_found', `Unknown export preset ${id}; call list_export_presets`);
+    if (!preset) throw new ExportJobError('preset_not_found', `Unknown export preset ${id}; list_export_presets lists the ids`);
     return preset;
   };
   if (name === 'list_export_presets') return { ...exportWire({ presets: library.map(p => record(p, defaultId)),

@@ -147,7 +147,8 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     const backend = fakeBackend(async () => '{"ok":false,"error":{"code":"invalid_params","message":"layer x not found","data":{"layer":"x"}}}')
     const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'ping', {}))
     expect(out.content[0].text).toBe('layer x not found')
-    expect(out.structuredContent).toEqual({ code: 'invalid_params', message: 'layer x not found', layer: 'x' })
+    // A route that names no variant gets the code's own.
+    expect(out.structuredContent).toEqual({ code: 'invalid_params', message: 'layer x not found', layer: 'x', error: 'InvalidArgument' })
   })
 
   it('a clip-compute refusal thrown as an SDK-shaped error maps its code back', async () => {
@@ -209,7 +210,7 @@ describe('the routes with no parser of their own are still gated', () => {
     // JSON-RPC error; a bad id is the caller's argument, and the reader's own
     // sentence says which.
     const backend = fakeBackend()
-    backend.mcpReadResource = async () => { throw Object.assign(new Error(`media ${NOWHERE} not found`), { code: -32601 }) }
+    backend.mcpReadResource = async () => { throw Object.assign(new Error(`media ${NOWHERE} not found`), { code: -32002 }) }
     const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'read_project', { view: 'media_thumbnail', id: NOWHERE }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain(NOWHERE)
@@ -267,12 +268,19 @@ describe('thrownToToolError', () => {
     expect(thrownToToolError(e)).toEqual({ code: 'invalid_params', message: 'layer x not found', data: { layer: 'x' } })
   })
 
-  it('toolErrorResult flattens object data beside code and message, and boxes anything else', () => {
+  it('toolErrorResult flattens object data beside code and message, boxes anything else, and always names a variant', () => {
     expect((toolErrorResult({ code: 'invalid_params', message: 'm', data: { a: 1 } }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'invalid_params', message: 'm', a: 1 })
+      .toEqual({ code: 'invalid_params', message: 'm', a: 1, error: 'InvalidArgument' })
     expect((toolErrorResult({ code: 'internal', message: 'm', data: [1] }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'internal', message: 'm', data: [1] })
-    expect((toolErrorResult({ code: 'internal', message: 'm' }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'internal', message: 'm' })
+      .toEqual({ code: 'internal', message: 'm', data: [1], error: 'Internal' })
+    expect((toolErrorResult({ code: 'invalid_request', message: 'm', data: { error: 'Mine' } }) as { structuredContent: unknown }).structuredContent)
+      .toEqual({ code: 'invalid_request', message: 'm', error: 'Mine' })
+  })
+
+  it('toolErrorResult says IPC and errno text in the model\'s words, and never answers not_found', () => {
+    const r = toolErrorResult({ code: 'internal', message: "Error invoking remote method 'export_begin': Error: ENOSPC: no space left on device, write" }) as { content: Array<{ text: string }>; structuredContent: Record<string, unknown> }
+    expect(r.content[0].text).not.toMatch(/Error invoking remote method|ENOSPC:/)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'DiskFull', errno: 'ENOSPC' })
+    expect((toolErrorResult({ code: 'not_found', message: 'm' }) as { structuredContent: Record<string, unknown> }).structuredContent.code).toBe('invalid_params')
   })
 })

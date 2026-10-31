@@ -841,6 +841,40 @@ const KEYFRAME_PARAM_KEYS = `visual kinds (VideoClip, ImageOverlay, Text, Motif,
  *  whose remedy differs per tool (the ripple family). The structured `data`
  *  mirrors the same facts for clients that forward it. */
 export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJson {
+  const out = commandErrorArm(e, tool)
+  // Every refusal names its variant in `error` (docs/mcp.md § Error model):
+  // an arm that wrote prose only gets the variant here, so no arm can forget it.
+  const data = out.data !== null && typeof out.data === 'object' && !Array.isArray(out.data) ? out.data as Record<string, unknown> : {}
+  if (typeof data.error === 'string') return out
+  const variant = e.error === 'ValidationFailed' ? { error: 'ValidationFailed', rule: e.detail.rule } : { error: e.error }
+  return { ...out, data: { ...variant, ...data } }
+}
+
+/** A `RetimeRejected` reason as the one sentence that names its remedy. */
+function retimeRefusal(r: Record<string, unknown>): string {
+  const rate = (v: unknown) => { const t = v as { num?: number; den?: number } | null; return t && typeof t.num === 'number' ? `${t.num}/${t.den}` : String(v) }
+  switch (r.kind) {
+    case 'EmptyTargets': return 'retime_layers needs at least one layer id in layer_ids'
+    case 'LayerMissing': return `layer ${String(r.layer_id)} not found — project://tracks lists the current layers`
+    case 'Locked': return `layer ${String(r.layer_id)} is locked, or sits on a locked track; unlock it (update_layer { patch: { locked: false } } or set_track_flags) and retry`
+    case 'UnsupportedContent': return `layer ${String(r.layer_id)} has no timed content to retime — only VideoClip, Audio, Motif, Group and animated image layers have a playback rate`
+    case 'NestedTargets': return `layer ${String(r.descendant_id)} sits inside Group ${String(r.ancestor_id)}, which is also selected; retiming the Group already retimes it — drop one of the two from layer_ids`
+    case 'InvalidSnapshot': return `layer ${String(r.layer_id)} has a span or timing the retime planner cannot read; read project://layers/${String(r.layer_id)} and retry, or report it`
+    case 'InvalidTarget': return 'the target is not a usable rate or duration: send { kind: "Rate", value: { num, den } } with a positive reduced rational, or { kind: "Duration", duration_us } with a positive integer'
+    case 'Numeric': return `the rate arithmetic failed (${String(r.reason)}): the requested rate or duration is too extreme to represent exactly — choose a simpler rational rate`
+    case 'DurationTooShort': return `layer ${String(r.layer_id)} would be shorter than one grid step at that rate — choose a slower rate or a longer duration`
+    case 'Transition': return `transition ${String(r.transition_id)} touches a selected layer, and its overlap must stay exactly its duration, which this retime would change — delete_transition it, retime, then add_transition again`
+    case 'Collision': {
+      const fit = typeof r.maximum_duration_us === 'number'
+        ? `; at most ${r.maximum_duration_us} µs fits (a rate of at least ${rate(r.minimum_rate)})`
+        : '; no slower duration fits where it starts'
+      return `layer ${String(r.layer_id)} would grow onto layer ${String(r.blocking_layer_id)} on its track${fit} — move_layer or shift_layers ${String(r.blocking_layer_id)} out of the way first, or retime to a duration that fits`
+    }
+    default: return `retime refused (${Object.entries(r).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')})`
+  }
+}
+
+function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   if (e.error === 'InvalidArgument') return { code: 'invalid_params', message: `${e.field}: ${e.detail}` }
   if (e.error === 'Backend') return { code: 'internal', message: e.detail }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'LayerOverlap') {
@@ -1047,7 +1081,7 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
   switch (e.error) {
     case 'ShiftLinkStraddles':
       return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Name the whole set with shift_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
-    case 'RetimeRejected': return { code: 'invalid_params', message: 'Time remapping was refused: ' + JSON.stringify(e.reason), data: { error: e.error, ...e.reason } }
+    case 'RetimeRejected': return { code: 'invalid_params', message: `${retimeRefusal(e.reason)}. Nothing was changed`, data: { error: e.error, ...e.reason } }
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
     case 'LayerNotFound':
@@ -1089,7 +1123,10 @@ export function mapCommandError(e: CommandError, tool?: string): McpToolErrorJso
     case 'NothingToRedo':
       return { code: 'invalid_params', message: `nothing to redo: the history cursor is at the newest state — a new edit after an undo truncates the redo tail` }
     case 'HistoryLocked':
-      return { code: 'invalid_params', message: `history is locked: ${e.reason}. undo, redo, jump_to and restore_checkpoint are blocked until set_history_lock { locked: false } (any connection may clear it) or the owning work session ends; edits still record`, data: { error: 'HistoryLocked', reason: e.reason, options: [{ action: 'unlock_history', tool: 'set_history_lock', locked: false }] } }
+      // The lock belongs to the work session that took it, so no option here
+      // unlocks it: the MCP host adds the holder, and the unlock only for the
+      // caller that holds it (`server.ts`, `historyLockedRefusal`).
+      return { code: 'invalid_request', message: `history is locked: ${e.reason}. undo, redo, jump_to and restore_checkpoint are blocked while the work session that locked it runs; edits still record. Wait for that session to end, or ask the user (the Agent panel's Unlock clears it)`, data: { error: 'HistoryLocked', reason: e.reason, options: [{ action: 'wait_for_session_end' }, { action: 'ask_user' }] } }
     case 'EmptyKeyframeTrack':
       return { code: 'invalid_params', message: `param '${e.param_key}' on layer ${e.layer} is Keyframed with no keys — a track needs at least one; set_keyframe adds one, clear_keyframes collapses it to Static`, data: { error: 'EmptyKeyframeTrack', layer: e.layer, param_key: e.param_key } }
     case 'UnknownKeyframeParam':

@@ -42,7 +42,8 @@ describe('the work session names its holder and can be taken over', () => {
     expect(began.isError).toBeFalsy()
     const busy = await call('two', 'begin_agent_session', { reason: 'Other work' }) as Res
     expect(busy.isError).toBe(true)
-    expect(text(busy)).toContain('AgentSessionBusy')
+    // Typed: no argument fixes a busy session, and the holder rides as data.
+    expect(busy.structuredContent).toMatchObject({ code: 'invalid_request', error: 'AgentSessionBusy', holder: { client: 'client-one', connection_id: 'one', reason: 'Rough cut' } })
     expect(text(busy)).toContain('client-one')
     expect(text(busy)).toContain('"Rough cut"')
     expect(text(busy)).toContain('end_agent_session { force: true }')
@@ -62,7 +63,7 @@ describe('the work session names its holder and can be taken over', () => {
 
     const mismatch = await call('two', 'end_agent_session') as Res
     expect(mismatch.isError).toBe(true)
-    expect(text(mismatch)).toContain('AgentSessionOwnerMismatch')
+    expect(mismatch.structuredContent).toMatchObject({ code: 'invalid_request', error: 'AgentSessionOwnerMismatch', holder: { client: 'client-one' } })
     expect(text(mismatch)).toContain('client-one')
     expect(agent.snapshot().session?.connection_id).toBe('one')
 
@@ -78,6 +79,24 @@ describe('the work session names its holder and can be taken over', () => {
     const began = await call('two', 'begin_agent_session', { reason: 'Other work' }) as Res
     expect(began.isError).toBeFalsy()
     expect(agent.snapshot().session?.connection_id).toBe('two')
+  })
+
+  it('HistoryLocked names the holder; only the holder is offered the unlock', async () => {
+    const { call } = host()
+    await call('one', 'begin_agent_session', { reason: 'Rough cut' })
+    await call('one', 'add_track', { label: 'x' })
+    await call('one', 'set_history_lock', { locked: true, reason: 'cutting' })
+    const other = await call('two', 'undo') as Res
+    expect(other.isError).toBe(true)
+    expect(other.structuredContent).toMatchObject({ code: 'invalid_request', error: 'HistoryLocked', reason: 'cutting', holder: { client: 'client-one', connection_id: 'one' } })
+    expect(text(other)).toContain('client-one')
+    expect(text(other)).toContain('ask the user')
+    expect(text(other)).not.toContain('set_history_lock')
+    expect(JSON.stringify(other.structuredContent)).not.toContain('unlock_history')
+    const owner = await call('one', 'undo') as Res
+    expect(owner.isError).toBe(true)
+    expect(text(owner)).toContain('set_history_lock { locked: false }')
+    expect(owner.structuredContent?.options).toEqual([{ action: 'unlock_history', tool: 'set_history_lock', locked: false }])
   })
 
   it('force on an idle project is a harmless no-op', async () => {
