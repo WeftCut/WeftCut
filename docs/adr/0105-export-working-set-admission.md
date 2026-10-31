@@ -73,3 +73,10 @@ pressure/target changes, delayed teardown, low-budget Main10 precision and EOS,
 transient occupancy without partial allocation, repeated exports, and mux-only
 recovery. Export timing and image conformance are compared to the pre-change
 baseline; the full test matrix remains required.
+
+Image-load and first-frame notifications schedule repaints only in preview.
+During export, the output-frame driver alone creates decoder handles and
+composites frames. In particular, preloading still images must not start an
+unsolicited t=0 paint that installs a WebCodecs decoder before the admitted
+native decoder for that same source identity. The same ownership applies to
+still-frame exports. Preview retains its coalesced asynchronous repaint behavior.
