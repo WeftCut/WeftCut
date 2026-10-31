@@ -1,2184 +1,1340 @@
 # Features
 
-Behavior contracts for small, self-contained editor features — pieces too
-small for a subsystem doc but with rules worth writing down. Subsystem
-context lives in the linked docs.
+The concrete behavior of each editor capability: what the user sees, the
+rules, and the edge cases. Subsystem mechanics live in the linked docs; the
+record shapes in [data-model.md](data-model.md); the agent surface in
+[mcp.md](mcp.md).
 
 ## Undo-stack scope
 
-What records into the editing undo stack and what doesn't, so non-editing
-operations (project load, media library, canvas setup) never pollute the
-history Ctrl-Z walks. Implemented in the TS state layer: the history stack
-and out-of-band snapshot patching in `apps/desktop/src/main/state/history.ts`;
-per-op record vs unrecorded routing in `state/actor.ts` (tests:
-`history.test.ts`, `actor.test.ts`).
+A state mutation records a `HistoryEntry` iff it changes the timeline
+structure of the loaded project — layers, tracks, markers, transitions, links,
+Groups, role gains, or layers cascade-deleted by a media removal. Everything else
+broadcasts a non-recorded `ChangeEvent`. Unrecorded patches are applied to
+**every** stored snapshot, checkpoint and the review baseline, so no revert
+path undoes them.
+History lives in `apps/desktop/src/main/state/history.ts`; per-op routing in
+`state/actor.ts`.
 
-**Recording rule.** A state mutation records a `HistoryEntry` iff it changes
-the timeline structure of the currently-loaded project — layers, tracks,
-markers, transitions, or layers cascade-deleted by a media removal.
-Everything else broadcasts a non-recorded `ChangeEvent`. The **whole
-composition envelope** is on the non-recording side: size, rate, colour and
-audio-target fields *and* `duration_us` / `duration_pinned`. It is project
-setup, not editing — `set_composition` and `fit_composition_to_layers` never
-add an entry, and Ctrl-Z walks straight past them.
-
-| Op | Recorded? |
+| Actor op | Recorded? |
 |---|---|
-| `add_track`, `delete_track`, `move_track` | yes |
-| `rename_track` | yes — a name is content, and the layer label already records; the two rename surfaces cannot disagree about undo |
-| `update_track_flags` (eye/M/S/lock toggles) | no — patched into every history snapshot; undo never flips a track control |
-| `add_layer`, `update_layer`, `update_layer_params`, `set_layers_enabled`, `move_layer`, `paste_layers`, `split_layer`, `delete_layers` | yes |
-| `move_layers_to_new_track` | yes — **one** entry for the whole raise: the new track, every layer moved onto it, and every source track the raise emptied. Two entries would let one undo return the clips while leaving them on a track that no longer belongs to them |
-| `add_marker`, `update_marker`, `remove_marker` | yes |
-| `add_transition`, `update_transition`, `remove_transition` | yes |
-| `add_media_item` | no |
-| `set_media_workspace_paths`, `set_media_derivatives` | no |
-| `remove_media`, no references / `force=false` | no — mirror import |
-| `remove_media`, `force=true` cascade-delete | yes (layers actually got deleted) |
-| `set_composition`, any field or mix of fields | **no** — setup, not editing. One patch, applied to every snapshot + checkpoint |
-| `fit_composition_to_layers` | no — same fan-out; each snapshot unpins and refits to **its own** high-water mark |
-| Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
-| `replace_state` (open / new project) | **no** — resets `History` to a fresh one-entry stack and clears checkpoints |
-| `undo`, `redo` | cursor-only, no new entry |
-| `jump_to { index }` (history panel: click a row) | cursor-only, no new entry — `undo`/`redo` generalized to an arbitrary stack index, so it records nothing for the same reason and rejects under `set_history_lock` for the same reason |
-| `restore_checkpoint` | yes (deliberate user/agent action) |
-| `create_checkpoint { label }`, `delete_checkpoint { checkpoint_id }` | **no entry and no `project:changed` broadcast** — neither changes project state, so waking autosave would rewrite `project.json` for nothing. Neither is gated on `set_history_lock` either: the lock rejects revert paths, and creating or dropping a checkpoint reverts nothing. A surface showing the checkpoint list must refetch it itself after either — the History panel does |
+| layer, track, marker, transition, link and Group edits; `rename_track`; `set_role_gain` | yes |
+| `move_layers_to_new_track` | yes — **one** entry: the new track, every moved layer and every source track it emptied |
+| `update_track_flags` (eye / M / S / lock), `update_role_flags` | no — undo never flips a track or role control |
+| `add_media_item`, `set_media_workspace_paths`, `set_media_derivatives`, `set_media_hash` | no |
+| `remove_media` with no referencing layers | no — mirror of an import |
+| `remove_media { force: true }` with referencing layers | yes — the cascade is `delete_layers`' delete |
+| `update_project_settings` (incl. `shot_review`, `pause_review`) | no |
+| `set_composition` (any field, incl. `fps`, size, `duration_us`, `duration_pinned`), `fit_composition_to_layers` | **no** — project setup; the patch runs as a transform per snapshot (`History.replaceCompositionEverywhere`), so each snapshot refits/re-snaps against its own content |
+| passive duration shrink on delete / inward trim (unpinned) | rides the edit that caused it |
+| `replace_state` (open / new project) | no — resets history to one entry, drops checkpoints and the lock |
+| `undo`, `redo`, `jump_to { index }` | cursor-only |
+| `restore_checkpoint`, Revert all (review baseline) | yes |
+| `create_checkpoint`, `delete_checkpoint` | no entry and no `project:changed` broadcast; a surface listing checkpoints refetches itself (the History panel does) |
 
-**Why the snags.** Imports are additive — no reference in any older snapshot
-can break, so `add_media_item` patches every snapshot in place. `remove_media`
-lacks that property when layers reference the media, hence the split: the
-no-reference branch behaves like an import; the cascade branch records
-because deleting layers is a real edit. `replace_state` is a wholesale
-project swap — the old history is incoherent against the new `project_id`,
-so the stack and checkpoints reset instead of carrying forward.
+Because canvas changes cannot be undone, Settings → Project → Canvas opens with
+**Lock canvas settings** on; resolution and rate are inert until it is turned off,
+and turning it back on abandons an in-progress size edit.
 
-**Why the composition envelope stopped recording.** `duration_us` and `fps`
-used to record, for two reasons that both turn out to be arguments about the
-*shape of the fan-out*, not about whether it belongs in history:
+**The rate lock is history-scoped.** An `fps` change lands in every snapshot, so
+it is refused (`FpsLockedByContent`, `locked_by: current | history`) if the live
+timeline *or any snapshot or checkpoint* holds a layer
+(`History.storedSnapshotsHoldLayer`); otherwise undo would bring back layers
+authored on the old grid. The rate is settable only on a project whose timeline
+has never held anything; the escape is to empty the timeline and reopen the
+project. The settings panel disables the control from `composition.fps_locked`.
 
-- a shrinking `duration_us` could strand layers past the end in an older
-  snapshot that held longer content;
-- an `fps` change re-snaps layer geometry and markers.
-
-Both dissolve once the patch is applied as a **transform run per snapshot**
-rather than a value copied across them (`History.replaceCompositionEverywhere`).
-Ctrl-Z is therefore not the safety net for these fields, and the UI carries the
-guard instead: Settings → Canvas mounts with its "Lock canvas settings" switch
-engaged, so the resolution and rate are inert until the user turns it off, and
-re-engaging it abandons any in-progress size edit. Widen the undo scope again and
-that guard becomes redundant — it exists to price in the missing undo, not for
-its own sake.
-`applyDurationAutofit` already floors a pinned duration at the *live* content
-high-water mark, so running it inside each snapshot makes the overflow guard
-per-snapshot for free: the snapshot with the 10 s layer keeps a 10 s duration
-while the head sits at 3 s, and nothing is ever stranded. The fps re-snap
-likewise runs against each snapshot's own markers.
-
-**The rate lock is history-scoped, and has to be.** An unrecorded `fps` change
-lands in *every* stored snapshot, so judging `FpsLockedByContent` on the
-current state alone would leave `undo` (and `restore_checkpoint`) as a
-backdoor: empty the timeline, change the rate, undo the deletion, and layers
-authored on the old grid reappear at the new rate — a state neither revert
-path re-validates. So the rule is **judgement scope == write scope**: the rate
-is refused if the live timeline holds a layer *or* any snapshot or checkpoint
-does (`History.storedSnapshotsHoldLayer`). `locked_by` on the error names
-which. Practically the rate is settable only on a project whose timeline has
-never held anything, and the escape hatch is the one Premiere and Resolve both
-prescribe — empty the timeline, then reopen the project, since `replace_state`
-resets the stack and checkpoints. The settings panel reads this off
-`composition.fps_locked` to disable the control rather than offer a click that
-always errors.
-
-**User vs agent.** Both surfaces write the same `History`; entries carry an
-`Actor::User` / `Actor::Agent { client }` tag so the history panel can
-distinguish them, but Ctrl-Z walks back across both — selective undo on a
-shared mutable state graph is the "history as DAG" problem and out of scope.
-While an agent holds `set_history_lock { locked: true, reason }`, every revert
-path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) rejects with
-`HistoryLocked`; the lock is ephemeral (released via `set_history_lock
-{ locked: false }` or workspace swap) and never
-affects what records. Deferred: `begin_transaction`/`commit_transaction`
-bracketing to collapse an agent batch into one undoable entry — revisit
-when stack-flooding actually hurts.
+**User vs agent.** Both write one `History`; entries carry `Actor::User` /
+`Actor::Agent { client }` for the History panel, and Ctrl-Z walks across both.
+While `set_history_lock { locked: true, reason }` is held, every revert path —
+`undo`, `redo`, `jump_to`, `restore_checkpoint`, Revert all — fails with
+`HistoryLocked`; edits still record, and checkpoint create/delete is not gated.
+The lock is released by `set_history_lock { locked: false }` (any connection),
+the Agent panel's Unlock, the owning connection disconnecting or its work
+session ending, or a project swap.
 
 ## Timeline selection
 
-The timeline's clip selection is a set plus a **primary** — the one the
-Attribute panel and the on-canvas gizmo follow. The set is renderer-global
-(`state/selectionStore.ts`) and always satisfies `primary === null ⇔ set is
-empty` and `set.has(primary)`, so no surface has to handle a primary that is not
-selected. A layer selection and a selected transition chip are mutually
-exclusive: choosing either drops the other, which is what lets Delete and the
-Attribute panel always have exactly one kind of target.
+The clip selection is a set plus a **primary** — the clip the Attribute panel
+and the gizmo follow (`renderer/state/selectionStore.ts`). Invariants:
+`primary === null ⇔ set is empty`, and `set.has(primary)`. A layer selection and
+a selected transition chip are mutually exclusive, so Delete and the Attribute
+panel always have one kind of target.
 
-**Click semantics.** Plain click on an unselected clip replaces the selection;
-pressing an already selected clip's body keeps the complete selection for a
-group move and makes the pressed clip primary. This applies to linked clips,
-ordinary multi-selections, and mixtures of both: the Attribute panel and gizmo
-follow the pressed clip without dropping the other highlights. Every selected
-clip has a 1 px accent border; the primary has a 2 px pale-blue border (the
-accent mixed with foreground), without an extra inner line or shadow.
-Selection borders paint above clip previews so thumbnails and
-waveforms cannot cover the focus indicator. Link override
-still narrows a linked selection to the pressed member, as described below.
-A click on the blank
-lane space *between two clips* selects that **gap**, and a click on any other
-blank space clears, per *Background clicks* below. `Shift+click` **toggles** — the
-clicked clip (and its link) goes in if it was out and out if it was in. Toggle
-rather than union because that is the additive modifier in Resolve, FCP and
-Premiere alike, and a union-only gesture leaves no way back from an over-wide
-selection except starting over. `Alt+click` selects one member out of a link.
-Right-click selects a clip outside the current selection. Inside a
-multi-selection it keeps every member and makes the clicked clip primary, so
-single-clip actions (content description, shot review and pause detection)
-target the clip under the cursor while batch actions retain the whole set.
+**Clicks.** A plain click on an unselected clip replaces the selection
+(taking its link, per [Links](#links)); pressing an already selected clip keeps
+the whole selection for a group move and makes it primary. `Shift+click`
+**toggles** the clip (and its link). `Alt+click` selects one member of a link.
+Right-click on an unselected clip selects it; inside a multi-selection it keeps
+the set and makes the clicked clip primary, so single-clip actions (describe,
+shot review, pauses) target the clip under the cursor while batch actions keep
+the set. A deselecting `Shift+click` never arms a drag. Every selected clip has a
+1 px accent border; the primary a 2 px pale-blue border, painted above clip
+previews.
 
-**Locks protect edits without blocking inspection.** A locked clip, including
-one on a locked track, can be clicked to focus the Attribute panel and reach its
-lock toggle. It uses the same selection highlight, Shift-toggle and link
-selection rules as an unlocked clip, and clicking a selected locked member keeps
-the batch while changing primary. It never arms move, trim, duplicate, blade or
-sample-region gestures. Moving a mixed selection from an unlocked member refuses
-the whole drop if any member is locked; it never silently moves only part of it.
-An amber lock badge identifies protected clips independently of the blue selection
-border. Its tooltip distinguishes a clip lock from a track lock. The body uses a
-normal arrow; an attempted drag shows a forbidden cursor and briefly emphasizes
-the badge, without creating an edit gesture. The badge is informational, while
-the Attribute panel's existing lock toggle releases a clip lock.
+**Locks protect edits, not inspection.** A locked clip (or one on a locked
+track) can be selected under the same rules, to reach its lock toggle; it never
+arms move, trim, duplicate, blade or sample-region gestures. An amber badge marks
+it (tooltip: clip vs track lock); dragging it shows a forbidden cursor and pulses
+the badge. The lock covers all clip content — name, visibility, timing, params,
+effects, keyframes, deletion, link/transition changes; inspector controls go
+read-only. Renderer and MCP share the actor, whose commit and dry-run boundaries
+refuse indirect changes too; a failed batch changes nothing. Lock-only patches
+work even on a locked track; unlocking and editing are separate operations.
 
-The same lock protects all clip content, including its name, visibility, timing,
-parameters, effects, keyframes, deletion and link/transition changes. UI controls
-are read-only while sections can still be expanded for inspection. Both the
-renderer and MCP use the same state actor; its commit and dry-run boundaries
-reject indirect changes to locked clips too. A failed batch records nothing and
-changes no members. Lock-only patches remain available even on a locked track;
-unlocking and editing require separate operations. Undo/redo and opening a
-project restore historical state, rather than being content edit gestures.
+**Select All / Deselect All** (`Mod+A` / `Mod+Shift+A`) are timeline-scoped
+([ADR 0041](adr/0041-focus-regions-are-panels-and-scope-the-keyboard.md)) and stand
+down inside text fields. They are not on the Edit menu (the handlers live in the
+Timeline Panel, which alone knows which tracks are rendered); the search palette
+lists them. Select All **respects the A/B Roll filter** and **excludes locked
+clips** rather than refusing; a surviving primary is kept. Deselect All clears
+clips, the transition chip and the keyframe selection.
 
-**A deselecting click never becomes a drag.** Selection and drag arming share one
-pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
-removes a clip returns early instead of seeding the gesture. Otherwise the
-smallest pointer wobble would move the clip the user had just dropped from the
-selection.
+**Delete** takes the clip selection verbatim as one undo entry; it never fans out
+over a link (the selection already carries the link).
 
-**Select All / Deselect All.** `Mod+A` and `Mod+Shift+A`, timeline-scoped
-(ADR 0041) like Delete: with the media pool focused, `Mod+A` is not "select every
-clip in the timeline". Inside a text field both stand down so the platform's
-select-all-text survives (on macOS the chord then falls through to the native
-Edit menu's own item). Neither sits on the Edit menu, because the handlers live
-in the Timeline Panel — the only place that knows which tracks are *rendered* —
-and a menu-bar row backed by a panel provider would vanish when that panel
-closes. The search palette carries discoverability instead.
+**Move** drags the whole selection plus active link partners as one undo entry,
+keeping offsets on each clip's own grid; the earliest member stops the set at
+zero. Vertical movement shifts visible members by the same number of displayed
+lanes; hidden link partners keep their lanes. An occupied or locked destination,
+a locked member, or a lane offset past the displayed lanes refuses the whole
+drop. A transition authorizes only its own pair's exact overlap, so a pair moved
+together keeps its transition. Onto the drop strip, all members must fit on one
+new lane.
 
-Select All follows the same two rules the playhead split does, for the same
-reasons: it **respects the A/B Roll filter**, so it cannot arm a Delete for clips
-that are off screen, and it **excludes locks rather than refusing them** — a
-locked clip requires an explicit inspection click rather than being included by
-a bulk gesture that would block the next move or Delete for clips the user never
-chose. A surviving primary is kept, so Select All does not
-move the Attribute panel off the clip being inspected. Deselect All clears all
-three selections that arm Delete: clips, the transition chip, and the keyframe
-selection.
+**Marquee.** Dragging from blank space draws a box; **the surface the press
+started on decides what it selects**, fixed at pointer-down: a track lane or the
+track viewport's background selects clips; a keyframe sub-lane row selects
+keyframes; a ruler press is a scrub. The selection is recomputed from scratch
+on every move (shrinking releases clips); Escape restores the press-time
+selection; release keeps the last result. The box auto-scrolls horizontally
+only. A clip box **intersects** (a clip longer than the viewport cannot be
+enclosed) and is slice-aware on combined A/V rows. It respects the A/B Roll
+filter and excludes locked clips like Select All, takes whole links (locked
+members included, as a click would), and keeps a surviving primary.
+Anchors are a whitelist: a surface opts in with `useMarqueeAnchor({ kind })`.
+Clip x comes from `t_start_us`/`t_end_us × pxPerSec`; row y is measured from
+the DOM per event, because a y-table from track heights drifts by a row per
+expanded keyframe sub-lane. Rules: `renderer/timeline/marquee.ts`; gesture:
+`timeline/hooks/useMarqueeAnchor.ts`.
 
-**Delete takes the whole clip selection, as one undo entry** however many clips
-and lanes it spans — so one undo brings a swept block back in one step. It takes
-the selection verbatim and never fans out over a link: selection is what carries
-a link, so a clicked or swept member has already brought its siblings along.
+**Additive gestures are deliberately asymmetric.** `Shift+click` toggles; a
+marquee replaces. A `Shift`-marquee, if added, must **union** — two XOR boxes
+would cancel. Until then, sweep then `Shift+click` to trim.
 
-**Move takes the whole clip selection, as one undo entry.** Dragging any selected
-clip's body shifts the selection and its active link partners together, keeping
-their timing offsets on each clip's own grid. The earliest member stops the
-whole set at zero. Vertical movement shifts the visible members by the same
-number of displayed lanes; hidden link partners retain their lanes. An occupied
-or locked destination, a locked member, or a lane offset beyond the displayed
-lanes refuses the entire drop. Existing transitions authorize only their own
-participant pair's exact overlap; preserving that overlap allows the pair to
-move together, and its transition chip follows the preview above link chrome.
-Moving onto the drop strip retains its existing
-rule: all members must fit on one new lane. Trimming and Alt-drag duplication
-keep their existing link-based behavior.
+**Background clicks** clear per kind: blank lane space drops clips and the
+transition chip; blank sub-lane space drops only keyframes. The band below the
+last track is clip surface (clicking clears; a box can start there).
 
-**Marquee.** Dragging from blank timeline space draws a box, and **the surface
-the drag started on decides what the box selects** (ADR 0051) — a track lane, the
-drop strip and the scroll body select clips; a keyframe sub-lane row selects
-keyframes. The kind is fixed when the pointer goes down and never reconsidered,
-so the box's extent decides only which members it takes. A press on the ruler is
-a scrub and nothing else. The selection updates live during the drag and is
-recomputed from scratch on every move, so shrinking the box back releases a clip
-that was over-reached; Escape restores what the press found, a release keeps what
-the last move computed. The box auto-scrolls horizontally at the edges and not
-vertically — the vertical extent is a handful of lanes while the horizontal one
-is unbounded.
+**Gaps.** The one blank space that *selects* is a gap — the empty span on a lane
+between two clip boundaries. It highlights with the clip outline, and `Delete`
+closes it ([Ripple delete](#ripple-delete)). A gap is read off every clip on the
+lane regardless of class (on a combined A/V row, space under a picture whose
+audio half is empty is not a gap). The space before the first clip is a gap from
+composition time 0; the space after the last clip is not, nor is blank space on a
+locked lane. A gap selection has no id: it is re-derived on every summary and
+dropped as soon as the span stops being exactly that gap. Right-clicking a gap
+offers only *Ripple delete*.
 
-A clip box **intersects** rather than encloses, since a clip longer than the
-viewport can never be enclosed, and it is slice-aware, so grazing the top half of
-a combined A/V row takes the visual layer and not the audio one. It shares Select
-All's two rules for Select All's reasons: it **respects the A/B Roll filter**
-(only rendered lanes can be swept) and it **excludes locks rather than refusing
-them**. Touching one member of a link takes the whole link, exactly as a click
-does — locked members included, so a box can never build a selection a click
-could not. A surviving primary is kept, so a sweep does not move the Attribute
-panel off the clip being inspected.
+**Keyframe selection** is a set across layers and properties. A box tests each
+diamond's drawn centre — both axes in an expanded row, x only in a collapsed row
+(one glyph covers ~40 % of its axis). Sweeping clips drops the keyframe
+selection. Every whole-selection operation — Delete, easing choice, retime drag,
+nudge, paste — is one undo entry. With several keys selected the easing menu
+shows no current value. Right-clicking a selected diamond acts on the whole
+selection without moving the playhead; an unselected one is selected first.
 
-**The additive gestures are deliberately asymmetric.** `Shift+click` **toggles**,
-per the click semantics above; a marquee **replaces**, with no modifier of its
-own; and a `Shift`-marquee, if one is ever added, must **union**. This is not an
-oversight in either direction — those three are different operations. Toggle is
-the additive *click* in Resolve, FCP and Premiere, while their marquees add, and
-a toggling box is worse than either: two overlapping XOR boxes cancel each other
-out, and accumulating across boxes is the only thing a Shift-marquee is for. Until
-one exists, "sweep a block, then `Shift+click` to trim it" is the accumulation
-path.
+- **Drag** moves the selection by one shared delta snapped once to the frame
+  grid. The group stops at the tightest `[0, duration]` wall of any selected
+  key (each in its own layer). Unselected neighbours are not walls; a moved key
+  landing on a stationary key's frame replaces it.
+- **`Alt`-drag on an end key** scales the selection in time about the opposite
+  end (scale, then snap). The factor is floored so selected keys stay ≥ 1 frame
+  apart and capped by the drag walls; it needs two distinct selected times.
+- **`Alt+Arrow`** nudges one frame, `Alt+Shift+Arrow` ten. With no keyframe
+  selected the same keys slip the selected audio ([Links](#links)). Delete, Copy
+  and Paste dispatch the same way (keyframes when any are selected, clips
+  otherwise); Settings → Keyboard prints that rule under each action.
+- **Copy/paste** share one slot with the clip clipboard. A keyframe copy is a
+  snapshot grouped by property, rebased so the earliest key is at zero. Paste
+  puts it at the playhead on **every selected clip**, matching by property name;
+  properties the target lacks are skipped and named on the status bar. A Static
+  target becomes Keyframed with **only** the pasted keys; a Keyframed target
+  keeps its keys and pasted ones replace what they land on. Keys past the
+  target's end are kept.
 
-**Background clicks clear per kind — except on a gap.** A press that never
-travels far enough to become a box *is* the background click, and what it does
-depends on the same surface the box's kind comes from: blank lane space drops
-the clips and the transition chip, blank sub-lane space drops only the keyframes
-— so clicking beside a diamond leaves the Attribute panel on the clip being
-keyframed. The band below the last track is part of the timeline's clip surface:
-clicking it clears, and a box can start there and drag up over the tracks.
+Not implemented: anchor-to-click range selection and "select forward on track"
+tools.
 
-The one blank space that *selects* is a **gap**: the empty span on a lane between
-two clip boundaries ([ADR 0069](adr/0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md)).
-Clicking it highlights the span with the selected-clip outline, and `Delete`
-then **closes** it rather than lifting anything — see [Ripple delete](#ripple-delete)
-— which is the gesture Premiere and Resolve give the bare key over a gap. A gap
-is read class-agnostically off every clip on the lane, so on a combined A/V row
-the space under a picture whose audio half is empty is not a gap. The space
-before the first clip counts as a gap from the head of the composition; the space
-after the last clip does not — it has no right edge to close up to — and neither
-does blank space on a locked lane, whose gap could never close (its own
-downstream clip would have to move). A gap selection has no id: it is re-derived
-against every project summary and dropped the moment the span stops being
-exactly that gap, so a stale highlight never arms a Delete the actor would
-refuse. Right-clicking a gap selects it and offers the one row that means
-anything over empty space, *Ripple delete*.
+## Editing never moves the playhead
 
-**Keyframe selection is a set**, spanning layers and properties, because one
-sub-lane row draws the curves of every layer on its track. A box tests each
-diamond's drawn centre — both axes in an expanded row, where the value axis is
-tall enough to aim in, and x alone in a collapsed one, where one glyph already
-covers some 40% of the axis (ADR 0051). Sweeping clips drops the keyframe
-selection, since a keyframe selection claims Delete ahead of the clips. Every
-operation that acts on the whole keyframe selection — Delete, an easing choice
-from a diamond's context menu, a retime drag, a nudge, a paste — is **one undo
-entry per gesture**, however many layers and properties the selection spans. The
-easing menu reports no current interpolation while several keys are selected —
-claiming the right-clicked key's easing for the rest would be unverifiable from
-the screen. Right-clicking a diamond already in the selection leaves the
-selection and the playhead alone and acts on all of it; right-clicking one
-outside selects it first, the way the clip menu behaves.
-
-**Dragging a diamond moves the whole selection** by one shared delta, snapped
-once to the composition's frame grid — so a group keeps its shape instead of
-each key rounding on its own. Pressing an unselected diamond replaces the
-selection with it first, exactly as a clip click does. The group stops at the
-**tightest** `[0, duration]` wall across every selected key, each measured in its
-own layer: the alternative — letting each layer stop separately — silently
-deforms the very spacing the drag is moving. Unselected neighbours are passed
-without disturbing them, and a moved key landing on a stationary key's frame
-**replaces** it, which one undo restores. Neighbours are deliberately not walls:
-a group spanning layers would then stick on keys the user cannot see.
-
-**`Alt`-dragging an end key scales the selection in time** about the opposite
-end — After Effects' gesture. Times are scaled first and snapped after, since a
-scale is not a translation and there is no single delta a pre-snap could round.
-The factor is floored so adjacent selected keys stay at least one frame apart —
-a shrink can neither merge two keys nor flip their order — and capped by the same
-walls a drag obeys. Normalized tangents make the result shape-preserving for
-free. The gesture needs two distinct selected times to have a span at all;
-without them the `Alt`-drag is an ordinary move.
-
-**`Alt+Arrow` nudges**, one frame at a time, and `Alt+Shift+Arrow` ten — the
-After Effects tiers, repeatable, under the drag's rules. The key is dual-purpose:
-with no keyframe selected it falls through to the sub-frame audio slip, the
-precedence Delete has. Delete, Copy and Paste dispatch the same way — keyframes
-when any are selected, clips otherwise — and Settings → Keyboard prints that rule
-as a second line under each of those actions, because a label naming only one of
-the two things a key does is not terse, it is wrong about half the presses.
-
-**Copy and paste share one slot** with the clip clipboard, so `Mod+C` takes
-whichever of the two selections is armed and `Mod+V` puts back whatever was
-taken last. A keyframe copy is a serialized snapshot grouped by property, with
-layer identity dropped and times rebased so the earliest key sits at zero — the
-clip it came from can be trimmed, re-keyed or deleted before the paste. Pasting
-puts the earliest key at the focused timeline's playhead on **every selected
-clip**, matching by property name; a property the target's kind does not carry is
-skipped and named on the status bar. A Static target lifts to a Keyframed track
-holding **only** the pasted keys, because folding the old constant in as an extra
-key would invent a keyframe nobody authored; a Keyframed target keeps its own
-keys and the pasted ones replace what they land on. Keys past the target's end
-are retained rather than clipped, the rule trim and split already follow.
-
-**Still missing** (the conventions a traditional NLE also has): contiguous range
-selection between an anchor and a click, and the directional "select every clip
-forward on this track" tools.
+Editing gestures leave the playhead where it is parked. A keyframe diamond
+selects and focuses on press but seeks only on a release that travelled less
+than 3 px (`keyframe/useKeyframeDrag.ts`); crossing 3 px latches drag intent even
+if the pointer returns, and a cancel neither seeks nor commits. Trim and
+transition-edge resizes show their frame through `state/useEditPreview.ts`
+(pause, preview-only seek without publishing time, restore on release, cancel or
+unmount). Window-listener gestures — keyframe retime, transition resize, ruler
+and mini-timeline scrubs, track-height drags — go through
+`hooks/usePointerGesture.ts`, which removes listeners on release, pointercancel,
+Escape, blur and unmount; only a release commits. Ruler and mini-timeline scrubs
+are the gestures that navigate. New window-listener gestures use
+`usePointerGesture`; new temporary frame previews use `useEditPreview`.
 
 ## Keyframe curves
 
 Focusing a property expands its sub-lane into a value graph with one tangent
-handle per side of every Spline key — the After Effects / Premiere graph editor,
-on the timeline itself. Dragging a handle reshapes that one side of that one
-key, live, and lands as a single undo step on release. A side the app solves
-for you (Auto — what the Smooth command asks for) draws greyed; grabbing it
-takes it over, the way AE turns an auto-bezier key into a continuous one. A key
-keeps its two sides at one slope while its continuity is Smooth and lets them
-differ when Broken; right-clicking a handle switches between the two.
+handle per side of every Spline key. Dragging a handle reshapes that side live
+and commits one undo step on release. An Auto side (what Smooth asks for) draws
+greyed; grabbing it takes it over. A Smooth key keeps both sides at one slope; a
+Broken one lets them differ; right-clicking a handle switches.
 
-Right-clicking a key or a segment opens the easing menu: Linear, Hold, the three
-everyday eases, Smooth, and the whole preset library behind one row — every
-choice applied to the entire keyframe selection in one undo step, and every row
-previewed on the curves while it is armed. Smooth is not a bake: an Auto key is
-re-solved whenever a neighbour moves. On a track's first or last key the menu
-adds Extrapolate before / after — Hold (the default clamp), Loop, Ping-pong,
-Offset, Continue — the way AE's loopIn / loopOut and Blender's cycle modifier
-run a curve past its keys. The extrapolated stretch is drawn dashed out to the
-clip's ends, and a small mark beside the end key (↻ ↔ ⤴ →) says which mode is
-on; nothing pretends there are keys where there are none. Keyframe glyphs read
-the segment class at a glance: diamond = linear, square = hold, circle = eased.
-The record behind all of this is described in `data-model.md` § Animated values
-and the editor mechanics in `render.md` § Keyframe easing authoring.
+Right-clicking a key or segment opens the easing menu — Linear, Hold, three
+everyday eases, Smooth, and the preset library — applied to the whole keyframe
+selection in one undo step, each row previewed while armed. Smooth is not baked:
+an Auto key re-solves when a neighbour moves. On a track's first/last key the
+menu adds Extrapolate before/after — Hold (default), Loop, Ping-pong, Offset,
+Continue. The extrapolated stretch draws dashed to the clip's ends, with a mark
+beside the end key (↻ ↔ ⤴ →). Glyphs: diamond = linear, square = hold,
+circle = eased. Record: [data-model.md § Animated values](data-model.md#animated-values);
+editor mechanics: [render.md § Keyframe easing authoring](render.md#keyframe-easing-authoring).
 
 ## Colour keyframing
 
-A Text layer's glyph colour and a Color layer's fill animate, and they animate
-through the same surfaces every other property uses. The inspector's colour row
-wears the stopwatch: unlit, a pick from the swatch or the eyedropper is the
-static value it has always been; lit, the same pick becomes a keyframe at the
-playhead, and the swatch then shows the colour the engine resolves there rather
-than the colour that was authored. Turning the stopwatch back off freezes what
-was on screen. Colours interpolate in OkLab, so red to green passes through a
-warm gold rather than the muddy olive a channel-wise average would give.
+A Text layer's glyph colour and a Color layer's fill are animatable. In the
+inspector the colour row has a stopwatch: off, a swatch or eyedropper pick sets
+the static value; on, it keys at the playhead, and the swatch shows the resolved
+colour there. Turning it off freezes the colour on screen. Colours interpolate
+in OkLab.
 
-On the timeline the property's sub-lane draws the track as a gradient strip —
-one sampled column per screen pixel, the clip's own span — with the keyframe
-diamonds over it. Everything a numeric lane offers except the value graph
-applies: selection and marquee, batch retime, delete, copy/paste, the easing
-menu and the whole preset library, extrapolation and its end-key marks. What the
-row does NOT have is a curve or tangent handles: a colour has no single axis to
-plot, so there is nothing for a handle to drag, and the easing of a segment is
-chosen from the menu instead. The expanded row's header carries the compact
-swatch and the keyframe navigator, exactly as a numeric row carries its number
-field.
-
-Shadow and outline colours stay static — one animatable colour per layer is the
-scope, and the strip is what it buys.
+The sub-lane draws the track as a gradient strip (one sample per screen pixel
+across the clip) with diamonds over it. Selection, marquee, retime, delete,
+copy/paste, the easing menu, presets and extrapolation all apply; there is no
+value graph or tangent handles (a colour has no single axis). The expanded row
+header carries a compact swatch and keyframe navigator. Shadow and outline
+colours are static.
 
 ## Links
 
-A `Link` is a project-level entity owning a flat set of member `LayerId`s —
-a layer is in at most one link, no nesting. Moving, trimming, splitting,
-or duplicating a member fans the edit out to the other
-members under the rules below; everything else (keyframes, opacity, gain,
-delete) stays local — delete and [ripple delete](#ripple-delete) both take
-exactly the set they are handed, because the selection already carries the
-link. A link has
-no rendering significance — the renderer composes every member
-independently — and no identity beyond its accent: it says "these travel
-together", which is Premiere's Link with any number of members. One
-mechanism serves both auto-paired AV from a single source and manual scene
-bundles (B-roll + voiceover + lower-third that travel together). "This is
-one thing" is a different intent and a different word: a *Group* is a
-composition placed as one layer ([CONTEXT.md](../CONTEXT.md#links-and-groups),
-ADR 0052), never a link.
+A `Link` is a project-level set of member `LayerId`s — a layer is in at most one
+link, no nesting. Moving, trimming, splitting or duplicating a member fans the
+edit out to the others; everything else (keyframes, opacity, gain, delete) stays
+local. A link has no rendering significance; it means "these travel together".
+One mechanism serves auto-paired A/V and manual bundles. "This is one thing" is
+a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
+[ADR 0052](adr/0052-link-propagates-group-composes.md)).
 
 **Fan-out rules** — any single op can bypass them with `escape_link: true`:
 
-- **Move** propagates the time delta to every member's `t_start_us`/`t_end_us`;
-  the track change applies only to the targeted layer. Rejects if any
-  member's new range would overlap its track or leave the composition.
-  Dragged toward the origin the link **stops as a set**: the clamp applies to
-  the shared delta, so the earliest member lands on 0 and everyone keeps their
-  spacing — no member is shortened in place. Each member then re-snaps on *its
-  own* lattice, which is what preserves a slipped A/V sync offset.
-- **Trim** propagates only to members whose corresponding edge sits at the
-  same exact `t` (alignment is recomputed per op — there is no stored
-  "aligned" state), with the delta clamped so no member crosses its source
-  bounds (`src_in_us`/`src_out_us`) or inverts.
-- **Split** cuts every member spanning `T`, distributing source in/out
-  proportionally for media-bearing kinds; all pieces stay in the link. The
-  shot-apply's rejecting verbs (§ Shot review) are the one place a *delete*
-  travels a link too: they remove every member piece lying under a rejected
-  span and nothing under a kept one. `delete_layers` stays local.
-- **Duplicate** (`paste_layers`) clones every member and links the clones to
-  each other — never to their sources — as **one** undo step. The first id is
-  the seed the drop position refers to; every other clone shifts by the same
-  delta and snaps on its own lattice, and only the seed's clone changes track
-  (the Move rule). A locked or occupied destination for any member rejects the
-  whole batch; nothing is created.
-- **`enabled`** changes only the inspected clip in the inspector, or the
-  selected clips in the timeline (`set_layers_enabled`). It never adds
-  unselected link members. A locked member or owning track rejects the whole set.
-- Both batch ops take the **set they are handed** and expand nothing: the UI
-  supplies the duplicate's subjects or the enabled command's selection, and
-  an agent names the layers it means.
-- **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
-  exactly the layers it is handed, onto one fresh lane. Its two entry points
-  differ in which layers they name *and* in whether they name a time. The
-  **Move to a new track** command names the selection and no time, so every clip
-  keeps the moment it was already at — a menu shows no ghost, and may not move a
-  clip somewhere the editor never saw. A clip dragged into the **drop strip**
-  names the drag's subject set and the landing under the pointer: the clip stays
-  under the hand that carried it there, exactly as it does on any other lane. One
-  member is the anchor and the rest hold their phase to it, so a linked clip takes
-  its link up with it and every member changes lane — unlike a plain Move (above),
-  where only the targeted layer does.
-- **Locks reject the whole op:** if a fan-out would touch a member with
-  `locked == true` — or any layer on a `Track.locked` track — the op fails
-  with `LinkLockedMember` / `TrackLocked` rather than partially applying.
+- **Move** applies the time delta to every member; the track change applies only
+  to the targeted layer. Refuses if any member would overlap or leave the
+  composition. Toward the origin the link stops as a set (the earliest member
+  lands on 0, spacing kept); each member then re-snaps on its own lattice, which
+  preserves an A/V slip.
+- **Trim** propagates only to members whose corresponding edge is at the same
+  exact `t` (recomputed per op), with the delta clamped so no member crosses its
+  source bounds or inverts.
+- **Split** cuts every member spanning `T` (source windows follow) and
+  **partitions the link at the cut**: left halves keep the link id, right halves
+  get a new link, a non-spanning member joins its temporal side, and a side left
+  with one member is unlinked. Under Link override (or `escape_link`) only the
+  target splits; its left half stays linked and its right half is free.
+  `split_layer` takes an `at_t_us` array and applies every cut in one commit. The
+  shot-apply discard (§ Shot review) is the one place a delete travels a link.
+- **Duplicate** (`paste_layers`) clones every member handed to it and links the
+  clones to each other, never to their sources, as one undo step. Other clones
+  keep their offset from the seed and snap on their own lattice; only the seed
+  changes track. A locked or occupied destination for any member refuses the
+  batch.
+- **`enabled`** changes only the inspected clip (inspector) or the selected clips
+  (`set_layers_enabled`); it never adds unselected members. A locked member or
+  track refuses the whole set.
+- **Raise to a new track** (`move_layers_to_new_track`) moves exactly the layers
+  it is handed onto one fresh lane. *Move to a new track* (command) names the
+  selection and no time — every clip keeps its time. A drag into the drop strip
+  names the drag's subjects and the landing under the pointer; members hold
+  their phase to the anchor and all change lane.
+- **Locks refuse the whole op:** a fan-out touching a locked member or a member
+  on a locked track fails with `LinkLockedMember` / `TrackLocked`.
 
-**Invariants** (validated on every commit): every member resolves to a real
-layer; no layer appears in two links; a link auto-dissolves below 2
-members *in the same commit* (delete is always local — `delete_layers` never
-fans out); `links_create`/`links_add_members` reject already-linked
-layers unless `reassign: true`, which moves the layer over.
+**Invariants** (validated every commit): every member resolves to a layer; no
+layer is in two links; a link dissolves below 2 members in the same commit;
+`create_link` / `update_link` refuse an already-linked layer unless
+`reassign: true`, which moves it.
 
-**Import auto-pair.** When `auto_pair_audio_on_import` is on (default) and
-an imported video source has an audio stream, import creates a `VideoClip`
-plus an `Audio` layer (same media, same span) and links them atomically.
-`VideoClip` lowering does not emit audio — the paired `Audio` layer is the
+**Import auto-pair.** With `auto_pair_audio_on_import` on (default), importing a
+video source with audio creates a `VideoClip` plus a linked `Audio` layer over
+the same span. `VideoClip` itself emits no audio; the paired `Audio` layer is the
 audible one.
 
-**UI.** Click a member → select the whole link; `Shift+click` toggles by
-link (a second one takes it back out — a deselecting click never starts a
-drag); `Alt+click` selects only the clicked layer, and `Alt+trim` escapes
-that one trim. Body `Alt+drag` duplicates the **whole link**: one ghost per
-member during the drag, one `paste_layers` on release, the clones linked to
-each other and never to their sources, one undo. The escape is the
-selection — `Alt+click` a member first and the copy is that member alone,
-unlinked — because `Alt` on the body already means duplicate. A collision on
-any member's destination shows the drag invalid and creates nothing.
-**Enable / Disable** in a clip's context menu sends exactly the current selection
-in one `set_layers_enabled`. The row names the selected count (`Disable 2 clips`).
-A mixed or disabled set offers Enable; an entirely enabled set offers Disable.
-Linked selection can select a whole link, while `Alt` selection or Link override
-can select one member; the command never adds siblings back. A locked affected
-clip or track disables the row with a reason; an unselected sibling's track does not.
-The inspector's Enabled
-switch operates only on the displayed clip, including during multi-selection.
-Linked layers show a 2 px left accent in a hue derived
-deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
-Premiere: a selection inside one link unlinks it, two or more unlinked layers
-link, and anything else greys out with the reason in the tooltip. It is one
-command, rebindable via the TS keybindings store, and the same toggle sits in
-the Quick Actions strip's `edit` section as Link / Unlink.
+**UI.** Clicking a member selects the whole link; `Shift+click` toggles by link;
+`Alt+click` selects only that layer and `Alt+trim` escapes that trim. Body
+`Alt+drag` duplicates the **whole link** (one ghost per member, one
+`paste_layers`, one undo); `Alt+click` a member first to copy it alone. A
+collision on any member shows the drag invalid. *Enable / Disable N clips* in the
+clip menu sends exactly the selection in one `set_layers_enabled` (mixed or all
+disabled → Enable; all enabled → Disable); a locked clip or track disables the
+row with a reason. The inspector's Enabled switch affects only the displayed
+clip. Linked layers show a 2 px left accent in a hue derived from `link_id`.
+`Mod+L` toggles link ↔ unlink: a selection inside one link unlinks it; two or more
+unlinked layers link; anything else greys with the reason. It is also in the
+Quick Actions `edit` section.
 
-**Link override.** `Alt+Shift+G` (Reaper's *Grouping enabled* key; also a
-toggle in the Quick Actions strip and a row in the search palette) flips a
-session switch that stands in for a held `Alt`. While it is on, every site
-that consults link membership treats the link as absent: a plain click
-selects one member, a drag moves or duplicates one, the blade and `Mod+B`
-split one, and the marquee takes exactly what it touched. Enable / Disable
-always honors the resulting selection, even if several members were selected
-before the override was turned on. The status bar shows a `Links off` chip and the timeline's link
-accents dim to 40 % for as long as it is on, so the mode is stated on screen
-rather than remembered. Nothing is written: links keep every membership, the
-toggle records no history entry, and it is not persisted. MCP is unaffected
-— an agent passes `escape_link` explicitly.
+**Link override.** `Alt+Shift+G` (also a Quick Actions toggle and a palette
+row) is a session switch standing in for a held `Alt`: every site that consults
+links treats them as absent — click selects one member, drag moves or
+duplicates one, blade and `Mod+B` split one, marquee takes what it touched. The
+status bar shows `Links off` and link accents dim to 40 %. Nothing is written:
+memberships stay, no history entry, not persisted. MCP is unaffected (agents
+pass `escape_link`).
 
-**A/V sync offset.** An audio member can be slipped off its video partner
-(audio lives on the 48 kHz sample lattice — see [audio.md](audio.md)), and the
-resulting offset is **derived from the geometry, never stored**: it is
-`audio.t_start_us − video.t_start_us`, measured in sample indices so the
-~10 µs residue between the two lattices at 29.97 / 59.94 does not read as a
-slip. With no field, nothing can disagree with where the clips actually are.
+**A/V sync offset.** An audio member slipped off its video (audio is on the
+48 kHz lattice — [audio.md](audio.md)) has an offset **derived from geometry,
+never stored**: `audio.t_start_us − video.t_start_us`, measured in samples so the
+~10 µs lattice residue at 29.97/59.94 does not read as a slip. A non-zero offset
+shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`). A whole-link move
+preserves it; a video trim does not drag slipped audio (edges no longer
+coincide). `Alt+←/→` slips the selected audio one sample, `Alt+Shift+←/→` one
+millisecond (48 samples), `Alt+Shift+S` re-syncs it to its video — all commands
+(palette, Settings → Keyboard, agent-callable). Pointer drags never reach sample
+precision (one sample is 0.042 px at the 2000 px/s ceiling); the inspector's
+audio fields switch units (timecode / ms / samples); the ruler stays frame-based.
 
-A non-zero offset shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`).
-The two existing fan-out rules already behave correctly for it, and this is
-worth stating because it looks like an inconsistency and is not: a
-**whole-link move preserves the offset** (every member shifts by the same
-delta, then lands on its own lattice), while a **video trim does not drag
-slipped audio** (the aligned set requires coinciding edges — which is the
-right outcome for a deliberately slipped track).
-
-`Alt+←/→` nudges a selected audio layer one sample, `Alt+Shift+←/→` one
-millisecond (48 samples), and `Alt+Shift+S` re-syncs it to its video. All five
-are real commands, so the search palette lists them, Settings → Keyboard
-rebinds them, and an agent can call them. **Pointer drags never reach sample
-precision** and are not meant to: one sample is 0.042 px at the 2000 px/s zoom
-ceiling, so dragging keeps snapping to the visible quantum. Sample precision
-arrives through the nudges and through the inspector's numeric fields, whose
-unit (timecode / milliseconds / samples) is switchable per the audio-units
-selector — audio readouts only; the ruler and playhead stay frame-based.
-
-Mutations live in `apps/desktop/src/main/state/mutations/links.ts`, with
-fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
-(`links_create` … `links_remove_members`, plus `escape_link` on the structural
-ops) and the read surface (`links` on `project://current`; there is no
-`links_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
+Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
+`move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://current`
+(no list tool).
 
 ## Groups
 
-A *Group* is a composition placed as one layer — After Effects' precomp,
-Premiere's nest ([CONTEXT.md](../CONTEXT.md#links-and-groups), ADR 0052). The
-Group layer's params are a `CompositionRef`: a source window
-`[src_in_us, src_out_us)` into the composition's own time, plus the transform,
-opacity and blend mode every visual layer carries. Parent time `t` is
-composition time `t − t_start_us + src_in_us`; nested Groups compose the
-mapping. Four structural operations make one, move more layers into one,
-dissolve one, and carry layers into any composition by name; each is a single
-history entry, and those four are the only ops that cross a composition
-boundary at all.
+A *Group* is a composition placed as one layer — a precomp / nest
+([ADR 0052](adr/0052-link-propagates-group-composes.md)). Its params are a
+`CompositionRef`: a source window `[src_in_us, src_out_us)` in the composition's
+own time, plus transform, opacity and blend. At rate 1, parent time `t` maps to
+`t − t_start_us + src_in_us` (a retimed Group scales it — [Retime](#retime));
+nesting composes. Pre-compose, ungroup, add to
+Group and move to another composition are each one history entry and are the
+only ops that cross a composition boundary.
 
-**Pre-compose** (`groups_create`) turns a set of layers — one or more, all in
-one composition — into a Group in place. The set's earliest start `t0` becomes
-the new composition's zero: every member shifts by `−t0` on its own lattice,
-and its keyframes, being layer-local, do not move. The composition copies the
-parent's settings and carries the reserved A roll / B roll, so "no tracks" is
-never a state; the parent tracks that held members map bottom-up onto A roll,
-B roll, then fresh transient lanes, which preserves relative z-order. Links
-fully inside the set move with it, ids intact; a link straddling the boundary
-loses its inside members and dissolves below two. Transitions between two
-members move; a straddling one is dropped by reconcile and logged. Markers
-stay in the parent. The Group layer lands at `t0` on the top-most former lane,
-windowed over the whole composition; if that span is now taken it takes the
-drop strip's route — the nearest free lane above, else a lane spawned on top.
-Emptied transient lanes are pruned. The operation is all-or-nothing: a locked
-member (`GroupLockedMember`) or a locked track (`TrackLocked`) refuses the
-whole set before anything moves, so a Group never holds half a selection.
+**Pre-compose** (`groups_create`; MCP `create_group`; `Mod+G`) turns one or more
+layers of one composition into a Group in place. The set's earliest start `t0`
+becomes the new composition's zero (members shift by `−t0` on their own
+lattices; keyframes are layer-local). The composition copies the parent's
+settings and has reserved A roll / B roll; source tracks map bottom-up onto A
+roll, B roll, then fresh lanes, preserving z-order. Links fully inside move with
+ids intact; a straddling link loses its inside members (dissolving below two).
+Transitions between two members move; a straddling one is dropped by reconcile
+and logged. Markers stay in the parent. The Group layer lands at `t0` on the
+top-most former lane, windowed over the whole composition, or — if that span is
+taken — the nearest free lane above, else a new top lane. Emptied lanes are
+pruned. A locked member (`GroupLockedMember`) or track (`TrackLocked`) refuses
+the whole set.
 
-**Ungroup** (`groups_ungroup`) is Resolve's *Decompose in Place*: the members
-come back into the parent at the same on-screen time. It is allowed only when
-the Group layer is **plain** — identity transform (including the linked-scale
-default), static opacity 1, no effects, Normal blend. A transform, an opacity,
-an effect chain or a blend mode on the Group applies to the composite and has
-no per-member equivalent,
-so expanding would discard it silently — the outcome ADR 0048 and the
-prevent-at-the-gesture rule for refusals both forbid — and the refusal names
-the field instead (`GroupNotPlain { reason }`). Every member intersecting the
-window is copied in at `t + t_start_us − src_in_us`, trimmed to the window with
-its source window and keyframes following (trim's content-glue rule); members
-wholly outside are dropped. The composition's tracks become fresh transient
-lanes at the Group layer's z position — empty ones are not created — and links
-and transitions inside carry over under fresh ids. The Group layer goes, its
-lane is pruned, and the composition is removed when nothing else references
-it; a second Group layer pointing at it keeps it.
+**Ungroup** (`groups_ungroup`; MCP `ungroup_layer`; `Mod+Shift+G`) puts members
+back in the parent at the same on-screen time. Allowed only on a **plain** Group
+layer — identity transform, static opacity 1, no effects, Normal blend —
+otherwise `GroupNotPlain { reason }` names the field (those apply to the
+composite and have no per-member equivalent) — and only at rate 1. Members intersecting the window
+are copied in at `t + t_start_us − src_in_us`, trimmed to the window (source and
+keyframes follow); members outside are dropped. Non-empty composition tracks
+become fresh lanes at the Group layer's z position; inner links and transitions
+carry over under fresh ids. The Group layer goes and the composition is removed
+unless another Group layer references it.
 
-**Add to Group** (`groups_add_members`) moves layers that are already on a
-timeline into a Group that is already there. The set and the Group clip must be
-siblings in one composition: the clip is what the user pointed at, and its
-placement is what the arrival time is measured from. Each member lands at
-`t − t_start_us + src_in_us`, re-snapped on its own lattice, so it keeps the
-screen position it had; a member outside the Group clip's window arrives outside
-it and shows as overhang — preferred to landing the set at the destination's
-playhead, because this is a structural regrouping rather than a paste, and a
-regrouping that moves pictures is a surprise. Source tracks map bottom-up onto
-the destination's existing lanes, spawning one past the end, exactly as
-pre-compose maps onto A roll / B roll / fresh; a whole source track's members
-travel together onto one lane — which is what keeps a transition between two of
-them alive — and bounce as a block when that lane is locked or already occupied
-at those times. Links, transitions and markers follow pre-compose's rules. Both
-compositions autofit and no Group layer is retrimmed. All-or-nothing before
-anything moves: a set spanning two compositions or a Group clip outside it
-(`CrossCompositionSet`), a target that is not a Group layer (`WrongLayerKind`),
-a locked member (`GroupLockedMember`) or lane (`TrackLocked`), a member whose own
-composition already reaches the destination — the destination included, which is
-moving a Group clip into itself (`CompositionCycle`) — and a member that would
-land before composition time 0 (`InvalidArgument`, naming the earliest landing
-the whole set clears — the bound belongs to the earliest member, not to
-whichever one the refusal happens to report, so retrying at it is not refused
-again).
+**Add to Group** (`groups_add_members`; MCP `add_group_members`) moves timeline
+layers into an existing Group clip that is their sibling in one composition.
+Each member lands at `t − t_start_us + src_in_us`, re-snapped, so it keeps its
+screen position; a member outside the window arrives as overhang. The Group clip
+must be at rate 1. It delegates to Move to composition, below.
 
-**Moving to another composition** (`move_layers_to_composition`) is the same crossing
-addressed by NAMING a destination instead of by pointing at a Group clip: a set
-of layers, one destination composition, and an ABSOLUTE landing time on that
-composition's clock. Add to Group is one of its callers — it reads the landing
-off the Group clip's placement and delegates — so everything below governs both,
-and the ROOT is an ordinary destination here rather than a special case: taking
-a clip out of a Group and back into the film *is* this operation, and it is one
-of the two directions it exists for. An anchor member is the one the landing
-time positions; every other member keeps its phase relative to it, which is what
-preserves the set's mutual geometry and keeps a transition between two moved
-members alive. Both endpoints re-snap on each member's own lattice at the
-DESTINATION's rate, so a landing is quantized where it arrives and two
-compositions on different rates do not round trip — A → B → A need not return a
-layer to the microsecond it left. Links and transitions follow the set, markers
-stay behind, emptied source lanes are pruned, both compositions autofit and no
-Group layer is retrimmed. It refuses whole before the first write, and the
-refusals are Add to Group's: a set spanning two compositions
-(`CrossCompositionSet`), a locked member (`GroupLockedMember`) or lane
-(`TrackLocked`), a member whose composition already reaches the destination —
-the destination included (`CompositionCycle`) — and a landing before composition
-time 0 (`InvalidArgument`, never a clamp: composition time has no negative half,
-and sliding the set onto zero would move it off the picture it was placed
-against), plus an unknown destination or lane (`CompositionNotFound`,
-`TrackNotFound`) and a destination that is the composition the set is already
-in, which is `move_layer`'s work rather than a crossing. Add to Group's other
-three are about the Group CLIP and stay with it: that it is a sibling of the
-set, that it is a Group at all, and that no Group clip may point at the root.
-The last of those reads like a rule against the root *receiving* layers and is
-not one — nothing may be placed as a Group of the film, and the film takes
-layers back like any other destination.
+**Move to another composition** (`move_layers_to_composition`) moves a set into
+a named destination at an absolute landing time on the destination's clock; the
+root is an ordinary destination (taking clips out of a Group). The anchor member
+lands at the time; others keep their phase to it, so a transition between moved
+members survives. Each member re-snaps on its own lattice. The landing is
+absolute because the renderer's mirror lags the actor: Add to Group computes it in
+main from the live project, a drag in the renderer from the pointer; a
+`base + delta` over the mirror would eat the previous commit. Links and transitions follow the set, markers
+stay, emptied source lanes are pruned, both compositions autofit, and no Group
+layer is retrimmed. Refusals, all before the first write: set spans two
+compositions (`CrossCompositionSet`); locked member or lane (`GroupLockedMember`,
+`TrackLocked`); a member whose composition already reaches the destination,
+including the destination itself (`CompositionCycle`); landing before time 0
+(`InvalidArgument`, naming the earliest landing the whole set clears — never
+clamped); unknown destination or lane (`CompositionNotFound`, `TrackNotFound`);
+destination = current composition (that is `move_layer`). Add to Group adds:
+target not a Group layer (`WrongLayerKind`) or not a sibling of the set
+(`CrossCompositionSet`).
 
-**Which lane it lands on.** Destination lanes are assigned per SOURCE track,
-never per member — a whole source track's members travel together onto one lane,
-exactly as pre-compose and Add to Group map bottom-up — and what forks is the
-answer when the preferred lane is locked or already occupied at those times.
-A caller with no opinion **bounces**: the nearest free lane, else a fresh one.
-A caller that NAMES a lane is **refused** instead (`TrackLocked`,
-`LayerOverlap`), and one that names the destination's drop strip always takes a
-fresh lane at the top of its z-stack. The fork is about what the user was shown:
-a menu has no ghost, so bouncing is honest for it; a drag has one, and bouncing
-would make the ghost a lie.
+**Lane assignment** is per *source track* (a whole track's members travel onto
+one lane, keeping transitions alive), bottom-up onto existing lanes, spawning past
+the end. When the preferred lane is locked or occupied, a caller that named no
+lane **bounces** (nearest free lane, else a fresh one); a caller that named one is
+**refused** (`TrackLocked`, `LayerOverlap`); naming the destination's drop strip
+always takes a fresh top lane. Menus bounce (no ghost); drags refuse (a bounce
+would make the ghost lie).
 
-**Move to… ›** on a clip's context menu is the submenu form. The trigger
-names no destination because the rows under it each name one. The
-film's own timeline sorts first — it is the answer to "get this back out of the
-Group", which is the commonest reason to open the row — then every Group by
-name. A destination that cannot take the selection is listed and greyed rather
-than dropped, because a missing row is a question and a greyed one is an answer:
-the composition the clips are already in says so, and one a selected Group clip
-already reaches says it cannot also sit inside itself. A live row whose
-composition has no reading of the current moment says that too — the clips land
-at its start. The trigger itself greys, falling back to a flat row that has
-somewhere to put the reason, when there is nothing selected or a member or its
-lane is locked; a project offering nowhere to go greys every row instead, which
-is the same information with the destination named. Each row's landing is that
-composition's own reading of the one moment, projected through the placement the
-user is looking at, and it is resolved again at the commit rather than read off
-the row — an open popup does not re-render while the film plays under it. A
-composition with no projection at this moment falls back to its own `t = 0`
-rather than refusing: the gesture named a composition, not a moment. The anchor
-is the earliest-starting member, so the set *starts* at that time and the
-negative-landing refusal is unreachable from here. Afterwards the selection
-clears and the view stays where it was: the menu never left the Panel it was
-opened in. The same command sits in the Edit menu, in the search palette and on
-any key someone binds it to — surfaces with no room for a list, so there it
-means the root, and greys once the selection is already in it rather than taking
-whichever Group happens to sort first. Carrying no list, it can say where it
-goes, and does: those surfaces label it **Move to timeline**.
+**Move to… ›** (clip context menu) lists the root first, then every Group by
+name. Destinations that cannot take the selection stay listed but greyed with
+the reason (already there; would contain itself). A row whose composition has no
+reading of the current moment lands at its start. The trigger greys when nothing
+is selected or a member or lane is locked. Each row's landing is that
+composition's reading of the current moment through the visible placement,
+resolved again at commit. The anchor is the earliest member. Afterwards the
+selection clears and the view stays. The Edit menu, palette and keybinding form
+(unbound by default) is **Move to timeline**: it means the root and greys when
+the selection is already there.
 
-**Carrying a clip into another timeline Panel.** With two compositions open side
-by side, dragging a clip out of one timeline and into the other commits the same
-operation. The destination Panel owns the drop, because ownership follows the
-coordinate system: zoom, scroll, the frame grid, the snapping targets and the
-lane geometry are all per Panel, so only the composition under the pointer can
-turn that pointer into a lane and a time, and it is the Panel that sends the
-command. **The clip stays under the grab point** the way it does at home: the
-pointer names where inside the clip the editor took hold, not the clip's head, so
-crossing the seam does not shift it. What travels is a duration rather than a
-distance in pixels, which is why the source Panel's zoom does not distort it. It
-draws its own ghost for a clip it holds no data for — the kind's
-colour, the clip's name, and the footprint recomputed at THIS Panel's zoom,
-since the source's width would be a lie about the duration here; no filmstrip,
-waveform, link chrome or transition chip, because none of them answers what the
-drop asks. The ghost refuses in place in the vocabulary the in-composition drag
-already uses: red over an overlap, amber over a locked lane, and a release there
-sends nothing. Over the destination's drop strip it spawns a lane. A drop that
-lands takes the keyboard and the selection with it, where the menu clears the
-selection and stays put — the difference is the pointer, which named a place the
-clips are now visible at. **Alt+drag across Panels is refused**, with the reason
-in the status bar rather than a dialog: a copy mints ids, and a paste links its
-clones to each other and never back to their sources, so copying into another
-composition is a second mutation and not a parameter of this one. The refusal
-names the way in as well as the wall — the same drag without Alt moves the clips
-there.
+**Dragging between timeline Panels** commits the same operation; the destination
+Panel owns the drop (zoom, grid, snapping and lanes are per Panel). The clip
+stays under the grab point; what travels is a duration. The destination draws
+its own ghost (kind colour, name, footprint at its zoom; no filmstrip, waveform,
+link chrome or transition chip), red over an overlap, amber over a locked lane,
+where release sends nothing; over its drop strip it spawns a lane. A successful
+drop takes focus and selection with it. **Alt+drag across Panels is refused**
+with a status-bar reason (copying into another composition would be a second
+mutation); the same drag without Alt moves.
 
-**Overhang.** A Group layer's window may extend past its composition's
-duration: validation puts no upper bound on `src_out_us`, a trim gesture clamps
-to the duration, and past the end the Group renders nothing (ADR 0052 §6). The
-rule exists so that a delete *inside* a Group — which shrinks the composition —
-is never refused on account of a parent's window. Duration autofit is per
-composition: a composition growing inside does not extend the Group layers
-that show it. Add to Group is the operation that grows one UNDER existing
-placements — the members it moves in can push the destination's duration out,
-and every Group clip showing that composition, the one they were added through
-included, keeps the window it had, so the new content reads as room to trim out
-to rather than as a silent retrim.
+**Overhang.** A Group window may extend past its composition's duration:
+validation sets no upper bound on `src_out_us`, a trim gesture clamps to the
+duration, and past the end the Group renders nothing. This keeps deletes inside a
+Group from being refused by a parent's window. Autofit is per composition:
+content growing inside (including via Add to Group) does not extend existing
+Group windows.
 
 **Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
-equal the root's — a Group on another rate would put its window on a different
-grid from the parent's timeline, which is time-remapping. Width and height may
-differ per composition.
+equal the root's (`CompositionLatticeMismatch`); width and height may differ.
 
-Naming and removal: `groups_rename` sets or clears a composition's label (the
-root has none — it is the timeline); `compositions_delete` removes a
-composition nothing references (`CompositionInUse` otherwise). Orphans are
-legal: deleting a Group layer leaves its composition behind.
+**Naming and removal.** `groups_rename` (MCP `rename_composition`) sets or clears
+a composition's label (the root has none). `compositions_delete` (MCP
+`delete_composition`) removes an unreferenced composition, else
+`CompositionInUse`. Orphans are legal: deleting a Group layer leaves its
+composition.
 
-**UI.** A Group clip wears lucide's `Group` glyph and a neutral slate surface —
-the one kind with no medium of its own, since it holds every other kind — and
-names itself after its composition: its stored label, else `Group N`, where `N`
-is the composition's stored `ordinal` (docs/data-model.md) — localised in the
-renderer, as `Track N` is. Naming one Group renumbers no other, and clearing a
-name gives back the number that Group always had. The clip's own `label` still
-outranks that, as a renamed video clip's does over its file name. Its thumbnail
-is a still of the earliest video inside the composition, or inside a Group
-nested in it; with no video at all the glyph stands alone. It is an ordinary
-picture layer everywhere else — the overlap classes, the Playhead panel's video
-bucket, the effect chain, the transform gizmo — and it keyframes `transform` and
-`opacity`, the media-bearing set minus what ADR 0052 leaves out of v1.
+**UI.** A Group clip has lucide's `Group` glyph, a neutral slate surface, and
+the name: its own `label`, else the composition's label, else `Group N` (the
+composition's stored `ordinal`, localized like `Track N`; naming one Group
+renumbers none). Its thumbnail is the earliest video inside (searching nested
+Groups); none → glyph only. It is otherwise an ordinary visual layer (overlap
+classes, Playhead panel video bucket, effects, gizmo) and keyframes `transform`
+and `opacity`. At its right edge a **hatched tail** marks the window past the
+composition's end; a **2 px tick** marks a window shorter than the composition.
 
-The two source-window affordances live at its right edge. A **hatched tail**
-covers the part of the clip past the composition's duration: source ran out,
-nothing renders there. A **2 px tick** appears when the window is shorter than
-the composition: there is content to trim out to. A trim drag clamps `src_out_us`
-to the duration, so the out edge stops there rather than being refused.
+`Mod+G` pre-composes the selection and selects the new Group clip;
+`Mod+Shift+G` ungroups the one selected Group layer (two commands: their
+preconditions are not inverses). Each greys with its reason (nothing selected,
+locked member, the field blocking ungroup). Both are in the Edit menu, Quick
+Actions `edit` section and palette. `Open group` and `Add to Group` are commands
+shipped unbound. Add to Group appears on the menu opened over the target Group
+clip as `Add to “Name”`, and greys with its reason: no Group clip selected, two
+of them, nothing to add, a locked member, or a clip starting before the Group
+(nowhere to land).
 
-`Ctrl+G` pre-composes the selection and selects the Group clip it makes;
-`Ctrl+Shift+G` ungroups the one selected Group layer. Two commands rather than
-one toggle — unlike `Ctrl+L`, their preconditions are not inverses: one takes
-any number of layers, the other exactly one Group. Each greys out with the reason
-in its tooltip: nothing selected, a locked member, or the field that blocks the
-expansion (`Reset the group's opacity to 1 first…`). Both sit in the Edit menu,
-in the Quick Actions strip's `edit` section as Group / Ungroup, and in the
-search palette; `Open group` and `Add to Group` are commands too, both shipped
-UNBOUND — their home is the pointer, and no shipping NLE has a key for either to
-copy. `Add to Group` needs the Group clip its members are going into, so the
-row that carries it is the one opened over that clip, and only there does it
-name the destination: `Add to “Lower third”`, against the plain label the
-once-built menus keep. It greys with its own reason — no group clip selected,
-two of them, nothing to put in, a locked member, or a clip that starts before
-the group does and so has nowhere in composition time to land. There is no
-leaving half: under a tab strip, leaving is closing a tab or activating another.
+**Entering.** Double-click a Group clip or use `Open group`. Renaming is in the
+menu: `Rename` (clip label) and `Rename group…` (composition name). The
+composition opens in its **own timeline Panel**, a tab beside the one it was
+entered from; one Panel per composition, so reopening activates the existing tab
+([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)). The tab shows the
+name, its tooltip the route (`‹project› › Group A › Group B`); drag it out for
+side-by-side timelines. A Group placed more than once offers `Switch instance`
+on the tab menu to choose the placement its times are read against. Empty
+timeline space is tinted one step per nesting level. Switching tabs drops the
+selection, marked range and inline reveal, but not the moment or display mode.
+The inspector's Group section shows the composition's name, frame size,
+duration and the same buttons.
 
-**Entering.** Double-click a Group clip to open its composition, or use
-`Open group` from its context menu — the same kind-gated block that carries
-`Ungroup` and `Add to “…”`; that gesture is spent on navigation, so
-renaming happens through the menu's two rows instead — `Rename` for the clip's
-own label, `Rename group…` for the composition's name (which every clip placing
-it then shows). The composition opens in a **timeline Panel of its own**, as a
-tab beside the timeline it was entered from: one Panel per composition, so
-opening the same Group twice activates the tab it already has (ADR 0053). The
-tab prints the composition's name and its tooltip the route to it —
-`‹project› › Group A › Group B`; drag the tab out and the two timelines stand
-side by side, each scrolling and zooming on its own. Where a Group is placed
-more than once, the tab's context menu offers `Switch instance` to say which
-placement its times are read against. The timeline's empty space is tinted one
-step per level so depth reads without looking at the tab — Resolve does the
-same for a compound clip. Moving between tabs drops the selection, the marked
-range and any inline reveal; the moment is not touched, because every tab reads
-the same one in its own coordinates, and the display mode is not touched
-either. The inspector's Group section
-carries the composition's name, its frame size, its duration and the same two
-buttons.
+**One moment.** There is one playhead, a time on the root's clock. A Group's
+timeline draws that moment shifted by its clip's placement, so scrubbing inside
+moves the film and vice versa. `Home`/`End` inside a Group go to the Group's
+ends. A Group whose clip is not on screen now draws no playhead, but edits at the
+playhead still work. An orphan composition has no reading of the moment and
+scrubs on its own axis.
 
-**One moment.** There is a single playhead in the editor and it is a time on the
-FILM's clock. A Group's timeline draws its own reading of that same moment,
-shifted by where its clip sits, so scrubbing inside a Group moves the film and
-stepping the film moves the Group's line — one number, read twice. `Home` and
-`End` inside a Group therefore go to the ends of the *Group*, which are moments
-of the film. A Group whose clip is not on screen at the current moment draws no
-playhead at all, because it has no position then; an edit *at* the playhead
-still works there, since a composition's clock runs whether or not its placement
-shows it. A composition nothing places — an orphan — has no reading of the
-film's moment at all, so its timeline scrubs on an axis of its own and leaves
-the film where it is.
+**Preview target.** The Preview Panel draws *Follow focus* (default — the
+timeline holding the keyboard) or a fixed composition chosen from the root and
+every Group, so the film can stay on screen while editing inside a Group. A
+target the project loses releases back to Follow focus. Export always renders
+the root.
 
-**Watching the film while editing a Group.** The Preview Panel names what it
-draws: *Follow focus* — the default, the timeline holding the keyboard — or a
-fixed composition, chosen from the film and every Group. Locked to the film,
-entering a Group stops taking the picture off screen: the timeline shows the
-Group, the canvas shows what the film looks like at the moment being scrubbed,
-and a lower third can be built against the shot under it without leaving once
-per adjustment. The target can be a composition with no timeline open at all,
-which is what makes it a lock rather than a property of a tab; a target the
-project loses — ungrouped, or its composition deleted — releases back to
-following focus. Export is never affected: it renders the root, whatever the
-preview was pointed at.
+Open timelines, each one's zoom, scroll and entry anchor, and the preview lock
+persist **per project**; Dock geometry is app-wide.
 
-Which timelines are open, each one's zoom and scroll, the anchor each was
-entered through, and the preview's lock are remembered **per project** and come
-back when it is reopened. The Dock's own geometry is remembered app-wide
-instead, so a reopened project comes back with its tabs but in whatever
-arrangement the workspace is currently in.
+A clip inside a Group is findable in the search palette; activating it opens
+the Group first. Undoing a pre-compose while inside the new Group closes its tab,
+returns focus to the parent timeline and reselects the layers.
 
-A clip inside a Group is findable in the search palette like any other, and
-activating it opens that Group first, then selects. Undoing a pre-compose while
-standing inside the Group it created closes that tab — the composition no
-longer exists — and hands the keyboard back to the timeline it came from, with
-the grouped layers selected again.
+**Reuse and orphans.** A composition is a card in the media pool (sorted with
+the files by name), with the Group glyph, duration and reference count. Dragging
+it places another instance (`add_group_layer`); two instances at different
+offsets show different frames. A composition may be placed in another Group but
+never inside itself or an ancestor (the drop target greys). An orphan keeps its
+card, dimmed and tagged isolated — the only place to open, rename, or delete it;
+selecting it shows the composition in the inspector.
 
-**Reuse, and where an orphan lives.** A composition is a card in the media pool
-beside the imported files — one list, both kinds, sorted by name — carrying a
-Group glyph where a thumbnail would be, its duration and its reference count.
-Dragging one places another instance (`add_group_layer`) — the second way a
-Group reaches a timeline, and the reason a composition is an entity at all. Two
-placements of one composition are two instances at their own offsets, so at one
-playhead they show different frames of the same content. A composition may be
-placed inside another Group, but never inside itself or one of its ancestors:
-the drop target greys out rather than letting the release be refused. A
-composition nothing references any more — an orphan — keeps its card, dimmed and
-tagged isolated, where it can be opened, renamed, or deleted; that card is the
-only surface able to remove it. Selecting it puts the composition in the
-inspector, so an orphan can be read and named with no clip anywhere.
+Mutations: `apps/desktop/src/main/state/mutations/groups.ts` over the crossing
+primitive `mutations/moveToComposition.ts`.
 
-Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`, over the
-crossing primitive in `mutations/moveToComposition.ts` (ADR 0054); tools and
-wire shapes: [mcp.md](mcp.md), [data-model.md](data-model.md).
+## Retime
+
+Video, Audio, animated images, Motifs and Group clips take a constant playback
+rate ([ADR 0092](adr/0092-constant-time-remapping-preserves-content-windows.md)).
+The inspector's Timing group stacks Start, Duration and a read-only End
+(exclusive, Start + Duration, in frame or audio units); Start moves the clip and
+Duration trims its out edge. Beneath them one **Retime** row holds a target
+duration, a speed multiplier (a text button until clicked, then an input with a
+trailing ×; Enter or blur commits, Escape cancels), *Reset to 1×*, and, for Audio
+and Group clips, *Preserve pitch*. Both retime directly, without preview or
+confirmation.
+
+The selection is the whole batch; links never expand it, and a Group and its own
+children cannot be retimed together. In a batch, *Preserve pitch* addresses only
+the Audio/Group clips (showing their count) and shows a mixed state that enables
+it for all when clicked. A retime keeps the start and the selected content, snaps
+the new end to the clip's grid, and scales the clip's own keys and fades;
+neighbours never move. Refusals (the local preview and the commit alike) name the
+colliding clips and, when known, the maximum duration and approximate minimum
+speed; a transition refusal names the transition. Only frame sampling is
+available. A retimed Group can be entered and edited, but ungrouping it or adding
+members needs rate 1. Agents: `retime_layers`, `set_preserve_pitch`,
+`set_frame_interpolation`, `get_frame_interpolation_capabilities`
+([mcp.md](mcp.md)). Code: `renderer/properties/RetimeFields.tsx`,
+`renderer/retimePlan.ts`, `main/state/mutations/retime.ts`.
 
 ## Split at the playhead
 
-`Mod+B` cuts every clip the playhead is inside. It is the Blade tool's
-keyboard half — the tool can only ever cut where the pointer is — and reaches
-the same `split_layer_linked` channel a blade click does, `escape_link: false`
-included, so a linked A/V pair cuts in lockstep. Also on the Edit menu, in the
-Quick Actions strip, in a clip's context menu and in the search palette.
-Resolution lives in `apps/desktop/src/renderer/commands/splitAtPlayhead.ts`.
+`Mod+B` cuts every clip the playhead is inside — the Blade's keyboard half,
+through the same `split_layer_linked` channel with `escape_link: false`, so
+linked A/V cuts together. Also in the Edit menu, Quick Actions, clip context
+menu and palette. Resolution: `apps/desktop/src/renderer/commands/splitAtPlayhead.ts`.
 
-**Targets resolve selection-first.** A non-empty selection with anything
-straddling the playhead narrows the cut to those clips; otherwise every
-straddling clip is cut. That is Premiere's contract, and it is also what keeps
-the common case — one clip, or one auto-paired couple — to a single history
-entry, because each clip is its own commit.
-
-**One target per link, not one per member.** A linked split already fans out
-to every spanning sibling inside one commit, so sending the partner as well
-would ask for a cut in an interval that commit had just closed.
-
-**The sweep respects the A/B Roll filter; the selection does not.** In A/B Roll
-the timeline hides every role-less track, which is exactly where
-auto-spawned overlays and titles land, so cutting one there would be an edit the
-user cannot see. A *selected* layer is one they reached on purpose — the inline
-reveal is already showing it — so the selection path ignores the filter.
-
-**Locks are prevented, not refused.** Locked layers and locked tracks are
-filtered out before dispatch: a lock is the user's own standing instruction, not
-an error to report back at them. The one refusal that survives is a link
-straddling a locked track, where the actor's `TrackLocked` is the useful answer
-— half the pair is pinned, and a partial split of a link is not a thing
-`escape_link: false` can express.
-
-**No disabled state, on purpose.** Whether a clip straddles the playhead
-changes as the playhead moves, so gating the command would mean subscribing the
-Quick Actions strip to the playhead — a re-render per frame, which the playhead
-budget forbids. Over a gap the command no-ops, exactly as `Ctrl+K` does in
-Premiere.
-
-**Undo granularity is the known limit.** N straddling clips are N commits and
-therefore N undo steps. Collapsing them would need a new actor op;
-`split_layer_multi` is the other axis (one layer, many times — the shot-split
-path).
+- **Selection first.** If the selection holds clips straddling the playhead,
+  only those are cut; otherwise every straddling clip.
+- **One target per link** — the linked split already cuts spanning siblings.
+- **The sweep respects the A/B Roll filter; the selection does not** (A/B Roll
+  hides role-less tracks; a selected layer was reached on purpose).
+- **Locks are filtered out, not refused.** The one surviving refusal is a link
+  straddling a locked track (`TrackLocked`).
+- **Never disabled** — gating would subscribe Quick Actions to the playhead and
+  re-render per frame. Over a gap it no-ops.
+- N straddling clips are N commits and N undo steps.
 
 ## Ripple delete
 
-`Shift+Delete` (or `Shift+Backspace`) removes the selected clips **and closes
-the span they vacated**: everything after it, on every track of the
-composition, moves left and the film gets shorter. Bare `Delete` stays the
-lift — the clip goes and its span stays empty — as in Premiere and Resolve.
-Both sit together on the Edit menu, in a clip's context menu (*Ripple delete*
-directly under *Delete*), in the search palette, and the ripple has a Quick
-Actions button. With keyframes or a transition chip selected the key degrades
-to the plain delete, so the precedence order is the one Delete already has
-([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
+`Shift+Delete` / `Shift+Backspace` removes the selected clips **and closes the
+span they vacated**: everything after it, on every track of the composition,
+moves left. Bare `Delete` is the lift. Both are in the Edit menu, clip context
+menu (*Ripple delete* under *Delete*) and palette; ripple also has a Quick
+Actions button. With keyframes or a transition chip selected the key falls back
+to plain delete (Delete's precedence).
 
-**The hole is what the clip actually vacated on its own track.** Its footprint,
-clipped to its remaining same-class neighbours:
-`[max(start, prev.end), min(end, next.start))`. Two consequences fall out. A
-transition participant can be rippled — the overlap the transition authorized
-belongs to the partner and is not part of the hole, so the downstream clip
-lands on the partner's exit frame instead of colliding with its tail. And a gap
-that already sat beside the clip is not closed; it moves left with everything
-after it, which keeps the span an overlap placement vacated a gap. With no
-transition the rule degrades to "shift by the clip's length".
+**The hole** is the clip's footprint clipped to its remaining same-class
+neighbours on its own track: `[max(start, prev.end), min(end, next.start))`. So a
+transition participant can be rippled (the overlap belongs to the partner), and
+an existing gap beside the clip is not closed — it moves left with everything
+after it. With no neighbours overlapping, the shift is the clip's length.
 
-**Several clips: remove, measure, merge, sweep.** The whole selection comes
-out first, each hole is measured against what remains, touching or overlapping
-holes across tracks merge into one, and every remaining layer that starts at
-or after a hole shifts left by the total length of the holes ahead of it — one
-snap of the summed delta per mover, each on its own lattice, so a slipped A/V
-offset survives exactly as it does under a link move. A linked video and its
-audio yield one hole and one shift; two adjacent slices yield one longer hole.
-One commit, one undo, one history row.
+**Several clips.** The selection is removed first; each hole is measured against
+what remains; touching or overlapping holes across tracks merge; every remaining
+layer starting at or after a hole shifts left by the total length of the holes
+ahead of it — one snap of the summed delta per layer on its own lattice, so A/V
+slips survive. One commit, one undo.
 
-**Who moves, who stays, who blocks.** A layer starting at or after the hole's
-end moves; a layer starting before the hole stays, whether or not it reaches
-across the cut — a spanning title is anchored ahead of it. A layer that
-*starts inside* the hole and is not selected refuses (`RippleInsideHole`): the
-hole must come out clean, and the remedy composes — add that clip to the
-selection and its own hole merges in. A landing on a layer that is not moving
-refuses (`RippleCollision`); a transition authorizes its overlap only while
-both participants shift by the same amount, and the system never makes room.
-Locks read leniently: only a layer or lane that would actually move blocks
-(`RippleLockedLayer` / `TrackLocked`), so locking a logo at the head does not
-disable the ripple for the rest of the film.
+**Who moves, stays, blocks.** A layer starting at or after a hole's end moves;
+one starting before it stays, even if it spans the cut. An unselected layer
+*starting inside* a hole refuses (`RippleInsideHole`; remedy: select it too). A
+landing on a non-moving layer refuses (`RippleCollision`); a transition keeps its
+overlap only if both participants shift equally; the system never makes room.
+Locks block only if the locked layer or lane would move (`RippleLockedLayer` /
+`TrackLocked`). **Origin exception:** when a hole starts at 0, a layer also
+starting at 0 stays and does not refuse (a title over the head of the film stays
+while the leading silence closes beneath); a linked partner of a deleted layer
+gets no such pass.
 
-**Links.** A split leaves every piece of a linked clip in one link, so
-deleting a middle piece always leaves link members before the hole and after
-it — that is the ripple's headline case and it is allowed: the pieces before
-the cut end at it, and bringing the pieces after it up to them is the point.
-The refusal (`RippleLinkStraddles`) is for a member that *reaches across* the
-cut — starts before the hole and ends after its start — while another member
-would move: a J-cut whose audio would drift off its picture. Because a plain
-click on a linked clip selects the whole link, picking one piece of a split
-clip is an `Alt`-click (and `Alt`+`Shift`-click adds its partner).
+**Links.** A linked set may have members before the hole and after it; that is
+allowed — bringing the later pieces up to the earlier ones is the point. A member
+that *reaches across* a hole (starts before it, ends after its start) while
+another member of that link would move refuses (`RippleLinkStraddles`) — a J-cut
+would drift off its picture. To remove one member of a link, `Alt`-click it.
 
 **Transitions, markers, time.** A transition with both participants downstream
-travels intact; at a fractional frame rate the microsecond distance of a frame
-depends on where it sits, so the stored `duration_us` is re-derived from the
-landed overlap and the borrowed tail is re-measured as the same count of
-frames — a pure-placement overlap still borrows nothing afterwards. A
-transition with one participant deleted is dropped by the commit's reconcile,
-as under a plain delete. Anchored markers follow their clips through the same
-reconcile and a deleted clip's markers go with it; free markers, the playhead
-and the in/out range stay at their absolute times ([Markers](#markers)).
-Keyframes are clip-relative and need nothing. Composition duration follows the
-autofit rule ([ADR 0005](adr/0005-composition-duration-autofits-to-layers-unless-pinned.md)):
-unpinned shrinks, pinned keeps its length. Inside a Group the Group's own
-timeline shrinks and every parent `CompositionRef` keeps its placement and
-window (the overhang [Groups](#groups) tolerates); in a parent a Group clip is
-one more body that moves or stays, and the ripple never reaches inside it.
+travels; at fractional rates its `duration_us` and borrowed tail are re-derived
+from the landed overlap in frames. A transition losing a participant is dropped
+by reconcile. Anchored markers follow their clips (a deleted clip's markers go);
+free markers, the playhead and in/out stay at absolute times. Duration follows
+the autofit rule ([data-model.md § Composition](data-model.md#composition)):
+unpinned shrinks, pinned keeps its length. Inside a Group the Group's timeline
+shrinks and parent windows are kept (overhang); in a parent a Group clip is one
+body that moves or stays.
 
 **Predicted, then enforced.** One pure planner (`renderer/ripple/plan.ts`)
-computes the plan or the refusal. The mutation applies it, and the renderer
-runs the same function against its mirror so the context-menu row, the strip
-button and the menu entry are greyed *with the reason* before the key is
-pressed — the tooltip sentence and the status-bar line a real refusal prints
-are one curated wording. The mirror can lag the actor by a round trip, so the
-actor stays the authority: a refusal it did not predict lands on the status
-bar through the usual refusal funnel. No toast, no dialog.
+computes the plan or the refusal. The actor applies it; the renderer runs it on
+its mirror to grey the menu row, strip button and menu entry *with the reason*,
+using the same wording the status bar prints for a real refusal. The actor stays
+authoritative: an unpredicted refusal lands on the status bar. No toast, no
+dialog.
 
-**A selected gap closes under the same closing.** Clicking the blank lane space
-between two clips selects the gap ([Timeline selection](#timeline-selection)),
-and `Delete`, `Backspace`, `Shift+Delete` and the gap's context-menu row all do
-one thing: the gap is the hole, nothing is deleted, and every layer of the
-composition starting at or after its end moves left by its length, on every
-track ([ADR 0069](adr/0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md)).
-Bare `Delete` closes here because a gap is already empty — there is nothing to
-lift — and because that is what Premiere and Resolve make the key mean over a
-gap. From the merge on the planner is the deletion's, so the refusals are the
-same four with the same predicted greying: a clip starting inside the gap on
-another lane (`RippleInsideHole`; the remedy is to remove that clip, since a gap
-has no set to add it to), a landing that collides, a link reaching across, a
-lock that would have to move — and the gap's own lane always holds a mover, so a
-gap on a locked lane always refuses. The span travels to the actor as **both
-edges**, never as a time inside it: the actor closes exactly what the timeline
-highlighted, and a span that is no longer a gap when it arrives — a clip moved
-into it under a lagging mirror — is refused (`GapNotFound`) rather than
-re-measured. The history row reads *Closed gap*.
+**A selected gap** ([Timeline selection](#timeline-selection)) closes under
+`Delete`, `Backspace`, `Shift+Delete` or its menu row: the gap is the hole,
+nothing is deleted, every layer at or after its end moves left on every track.
+Refusals are the same four (a clip on another lane starting inside the gap — the
+remedy is to remove it; a collision; a straddling link; a lock that would move);
+a gap on a locked lane always refuses. The span is sent as **both edges**; if it
+is no longer exactly a gap when it arrives, the actor refuses (`GapNotFound`)
+rather than re-measuring. History row: *Closed gap*.
 
-**For agents** the same edit is `delete_layers { layer_ids, ripple: true }`
-([mcp.md](mcp.md)) and, for a gap, `ripple_delete_gap { track_id, start_us,
-end_us }`; `split_layer_multi` carries a `ripple` flag so a split and
-the closing of what it discarded are one undo, which is what
-[Pauses](#pauses)' *Remove pauses* and the `/cut-pauses` prompt
-stand on.
+**Agents:** `delete_layers { layer_ids, ripple: true }` and
+`ripple_delete_gap { track_id, start_us, end_us }`. The internal
+`split_layer_multi` op carries a `ripple` flag so a split plus closing the
+discarded spans is one undo — what [Remove pauses](#pauses) and the
+`/cut-pauses` prompt use.
 
-Code: `renderer/ripple/plan.ts` (the planner, with its gap entry),
-`renderer/ripple/gap.ts` (what a gap is — one rule for the click, the selection
-store and the planner), `main/state/mutations/ripple.ts` (the sweep and the
-transition re-derivation), `renderer/timeline/rippleEligibility.ts` (the one
-predicate behind every surface), `renderer/errors/formatCommandError.ts` (the
-curated refusals).
+Deliberately unbuilt: ripple trim, insert edits, per-track Sync Lock, rippling
+free markers, and a parent rippling when a Group shrinks. Rejected: bare `Delete`
+rippling (it stays the lift), same-track ripple (desyncs linked A/V on two
+tracks), and sliding a layer that starts inside the hole (a B-roll cut for the
+deleted clip would land on the previous one).
+
+Code: `renderer/ripple/plan.ts` (planner), `renderer/ripple/gap.ts` (what a gap
+is, for click, selection store and planner), `main/state/mutations/ripple.ts`,
+`renderer/timeline/rippleEligibility.ts`, `renderer/errors/formatCommandError.ts`.
 
 ## Track placement
 
-**Tracks are created by placing content.** The top drop strip and Move to a new
-track remain the creation paths (ADR 0042). All Tracks adds whole-track ordering:
-drag a header grip to an insertion line, or use the header menu's up, down, top
-and bottom actions. A/B Roll exposes neither ordering control; its Playhead Panel
-continues to arrange clips. A/B tracks stay as reference rows, while other tracks
-can move above, between and below them. A locked track or one with a locked clip
-cannot move. Audio rows can be arranged without changing mixing.
+**Tracks are created by placing content**: the drop strip and *Move to a new
+track* are the creation paths. In **All Tracks** mode, whole tracks reorder by
+dragging a header grip to an insertion line or via the header menu (up, down,
+top, bottom); A/B tracks stay as reference rows that other tracks move around. A
+locked track, or one holding a locked clip, cannot move. Reordering audio rows
+does not change mixing. A drag highlights the row and its clip count, keeps row
+geometry stable, auto-scrolls vertically, and is cancelled by Escape, pointer
+cancel, mode/visibility changes or a change to the track order. One drop is one
+undo entry, preserving track identity, attributes and every clip's timing. New
+and menu-moved tracks scroll into view vertically without changing the time
+window or selection. There are no clip drop targets between rows (move to a new
+track, then reorder it). The header also offers *Delete track and clips*
+(not on A/B tracks).
 
-Dragging highlights the whole row and its clip count, keeps row geometry stable,
-and scrolls vertically at the viewport edges. Escape, pointer cancellation,
-mode/visibility changes and changes to the track-id order cancel the gesture.
-One drop changes real z order in one undo entry, preserving track identity,
-attributes and every clip's timing, including offscreen clips. Newly created
-tracks and menu-moved tracks scroll into view vertically without changing the
-horizontal time window or clip selection. To insert one clip between tracks,
-move it to a new track and reorder that track; there are no extra clip drop
-targets between rows. The header also offers Delete track and clips except on
-A/B tracks, independently of the automatic empty-track cleanup preference.
+**A/B Roll** mode has no track reordering; the Playhead Panel's *Now playing*
+stack arranges clips. It lists persistent reference rows for the reserved
+A-roll, B-roll and caption tracks in track order, showing the current clip or an
+empty placeholder (audio-role tracks excluded). References are read-only drop
+targets, never drag sources, and survive gaps and category filters. Every listed
+clip, linked or not, has its own row; restacking moves only the dragged clip,
+above, between or below the references. A drag emits nothing until drop, then
+one history entry; Escape/pointercancel cancel (`panels/playheadItems.ts`; wire
+op `restack_layer` in [data-model.md](data-model.md#mutation-surface)).
 
-A **drop strip** sits above the topmost lane: a 12–16 px row that turns a drag
-into a new track at the top of the z-stack. Two of its properties look like
-oversights and are neither. Its space is reserved **permanently**, because a row
-that appeared on drag would reflow the timeline under the pointer mid-gesture. And
-idle it is a **dashed rule** along the bottom of that row, with an insertion arrow in the
-header half — a seam, not a lane — lighting up only while a drag is live,
-because anything that looks like an empty lane when nothing is happening
-reads as a lane the editor is supposed to manage. It accepts
-a media-pool drag and an existing-clip drag identically — two different event
-models, one target, which is why both are end-to-end gated
-(`e2e/electron/timeline-drop-strip.spec.ts`, `timeline-raise-to-strip.spec.ts`).
-A clip dropped on a lane that has room still lands there; spawning is the
-exception.
+**The drop strip** is a 14 px row above the topmost lane that turns a drag into a
+new track at the top of the z-stack. Its space is reserved permanently (a row
+appearing mid-drag would reflow under the pointer), and idle it is a dashed rule
+with an insertion arrow in the header half — a seam, not an empty lane — lit only
+during a drag. It accepts media-pool drags and clip drags (both e2e-gated:
+`e2e/electron/timeline-drop-strip.spec.ts`, `timeline-raise-to-strip.spec.ts`). A
+clip dropped on a lane with room lands there; spawning is the exception. The
+strip draws a raise's preview (the only row without a lane to host it), and the
+source lane lets go of the chip; the preview persists through the commit's round
+trip so a released raise does not flash back.
 
-The strip is also where a raise's **preview** is drawn, and it is the only row
-that can be: every other destination is a lane that can host the chip itself,
-while this one has no lane until the commit returns. So the bars sit in the strip
-and the lane the clip is leaving lets go of it — a chip left behind there would
-say the clip is staying. The preview outlasts the release too, holding its place
-for the round trip in which the destination still has no id, which is what keeps
-a released raise from flashing back to where it started.
+The top is the **only** spawn point (a lane below A-roll is hidden unless A-roll
+has a gap). A **raise** moves clips to the top; an emptied source track is
+cleaned up. **Move to a new track** (palette, Edit menu, clip menu; unbound) is
+the raise without a pointer, disabled when the selection would overlap itself
+on one lane; it keeps every clip's time, while a drag lands where the ghost
+showed.
 
-The top is the **only** spawn point. A lane below A-roll composites underneath it
-and is invisible unless A-roll has a gap. A **raise** moves clips to that topmost
-position; its emptied source is cleaned up. In A/B Roll, anchored **restacking**
-belongs to the Playhead Panel's Now playing stack (ADRs 0044 and 0088). Its
-reserved A-roll, B-roll and caption reference rows persist through gaps and
-category filters, so a clip can be placed above, between or below them in one
-drag or menu action. References are targets, never draggable sources; audio
-does not participate in visual ordering. One undo restores the entire change.
-**Move to a new track** is the raise operation without a
-pointer (search palette, Edit menu, and a clip's own context menu; no default
-binding, disabled when the selection would overlap itself on one lane). A drag
-gesture is unreachable from the keyboard, so the command is not a convenience.
-The one thing it does not carry is a time: a raise **may** name where the set
-lands, and the drag does because its ghost showed the editor that landing, while
-the command leaves every clip where it was.
+**Automatically delete empty tracks** (Settings → General → Timeline, default on)
+removes an ordinary unlocked track when its last clip leaves. Reserved and locked
+tracks survive, a track born empty is never swept, and turning the setting on
+does not sweep existing empty tracks.
 
-**Automatically delete empty tracks**, enabled by default in Settings → Timeline,
-removes an ordinary unlocked track when its last clip leaves. Reserved or locked
-tracks survive. A track that was *born* empty was never emptied, so unrelated edits
-never sweep it away. Turning the preference off preserves emptied tracks; turning
-it on does not sweep existing empty tracks. Explicit deletion remains available
-from the header independently of this setting.
+**Track names** are automatic unless set: reserved tracks from their role, the
+rest from a position that renumbers as tracks come and go. Double-click the
+header name or use Rename; **clearing the field restores the automatic name**
+(unlike a clip, where empty abandons the edit). A rename is undoable; eye and lock
+are not. Raising a clip out of a renamed track that it empties discards the name
+with the track; one undo restores all three.
 
-Every track is **named automatically unless the editor names it**: the reserved
-A/B-roll tracks from their role, the rest from a position that renumbers as tracks
-come and go, exactly as Premiere and Resolve renumber. Double-click a track
-header's name to rename it, or use Rename in its context menu; **clearing the field
-gives the automatic name back**, which is the opposite of renaming a clip, where an
-empty value abandons the edit. A track's automatic name is a meaningful default the
-editor needs a route back to, and a clip has no equivalent. A rename is undoable —
-it is content, not a control — while the eye and the lock are not, so undo never
-reveals a track the editor hid.
+Code: `apps/desktop/src/renderer/timeline/placement.ts`, `DropStrip.tsx`,
+`hooks/useLayerDrag.ts`, `renderer/lib/trackName.ts`; mutations
+`main/state/mutations/move.ts` (`applyMoveLayersToNewTrack`), `tracks.ts`
+(`applyRenameTrack`), and the prune in `mutations/helpers.ts`. Cleanup predicate:
+[data-model.md § Track](data-model.md#track).
 
-One consequence worth knowing: **raising a clip out of a track you renamed
-discards that name**, because the track goes with it. One undo restores clip,
-track and name together.
+## Timeline layout
 
-Placement policy and the strip live in
-`apps/desktop/src/renderer/timeline/placement.ts` and `DropStrip.tsx`; the pointer
-drag's hit-test in `hooks/useLayerDrag.ts`; naming in `renderer/lib/trackName.ts`.
-Mutations: `main/state/mutations/move.ts` (`applyMoveLayersToNewTrack`),
-`tracks.ts` (`applyRenameTrack`) and the single prune in `mutations/helpers.ts`.
-Wire shape and the cleanup predicate: [data-model.md](data-model.md).
+The timeline stacks fixed rows (ruler, marker lane, review lane, add-track
+strip — each a `TimelineFixedRow`) above one **track viewport**
+(`timeline-track-viewport`), the only scroller, owning both scroll offsets. Fixed
+rows follow horizontal scroll through `timelineScrollStore` with transforms,
+without re-rendering tracks. Track decorations, cursors and height handles are
+clipped inside the viewport so nothing can hit-test over the ruler (a shared
+scroller once let a height handle steal ruler presses). One pointer-inert
+playhead overlay (`TimelinePlayhead.tsx`) spans all rows. Drag destinations
+resolve in `timeline/timelineDestination.ts`: the add-track strip owns only its
+visible rect; track bands count only inside the viewport and outside the header
+column.
 
 ## Timeline scrolling
 
-The **bare wheel walks time** and **Shift+wheel walks the track stack** — the
-mapping Premiere carries as its `Timeline Mouse Scrolling` default and Resolve's
-Edit page uses. On a clip-along-time timeline the horizontal axis is the one that
-always overflows, so it gets the unmodified gesture; the browser's own convention
-(bare wheel vertical, Shift horizontal) is the opposite, and it is invisible — a
-lane that only moves under a modifier reads as jammed.
-
-`Settings → Timeline → Mouse wheel scrolls` flips the pair for the
-track-count-first habit After Effects and Media Composer teach. `Across tracks`
-is not a reimplementation: it hands every unmodified gesture back to Chromium, so
-that mode keeps the platform's scroll smoothing.
-
-Two gestures are never remapped. A **trackpad's sideways swipe** already carries
-a horizontal delta, so it passes straight through with its momentum intact — the
-handler would otherwise double its travel. And a wheel with **Ctrl or Alt** held
-belongs to zoom below; the two listeners on the timeline's scroll root divide the
-wheel by modifier, never by which one registered first.
-
-Pressing into an end stop does nothing rather than spilling onto the other axis —
-the same rule zoom follows. The mapping table is
-`apps/desktop/src/renderer/timeline/wheelScroll.ts` (pure, so the axis rules are
-testable without a layout); the listener is `hooks/useWheelScroll.ts`. Nothing
-here writes `timelineScrollStore` — moving `scrollLeft` fires a `scroll` event,
-and `Timeline`'s rAF-coalesced publisher stays the store's one writer.
+The **bare wheel scrolls time**; **Shift+wheel scrolls tracks** (Premiere's and
+Resolve's default). Settings → General → Timeline → *Mouse wheel scrolls* flips
+the pair; *Across tracks* hands the unmodified wheel back to Chromium, keeping
+platform smoothing. A trackpad's sideways swipe passes through untouched
+(momentum intact). Ctrl/Alt+wheel is zoom. Pressing into an end stop does
+nothing (no spill onto the other axis). Mapping: `renderer/timeline/wheelScroll.ts`
+(pure); listener: `hooks/useWheelScroll.ts`. Nothing here writes
+`timelineScrollStore`; the viewport's rAF-coalesced scroll publisher is its only
+writer.
 
 ## Timeline zoom
 
-Two gestures scale the timeline, differing in one thing — what they hold still.
-**Ctrl+wheel** (and **Alt+wheel**, Premiere's modifier for the same gesture) is
-continuous and holds the time under the **cursor**. **`=` / `-`** step one
-doubling per press and hold the **playhead**, because a key press has no pointer
-to hold. Geometry in
-`apps/desktop/src/renderer/timeline/zoom.ts`; the state, the bounds and the one
-`scrollLeft` write in `hooks/useTimelineView.ts`.
+**Ctrl+wheel** (or **Alt+wheel**) zooms continuously about the time under the
+**cursor**. **`=` / `-`** step one doubling and hold the **playhead**; if the
+playhead is off screen they hold the lane centre instead, and an on-screen
+playhead stays on screen at every step. Range: ceiling 2000 px/s; floor =
+**fit-to-project** (the project extent before post-roll padding exactly fills the
+lane), recomputed per gesture. Pressing into a stop does nothing. Geometry:
+`renderer/timeline/zoom.ts`; state and the `scrollLeft` write:
+`hooks/useTimelineView.ts`.
 
-Both share the same range. The ceiling is a flat 2000 px/s. The floor is
-computed per gesture: **fit-to-project** — the scale at which the project extent
-(before the post-roll padding) exactly fills the lane — so zooming out always
-stops at the whole timeline and never past it, and the stop widens as the
-project grows or the panel resizes. Pressing into a stop is a no-op, not a
-nudge: the view doesn't move.
-
-**When the playhead is off screen**, a keyboard zoom anchors the lane's centre
-instead. A zoom is a magnification, not a seek — a user who scrolled to a
-distant region and pressed `-` to widen it wants *that* region to widen. The
-complement is the property the anchoring exists for: a playhead that is on
-screen **stays** on screen, at every rung, because holding its offset from the
-lane's left edge survives both end-stop clamps.
-
-`=` / `-` rather than the `Mod+=` / `Mod+-` half of the convention, and this is a
-hard constraint rather than a preference: `hardenWindow`
-(`src/main/windows.ts`) consumes every Ctrl/Cmd +/−/0 at `before-input-event` to
-kill Chromium's page zoom, which would otherwise shrink the whole application —
-and that `preventDefault()` stops the keydown from reaching the renderer at all.
-A chorded binding would look right in Settings → Keyboard and never fire. Bare
-keys also stay dead inside text fields, so a minus still types into a numeric
-inspector field.
-
-Both are real commands (search palette, Settings → Keyboard, agent-callable) and
-are **unscoped** — `=` and `-` always zoom the timeline, whichever panel holds
-focus. Preview zoom has its own commands in Quick Actions.
+The keys are bare `=`/`-`, not `Mod+=`/`Mod+-`: `hardenWindow`
+(`src/main/windows.ts`) consumes Ctrl/Cmd +/−/0 at `before-input-event` to kill
+Chromium page zoom, so a chorded binding would never reach the renderer. Both are
+commands, **unscoped** (they zoom the timeline whatever has focus) and inert in
+text fields.
 
 ## Preview zoom and pan
 
-The wheel over the preview zooms it, anchored on the pointer — nothing to arm,
-no mode to leave. A trackpad pinch zooms the same way, and two-finger scrolling
-zooms as the wheel does. The middle mouse button drags the picture under any
-tool. `Z` returns to Fit, recentred, from anywhere; View › Fit preview to
-window is the same command.
+The wheel or a trackpad pinch over the preview zooms about the pointer;
+two-finger scroll zooms like the wheel. Middle-drag pans under any tool. `Z`
+(also View › *Fit preview to window*) returns to Fit, recentred.
 
-The preview toolbar's zoom readout is also its menu: `Fit`, then 25 %, 50 %,
-75 %, 100 %, 150 %, 200 %, 300 % and 400 %. A percentage is composition pixels
-per device pixel, so 100 % shows the frame's own detail whatever the panel's
-size; `Fit` is a mode rather than a number, and re-fits when the panel is
-resized. The wheel moves continuously between those stops and past both ends,
-snapping onto a stop when it passes close by, and the readout names wherever it
-lands. *Zoom in preview* and *Zoom out preview* walk the same stops from the
-search palette.
+The toolbar zoom readout is a menu: `Fit`, 25, 50, 75, 100, 150, 200, 300, 400 %.
+A percentage is composition pixels per device pixel; `Fit` is a mode that
+re-fits on resize. The wheel moves continuously beyond both ends, snapping to a
+stop when close. *Zoom in/out preview* step the stops from the palette.
 
-The Hand tool (`H`) sits beside Selection in the same tool group, for a pointer
-with no middle button: dragging the preview pans it, with a grabbing cursor
-during the gesture, and `Esc` or `V` returns to Selection. Both pan paths share
-one rule — each axis is bounded by the frame's edges and centred when it fits,
-and pointer capture keeps a drag working outside the panel.
+The Hand tool (`H`, beside Selection) pans by dragging for pointers without a
+middle button; `Esc` or `V` returns to Selection. Both pan paths bound each axis
+by the frame's edges (centred when it fits) and use pointer capture.
 
-Zoom and pan are session view state: they change no clips, history entries or
-export geometry, and changing the preview's composition resets them. The canvas
-and its editing overlays share the resulting screen coordinates.
+Zoom and pan are session view state: no clip, history or export change; changing
+the preview's composition resets them.
 
 ## Follow playhead
 
-The timeline keeps the playhead on screen by **paging** its view: when the
-playhead crosses to within 12 px of a viewport edge, the view jumps so the
-playhead sits one lead (8 % of the viewport, min 12 px) inside the edge it
-crossed. Geometry in
-`apps/desktop/src/renderer/timeline/followPlayhead.ts`; the DOM side —
-transient playhead subscription, one `scrollLeft` write per page — in
-`hooks/useFollowPlayhead.ts`.
+The timeline **pages** to keep the playhead visible: when it comes within 12 px
+of a viewport edge, the view jumps so it sits one lead (8 % of the viewport,
+min 12 px) inside the edge it crossed. Paging writes `scrollLeft` once per
+screenful instead of every frame. Forward pages leave a lead behind and a
+near-full screen ahead; backward pages jump a full screen so the playhead lands
+near the right edge (repeated step-backs don't re-page each press).
 
-**Paging, not tracking.** Pinning the playhead to a fixed column and sliding
-content under it would rewrite `scrollLeft` on every composition frame, and
-each write publishes to `timelineScrollStore` and re-renders the ruler. A page
-touches the view once per screenful.
-
-**Forward vs backward are asymmetric.** Forward pages leave a lead behind the
-playhead and a near-full screen of lookahead. Backward pages jump a full screen
-so the playhead lands near the *right* edge — the gesture that ran it off the
-left edge (stepping back a frame, seeking to the previous edit) is one the user
-repeats, and a lead-sized jump would re-page on the next press.
-
-**What moves the view and what doesn't.** Playback and jumps (shortcut seeks,
-edit-point steps, timecode entry, palette navigation) follow. Two things
-deliberately don't: a **ruler scrub drag**, because the user is aiming at a
-point they can see and paging would move the target out from under the pointer;
-and **zoom**, which owns its own anchor ([Timeline zoom](#timeline-zoom)) — the
-follow only ever reacts to the playhead moving, never to the view changing
-shape around a stationary one. That split is why a wheel tick cannot silently
-re-anchor on the playhead, and why the keyboard zoom's playhead anchor is the
-zoom's decision rather than the follow reaching in.
-
-App-level pref `timeline_follow_playhead` (default on), so it is one answer per
-machine rather than per project: View → Timeline auto-scroll, `Shift+F`, the
-Quick Actions strip, or the search palette. Absent from an older
-`app_settings.json` reads as **on**.
+Playback and jumps (shortcut seeks, edit-point steps, timecode entry, palette
+navigation) follow. A **ruler scrub** does not (the target would move under the
+pointer), nor does **zoom**, which owns its anchor; the follow reacts only to the
+playhead moving. App preference `timeline_follow_playhead` (default on; absent
+reads as on): View → Timeline auto-scroll, `Shift+F`, Quick Actions, palette.
+Code: `renderer/timeline/followPlayhead.ts`, `hooks/useFollowPlayhead.ts`.
 
 ## Markers
 
-A marker names a moment: a label, a colour, and a longer note. It belongs to
-one composition, and it either sits at a time of its own — a **free marker** —
-or **follows a clip**. Following is a field on the marker, not a second kind of
-entity (ADR 0056): an anchored marker carries a layer of its own composition
-plus a time in that layer's *source* window, and its `t_us` is re-derived from
-the clip on every commit. So it travels with the clip through moves, trims,
-splits and a crossing into a Group, and deleting the clip takes the marker with
-it. `t_us` stays stored, which is why every reader of a marker — the lane,
-`Ctrl+K`, export, MCP — is unchanged by any of this.
+A marker names a moment: label, colour, note. It belongs to one composition and
+is either **free** (its own time) or **follows a clip** — a field on the marker,
+not a second entity: an anchored marker stores a layer of its composition plus a
+time in that layer's *source*, and its `t_us` is re-derived from the clip every
+commit. It travels with moves, trims, splits and crossings into a Group;
+deleting the clip removes it (with a status-log row). `t_us` stays stored, so
+every reader (lane, palette, export, MCP) reads one field. A separate clip-owned
+marker kind was rejected: it would fork the lane, the palette, the summary,
+serialization, MCP and validation. Record: [data-model.md § Marker](data-model.md#marker).
 
-**The lane.** Markers live in one row directly under the ruler, never on the
-ruler itself. That row belongs to the ruler family — it measures time, where a
-track's lane holds layers — and it shares the ruler's quantised scroll window,
-so a glyph and the tick under it are the same x forever. A point is an L on
-its frame — stem on the left edge, foot running right under the name — so the
-position is the painted edge rather than a diamond's centre; a region is a
-capsule across its range, degrading to the same L below `MARKER_MIN_REGION_PX`
-so a two-frame region does not vanish at fit zoom (the tooltip still carries
-both ends). **An anchored L grows its stem; an anchored capsule fills** (a free
-one rings), and names print beside a point or inside a capsule, so a mark is
-readable without a hover. `markers_visible` (`M`'s own toggle, the View menu,
-the Quick Actions strip) owns the whole row: off, the 20 px go back to the
-tracks. `M` force-enables it, so authoring a mark brings the row back with it.
+**The lane** is one 20 px row under the ruler, sharing its scroll quantization so
+a glyph and its tick never drift. A point is an L (stem on the frame's left edge,
+foot under the name); a region is a capsule across its range, degrading to an L
+below `MARKER_MIN_REGION_PX` (tooltip keeps both ends). Anchored marks have a
+tall stem / filled capsule; free ones a short stem / ringed capsule. Names print
+beside a point or inside a capsule. `markers_visible` (`M`'s toggle in View
+menu and Quick Actions) shows/hides the row; `M` force-shows it.
 
-**Authoring.** `M` marks the playhead's frame; pressing it again on a marked
-frame opens rename rather than stacking a duplicate (the FCP/Resolve
-double-tap). An empty selection marks the *timeline*; a selection marks the
-*clip*, on the primary — one instant is one mark. A playhead outside the
-selected clip, or a clip whose kind carries no source window, falls back to a
-free marker. Right-click a glyph for rename, delete, **Attach to clip** and
-**Detach**; rows that do not apply are greyed, not hidden. Drag a glyph along
-the lane to move it — one commit at release, snapping to clip edges and the
-playhead, and a drag that lands where it started records nothing. Dragging an
-anchored marker moves its *anchor*, so the mark keeps following from the new
-offset; it clamps at its clip's edges rather than being allowed to hibernate
-out from under the cursor. Shot detection writes anchored markers directly, so
-a clip can carry its own cuts instead of being split by them.
+**Authoring.** `M` marks the playhead frame; pressing it on a marked frame opens
+rename instead of stacking. No selection → a free marker; a selection → anchored
+to the primary. A playhead outside the selected clip, or a kind with no source
+window, falls back to free. Right-click a glyph for rename, delete, **Attach to
+clip**, **Detach** (inapplicable rows grey). Dragging along the lane moves it
+(one commit at release; snaps to clip edges and playhead; a no-op drag records
+nothing). Dragging an anchored marker moves its anchor and clamps at its clip's
+edges. Shot detection writes anchored markers.
 
-**Hibernation.** Trim a clip past one of its anchored markers and the marker
-*hibernates*: the clip no longer shows the frame the mark names, so it is kept,
-painted nowhere, and revived on exactly that frame the moment the window covers
-it again. It is a derived condition recomputed every commit, never a stored
-flag, which is what makes undoing the trim enough to wake it. A *region* whose
-clip is trimmed to end inside it is drawn only as far as the clip still runs;
-the span it was given stays in the model, so re-extending the clip shows the
-whole region again. Deleting the clip is the other case and behaves differently
-— the marker is dropped, with a status-log row saying so. Detach is the
-deliberate exit: it turns the mark back into an ordinary free marker at the time
-it currently sits on, for when the note is worth keeping but the following is
-not.
+**Hibernation.** Trimming a clip past an anchored marker *hibernates* it: kept,
+not drawn, revived on exactly that frame when the window covers it again. It is
+derived each commit, never stored, so undoing the trim wakes it. A region whose
+clip ends inside it is drawn only to the clip's end; its stored span is kept.
+Detach turns a mark into a free marker at its current time.
 
-**Finding them.** `Shift+M` and `Mod+Shift+M` walk to the next and previous mark
-of the timeline holding the keyboard, matching on where a mark *begins* — a
-region merely spanning the playhead is not the current marker. Neither wraps:
-the dead key at the end of the list is the signal that the list has an end. Both
-are also `Ctrl+K` commands and rows on the ruler's right-click menu. `Ctrl+K`
-searches marker labels and notes; hibernating marks are excluded there, having
-no position to seek to.
+**Navigation.** `Shift+M` / `Mod+Shift+M` go to the next / previous mark start in
+the focused timeline (a region merely spanning the playhead is not current);
+neither wraps. Also palette commands and ruler menu rows. The palette searches
+labels and notes and excludes hibernating marks.
 
-**The Marker Panel** (closed by default; View → Marker) holds what marks *say*,
-where the lane holds where they *are*: every marker in the project, grouped by
-the composition that owns it, with label, colour and note editable in place.
-Scope is project-wide on purpose — a mark inside a Group is otherwise invisible
-from the root, which is the blindness the feature exists to close — and
-activating a row opens that Group's timeline before seeking. Hibernating marks
-get their own section, last and outside the time ordering, each showing where it
-sits in the *footage* and offering Detach; this is the only surface one appears
-on at all. On the parent timeline a Group clip carries a `⚑N` badge counting the
-marks reachable inside it, nesting included.
+**Marker Panel** (closed by default; View → Markers) lists every marker in the
+project, grouped by composition, with label, colour and note editable in place;
+activating a row opens that Group's timeline and seeks. Hibernating marks are a
+separate last section, showing their footage position and offering Detach — the
+only surface they appear on. A Group clip on the parent timeline shows a `⚑N`
+badge counting marks inside it, nested ones included.
 
-**Limits.** Time is read-only in the Panel, free markers included: an anchored
-marker's time is a cache the next commit rewrites, so a typed value would revert
-under the cursor. Position is the lane's drag, and that is the one rule. A
-region marker drags whole — its ends are not resizable by a gesture yet; the
-only hand-reachable producer of one is *Mark pauses*, in the Attribute panel's
-[Pauses](#pauses) section (§ below), which writes a region per pause. Child
-markers are never projected onto a parent's lane; the badge asserts a count and
-no position, because drawing a child
-composition's contents on the parent would erase, visually, the boundary
-ADR 0052 and ADR 0053 pay for.
+**Limits.** Time is read-only in the Panel (an anchored time is a cache the next
+commit rewrites); the lane drag is the one way to move a marker. Regions drag
+whole; their ends are not resizable. *Mark pauses* ([Pauses](#pauses)) is the
+hand-reachable producer of regions. Child markers are never drawn on a parent's
+lane.
 
 ## Shot review
 
-Shot detection is the one analysis a person reviews before it lands, because
-one candidate cut is verifiable at a glance — a frame pair either changes or it
-does not — which is cheaper than undoing a whole split and starting over. The
-review lives in the **Shots** Panel (View menu, or *Review shots…* on a
-`VideoClip`'s context menu and in the palette; closed by default). Everything
-it shows is a pure `reduce` over ONE whole-source scan
+The **Shots** Panel (View menu, or *Review shots…* on a `VideoClip` menu and in
+the palette; closed by default) reviews shot detection before it lands.
+Everything it shows is a pure reduce over ONE whole-source scan
 ([ADR 0057](adr/0057-shot-detection-is-one-floor-scan-and-a-pure-reduce.md)):
-ffmpeg scores every frame once at a fixed floor, and every threshold the
-reviewer tries afterwards is a cache read, never a decode.
+ffmpeg scores every frame once at a floor, and every later threshold is a cache
+read.
 
-**The subject** is the primary selected `VideoClip`. A source whose scan is
-cached renders its shots the instant the clip is selected; one that is not
-shows an **Analyze** button and nothing else — clicking clips is the
-highest-frequency gesture in the editor, so the Panel never scans on
-selection. (The media pool's *Analyze shots* is the same scan as a warm-up.)
-The scan is one status-log op, Started → Ok, and its failure sentence stays
-inline.
+**Subject:** the primary selected `VideoClip`. A cached scan renders instantly;
+otherwise the Panel shows **Analyze** and never scans on selection alone (the
+media pool's *Analyze shots* warms the same cache). The scan is one status-log
+op; its failure stays inline.
 
-**One row per shot**: a cover frame at the shot's own keyframe, its span and
-duration on the composition clock, and — on every row but the first — the
-candidate cut it opens on: the detector's score for that frame and the frame
-pair either side of it, the one look that answers "is this a real cut".
-Clearing a candidate's checkbox merges its shot into the predecessor; the
-cleared boundary stays listed on the merged row so the merge is reversible.
-A merged row shows no stats or flags, for the reduce's own reason: it is a
-different shot from any the scan measured. Clicking a row seeks the playhead to
-the shot's start. A second checkbox per row, **keep**, defaults on: unchecking
-marks a shot for discard.
+**Rows**, one per shot: a cover frame, span and duration on the composition
+clock, and — except the first — the candidate cut it opens on (score and the
+frame pair either side). Clearing a candidate's checkbox merges the shot into
+its predecessor (the boundary stays listed so it can be restored); merged rows
+show no stats. Clicking a row seeks to the shot's start. A second checkbox,
+**keep** (default on), marks a shot for discard.
 
-**Measure shots** fills the stat cells the scan left absent — the floor scan is
-timing-only, so at first that is every row. It samples three frames of each row
-that has none (inside the start, the cover frame, inside the end) for mean
-brightness, motion across the span and a focus proxy, plus the black / freeze /
-fade flags, through the same measurement `analyze_clip` reports, so the two
-never disagree about one span. It is opt-in because it spawns an ffmpeg pass per
-shot, and it writes nothing to the project: the measurements are cached per
-source span, so a boundary that survives a threshold move keeps its numbers and
-a second press costs only the spans the move reshaped. A merged row is
-measurable like any other — the span the reviewer made is the only span whose
-numbers mean anything for it. The button sits on the parameters row rather than
-among the apply verbs, because what it changes is what the rows say, not what
-they are; it greys with its reason once nothing is left to measure, while it
-runs, and while an apply runs. The pass is one status-log op, Started → Ok/Err,
-carrying the span count, and its failure sentence stays inline.
+**Measure shots** fills the stat cells (the floor scan is timing-only): three
+sampled frames per unmeasured row for brightness, motion and a focus proxy, plus
+black / freeze / fade flags — the same measurement `analyze_clip` reports. It
+spawns an ffmpeg pass per shot, writes nothing to the project, and caches per
+source span, so a re-press costs only reshaped spans. Merged rows are
+measurable. It greys with a reason when nothing is left, while it runs, and
+during an apply.
 
-**The strip and the line.** Above the rows, a strip plots one tick per
-candidate the floor scan emitted (x = source time, y = frame-change score)
-and a horizontal, draggable threshold across it. Ticks above the line are the
-boundaries the rows are built from; ticks below are what is being thrown
-away — so the strip answers how many candidates are still outside the line,
-and whether the source has any score separation at all. Dragging re-runs the
-reduce and relays the rows live; the line cannot go below the floor, and a
-window with no candidate says so instead of drawing a line over an empty
-plot. The line is a keyboard slider too (arrows, Page, Home/End). No control
-is labelled "sensitivity": the wire field of that name reads backwards
-(higher = fewer cuts), so the axis is named by what it measures and the
-control's meaning is its position. **Minimum shot length** is a separate
-millisecond field, deliberately unlike the line: it fixes output granularity
-(boundaries closer than it are dropped), not accuracy, and two look-alike
-sliders would invite using one to fix the other's problem. Both persist per
-project (`settings.shot_review`, `null` = the detector's defaults so no
-threshold literal lives outside Rust) through the unrecorded settings patch,
-so tuning never enters the undo stack.
+**The strip and the line.** A strip plots one tick per floor-scan candidate
+(x = source time, y = score) with a draggable horizontal threshold; ticks above
+it are the boundaries. Dragging re-runs the reduce live; the line cannot go below
+the floor; it is also a keyboard slider. Nothing is labelled "sensitivity" (the
+wire field reads backwards: higher = fewer cuts). **Minimum shot length** is a
+separate ms field (output granularity, not accuracy). Both persist per project in
+`settings.shot_review` (`null` = Rust's defaults) through the unrecorded settings
+patch.
 
-**Three verbs**, one canonical list: *Split at cuts*, *Mark cuts* and *Split
-and discard unchecked* all send the accepted boundaries — every row's opening
-candidate, kept or not — through one channel, so a split and a mark of the
-same review land on identical frames and a discard's survivors sit exactly
-where a plain split would have cut. Each is one commit and one undo, the
-discard included: undo restores the single pre-apply layer. A greyed verb
-carries its reason in the tooltip (no interior boundary; nothing unchecked;
-an apply already running). Unchecking every shot is refused by the channel —
-erasing the clip is a delete, not an apply — and the refusal lands inline.
-Two reviewed boundaries that snap onto the same composition frame are refused
-for a discard, with the remedy (raise the minimum shot length), because the
-row numbering the reviewer saw no longer matches the segments a split would
-make. No confirmation dialog on discard: destructive-but-undoable is house
-style, and the status bar reports what happened (Started → Ok/Err under one
-`op_id`, the Started row carrying how much went out). The Panel keeps
-following the selection afterwards: a split leaves the clip's identity on its
-first segment, so that segment is what the Panel reviews next — one shot,
-with no candidate inside its window — and the other segments are a click
-away; a discard that removes the first segment selects the first surviving
-segment instead, so a successful apply never leaves the timeline without a
-selection or the Panel without a subject. That survivor alone and not its
-link: the answer names only the target's own segments, and the paired audio
-the same commit cut alongside it has an id no caller has seen yet. After a
-mark the review stands. A discarded take takes its link partners with it —
-every other member of the clip's link overlapping the rejected span goes in
-the same commit, so a rejected shot's paired audio leaves with the picture
-rather than staying behind as a sliver. The same reach covers the agent's
-`drop_short_us`. What sits wholly inside a kept segment — a lower-third over
-the surviving middle of a manual bundle — stays.
+**Verbs**: *Split at cuts*, *Mark cuts* and *Split and discard unchecked* send
+the same accepted-boundary list through one channel (the `apply_shot_cuts`
+hybrid), so split, mark and discard land on identical frames. Each is one commit
+and one undo. A greyed verb gives the reason (no interior boundary; nothing
+unchecked; an apply running). Unchecking every shot is refused (that is a
+delete). Two boundaries snapping to one frame are refused for discard, with the
+remedy (raise the minimum shot length). No confirmation dialog; the status bar
+reports Started → Ok/Err under one `op_id`. After a split the Panel reviews the
+first segment (which keeps the clip's id); a discard that removes it selects the
+first surviving segment (not its link partners). After a mark the review stays.
+A discard also removes every other member of the clip's link overlapping a
+rejected span (so paired audio goes with the picture); content wholly inside a
+kept segment stays. The agent's `drop_short_us` has the same reach.
 
-**What is in each shot.** Two gestures over the same tool, at two
-granularities.
+**Descriptions.** *Describe selected clip content* (VideoClip menu, Edit menu,
+palette) runs `describe_clip` (purpose `clip`) over the whole clip. It does not
+open the Shots Panel; progress and Cancel are on the clip's timeline job band and
+the status surfaces. Clip content has its own section at the top of the Shots
+Panel: it leads with the run's summary when one covers the clip's source range to
+within 0.25 s at each edge (tightest first), then one *Details (N segments)*
+disclosure — closed under a summary, open without one — whose list scrolls inside
+`min(40vh, 18em)`; each line's timecode seeks through the source→timeline
+projection, tags on hover. Optimistic segment updates withdraw overlapping
+summaries until the read lands.
 
-*Describe selected clip content* — on a `VideoClip`'s context menu beside *Review shots…*,
-in the Edit menu and the palette — runs `describe_clip` over the WHOLE clip and
-lands the result as a column on the shot rows. No ellipsis and no dialog: the two
-parameters it used to ask for live in Settings → Video understanding, so the
-press starts the run. It reveals the Shots Panel FIRST, because a whole-clip run
-lights every row of that clip and that is what makes a run with no cancel on the
-wire distinguishable from a dead app. The rows: each row shows the model's prose for the stretch of source it
-covers, tags after it, and a segment that straddles a detected boundary appears
-on both rows — the model and the detector disagreeing about where the content
-changes is exactly the correlation the column is for.
+Shot rows show only shot descriptions. Per row, *Describe shot* (or *Describe
+again*) runs a shot-sized window; the parameters row has *Describe N shots* for
+undescribed rows. Shot runs write the `shot` description cache and whole-clip
+runs the `clip` one; neither satisfies the other, so describing a clip does not
+mark its shots described. The sweep is serial, becomes *Stop* (effective after the
+shot in flight; cancelling that shot's job also stops it), and halts at the first
+refusal. Only rows inside the running window say *Describing…*.
 
-**Per shot**, each row carries its own *Describe shot* press, and the
-parameters row carries *Describe N shots* over every row that has nothing yet.
-All three gestures run at the same view, because none of them states one: the
-window is the only argument any of them sends. A shot-sized window is the better
-question — handed
-one shot, the model has nowhere else to put a segment boundary, so the prose is
-about that shot and lands on that row, where a whole-clip run at 1 fps chooses
-its own spans. This needs no new tool: `describe_clip` already takes
-`t_start_us` / `t_end_us`, and the cache behind it folds adjacent windows, so N
-shot-sized runs accumulate into the entry a whole-clip run would have written.
-A row that already has prose still offers *Describe again* — a model's answer
-is not a fact. The sweep is serial (one local model spawn at a time) and
-becomes a *Stop* that takes effect after the shot in flight, since a model run
-has no cancel on the wire; it halts at the first refusal, because these
-failures are properties of the setup rather than of a shot. Only the rows a
-run's window actually reaches say *Describing…*, so a per-shot press never
-reports work on the twenty-nine rows it will not answer for.
+Undescribed rows read *Not described*. Each run is Started → Ok/Err under one
+`op_id`, Ok naming engine, model and (per-shot) the shot. With no
+video-understanding engine configured, the command opens Settings → Video
+understanding; other refusals are the tool's sentence in the status log (and the
+Panel's describe slot when pressed there). A run in flight greys every describe
+control. Re-timed clips can be described.
 
-Shots with no description read *Not described* at the same row height; that is
-the ordinary state, not a failure. Every run is Started → Ok/Err under one
-`op_id`, the Ok row naming the engine and model that answered and — for a
-per-shot run — which shot. The one failure with a remedy inside the app — no
-video-understanding engine configured — OPENS Settings → Video understanding
-rather than offering a button to it: the command has no dialog to host one, a
-status-log row cannot carry an action, and the panel it opens is where the
-missing engine is configured. Every other refusal is the tool's own sentence in
-the status log, and in the Panel's own describe slot when the press came from
-there (never the apply bar's, which is exclusive between the scan, a measurement
-and an apply). A re-timed clip greys every describe control with the split to
-make, and so does a run already in flight — the model is serial, so a second
-press would be refused silently otherwise.
+Reading, displaying or indexing never starts inference: shot rows read
+`media://{id}/shot-description`, the clip-content section
+`media://{id}/description`. Both serve the engine, model file, sampling, focus and
+**UI language** set in Settings → Video understanding (one value across
+projects). All are cache-key inputs: changing one switches to another cached view
+and keeps the old one (`descriptions/` is excluded from the disk-LRU sweep). Prose
+is written in the UI language, so after a language switch everything reads *Not
+described* until described again. Electron main injects `app_settings.language`
+into both the tool and the resource read; the renderer pins the OS locale into it
+on first launch. Descriptions are read-only here; the palette indexes clip-purpose
+segments only.
 
-Selecting a clip never describes it: the rows read the cached view through
-`media://{id}/description`, which serves the ENGINE, sampling, focus and LANGUAGE
-the app's settings name — so what a gesture writes is what the rows read back, at
-any setting. **Sampling and focus live in Settings → Video understanding**, one
-value across every project: how densely to sample frames, and whether `tags` lean
-toward the general scene or toward shot type and camera work (the prose describes
-the scene either way). Changing either switches to another cached view and keeps
-the one already there — `descriptions/` is excluded from the disk-LRU sweep, so
-switching back finds it intact and needs no model run. The engine selector and the
-per-backend rows above them do the same thing for the same reason: the resolved
-backend and its model file are cache-key inputs too, so pointing the section at
-another engine — or at another GGUF — switches views exactly as the sampling does,
-and every control in the section re-reads the rows after it persists. **The prose is written in
-the app's UI language.** That language is part of the same cache key — the range-lazy cache short-circuits a described window with no
-model spawn, so sharing a key across languages would hand English prose back to a
-Chinese request with no way to correct it. The consequence is worth stating: after
-a language switch every shot reads *Not described* until it is described again,
-because a description in another language is a different description rather than a
-translation of this one. Electron main injects `app_settings.language` into both
-the tool and the resource read from one value, so the view a run writes is always
-the view the rows read; the renderer pins the OS-detected locale into that field on
-a first launch precisely so main has an answer to inject. Descriptions are
-read-only here, and searchable from the palette (§ Global search palette).
-
-Code: `renderer/shots/` (`shotsStore.ts` owns the subject, the reduce, the
-review decisions and the verbs; `shotRows.ts` projects spans into rows;
-`ScoreStrip.tsx`; `ShotsPanel.tsx`), `styles/shots.css`; the reduce and the
-floor scan are `native/src/jobs/shot/`, read through `analyzeShotsFloor` /
-`reduceShotReport`; the verbs are the `apply_shot_cuts` hybrid in
-`main/state/hybrids.ts` over `split_layer_multi` (with `discard_segments`) and
-`add_markers`. Descriptions: `renderer/describe/` (eligibility, the
-per-source store, the one shared run in `describeRun.ts`, the shot-scoped arm in
-`describeShots.ts` and the time-intersection join),
-`commands/describeCommands.ts`, the two run params in `settings/VlmSection.tsx`
-over `shared/vlm-config.ts`, and `readMediaDescription` in
-`main/mcp/server.ts` behind the `get_media_description` channel; the output
-language is the prompt's trailing rule in `native/src/vlm/sidecar.rs` and a
-cache-key input in `native/src/vlm/description.rs`.
+Code: `renderer/shots/` (`shotsStore.ts`, `shotRows.ts`, `ScoreStrip.tsx`,
+`ShotsPanel.tsx`); scan and reduce in `native/src/jobs/shot/` via
+`analyzeShotsFloor` / `reduceShotReport`; verbs in `main/state/hybrids.ts` over
+`split_layer_multi` (`discard_segments`) and `add_markers`. Descriptions:
+`renderer/describe/`, `commands/describeCommands.ts`, `settings/VlmSection.tsx`
+over `shared/vlm-config.ts`, `readMediaDescription` in `main/mcp/server.ts`;
+output language in `native/src/vlm/sidecar.rs` and the cache key in
+`native/src/vlm/description.rs`.
 
 ## Transcribe and voiceover
 
-Two speech operations the MCP prompts `/auto-caption` and `/voiceover`
-already script for an agent are reachable by hand, through the same tools
-([mcp.md](mcp.md) § Speech). Neither gets a review gate, and neither gets an
-aggregate "AI" menu: each capability hangs off the object it acts on, which
-is how every comparable NLE places them.
+The speech operations the MCP prompts `/auto-caption` and `/voiceover` script
+are reachable by hand through the same tools ([mcp.md](mcp.md)). Each hangs off
+the object it acts on; there is no "AI" menu and no review gate.
 
-**Transcribe selected clip** sits on a `VideoClip` or `Audio` layer's context
-menu (the two kinds whose media carries an audio stream — offering it over a
-Color layer would be a row that can only refuse), in the Edit menu, and in
-the palette. It is an `ACTION_DEFS` entry scoped to the timeline selection
-with no default key, so a user who transcribes every clip can bind one in
-Settings → Keyboard. There is no dialog: the clips are the selection, and the
-language is the engine's to detect (whisper.cpp runs `-l auto`, OpenAI omits
-the field, FunASR's model *is* the language). The press acts on the WHOLE
-selection ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)):
-every selected clip with sound, in timeline order, reduced to one subject per
-source — a linked picture clip yields to its selected same-media audio (the
-layer that plays, so a plain click on a linked clip is still one
-transcription, and the words follow an A/V slip), and the same source span
-selected twice is read once; titles and captions caught in a marquee are
-ignored. It runs `transcribe_clip` on each subject's whole span, one at a
-time, then applies every returned transcript in one `apply_transcripts` call
-(one commit, so a six-clip transcription is one history row and one
-undo, and the cues pack into the caption track already there wherever it has
-room), and reveals the Caption panel — a landed transcript is invisible until
-its editor is open. A greyed row says why: nothing selected, nothing with
-sound in the selection, a re-timed clip among the subjects (`speed != 1`,
-refused at the gesture before any audio is extracted, for the whole press
-rather than by skipping that clip), or a transcription already running (a
-second concurrent run would bill a second request). The run stops at the
-first clip that fails and still lands the transcripts before it: the status
-log then carries the cues that landed and, as the row that closes the run,
-the clip that failed by name with the tool's own sentence. When that sentence
-names Settings → Transcription — no model prepared, no API key — the command
-opens that pane, since the remedy is the one thing a log row cannot carry.
-The transcript is edited in `CaptionsPanel`, per cue, which is strictly more
-than a review list could offer ([captions.md](captions.md)).
+**Transcribe selected clip** — `VideoClip` / `Audio` context menu, Edit menu,
+palette; unbound by default. The clips are the selection and the engine detects
+the language. Before the run, clips whose loudest peak is below −24 dBFS (or whose
+levels cannot be checked yet) are logged and a *Check audio before
+transcription* dialog offers Cancel, *Continue at original volume*, or *Normalize
+and transcribe* (only this run's audio copies of the quiet clips, to a −3 dBFS
+peak, at most +24 dB; media and timeline volume are unchanged). It acts on the WHOLE selection: every selected clip
+with sound, in timeline order, one subject per source — a linked picture yields
+to its selected same-media audio, and a source span selected twice is read once;
+titles and captions are ignored. It runs `transcribe_clip` per subject, one at a
+time, then one `apply_transcripts` (one commit, one undo; cues pack into existing
+caption tracks where there is room — [captions.md](captions.md#ingestion)), and
+reveals the Caption panel. Greyed with a reason: nothing selected, nothing with
+sound, or a run already going. Re-timed clips are transcribed. On a failure it stops, lands the transcripts before it, and logs
+the failing clip with the tool's sentence; when that sentence names Settings →
+Transcription (no model, no API key) the command opens it. Cues are edited in
+`CaptionsPanel`.
 
-**Voiceover…** is menu-only (Edit menu + palette): it acts on no clip, it
-needs a script, so it must be reachable with nothing selected and a
-rebindable key would bind to no object. The dialog carries the prompt's
-parameters — script, voice (tts-1's six), speed — plus one addition, *where
-it lands*: after everything else (the tool's own default, what an agent
-gets) or at the playhead (what a person usually means), each printed as the
-timecode it resolves to. The destination track is stated and then sent
-explicitly even when it equals the hybrid's own default, so the track shown
-is the track written. The 4096-character cap is enforced in the field with a
-live counter, before any request. `speed` is omitted at 1.0 rather than sent
-as `1`: the TTS cache keys an absent speed apart from an explicit one, and
-sending it would bill a fresh request for a script an agent's default-speed
-call already produced. A cost sentence sits above the button — this is the
-one per-use paid action in the editor, and the content-addressed cache is
-what makes a re-run of the same script free.
+**Voiceover…** — Edit menu and palette only (it acts on no clip). The dialog
+holds script, voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`), speed,
+and where it lands: after everything (the tool's default) or at the playhead,
+each shown as a timecode. The destination track is shown and sent explicitly.
+The 4096-character cap is enforced in the field. `speed` is omitted at 1.0 (the
+TTS cache keys absent and explicit speed apart, so sending it would re-bill an
+agent's cached default). A cost line sits above the button (the one per-use paid
+action); the content-addressed cache makes re-runs free. Tool refusals stay
+inline with the dialog open.
 
-The voiceover dialog keeps the tool's own refusal inline (the payload cap,
-the missing key) and stays open, so what was typed survives a fix in
-Settings; each run of either operation is two status-log rows under one
-`op_id` ([status-log.md](status-log.md)). Log rows carry the script's
-length, never the script.
-
-Code: `renderer/speech/` (eligibility, the transcription run, placement
-arithmetic, the voiceover dialog), `renderer/commands/speechCommands.ts`; the main-process bridge is
-`callClipComputeTool` in `main/mcp/server.ts` and the `clipCompute` route in
+Each run is two status-log rows under one `op_id`
+([status-log.md](status-log.md)); rows carry script length, never the script.
+Code: `renderer/speech/`, `renderer/commands/speechCommands.ts`;
+`callClipComputeTool` in `main/mcp/server.ts`; the `clipCompute` route in
 `main/state/router.ts`.
 
 ## Pauses
 
-**Pauses** is a section of the Attribute panel, on any clip whose sound the
-composition actually plays. It measures the quiet stretches of that audio and
-carries the two verbs over the one measurement — mark them, or cut them out —
-with the timeline still visible and playable underneath, which is the whole
-reason it is a panel section and not the modal dialog it replaces
-([ADR 0068](adr/0068-a-pause-is-a-fact-about-the-audio-that-plays.md)).
+**Pauses** is an Attribute-panel section on any clip whose sound the
+composition plays. It measures quiet stretches and offers two verbs — mark or
+cut — with the timeline visible and playable.
 
-**The subject is the layer that plays.** An `Audio` layer measures itself. A
-`VideoClip` delegates to the linked Audio member that shares its media, else to
-its link's only Audio member, and the section says which on a first line —
-*Measured on the linked audio "…"* — because the partner is what a person
-hears, an embedded track reaches no mixer, and a partner that has been muted,
-slipped or deleted is exactly what a detection over the source file would miss.
-A `VideoClip` with no such member shows no Pauses section at all, and *Detect
-pauses in selected clip…* greys with its own reason, *This clip plays no
-sound*.
+**The subject is the layer that plays** ([audio.md](audio.md#pauses-read-what-plays)).
+An `Audio` layer measures itself; a `VideoClip` delegates to the linked Audio
+member sharing its media, else its link's only Audio member, and says so
+(*Measured on the linked audio "…"*). A `VideoClip` with neither shows no section,
+and *Detect pauses in selected clip…* greys with *This clip plays no sound*.
 
-**Collapsed by default, and expanding it is what detects.** The body unmounts
-when the section collapses, so a clip selected and left alone runs no
-detection, holds no subscription and draws nothing. *Detect pauses in selected
-clip…* — the clip context menu, the Edit menu and the palette, an `ACTION_DEFS`
-entry scoped to the timeline selection with no default key — reveals the
-Attribute panel and expands the section, the same gesture *Review shots…* makes
-on the Shots Panel. A command that only opened the panel would leave the user
-hunting for a collapsed header.
+**Collapsed by default; expanding detects.** The body unmounts when collapsed
+(no detection, no subscription). *Detect pauses in selected clip…* (clip menu,
+Edit menu, palette; unbound) reveals the Attribute panel and expands the section.
 
-**The parameters use the Attribute panel's label/value rows.** The preset
-dropdown groups *Speech / podcast*, *Noisy room*, *Music / ambience* under
-built-in presets and saved recipes under *My presets*. Built-ins set threshold
-and shortest pause, retaining the current pad (clamped to fit). Personal
-presets copy all three parameters. Manual edits retain the source name with
-*Modified*; an unmatched recipe reads *Custom*.
-**Threshold** is a slider in dB (−60 … −20, a dB per step, read out as
-`−34 dB`) with its direction explained in the label's help tooltip;
-amplitude is what the detector takes, and amplitude 0..1 is linear on a
-logarithmic quantity, so one step of it is 6 dB at the bottom of the range and
-a fifth of a dB at the top — a control that cannot be aimed. **Use suggested**, beside the
-threshold readout above the slider, applies a suggested value once and re-detects
-pauses. Its tooltip previews the value it will apply. It sets the
-threshold 6 dB above the clip's own noise floor, which every detection returns
-and the section prints (*Noise floor ≈ −48 dB*), so the number has a referent
-instead of being a number. **Minimum pause** is a millisecond field, and
-**Keep per side** is the pad *Remove* leaves behind. The header's *Reset
-parameters to defaults* restores the detector's values without touching the
-personal library. Before measurement, the noise floor reads `—` and
-*Use suggested* is disabled. The line below the slider contains only the noise-floor readout.
+**Parameters.** A preset dropdown: built-ins *Speech / podcast*, *Noisy room*,
+*Music / ambience* (set threshold and minimum, keep the pad, clamped to fit) and
+*My presets* (all three values). Manual edits show the source name with
+*Modified*; an unmatched recipe reads *Custom*. **Threshold** is a dB slider
+(−60…−20, 1 dB steps; amplitude is linear and unaimable). **Use suggested**
+applies the clip's noise floor + 6 dB once and re-detects (tooltip previews the
+value; disabled until measured); the line below the slider shows *Noise floor ≈
+−48 dB* (`—` before measuring). **Minimum pause** is a ms field; **Keep per side**
+is the pad *Remove* leaves, capped at `(minimum − 50 ms) / 2`, floored to the
+50 ms step (the tools refuse `2 × pad ≥ minimum`). *Reset parameters to defaults*
+restores detector values without touching presets. The detector's bridge (a
+loud run under 80 ms does not end a pause — clicks, coughs) is a constant, not a
+control.
 
-**Personal presets are app preferences, available across projects.** *Save as
-preset…* opens a small name form showing all three values. Names are trimmed,
-case-insensitively unique and limited to 80 characters. A changed personal
-recipe can be explicitly updated or saved under a new name; built-ins cannot
-be overwritten. *Manage presets…* holds rename/delete in a popover aligned
-with the preset menu. Deleting a selected recipe keeps the working parameters and
-shows *Custom*. Save failures retain the form for retry. The main process
-applies each library edit atomically to its latest settings, so independent
-windows do not replace each other's lists. Projects keep copied parameter
-values: library changes never propagate into already configured projects.
-Measured noise floors, detections and audition state are not saved; an
-automatically estimated threshold is saved as a fixed number.
+**Personal presets** are app preferences across projects. *Save as preset…*
+shows the three values; names are trimmed, case-insensitively unique, ≤ 80
+characters. A changed recipe can be updated or saved under a new name; built-ins
+cannot be overwritten. *Manage presets…* renames/deletes; deleting the selected
+recipe keeps the values and shows *Custom*. Save failures keep the form. Main
+applies each library edit atomically to the latest settings (concurrent windows
+don't clobber). Projects keep copied values; library changes never propagate.
+The working parameters persist per project in `settings.pause_review` (`null` =
+detector defaults) through the unrecorded settings patch whenever a value
+commits; measured floors, detections and audition state are not saved.
 
-**Every change re-detects, live**, on a short debounce with the latest run
-winning: a detection walks pre-computed waveform peaks and decodes nothing, so
-a control that re-runs per keystroke costs a cache read. It also re-runs when
-the selection names a new subject, when the subject is trimmed, slipped or
-moved — bands measured over a window the clip no longer has are worse than no
-bands — and when an effect bake or its waveform lands. A fresh import's
-waveform may still be generating. That is a state, not a failure: the section
-shows *Waiting for the waveform…* and retries when the job reports, the same
-instruction the authored recipe gives an agent.
+**Live re-detection** on a short debounce, latest run wins (a detection walks
+pre-computed waveform peaks, no decode). It also re-runs on a new subject, when
+the subject is trimmed, slipped or moved, and when an effect bake or waveform
+lands. A missing waveform shows *Waiting for the waveform…* and retries. Peaks
+come from the baked effect sibling when ready, else the raw media — so bands
+match the drawn waveform, and a running bake falls back instead of refusing.
 
-**Which peaks it reads** is the question the timeline waveform already answers:
-the baked effect sibling's when the subject has effects and their peaks are
-ready, the raw media's otherwise ([audio.md](audio.md)). Denoise moves a clip's
-floor, and a pause is a fact about the audio after it — so the bands and the
-waveform drawn under them cannot disagree, and a subject whose bake is still
-running falls back rather than refusing.
+**Result.** *Found N pauses* and *Removes X · leaves Y* (seconds; exact times in
+the tooltip). On the timeline, one band per pause on the subject's audio block:
+faint amber for the whole pause, stronger amber for the core *Remove* cuts.
+Nothing is drawn on the linked picture or the ruler. Nothing found → *No pauses
+detected with the current settings*, both verbs grey.
 
-**A compact result and the bands, not a list.** The result region shows *Found
-{{count}} pauses* and *Removes {{removed}} · leaves {{result}}*, using seconds
-with exact wall-clock times in the detail tooltip. Waiting, detecting and
-empty results occupy the same region. The section puts the rest on the
-timeline: one band per pause on the subject's own audio block, the whole range
-in faint amber and the core *Remove* would actually cut in a stronger one.
-Nothing is drawn on the linked picture or on the ruler — a filmstrip under a
-band verifies nothing, and the link's accent already says the picture follows.
-Nobody confirms forty rows one by one; *where* is answered by the bands and
-*how it sounds* by the audition. A clip with nothing under the threshold reads
-*No pauses detected with the current settings* and both verbs grey; nothing is written.
+**Audition result** stitches the surviving audio around the first three joins
+from the playhead (or the clip start) out of the mixer's conform PCM, with ≥ 1 s
+context each side, a 10 s cap and a 5 ms crossfade per join, and plays that one
+buffer without touching the transport (seek-and-skip would depend on decode
+timing). Pressing again, changing a parameter or subject, or collapsing stops it.
 
-**Audition result** answers the question a list cannot. It stitches the audio
-that would survive around the first three joins from the playhead (the clip's
-start, when the playhead is outside the clip) out of the same conform PCM the
-mixer itself would play, with at least a second of context on each side, a
-ten-second cap and a five-millisecond crossfade at every join, and plays the
-one buffer. It never moves the playhead and never touches the transport:
-auditioning by seek-and-skip depends on decode keeping up, so the join heard
-would not reliably be the join exported, while the stitched excerpt *is* the
-samples. Pressing again stops it, and so does changing a parameter, changing
-the subject, or collapsing the section.
+**Mark pauses** adds one region marker per pause (pad included) in the clip's
+own composition, anchored to the subject ([Markers](#markers)) — trims hibernate
+them, deleting the clip removes them. One commit, one undo. Pause marks are
+amber, distinct from shot-cut blue.
 
-**Mark pauses** lands one region marker per pause, in the clip's own
-composition (a clip inside a Group marks the Group's timeline), anchored to the
-subject at the source instant its range begins ([ADR 0056](adr/0056-following-a-clip-is-a-marker-field.md)):
-a trim past a range hibernates its mark and re-extending revives it, and
-deleting the clip takes them all. One commit, one undo for the whole set. A
-mark spans the whole pause, pad included — marking is for reading, not for
-cutting. Pause marks are amber, a class apart from the shot-cut blue, because
-the two producers routinely sit on the same clip and hue is the only channel
-left to tell "the picture changes here" from "nobody is speaking through here".
+**Remove pauses** cuts each pause's core out and closes the gap
+([Ripple delete](#ripple-delete)). *Keep per side* stays at both ends; a pause at
+the clip's head or tail keeps its pad only on the inner side. One commit, one
+undo restoring the whole clip. A linked picture is cut with the sound; when a
+frame-grid member shares the link, cuts are snapped to the composition's frame
+grid first so both members cut at one instant (an unlinked audio clip keeps
+sample precision). Touching cuts close as one hole. Refusals come before any
+write: the ripple planner's four, each naming the blocking layer, and a clip that
+is one pause end to end (a delete). They show in the section's error slot.
 
-**Remove pauses** is the other verb over the same detection: each pause is cut
-out of the clip and the gap it vacated closes behind it, so the clip — and the
-film — get shorter ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
-What goes is the pause's core, not the pause: *Keep per side* stays at both
-ends, because erasing a pause outright makes speech breathless and clips the
-soft onset of a word that a ten-millisecond peak window read as quiet. A pause
-touching the clip's head or tail keeps its pad on the inner side only and is
-trimmed to the clip's edge on the outer one. The pad can never eat a whole
-pause: the field's maximum is half the shortest-pause value less a 50 ms
-margin, and the tools refuse a pair that breaks the rule rather than cutting on
-it. One commit, one undo: the undo restores the whole clip, not a split clip
-missing its quiet parts. A linked picture goes with each removed slice: the
-cuts are decided on the sound but, when a frame-grid member shares the link,
-landed on the composition's frame grid first, so both members are cut at one
-instant rather than half a frame apart (an unlinked audio clip keeps its
-sample precision). Two touching cuts close as the one hole they are. Refusals arrive before
-any write and the clip comes back unsplit, so a rejected press leaves nothing
-to clean up: the ripple planner's four — a layer on another track starting
-inside a removed stretch, a collision, a link straddling one, a locked mover —
-each name the layer that blocked, and a clip that is one pause end to end is
-refused as the delete it would be. All of them land in the section's own error
-slot, beside the parameters that produced them, so the fix is to move that clip
-and press again.
+Both verbs re-detect at the current parameters inside their own call, grey
+while a detection runs or the other verb commits, and log two rows under one
+`op_id`; failures stay inline. Mark is the renderer-only `mark_pauses` hybrid (an
+agent composes it from `detect_pauses` + `add_marker`); Remove is
+`remove_pauses`, also an MCP tool.
 
-Both verbs re-detect inside their own call at the section's current parameters,
-so what lands is the set the bands showed, and both grey while a detection is
-in flight and while the other is committing. Every run is two status-log rows
-under one `op_id`; a failure closes the op and stays inline, so the parameters
-tuned survive a fix.
-
-**The parameters are a project preference** (`settings.pause_review`, `null` =
-the detector's defaults, so no threshold literal lives outside Rust), written
-through the unrecorded settings patch whenever one commits — a slider release,
-a field, a preset, Auto — and hydrated when a project opens, so tuning never
-enters the undo stack. One recording session is one project: tune once, use on
-every clip in it. Different projects have different noise floors, which is why
-none of it is global.
-
-**Bridge is a fixed detector constant, not a control.** A loud run shorter than
-80 ms inside a quiet one does not end it. A click, a cough or a lip noise runs
-30–100 ms and would otherwise split one pause into two halves that both fall
-under the minimum and vanish, while the shortest syllable is 150 ms, so nothing
-80 ms long is a word. A fourth field in a narrow panel, for a knob nobody
-turns, is worth less than the default being right.
-
-Both verbs reach the same tools an agent has: Mark is the renderer-only
-`mark_pauses` hybrid, Remove is `remove_pauses`, which is advertised
-([mcp.md](mcp.md)).
-
-Code: `renderer/properties/PausesSection.tsx` (the section and its controls),
-`renderer/audition/` (the stitched result audition), `renderer/state/pausePreviewStore.ts`
-(what the timeline reads) and `renderer/timeline/PauseBands.tsx` (the bands);
-the command, its gate and the renderer's subject rule live in
-`renderer/commands/pauseCommands.ts`, the main process's twin in
-`main/state/pauseSubject.ts`; the two writes are the
-`mark_pauses` and `remove_pauses` hybrids in `main/state/hybrids.ts`. Only the
-first is renderer-only — an agent already composes a mark from `detect_pauses`
-and `add_markers`, while the cut is one recorded edit no sequence of tools
-reproduces.
+Code: `renderer/properties/PausesSection.tsx`, `renderer/audition/`,
+`renderer/state/pausePreviewStore.ts`, `renderer/timeline/PauseBands.tsx`; the
+command and renderer subject rule in `renderer/commands/pauseCommands.ts`, the
+main twin in `main/state/pauseSubject.ts`; hybrids in `main/state/hybrids.ts`;
+presets in `shared/pause-presets.ts`.
 
 ## Global search palette
 
-`Mod+K` (also a menu item) opens a Spotlight-style overlay that searches,
-in one box: **commands** (every user-invocable app action), **media-pool
-items**, **tracks**, **clips** (timeline layers by label), **captions /
-text** (`Text` layer content — captions are Text layers, ADR 0026),
-**markers**, and **descriptions** (what a vision model said about a stretch
-of a clip, text and tags alike — § Shot review). Selecting a result either
-executes (commands) or navigates (everything else: select the item, move the
-playhead, scroll the timeline). A description row is one described segment on
-one placement of its source: activating it selects that clip and parks the
-playhead where the described stretch begins; a described source that sits only
-in the pool contributes no row, since there is no clip to select. The index
-carries only what is already cached — opening the palette never runs a model.
-Navigating never changes play state — seek-while-playing keeps playing, the
-Premiere/Resolve convention. Chinese text matches three ways: original
-characters, full pinyin ("zimu" → 字幕), and pinyin initials ("zm");
-command entries index their en-US label as an extra haystack, so "export"
-matches 导出 on a Chinese locale. Out of scope: effect parameters, keyframe
-values, project-settings values, persistent search history.
+`Mod+K` (also a menu item) opens one search box over **commands**, **media**,
+**Groups** (compositions), **tracks**, **clips** (by label), **captions / text**
+(Text layer content — [ADR 0026](adr/0026-captions-as-text-layers.md)),
+**markers** and **descriptions** (cached vision-model text and tags; § Shot
+review). Commands execute; a Group opens its timeline; everything else navigates
+(select, seek, scroll). A description row is one segment on one placement:
+activating it selects the clip and seeks to the segment start; a source only in
+the pool contributes none. The index holds only cached data — opening the
+palette never runs a model. Navigating never changes play state. Chinese matches
+by characters, full pinyin (`zimu` → 字幕) and initials (`zm`); commands also index
+their en-US label. Not indexed: effect parameters, keyframe values,
+project-settings values; no search history.
 
-**Stale-but-instant index.** Palette queries never block on indexing; they
-always hit the last completed index (like an IDE search during re-indexing):
+**Stale-but-instant index.** `project:changed` → 300 ms debounce → full rebuild
+from `projectStore.summary` → atomic swap; queries always hit the last completed
+index. Full rebuilds make sync bugs impossible; they cost single-digit ms on the
+main thread (`buildEntries` is pure, so a Worker remains possible). Pinyin
+haystacks are memoized per string.
 
-```
-project:changed ─▶ debounce 300 ms ─▶ async full rebuild ─▶ atomic swap
-palette open / keystroke ───────────▶ query the last completed index
-```
+**Ranking.** fuzzysort scores every haystack, keeping each entry's best, with a
+floor against scatter matches and boosts for commands and exact prefixes.
+Groups appear in fixed order — commands, media, Groups, tracks, clips, captions,
+markers, descriptions — each capped with "show more". Pinyin matches are not
+highlighted (indices don't map onto CJK chars). Media rows open a second level
+(reveal in pool + one row per timeline usage); unused media and orphan
+compositions are noted. Activation re-validates ids; a stale entry logs and
+no-ops. Dependencies: `fuzzysort` + `pinyin-pro` (`cmdk` binds Radix; the app is
+on Base UI).
 
-Every rebuild is a full rebuild from the canonical `projectStore.summary`
-snapshot, so ghost-entry / missed-update sync bugs are impossible by
-construction. The corpus is one project's summary — single-digit
-milliseconds on the main thread, cheaper than structured-cloning the
-summary into a Worker (`buildEntries` is pure, so the Worker escalation
-seam stays open). Pinyin haystacks are memoized per source string, which
-makes full rebuilds behave like increments.
-
-**Ranking & activation.** fuzzysort scores every haystack and keeps the
-best per entry, with a floor that drops scatter matches and small boosts
-for commands and exact prefixes; results group in fixed order (commands →
-media → tracks → clips → captions → markers → descriptions, the last because
-those are the only rows nobody wrote), capped per group with a
-"show more" expander. Pinyin-matched results skip highlighting — fuzzysort
-indexes don't map 1:1 onto CJK label chars, so no highlight beats a wrong
-one. Media rows open a second level (reveal in pool + one row per timeline
-usage). Activation re-validates ids against the live project; an entry
-deleted since the last index build logs via LogBus and no-ops. `cmdk` was
-rejected — its dialog binds Radix while the app is on Base UI, and
-multi-haystack pinyin matching needs a custom filter anyway; the deps are
-`fuzzysort` + `pinyin-pro`.
-
-Code: `renderer/search/` (index store, matcher, pinyin, palette UI). The
-command registry the palette executes from is
-`renderer/commands/registry.ts` + `appCommands.ts`; navigation verbs live
-in `renderer/state/navigation.ts`.
+Code: `renderer/search/`; commands from `renderer/commands/registry.ts` +
+`appCommands.ts`; navigation in `renderer/state/navigation.ts`.
 
 ## Color picker (eyedropper)
 
-One global pick session serves every color surface
-(`renderer/colorpick/pickColor.ts`). At session start it freezes two
-buffers — the preview (composition, or a selected effect's input texture)
-and a `capturePage()` window snapshot — then every
-hover sample is a CPU read. `S` switches the same session to desktop sampling:
-main captures each display before showing any overlay, then presents one
-independent window per display with the frozen screenshot, custom magnifier,
-center-pixel marker and color readout. Click/Enter confirms, arrow keys adjust
-one physical pixel, and Esc cancels. Desktop hover uses the same transient
-override path; only confirmation commits.
+One global pick session serves every colour field
+(`renderer/colorpick/pickColor.ts`). At start it freezes the preview source
+(composition, or a selected effect's input) and a `capturePage()` snapshot; hover
+reads the frozen CPU buffers. `S` switches to desktop sampling: main captures
+every display before showing any overlay, then shows one window per display with
+the frozen screenshot, magnifier, centre marker and readout. Click/Enter
+confirms, arrows move one physical pixel, Esc cancels. Hover applies a transient
+override; only confirmation commits.
 
-**Why the sample source is frozen:** chromakey hover live-applies the key
-color while you move; sampling the live composite would read the keyed
-result (the background), not the source pixel — a feedback loop. The
-effect picker names `{ layerId, effectId }` and freezes the actual filter input
-at that position in the layer's chain. Enabled upstream effects remain; the
-target, downstream effects and sibling compositing cannot contaminate the
-sample. A disabled target has an input at the same stored position. Capture
-renders offscreen at composition resolution with effects enabled, independent
-of preview LOD, and restores the normal chain before asynchronous readback.
-Subsequent hover reads only the frozen CPU buffer.
+**Why frozen:** a chroma-key pick live-applies the key colour while hovering, so
+sampling the live composite would read the keyed result. An effect pick
+(`{ layerId, effectId }`) freezes that filter's actual input — upstream enabled
+effects applied; the target, downstream effects and siblings excluded; a disabled
+target uses the same chain position. Capture renders offscreen at composition
+resolution with effects on, independent of preview LOD, and restores the chain
+before async readback. `EffectInputCapture` uses a temporary pass-through filter
+(WebGPU: copy into a staging buffer on the render's encoder before texture-pool
+reuse; WebGL: read the input texture and restore the framebuffer); readback keeps
+the shader's RGB (premultiplied, no Canvas conversion), mapped through Pixi's
+filter rectangle, padding and resolution. Outside or fully transparent input has
+no colour. If the target is unavailable, a localized explanation appears and
+preview clicks do not fall back to the composited screenshot. Effect picks on a
+Group sample the Group's composed input.
 
-`EffectInputCapture` uses a temporary pass-through filter. WebGPU copies into
-a staging buffer on the render's own command encoder before texture-pool reuse;
-WebGL reads the input texture and restores the framebuffer binding. Readback
-retains the shader's RGB representation, including premultiplication (no Canvas
-color/alpha conversion). Pixi's filter mapping supplies the actual rectangle,
-padding and resolution; the picker maps composition points to those texels.
-Outside/fully transparent input has no selectable color. If the target is
-unavailable, a localized explanation appears and preview clicks do not silently
-sample the composited screenshot; editor chrome and explicit desktop picking
-remain available. Targets belong to the open composition; picking an effect
-on a Group samples the Group's composed input, not an arbitrary child instance.
+**Seams:** `previewSamplerRegistry` (PixiPreview registers capture/mapping; the
+picker never imports Pixi); `effectOverrides` (transient per-effect overrides
+read by `EffectChain.sync()`, never recorded or in React state; the preview
+re-composites per change); `AppColorField` (eyedropper by default,
+`withEyeDropper={false}` opts out). Effect descriptors declare `colorGroups` (RGB
+scalar triplets) committed as one undo entry.
 
-**Seams:** `previewSamplerRegistry` — PixiPreview registers capture/mapping
-on mount; the picker never imports Pixi. `effectOverrides` — transient
-per-effect param overrides consulted by
-`EffectChain.sync()`; never recorded, never in React state; PixiPreview
-re-composites on every change so hover edits render while paused.
-`AppColorField` — eyedropper button by default (`withEyeDropper={false}` to
-opt out). Effect descriptors declare `colorGroups` (RGB scalar triplets);
-the inspector commits all three tracks as one undo entry.
+`main/screenPick.ts` owns the desktop windows, sender-bound IPC, cancellation
+and focus restore; their sandbox preload exposes only sampling. Preemption, owner
+close/navigation/crash, display changes, loss of focus or timeout end the whole
+session. Capture/permission errors fall back to in-app picking with an
+explanation. Captures stay in memory.
 
-`main/screenPick.ts` owns desktop windows, sender-bound IPC, cancellation and
-focus restoration. Their dedicated sandbox preload exposes only sampling
-operations, and the windows are internal for quit accounting. The renderer
-keeps the original session while the desktop windows own focus; preemption,
-owner close/navigation/crash, display changes, loss of session focus and timeout
-release the whole group. Capture/permission errors restore in-app picking with
-a localized explanation. Captures live only in memory.
-
-**Limits:** desktop content is frozen at entry and covers the editor's live
-effect preview. Windows SDR capture is verified on a single 110%-scaled screen;
-real mixed-DPI multi-monitor, macOS permission/Spaces and X11 need platform
-verification. Native Wayland global overlays are unavailable; the picker reports
-that limitation and keeps in-app sampling. Preview picking is 8-bit in the
-current working space; it does not recover source HDR/10-bit values. Composition resolution
-does not recover original-source detail lost through a Quick proxy. Frozen
-window/desktop captures do not reflect subsequent UI changes.
+**Limits:** desktop content is frozen at entry. Verified only on Windows SDR at a
+single 110 % screen; mixed-DPI multi-monitor, macOS permissions/Spaces and X11
+are unverified. Native Wayland has no global overlays (reported; in-app picking
+remains). Preview picks are 8-bit in the working space (no HDR/10-bit recovery)
+and cannot recover detail lost to a Quick proxy.
 
 ## On-canvas transform (gizmo)
 
-Selected Text layers support in-preview entry: double-click the box, or click
-the text with the Text tool. An empty Text layer keeps a one-em, one-line
-footprint, so its box still draws and both entries still reach it. Entry pauses
-playback and opens a native textarea at the transformed box, with the rendered
-font size. Enter inserts a line break; Ctrl/⌘+Enter, Escape, blur or an outside
-click all finish the edit and save it — there is no cancel key, and reverting a
-finished edit is undo's job. IME composition owns Enter/Escape until it ends.
-The draft stays local and saves only `content` in one history entry; text undo
-stays in the input while editing. A save the project refuses is reported in the
-status bar, as every direct commit is, and keeps the draft in the field: any
-finishing action retries, and Escape then leaves without saving. Locked or
-disabled layers/tracks cannot enter this mode. The input is
-editor chrome: it uses theme colours, grows along auto box axes, and scrolls
-overflowing text in fixed boxes; the compositor applies the authored colour,
-effects and shrink-to-fit on save. Changing project or removing the editing
-surface discards an unsubmitted draft.
+The primary selected layer shows its footprint as a box over the preview: drag
+inside to move, corner/edge handles to resize, the knob above the top edge to
+rotate, the reticle at the pivot to move the anchor. Only the five
+transform-bearing kinds get one (`TRANSFORMABLE_KINDS`: VideoClip, ImageOverlay,
+Text, Motif, Group) — Color fills the frame, Audio is not visual — and only while
+the playhead is in the layer. A Path-position layer also shows its motion path. Resize writes `scale`, except on Text, where it writes the layout box.
+Crop has its own overlay ([Rectangular video crop](#rectangular-video-crop)).
+
+**Size presets.** The preview context menu offers **Fit to frame**, **Fill
+frame** and **Restore original size** for the primary video, image, Motif or
+Group. Fit shows the whole visible (post-crop) rectangle; Fill covers the frame,
+including every corner when rotated; both centre and keep anchor, rotation and
+mirrors. Restore sets scale magnitudes to 100 %, keeping mirrors and position.
+Not for Text, locked or disabled layers or tracks. Each is one undo step under
+the frame-snapped keyframe rules; a Path position is translated without
+changing geometry or progress.
+
+**Behaviour rules:**
+
+- **Rotation** writes `rotation_deg` only (the engine rotates about the anchor and
+  `x`/`y` are the unrotated top-left). Angles accumulate per-move increments in
+  (−180°, 180°], so a drag across the ±180° seam and multi-turn drags behave.
+  Shift snaps to an absolute 15° grid, keeping the true angle so releasing Shift
+  resumes from the cursor.
+- **Anchor drag** is pan-behind: it writes the anchor pair plus compensating
+  `x`/`y`, so the picture stays put (zero compensation for an unrotated, unflipped
+  media layer). The inspector's Anchor fields write the anchor alone and do move
+  the picture (as in After Effects). The drag is converted into the layer's local
+  frame, keeping the reticle under the cursor on rotated layers.
+- **Resize** scales about the anchor and pins it with compensating `x`/`y`
+  (`Δ = pivot·(|scale₀| − |scale₁|)`), solved directly so the handle tracks the
+  cursor at any rotation, flip or non-uniform scale. A `scale_linked` layer shows
+  **corners only** (an edge would break the twin invariant). Shift constrains
+  proportions on an unlinked layer. A handle's driven axes come from its identity,
+  never from its offset to the pivot.
+- **Text** handles write `box_w`/`box_h` through `update_layer_params`, not
+  `scale` ([ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md)),
+  using the same solve read as a factor; all eight handles show regardless of
+  `scale_linked`; no position compensation (Text's `x`/`y` is the anchor). Modes:
+  `(null, null)` auto width, `(set, null)` auto height, `(set, set)` fixed;
+  `(null, set)` is illegal, so a top/bottom drag backfills `box_w` from the
+  measured width, while a side drag never invents a height. `box_w` floors at the
+  8 px shrink floor (no flipping). Double-clicking a handle steps fixed → auto
+  height → auto width. The box stroke turns `--warning` while shrink-to-fit is
+  active and `--destructive` when text overflows at the floor
+  (`GizmoProbe.textFitOf`). The sprite re-wraps live during the drag.
+- Deltas below `1e-9` are dropped (trig residue would otherwise stamp invisible
+  keyframes).
+- **Snapping** pulls moves and resizes onto the composition's edges and centre
+  lines and every other staged layer's bounds, **each axis independently**; ties
+  go to composition lines. Radius is in screen px (`preview_snap_strength_px`,
+  default 12; `preview_snap_enabled`), its own app setting, separate from the
+  timeline's. Holding Ctrl suppresses snapping (not Alt, which opens the Windows
+  menu bar). Guides are magenta, one per axis at most. A uniform resize solves
+  the snap by ray/line intersection, ranked by displacement. Targets are frozen
+  at pointer-down. Solver: `preview/previewSnap.ts`, run before the override is
+  written.
+
+**Implementation invariants** (each one looks fixable and is not):
+
+- The box is an **SVG overlay, not Pixi children**: `app.stage` is read back by the
+  eyedropper, the e2e `sampleComposite` hook and conformance `captureFrame`, and
+  a screen-space overlay keeps handles in CSS pixels on any composition size.
+- A drag writes a transient delta into `transformOverrides` (like
+  `effectOverrides`) and **commits once on release** through
+  `updateLayerParamTracks` (`update_layer_params` for a Text box) — one batch, one
+  undo. The override holds until the new summary arrives, and the box reads the
+  same override map, so outline and picture never drift. The Text box channel is
+  the one **absolute** (not delta) override.
+- A renderer-local **ledger** (`param key → track written`) is the base for the
+  next commit and the rotation grid, because the mirror lags by two IPC round
+  trips; the override carries `resolve(written) − resolve(mirror)` so it lifts
+  itself when the summary lands. The ledger drops on the first summary with no
+  commit in flight (handing authority back to undo, inspector or MCP). It also
+  holds the Text box's nullability (the resize mode). It covers only this gizmo:
+  a concurrent writer to the same tracks mid-burst would need the base resolved
+  in main.
+- Handles are **round** (no orientation to keep in sync on flipped or skewed
+  quads).
+
+**Seams:** `gizmoProbeRegistry` (PixiPreview registers `canvasRect`,
+`naturalSizeOf`, `textFitOf`; the gizmo never imports Pixi); `gizmoGeometry.ts`
+(pure quad, pivot, handles, `object-fit: contain` mapping; shares
+`anchorPivot.ts` with the renderer); `centerInFrame.ts` (the layer-frame rule
+shared with the centring commands); `autoKeyTrack` (Static → value; Keyframed →
+key at the frame-snapped playhead, as in the inspector).
+
+**Limits:** move, resize, rotate, anchor only — no corner-pin; single selection.
+The box follows animation via rAF and hides while the preview tab is hidden. The
+knob sits 26 px (UI-scaled) outside the box with `overflow: visible`, so a layer
+flush with the top of a panel-filling frame has no room for it. Edge handles hide
+on edges under 24 px (UI-scaled). A Text box drag re-rasterizes the glyph atlas
+per gesture frame (bounded by Pixi's caches).
 
 ### Text tool
 
-The third modal tool, beside Selection and Blade in the Quick Actions strip's
-tool row, the Edit menu and the search palette; `T` arms it (the display-mode
-toggle that held `T` is on `Shift+T`). While it is armed the preview canvas
-shows an I-beam and a click there is a text edit: on a Text layer it selects
-that layer and opens the inline editor on it; on empty frame it creates a Text
-layer at the click point and opens the editor with the placeholder selected,
-so typing replaces it. The click point is the new layer's anchor, so the text
-is centred on it; every other parameter is the same default the Insert menu's
-**Text** command uses, and the layer lands on the same automatically chosen
-overlay track at the playhead. Creation and the first edit are two history
-entries, as they are from the menu. Locked and disabled layers, and layers on
-locked or disabled tracks, are transparent to the click — as in Premiere, a
-click over a locked title creates a new one. Only Text is hit-tested: the
-preview is not a selection surface for any other kind, and the transform gizmo
-takes no pointer input while the tool is armed (switch to Selection to move or
-resize).
+`T` arms the Text tool (beside Selection, Blade and Hand in the Quick Actions tool
+row; also Edit menu and palette; display mode is `Shift+T`). While armed the
+preview shows an I-beam: clicking a Text layer selects it and opens the inline
+editor; clicking empty frame creates a Text layer anchored (centred) at the click,
+with the Insert menu's **Text** defaults on its automatic overlay track at the
+playhead, and opens the editor with the placeholder selected. Creation and the
+first edit are two history entries. Locked or disabled layers/tracks are
+transparent to the click (a click over a locked title creates a new one). Only
+Text is hit-tested, and the gizmo takes no pointer input while armed. The tool
+stays armed after a creation; Escape inside the editor finishes the edit, outside
+it returns to Selection. A click that closes an open editor only closes it. A drag
+does nothing. The tool is unavailable on an empty project (no canvas yet; the
+tooltip points at Insert) and inert while the preview shows a composition other
+than the focused one.
 
-The tool stays armed after a creation, so successive clicks make successive
-titles. Escape inside the editor finishes the edit; Escape outside it returns
-to the Selection tool. The click that closes an open editor only closes it —
-it never creates a layer under itself. A drag (pointer travel past a few
-pixels) does nothing in this version. The tool is unavailable on a project
-with no layers, because the preview mounts no canvas until something is
-staged; the strip button's tooltip says so and points at the Insert menu,
-which works on an empty project. The tool is also inert while the preview is
-pointed at a composition other than the focused one, for the gizmo's reason:
-the click's frame coordinate only means something when the canvas is that
-composition's frame.
+**Inline text editing.** On a selected Text layer, double-click the box or click
+it with the Text tool. An empty Text layer keeps a one-em, one-line footprint.
+Entry pauses playback and opens a native textarea over the transformed box at the
+rendered font size. Enter inserts a line break; Ctrl/⌘+Enter, Escape, blur or an
+outside click finish **and save** (no cancel key; undo reverts). IME composition
+owns Enter/Escape. The draft saves only `content` in one history entry; text undo
+stays inside the field while editing. A refused save is reported on the status
+bar and keeps the draft (any finish retries; Escape then leaves without saving).
+Locked or disabled layers/tracks cannot enter. The field uses theme colours,
+grows along auto box axes and scrolls in fixed boxes; colour, effects and
+shrink-to-fit apply on save. Changing project or unmounting discards an unsaved
+draft.
 
-The primary selected layer shows its footprint as a box over the preview:
-dragging inside the box moves it, handles on its corners and edges resize it, a
-knob on a stalk above its top edge rotates it, and a target reticle at the pivot
-moves its anchor. Only the four transform-bearing visual kinds get one (Color
-fills the composition, Audio is not visual), and only while the playhead is
-inside the layer's span. Resize means `scale` on three of those kinds and the
-layout **box** on Text — see below.
-
-The preview context menu offers **Fit to frame**, **Fill frame**, and
-**Restore original size** for the primary selected video, image, Motif or Group
-in the preview composition. Fit scales the visible rectangle proportionally to
-show all of it; Fill scales it to cover the composition, including every corner
-when rotated. Both center the result, preserve the anchor, rotation and mirrors,
-and use the retained rectangle after cropping. Restore sets scale magnitudes to
-100% while preserving mirrors and position. Text keeps its box-editing behavior
-and has no size presets here. Locked or disabled layers and tracks are excluded.
-Each action follows the existing frame-snapped keyframe rules and commits as one
-undo step; a Path position is translated without changing its geometry or
-progress. Video crop actions remain available in a separate menu group.
-
-**Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
-read-back surface — the eyedropper's `extract.pixels`, the e2e
-`sampleComposite` hook and the conformance `captureFrame` PNG all read it, so
-anything staged would land in those buffers. And the canvas is contain-fitted:
-a box drawn in composition space would be sub-pixel on a 4K composition shown
-in a small panel, while a screen-space overlay has handles in CSS pixels by
-construction. (The ecosystem's Pixi gizmo, `@pixi-essentials/transformer`, is
-also v7-only — it peer-depends on the `@pixi/*` sub-packages v8 removed.)
-
-**Why the drag doesn't write per pointermove:** one write per move event is a
-full renderer→main→`project:changed`→refetch round trip and would pile up undo
-steps. The gesture instead sets a transient delta in `transformOverrides` (same
-idiom as `effectOverrides`: consulted after `resolveView`, never recorded, never
-in React state), and commits once on release through `updateLayerParamTracks`
-(`update_layer_params` for a text box, which is a scalar and not a track) — one
-batch, one undo. The override is held until the new summary arrives, so the
-layer never snaps back for a frame between commit and refetch. The box itself
-reads that same override map rather than the in-flight gesture's own state, so
-the outline and the footprint it outlines cannot drift apart mid-drag whichever
-handle is moving — and an anchor gesture, which moves four fields at once, lands
-all of them on one frame.
-
-**Why rotation writes one track and nothing else:** the engine rotates about the
-anchor and `x`/`y` mean the *unrotated* top-left, so turning a layer about its
-anchor moves neither — the commit is `rotation_deg` alone. A handle that rotated
-about the box's visual centre instead would need compensating `x`/`y` in the same
-batch, time-dependent on a keyframed layer.
-The gesture accumulates per-move angle increments folded into (−180, 180°]
-rather than diffing against its start angle: `atan2`'s ±180° branch cut would
-otherwise read a +20° drag across the seam as −340°, and accumulating is also
-what makes a multi-turn drag mean multiple turns. Shift snaps the resulting angle
-to an absolute 15° grid while the true angle is kept alongside, so releasing
-Shift resumes from the cursor rather than from the grid.
-
-**Why the anchor target writes four tracks and the inspector field writes one:**
-moving the anchor moves the pivot, and the pivot enters the composed position, so
-an anchor change generally moves the picture. The canvas gesture is *pan-behind*
-— it commits the anchor pair plus compensating `x`/`y` together, so the picture
-stays exactly where it was and only the reticle moves. The inspector's `Anchor
-X`/`Anchor Y` fields write the anchor alone, which does move a rotated or Text
-layer; the split is deliberate and matches After Effects, and nothing else is
-available to the panel, which has no natural size to compute a compensation with.
-The compensation is zero for an unrotated, unflipped media layer, so the common
-gesture writes two tracks and never stamps a redundant key on position. A drag is
-converted client → composition → the layer's own *local* frame before it becomes
-an anchor delta (the anchor is stored unrotated and unscaled), which is what keeps
-the reticle under the cursor on a rotated layer. Both surfaces keyframe: the
-anchor pair is `Animated` like the rest of the transform.
-
-**Why a resize handle pins the anchor:** the handles scale the layer about its
-anchor, matching After Effects and Premiere and matching what the reticle already
-shows — the engine's own rotation and scale origin. That needs compensating
-`x`/`y`, because the composed position is `(x, y) + |scale|·pivot`, so scale alone
-would walk the pivot; pinning it is `Δ = pivot·(|scale₀| − |scale₁|)` per axis,
-with no rotation term at all. It is the exact mirror of the anchor gesture: there
-a media layer usually needs no compensation and Text always does, here Text needs
-none (its position *is* the pivot) and a media layer always does. With the pivot
-pinned the solve is direct rather than iterative — `scale·offset = R⁻¹·(cursor −
-pivot)` — so the grabbed handle tracks the cursor exactly however the layer is
-rotated, flipped or non-uniformly scaled.
-
-A `scale_linked` layer shows its **corners only**. An edge handle there has no
-honest behaviour: a single-axis write is what the twin invariant reads as
-divergence, and it would silently clear the flag. Shift constrains proportions on
-an unlinked layer by fitting one factor to the handle's own axes — the diagonal
-projection on a corner, the plain axis ratio on an edge. Which axes a handle
-drives comes from its identity and never from "its offset from the pivot is
-zero": an off-centre anchor puts the top edge's midpoint off the pivot's column,
-and inferring the mask there would let a horizontal drag scale it sideways.
-
-**Why a Text layer's handles write a box instead of a scale:** a box lays glyphs
-out, while `scale` magnifies an already-rasterized atlas — so a handle writing
-`scale` would enlarge a title's *letters* and leave the inspector's font size
-advisory (ADR 0049). The eight handles write `box_w`/`box_h` for Text instead, and
-the font size stays what reaches the frame at any box size. It is the *same* solve
-— the one that puts the handle under the cursor through rotation, the corner's
-proportional constraint and the snap pull — read as a **factor** rather than
-written as a scale:
-`naturalSizeOf` reports a Text layer's box when one is set, so
-`natural × solved/base` is exactly "resize the box by what the drag implies".
-Box edges consequently snap with no extra machinery, since the box *is* the frame
-the solve runs in. `scale_x`/`scale_y` keep their meaning and stay reachable from
-the inspector and the keyframe lanes, so all eight handles are offered regardless
-of `scale_linked` — a box's two axes are independent by construction, and the flag
-keeps only its other job (one Scale lane vs two).
-
-Three differences follow from the box being a plain params scalar rather than an
-`Animated` track. It commits through `update_layer_params`, not
-`updateLayerParamTracks` — there is no track to auto-key. It writes **no position
-compensation**: `scaleCompensation` is zero whenever the origin is the anchor, and
-Text's `x`/`y` *is* the anchor, so a box resize cannot walk the pivot the way a
-media resize does. And its `transformOverrides` channel is **absolute**, the only
-one in that map that is not a delta: every other channel adds to a track so a
-keyframed layer keeps animating mid-drag, and with no track to add to the only
-thing an override can carry is the value itself. That channel is what makes the
-gesture legible — the sprite re-wraps, re-runs its shrink search and re-reports
-its fit on every pointermove, so the wrap, the compression and the box stroke's
-shrink/overflow colours all move under the cursor instead of arriving after the
-commit. The cost is a glyph-atlas re-raster per gesture frame, deliberately
-accepted and bounded on both sides (Pixi's measurement cache is capped;
-`TextureGCSystem` reclaims the atlases).
-
-Because the fold happens in the Compositor, the gizmo's outline and the picture
-come from one source again — `naturalSizeOf` measures the *overridden* sprite —
-so the box the handles sit on is the box being rendered, mid-drag included. The
-gizmo still keeps a **box ledger** beside the track one, retired by the same rule,
-for the thing a measured size can never report: the box's **nullability**, which
-is the resize mode. A measured 640 px and a `box_w` of 640 are the same number and
-different modes, so which axis a drag may leave alone, which rung a double-click
-steps down, and which axes a patch may omit all read the ledger. Its second job is
-to keep publishing the override until the summary lands, so the glyphs do not
-reflow back to the pre-commit box in between.
-
-The three resize modes are read off which box fields are set — `(null, null)` auto
-width, `(set, null)` auto height, `(set, set)` fixed — so `(null, set)` is no mode
-at all, and the gesture is one of the three places that prevents it: a top or
-bottom edge drag **backfills `box_w`** from the width it measured in the same
-commit (MCP refuses the pair, `TextSprite` coalesces it). A horizontal edge, by
-contrast, never invents a height — that would drag an auto-height layer into fixed
-and switch shrink-to-fit on. `box_w` floors at the 8 px shrink floor, which also
-stops a drag past the pivot from flipping the box; flipping is what `scale` is
-for. Double-clicking a handle steps back down the ladder — fixed → auto height →
-auto width — which is why a *horizontal* edge double-click on a fixed layer drops
-the height: releasing its own axis there would leave the illegal pair, so it takes
-the rung above and a second double-click releases the width. The box stroke turns
-`--warning` while shrink-to-fit is active and `--destructive` once the text
-overflows at the floor, read back through `GizmoProbe.textFitOf`.
-
-The handles are **round** so they carry no orientation to keep in sync with the
-box: a square would have to be re-rotated every frame to match it, and on a
-flipped or non-uniformly scaled layer — where the quad's winding reverses and its
-edges stop being perpendicular — no single angle for it is correct. The direction
-that matters is carried by the cursor instead.
-
-Deltas below `1e-9` are dropped rather than committed. `Math.cos(±π/2)` is `6e-17`,
-so anything downstream of the inverse rotation — a resize solve, an anchor drag —
-leaves `~1e-16` on the axis the cursor did not move, and against exact zero that
-reads as an edit and stamps a keyframe with an invisible value change.
-
-**Why snapping decides the two axes independently:** a move or a resize pulls onto
-the composition's four edges and two centre lines and onto every other staged
-layer's screen-space bounding box, with each axis decided on its own. A single
-global best — the right rule for the timeline, where time is one-dimensional —
-would make "flush against the left edge *and* vertically centred" unreachable.
-Ties go to a composition line, so a layer line has to be strictly nearer to win;
-in the timeline an implicit tie-break is safe only because its boundary set has a
-stable track order. Strength is a **screen**-pixel radius
-(`preview_snap_strength_px`, default 12, with `preview_snap_enabled` beside it),
-converted to composition pixels per move through the contain fit so the pull feels
-the same at any composition resolution. It is deliberately its own app-level pair
-rather than a reuse of the timeline's, whose target density differs by an order of
-magnitude. Holding Ctrl suppresses the snap while it is down — not Alt, which
-opens the self-drawn menu bar on Windows. Guides are magenta (the palette is
-achromatic by design, and magenta's low green keeps it legible over skin, sky,
-foliage and water alike), at most one per axis, painted under the box and the
-handles with a dark under-stroke.
-
-The solver is pure (`preview/previewSnap.ts`) and runs *before* the override is
-written, against the gesture's raw un-snapped box: the box depends on the
-override, the override on the snap result, and the snap result on the box, so
-measuring after the write is the one ordering of those three that fails to
-terminate. A free resize snaps the handle's **target point**, which is exact at
-any rotation because the solve lands the handle on the point it was given
-identically — masked to the axes the handle drives, since a scale the solve would
-discard must not draw a guide first. A uniform resize (a linked layer, or Shift)
-has one degree of freedom — `scale = t · scale₀`, so the handle travels a fixed
-ray — which makes a snapped point generally unreachable; it solves `t` by
-ray/line intersection instead, and at most one axis can be hit. That branch ranks
-by the resulting **displacement**, not by perpendicular distance to the line: a
-near-parallel ray needs an enormous `t` to reach a line a few pixels away, so a
-nudge would become a 500× scale-up. The target set is frozen at pointerdown, so
-guides do not follow layers that animate mid-gesture.
-
-**Why a commit's base comes from a ledger:** every gesture commits an absolute
-track built from `base + delta`, and the project mirror is two IPC round trips
-behind — commit → `project:changed` → refetch → re-render. A second gesture
-released inside that window would read the pre-commit base and *replace* the first
-gesture's track instead of stacking on it. The gizmo therefore keeps a
-renderer-local ledger of `param key → the track it wrote`, entered before the round
-trip starts and read ahead of the mirror by every commit and by the rotation grid
-(which would otherwise quantize a Shift-rotate against an angle no longer on
-screen). The override carries the matching gap as a per-channel **carry**,
-`resolve(written) − resolve(mirror)`, because `setTransformOverride` replaces
-rather than merges: without it the next gesture's first pointermove drops the held
-override and the layer visibly snaps back by the previous displacement. The carry
-is self-cancelling — once the summary carrying the write lands, both tracks
-resolve to the same value and every channel goes to zero — so the override lifts
-itself, nothing has to decide when the round trip finished, and a summary arriving
-mid-gesture just moves the carry into the base. The ledger is dropped on the first
-summary that arrives with no commit still in flight, which is how undo, the
-inspector or an MCP agent takes the authority back.
-
-**Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect`,
-`naturalSizeOf` and `textFitOf`; the gizmo never imports Pixi. `gizmoGeometry.ts`
-— pure composition-space quad, pivot, handle placement and the
-`object-fit: contain` mapping, so the geometry is unit-tested without a renderer
-(and shares `anchorPivot.ts` with the renderer, which is what keeps box and
-picture aligned). `centerInFrame.ts` — the layer-frame rule itself, shared with
-the centering commands so the rectangle the gizmo outlines and the one "Center
-horizontally" centres cannot be derived differently. `autoKeyTrack` — the shared
-commit rule: a Static track takes a value, a Keyframed one gets a key at the
-frame-snapped playhead, exactly like the inspector.
-
-**Limits:** move, resize, rotate and anchor; crop uses its own overlay. No corner-pin. Single
-selection only. The box follows animated values during playback via rAF; it is
-hidden while the preview dock tab is not visible. The rotation knob sits a fixed
-26 CSS px outside the box (screen space, so the affordance is
-resolution-independent), so the overlay runs `overflow: visible` and the panel is
-the real clip bound — a layer flush against the top of a panel-filling
-composition has no room for its knob. An edge handle whose edge is under 24
-screen px is hidden, since it would sit under the two corners it lives between; a
-box small enough for its corners to overlap keeps them all, and the interior left
-for the move drag shrinks with it. A Text box drag re-lays the glyphs out on every
-pointermove that moves the box, which is a re-measure and a glyph-atlas re-raster
-per gesture frame. The commit ledger is renderer-local, so it
-composes a burst of gestures from this gizmo and nothing else: a *concurrent*
-writer editing the same tracks mid-burst — an MCP agent, say — would need the
-base resolved on the main side instead.
-
-## Window geometry memory
-
-The main window reopens at last session's position, size, and maximize
-state, persisted to `<userData>/window_geometry.json` (`main/windowGeometry.ts`,
-wired in `main/windows.ts`). Writes are debounced through drags and flushed
-on window close and before quit. A move never dirties the Project or enters
-undo — it is app-level state, like the Workspace layout.
-
-**Restore is validated, never trusted.** A saved rect may name a monitor
-that has been unplugged or a resolution that has shrunk, and this window is
-frameless on Windows/Linux — no OS titlebar, no system Move menu — so an
-off-screen restore would be unrecoverable without deleting the file.
-`sanitizeGeometry` requires the rect to present a grabbable strip
-(≥120×48px) on some display's work area, clamps the size to the host
-display, and otherwise falls back to a centered default. A window
-deliberately straddling two monitors or hanging past an edge survives;
-that is a deliberate divergence from `electron-window-state`, whose
-full-containment rule discards both.
-
-**Landmine — the save/restore ratchet.** Electron's bounds API is not
-idempotent on a fractionally-scaled display: hand a rect to the
-`BrowserWindow` constructor and the value read back differs, because the
-DIP↔physical conversion rounds in both directions. Measured at
-`scaleFactor` 1.1, feeding each accessor's own output back into the
-constructor grows the window monotonically — `ctor → getBounds` runs
-1182 → 1189 → 1196 → 1202 → 1209, and `getContentBounds` /
-`useContentSize` / `setBounds` all ratchet too, so no accessor pair fixes
-it. Persisting what you measure therefore inflates the window every launch
-until it hits the screen edge. The fix breaks the feedback loop instead:
-`rememberGeometry` keeps persisting the rect it *requested* while the
-measurement stays within `BOUNDS_DEADBAND_PX`, and abandons the deadband
-permanently at the first genuine resize. `e2e/electron/window-geometry.spec.ts`
-gates it by asserting three untouched launches leave byte-identical
-geometry on disk.
-
-**Also load-bearing:** capture `getNormalBounds()`, not `getBounds()` —
-the latter reports the *maximized* rect, so persisting it makes "restore
-down" a no-op next launch. Minimized windows are skipped (unreliable
-bounds; `isMaximized()` reads false). Fullscreen is restored only on
-macOS, where the green traffic light can also leave it; on Windows/Linux
-F11 is dev-gated, so a restored fullscreen would be inescapable in a
-release build.
-
-**Landmine — restoring fullscreen must not pass `false`.** Electron reads an
-explicit `fullscreen: false` in the constructor as "disable this window's
-fullscreen capability": `isFullScreenable()` goes false, the macOS green
-stoplight degrades to a plain zoom, and `setFullScreen(true)` becomes a
-silent no-op. Since the saved flag is false on every normal launch, feeding
-it straight to the constructor turned native fullscreen off for everyone.
-The key is spread in only when actually true. Passing `undefined` disables
-it just the same — only omitting the key works. Guarded by
-`e2e/electron/window-chrome.spec.ts`.
-
-## macOS window caption
-
-The main window is frameless on Windows/Linux (the renderer draws
-`<WindowControls/>`), but on macOS it uses `titleBarStyle: 'hidden'` and keeps
-the OS-drawn traffic lights — so the green button gives real native fullscreen
-and the window keeps its native rounded frame and shadow. Two things that
-follow from that, both of which were wrong once:
-
-**The inset comes from CSS, not IPC.** Each self-drawn bar
-(`.app-header`, `.startup-titlebar`, `.perf-titlebar`, the agent-mode
-titlebar row) starts its content at `env(titlebar-area-x)` and is at least
-`env(titlebar-area-height)` tall — the real button geometry, published by
-`titleBarOverlay: true`. The fallback in each `env()` covers every
-no-overlay case (macOS fullscreen, and Win/Linux where there are no traffic
-lights), so none of these rules needs a platform or fullscreen selector.
-Driving the inset off the `enter-/leave-full-screen` IPC events instead is
-what produced the visible bug: those land only *after* the fullscreen
-animation, ~500ms after Chromium has already moved the buttons, so the title
-overlapped them for the whole exit animation. `titleBarOverlay` is macOS-only
-— on Windows the same flag has the OS paint native caption buttons over ours.
-
-**Centring is one number, and it is derived.** The buttons occupy a 14px-tall
-band whose top is `trafficLightPosition.y` (fractional values round to whole
-points), and Chromium reports `env(titlebar-area-height)` as `2y + 14` — so the
-band's centre is always exactly half that env value. The invariant that follows:
-**a bar is vertically centred if and only if its own height equals
-`env(titlebar-area-height)`**. Bars that size themselves to the env value
-satisfy it for free; `.app-header` is the only one with a height of its own
-(42.5px, content-driven), so `y = (42.5 - 14) / 2 = 14`. Getting this wrong is
-not subtle — at the previous `y = 11` the buttons sat 3px high in the editor.
-
-**The window's appearance must be declared.** macOS draws the traffic lights
-through the *window's* appearance, so with `nativeTheme.themeSource` left at
-`'system'` a light-mode host drew the INACTIVE buttons in light-chrome grey —
-invisible against the `#0a0a0a` caption, making an unfocused window look like
-it had no buttons at all. `color-scheme: dark` cannot reach them; it governs
-only what Chromium paints. `themeSource = 'dark'` is set before the first
-window, which also carries the dark appearance into native menus, sheets, and
-the file picker.
-
+**Default text font.** Settings → General → Default text font
+(`default_text_font`) sets the family for newly authored Text layers (Insert
+menu, Text tool, MCP creation); empty means the bundled `Liberation Sans, Noto
+Sans SC` chain. Existing, pasted and imported layers keep their fonts. The picker
+lists OS-installed families from one lazy main-process scan
+(`main/fonts/resolveSystemFont.ts`; TTF/OTF and the first TTC face) exposed as
+`font.listFamilies()`; the renderer never receives font paths. Install fonts
+through the OS and restart to refresh. User-chosen fonts carry no cross-machine
+guarantee.
 
 ## Rectangular video crop
 
-Quick Panel and the VideoClip/preview right-click menus enter on-canvas cropping; the context menus also offer reset. The Quick Panel icon is highlighted while cropping. Click it again, select another tool, or press Enter/Escape to finish; Escape during a drag cancels that drag. The inspector has no crop section, and the preview gains no temporary toolbar. Numeric fields and aspect presets are intentionally omitted. Eight handles and the full edges resize the retained rectangle using direction-aware resize cursors; dragging inside moves it. One drag is one undo entry. After cropping, the normal transform box, centering and move/scale snapping follow the visible rectangle, including when other clips snap to it. The original source still defines the pivot and scale. Crop follows flips and transforms without changing them, remains active with preview effects bypassed, and is applied identically in preview, Group composition, transitions and export. The stored rectangle is static and normalized to source dimensions; no path masks or animation are introduced. See ADR 0090.
+Quick Actions and the VideoClip / preview context menus enter on-canvas
+cropping; the context menus also offer reset. The Quick Actions icon stays lit
+while cropping; clicking it again, choosing another tool, or Enter/Escape
+finishes; Escape mid-drag cancels that drag. Entering pauses playback and seeks
+into the clip if the playhead is outside it. Only an enabled, unlocked
+`VideoClip` on an enabled, unlocked track, in the composition the preview is
+showing, can enter (`commands/cropCommands.ts`).
+
+Eight handles and the full edges resize the kept rectangle (direction-aware
+cursors); dragging inside moves it; one drag is one undo entry. There is no
+inspector section, temporary toolbar, numeric field or aspect preset. After
+cropping, the transform box, centring and move/scale snapping (including other
+clips snapping to it) use the visible rectangle; the original source still
+defines pivot and scale. Crop follows flips and transforms without changing them,
+stays active with preview effects bypassed, and applies identically in preview,
+Groups, transitions and export. The rectangle is static and normalized to source
+dimensions ([data-model.md § Layer](data-model.md#layer)).
+Image and Group crops, animated crops, feathering and masks are not supported.
+
+## Agent view and review
+
+Agent view (preview, compact review timeline, Agent panel with Activity, Tacks and
+Changes tabs), Tacks and the Timeline diff with *Approve all* / *Revert all* are
+specified in [mcp.md § Review](mcp.md#review) and [§ Tacks](mcp.md#tacks).
+Revert all is a recorded, lock-gated revert path ([Undo-stack scope](#undo-stack-scope)).
+
+## Strip overflow
+
+The dock tab strip and the Quick Actions strip never wrap. When they overflow,
+each end still hiding content gets a floating gradient (the dock strip adds an
+arrow button on it). The overlay never takes layout width (one that vanished at
+the end stop would hand width back and could flip the strip in and out of
+overflow). An arrow click scrolls item-aligned (the nearest partly hidden item
+becomes fully visible); no press-and-hold. Tabs never truncate their title (it
+is the Panel's only title); narrow groups scroll instead. There is no hidden-tabs
+list (`disableTabsOverflowList`); the View menu and palette reach any Panel by
+name. Arrows are pointer-only (out of tab order); the tablist's arrow keys reach
+every tab. `scroll-padding` plus an explicit correction keep a newly active tab
+out from under the leading overlay. Quick Actions draws the gradient only.
+Geometry: `renderer/lib/edgeOverflow.ts` (with an end-stop tolerance for
+fractional `scrollLeft`); DOM: `renderer/hooks/useEdgeOverflow.ts`. Rejected:
+CSS `::scroll-button()` — it mounts inside the `role="tablist"` scroller and
+steps by a viewport fraction.
+
+## Performance settings
+
+Settings → Performance sets intent — memory target, processing effort, temporary
+cache space (automatic: 10 % of the Workspace disk) and whether background work
+continues during playback — enforced by one cooperative resource authority on
+all platforms. It also hosts the experimental Windows H.264 4K/60 computer test
+and Linux hardware diagnostics. See [performance-settings.md](performance-settings.md).
+
+## Window geometry memory
+
+The main window reopens at the last position, size and maximize state, stored in
+`<userData>/window_geometry.json` (`main/windowGeometry.ts`, wired in
+`main/windows.ts`). Writes are debounced and flushed on close and before quit.
+It is app state: never dirties the project or enters undo.
+
+- **Restore is validated.** The window is frameless on Windows/Linux, so an
+  off-screen restore would be unrecoverable. `sanitizeGeometry` requires a
+  grabbable ≥ 120×48 px strip on some display's work area, clamps size to that
+  display, else centres a default. A window straddling monitors or hanging past
+  an edge survives (unlike `electron-window-state`'s full-containment rule).
+- **Save/restore ratchet.** Electron bounds are not idempotent at fractional
+  scale: at `scaleFactor` 1.1, feeding each read back into the constructor grows
+  the window every launch (1182 → 1189 → 1196 …), for every accessor pair.
+  `rememberGeometry` persists the rect it *requested* while the measured rect is
+  within `BOUNDS_DEADBAND_PX` (16), dropping the deadband at the first real
+  resize. `e2e/electron/window-geometry.spec.ts` asserts three untouched launches
+  leave byte-identical geometry.
+- Persist `getNormalBounds()`, not `getBounds()` (maximized rect would make
+  restore-down a no-op). Minimized windows are skipped. Fullscreen is restored
+  only on macOS (on Windows/Linux F11 is dev-gated, so a restored fullscreen
+  would be inescapable).
+- **Never pass `fullscreen: false` (or `undefined`) to the constructor**: Electron
+  then disables fullscreen capability (`isFullScreenable()` false, the green
+  button degrades to zoom, `setFullScreen(true)` no-ops). The key is spread in
+  only when true. Guarded by `e2e/electron/window-chrome.spec.ts`.
+
+## macOS window caption
+
+The main window is frameless on Windows/Linux (renderer-drawn
+`<WindowControls/>`); on macOS it uses `titleBarStyle: 'hidden'` with OS traffic
+lights (native fullscreen, rounded frame, shadow) and `titleBarOverlay: true`
+(macOS only — on Windows that flag paints native caption buttons over ours).
+
+- **The inset comes from CSS.** Caption bars start content at
+  `env(titlebar-area-x)` and are at least `env(titlebar-area-height)` tall; the
+  `env()` fallbacks cover macOS fullscreen and Windows/Linux, so no platform or
+  fullscreen selector is needed. The `enter-/leave-full-screen` events arrive
+  ~500 ms after Chromium moves the buttons, so driving the inset from IPC
+  overlaps the title during the animation.
+- **Centring is derived.** The buttons are a 14 px band at
+  `trafficLightPosition.y`, and `env(titlebar-area-height)` is `2y + 14`. The
+  editor's caption bars (`.app-header`, `.startup-titlebar`, `.agent-titlebar`)
+  share `--app-chrome-height: max(42.5px, env(titlebar-area-height))`, and
+  `main/index.ts` sets `y = (42.5 − 14) / 2 = 14` (rounded). Change one, recompute
+  the other; `window-chrome.spec.ts` fails if they drift. Secondary frameless
+  windows (`main/windowConfig.ts`, e.g. `.perf-titlebar`) use `y = 10` and size
+  their bar to the env value.
+- **Declare the appearance.** Traffic lights follow the *window's* appearance;
+  with `nativeTheme.themeSource` at `'system'`, a light-mode host draws inactive
+  buttons invisible against the dark caption (`color-scheme: dark` does not reach
+  them). `themeSource = 'dark'` is set before the first window, which also darkens
+  native menus, sheets and the file picker.

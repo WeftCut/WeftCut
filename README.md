@@ -155,7 +155,7 @@ Design decisions: [ADRs](docs/adr/).
 
 ## Build from source
 
-Prerequisites: **Node 24+**, **Rust** (stable via `rustup`), and your platform's C++ build tools — per-OS commands in [docs/setup.md](docs/setup.md).
+Prerequisites: **Node 24+**, **Rust** (version pinned by `rust-toolchain.toml`, installed via `rustup`), and your platform's C/C++ build tools and libclang — per-OS commands in [docs/setup.md](docs/setup.md).
 
 ```sh
 npm install       # JS dependencies
@@ -175,10 +175,10 @@ Start with **[architecture](docs/architecture.md)** for the system map, or **[MC
 - **[Data model](docs/data-model.md)** — project state schema, history, persistence, validation.
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
-- **[Export](docs/export.md)** — export settings and range, audio export, final mux, proxies, background jobs.
+- **[Export](docs/export.md)** — export pipeline, settings and range, audio, finalization, export jobs and presets.
 - **[Captions](docs/captions.md)** · **[Audio](docs/audio.md)** — caption ingestion and the audio engine.
-- **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, colour.
-- **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, search palette, colour picker.
+- **[Conformance](docs/conformance.md)** — E2E gates that export real media and check frame alignment, audio sync and colour.
+- **[Features](docs/features.md)** — the concrete behavior of each editor capability: selection, links, groups, ripple delete, markers, shot review, pauses, search, gizmo, crop.
 - **[Status / log system](docs/status-log.md)** — the bottom-of-editor log bus.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Licensing](docs/licensing.md)** — MIT app plus the two FFmpeg lanes and their build-time compliance gates.
