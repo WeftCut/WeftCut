@@ -1217,6 +1217,12 @@ const enUS = {
     groups_rename_confirm: "Rename",
   },
   preview: {
+    quality_label: "Preview quality",
+    quality_full: "Quality: Original",
+    quality_half: "Quality: ½",
+    quality_quarter: "Quality: ¼",
+    quality_hint: "Preview only: reduced decoding and rendering resolution for smoother playback. Export quality is unchanged.",
+    quality_error: "Could not change preview quality. Try again.",
     edit_text: "Edit text",
     empty_hint: "Add a clip to start the preview",
     preparing: "Preparing preview…",

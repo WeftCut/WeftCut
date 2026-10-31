@@ -1070,6 +1070,12 @@ const zhCN: Resources = {
     groups_rename_confirm: "重命名",
   },
   preview: {
+    quality_label: "预览质量",
+    quality_full: "质量：原始",
+    quality_half: "质量：½",
+    quality_quarter: "质量：¼",
+    quality_hint: "仅预览：降低解码和渲染分辨率，使播放更流畅。导出质量不变。",
+    quality_error: "无法更改预览质量，请重试。",
     edit_text: "编辑文字",
     empty_hint: "添加片段后预览将自动启动",
     preparing: "正在准备预览…",
