@@ -7,7 +7,7 @@ import { EXPORT_PRESET_NAME_LIMIT } from '../../shared/export-presets';
 
 const HELP: Record<string, string> = {
   includeVideo: 'Include video.', includeAudio: 'Include audio; must agree with audio.include if both are set.',
-  resolutionHeight: 'Output height in pixels, downscale only. Null follows composition; omission keeps saved setting.',
+  resolutionHeight: 'Output height in pixels, downscale only. Null follows composition.',
   fps: 'Integer output fps, no upsampling. Null follows composition.', codec: 'Output codec.', quality: 'Target bitrate preset; custom uses custom_bitrate.',
   customBitrate: 'Custom target bitrate in bits/second; null clears the saved target.', rateMode: 'Rate control; quality requires native software encoding.',
   maxBitrate: 'Native VBR peak ceiling in bits/second; null removes the cap.', bufferSize: 'Native VBV buffer in bits; null derives it from rate.',
@@ -24,6 +24,9 @@ export function exportSettingsSchema(): Record<string, unknown> {
       [Object.keys(exportWire({ [name]: null }, true) as object)[0]!, { ...visit(rule), description: HELP[name] }])) : v]));
   return visit(EXPORT_SETTINGS_SCHEMA);
 }
+/** The longest `get_export_status { wait_s }` blocks, inside every client's
+ *  request timeout. */
+export const EXPORT_STATUS_MAX_WAIT_S = 60;
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const id = { type: 'string', minLength: 1, description: 'Application-session export job id.' };
 const definition = (name: string, description: string, inputSchema: Record<string, unknown>, readOnlyHint: boolean, idempotentHint: boolean): CatalogTool & { description: string; inputSchema: Record<string, unknown> } => ({
@@ -37,7 +40,7 @@ export function exportPresetSettingsSchema(): Record<string, unknown> {
 }
 const presetId = { type: 'string', minLength: 1, description: 'Exact preset ID from list_export_presets. Built-in IDs start with builtin:.' };
 const presetName = { type: 'string', minLength: 1, maxLength: EXPORT_PRESET_NAME_LIMIT, description: 'Unique personal preset name, trimmed, at most 40 characters.' };
-const presetSettings = { ...exportPresetSettingsSchema(), description: 'Partial portable output settings in snake_case. Excludes engines, hardware acceleration, paths and ranges. Omitted fields retain base values.' };
+const presetSettings = { ...exportPresetSettingsSchema(), description: 'Partial portable output settings in snake_case. Omitted fields retain base values.' };
 export const EXPORT_PRESET_TOOL_DEFS = [
   definition('list_export_presets', 'List built-in and personal export presets, complete portable settings, default ID and name limit. Available without a project.', schema({}), true, true),
   definition('create_export_preset', 'Create a reusable personal export preset. Copies base_preset_id (default builtin:match) and applies optional settings. Built-in base bitrate is copied as a fixed standard-frame-rate value; use get_export_options with preset_id to inspect project-adapted values. Does not change the default or project settings.', schema({ name: presetName, base_preset_id: presetId, settings: presetSettings }, ['name']), false, false),
@@ -50,7 +53,7 @@ export const EXPORT_PRESET_TOOLS = new Set(EXPORT_PRESET_TOOL_DEFS.map(d => d.na
 export const EXPORT_TOOL_DEFS = [
   ...EXPORT_PRESET_TOOL_DEFS,
   definition('get_export_options', 'Read effective export settings and composition limits. Optional preset_id previews that preset without changing project settings; otherwise uses saved project settings, then the global default.', schema({ preset_id: presetId }), true, true),
-  definition('start_export', 'Start an asynchronous export in the editor. Use one request_id per intent; reuse it when reconnecting. Settings, path, extension and an on_conflict: fail collision are refused before a job exists. Poll get_export_status for the actual completed path. Default conflicts add a numeric suffix.', schema({
+  definition('start_export', 'Start an asynchronous export. Use one request_id per intent; reuse it when reconnecting. Settings, path, extension and an on_conflict: fail collision are refused before a job exists. get_export_status { wait_s } reports the actual completed path.', schema({
     request_id: { ...id, maxLength: 200, description: 'Unique export intent id. Reuse with identical arguments after reconnecting.' },
     output_path: { ...id, description: 'Absolute candidate file path in an existing folder; its extension must be the one get_export_options reports. Omit for project/output/project-name.ext.' },
     on_conflict: { enum: ['rename', 'fail'], description: 'Default rename adds a number. Fail requires the exact name. Neither overwrites.' },
@@ -65,9 +68,9 @@ export const EXPORT_TOOL_DEFS = [
     width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
     sheet: { type: 'boolean', description: 'One contact sheet (default true) or one image per frame.' },
   }), true, true),
-  definition('get_export_status', 'Read an export job as { job }. Omit job_id for the active job, else the most recent one (UI or MCP); job is null only when none has run. Records survive MCP reconnects until the app exits.', schema({ job_id: id }), true, true),
+  definition('get_export_status', 'Read an export job as { job }. Omit job_id for the active job, else the most recent one; job is null only when none has run. wait_s blocks until its state changes. Records survive MCP reconnects until the app exits.', schema({ job_id: id, wait_s: { type: 'integer', minimum: 0, maximum: EXPORT_STATUS_MAX_WAIT_S, description: 'Block up to this many seconds for a state change.' } }), true, true),
   definition('retry_export', 'Retry only finalization of an awaiting_retry job. Optional filename changes the basename in the same directory; keep its extension.', schema({ job_id: id, filename: { ...id, description: 'New basename including matching extension. Directory and encoded settings cannot change.' } }, ['job_id']), false, false),
-  definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; poll status until terminal.', schema({ job_id: id }, ['job_id']), false, true),
+  definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; wait on get_export_status until terminal.', schema({ job_id: id }, ['job_id']), false, true),
 ];
 export const EXPORT_TOOLS = new Set(EXPORT_TOOL_DEFS.map(d => d.name));
 

@@ -6,7 +6,8 @@
 //! is NOT engine-specific, and is easy to get wrong per engine, lives here once:
 //!
 //! - the **interactive-memory admission** (`resources::interactive`) sized from
-//!   the model files the arguments name, held for the child's whole life;
+//!   the model files the arguments name, held for the child's whole life
+//!   under the holder `model`, refused as [`SidecarFailure::Admission`];
 //! - the **thread clamp** against the admitted allocation, applied after the
 //!   admission wait and immediately before spawn (see [`ChildRun::threads`]);
 //! - **conhost suppression** (`no_console_window`);
@@ -33,7 +34,12 @@ use crate::process::{output_watching_stderr, NoConsoleWindow};
 /// has always used.
 #[derive(Debug)]
 pub enum SidecarFailure {
-    /// Admission, path resolution, or reading the child's pipes failed.
+    /// The resource authority did not admit the run: the model needs more
+    /// working memory than the allowance, or the budget stayed busy. The
+    /// authority's own sentence, said as it is (no `io error:` prefix), so the
+    /// host reads it as `ResourceBudget` / `ResourceBusy`.
+    Admission(String),
+    /// Path resolution or reading the child's pipes failed.
     Io(std::io::Error),
     /// The child could not be started (bad path, wrong architecture, …).
     Spawn { program: String, cause: String },
@@ -79,10 +85,12 @@ pub async fn run_child(
     mut run: ChildRun<'_>,
     observer: ModelObserver<'_>,
 ) -> Result<Output, SidecarFailure> {
-    let _resources =
-        crate::resources::interactive(crate::resources::model_memory_mib(&run.args, run.cwd))
-            .await
-            .map_err(|e| SidecarFailure::Io(std::io::Error::other(e)))?;
+    let _resources = crate::resources::held_by(
+        crate::resources::Holder::new("model"),
+        crate::resources::interactive(crate::resources::model_memory_mib(&run.args, run.cwd)),
+    )
+    .await
+    .map_err(SidecarFailure::Admission)?;
     (run.threads)(&mut run.args, crate::resources::task_threads());
     let child = Command::new(program_path(run.program).map_err(SidecarFailure::Io)?)
         .no_console_window() // Windows: no conhost flash under Electron.

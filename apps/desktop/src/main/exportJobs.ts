@@ -148,7 +148,30 @@ export class ExportJobs {
     const j = this.active ?? [...this.entries.values()].pop();
     return j ? this.status(j.view.job_id) : null;
   }
-  private notify(j: Entry) { this.deps.send('export:status', this.status(j.view.job_id)); }
+  private changeWaiters = new Set<() => void>();
+  private notify(j: Entry) {
+    this.deps.send('export:status', this.status(j.view.job_id));
+    for (const wake of [...this.changeWaiters]) wake();
+  }
+  /** `get_export_status { wait_s }`: resolves once job `id` (else the one
+   *  `latest()` names) leaves the state it was in at the call, when it is
+   *  terminal already, or after `ms`. Progress inside a state wakes nothing.
+   *  An unknown `id` throws `job_not_found` before any wait. */
+  waitForStateChange(id: string | undefined, ms: number): Promise<void> {
+    const read = () => (id ? this.status(id) : this.latest());
+    const first = read();
+    if (!first || exportTerminal(first.state) || ms <= 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => { clearTimeout(timer); this.changeWaiters.delete(check); resolve(); };
+      const check = () => {
+        const now = read();
+        if (!now || now.job_id !== first.job_id || now.state !== first.state) done();
+      };
+      const timer = setTimeout(done, ms);
+      timer.unref?.();
+      this.changeWaiters.add(check);
+    });
+  }
   start(args: Record<string, unknown>, agent = true): Promise<ExportJob> {
     const fingerprint = canonical({ args, agent });
     const key = args.request_id;

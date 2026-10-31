@@ -1,3 +1,4 @@
+import type { ResourceHolder } from './resource-policy';
 /** Plans describe simultaneous allocations, never output quality. */
 export interface ExportResourcePlan {
   memoryMiB: number;
@@ -10,6 +11,8 @@ export type ResourceWaitReason = 'busy' | 'pressure' | 'host-pressure' | 'budget
 export interface ExportResourceBlock {
   kind: 'blocked'; reason: ResourceWaitReason;
   requestedMiB: number; availableMiB: number; workMiB: number; revision: number;
+  /** What held the budget when admission refused, largest first. */
+  holders?: ResourceHolder[];
 }
 export type ExportAdmission = ExportResourceBlock | { kind: 'admitted'; id: number; index: number };
 export interface ExportPlanRequest { id: string; options: number[]; nativeEncoder: boolean }

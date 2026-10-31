@@ -5,7 +5,8 @@ import { sourceSignature } from './state/mutations/textCorrection.js'
 import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
-import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories } from './resources.js'
+import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories, resourceSnapshot } from './resources.js'
+import { setResourceHolders } from './mcp/faultText.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
@@ -61,6 +62,7 @@ import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
 import { ImportDiagnostics } from './importDiagnostics'
+import { recordDerivativeJob, resetDerivativeJobs } from './state/derivative-jobs'
 import { IMPORT_DIAGNOSTIC_MILESTONE } from '../shared/import-diagnostics'
 import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -580,6 +582,8 @@ app.whenReady().then(async () => {
   layoutTheme = readLayoutTheme(initialAppSettings.layout_theme)
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
+  // A busy refusal said as a sentence names its holders from the live ledger.
+  setResourceHolders(() => resourceSnapshot().holders ?? [])
   const measureCacheDisk = (workspace: string) => void fs.promises.statfs(workspace).then(stats => {
     // A later Workspace measures its own disk; the same disk changes nothing.
     if (wsCache !== workspace || diskMiB(stats) === cacheDiskMiB) return
@@ -676,6 +680,9 @@ app.whenReady().then(async () => {
       if (event === 'media:job_complete' || event === 'media:job_error' || event === 'import:complete' || event === 'import:error') {
         importDiagnostics?.native(event, payload)
       }
+      // What an agent reads of the derivative jobs (media cards, refusals):
+      // the job events reach no MCP session themselves.
+      if (event === 'media:job_started' || event === 'media:job_complete' || event === 'media:job_error') recordDerivativeJob(event, payload)
       if (event === 'log:entry') recordProjectDiagnostic(payload)
       // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
       // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
@@ -1029,6 +1036,7 @@ app.whenReady().then(async () => {
       motifAdmissionOpen = false
       emitToRenderer('project:workspace-changing', {})
       importDiagnostics?.reset()
+      resetDerivativeJobs()
       audioFxBaker?.suspend()
       motifBakes?.reset()
     },

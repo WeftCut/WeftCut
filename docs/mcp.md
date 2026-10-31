@@ -161,6 +161,27 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   same sum. Gate: `mcp.time-base-names.test.ts` walks every input property
   and every result key a description documents; its exceptions are explicit
   lists.
+- **Background state is readable.** No agent should need `sleep`, `pgrep` or a
+  cache listing to learn what the app is doing:
+  - A media card (`media://{id}`, each `project://media` row, the
+    `import_media` answer) carries `derivatives`: `waveform` / `conform`
+    (audio), `thumbnails` / `proxy` (video; no `proxy` for a Bypass route),
+    each `"pending" | "running" | "ready" | { "failed": "<reason>" }`. Main
+    keeps the job events no MCP session receives
+    (`main/state/derivative-jobs.ts`). Shot detection is not a derivative: the
+    call that needs it runs it.
+  - A "not ready" refusal (`DerivativeNotReady`) carries `{ media_id,
+    derivative, state, retry_after_s }`; a failed job says so with its
+    `reason` and `retry_after_s: null`, and `import_media` of the same file
+    re-runs it.
+  - A busy admission (`ResourceBusy`) names its `holders` (`[{ kind,
+    media_id?, mib, threads }]`, from the native ledger) and `retry_after_s`.
+    A claim larger than the whole working allowance is `ResourceBudget {
+    needed_mib, allowed_mib, setting, memory_target_mib }`, which no wait
+    admits.
+  - `get_export_status { wait_s ≤ 60 }` blocks until the job's state changes.
+  Gates: `derivative-jobs.test.ts`, `faultText.test.ts`, the governor's holder
+  tests (`native/src/resources.rs`).
 
 ### Projects and the no-project rule
 
@@ -199,7 +220,7 @@ exists.
 | `project://current` | full Project JSON |
 | `project://composition` | one composition's settings only (no tracks); `?composition=<id>` for a Group's |
 | `project://compositions` | every composition with `ref_count` (Group layers pointing at it; 0 = root or orphan) |
-| `project://media` | media pool |
+| `project://media` | media pool, each row with its `derivatives` |
 | `project://tracks` | a composition's tracks (`enabled`, `locked`, `role`) with layer **envelopes** (`media_id`, `rate` when ≠ 1) — what an agent plans timeline edits against |
 | `project://layers/{id}` | one layer in full, from any composition; stored key times as `local_t_us` |
 | `project://markers` | a composition's markers, with `anchor_layer`, `anchor_src_us`, `hibernating` |
@@ -212,7 +233,7 @@ exists.
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
 | `project://compiled` | compiled audio IRGraph |
 | `composition://meter` | preview master-bus level `{ live, rms_db, peak_db }`, pushed ~2 Hz, `live: false` after 2 s of silence; a tap on what the user hears, never a render. Per-role meters reach no MCP surface ([audio.md](audio.md#meters)) |
-| `media://{id}` | one pooled file as a card (`used_by`, sub-resources). `resources/list` names one per file and `list_changed` fires on pool changes, so clients can @-mention media |
+| `media://{id}` | one pooled file as a card (`used_by`, `derivatives`, sub-resources). `resources/list` names one per file and `list_changed` fires on pool changes, so clients can @-mention media |
 | `media://{id}/thumbnail` | middle thumbnail JPG |
 | `media://{id}/frame/{src_us}` | frame at a source time, lazy-cached |
 | `media://{id}/waveform` | peaks file |
@@ -232,8 +253,9 @@ Templates (`resources/templates/list`, RFC 6570): `project://layers/{id}`,
 `project://` read takes; an unknown key or a scope on a project-wide read is
 refused, never answered with the root. A `media://*` read before its
 derivative exists is resource-not-found with `DerivativeNotReady` data
-(`media_id`, `derivative`) and a retry hint; the job events themselves reach
-the renderer only, so no remedy names them.
+(`media_id`, `derivative`, `state`, `retry_after_s`); a failed job reads
+failed with its reason. The job events themselves reach the renderer only, so
+no remedy names them.
 
 `read_project { view }` serves the same views as a tool for clients without
 resource support (`READ_PROJECT_VIEWS`, plus `media_thumbnail` / `media_frame`
@@ -594,8 +616,11 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   are checked before a job exists and refused as `invalid_params`
   (`PathExists`, `PathNotFound`, `InvalidArgument`). `get_export_status`
   answers `{ job }`: the job named, else the active one, else the most recent;
-  `null` only before any job ran. Only a completed status certifies
-  `output_path`. Export locks
+  `null` only before any job ran. `wait_s` (≤ 60) blocks until that job's
+  `state` changes (progress does not wake it) and answers at once when it is
+  terminal; there are no progress notifications. A failed job's `error`
+  carries its family's variant and data (`ResourceBusy` with `holders`).
+  Only a completed status certifies `output_path`. Export locks
   editing and project switching until terminal; closing MCP does not affect
   the job; jobs do not survive an app restart.
 - `render_frames` — read-only JPEGs of the root through the export pipeline
@@ -729,7 +754,9 @@ lives only in `structuredContent`.
   Electron's `Error invoking remote method '…'` wrapper is dropped, errno text
   becomes a sentence with its own variant (`PathNotFound`, `PathExists`,
   `PermissionDenied`, `DiskFull`, …), and a resource-admission refusal becomes
-  `ResourceBusy` with the MiB it needed and found. A route that names no
+  `ResourceBusy` (the MiB it needed and found, the `holders`, `retry_after_s`)
+  or, for a claim no wait admits, `ResourceBudget` naming Settings ›
+  Performance › Memory target and the target that would admit it. A route that names no
   variant gets the code's (`InvalidArgument`, `InvalidRequest`, `Internal`).
   Export refusals map the job service's codes onto variants
   (`exportRefusal`, `main/mcp/exportTools.ts`); an unknown argument names the

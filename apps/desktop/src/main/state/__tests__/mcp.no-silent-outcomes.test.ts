@@ -469,6 +469,9 @@ describe('the audit probes refuse or change state', () => {
     const w = await world()
     const dir = (w.host.openedProject as () => { dir: string })().dir
     expect((await call(w, 'get_export_status', {})).structuredContent).toEqual({ job: null })
+    // A wait with no job to watch answers at once; a wait past the cap refuses.
+    expect((await call(w, 'get_export_status', { wait_s: 60 })).structuredContent).toEqual({ job: null })
+    expect((await call(w, 'get_export_status', { wait_s: 61 })).structuredContent).toMatchObject({ code: 'invalid_params', error: 'InvalidArgument' })
     const wrongExt = await call(w, 'start_export', { output_path: join(dir, 'cut.mov') })
     expect(wrongExt.structuredContent).toMatchObject({ code: 'invalid_params', error: 'InvalidArgument' })
     expect(text(wrongExt)).toContain('get_export_options')

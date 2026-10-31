@@ -37,7 +37,7 @@ impl Governor {
         if reason.is_some() || choice.is_none() {
             return serde_json::json!({"kind":"blocked", "reason":reason.unwrap_or("busy"),
                 "requestedMiB":minimum, "availableMiB":available, "workMiB":s.limits.work_mib,
-                "revision":s.revision});
+                "holders":Self::holder_uses(&s), "revision":s.revision});
         }
         let index = choice.unwrap();
         let id = Self::insert_export_claim(
@@ -62,9 +62,11 @@ impl Governor {
     fn insert_export_claim(s: &mut State, claim: Claim) -> u32 {
         loop {
             s.next = s.next.wrapping_add(1).max(1);
-            if let std::collections::hash_map::Entry::Vacant(entry) = s.leases.entry(s.next) {
+            let id = s.next;
+            if let std::collections::hash_map::Entry::Vacant(entry) = s.leases.entry(id) {
                 entry.insert(claim);
-                return s.next;
+                Self::name_lease(s, id, current_holder("export"));
+                return id;
             }
         }
     }
@@ -326,6 +328,23 @@ mod tests {
         g.release(a);
         g.release(id);
         assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn a_blocked_plan_names_what_holds_the_budget() {
+        let g = Governor::new();
+        let proxy = held_by(Holder::media("proxy", "m-1"), g.acquire(true, 900))
+            .await
+            .unwrap();
+        let blocked = g.reserve_export(&[800], false);
+        assert_eq!(blocked["kind"], "blocked");
+        assert_eq!(
+            blocked["holders"],
+            serde_json::json!([{ "kind": "proxy", "media_id": "m-1", "mib": 900, "threads": 1 }])
+        );
+        drop(proxy);
+        let id = plan(&g, &[800]);
+        assert_eq!(g.snapshot().holders[0].holder, Holder::new("export"));
+        g.release(id);
     }
     #[tokio::test]
     async fn finalization_waits_for_real_child_teardown() {

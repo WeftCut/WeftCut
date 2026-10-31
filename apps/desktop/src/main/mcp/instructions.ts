@@ -23,7 +23,7 @@ export const MCP_INSTRUCTION_LINES: ReadonlyArray<string> = [
   "4. Times are microseconds on the frame grid: off-grid times are snapped and echoed, times outside their layer refused.",
   "5. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session` (it checkpoints and locks the user's undo; `lock: false` opts out) and `end_agent_session` when done, on failure too.",
   "6. Others may edit concurrently; when a commit fails for that, re-read and reapply.",
-  "7. Export: `start_export`; poll `get_export_status` for the completed output_path.",
+  "7. Export: `start_export`; `get_export_status { wait_s }` for the completed output_path.",
   "8. Edit the project open in the app; never create one unless asked. With none open, `open_project` or `create_project` the one the user named, else ask. A folder with project.json is a project; if it is not the open one (`project.dir` in `project://session`), ask. Its files change only through tools, TASTE.md aside.",
 ]
 

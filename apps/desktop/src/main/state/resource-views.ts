@@ -2,6 +2,7 @@ import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ActorHandle } from './actor'
 import type { Animated, Composition, Layer, MediaItem, Project } from './model'
 import { mediaRecord } from './mcp-results'
+import { derivativeStates } from './derivative-jobs'
 import { referencingLayers } from './mutations/media'
 import { eachLayer, rootComposition } from './model'
 import { serializeProject } from './serialize'
@@ -164,15 +165,21 @@ const MEDIA_SUBRESOURCES: Record<MediaItem['kind'], readonly string[]> = {
   Subtitle: [],
 }
 
-/** One pool item as `media://{id}` answers it: what it is, where it lies, and
- *  which layers place it — small enough to ride along as an @-mention's
- *  attachment. Null when the pool has no such item. */
+/** One pool item as `media://{id}` answers it: what it is, where it lies,
+ *  which layers place it and how far its background jobs are
+ *  (`derivatives`) — small enough to ride along as an @-mention's attachment.
+ *  Null when the pool has no such item. */
 export function mediaCard(p: Project, id: string): Record<string, unknown> | null {
   const record = mediaRecord(p, id)
   if (!record) return null
   const item = p.media_pool[id]!
-  return { ...record, path_rel: item.path_rel, used_by: referencingLayers(p, id),
+  return { ...record, path_rel: item.path_rel, used_by: referencingLayers(p, id), derivatives: derivativeStates(item),
     resources: MEDIA_SUBRESOURCES[item.kind].map((r) => `${PREFIX_MEDIA}${id}/${r}`) }
+}
+
+/** `project://media`: the pool, each row with its `derivatives`. */
+function mediaRows(p: Project): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(p.media_pool).map(([id, item]) => [id, { ...item, derivatives: derivativeStates(item) }]))
 }
 
 export function serveProjectResource(
@@ -213,7 +220,7 @@ export function serveProjectResource(
     case 'project://current': return textResource(uri, serializeProject(snap))
     case 'project://composition': return textResource(uri, compositionSettings(scopedComposition(snap, composition)))
     case 'project://compositions': return textResource(uri, compositionListing(snap))
-    case 'project://media': return textResource(uri, snap.media_pool)
+    case 'project://media': return textResource(uri, mediaRows(snap))
     case 'project://tracks': return textResource(uri, trackEnvelopes(scopedComposition(snap, composition)))
     case 'project://markers': return textResource(uri, scopedComposition(snap, composition).markers)
     case 'project://links': return textResource(uri, scopedComposition(snap, composition).links)

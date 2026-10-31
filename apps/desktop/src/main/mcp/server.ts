@@ -1,4 +1,4 @@
-import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, exportRefusal, exportSettingsSchema, unknownExportArguments } from "./exportTools";
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, EXPORT_STATUS_MAX_WAIT_S, exportRefusal, exportSettingsSchema, unknownExportArguments } from "./exportTools";
 import { describeFault } from "./faultText";
 import { beatSamples } from "./frameSamples";
 import { runExportPresetTool } from './exportPresetTools';
@@ -31,6 +31,7 @@ import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from '../state/resource-views.js'
+import { withDerivativeState } from '../state/derivative-jobs.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { MediaItem } from '../state/model.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
@@ -81,9 +82,10 @@ const CODE_MAP: Record<string, number> = {
 function unwrapEnvelope(env: Envelope): unknown {
   if (env.ok) return env.result
   const err = env.error!
-  const e = new Error(err.message) as Error & { code?: number; data?: unknown }
+  const { message, data } = withDerivativeState(err)
+  const e = new Error(message) as Error & { code?: number; data?: unknown }
   e.code = CODE_MAP[err.code] ?? -32603
-  e.data = err.data
+  e.data = data
   throw e
 }
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
@@ -260,7 +262,7 @@ function unwrapToolEnvelope(json: string, name: string): ServerResult {
   if (env.ok) return env.result as ServerResult
   const err = env.error!
   if (err.code === 'not_found') throw new UnknownToolError(name)
-  return toolErrorResult(err)
+  return toolErrorResult({ ...err, ...withDerivativeState(err) })
 }
 
 /** The argument gate for the routes that have no TS parser of their own.
@@ -418,7 +420,12 @@ async function dispatchTool(
     // One shape whatever was asked: `{ job }`, the job named, else the active
     // or most recent one, null only when no job has run this session.
     if (name === 'get_export_status') {
-      const job = typeof args.job_id === 'string' ? jobs.status(args.job_id) : jobs.latest();
+      const id = typeof args.job_id === 'string' ? args.job_id : undefined;
+      if (args.wait_s !== undefined) {
+        if (!Number.isInteger(args.wait_s) || (args.wait_s as number) < 0 || (args.wait_s as number) > EXPORT_STATUS_MAX_WAIT_S) throw new ExportJobError('invalid_params', `wait_s must be a whole number of seconds from 0 to ${EXPORT_STATUS_MAX_WAIT_S}`);
+        await jobs.waitForStateChange(id, (args.wait_s as number) * 1000);
+      }
+      const job = id ? jobs.status(id) : jobs.latest();
       const answer = { job: job === null ? null : exportRecordForAgent(exportWire(job, true) as Record<string, unknown>) };
       return { content: [{ type: 'text', text: JSON.stringify(answer) }], structuredContent: answer } as ServerResult;
     }
@@ -686,7 +693,10 @@ async function dispatchTool(
 function exportRecordForAgent(record: Record<string, unknown>): Record<string, unknown> {
   const error = record.error as { message?: unknown } | undefined
   if (!error || typeof error.message !== 'string') return record
-  return { ...record, error: { ...error, message: describeFault(error.message).message } }
+  // A failure of a known family carries its variant and data, as a refusal
+  // does: a busy budget names its holders and when to retry.
+  const fault = describeFault(error.message)
+  return { ...record, error: { ...error, message: fault.message, ...(fault.error ? { error: fault.error, ...fault.data } : {}) } }
 }
 
 /** `HistoryLocked` with its holder, which only the host knows: the activity

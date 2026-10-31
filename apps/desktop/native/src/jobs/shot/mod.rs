@@ -136,10 +136,12 @@ impl ShotDetector for FfmpegShotDetector {
         if !ffmpeg_is_installed() {
             anyhow::bail!("ffmpeg not installed; cannot detect shots");
         }
-        let _permit = crate::jobs::ffmpeg_sem()
-            .acquire()
-            .await
-            .context("acquire ffmpeg slot")?;
+        let _permit = crate::resources::held_by(
+            crate::resources::Holder::new("shots"),
+            crate::jobs::ffmpeg_sem().acquire(),
+        )
+        .await
+        .context("acquire ffmpeg slot")?;
 
         // `metadata=print` writes to the log (stderr), NOT a file: a temp path
         // can't be embedded in the filtergraph without Windows drive-colon /
@@ -623,10 +625,12 @@ async fn attach_stats(shot: &mut Shot, video: &Path, dir: &Path, opts: &ShotOpts
 /// tool samples its two frames through the same PNG extract as the shot stats.
 pub(crate) async fn extract_rgb(video: &Path, t_us: i64, dest: &Path) -> Result<RgbImage> {
     let t_s = (t_us.max(0) as f64) / 1_000_000.0;
-    let _permit = crate::jobs::ffmpeg_sem()
-        .acquire()
-        .await
-        .context("acquire ffmpeg slot")?;
+    let _permit = crate::resources::held_by(
+        crate::resources::Holder::new("shots"),
+        crate::jobs::ffmpeg_sem().acquire(),
+    )
+    .await
+    .context("acquire ffmpeg slot")?;
     let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
         .args([
             "-nostdin",

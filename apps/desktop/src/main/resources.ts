@@ -70,7 +70,7 @@ export function onBackgroundResourceChange(notify: () => void): () => void {
   resourceObservers.add(notify); return () => { resourceObservers.delete(notify); };
 }
 export function retainRasterDirectories(paths: string[]): void { getNative().resourcesRetainRaster(paths); }
-export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads'> {
+export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads' | 'holders'> {
   return JSON.parse(getNative().resourcesSnapshot());
 }
 export function processTreeMemory(): Promise<ResourceMemorySample> { return getNative().resourcesMemory(); }

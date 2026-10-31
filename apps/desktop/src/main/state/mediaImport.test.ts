@@ -8,6 +8,7 @@ import { createMediaImporter, type MediaImportDeps, type MediaImporter, type Pat
 import type { Actor } from './history'
 import { root } from './__tests__/fixtures/project'
 import { ImportDiagnostics } from '../importDiagnostics'
+import { recordDerivativeJob, resetDerivativeJobs } from './derivative-jobs'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -101,6 +102,22 @@ describe('ensureImported', () => {
     deps._probeMedia.mockResolvedValue(JSON.stringify({ ...probedItem(), path_abs: 'D:/backup.mp4' }))
     expect(await ensureImported('D:/backup.mp4', deps)).toEqual({ mediaId: MID, disposition: 'relinked', existing: true, sameContentAs: [], copying: null })
     expect(actor.snapshot().media_pool[MID].path_abs).toBe('D:/backup.mp4')
+  })
+
+  it('importing a held file again re-runs a derivative job that failed, and only then', async () => {
+    const actor = freshActor(), deps = makeDeps(actor)
+    const source = 'C:/x.mp4'
+    deps._probeMedia.mockResolvedValue(JSON.stringify({ ...probedItem(), path_abs: source }))
+    await ensureImported(source, deps)
+    expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(1)
+    await ensureImported(source, deps)
+    expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(1)
+    recordDerivativeJob('media:job_error', { media_id: MID, kind: 'thumbnails', error: 'No space left on device' })
+    try {
+      expect(await ensureImported(source, deps)).toMatchObject({ disposition: 'reused', existing: true })
+      expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(2)
+      expect((deps._enqueueDerivatives.mock.calls[1][0] as MediaItem[])[0]!.id).toBe(MID)
+    } finally { resetDerivativeJobs() }
   })
 
   it('answers where the copy into Media/ lands while it runs, and the pooled path once it landed (NEW-4)', async () => {

@@ -37,6 +37,7 @@ const CATALOG = mergeMcpCatalog(
 const DURATIONS: ReadonlySet<string> = new Set([
   'duration_us', 'delta_us', 'pad_us', 'min_pause_us', 'bridge_us', 'min_shot_us',
   'fade_in_us', 'fade_out_us', 'extended_us', 'available_us', 'removed_us',
+  'wait_s', 'retry_after_s',
 ])
 
 /** Timeline names with a role word before `t_`: each carries its base, and

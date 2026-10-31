@@ -25,7 +25,7 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
 4. Times are microseconds on the frame grid: off-grid times are snapped and echoed, times outside their layer refused.
 5. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session` (it checkpoints and locks the user's undo; `lock: false` opts out) and `end_agent_session` when done, on failure too.
 6. Others may edit concurrently; when a commit fails for that, re-read and reapply.
-7. Export: `start_export`; poll `get_export_status` for the completed output_path.
+7. Export: `start_export`; `get_export_status { wait_s }` for the completed output_path.
 8. Edit the project open in the app; never create one unless asked. With none open, `open_project` or `create_project` the one the user named, else ask. A folder with project.json is a project; if it is not the open one (`project.dir` in `project://session`), ask. Its files change only through tools, TASTE.md aside.
 
 ## Session etiquette
@@ -57,8 +57,8 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
 5. A commit can also fail because the user (or another agent) edited
    concurrently — re-read the resource and reapply.
 6. Export with `get_export_options`, then `start_export`. Generate one unique
-   `request_id` per export intent and reuse it after a reconnect. Poll
-   `get_export_status` until completion, failure or `awaiting_retry`; a transport
+   `request_id` per export intent and reuse it after a reconnect. Call
+   `get_export_status { wait_s: 60 }` until completion, failure or `awaiting_retry`; a transport
    disconnect does not cancel the job. Report the completed `output_path` and
    `filename`. An omitted path uses the project's output folder; conflicts
    add a number by default. Use `on_conflict: "fail"` for a strict name.

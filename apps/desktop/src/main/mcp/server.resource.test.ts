@@ -5,6 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { buildMcpServer, handleCallTool, handleReadResource } from './server'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources'
 import { mediaItemTemplate } from '../state/mutations/media'
+import { recordDerivativeJob, resetDerivativeJobs } from '../state/derivative-jobs'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject, rootComposition } from '../state/model'
@@ -143,6 +144,25 @@ describe('one media item as a resource', () => {
     expect(card).toMatchObject({ media_id: MID, kind: 'Video', label: 'Interview A', path: '/proj/Media/interview.mp4', path_rel: 'Media/interview.mp4', duration_us: 4_000_000 })
     expect(card.used_by).toEqual([added.value])
     expect(card.resources).toContain(`media://${MID}/description`)
+  })
+
+  // Sim L4: /tmp filled, the waveform job died, and every read said "not
+  // generated yet" for ten minutes. The card and the refusal say failed.
+  it('a failed waveform job reads failed on the card, in project://media, and in the reader\'s refusal', async () => {
+    const ts = tsHostStub()
+    ts.actor.dispatch('add_media_item', { media: mediaItemTemplate(MID, 'Audio', 4_000_000, true) })
+    recordDerivativeJob('media:job_started', { media_id: MID, kind: 'conform' })
+    recordDerivativeJob('media:job_error', { media_id: MID, kind: 'waveform', error: 'Disk quota exceeded' })
+    try {
+      const card = JSON.parse(contents(await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, `media://${MID}`))[0].text)
+      expect(card.derivatives).toEqual({ waveform: { failed: 'Disk quota exceeded' }, conform: 'running' })
+      const pool = JSON.parse(contents(await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'project://media'))[0].text)
+      expect(pool[MID].derivatives.waveform).toEqual({ failed: 'Disk quota exceeded' })
+      const reader = fakeBackend(async () => JSON.stringify({ ok: false, error: { code: 'not_found', message: `waveform not generated yet for media ${MID} — the import's background jobs are still generating it; retry in a few seconds`, data: { error: 'DerivativeNotReady', media_id: MID, derivative: 'waveform' } } }))
+      const refused = await handleReadResource(reader, () => ts, `media://${MID}/waveform`).then(() => null, (e: Error & { data?: unknown }) => e)
+      expect(refused?.message).toContain('waveform failed for media')
+      expect(refused?.data).toMatchObject({ error: 'DerivativeNotReady', derivative: 'waveform', state: 'failed', reason: 'Disk quota exceeded', retry_after_s: null })
+    } finally { resetDerivativeJobs() }
   })
 
   it('media://{id} of an id the pool lacks is not found', async () => {

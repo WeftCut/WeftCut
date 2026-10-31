@@ -153,7 +153,10 @@ async fn mix_and_encode(
 
     let _resources = tokio::select! {
         _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-        permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
+        permit = crate::resources::held_by(
+            crate::resources::Holder::new("export"),
+            crate::resources::interactive(128),
+        ) => permit.map_err(anyhow::Error::msg)?,
     };
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     cmd.args(["-y", "-hide_banner", "-nostats"])
@@ -327,7 +330,10 @@ pub async fn mux_to_file(
             None,
             Some(tokio::select! {
                 _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-                permit = crate::resources::interactive(64) => permit.map_err(anyhow::Error::msg)?,
+                permit = crate::resources::held_by(
+                    crate::resources::Holder::new("export"),
+                    crate::resources::interactive(64),
+                ) => permit.map_err(anyhow::Error::msg)?,
             }),
         ),
     };

@@ -7,6 +7,7 @@ import type { ImportOutcome } from '../state/mediaImport'
 import type { Project } from '../state/model.js'
 import { toolText, type ToolResultJson } from '../state/mcp-commands.js'
 import { mediaRecord, toolRecord } from '../state/mcp-results.js'
+import { derivativeStates } from '../state/derivative-jobs.js'
 
 export function shapeHybridResult(result: unknown): ToolResultJson {
   const text = String(result)
@@ -25,10 +26,12 @@ export function shapeHybridResult(result: unknown): ToolResultJson {
  *  (`same_content_as`). `path` / `path_rel` name the pooled file: under
  *  `Media/` once the project holds its copy, and while that copy still runs,
  *  the place it lands, with `copying: true` (the source is read until then).
+ *  `derivatives` is the state of each background job, as on `media://{id}`.
  *  `after` is the snapshot once the call has committed. */
 export function shapeImportResult(outcome: ImportOutcome, after: Project): ToolResultJson {
-  const record = mediaRecord(after, outcome.mediaId)
-  if (!record) return toolRecord({ media_id: outcome.mediaId })
+  const base = mediaRecord(after, outcome.mediaId)
+  if (!base) return toolRecord({ media_id: outcome.mediaId })
+  const record = { ...base, derivatives: derivativeStates(after.media_pool[outcome.mediaId]!) }
   const pooled = outcome.copying
     ? { path: outcome.copying.path_abs, path_rel: outcome.copying.path_rel, copying: true }
     : { path_rel: after.media_pool[outcome.mediaId]!.path_rel }

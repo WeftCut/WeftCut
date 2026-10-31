@@ -40,6 +40,59 @@ struct Claim {
     mib: u64,
     background: bool,
 }
+/// What a lease is for, named when admission refuses someone else: the work's
+/// kind (a derivative job's `JobKind` name, `export`, `editor`, `model`, …) and
+/// the media it works on. Set for a future with [`held_by`]; a claim made
+/// outside one is named by its lane (`background`, `on_demand`, `export`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Holder {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_id: Option<String>,
+}
+impl Holder {
+    pub fn new(kind: &'static str) -> Self {
+        Self {
+            kind,
+            media_id: None,
+        }
+    }
+    pub fn media(kind: &'static str, media_id: impl ToString) -> Self {
+        Self {
+            kind,
+            media_id: Some(media_id.to_string()),
+        }
+    }
+    /// The work in words: `proxy of media 1f…`, `export`.
+    fn phrase(&self) -> String {
+        let kind = self.kind.replace('_', " ");
+        match &self.media_id {
+            Some(id) => format!("{kind} of media {id}"),
+            None => kind,
+        }
+    }
+}
+tokio::task_local! {
+    static HOLDER: Holder;
+}
+/// Run `work` with every lease it takes named `holder`.
+pub async fn held_by<F: std::future::Future>(holder: Holder, work: F) -> F::Output {
+    HOLDER.scope(holder, work).await
+}
+/// The holder of a claim being admitted now: the scope's, else the lane's.
+fn current_holder(lane: &'static str) -> Holder {
+    HOLDER
+        .try_with(Holder::clone)
+        .unwrap_or_else(|_| Holder::new(lane))
+}
+/// One holder's share of the ledger, as a busy refusal names it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HolderUse {
+    #[serde(flatten)]
+    pub holder: Holder,
+    pub mib: u64,
+    pub threads: u32,
+}
 struct State {
     limits: Limits,
     next: u32,
@@ -55,6 +108,8 @@ struct State {
     finalizations: HashMap<u32, FinalizationState>,
     production: HashMap<u32, u32>,
     plans: HashMap<u32, export_plan::ExportPlanState>,
+    /// What each lease is for. Pruned of released leases on every insert.
+    holders: HashMap<u32, Holder>,
     revision: u32,
 }
 #[derive(Default)]
@@ -74,6 +129,8 @@ pub struct Snapshot {
     pub waiting: u32,
     pub reserved_mib: u64,
     pub cpu_threads: u32,
+    /// What holds the reserved budget, largest first.
+    pub holders: Vec<HolderUse>,
 }
 impl Governor {
     fn new() -> Arc<Self> {
@@ -91,6 +148,7 @@ impl Governor {
                 finalizations: HashMap::new(),
                 production: HashMap::new(),
                 plans: HashMap::new(),
+                holders: HashMap::new(),
                 revision: 0,
             }),
             changed: Notify::new(),
@@ -147,7 +205,14 @@ impl Governor {
         {
             return None;
         }
-        let id = Self::insert_lease(&mut s, claim);
+        let lane = if finalization.is_some() {
+            "export"
+        } else if claim.background {
+            "background"
+        } else {
+            "on_demand"
+        };
+        let id = Self::insert_lease(&mut s, claim, current_holder(lane));
         if let Some(tail) = finalization {
             s.leases.get_mut(&tail).unwrap().mib = 0;
             s.finalizations.get_mut(&tail).unwrap().production = Some(id);
@@ -181,15 +246,70 @@ impl Governor {
             None
         }
     }
-    fn insert_lease(s: &mut State, claim: Claim) -> u32 {
+    fn insert_lease(s: &mut State, claim: Claim, holder: Holder) -> u32 {
         loop {
             s.next = s.next.wrapping_add(1).max(1);
             let id = s.next;
             if let std::collections::hash_map::Entry::Vacant(e) = s.leases.entry(id) {
                 e.insert(claim);
+                Self::name_lease(s, id, holder);
                 return id;
             }
         }
+    }
+    fn name_lease(s: &mut State, id: u32, holder: Holder) {
+        let State {
+            holders, leases, ..
+        } = s;
+        holders.retain(|id, _| leases.contains_key(id));
+        holders.insert(id, holder);
+    }
+    /// The ledger by holder, largest share first. A borrowed export child
+    /// counts under its parent's name; an emptied lease is not a holder.
+    fn holder_uses(s: &State) -> Vec<HolderUse> {
+        let mut uses: Vec<HolderUse> = Vec::new();
+        for (id, claim) in &s.leases {
+            if claim.mib == 0 && claim.threads == 0 {
+                continue;
+            }
+            let holder = s
+                .holders
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| Holder::new("on_demand"));
+            match uses.iter_mut().find(|u| u.holder == holder) {
+                Some(u) => {
+                    u.mib += claim.mib;
+                    u.threads += claim.threads;
+                }
+                None => uses.push(HolderUse {
+                    holder,
+                    mib: claim.mib,
+                    threads: claim.threads,
+                }),
+            }
+        }
+        uses.sort_by(|a, b| {
+            (b.mib, b.threads, a.holder.kind).cmp(&(a.mib, a.threads, b.holder.kind))
+        });
+        uses
+    }
+    /// The holders in words, for a refusal's sentence: at most four, then a
+    /// count of the rest.
+    fn holders_phrase(s: &State) -> String {
+        let uses = Self::holder_uses(s);
+        if uses.is_empty() {
+            return "work that has just finished".into();
+        }
+        let mut parts: Vec<String> = uses
+            .iter()
+            .take(4)
+            .map(|u| format!("{} ({} MiB)", u.holder.phrase(), u.mib))
+            .collect();
+        if uses.len() > 4 {
+            parts.push(format!("{} more", uses.len() - 4));
+        }
+        parts.join(", ")
     }
     fn release(&self, id: u32) {
         let mut s = self.state.lock().unwrap();
@@ -222,10 +342,12 @@ impl Governor {
         self.notify_change();
     }
     fn reserve_finalization(&self) -> Option<u32> {
-        let id = self.reserve(Claim {
-            threads: 0,
-            mib: 64,
-            background: false,
+        let id = HOLDER.sync_scope(Holder::new("export"), || {
+            self.reserve(Claim {
+                threads: 0,
+                mib: 64,
+                background: false,
+            })
         })?;
         self.state
             .lock()
@@ -319,6 +441,7 @@ impl Governor {
             waiting: s.waiting,
             reserved_mib: s.leases.values().map(|c| c.mib).sum(),
             cpu_threads: s.leases.values().map(|c| c.threads).sum(),
+            holders: Self::holder_uses(&s),
         }
     }
     async fn acquire_preparation(self: &Arc<Self>) -> Result<PreparationPermit, String> {
@@ -330,7 +453,12 @@ impl Governor {
             .acquire_owned()
             .await
             .map_err(|e| e.to_string())?;
-        let resources = self.acquire_threads(false, 128, Some(1)).await?;
+        let admit = self.acquire_threads(false, 128, Some(1));
+        let resources = if HOLDER.try_with(|_| ()).is_ok() {
+            admit.await?
+        } else {
+            held_by(Holder::new("import"), admit).await?
+        };
         Ok(PreparationPermit {
             _resources: resources,
             _lane: lane,
@@ -361,7 +489,7 @@ impl Governor {
             let threads = {
                 let s = self.state.lock().unwrap();
                 if mib > s.limits.work_mib {
-                    return Err(format!("resource-capacity-exceeded: Requested {mib} MiB working memory exceeds the {} MiB allowance; increase the memory target", s.limits.work_mib));
+                    return Err(budget_refusal(mib, s.limits.work_mib));
                 }
                 threads.unwrap_or(s.limits.task_threads).min(if background {
                     s.limits.cpu_threads.saturating_sub(1).max(1)
@@ -428,10 +556,12 @@ pub(crate) async fn import_preparation() -> anyhow::Result<PreparationPermit> {
 /// taking a transcode/background slot or holding the preparation FIFO lane.
 /// Common CPU/memory limits, pressure and export finalization still apply.
 pub(crate) async fn workspace_copy() -> anyhow::Result<Permit> {
-    governor()
-        .acquire_threads(false, 8, Some(1))
-        .await
-        .map_err(anyhow::Error::msg)
+    held_by(
+        Holder::new("workspace_copy"),
+        governor().acquire_threads(false, 8, Some(1)),
+    )
+    .await
+    .map_err(anyhow::Error::msg)
 }
 impl Permit {
     pub fn threads(&self) -> u32 {
@@ -636,7 +766,7 @@ impl Governor {
             caller,
             queued: Instant::now(),
         };
-        let first = match self.try_user_compute() {
+        let first = match self.try_user_compute(caller) {
             Ok(Ok(id)) => {
                 trace.emit(LogLevel::Debug, "admitted", None, None);
                 return Ok(self.permit(id));
@@ -675,7 +805,7 @@ impl Governor {
                 let notified = self.changed.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
-                match self.try_user_compute()? {
+                match self.try_user_compute(caller)? {
                     Ok(id) => return Ok::<u32, String>(id),
                     Err(block) if block != waiting.reason => {
                         waiting.reason = block;
@@ -718,15 +848,22 @@ impl Governor {
     }
     /// One admission attempt under one lock, so a refusal carries the rule
     /// that refused it. The outer error is a claim that can never fit.
-    fn try_user_compute(&self) -> Result<Result<u32, UserComputeBlock>, String> {
+    fn try_user_compute(
+        &self,
+        caller: UserComputeCaller,
+    ) -> Result<Result<u32, UserComputeBlock>, String> {
         let mut s = self.state.lock().unwrap();
         if USER_COMPUTE_MIB > s.limits.work_mib {
-            return Err(format!("resource-capacity-exceeded: Requested {USER_COMPUTE_MIB} MiB working memory exceeds the {} MiB allowance; increase the memory target", s.limits.work_mib));
+            return Err(budget_refusal(USER_COMPUTE_MIB, s.limits.work_mib));
         }
         let claim = Self::user_compute_claim(&s);
         Ok(match Self::fresh_claim_block(&s, claim, 0) {
             Some(block) => Err(block),
-            None => Ok(Self::insert_lease(&mut s, claim)),
+            None => Ok(Self::insert_lease(
+                &mut s,
+                claim,
+                current_holder(caller.as_str()),
+            )),
         })
     }
     /// Name the rule still refusing at expiry, falling back to the last one
@@ -745,9 +882,8 @@ impl Governor {
             UserComputeBlock::Memory => format!("{head}: memory is under pressure. Close other work or wait for memory to recover, then retry"),
             UserComputeBlock::Finalization => format!("{head}: an export is finishing and goes first. Retry when the export completes"),
             UserComputeBlock::Budget => {
-                let others = s.leases.len();
-                let background = s.leases.values().filter(|c| c.background).count();
-                format!("{head}: the CPU and memory budget is held by {others} other lease(s), {background} of them background processing such as proxy generation. Retry when it finishes, or raise Processing effort or the Memory target in Settings")
+                let held = Self::holders_phrase(&s);
+                format!("{head}: the CPU and memory budget is held by {held}. Retry when that finishes, or raise Processing effort or the Memory target in Settings › Performance")
             }
         }
     }
@@ -825,6 +961,13 @@ impl Drop for UserComputeWaiting {
         }
     }
 }
+/// A claim larger than the whole working allowance: no wait can admit it, only
+/// a larger Memory target (the allowance is a fixed share of it,
+/// `shared/resource-policy.ts`). The host reads the two numbers into the typed
+/// `ResourceBudget` refusal.
+fn budget_refusal(mib: u64, work_mib: u64) -> String {
+    format!("resource-capacity-exceeded: Requested {mib} MiB working memory exceeds the {work_mib} MiB allowance; raise the Memory target in Settings › Performance")
+}
 pub async fn interactive(mib: u64) -> Result<Permit, String> {
     tokio::time::timeout(
         std::time::Duration::from_secs(15),
@@ -832,7 +975,8 @@ pub async fn interactive(mib: u64) -> Result<Permit, String> {
     )
     .await
     .map_err(|_| {
-        "resource-capacity-exceeded: Resources are busy. Stop playback or wait for other processing, then retry".to_string()
+        let held = Governor::holders_phrase(&governor().state.lock().unwrap());
+        format!("resource-capacity-exceeded: Resources are busy, held by {held}. Retry when that finishes, or stop playback")
     })?
 }
 /// Model weights plus working space. Offloaded weights remain conservatively
@@ -929,15 +1073,24 @@ pub fn resources_reserve(
     {
         return Err(napi::Error::from_reason("Invalid resource request"));
     }
-    governor()
-        .reserve_for(
-            Claim {
-                threads: threads as u32,
-                mib: memory_mib as u64,
-                background: false,
-            },
-            finalization,
-        )
+    // A window's lease is the editor's (preview decoders, picture caches),
+    // unless it borrows an export's reservation.
+    let holder = Holder::new(if finalization.is_some() {
+        "export"
+    } else {
+        "editor"
+    });
+    HOLDER
+        .sync_scope(holder, || {
+            governor().reserve_for(
+                Claim {
+                    threads: threads as u32,
+                    mib: memory_mib as u64,
+                    background: false,
+                },
+                finalization,
+            )
+        })
         .ok_or_else(|| {
             napi::Error::from_reason("Resource capacity is busy or the memory target is too small")
         })
@@ -1376,6 +1529,50 @@ mod tests {
         assert!(g.acquire(true, 128).await.is_ok());
     }
     #[tokio::test]
+    async fn the_ledger_names_what_holds_it_largest_first() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 8,
+            background_jobs: 4,
+            ..Limits::default()
+        })
+        .unwrap();
+        let proxy = held_by(Holder::media("proxy", "m-1"), g.acquire(true, 128))
+            .await
+            .unwrap();
+        let waveform = held_by(Holder::media("waveform", "m-2"), g.acquire(false, 300))
+            .await
+            .unwrap();
+        let unnamed = g.acquire(true, 64).await.unwrap();
+        let holders = g.snapshot().holders;
+        let named: Vec<(&str, Option<&str>, u64)> = holders
+            .iter()
+            .map(|u| (u.holder.kind, u.holder.media_id.as_deref(), u.mib))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("waveform", Some("m-2"), 300),
+                ("proxy", Some("m-1"), 128),
+                ("background", None, 64)
+            ]
+        );
+        // Released leases stop being holders.
+        drop(waveform);
+        drop(unnamed);
+        let left = held_by(Holder::new("model"), g.acquire(false, 200))
+            .await
+            .unwrap();
+        let kinds: Vec<&str> = g.snapshot().holders.iter().map(|u| u.holder.kind).collect();
+        assert_eq!(kinds, ["model", "proxy"]);
+        assert_eq!(
+            Governor::holders_phrase(&g.state.lock().unwrap()),
+            "model (200 MiB), proxy of media m-1 (128 MiB)"
+        );
+        drop((proxy, left));
+        assert!(g.snapshot().holders.is_empty());
+    }
+    #[tokio::test]
     async fn impossible_working_claim_fails_instead_of_waiting_for_a_release() {
         let g = Governor::new();
         g.configure(Limits {
@@ -1389,7 +1586,8 @@ mod tests {
                 .unwrap();
         let error = result.err().unwrap();
         assert!(error.contains("resource-capacity-exceeded"));
-        assert!(error.contains("increase the memory target"));
+        assert!(error.contains("509 MiB working memory exceeds the 409 MiB allowance"));
+        assert!(error.contains("Memory target in Settings › Performance"));
         assert_eq!(g.snapshot().waiting, 0);
         assert_eq!(g.snapshot().active, 0);
     }
@@ -1734,13 +1932,16 @@ mod tests {
             ..Limits::default()
         })
         .unwrap();
-        // Budget: a background proxy holds the slot the claim needs.
-        let proxy = g.acquire(true, 128).await.unwrap();
+        // Budget: a background proxy holds the slot the claim needs, and the
+        // refusal names it.
+        let proxy = held_by(Holder::media("proxy", "m-1"), g.acquire(true, 128))
+            .await
+            .unwrap();
         let (task, seen) = spawn_user_compute(&g, Duration::from_millis(30));
         let error = task.await.unwrap().err().unwrap();
         assert!(error.starts_with("resource-capacity-exceeded: "), "{error}");
         assert!(
-            error.contains("held by 1 other lease(s), 1 of them background processing such as proxy generation"),
+            error.contains("budget is held by proxy of media m-1 (128 MiB)"),
             "{error}"
         );
         assert_eq!(*seen.lock().unwrap(), [Some(UserComputeBlock::Budget)]);

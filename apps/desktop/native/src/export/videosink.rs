@@ -299,9 +299,12 @@ pub async fn export_video_sink_start_cancellable(
     } else {
         Some(tokio::select! {
         _ = cancellation.cancelled() => return Err("export cancelled".into()),
-        permit = crate::resources::interactive_export(
-            128 + (u64::from(args.width) * u64::from(args.height) * 32).div_ceil(1024 * 1024),
-            args.finalization_id,
+        permit = crate::resources::held_by(
+            crate::resources::Holder::new("export"),
+            crate::resources::interactive_export(
+                128 + (u64::from(args.width) * u64::from(args.height) * 32).div_ceil(1024 * 1024),
+                args.finalization_id,
+            ),
         ) => permit?,
         })
     };

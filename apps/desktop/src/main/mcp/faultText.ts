@@ -10,13 +10,15 @@
 // - Node's errno text (`ENOENT: no such file or directory, open '…'`), from a
 //   file write such as `export_motif { path }`.
 // - The resource admission refusal (`resource-capacity-exceeded: {json}` or the
-//   native sentence after the tag), which is a busy budget, not a crash.
+//   native sentence after the tag): a busy budget (`ResourceBusy`, naming what
+//   holds it) or a claim no wait can admit (`ResourceBudget`, naming the
+//   setting), never a crash.
 //
 // `describeFault` rewrites all three into a sentence and names the variant, so
 // `toolErrorResult` (every refusal) and the export records (a failed job's
 // `error.message`) answer in one vocabulary. Text that is none of these comes
 // back unchanged.
-import { RESOURCE_CAPACITY_EXCEEDED } from '../../shared/resource-policy'
+import { RESOURCE_CAPACITY_EXCEEDED, WORK_FRACTION, memoryTargetForWork, type ResourceHolder } from '../../shared/resource-policy'
 import type { McpErrorCode } from '../state/mcp-commands'
 
 export interface Fault {
@@ -52,27 +54,67 @@ function errnoFault(code: string, syscall: string, path: string | undefined, des
   }
 }
 
+/** Where the setting that sizes the working allowance lives. */
+export const MEMORY_SETTING = 'Settings › Performance › Memory target'
+/** When a busy budget may have room again; null where waiting does not help. */
+const RETRY_AFTER_S: Record<string, number | null> = { busy: 15, pressure: 5, 'host-pressure': 30, 'budget-too-small': null }
+
 const REASON_TEXT: Record<string, string> = {
-  busy: 'other work (an export, a proxy build, a transcription or a render) holds the rest of the budget — retry when it finishes',
+  busy: 'other work holds the rest of the budget — retry when it finishes',
   pressure: 'the app is under memory pressure — retry in a few seconds',
   'host-pressure': 'the computer is low on free memory — close other programs or retry later',
-  'budget-too-small': 'that is more than the whole budget — a larger memory target in Settings › Performance lets it run',
 }
+
+/** The live ledger's holders, for a refusal whose text carries none (the
+ *  native sentences). Installed by main; absent in tests and before boot. */
+let liveHolders: () => ResourceHolder[] = () => []
+export function setResourceHolders(read: () => ResourceHolder[]): void { liveHolders = read }
+function currentHolders(): ResourceHolder[] {
+  try { return liveHolders() } catch { return [] }
+}
+
+/** `proxy of media 1f… (512 MiB), export (2048 MiB)`. */
+export function holdersPhrase(holders: ResourceHolder[]): string {
+  const named = holders.slice(0, 4).map((h) => `${h.kind.replace(/_/g, ' ')}${h.media_id ? ` of media ${h.media_id}` : ''} (${h.mib} MiB)`)
+  return holders.length > 4 ? `${named.join(', ')} and ${holders.length - 4} more` : named.join(', ')
+}
+
+/** A claim larger than the whole working allowance. No wait admits it; only
+ *  a larger memory target does, and that is the user's setting. */
+function budgetFault(needed: number, allowed: number): Fault {
+  const target = memoryTargetForWork(needed)
+  return {
+    error: 'ResourceBudget', code: 'invalid_request',
+    data: { needed_mib: needed, allowed_mib: allowed, setting: MEMORY_SETTING, memory_target_mib: target, retry_after_s: null },
+    message: `this needs ${needed} MiB of working memory and the allowance is ${allowed} MiB (${Math.round(WORK_FRACTION * 100)} % of the memory target), so it cannot run at the current settings and waiting will not help — ask the user to raise ${MEMORY_SETTING} to at least ${target} MiB`,
+  }
+}
+
+const BUDGET_SENTENCE = /Requested (\d+) MiB working memory exceeds the (\d+) MiB allowance/
 
 function resourceFault(after: string): Fault {
   const body = after.trim()
   if (body.startsWith('{')) {
     try {
-      const b = JSON.parse(body) as { reason?: string; requestedMiB?: number; availableMiB?: number; workMiB?: number }
+      const b = JSON.parse(body) as { reason?: string; requestedMiB?: number; availableMiB?: number; workMiB?: number; holders?: ResourceHolder[] }
       const reason = typeof b.reason === 'string' ? b.reason : 'busy'
+      if (reason === 'budget-too-small' && typeof b.requestedMiB === 'number' && typeof b.workMiB === 'number') return budgetFault(b.requestedMiB, b.workMiB)
+      const holders = Array.isArray(b.holders) ? b.holders : []
+      const why = reason === 'busy' && holders.length ? `held by ${holdersPhrase(holders)} — retry when that finishes` : REASON_TEXT[reason] ?? REASON_TEXT.busy
       return {
         error: 'ResourceBusy', code: 'invalid_request',
-        data: { reason, requested_mib: b.requestedMiB ?? null, available_mib: b.availableMiB ?? null, budget_mib: b.workMiB ?? null },
-        message: `not enough processing memory right now: this needs about ${b.requestedMiB ?? '?'} MiB and ${b.availableMiB ?? '?'} MiB of the ${b.workMiB ?? '?'} MiB budget is free; ${REASON_TEXT[reason] ?? REASON_TEXT.busy}`,
+        data: { reason, requested_mib: b.requestedMiB ?? null, available_mib: b.availableMiB ?? null, budget_mib: b.workMiB ?? null, holders, retry_after_s: RETRY_AFTER_S[reason] ?? RETRY_AFTER_S.busy },
+        message: `not enough processing memory right now: this needs about ${b.requestedMiB ?? '?'} MiB and ${b.availableMiB ?? '?'} MiB of the ${b.workMiB ?? '?'} MiB budget is free; ${why}`,
       }
     } catch { /* not the JSON block: the native sentence path below */ }
   }
-  return { error: 'ResourceBusy', code: 'invalid_request', data: {}, message: `not enough processing resources right now: ${body || 'the budget is held'}` }
+  const budget = BUDGET_SENTENCE.exec(body)
+  if (budget) return budgetFault(Number(budget[1]), Number(budget[2]))
+  // The native sentence names the holders in words already; the data names
+  // them from the live ledger.
+  const reason = /memory is under pressure/.test(body) ? 'pressure' : 'busy'
+  return { error: 'ResourceBusy', code: 'invalid_request', data: { reason, holders: currentHolders(), retry_after_s: RETRY_AFTER_S[reason] },
+    message: `not enough processing resources right now: ${body || 'the budget is held'}` }
 }
 
 /** The sentence and variant for a failure's raw text. */

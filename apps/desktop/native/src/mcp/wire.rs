@@ -68,10 +68,11 @@ impl McpToolError {
 
 /// A derivative (`waveform`, `thumbnail`) the import's background jobs have
 /// not written yet: the sentence and the typed `DerivativeNotReady` data every
-/// such refusal carries. The remedy is a retry, because no MCP session
-/// receives the job events (`media:job_*` reach the renderer only). The
-/// sentence opens with "<derivative> not generated yet", which the renderer
-/// matches on.
+/// such refusal carries. The reader sees only that the file is missing; the
+/// host adds the job's `state` and `retry_after_s`, and rewrites the sentence
+/// for a job that failed (`main/state/derivative-jobs.ts`), since only main
+/// hears the job events. The sentence opens with "<derivative> not generated
+/// yet", which the renderer matches on.
 pub fn derivative_not_ready(media_id: &str, derivative: &str, extra: &str) -> (String, Value) {
     (
         format!(

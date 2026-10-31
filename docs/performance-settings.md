@@ -50,6 +50,12 @@ Retry; telemetry failure never blocks editing.
   allocation; release follows teardown, including cancellation and errors.
   IPC owners cannot release other windows' leases; navigation and renderer
   death return allocations.
+- Every lease is named for its **holder** (`resources::held_by`): a derivative
+  job's kind and media id, `export`, `editor` (a window's lease), `model`,
+  `import`, or its lane (`background`, `on_demand`) when unnamed. Busy
+  refusals list the holders, largest first (the sentence, the export plan's
+  `holders`, `resourcesSnapshot().holders`), so nobody has to inspect
+  processes to learn what holds the budget.
 - IPC and the NAPI entry reject non-integer, out-of-range and non-finite
   thread/memory claims before conversion, so large JS numbers cannot wrap into a
   smaller reservation.
@@ -123,7 +129,7 @@ sampling errors behind larger test budgets or longer timeouts.
 | Renderer source probes | Coalesced per source, at most two active, leased, cancelled on project change. |
 | Renderer export | Composition/encoder frames and streamed animation reserve before canvas/worker creation. |
 | Playback audio | Per-source bounded PCM lookahead reserved before open. |
-| Local speech/video models | Weight/workspace estimate before spawn; threads capped after admission; CPU fallback re-acquires. |
+| Local speech/video models | Weight/workspace estimate before spawn (256 MiB + 2 × the model files named on the command line, per child; one child per description chunk at a fixed `-c 8192`, so the window's length does not change it); threads capped after admission; CPU fallback re-acquires. A claim above the whole working allowance is refused at once (`ResourceBudget` over MCP), never queued. |
 | Replaceable disk derivatives | Global LRU across registered roots; writes and setting changes trigger maintenance. |
 
 Browser composition, JS heaps, codec-private surfaces and driver allocations

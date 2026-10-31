@@ -1701,6 +1701,8 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
             McpToolError::internal_error(message, None)
         }
         E::Io(_) | E::AudioExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
+        // No argument fixes a budget; the host names the variant from the text.
+        E::Admission(_) => McpToolError::invalid_request(message, None),
         // Local CLI-sidecar failures (whisper.cpp / FunASR): the message already
         // carries the exit code + engine stderr / the spawn cause / the timeout.
         E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } => {
@@ -2068,6 +2070,8 @@ fn map_vlm_error(e: crate::vlm::VlmError) -> McpToolError {
             McpToolError::internal_error(message, None)
         }
         E::Io(_) | E::FrameExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
+        // No argument fixes a budget; the host names the variant from the text.
+        E::Admission(_) => McpToolError::invalid_request(message, None),
         E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } | E::EndpointTimeout { .. } => {
             McpToolError::internal_error(message, None)
         }

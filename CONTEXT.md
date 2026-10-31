@@ -630,6 +630,21 @@ platform; targets are cooperative, not OS caps. UI words: Memory target /
 See ADR 0101, ADR 0150.
 _Avoid_: guaranteed RAM cap, CPU percentage cap
 
+**Derivative state**:
+How far one of a media item's background jobs is: `pending`, `running`,
+`ready` or `failed` with the job's reason. The derivatives are waveform,
+conform, thumbnails and proxy; shot detection is not one (the call that needs
+it runs it). Read on `media://{id}`, `project://media` rows and the
+`import_media` answer. See [mcp.md](docs/mcp.md#resources).
+_Avoid_: not generated yet (for a job that failed)
+
+**Holder**:
+What holds part of the working budget, named when admission refuses someone
+else: the work's kind (a derivative job, `export`, `editor`, `model`, …) and
+the media it works on. A busy refusal (`ResourceBusy`) lists the holders; a
+claim larger than the whole working allowance is `ResourceBudget` instead,
+which no wait admits.
+
 **Cache budget**:
 The desired combined retention of video and animation pictures, thumbnails and
 waveforms; active pictures may exceed it. Not the app's memory limit.

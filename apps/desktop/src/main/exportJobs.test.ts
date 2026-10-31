@@ -78,6 +78,27 @@ it('waits for the matching renderer and rejects stale ownership', async () => {
   await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
 });
 
+it('get_export_status { wait_s }: wakes on a state change, not on progress, and at once when terminal', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.1 });
+  let woke = false;
+  const waiting = s.jobs.waitForStateChange(job.job_id, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.5 });
+  await new Promise(r => setTimeout(r, 10));
+  expect(woke).toBe(false);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'finalizing', phase: 'mux' });
+  await waiting;
+  expect(s.jobs.status(job.job_id)?.state).toBe('finalizing');
+  // Without a change the wait ends when it elapses.
+  const started = Date.now();
+  await s.jobs.waitForStateChange(undefined, 30);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  const before = Date.now();
+  await s.jobs.waitForStateChange(job.job_id, 5_000);
+  expect(Date.now() - before).toBeLessThan(1_000);
+});
+
 it('keeps admission during cancellation until the renderer acknowledges cleanup', async () => {
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
   await s.jobs.cancel(job.job_id); expect(s.jobs.isActive()).toBe(true);

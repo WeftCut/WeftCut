@@ -5,6 +5,7 @@ import type { Actor } from './history'
 import type { MediaItem } from './model'
 import { McpArgError, mapCommandError } from './mcp-commands'
 import type { ImportTrace } from '../importDiagnostics'
+import { hasFailedDerivative } from './derivative-jobs'
 import { absoluteSource, mediaFolderPath, nextImportStep, pathLib, spelledKey, type FileKey, type Holding } from './importSource'
 
 export type MediaImportDeps = {
@@ -176,6 +177,10 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
         return outcome(step.id, 'reused')
       } else if (step.kind === 'reuse') {
         trace?.held(step.id)
+        // Importing the file again is how a failed derivative job is re-run
+        // (the `DerivativeNotReady` remedy); ready ones are adopted from cache.
+        const held = deps.actor.snapshot().media_pool[step.id]
+        if (held && hasFailedDerivative(held)) { await deps.enqueueDerivatives([held]); assertCurrent() }
         return outcome(step.id, 'reused')
       } else {
         const held = deps.actor.snapshot().media_pool[step.id]
