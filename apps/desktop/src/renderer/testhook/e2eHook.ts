@@ -30,6 +30,12 @@ import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
 import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
+import {
+  currentMotifFrameReader,
+  idleMotifReaderStats,
+  motifFrameReader,
+  type MotifReaderStats,
+} from "../render/motifs/MotifFrameReader";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
@@ -300,6 +306,12 @@ export interface E2EHook {
   /// Evict every L0 (in-RAM) frame for a cacheKey, so a subsequent resolve must
   /// come from disk (L2) or a fresh raster. Used to prove the disk read path.
   clearMotifCacheKey(cacheKey: string): void;
+  /// One stored-frame read by hashed address through the document's
+  /// `MotifFrameReader` (ADR 0154), on whichever lane it picks. Null is a miss.
+  readMotifFrame(args: { hash: string; frame: number; div: 1 | 2 | 4 }): Promise<ImageBitmap | null>;
+  /// The document's reader stats (`perf.motifReader` without the divisor),
+  /// readable before any preview mounts. Zeros until the first read.
+  motifReaderStats(): MotifReaderStats;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
@@ -511,7 +523,9 @@ export interface E2EHook {
   /// `underrun.droppedFrames`/`underrun.lateFrames`, per-clip
   /// `decodedFrameCount`/`ringSize`/
   /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
-  /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
+  /// hardware lane's `handoff` barrier percentiles, per-Motif rows (`motifs`)
+  /// and the Motif frame reader's lanes, divisor and stage medians
+  /// (`motifReader`). Null until the preview mounts.
   compositorPerfSnapshot(): CompositorPerfSnapshot | null;
   /// Live concurrent-HW-session budget from main (`used`/`max`). The lane mix a
   /// perf snapshot reports says WHICH lane each clip took; this says whether
@@ -1028,6 +1042,11 @@ export function installMotifTestHooks(): void {
   hookSlot().clearMotifCacheKey = (cacheKey: string): void => {
     sharedMotifFrameCache.clearKey(cacheKey);
   };
+
+  hookSlot().readMotifFrame = ({ hash, frame, div }) =>
+    motifFrameReader().readAddress({ hash, frame }, div);
+
+  hookSlot().motifReaderStats = () => currentMotifFrameReader()?.stats ?? idleMotifReaderStats();
 
   hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
     return sharedBakedKeyIndex.has(cacheKey);

@@ -318,7 +318,12 @@ to match. Three escalation levers sit over the one capture function:
 - **L0 — on demand (default).** The playhead frame is captured when needed and bound as
   a texture, at the resolution the composite needs. An in-RAM LRU of per-frame bitmaps
   bounded by a byte budget (512 MB of decoded RGBA — a frame count cap would let
-  240 × 1080p frames pin ~2 GB); evicted bitmaps are closed promptly.
+  240 × 1080p frames pin ~2 GB); evicted bitmaps are closed promptly. The Playback
+  Resolution divisor is part of an entry's identity: a stored frame read at 1/2 and
+  the same frame at full size are different entries, and a resolution change misses
+  and refills rather than clearing the cache. A live capture exists only at full size
+  and serves every divisor. The sprite draws a smaller bitmap at the Motif's logical
+  size, so geometry and anchors do not change with the divisor.
 - **L1 — in-RAM lookahead (always on).** A budget-paced background prewarmer fills the
   shared L0 cache ahead of the playhead, off the play loop, during playback and while
   paused. Active layers dedupe by content cache key (N identical Motifs warm one content
@@ -333,8 +338,9 @@ to match. Three escalation levers sit over the one capture function:
   persisted frames and waits for missing coverage; it does not create a competing
   capture sequence. The foreground playhead can still request a missing frame
   immediately. Without main preparation, lookahead can capture its bounded window.
-- **L2 — persisted frames.** One disposable `.wfrm`
-  LZ4/straight-RGBA file per frame under `<workspace>/Cache/raster/<hash>/`,
+- **L2 — persisted frames.** One disposable `.wfrm` straight-RGBA file per frame,
+  compressed with zstd level 1 ([ADR 0145](adr/0145-motif-frames-compress-with-zstd.md);
+  LZ4 frames from older caches still read), under `<workspace>/Cache/raster/<hash>/`,
   where `<hash>` is a 128-bit hash (two FNV-1a-64 lanes, 32 hex chars) of
   `(captureRuntimeVersion, motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
@@ -357,18 +363,45 @@ to match. Three escalation levers sit over the one capture function:
 
 Old PNG caches are ignored: missing new-format frames render again, and pre-baking
 writes only `.wfrm` files. Invalid cache reads also fall back to live rendering.
-Reads, existence checks and writes each use one dedicated IPC operation rather
-than a chain of path and filesystem round trips. Frame files retain exact
+Existence checks and writes each use one dedicated IPC operation rather than a
+chain of path and filesystem round trips. Frame files retain exact
 straight-alpha RGBA8 bytes, carry
 version/dimension/checksum validation, and are atomically replaced.
 
-Windows uses a persistent D3D11 transport pool for decoded disk frames and live
-OSR captures, independent of the optional video decoder. The active pool budget
-is 128 MiB / eight size-format pools; it is separate from the 512 MiB bitmap
-cache. Handles are shared once per pool; per-frame messages identify a leased
-slot. Preload snapshots a fresh ImageBitmap and completes the GPU read before
-acknowledging reuse. The same reader feeds export. Other platforms use native
-LZ4 decoding plus pixel IPC. Live capture retains a PNG fallback.
+**Read path.** One renderer `MotifFrameReader` per document owns every
+stored-frame read ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)).
+L0 fills, lookahead, scrubbing, export and export finalization call its one
+operation, read `(cacheKey, frame, scaleDiv)`, and get an `ImageBitmap`, or null
+when the frame is absent or fails verification. Preview reads at the Playback
+Resolution divisor (`playbackScaleDiv`, 1 / 2 / 4, as for video); export and
+finalization read at 1. One native core reads the file, decompresses it, verifies
+BLAKE3 over the pixels and applies an alpha-weighted box downscale, so
+transparent texels do not darken edges. Only the last step differs by platform:
+
+- **Windows: the texture lane.** A persistent D3D11 transport pool in main,
+  independent of the optional video decoder, uploads the scaled frame into a slot
+  sized for the divisor. The same pool carries live OSR captures. The active pool
+  budget is 128 MiB / eight size-format pools; it is separate from the 512 MiB
+  bitmap cache. Handles are shared once per pool; per-frame messages identify a
+  leased slot. Preload snapshots a fresh ImageBitmap and completes the GPU read
+  before acknowledging reuse. If a slot cannot be used (GPU budget, a failed
+  pool or import), main answers `unavailable` and the read takes the utility lane.
+- **macOS and Linux: the utility lane.** One app-wide utility process, started on
+  the first read, runs the core and posts scaled straight RGBA on a
+  `MessagePortMain` to the document's reader worker, which makes the bitmap.
+  Neither main's thread nor the page's main thread touches pixels.
+
+Main stays the authority on addresses and coverage. Requests name
+`(hash, frame, divisor)`, never a path; the utility builds the path under the
+raster root main gives it, with the same address check as `MotifFrameStore`, and
+reports an absent or invalid frame to main with the workspace generation. A
+transport failure (the utility exits, a port or slot fails) is not a miss: the
+reader restarts the lane and retries once, then preview keeps its previous frame
+and export fails, without marking the file bad. At most three reads are in flight
+per document. Live capture is not a read: it keeps its own path at full size, with
+a PNG fallback where shared textures are unavailable. The reader's lanes, misses,
+fallbacks, failures, divisor and stage medians appear in the perf snapshot as
+`motifReader`.
 
 Baking on Windows reads the OSR texture on a persistent native worker and
 encodes `.wfrm` directly, reusing the staging texture. It avoids PNG and pixel

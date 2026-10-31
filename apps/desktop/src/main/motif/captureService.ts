@@ -45,6 +45,8 @@ function captureIdentity(a: CaptureArgs): string {
   return JSON.stringify([a.motifId, a.contentHash, a.tSec, a.propsJson, a.width, a.height, a.settleRafs, a.fpsNum, a.fpsDen])
 }
 const sameAddress = (a: MotifCacheAddress, b: MotifCacheAddress) => a.hash === b.hash && a.frame === b.frame
+/** Main never reads stored pixels on the capture path (ADR 0154). */
+const storedFrame = (): StoredMotifFrame => ({ kind: 'stored', persisted: true })
 
 /** Capture and optional bake share the one OSR lease. A readback failure keeps
  * the captured bitmap available for the PNG writer; disk failures remain errors. */
@@ -86,9 +88,8 @@ export class MotifCaptureService {
       try {
         await pending.result
         if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-        const stored = await store.read(pending.address.hash, pending.address.frame)
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-        if (stored) return { ...stored, persisted: true }
+        // Persisted: the renderer reads it through its reader (ADR 0154).
+        return storedFrame()
       } catch (error) {
         // Cancelling background interest cannot invalidate a still-current
         // display consumer. Real content/disk failures retain their meaning.
@@ -243,10 +244,12 @@ export class MotifCaptureService {
       if (cache && (!bake || sameAddress(cache, bake))) {
         // A background write may finish after the renderer's disk miss, with
         // no pending receipt left to join. Register this display job BEFORE
-        // reading so any new persistence demand can join the same producer.
-        const stored = await store.read(cache.hash, cache.frame)
+        // checking so any new persistence demand can join the same producer.
+        // Stat-only (ADR 0144); the renderer's reader reads and verifies it,
+        // and an unreadable entry captures live as before.
+        const stored = await store.has(cache.hash, cache.frame).catch(() => false)
         if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-        if (stored && (!destinationAddress || sameAddress(cache, destinationAddress))) return { ...stored, persisted: true }
+        if (stored && (!destinationAddress || sameAddress(cache, destinationAddress))) return storedFrame()
       }
       if (this.useTexture && this.deps.copy) {
         try {

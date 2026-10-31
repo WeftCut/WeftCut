@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
 import { hydratePerformanceSettings } from "../../../shared/performance-settings";
+import { motifFrameReader } from "./MotifFrameReader";
+import { MotifTransportError } from "./frameTransport";
+
+vi.mock("./MotifFrameReader", () => ({ motifFrameReader: vi.fn() }));
 
 afterEach(() => hydratePerformanceSettings(undefined));
 
@@ -21,11 +25,11 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("a live budget reduction evicts on insertion but preserves pinned frames until release", () => {
     const c = new MotifFrameCache();
     const pinned = fakeBitmap(2048, 2048); // 16 MiB
-    c.setFrame("k", 0, pinned);
+    c.setFrame("k", 0, 1, pinned);
     c.retain(pinned);
-    c.setFrame("k", 1, fakeBitmap(2048, 2048));
+    c.setFrame("k", 1, 1, fakeBitmap(2048, 2048));
     hydratePerformanceSettings({ motif_cache_mib: 16 });
-    c.setFrame("k", 2, fakeBitmap(2048, 2048));
+    c.setFrame("k", 2, 1, fakeBitmap(2048, 2048));
     expect(c.size()).toBe(1);
     expect(pinned.close).not.toHaveBeenCalled();
     c.release(pinned);
@@ -35,14 +39,14 @@ describe("MotifFrameCache — L0 LRU", () => {
 
   test("getFrame returns null on miss", () => {
     const c = new MotifFrameCache();
-    expect(c.getFrame("k", 0)).toBeNull();
+    expect(c.getFrame("k", 0, 1)).toBeNull();
   });
 
   test("setFrame + getFrame returns the stored bitmap", () => {
     const c = new MotifFrameCache();
     const bm = fakeBitmap();
-    c.setFrame("k", 3, bm);
-    expect(c.getFrame("k", 3)).toBe(bm);
+    c.setFrame("k", 3, 1, bm);
+    expect(c.getFrame("k", 3, 1)).toBe(bm);
     expect(c.size()).toBe(1);
   });
 
@@ -50,10 +54,10 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k", 0, a);
-    c.setFrame("k", 1, b);
-    expect(c.getFrame("k", 0)).toBe(a);
-    expect(c.getFrame("k", 1)).toBe(b);
+    c.setFrame("k", 0, 1, a);
+    c.setFrame("k", 1, 1, b);
+    expect(c.getFrame("k", 0, 1)).toBe(a);
+    expect(c.getFrame("k", 1, 1)).toBe(b);
     expect(c.size()).toBe(2);
   });
 
@@ -66,23 +70,23 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache(BYTES_FOR(3));
     const a = fakeBitmap();
     const a2 = fakeBitmap();
-    const returned = c.setFrame("k", 0, a);
+    const returned = c.setFrame("k", 0, 1, a);
     expect(returned).toBe(a);
-    const returned2 = c.setFrame("k", 0, a2);
+    const returned2 = c.setFrame("k", 0, 1, a2);
     expect(returned2).toBe(a);    // returns the EXISTING canonical, not the incoming
     expect(a2.close).toHaveBeenCalledTimes(1); // incoming redundant one closed
     expect(a.close).not.toHaveBeenCalled();    // existing (maybe-bound) one NOT closed
-    expect(c.getFrame("k", 0)).toBe(a);        // canonical still in cache
+    expect(c.getFrame("k", 0, 1)).toBe(a);        // canonical still in cache
     expect(c.size()).toBe(1);
   });
 
   test("re-set with the same bitmap reference does not close it", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
-    c.setFrame("k", 0, a);
-    expect(c.setFrame("k", 0, a)).toBe(a);
+    c.setFrame("k", 0, 1, a);
+    expect(c.setFrame("k", 0, 1, a)).toBe(a);
     expect(a.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(a);
+    expect(c.getFrame("k", 0, 1)).toBe(a);
   });
 
   test("capacity eviction closes the least-recently-used frame", () => {
@@ -90,15 +94,15 @@ describe("MotifFrameCache — L0 LRU", () => {
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
-    c.setFrame("k", 0, a); // [a]
-    c.setFrame("k", 1, b); // [a, b]
-    c.setFrame("k", 2, d); // overflow → evict a → [b, d]
+    c.setFrame("k", 0, 1, a); // [a]
+    c.setFrame("k", 1, 1, b); // [a, b]
+    c.setFrame("k", 2, 1, d); // overflow → evict a → [b, d]
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(b.close).not.toHaveBeenCalled();
     expect(d.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBeNull();
-    expect(c.getFrame("k", 1)).toBe(b);
-    expect(c.getFrame("k", 2)).toBe(d);
+    expect(c.getFrame("k", 0, 1)).toBeNull();
+    expect(c.getFrame("k", 1, 1)).toBe(b);
+    expect(c.getFrame("k", 2, 1)).toBe(d);
     expect(c.size()).toBe(2);
   });
 
@@ -110,10 +114,10 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k", 0, a);
+    c.setFrame("k", 0, 1, a);
     c.retain(a); // bound by a sprite
-    c.setFrame("k", 1, b); // overflow → a leaves the store
-    expect(c.getFrame("k", 0)).toBeNull();
+    c.setFrame("k", 1, 1, b); // overflow → a leaves the store
+    expect(c.getFrame("k", 0, 1)).toBeNull();
     expect(a.close).not.toHaveBeenCalled();
     c.release(a);
     expect(a.close).toHaveBeenCalledTimes(1);
@@ -122,10 +126,10 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("a frame retained twice closes only after both releases", () => {
     const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
-    c.setFrame("k", 0, a);
+    c.setFrame("k", 0, 1, a);
     c.retain(a);
     c.retain(a); // two sprites share the canonical bitmap
-    c.setFrame("k", 1, fakeBitmap());
+    c.setFrame("k", 1, 1, fakeBitmap());
     c.release(a);
     expect(a.close).not.toHaveBeenCalled();
     c.release(a);
@@ -135,17 +139,17 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("releasing a frame still in the store does not close it", () => {
     const c = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap();
-    c.setFrame("k", 0, a);
+    c.setFrame("k", 0, 1, a);
     c.retain(a);
     c.release(a);
     expect(a.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(a);
+    expect(c.getFrame("k", 0, 1)).toBe(a);
   });
 
   test("clearKey defers closing a retained frame", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
-    c.setFrame("k", 0, a);
+    c.setFrame("k", 0, 1, a);
     c.retain(a);
     c.clearKey("k");
     expect(a.close).not.toHaveBeenCalled();
@@ -157,9 +161,9 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache(BYTES_FOR(1));
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k", 0, a);
+    c.setFrame("k", 0, 1, a);
     c.retain(a);
-    c.setFrame("k", 1, b);
+    c.setFrame("k", 1, 1, b);
     c.dispose();
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(b.close).toHaveBeenCalledTimes(1);
@@ -181,16 +185,16 @@ describe("MotifFrameCache — L0 LRU", () => {
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
-    c.setFrame("k", 0, a); // [a]
-    c.setFrame("k", 1, b); // [a, b]
+    c.setFrame("k", 0, 1, a); // [a]
+    c.setFrame("k", 1, 1, b); // [a, b]
     // Touch a → it becomes MRU; b is now LRU.
-    expect(c.getFrame("k", 0)).toBe(a); // [b, a]
-    c.setFrame("k", 2, d); // overflow → evict b → [a, d]
+    expect(c.getFrame("k", 0, 1)).toBe(a); // [b, a]
+    c.setFrame("k", 2, 1, d); // overflow → evict b → [a, d]
     expect(b.close).toHaveBeenCalledTimes(1);
     expect(a.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(a);
-    expect(c.getFrame("k", 1)).toBeNull();
-    expect(c.getFrame("k", 2)).toBe(d);
+    expect(c.getFrame("k", 0, 1)).toBe(a);
+    expect(c.getFrame("k", 1, 1)).toBeNull();
+    expect(c.getFrame("k", 2, 1)).toBe(d);
   });
 
   test("setFrame refreshes recency so a re-set frame survives eviction", () => {
@@ -201,28 +205,28 @@ describe("MotifFrameCache — L0 LRU", () => {
     const a2 = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
-    c.setFrame("k", 0, a); // [k#0]
-    c.setFrame("k", 1, b); // [k#0, k#1]
+    c.setFrame("k", 0, 1, a); // [k#0]
+    c.setFrame("k", 1, 1, b); // [k#0, k#1]
     // Re-set k#0 with a new bitmap → k#0 becomes MRU; k#1 is now LRU.
     // Idempotent: a is kept (canonical), a2 is closed (redundant incoming).
-    c.setFrame("k", 0, a2); // [k#1, k#0]; closes the INCOMING a2 (not a)
+    c.setFrame("k", 0, 1, a2); // [k#1, k#0]; closes the INCOMING a2 (not a)
     expect(a2.close).toHaveBeenCalledTimes(1); // incoming redundant one closed
     expect(a.close).not.toHaveBeenCalled();    // existing canonical NOT closed
-    c.setFrame("k", 2, d); // overflow → evict LRU (k#1) → [k#0, k#2]
+    c.setFrame("k", 2, 1, d); // overflow → evict LRU (k#1) → [k#0, k#2]
     expect(b.close).toHaveBeenCalledTimes(1); // k#1 evicted
     expect(a.close).not.toHaveBeenCalled();   // re-set k#0 (canonical a) survived
     expect(d.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(a);        // canonical is still a (not a2)
-    expect(c.getFrame("k", 1)).toBeNull();
-    expect(c.getFrame("k", 2)).toBe(d);
+    expect(c.getFrame("k", 0, 1)).toBe(a);        // canonical is still a (not a2)
+    expect(c.getFrame("k", 1, 1)).toBeNull();
+    expect(c.getFrame("k", 2, 1)).toBe(d);
   });
 
   test("rejects a negative or fractional frameIndex at the boundary", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
-    expect(() => c.setFrame("k", -1, a)).toThrow(/non-negative integer/);
-    expect(() => c.setFrame("k", 1.5, a)).toThrow(/non-negative integer/);
-    expect(() => c.getFrame("k", -1)).toThrow(/non-negative integer/);
+    expect(() => c.setFrame("k", -1, 1, a)).toThrow(/non-negative integer/);
+    expect(() => c.setFrame("k", 1.5, 1, a)).toThrow(/non-negative integer/);
+    expect(() => c.getFrame("k", -1, 1)).toThrow(/non-negative integer/);
   });
 
   test("a NaN cap falls back to the default byte budget", () => {
@@ -230,14 +234,14 @@ describe("MotifFrameCache — L0 LRU", () => {
     // so eviction would never fire and the cache would grow unbounded.
     const c = new MotifFrameCache(Number.NaN);
     expect(c.capacityBytes()).toBe(DEFAULT_MAX_BYTES);
-    c.setFrame("k", 0, fakeBitmap());
+    c.setFrame("k", 0, 1, fakeBitmap());
     expect(c.size()).toBe(1); // the entry is cached, not evicted into the void
   });
 
   test("hasKey reflects presence of any frame for a key", () => {
     const c = new MotifFrameCache();
     expect(c.hasKey("k")).toBe(false);
-    c.setFrame("k", 0, fakeBitmap());
+    c.setFrame("k", 0, 1, fakeBitmap());
     expect(c.hasKey("k")).toBe(true);
     expect(c.hasKey("other")).toBe(false);
   });
@@ -247,44 +251,43 @@ describe("MotifFrameCache — L0 LRU", () => {
     const a0 = fakeBitmap();
     const a1 = fakeBitmap();
     const b0 = fakeBitmap();
-    c.setFrame("a", 0, a0);
-    c.setFrame("a", 1, a1);
-    c.setFrame("b", 0, b0);
+    c.setFrame("a", 0, 1, a0);
+    c.setFrame("a", 1, 1, a1);
+    c.setFrame("b", 0, 1, b0);
     c.clearKey("a");
     expect(a0.close).toHaveBeenCalledTimes(1);
     expect(a1.close).toHaveBeenCalledTimes(1);
     expect(b0.close).not.toHaveBeenCalled();
     expect(c.hasKey("a")).toBe(false);
-    expect(c.getFrame("b", 0)).toBe(b0);
+    expect(c.getFrame("b", 0, 1)).toBe(b0);
     expect(c.size()).toBe(1);
   });
 
   test("prefix-collision: a cacheKey that is a textual prefix of another is not swept", () => {
     // cacheKeys are caller-built JSON and can contain '#'. Key "a" must
-    // not match "a#b"'s frame "a#b#5" (the '#'-split must anchor on the
-    // LAST '#' and require an all-digit frame-index suffix).
+    // not match "a#b"'s frame "a#b#5@1".
     const c = new MotifFrameCache();
     const shortKey = fakeBitmap();
     const longKey = fakeBitmap();
-    c.setFrame("a", 5, shortKey); // map key "a#5"
-    c.setFrame("a#b", 5, longKey); // map key "a#b#5"
+    c.setFrame("a", 5, 1, shortKey); // map key "a#5@1"
+    c.setFrame("a#b", 5, 1, longKey); // map key "a#b#5@1"
     expect(c.hasKey("a")).toBe(true);
     expect(c.hasKey("a#b")).toBe(true);
 
-    c.clearKey("a"); // must drop ONLY "a#5"
+    c.clearKey("a"); // must drop ONLY "a#5@1"
     expect(shortKey.close).toHaveBeenCalledTimes(1);
     expect(longKey.close).not.toHaveBeenCalled();
     expect(c.hasKey("a")).toBe(false);
     expect(c.hasKey("a#b")).toBe(true);
-    expect(c.getFrame("a#b", 5)).toBe(longKey);
+    expect(c.getFrame("a#b", 5, 1)).toBe(longKey);
   });
 
   test("dispose closes every frame across all keys", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k1", 0, a);
-    c.setFrame("k2", 0, b);
+    c.setFrame("k1", 0, 1, a);
+    c.setFrame("k2", 0, 1, b);
     c.dispose();
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(b.close).toHaveBeenCalledTimes(1);
@@ -297,11 +300,11 @@ describe("MotifFrameCache — L0 LRU", () => {
     // this exercises the accounting cheaply.
     const c = new MotifFrameCache();
     const fit = Math.floor(DEFAULT_MAX_BYTES / (1920 * 1080 * 4)); // 64
-    for (let i = 0; i < fit; i++) c.setFrame("k", i, fakeBitmap(1920, 1080));
+    for (let i = 0; i < fit; i++) c.setFrame("k", i, 1, fakeBitmap(1920, 1080));
     expect(c.size()).toBe(fit);
-    c.setFrame("k", fit, fakeBitmap(1920, 1080)); // overflow by one frame
+    c.setFrame("k", fit, 1, fakeBitmap(1920, 1080)); // overflow by one frame
     expect(c.size()).toBe(fit);
-    expect(c.getFrame("k", 0)).toBeNull(); // oldest evicted
+    expect(c.getFrame("k", 0, 1)).toBeNull(); // oldest evicted
   });
 
   test("eviction is by bytes: one large frame can push out several small ones", () => {
@@ -309,16 +312,16 @@ describe("MotifFrameCache — L0 LRU", () => {
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
-    c.setFrame("k", 0, a); // 4 B
-    c.setFrame("k", 1, b); // 8 B
-    c.setFrame("k", 2, d); // 12 B
+    c.setFrame("k", 0, 1, a); // 4 B
+    c.setFrame("k", 1, 1, b); // 8 B
+    c.setFrame("k", 2, 1, d); // 12 B
     const big = fakeBitmap(2, 2); // 16 B → 28 B total, over the 24 B budget
-    c.setFrame("k", 3, big);
+    c.setFrame("k", 3, 1, big);
     // Only `a` (4 B) had to leave to get back under budget.
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(b.close).not.toHaveBeenCalled();
     expect(d.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 3)).toBe(big);
+    expect(c.getFrame("k", 3, 1)).toBe(big);
     expect(c.size()).toBe(3);
   });
 
@@ -328,13 +331,13 @@ describe("MotifFrameCache — L0 LRU", () => {
     // parks it until a NEWER insert claims the space.
     const c = new MotifFrameCache(4); // one 1×1 frame's worth
     const big = fakeBitmap(4, 4); // 64 B — oversized alone
-    expect(c.setFrame("k", 0, big)).toBe(big);
+    expect(c.setFrame("k", 0, 1, big)).toBe(big);
     expect(big.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(big);
+    expect(c.getFrame("k", 0, 1)).toBe(big);
     const small = fakeBitmap();
-    c.setFrame("k", 1, small); // big is now the LRU → leaves
+    c.setFrame("k", 1, 1, small); // big is now the LRU → leaves
     expect(big.close).toHaveBeenCalledTimes(1);
-    expect(c.getFrame("k", 1)).toBe(small);
+    expect(c.getFrame("k", 1, 1)).toBe(small);
     expect(c.size()).toBe(1);
   });
 
@@ -342,8 +345,8 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k", 0, a);
-    c.setFrame("k", 1, b);
+    c.setFrame("k", 0, 1, a);
+    c.setFrame("k", 1, 1, b);
     c.retain(a); // bound by a sprite
     c.clearAll();
     expect(c.size()).toBe(0);
@@ -357,8 +360,8 @@ describe("MotifFrameCache — L0 LRU", () => {
     const c = new MotifFrameCache(0);
     const a = fakeBitmap();
     const b = fakeBitmap();
-    c.setFrame("k", 0, a); // oversized vs the 1-byte budget: kept (keep-one rule)
-    c.setFrame("k", 1, b); // a is now the LRU → evicted
+    c.setFrame("k", 0, 1, a); // oversized vs the 1-byte budget: kept (keep-one rule)
+    c.setFrame("k", 1, 1, b); // a is now the LRU → evicted
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(c.size()).toBe(1);
   });
@@ -366,17 +369,100 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("hasFrame peeks without changing recency", () => {
     const cache = new MotifFrameCache(BYTES_FOR(2));
     const a = fakeBitmap(); const b = fakeBitmap(); const c = fakeBitmap();
-    cache.setFrame("k", 0, a);
-    cache.setFrame("k", 1, b);
-    expect(cache.hasFrame("k", 0)).toBe(true);
-    expect(cache.hasFrame("k", 2)).toBe(false);
-    cache.setFrame("k", 2, c); // cap 2 → evicts LRU (k#0), since hasFrame didn't refresh it
-    expect(cache.hasFrame("k", 0)).toBe(false);
-    expect(cache.hasFrame("k", 1)).toBe(true);
-    expect(cache.hasFrame("k", 2)).toBe(true);
+    cache.setFrame("k", 0, 1, a);
+    cache.setFrame("k", 1, 1, b);
+    expect(cache.hasFrame("k", 0, 1)).toBe(true);
+    expect(cache.hasFrame("k", 2, 1)).toBe(false);
+    cache.setFrame("k", 2, 1, c); // cap 2 → evicts LRU (k#0), since hasFrame didn't refresh it
+    expect(cache.hasFrame("k", 0, 1)).toBe(false);
+    expect(cache.hasFrame("k", 1, 1)).toBe(true);
+    expect(cache.hasFrame("k", 2, 1)).toBe(true);
   });
 
   test("capacityBytes returns the budget", () => { expect(new MotifFrameCache(7).capacityBytes()).toBe(7); });
+});
+
+describe("MotifFrameCache — divisors", () => {
+  test("the divisor is part of the identity: only an exact divisor matches", () => {
+    const c = new MotifFrameCache();
+    const full = fakeBitmap(4, 4), half = fakeBitmap(2, 2);
+    c.setFrame("k", 0, 1, full);
+    expect(c.getFrame("k", 0, 2)).toBeNull(); // a full-size read does not serve 1/2
+    expect(c.hasFrame("k", 0, 4)).toBe(false);
+    expect(c.setFrame("k", 0, 2, half)).toBe(half);
+    expect(c.getFrame("k", 0, 1)).toBe(full);
+    expect(c.getFrame("k", 0, 2)).toBe(half);
+    expect(c.getFrame("k", 0, 4)).toBeNull();
+    expect(c.size()).toBe(2);
+    expect([c.frameCount("k", 1), c.frameCount("k", 2), c.frameCount("k", 4)]).toEqual([1, 1, 0]);
+  });
+
+  test("cacheKeys containing '#' and '@' cannot collide with another address", () => {
+    const c = new MotifFrameCache();
+    const a = fakeBitmap(), b = fakeBitmap();
+    c.setFrame("k", 1, 2, a);       // "k#1@2"
+    c.setFrame("k#1@2", 0, 1, b);   // "k#1@2#0@1"
+    expect(c.getFrame("k", 1, 2)).toBe(a);
+    expect(c.getFrame("k#1@2", 0, 1)).toBe(b);
+    c.clearKey("k");
+    expect(c.getFrame("k#1@2", 0, 1)).toBe(b);
+    expect(c.hasKey("k")).toBe(false);
+  });
+
+  test("a live capture is stored as divisor 1 and serves every divisor", () => {
+    const c = new MotifFrameCache();
+    const live = fakeBitmap(4, 4), read = fakeBitmap(2, 2);
+    expect(c.setFrame("k", 0, "live", live)).toBe(live);
+    expect(c.getFrame("k", 0, 1)).toBe(live);
+    expect(c.getFrame("k", 0, 2)).toBe(live);
+    expect(c.hasFrame("k", 0, 4)).toBe(true);
+    // A late read at 1/2 is redundant: the live entry already serves it.
+    expect(c.setFrame("k", 0, 2, read)).toBe(live);
+    expect(read.close).toHaveBeenCalledOnce();
+    expect(c.size()).toBe(1);
+    expect([c.frameCount("k", 1), c.frameCount("k", 2), c.frameCount("k", 4)]).toEqual([1, 1, 1]);
+  });
+
+  test("a live re-set of a full-size read makes it serve every divisor", () => {
+    const c = new MotifFrameCache();
+    const read = fakeBitmap(4, 4), live = fakeBitmap(4, 4);
+    c.setFrame("k", 0, 1, read);
+    expect(c.setFrame("k", 0, "live", live)).toBe(read);
+    expect(live.close).toHaveBeenCalledOnce();
+    expect(c.getFrame("k", 0, 2)).toBe(read);
+    expect(c.frameCount("k", 2)).toBe(1);
+  });
+
+  test("invalidation by cache key drops every divisor", () => {
+    const c = new MotifFrameCache();
+    const frames = [fakeBitmap(4, 4), fakeBitmap(2, 2), fakeBitmap(1, 1), fakeBitmap(4, 4)];
+    c.setFrame("k", 0, 1, frames[0]!);
+    c.setFrame("k", 0, 2, frames[1]!);
+    c.setFrame("k", 0, 4, frames[2]!);
+    c.setFrame("k", 1, "live", frames[3]!);
+    const other = fakeBitmap();
+    c.setFrame("other", 0, 2, other);
+    c.clearKey("k");
+    for (const frame of frames) expect(frame.close).toHaveBeenCalledOnce();
+    expect(other.close).not.toHaveBeenCalled();
+    expect(c.hasKey("k")).toBe(false);
+    expect([c.frameCount("k", 1), c.frameCount("k", 2), c.frameCount("k", 4)]).toEqual([0, 0, 0]);
+    expect(c.size()).toBe(1);
+  });
+
+  test("eviction of a live frame stops it serving and counting at every divisor", () => {
+    const c = new MotifFrameCache(BYTES_FOR(1));
+    c.setFrame("k", 0, "live", fakeBitmap());
+    c.setFrame("k", 1, 2, fakeBitmap());
+    expect(c.hasFrame("k", 0, 2)).toBe(false);
+    expect([c.frameCount("k", 1), c.frameCount("k", 2)]).toEqual([0, 1]);
+  });
+
+  test("rejects a divisor a reader cannot read at", () => {
+    const c = new MotifFrameCache();
+    expect(() => c.setFrame("k", 0, 3 as never, fakeBitmap())).toThrow(/divisor/);
+    expect(() => c.getFrame("k", 0, 0 as never)).toThrow(/divisor/);
+  });
 });
 
 describe("MotifFrameCache — content coverage", () => {
@@ -385,24 +471,24 @@ describe("MotifFrameCache — content coverage", () => {
     const expectExact = () => {
       for (const key of ["a", "b", "c", "missing"]) {
         let truth = 0;
-        for (let f = 0; f < 4; f++) if (c.hasFrame(key, f)) truth++;
-        expect(c.frameCount(key)).toBe(truth);
+        for (let f = 0; f < 4; f++) if (c.hasFrame(key, f, 1)) truth++;
+        expect(c.frameCount(key, 1)).toBe(truth);
         expect(c.hasKey(key)).toBe(truth > 0);
       }
     };
-    c.setFrame("a", 0, fakeBitmap());
-    c.setFrame("a", 1, fakeBitmap());
-    c.setFrame("b", 0, fakeBitmap());
+    c.setFrame("a", 0, 1, fakeBitmap());
+    c.setFrame("a", 1, 1, fakeBitmap());
+    c.setFrame("b", 0, 1, fakeBitmap());
     expectExact(); // late readers see existing coverage
-    c.setFrame("c", 0, fakeBitmap()); // evicts a#0
+    c.setFrame("c", 0, 1, fakeBitmap()); // evicts a#0
     expectExact();
-    c.setFrame("b", 0, fakeBitmap()); // duplicate does not count twice
+    c.setFrame("b", 0, 1, fakeBitmap()); // duplicate does not count twice
     expectExact();
     c.clearKey("a");
     expectExact();
     c.clearAll();
     expectExact();
-    c.setFrame("a", 0, fakeBitmap());
+    c.setFrame("a", 0, 1, fakeBitmap());
     c.dispose();
     expectExact();
   });
@@ -410,15 +496,15 @@ describe("MotifFrameCache — content coverage", () => {
   test("evicted retained frames stop contributing before their last release", () => {
     const c = new MotifFrameCache(BYTES_FOR(1));
     const bitmap = fakeBitmap();
-    c.setFrame("a", 0, bitmap);
+    c.setFrame("a", 0, 1, bitmap);
     c.retain(bitmap);
-    c.setFrame("b", 0, fakeBitmap());
-    expect(c.frameCount("a")).toBe(0);
-    expect(c.frameCount("b")).toBe(1);
+    c.setFrame("b", 0, 1, fakeBitmap());
+    expect(c.frameCount("a", 1)).toBe(0);
+    expect(c.frameCount("b", 1)).toBe(1);
     expect(bitmap.close).not.toHaveBeenCalled();
     c.release(bitmap);
     expect(bitmap.close).toHaveBeenCalledTimes(1);
-    expect(c.frameCount("b")).toBe(1);
+    expect(c.frameCount("b", 1)).toBe(1);
     c.dispose();
   });
 });
@@ -444,8 +530,25 @@ describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
   test("readBitmap / hasPersistedFrame return the empty result when window is undefined", async () => {
     delete (globalThis as Record<string, unknown>).window;
     const c = new MotifFrameCache();
-    await expect(c.readBitmap("k", 0)).resolves.toBeNull();
+    await expect(c.readBitmap("k", 0, 1)).resolves.toBeNull();
     await expect(c.hasPersistedFrame("k", 0)).resolves.toBe(false);
+  });
+});
+
+describe("MotifFrameCache.readBitmap", () => {
+  test("reads through the reader at the divisor; a transport failure is not a miss", async () => {
+    vi.stubGlobal("window", {});
+    try {
+      const bitmap = fakeBitmap();
+      const read = vi.fn().mockResolvedValueOnce(bitmap).mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new MotifTransportError("utility", "closed"));
+      vi.mocked(motifFrameReader).mockReturnValue({ read } as unknown as ReturnType<typeof motifFrameReader>);
+      const c = new MotifFrameCache();
+      await expect(c.readBitmap("k", 3, 2)).resolves.toBe(bitmap);
+      await expect(c.readBitmap("k", 3, 1, { finalizationToken: "t" })).resolves.toBeNull();
+      await expect(c.readBitmap("k", 3, 4)).rejects.toBeInstanceOf(MotifTransportError);
+      expect(read.mock.calls).toEqual([["k", 3, 2, {}], ["k", 3, 1, { finalizationToken: "t" }], ["k", 3, 4, {}]]);
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 

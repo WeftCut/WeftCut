@@ -4,6 +4,13 @@ status: accepted
 
 # Motif prewarming replenishes available lanes
 
+> **Revised by [ADR 0154](0154-motif-frames-are-read-at-preview-scale-through-one-reader.md).**
+> Persisted reads now go through one `MotifFrameReader` per document, which
+> admits at most three reads in flight on every lane, not only on the Windows
+> texture lanes. Off Windows those reads take a utility process and a renderer
+> worker instead of CPU-pixel IPC. Preview reads at the Playback Resolution
+> divisor. On the texture lane, handing a free lane to the oldest waiter stands.
+
 Persisted Motif playback can hold an old bitmap while composite submission
 continues at 60 fps. Local traces attributed the latency to persisted frame
 reads and texture delivery, rather than broker clones or Pixi texture binding.

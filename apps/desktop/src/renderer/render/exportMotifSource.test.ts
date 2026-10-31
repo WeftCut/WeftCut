@@ -4,7 +4,7 @@ import type { LayerSummary, TrackSummary } from "../ipc";
 import { exportMotifPlanner, planExportMotifFrame } from "./exportMotifSource";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 import { captureMotifFrameResult } from "./motifs/host";
-import { controlStoredMotifCapture } from "./motifs/frameTransport";
+import { controlStoredMotifCapture, type CapturedFrame } from "./motifs/frameTransport";
 import { timeUsAtFrame } from "../frames";
 
 vi.mock("./motifs/motifRasterCache", () => ({
@@ -61,7 +61,9 @@ describe('streamed Motif selection', () => {
 
   it('reuses disk frames without capturing or writing', async () => {
     const b = bitmap(); vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(b);
-    expect(await planExportMotifFrame(summary(), 0)[0]!.read(new AbortController().signal)).toBe(b);
+    expect(await planExportMotifFrame(summary(), 0, 'export-token')[0]!.read(new AbortController().signal)).toBe(b);
+    // Export and finalization read full size, whatever preview's divisor.
+    expect(sharedMotifFrameCache.readBitmap).toHaveBeenCalledWith(expect.any(String), 0, 1, { finalizationToken: 'export-token' });
     expect(captureMotifFrameResult).not.toHaveBeenCalled();
     expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
   });
@@ -69,7 +71,7 @@ describe('streamed Motif selection', () => {
   it('persists cold export frames in main without drawing or encoding pixels again in the renderer', async () => {
     const b = bitmap();
     vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
-    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true });
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true, scaleDiv: 'live' });
     const canvas = vi.fn(() => { throw new Error('No renderer encode expected'); });
     vi.stubGlobal('OffscreenCanvas', canvas);
     const task = planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!;
@@ -84,10 +86,10 @@ describe('streamed Motif selection', () => {
     expect(sharedBakedKeyIndex.add).toHaveBeenCalledWith(expect.any(String), 60);
   });
 
-  it.each(['missing', 'corrupt', 'unbaked'])('repairs a %s frame and makes it reusable', async kind => {
-    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false });
-    if (kind === 'corrupt') vi.mocked(sharedMotifFrameCache.readBitmap).mockRejectedValue(new Error('bad cache'));
-    else vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
+  // The reader answers a missing or corrupt frame alike: null.
+  it.each(['missing or corrupt', 'unbaked'])('repairs a %s frame and makes it reusable', async kind => {
+    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false, scaleDiv: 'live' });
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
     if (kind === 'unbaked') vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
     const task = planExportMotifFrame(summary(), 0)[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
@@ -95,9 +97,18 @@ describe('streamed Motif selection', () => {
     expect(sharedBakedKeyIndex.add).toHaveBeenCalledOnce();
   });
 
+  it('a transport error fails the export instead of capturing', async () => {
+    const { MotifTransportError } = await vi.importActual<typeof import('./motifs/frameTransport')>('./motifs/frameTransport');
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockRejectedValue(new MotifTransportError('utility', 'closed'));
+    const task = planExportMotifFrame(summary(), 0)[0]!;
+    await expect(task.read(new AbortController().signal)).rejects.toBeInstanceOf(MotifTransportError);
+    expect(captureMotifFrameResult).not.toHaveBeenCalled();
+    expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
+  });
+
   it('continues with valid pixels when cache persistence fails, and propagates capture failures', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValueOnce({ bitmap: b, persisted: false });
+    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValueOnce({ bitmap: b, persisted: false, scaleDiv: 'live' });
     vi.mocked(sharedMotifFrameCache.writeFrame).mockRejectedValue(new Error('disk full'));
     const task = planExportMotifFrame(summary(), 0)[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
@@ -107,14 +118,14 @@ describe('streamed Motif selection', () => {
   });
 
   it('cancels an admitted capture and skips cache writes for late results', async () => {
-    let resolve!: (v: { bitmap: ImageBitmap; persisted: boolean }) => void;
+    let resolve!: (v: CapturedFrame) => void;
     vi.mocked(captureMotifFrameResult).mockReturnValue(new Promise(r => { resolve = r; }));
     const ctrl = new AbortController();
     const read = planExportMotifFrame(summary(), 0)[0]!.read(ctrl.signal);
     await vi.waitFor(() => expect(captureMotifFrameResult).toHaveBeenCalledOnce());
     ctrl.abort();
     expect(controlStoredMotifCapture).toHaveBeenCalledWith(expect.objectContaining({ action: 'cancel' }));
-    const b = bitmap(); resolve({ bitmap: b, persisted: false });
+    const b = bitmap(); resolve({ bitmap: b, persisted: false, scaleDiv: 'live' });
     expect(await read).toBe(b); // producer owns and closes this late result
     expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
   });

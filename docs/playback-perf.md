@@ -219,6 +219,26 @@ GPU engine utilization comes from Windows `typeperf` on the `VideoDecode` and
 run on a quiet machine. Off Windows the sampler is inert and the GPU columns
 come back empty.
 
+### Motif reads
+
+Each cell's report keeps the end-of-window per-Motif rows (`motifs`) and the
+Motif frame reader's snapshot (`motifReader`, the `perf.motifReader` block of
+the compositor's perf snapshot); both stay empty or idle when the timeline has
+no Motif. The reader block holds the reads each lane answered (`reads.texture`,
+`reads.utility`), misses, Windows fallbacks to the utility lane, transport
+failures and restarts, the current divisor (`scaleDiv`) and median stage times
+over the last 64 frames — `readMs`, `decodeMs`, `hashMs`, `scaleMs`, then
+`uploadMs` and `importMs` on the texture lane or `bitmapMs` on the utility
+lane. These are internal snapshots, not UI.
+
+Stored Motif frames are read at Playback Resolution, the same 1 / 2 / 4 divisor
+video uses, so a ½ or ¼ run also cuts Motif upload, transfer and L0 memory by
+4× or 16×; the file read, decompression and verification stay full size. Before
+[ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)
+a Motif frame arrived at full size whatever the preview showed, and off Windows
+it crossed IPC as full RGBA onto the page's main thread, so Motif late frames
+from older runs are not comparable.
+
 ## Route pinning
 
 All three decode paths run on **one fixture**, so a route comparison is never

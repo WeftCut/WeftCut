@@ -4,6 +4,7 @@ import type { MotifFrameCache } from './frameCache';
 import { cancelMotifFrameRequest, resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from './motifRasterCache';
 import { isCaptureSuperseded } from './host';
 import { MOTIF_RECENT_FRAMES } from './motifFrames';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface MotifPlaybackSnapshot {
   targetFrame: number | null;
@@ -17,7 +18,7 @@ export interface MotifPlaybackSnapshot {
   discarded: number;
 }
 
-interface Request { descriptor: MotifFrameDescriptor; epoch: number }
+interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: MotifReaderDiv }
 const RETRY_MS = [250, 1_000, 4_000];
 
 /** Per-instance preview demand and frame selection. Ordinary forward playback
@@ -27,6 +28,8 @@ const RETRY_MS = [250, 1_000, 4_000];
 export class MotifPlaybackCursor {
   private readonly requestKey = `motif-preview:${crypto.randomUUID()}`;
   private target: MotifFrameDescriptor | null = null;
+  /** The Playback Resolution divisor of `target`; L0 hits match it exactly. */
+  private scaleDiv: MotifReaderDiv = 1;
   private boundFrame: number | null = null;
   private boundAt = 0;
   private playing = false;
@@ -44,15 +47,21 @@ export class MotifPlaybackCursor {
     motif: () => Motif | null;
     fpsNum: number;
     fpsDen: number;
-    bind: (bitmap: ImageBitmap, lane: MotifFrameCache) => void;
+    /** The sprite draws the frame at the descriptor's render size. */
+    bind: (bitmap: ImageBitmap, lane: MotifFrameCache, descriptor: MotifFrameDescriptor) => void;
     onLoaded: () => void;
+    /** Preview's Playback Resolution divisor, read on each update. */
+    scaleDiv: () => MotifReaderDiv;
   }) {}
 
   update(descriptor: MotifFrameDescriptor, playing: boolean): void {
     if (this.disposed) return;
     const previous = this.target;
+    const scaleDiv = this.deps.scaleDiv();
     if (!previous) this.boundAt = performance.now();
-    if (previous && (previous.cacheKey !== descriptor.cacheKey ||
+    // A divisor change refills like a content refresh: the bound frame stays
+    // on screen until the frame at the new divisor arrives.
+    if (previous && (previous.cacheKey !== descriptor.cacheKey || scaleDiv !== this.scaleDiv ||
       previous.overlayActive !== descriptor.overlayActive ||
       descriptor.contentFrame < previous.contentFrame ||
       (!playing && descriptor.contentFrame !== previous.contentFrame) || this.playing !== playing)) {
@@ -60,6 +69,7 @@ export class MotifPlaybackCursor {
     }
     this.playing = playing;
     this.target = descriptor;
+    this.scaleDiv = scaleDiv;
     this.measureHold();
     this.pump();
   }
@@ -103,7 +113,7 @@ export class MotifPlaybackCursor {
 
   private bind(d: MotifFrameDescriptor, bitmap: ImageBitmap): void {
     this.measureHold();
-    this.deps.bind(bitmap, this.lane(d));
+    this.deps.bind(bitmap, this.lane(d), d);
     this.boundFrame = d.contentFrame;
     this.boundAt = performance.now();
     this.failures = 0;
@@ -115,19 +125,19 @@ export class MotifPlaybackCursor {
     if (this.disposed || !d || this.boundFrame === d.contentFrame) return;
     // Cache progress can overtake an admitted read; adopt it immediately and
     // never allow that older completion to roll the bitmap back.
-    const cached = this.lane(d).getFrame(d.cacheKey, d.contentFrame);
+    const cached = this.lane(d).getFrame(d.cacheKey, d.contentFrame, this.scaleDiv);
     if (cached) { this.bind(d, cached); return; }
     if (this.playing) {
       const oldest = Math.max(0, d.contentFrame - MOTIF_RECENT_FRAMES, (this.boundFrame ?? -1) + 1);
       for (let frame = d.contentFrame - 1; frame >= oldest; frame--) {
-        const recent = this.lane(d).getFrame(d.cacheKey, frame);
+        const recent = this.lane(d).getFrame(d.cacheKey, frame, this.scaleDiv);
         if (recent) { this.bind({ ...d, contentFrame: frame }, recent); break; }
       }
     }
     if (this.pending || performance.now() < this.retryAt) return;
     const motif = this.deps.motif();
     if (!motif) return;
-    const request = { descriptor: d, epoch: this.epoch };
+    const request = { descriptor: d, epoch: this.epoch, scaleDiv: this.scaleDiv };
     this.pending = request;
     void this.acquire(request, motif);
   }
@@ -135,13 +145,13 @@ export class MotifPlaybackCursor {
   private async acquire(request: Request, motif: Motif): Promise<void> {
     const d = request.descriptor;
     try {
-      const bitmap = await resolveMotifFrame(motif, d.cacheKey, d.contentFrame,
+      const { bitmap, scaleDiv } = await resolveMotifFrame(motif, d.cacheKey, d.contentFrame,
         d.tSec, d.durationSec, d.canonicalProps, this.requestKey,
-        this.deps.fpsNum, this.deps.fpsDen, d.overlayActive);
+        this.deps.fpsNum, this.deps.fpsDen, d.overlayActive, 'foreground', request.scaleDiv);
       if (this.disposed || request.epoch !== this.epoch) {
         bitmap.close(); this.discarded++; return;
       }
-      const canonical = this.lane(d).setFrame(d.cacheKey, d.contentFrame, bitmap);
+      const canonical = this.lane(d).setFrame(d.cacheKey, d.contentFrame, scaleDiv, bitmap);
       this.completed++;
       const target = this.target;
       if (target && d.contentFrame <= target.contentFrame &&
@@ -155,6 +165,8 @@ export class MotifPlaybackCursor {
       // A warmed frame can overtake the read before it fails. That is already
       // successful progress, so the obsolete failure must not throttle demand.
       if (this.boundFrame !== null && this.boundFrame >= d.contentFrame) return;
+      // Any other failure, a `MotifTransportError` included, keeps the bound
+      // frame and retries with backoff; it never forgets or recaptures.
       if (!isCaptureSuperseded(error)) {
         this.retryAt = performance.now() + RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]!;
         if (this.failures <= 3 || this.failures % 10 === 0) console.error('[weftcut/motifs] preview frame failed', error);

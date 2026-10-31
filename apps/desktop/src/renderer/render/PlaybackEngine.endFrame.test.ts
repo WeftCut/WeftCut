@@ -30,7 +30,7 @@ it("keeps the final Motif on stage across ticks before and after the end timer",
   const desc = motifFrameDescriptor({ src_in_us: 0, props: { seconds: 2 } },
     0, 2_000_000, 30, 1, getMotif("countdown")!)!;
   for (let frame = 0; frame < desc.contentDurationFrames; frame++) {
-    sharedMotifFrameCache.setFrame(desc.cacheKey, frame,
+    sharedMotifFrameCache.setFrame(desc.cacheKey, frame, 1,
       { width: 320, height: 320, close: vi.fn() } as unknown as ImageBitmap);
   }
   const ctx = { state: "running", currentTime: 10 };

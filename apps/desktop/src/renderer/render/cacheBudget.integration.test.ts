@@ -12,7 +12,7 @@ it('real video rings reclaim borrowed animation retention and both owners releas
   hydratePerformanceSettings(resolvePerformanceBudgets({ cache_mib: 512, gpu_buffer_mib: 416 }), null, true);
   const animation = new MotifFrameCache(), video = new FrameRing();
   try {
-    for (let i = 0; i < 50; i++) animation.setFrame('animation', i, frame());
+    for (let i = 0; i < 50; i++) animation.setFrame('animation', i, 1, frame());
     // With idle video/tiles, animation can exceed its ~151 MiB baseline share.
     expect(animation.size()).toBe(50);
     for (let i = 0; i < 10; i++) video.push(frame(3840, 2160), i * 33333, 33333);
@@ -27,7 +27,7 @@ it('a pinned retired animation picture stays accounted until its final release',
   hydratePerformanceSettings(resolvePerformanceBudgets({ cache_mib: 512, gpu_buffer_mib: 416 }), null, true);
   const animation = new MotifFrameCache(), picture = frame();
   try {
-    animation.setFrame('animation', 0, picture);
+    animation.setFrame('animation', 0, 1, picture);
     animation.retain(picture);
     animation.clearAll();
     expect(cacheBudget.snapshot().total).toBe(1920 * 1080 * 4);

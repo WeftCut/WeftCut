@@ -1,10 +1,19 @@
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, tmpDir } from './helpers/driver'
+import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 
-// Real preload/worker/native texture ownership, with synthetic colored frames.
+interface ReaderStats {
+  reads: { texture: number; utility: number };
+  misses: number;
+  fallbacks: number;
+  transportFailures: number;
+}
+
+// The real MotifFrameReader (ADR 0154) with synthetic colored frames: the
+// texture lane's native ownership and slot reuse on Windows with shared
+// textures, the utility process and reader worker everywhere else.
 test('@serial cached Motif frames survive concurrent reads and slot reuse', async () => {
   const { app, page } = await launchApp({ env: { ELECTRON_RENDERER_URL: '' } })
   try {
@@ -24,37 +33,25 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       })
     })
     const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
-    await app.evaluate(async ({ ipcMain }, { addon, directory, pngs }) => {
+    await app.evaluate(async (_electron, { addon, directory, pngs }) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
       for (let i = 0; i < pngs.length; i++) {
         await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodePng(Buffer.from(pngs[i]!, 'base64'), true))
       }
-      const handler = ipcMain._invokeHandlers.get('motif:read')!
-      ;(globalThis as any).__motifReadKinds = []
-      ipcMain._invokeHandlers.set('motif:read', async (...args: any[]) => {
-        const result = await handler(...args)
-        ;(globalThis as any).__motifReadKinds.push(result?.kind)
-        return result
-      })
     }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), pngs })
-    const pixels = await page.evaluate(async hash => {
-      const channel = new MessageChannel()
-      const pending = new Map<number, { resolve(bitmap: ImageBitmap): void; reject(error: Error): void }>()
-      channel.port1.onmessage = ({ data }) => {
-        const request = pending.get(data.id)!
-        pending.delete(data.id)
-        if (data.error || !data.bitmap) request.reject(new Error(data.error ?? 'Missing frame'))
-        else request.resolve(data.bitmap)
+    await waitForHook(page, 'readMotifFrame')
+    await waitForHook(page, 'motifReaderStats')
+    const { pixels, before, after } = await page.evaluate(async hash => {
+      const hook = (window as any).__weftcutTest
+      const stats = () => hook.motifReaderStats()
+      const before = stats()
+      const read = async (frame: number): Promise<ImageBitmap> => {
+        const bitmap = await hook.readMotifFrame({ hash, frame, div: 1 }) as ImageBitmap | null
+        if (!bitmap) throw new Error(`Missing frame ${frame}`)
+        return bitmap
       }
-      window.postMessage({ type: 'weftcut:motif-frame-port' }, '*', [channel.port2])
-      let id = 0
-      const read = (frame: number) => new Promise<ImageBitmap>((resolve, reject) => {
-        const requestId = ++id
-        pending.set(requestId, { resolve, reject })
-        channel.port1.postMessage({ id: requestId, hash, frame })
-      })
       const held = await Promise.all(Array.from({ length: 12 }, (_, i) => read(i % 6)))
       // Keep old bitmaps alive while every GPU lane is overwritten repeatedly.
       for (let batch = 0; batch < 4; batch++) {
@@ -62,22 +59,27 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
         frames.forEach(frame => frame.close())
       }
       const ctx = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })!
-      const samples = held.map(frame => {
+      const pixels = held.map(frame => {
         ctx.clearRect(0, 0, 1, 1)
         ctx.drawImage(frame, 100, 100, 1, 1, 0, 0, 1, 1)
         frame.close()
         return [...ctx.getImageData(0, 0, 1, 1).data]
       })
-      channel.port1.close()
-      return samples
-    }, hash)
+      return { pixels, before, after: stats() }
+    }, hash) as { pixels: number[][]; before: ReaderStats; after: ReaderStats }
     for (let i = 0; i < pixels.length; i++) {
       const expected = [(i % 6) * 40, 200 - (i % 6) * 30, 80, 128]
       expected.forEach((value, channel) => expect(Math.abs(pixels[i]![channel]! - value)).toBeLessThanOrEqual(2))
     }
-    const kinds = await app.evaluate(() => (globalThis as any).__motifReadKinds as string[])
-    expect(kinds).toHaveLength(36)
-    expect(new Set(kinds)).toEqual(new Set([sharedTextures ? 'texture' : 'rgba']))
+    // Shared textures take the texture lane; everything else the utility lane.
+    // Windows without shared textures asks the texture lane first and falls
+    // back on every read; other platforms never ask it.
+    const delta = (pick: (stats: ReaderStats) => number) => pick(after) - pick(before)
+    expect({ texture: delta(s => s.reads.texture), utility: delta(s => s.reads.utility) })
+      .toEqual(sharedTextures ? { texture: 36, utility: 0 } : { texture: 0, utility: 36 })
+    expect(delta(s => s.fallbacks)).toBe(!sharedTextures && process.platform === 'win32' ? 36 : 0)
+    expect(delta(s => s.misses)).toBe(0)
+    expect(delta(s => s.transportFailures)).toBe(0)
   } finally { await app.close() }
 })
 
@@ -138,7 +140,7 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
           const requestId = ++id
           const timeout = setTimeout(() => { pending.delete(requestId); resolve('timeout') }, 3000)
           pending.set(requestId, result => { clearTimeout(timeout); resolve(result) })
-          channel.port1.postMessage({ id: requestId, hash, frame: 0 })
+          channel.port1.postMessage({ id: requestId, hash, frame: 0, div: 1 })
         })
         const first = await Promise.all([read(), read(), read()])
         const second = await Promise.all([read(), read(), read()])
@@ -156,10 +158,11 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
           if (data.bitmap) (window as any).__motifReloadFrames.push(data.bitmap)
         }
         window.postMessage({ type: 'weftcut:motif-frame-port' }, '*', [channel.port2])
-        for (let id = 1; id <= 24; id++) channel.port1.postMessage({ id, hash, frame: 1 })
+        for (let id = 1; id <= 24; id++) channel.port1.postMessage({ id, hash, frame: 1, div: 1 })
       }, hash)
     }
-    // A silent permanent switch to CPU must not hide a remaining import leak.
+    // A silent switch to the utility lane (`unavailable`) must not hide a
+    // remaining import leak.
     const kinds = await app.evaluate(() => (globalThis as any).__motifReloadKinds as string[])
     expect(kinds).toHaveLength(54)
     expect(new Set(kinds)).toEqual(new Set(['texture']))

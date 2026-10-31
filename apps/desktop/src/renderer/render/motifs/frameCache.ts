@@ -1,12 +1,17 @@
 import { hashCacheKey } from "../../../shared/motifs/cacheKey";
 import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings";
+import { isMotifReaderDiv, type MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { cacheBudget } from '../cacheBudget';
+import type { MotifReadOptions } from "./MotifFrameReader";
+import type { MotifFrameDiv } from "./frameTransport";
 // Per-frame raster cache for animated motifs.
 //
 // A motif animates over its duration: each composition frame is a distinct
 // CDP capture decoded to an `ImageBitmap`. This cache holds a SEQUENCE of
-// frames per motif instance, keyed by `(cacheKey, frameIndex)` — distinct
-// from a single-bitmap-per-motif cache.
+// frames per motif instance, keyed by `(cacheKey, frameIndex, scaleDiv)` —
+// distinct from a single-bitmap-per-motif cache. Preview reads stored frames
+// at the Playback Resolution divisor, so a 1/2 bitmap and a full one of the
+// same frame are different entries (ADR 0154).
 //
 // Two layers:
 //
@@ -43,43 +48,31 @@ export interface Closeable {
 /// (the old 240-FRAME cap could: 240 × 8.3 MB ≈ 2 GB).
 export const DEFAULT_MAX_BYTES = PERFORMANCE_DEFAULTS.motif_cache_mib * MIB;
 
-/// Composite L0 map key. `frameIndex` is appended after a `#`; callers'
-/// cacheKeys are JSON and may themselves contain `#`, so any code that
-/// splits a key back into `(cacheKey, frameIndex)` must anchor on the
-/// LAST `#` and require an all-digit suffix — see `keyMatchesCacheKey`.
+/// Composite L0 map key: `${cacheKey}#${frameIndex}@${scaleDiv}`. Callers'
+/// cacheKeys are JSON and may themselves contain `#` and `@`; the suffix after
+/// the LAST `#` is always `<digits>@<digits>`, so distinct addresses never
+/// collide. Entries carry their cacheKey, so nothing parses a key back.
 ///
-/// `frameIndex` MUST be a non-negative integer: a negative or fractional
-/// index would stringify to a non-digit suffix (`#-1`, `#1.5`) that
-/// `keyMatchesCacheKey` rejects, so the entry would be unreachable by
-/// `hasKey`/`clearKey` — a silent leak. Reject it at the boundary instead.
-function frameMapKey(cacheKey: string, frameIndex: number): string {
+/// `frameIndex` MUST be a non-negative integer and `scaleDiv` a reader
+/// divisor: anything else would mint a key no lookup can reach — a silent
+/// leak. Reject it at the boundary instead.
+function frameMapKey(cacheKey: string, frameIndex: number, scaleDiv: MotifReaderDiv): string {
   if (!Number.isInteger(frameIndex) || frameIndex < 0) {
     throw new Error(
       `MotifFrameCache: frameIndex must be a non-negative integer, got ${frameIndex}`,
     );
   }
-  return `${cacheKey}#${frameIndex}`;
+  if (!isMotifReaderDiv(scaleDiv)) throw new Error(`MotifFrameCache: invalid divisor ${String(scaleDiv)}`);
+  return `${cacheKey}#${frameIndex}@${scaleDiv}`;
 }
 
-/// True when `mapKey` is a frame of `cacheKey`. Guards against the
-/// prefix-collision hazard: cacheKey "a" must NOT match "a#b"'s frame
-/// "a#b#5". We require `mapKey === cacheKey + "#" + <digits>`, i.e. the
-/// `#` we split on is the LAST one and everything after it is a frame
-/// index. (cacheKeys can contain `#`; frame indices are always digits.)
-function keyMatchesCacheKey(mapKey: string, cacheKey: string): boolean {
-  const hashAt = mapKey.lastIndexOf("#");
-  if (hashAt < 0) return false;
-  if (mapKey.slice(0, hashAt) !== cacheKey) return false;
-  const suffix = mapKey.slice(hashAt + 1);
-  return suffix.length > 0 && /^\d+$/.test(suffix);
-}
-
-/// Recover the cacheKey from a composite map key: everything before the LAST
-/// `#` (the all-digits frame-index suffix is guaranteed by `frameMapKey`).
-/// Used where membership accounting needs the key but only the composite is
-/// at hand (eviction, clearAll).
-function cacheKeyOf(mapKey: string): string {
-  return mapKey.slice(0, mapKey.lastIndexOf("#"));
+interface Entry {
+  bmp: Closeable;
+  bytes: number;
+  cacheKey: string;
+  scaleDiv: MotifReaderDiv;
+  /// A live capture (always divisor 1): it serves every divisor.
+  live: boolean;
 }
 
 /// Decoded RGBA cost of one frame: width × height × 4 bytes — the resident
@@ -96,7 +89,7 @@ export class MotifFrameCache {
   /// we exploit for LRU: the FIRST key is the least-recently-used, the
   /// LAST is the most-recent. `get` and `set` both move a touched entry
   /// to the tail (delete + re-insert) so recency stays accurate.
-  private readonly store = new Map<string, { bmp: Closeable; bytes: number }>();
+  private readonly store = new Map<string, Entry>();
   private readonly fixedMaxBytes: number | undefined;
   private get maxBytes(): number {
     return this.fixedMaxBytes ?? cacheBudget.ownerAllowance('motif_cache_mib', this);
@@ -114,7 +107,8 @@ export class MotifFrameCache {
   private readonly retired = new Set<Closeable>();
   /// Membership belongs to the cache, whose lifetime can exceed a preview
   /// service's. Late readers see existing frames without replaying events.
-  private readonly frameCounts = new Map<string, number>();
+  /// Per cacheKey: frames at each divisor, plus `live` (also counted at 1).
+  private readonly frameCounts = new Map<string, Map<MotifFrameDiv, number>>();
 
   constructor(maxBytes?: number) {
     // Guard against a zero/negative cap silently disabling the cache. A NaN
@@ -131,24 +125,49 @@ export class MotifFrameCache {
   // L0 — in-RAM LRU of per-frame ImageBitmaps
   // ----------------------------------------------------------------
 
-  private changeMembership(cacheKey: string, delta: number): void {
-    const count = (this.frameCounts.get(cacheKey) ?? 0) + delta;
-    if (count === 0) this.frameCounts.delete(cacheKey);
-    else this.frameCounts.set(cacheKey, count);
+  private changeMembership(cacheKey: string, div: MotifFrameDiv, delta: number): void {
+    const counts = this.frameCounts.get(cacheKey) ?? new Map<MotifFrameDiv, number>();
+    const count = (counts.get(div) ?? 0) + delta;
+    if (count === 0) counts.delete(div);
+    else counts.set(div, count);
+    if (counts.size) this.frameCounts.set(cacheKey, counts);
+    else this.frameCounts.delete(cacheKey);
   }
 
-  /// O(1) coverage of this content, independent of a reader's lifetime.
-  frameCount(cacheKey: string): number {
-    return this.frameCounts.get(cacheKey) ?? 0;
+  /// Account an entry entering (+1) or leaving (-1) the store.
+  private count(entry: Entry, delta: number): void {
+    this.changeMembership(entry.cacheKey, entry.scaleDiv, delta);
+    if (entry.live) this.changeMembership(entry.cacheKey, 'live', delta);
+  }
+
+  /// O(1) coverage of this content at `scaleDiv`, independent of a reader's
+  /// lifetime.
+  frameCount(cacheKey: string, scaleDiv: MotifReaderDiv): number {
+    const counts = this.frameCounts.get(cacheKey);
+    if (!counts) return 0;
+    const exact = counts.get(scaleDiv) ?? 0;
+    return scaleDiv === 1 ? exact : exact + (counts.get('live') ?? 0);
+  }
+
+  /// The map key that serves `(cacheKey, frameIndex)` at `scaleDiv`: only the
+  /// entry at that exact divisor, or a live capture. A live capture is full
+  /// size and the only size its frame comes in, so asking again at the divisor
+  /// would only capture it again.
+  private serving(cacheKey: string, frameIndex: number, scaleDiv: MotifReaderDiv): string | undefined {
+    const exact = frameMapKey(cacheKey, frameIndex, scaleDiv);
+    if (this.store.has(exact)) return exact;
+    if (scaleDiv === 1) return undefined;
+    const full = frameMapKey(cacheKey, frameIndex, 1);
+    return this.store.get(full)?.live ? full : undefined;
   }
 
   /// Return the cached frame, or null on miss. A hit refreshes recency
   /// (the entry moves to the MRU end), so a frame the preview keeps
   /// hitting won't be evicted out from under it.
-  getFrame(cacheKey: string, frameIndex: number): ImageBitmap | null {
-    const k = frameMapKey(cacheKey, frameIndex);
-    const entry = this.store.get(k);
-    if (entry === undefined) return null;
+  getFrame(cacheKey: string, frameIndex: number, scaleDiv: MotifReaderDiv): ImageBitmap | null {
+    const k = this.serving(cacheKey, frameIndex, scaleDiv);
+    if (k === undefined) return null;
+    const entry = this.store.get(k)!;
     // Refresh recency: delete + re-insert moves it to the tail.
     this.store.delete(k);
     this.store.set(k, entry);
@@ -160,19 +179,20 @@ export class MotifFrameCache {
   /// evict the unplayed near future when a farther-ahead frame arrives.
   /// Targets are highest-priority first. This only reorders existing entries:
   /// it neither allocates nor pins bitmaps, and the byte budget still applies.
-  prioritizeFrames(targets: readonly { cacheKey: string; frame: number }[]): void {
+  prioritizeFrames(targets: readonly { cacheKey: string; frame: number }[], scaleDiv: MotifReaderDiv): void {
     for (let i = targets.length - 1; i >= 0; i--) {
       const { cacheKey, frame } = targets[i]!;
-      const key = frameMapKey(cacheKey, frame);
-      const entry = this.store.get(key);
-      if (!entry) continue;
+      const key = this.serving(cacheKey, frame, scaleDiv);
+      if (key === undefined) continue;
+      const entry = this.store.get(key)!;
       this.store.delete(key);
       this.store.set(key, entry);
     }
   }
 
-  /// Insert a frame, or keep the bitmap already cached for this (key, frame).
-  /// A given (cacheKey, frameIndex) is deterministic — same motif, props,
+  /// Insert a frame, or keep the bitmap already serving this (key, frame,
+  /// divisor). A live capture is stored as divisor 1. A given (cacheKey,
+  /// frameIndex) is deterministic — same motif, props,
   /// size, fps, content-duration and absolute content frame — so a concurrent
   /// re-raster (e.g. several same-config motif layers cold-missing on
   /// project reopen) produces an IDENTICAL image. Keep the existing bitmap (a
@@ -183,27 +203,29 @@ export class MotifFrameCache {
   /// on WebGPU upload). When the store exceeds `maxBytes`, LRU frames are
   /// evicted and `.close()`d (deferred while retained — see `retain`).
   ///
-  /// @returns The canonical cache-owned bitmap for this (cacheKey, frameIndex):
-  ///   `bmp` itself on first insert, or the EXISTING (possibly already-bound)
-  ///   bitmap on a same-(key,frame) re-set (in which case `bmp` has been closed).
-  setFrame(cacheKey: string, frameIndex: number, bmp: ImageBitmap): ImageBitmap {
-    const k = frameMapKey(cacheKey, frameIndex);
-    const prev = this.store.get(k);
-    if (prev !== undefined) {
+  /// @returns The canonical cache-owned bitmap for this (cacheKey, frameIndex,
+  ///   divisor): `bmp` itself on first insert, or the EXISTING (possibly
+  ///   already-bound) bitmap on a re-set (in which case `bmp` has been closed).
+  setFrame(cacheKey: string, frameIndex: number, scaleDiv: MotifFrameDiv, bmp: ImageBitmap): ImageBitmap {
+    const live = scaleDiv === 'live';
+    const div = live ? 1 : scaleDiv;
+    const k = this.serving(cacheKey, frameIndex, div);
+    if (k !== undefined) {
+      const prev = this.store.get(k)!;
       // Keep the existing (possibly already-bound) bitmap; drop the redundant
       // incoming one. Refresh recency by re-inserting at the MRU tail. Bytes
-      // don't change: a given (key, frame) is deterministic, so the incoming
-      // bitmap's dims equal the stored one's. No membership change: the
-      // (key, frame) was already in the store.
+      // don't change: the serving entry holds the same frame at this size.
+      // A live re-set marks a full-size read live: the frame is not stored.
       if (prev.bmp !== (bmp as unknown as Closeable)) this.retire(bmp);
+      if (live && !prev.live) { prev.live = true; this.changeMembership(cacheKey, 'live', +1); }
       this.store.delete(k);
       this.store.set(k, prev);
       return prev.bmp as unknown as ImageBitmap;
     }
-    const bytes = frameCostBytes(bmp);
-    this.store.set(k, { bmp: bmp as unknown as Closeable, bytes });
-    this.bytesUsed += bytes;
-    this.changeMembership(cacheKey, +1);
+    const entry: Entry = { bmp: bmp as unknown as Closeable, bytes: frameCostBytes(bmp), cacheKey, scaleDiv: div, live };
+    this.store.set(frameMapKey(cacheKey, frameIndex, div), entry);
+    this.bytesUsed += entry.bytes;
+    this.count(entry, +1);
     this.evictToCapacity();
     return bmp;
   }
@@ -223,7 +245,7 @@ export class MotifFrameCache {
       if (victim) {
         this.bytesUsed -= victim.bytes;
         this.retire(victim.bmp);
-        this.changeMembership(cacheKeyOf(oldest.value), -1);
+        this.count(victim, -1);
       }
     }
     this.reportUsage();
@@ -265,11 +287,11 @@ export class MotifFrameCache {
     this.reportUsage();
   }
 
-  /// True when (cacheKey, frameIndex) is held, WITHOUT touching recency (unlike
-  /// getFrame). The prewarmer uses this to skip already-cached targets so a peek
-  /// can't reorder the LRU.
-  hasFrame(cacheKey: string, frameIndex: number): boolean {
-    return this.store.has(frameMapKey(cacheKey, frameIndex));
+  /// True when (cacheKey, frameIndex) is held at `scaleDiv`, WITHOUT touching
+  /// recency (unlike getFrame). The prewarmer uses this to skip already-cached
+  /// targets so a peek can't reorder the LRU.
+  hasFrame(cacheKey: string, frameIndex: number, scaleDiv: MotifReaderDiv): boolean {
+    return this.serving(cacheKey, frameIndex, scaleDiv) !== undefined;
   }
 
   /// The byte budget (the prewarmer scales its warm plan against it).
@@ -277,24 +299,21 @@ export class MotifFrameCache {
     return this.maxBytes;
   }
 
-  /// True when at least one frame of `cacheKey` is currently held.
+  /// True when at least one frame of `cacheKey` is currently held, at any
+  /// divisor.
   hasKey(cacheKey: string): boolean {
-    return this.frameCount(cacheKey) > 0;
+    return this.frameCounts.has(cacheKey);
   }
 
-  /// Drop every frame of `cacheKey`, closing each bitmap. No-op when the
-  /// key isn't present.
+  /// Drop every frame of `cacheKey` at every divisor, closing each bitmap.
+  /// No-op when the key isn't present.
   clearKey(cacheKey: string): void {
-    for (const k of Array.from(this.store.keys())) {
-      if (keyMatchesCacheKey(k, cacheKey)) {
-        const entry = this.store.get(k);
-        this.store.delete(k);
-        if (entry) {
-          this.bytesUsed -= entry.bytes;
-          this.retire(entry.bmp);
-          this.changeMembership(cacheKey, -1);
-        }
-      }
+    for (const [k, entry] of Array.from(this.store)) {
+      if (entry.cacheKey !== cacheKey) continue;
+      this.store.delete(k);
+      this.bytesUsed -= entry.bytes;
+      this.retire(entry.bmp);
+      this.count(entry, -1);
     }
     this.reportUsage();
   }
@@ -354,22 +373,14 @@ export class MotifFrameCache {
   // unit test.
   // ----------------------------------------------------------------
 
-  /// One IPC for the whole read. Frames are decompressed on a native worker;
-  /// missing or invalid cache entries return null so callers render again.
-  async readBitmap(cacheKey: string, frameIndex: number, finalizationToken?: string): Promise<ImageBitmap | null> {
+  /// A stored frame at `scaleDiv`, through the document's `MotifFrameReader`
+  /// (ADR 0154); null when it is not stored or is invalid. A transport failure
+  /// throws `MotifTransportError`: it is not a miss. No window (the export
+  /// Worker, node tests) has no reader and reads nothing.
+  async readBitmap(cacheKey: string, frameIndex: number, scaleDiv: MotifReaderDiv, options: MotifReadOptions = {}): Promise<ImageBitmap | null> {
     if (typeof window === "undefined") return null;
-    try {
-      const { readStoredMotifFrame } = await import("./frameTransport");
-      return await readStoredMotifFrame(hashCacheKey(cacheKey), frameIndex, finalizationToken);
-    } catch { /* lost GPU/port: the CPU read remains available */ }
-    const { invoke } = await import("@/bridge/ipc");
-    const frame = await invoke<
-      | { kind: "rgba"; width: number; height: number; rgba: Uint8Array }
-      | null
-    >("motif_read_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex });
-    if (!frame) return null;
-    const pixels = new Uint8ClampedArray(frame.rgba.buffer as ArrayBuffer, frame.rgba.byteOffset, frame.rgba.byteLength);
-    return createImageBitmap(new ImageData(pixels, frame.width, frame.height));
+    const { motifFrameReader } = await import("./MotifFrameReader");
+    return motifFrameReader().read(cacheKey, frameIndex, scaleDiv, options);
   }
 
   /// True if the new-format frame exists on disk. Cheaper than `readBitmap`
