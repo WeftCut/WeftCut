@@ -512,7 +512,8 @@ _Avoid_: append point, re-smoothing
 A parameterized, time-varying overlay authored as a web page (manifest island +
 `index.html`), served over `motif:` and captured frame by frame under a
 harness-owned clock. Placed, it is a `Motif` layer whose props are its whole
-state. One Motif draws one element. See [motifs.md](docs/motifs.md), ADR 0017.
+state. One Motif draws one element ([motif-authoring.md](docs/motif-authoring.md#scope-one-element-or-one-interaction)).
+See [motifs.md](docs/motifs.md), ADR 0017.
 _Avoid_: template, overlay, animation preset
 
 **Motif draft**: A retained, editable package, optionally linked to a working directory.
@@ -654,7 +655,7 @@ _Avoid_: zoom level, font-size setting, color theme
 
 **Agent view**:
 The lightweight preview + mini timeline + agent panel layout, entered and left
-independently of work. UI word: Agent Mode / 代理模式. See ADR 0065.
+independently of work. UI word: Agent Mode / 代理模式. See [mcp.md](docs/mcp.md#agent-panel-and-lifecycle).
 _Avoid_: session (for the layout)
 
 **Work session**:
@@ -697,7 +698,7 @@ _Avoid_: diff entry, hunk, carried change; shifted / moved as classes
 
 **Approve**:
 Make the current state the review baseline, all at once (no per-change
-approval). Records nothing. UI word: Approve all / 全部批准.
+approval). Records nothing. UI word: Approve all / 全部批准. See ADR 0115.
 _Avoid_: accept, commit, apply
 
 **Revert all**:
@@ -712,8 +713,8 @@ _Avoid_: selection (clips'), highlight (per-activity)
 
 ## Agent harness
 
-What an agent knows about how a result should look and how a job runs, in a
-fixed precedence: etiquette, craft, style, TASTE, recipe. See ADR 0123, ADR 0126.
+What an agent knows about how a result should look and how a job runs, in
+layers: etiquette, craft, style, TASTE, recipe. See ADR 0046, ADR 0126.
 
 **Craft**:
 Brand-agnostic production rules as numbers or thresholds (title-safe, minimum

@@ -105,6 +105,13 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   session when stdin closes; `end_agent_session { force: true }` is the
   takeover. `AgentSessionBusy` / `AgentSessionOwnerMismatch` name the holder,
   also visible in `project://session`.
+- `transcribe_clip` and `describe_clip` are clip-compute jobs (ADR 0121,
+  `main/compute/jobs.ts`): a call with a `progressToken` gets
+  `notifications/progress` on each phase change and at least every 15 s; an
+  identical call (same source span and answer-changing args) joins the running
+  job; only `notifications/cancelled` from every attached caller, or the app's
+  Cancel, cancels it — a disconnect does not; a cancelled call answers
+  `isError` with code `cancelled`.
 
 ## Tool surface conventions
 
@@ -289,8 +296,11 @@ omitted props take style tokens, then manifest defaults; a `media` prop names
 `label`, times, `locked`; anything else is refused naming the right tool),
 `update_layer_params` (one closed `oneOf` variant per kind; static transform
 writes replace keyframes; Text has no scale fields — a bigger title is a
-bigger box, ADR 0049; VideoClip `crop` is a normalized source rect, `null`
-resets), `set_scale_linked`, `set_layers_enabled` (the only writer of
+bigger box, ADR 0049; Text `intro` (`FadeIn`/`SlideUp`/`SlideDown`/
+`Typewriter`) and `outro` (`FadeOut`/`SlideUp`/`SlideDown`) presets stay on the
+layer's edges and play in preview and export alike,
+[render.md](render.md#text-entrance-and-exit-presets); VideoClip `crop` is a
+normalized source rect, `null` resets), `set_scale_linked`, `set_layers_enabled` (the only writer of
 `enabled`), `move_layer`, `trim_layer`, `shift_layers` (a named set, or every
 layer from `from_t_us` — the ripple insert/close), `restack_layer` (anchored
 z-reorder, [features.md](features.md#track-placement)), `split_layer` (an array of cuts, one atomic edit),
@@ -685,8 +695,9 @@ main injects the selected model's config into every call that resolves an
 engine, so the Rust resolver is stateless. Transcription uses the model
 selected in Settings → Transcription (a picker that activates a model only
 after its downloads install and a minimal inference succeeds) and otherwise
-errors naming the remedy; nothing is substituted (ADR 0064). TTS picks by
-preference, then a default order. Unconfigured speech tools stay listed and
+errors naming the remedy; nothing is substituted (ADR 0064). An OpenAI key
+also enables `synthesize_speech`; TTS picks by preference, then a default
+order. Unconfigured speech tools stay listed and
 refuse naming the Settings panel.
 
 - `transcribe_clip` — a timeline-absolute transcript envelope `{ backend,
@@ -751,13 +762,6 @@ same sampled frames with `<t s>` markers.
   concurrency are run tuning, outside the cache key.
 - Settings → Video understanding has its own `vlm_endpoint` key; local
   engines are app-managed downloads (ADR 0039).
-
-`transcribe_clip` and `describe_clip` are clip-compute jobs (ADR 0121): a call
-with a `progressToken` gets `notifications/progress` on each phase change and
-at least every 15 s; an identical call (same source span and answer-changing
-args) joins the running job; only `notifications/cancelled` from every attached
-caller, or the app's Cancel, cancels it — a disconnect does not; a cancelled
-call answers `isError` with code `cancelled`.
 
 ## Observability
 
