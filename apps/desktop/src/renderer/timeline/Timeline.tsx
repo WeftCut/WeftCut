@@ -316,7 +316,7 @@ export const Timeline = memo(function Timeline({
   } | null>(null);
   // The gap's context menu — the third right-click surface. It carries no
   // target of its own: the right-click selected the gap first, and the menu's
-  // one row acts on the selection (ADR 0069).
+  // one row acts on the selection.
   const [gapMenu, setGapMenu] = useState<{ x: number; y: number } | null>(null);
   const primaryLayerId = usePrimaryLayerId();
   const selectedLayerIds = useSelectedLayerIds();
@@ -1388,7 +1388,7 @@ export const Timeline = memo(function Timeline({
     return () => viewport.removeEventListener("scroll", onScroll);
   }, [contextMenu, chipMenu, gapMenu]);
 
-  /// Right-click on lane background (ADR 0069). Resolves the press to the gap
+  /// Right-click on lane background. Resolves the press to the gap
   /// under it through the one gap rule; over trailing space, an empty lane or a
   /// locked lane there is no gap and no menu — nothing else lives on lane
   /// background to offer. Selects first, as the clip and chip menus do, so the
@@ -1739,8 +1739,9 @@ export const Timeline = memo(function Timeline({
   /// keyframe and then clicking a lane.
   ///
   /// On a LANE, blank space between two clips is a gap, and the click selects it
-  /// (ADR 0069) — Premiere's and Resolve's gesture, with no modifier. Only a
-  /// press that resolves to a gap through the one gap rule selects: trailing
+  /// (docs/features.md#ripple-delete) — Premiere's and Resolve's gesture,
+  /// with no modifier. Only a press that resolves to a gap through the one gap
+  /// rule selects: trailing
   /// space, an empty lane and the track background all still clear.
   /// A locked lane's blank space clears too, for `marqueeHitClips`'s reason —
   /// its gap can never close (its own downstream clip would have to move), so

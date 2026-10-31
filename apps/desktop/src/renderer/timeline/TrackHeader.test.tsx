@@ -107,8 +107,9 @@ describe("TrackHeader inline rename", () => {
     await waitFor(() => expect(ipcMocks.renameTrack).toHaveBeenCalledWith("T1", "Overlays"));
   });
 
-  // The lane's half of ADR 0042: an emptied field is a request for the DERIVED
-  // name, not an abandoned edit (which is what it means for a layer).
+  // The lane's half of the rename rule (docs/data-model.md#track): an emptied
+  // field is a request for the DERIVED name, not an abandoned edit (which is
+  // what it means for a layer).
   it.each(["", "   "])("clearing the field to %o writes null", async (blank) => {
     const { container } = renderHeader(track({ label: "Titles" }));
     fireEvent.doubleClick(nameCell(container));

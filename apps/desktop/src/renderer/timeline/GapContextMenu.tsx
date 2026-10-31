@@ -6,9 +6,10 @@ import { CommandContextItem } from "../menu/CommandContextItem";
 import { useCursorAnchor } from "./contextMenuAnchor";
 import { rippleDeleteReason, useRippleDeleteState } from "./rippleEligibility";
 
-/// Right-click menu on a selected gap (ADR 0069). Its own component rather than
-/// an arm of `LayerContextMenu` for `TrackContextMenu`'s reason: the object
-/// being acted on is not a layer, and none of the layer menu's rows — rename,
+/// Right-click menu on a selected gap (docs/features.md#ripple-delete). Its
+/// own component rather than an arm of `LayerContextMenu` for
+/// `TrackContextMenu`'s reason: the object being acted on is not a layer, and
+/// none of the layer menu's rows — rename,
 /// link, group, transitions — has a meaning over empty space.
 ///
 /// ONE row, *Ripple delete*, and no plain *Delete* beside it: a gap is already

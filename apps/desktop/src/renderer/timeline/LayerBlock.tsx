@@ -392,7 +392,7 @@ export function LayerBlock({
   const dragValidity =
     isDragging && dragState?.kind === "move" ? dragState.validity : "valid";
   // Not `!== "valid"`: a drag over the drop strip reads `"spawn"`, which is a
-  // destination being created rather than a refusal (ADR 0042).
+  // destination being created rather than a refusal.
   const dragIsInvalid = placementRefuses(dragValidity);
   const dragInvalidLabel =
     dragValidity === "collision"

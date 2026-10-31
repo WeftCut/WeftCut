@@ -11,7 +11,7 @@ import { DecodeClock, type DecodeClockPacket } from "./decodeClock";
 /// Forward-seek threshold (µs). A target more than one lookahead window
 /// (≈1 s, matching FrameRing's DEFAULT_LOOKAHEAD_US) past the pump's
 /// decoded frontier triggers a reset+seek instead of a forward slog
-/// through the intervening delta packets. See ADR 0003.
+/// through the intervening delta packets. See docs/preview.md#decode.
 export const FORWARD_SEEK_RESET_US = 1_000_000;
 
 /// Decoder-queue backpressure cap. `VideoDecoder.decode()` queues
@@ -52,8 +52,8 @@ export interface ResetDecisionInput {
 /// AND paused lookahead-fill (where the frontier advances *ahead* of a
 /// held playhead, so `targetUs - lastDecodedPtsUs` is negative). Forward
 /// GOP-crossings flow the next key packet in-stream without a reset
-/// (ADR 0003 — an unconditional per-GOP reset reintroduces the playback
-/// stall the ADR exists to prevent).
+/// (docs/preview.md#decode — an unconditional per-GOP reset reintroduces the
+/// playback stall).
 export function resetReason(s: ResetDecisionInput): ResetReason | null {
   if (s.ringFirstPtsUs !== null && s.targetUs < s.ringFirstPtsUs)
     return "backward-beyond-ring";
@@ -179,7 +179,7 @@ export class PacketPump {
   ///
   /// Deliberately key IDENTITY and not "is the key at or before the frontier",
   /// which would be the more general rule (it would also cover a key the pump
-  /// crossed in-stream under ADR 0003, where a forward GOP boundary needs no
+  /// crossed in-stream, where a forward GOP boundary needs no
   /// reset). The general form has to convert `key.timestamp` seconds into source
   /// µs to compare against `lastDecodedPtsUs`, and that conversion is the exact
   /// ±1 µs rounding trap the non-zero-origin frontier test guards: the pump's

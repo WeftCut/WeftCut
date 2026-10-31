@@ -344,9 +344,9 @@ export function planMediaDrop({
   );
   const overlapClass = dragOverlapClass(media);
   // A subtitle document is not placed on the lane it is released over: its
-  // cues pack onto the caption tracks (ADR 0070), so the lane can neither
-  // refuse it nor be spawned for it. The ghost shrinks to a marker at the time
-  // the document's 0 lands.
+  // cues pack onto the caption tracks (docs/captions.md#ingestion), so the
+  // lane can neither refuse it nor be spawned for it. The ghost shrinks to a
+  // marker at the time the document's 0 lands.
   if (media.source === "media" && media.kind === "Subtitle") {
     return {
       rawStartUs,

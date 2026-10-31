@@ -42,7 +42,7 @@ const EDGE_SPEED_PX = 12;
 /// a sub-lane, which name no clip lane — and `canvasX` is the
 /// press's x in the `timeline-canvas` overlay space, sharing the ruler's axis
 /// (x = 0 is t = 0). Together they are what a lane click needs to resolve to the
-/// gap under it (ADR 0069); the gesture itself still knows nothing of gaps.
+/// gap under it; the gesture itself still knows nothing of gaps.
 export interface BackgroundPress {
   trackId: string | null;
   canvasX: number;

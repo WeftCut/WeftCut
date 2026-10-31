@@ -86,7 +86,7 @@ export function DropStripSeam({ intoLanePx }: { intoLanePx: number }) {
 
 /// Header-column half of the drop-strip row. Same height as the body, or every
 /// header beneath it loses its lane. The insertion arrow is a drag landmark,
-/// with a tooltip explaining how to spawn a lane (ADR 0042). It sits at the
+/// with a tooltip explaining how to spawn a lane. It sits at the
 /// bottom of the hit row (`items-end`) so leftover pixels fall above the icon, not as a
 /// gutter between the strip and the first track. Its bottom border separates
 /// the fixed insertion control from the scrolling track headers; the time area
@@ -111,7 +111,8 @@ export function DropStripHeader() {
 }
 
 /// The permanently reserved row above the topmost lane: releasing a drag here
-/// spawns a lane at the top of the z-stack and places the clip on it (ADR 0042).
+/// spawns a lane at the top of the z-stack and places the clip on it
+/// (docs/features.md#track-placement).
 ///
 /// Idle it is an insertion arrow in the header half and a dashed rule that
 /// Timeline paints as `DropStripSeam` after this row — a seam, not a lane. No fill, nothing

@@ -17,7 +17,7 @@
 /// Pure and renderer-side, for the boundary `plan.ts` records: main may import
 /// a pure renderer module, the renderer may never import `main/state`.
 ///
-/// ADR 0069.
+/// See docs/features.md#ripple-delete.
 import type { TimeUs } from '../../shared/commandErrors'
 
 /** Half-open `[s, e)`, the convention every span here uses. */

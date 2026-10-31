@@ -35,7 +35,7 @@ const REFILL_LOOKAHEAD_US = 150_000;
 let nextStreamSeq = 0;
 
 /// The HW lanes that COPY BACK to CPU frames and ship bytes over the previewSw
-/// transport (Linux NVDEC/VAAPI — ADR 0034; macOS VideoToolbox — issue #10), as
+/// transport (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
 /// opposed to the Windows shared-texture lane (d3d11va → GpuTransport). One
 /// predicate so `makeHardwareTransport` and `usesSwTransport` cannot drift.
 function isCopyBackHwLane(lane: string): boolean {

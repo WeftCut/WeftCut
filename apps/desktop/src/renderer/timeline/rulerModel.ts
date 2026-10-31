@@ -25,7 +25,7 @@ import type { TackKind } from "../../shared/agent-activity";
 /// Does not own: how `scrollLeftPx` gets here (the components subscribe to
 /// `state/timelineScrollStore`), the frame grid itself (`renderer/frames.ts`),
 /// nor marker hover text — that needs a locale, so it composes in `MarkerLane`.
-/// See ADR 0037 (the frame grid) and ADR 0056 (markers).
+/// See ADR 0037 (the frame grid) and docs/features.md#markers.
 ///
 /// Frame-mode tick times come from the composition frame grid, so the ruler and
 /// the edited content are the same grid.
