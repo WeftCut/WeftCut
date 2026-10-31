@@ -238,7 +238,7 @@ impl FfmpegCommand {
 
     /// The watch a `Bound::Stall` child runs under, with its progress file.
     /// The file names this one spawn, so a watched command spawns once.
-    fn watch(&mut self) -> io::Result<Option<(Arc<Watch>, PathBuf)>> {
+    fn watch(&mut self) -> io::Result<Option<Arc<Watch>>> {
         let Bound::Stall(limit) = self.bound else {
             return Ok(None);
         };
@@ -246,7 +246,7 @@ impl FfmpegCommand {
             .progress
             .take()
             .ok_or_else(|| io::Error::other("a watched ffmpeg command spawns only once"))?;
-        Ok(Some((Watch::new(limit, self.policy.grace), progress)))
+        Ok(Some(Watch::new(limit, self.policy.grace, progress)))
     }
 
     /// Spawn on the tokio runtime.
@@ -257,14 +257,14 @@ impl FfmpegCommand {
         let owner = FfmpegChild {
             handle: Some(Handle {
                 child,
-                watch: watch.as_ref().map(|(watch, _)| watch.clone()),
+                watch: watch.clone(),
             }),
             stop: Stop::new(self.policy),
             timeout: self.timeout(),
         };
-        if let Some((watch, progress)) = watch {
+        if let Some(watch) = watch {
             // On failure the owner drops, which stops the child.
-            watch.start(target?, progress)?;
+            watch.start(target?)?;
         }
         Ok(owner)
     }
@@ -284,13 +284,13 @@ impl FfmpegCommand {
         let owner = SyncFfmpegChild {
             handle: Some(Handle {
                 child,
-                watch: watch.as_ref().map(|(watch, _)| watch.clone()),
+                watch: watch.clone(),
             }),
             stop: Stop::new(self.policy),
             timeout: self.timeout(),
         };
-        if let Some((watch, progress)) = watch {
-            watch.start(target, progress)?;
+        if let Some(watch) = watch {
+            watch.start(target)?;
         }
         Ok(owner)
     }
@@ -681,7 +681,9 @@ impl<C: Process> Process for Handle<C> {
         };
         let mut state = watch.lock();
         let status = self.child.try_wait()?;
-        state.released |= status.is_some();
+        if status.is_some() {
+            watch.release(&mut state);
+        }
         Ok(status)
     }
     fn kill(&mut self) -> io::Result<()> {
@@ -692,7 +694,7 @@ impl<C: Process> Process for Handle<C> {
 impl<C: Process> Drop for Handle<C> {
     fn drop(&mut self) {
         if let Some(watch) = &self.watch {
-            watch.lock().released = true;
+            watch.release(&mut watch.lock());
         }
     }
 }
@@ -702,6 +704,8 @@ impl<C: Process> Drop for Handle<C> {
 struct Watch {
     limit: Duration,
     grace: Duration,
+    /// The child's `-progress` file.
+    progress: PathBuf,
     state: Mutex<WatchState>,
 }
 
@@ -716,10 +720,11 @@ struct WatchState {
 }
 
 impl Watch {
-    fn new(limit: Duration, grace: Duration) -> Arc<Self> {
+    fn new(limit: Duration, grace: Duration, progress: PathBuf) -> Arc<Self> {
         Arc::new(Self {
             limit,
             grace,
+            progress,
             state: Mutex::new(WatchState {
                 alive_at: Instant::now(),
                 feed: Feed::Untaken,
@@ -731,6 +736,14 @@ impl Watch {
 
     fn lock(&self) -> MutexGuard<'_, WatchState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The owner is done with the child. The progress file goes now, not when
+    /// the watch thread next wakes, which a process exit may never see.
+    fn release(&self, state: &mut WatchState) {
+        if !std::mem::replace(&mut state.released, true) {
+            let _ = std::fs::remove_file(&self.progress);
+        }
     }
 
     fn stalled(&self) -> Option<io::Error> {
@@ -745,17 +758,17 @@ impl Watch {
         }
     }
 
-    fn start(self: &Arc<Self>, target: Target, progress: PathBuf) -> io::Result<()> {
+    fn start(self: &Arc<Self>, target: Target) -> io::Result<()> {
         let watch = self.clone();
         std::thread::Builder::new()
             .name("ffmpeg-watch".into())
-            .spawn(move || watch.run(target, progress))
+            .spawn(move || watch.run(target))
             .map(drop)
     }
 
-    fn run(&self, target: Target, path: PathBuf) {
+    fn run(&self, target: Target) {
         let tick = (self.limit / 4).clamp(Duration::from_millis(5), Duration::from_millis(250));
-        let mut progress = ProgressFile::new(path.clone());
+        let mut progress = ProgressFile::new(self.progress.clone());
         let mut cpu = CpuUse::new(target.pid);
         let mut stopping = false;
         loop {
@@ -809,8 +822,6 @@ impl Watch {
             self.kill_after_grace(target);
             stopping = true;
         }
-        drop(progress);
-        let _ = std::fs::remove_file(&path);
     }
 
     /// The rest of the stop sequence the watchdog can run without owning the
@@ -1501,19 +1512,19 @@ mod unix_tests {
     async fn the_watchdog_leaves_a_child_that_keeps_advancing() {
         let dir = tempfile::tempdir().unwrap();
         let started = Instant::now();
-        let status = fake_ffmpeg(dir.path(), KEEPS_ADVANCING)
-            .output()
-            .await
-            .unwrap()
-            .status;
+        let mut command = fake_ffmpeg(dir.path(), KEEPS_ADVANCING);
+        let progress = command.progress.clone().unwrap();
+        let status = command.output().await.unwrap().status;
         assert!(status.success(), "{status}");
         assert!(started.elapsed() > 2 * LIMIT, "{:?}", started.elapsed());
+        // Removed at the reap, not when the watch thread next wakes.
+        assert!(!progress.exists(), "{}", progress.display());
 
-        let status = fake_ffmpeg(dir.path(), KEEPS_ADVANCING)
-            .output_sync()
-            .unwrap()
-            .status;
+        let mut command = fake_ffmpeg(dir.path(), KEEPS_ADVANCING);
+        let progress = command.progress.clone().unwrap();
+        let status = command.output_sync().unwrap().status;
         assert!(status.success(), "{status}");
+        assert!(!progress.exists(), "{}", progress.display());
     }
 
     #[tokio::test]
